@@ -573,6 +573,24 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 	isMachine := userCtx.MachineIdentityID != nil
 
 	// Pre-fetch name and project for audit log before the record is deleted.
+	// This is also this route's own permission-resolution read for the
+	// non-machine path (GetSecretWithPermissionCheck) -- its error must abort
+	// the request, not be silently discarded. Found live by
+	// FuzzStorageFaultOperations: a fault on the authz-resolution read inside
+	// this prefetch was swallowed (only gating whether the audit log got the
+	// real secret name), and the request still succeeded off the side effect
+	// of DeleteSecretWithPermissionCheck's own separate, unfaulted
+	// authorization call later in this function -- oracle (c): an
+	// authz-resolution read's failure must never be indistinguishable from a
+	// deny.
+	//
+	// ErrAccessOutsideSchedule is deliberately NOT treated as blocking here,
+	// unlike GetSecret's handler above with the identical call: a
+	// SecretAccessSchedule pins a READ window (secret_schedule.go's own doc
+	// comment), and DeleteSecretWithPermissionCheck below never enforces it --
+	// deletion is intentionally not schedule-gated. Aborting on it here would
+	// newly impose a read-only restriction onto delete that the feature was
+	// never designed to cover.
 	secretName := fmt.Sprintf("id=%d", id)
 	var secretProjectID uint
 	var prefetchErr error
@@ -581,6 +599,17 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 		prefetched, prefetchErr = h.coreService.GetSecret(r.Context(), uint(id))
 	} else {
 		prefetched, prefetchErr = h.coreService.GetSecretWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
+	}
+	if prefetchErr != nil && !errors.Is(prefetchErr, core.ErrAccessOutsideSchedule) {
+		log.Printf("Error getting secret before delete: %v", prefetchErr)
+		if strings.Contains(prefetchErr.Error(), errNotFound) {
+			h.sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
+		} else if strings.Contains(prefetchErr.Error(), errPermissionDenied) {
+			h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
+		} else {
+			h.sendError(w, "InternalError", "Failed to delete secret", http.StatusInternalServerError, nil)
+		}
+		return
 	}
 	if prefetchErr == nil {
 		secretName = prefetched.Name
