@@ -49,11 +49,16 @@ func runBulkApprove(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("--ids: %w", err)
 	}
+	ctx := context.Background()
+
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runBulkApproveRemote(ctx, rc, ids)
+	}
+
 	service, err := bulkInitService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
-	ctx := context.Background()
 
 	approverID, err := resolveUserID(ctx, service, bulkApproveBy)
 	if err != nil {
@@ -65,13 +70,29 @@ func runBulkApprove(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("bulk approve failed: %w", err)
 	}
 
-	fmt.Printf("Approved %d request(s), %d failure(s).\n", len(result.Approved), len(result.Failed))
-	for _, id := range result.Approved {
-		fmt.Printf("  ✓ request %d approved\n", id)
+	printBulkApproveResult(result.Approved, result.Failed)
+	return nil
+}
+
+// runBulkApproveRemote approves ids via POST
+// /api/v1/access-requests/bulk-approve, gated server-side on a global
+// roles.assign (see router.go); the handler itself enforces per-item
+// project-scoped roles.assign for the caller before approving each request
+// (internal/core/bulk_access_requests.go), the SAME check the embedded path
+// gets from BulkApproveAccessRequests directly. --by is not consulted here:
+// the server attributes each approval to the caller's own bearer token.
+func runBulkApproveRemote(ctx context.Context, rc *common.RemoteClient, ids []uint) error {
+	body := map[string]interface{}{"request_ids": ids}
+	var resp struct {
+		Result struct {
+			Approved []uint                 `json:"approved"`
+			Failed   []core.BulkAccessError `json:"failed"`
+		} `json:"result"`
 	}
-	for _, f := range result.Failed {
-		fmt.Printf("  ✗ request %d: %s\n", f.RequestID, f.Error)
+	if err := rc.Post(ctx, "/api/v1/access-requests/bulk-approve", body, &resp); err != nil {
+		return fmt.Errorf("bulk approve failed: %w", err)
 	}
+	printBulkApproveResult(resp.Result.Approved, resp.Result.Failed)
 	return nil
 }
 
@@ -107,11 +128,16 @@ func runBulkReject(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("--ids: %w", err)
 	}
+	ctx := context.Background()
+
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runBulkRejectRemote(ctx, rc, ids)
+	}
+
 	service, err := bulkInitService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
-	ctx := context.Background()
 
 	approverID, err := resolveUserID(ctx, service, bulkRejectBy)
 	if err != nil {
@@ -123,13 +149,29 @@ func runBulkReject(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("bulk reject failed: %w", err)
 	}
 
-	fmt.Printf("Rejected %d request(s), %d failure(s).\n", len(result.Rejected), len(result.Failed))
-	for _, id := range result.Rejected {
-		fmt.Printf("  ✓ request %d rejected\n", id)
+	printBulkRejectResult(result.Rejected, result.Failed)
+	return nil
+}
+
+// runBulkRejectRemote rejects ids via POST
+// /api/v1/access-requests/bulk-reject, gated server-side on a global
+// roles.assign (see router.go); the handler itself enforces per-item
+// project-scoped roles.assign for the caller before rejecting each request
+// (internal/core/bulk_access_requests.go), the SAME check the embedded path
+// gets from BulkRejectAccessRequests directly. --by is not consulted here:
+// the server attributes each rejection to the caller's own bearer token.
+func runBulkRejectRemote(ctx context.Context, rc *common.RemoteClient, ids []uint) error {
+	body := map[string]interface{}{"request_ids": ids, "reason": bulkRejectReason}
+	var resp struct {
+		Result struct {
+			Rejected []uint                 `json:"rejected"`
+			Failed   []core.BulkAccessError `json:"failed"`
+		} `json:"result"`
 	}
-	for _, f := range result.Failed {
-		fmt.Printf("  ✗ request %d: %s\n", f.RequestID, f.Error)
+	if err := rc.Post(ctx, "/api/v1/access-requests/bulk-reject", body, &resp); err != nil {
+		return fmt.Errorf("bulk reject failed: %w", err)
 	}
+	printBulkRejectResult(resp.Result.Rejected, resp.Result.Failed)
 	return nil
 }
 
@@ -296,11 +338,16 @@ func runTmplDelete(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid template ID %q: %w", args[0], err)
 	}
+	ctx := context.Background()
+
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runTmplDeleteRemote(ctx, rc, uint(id))
+	}
+
 	service, err := bulkInitService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
-	ctx := context.Background()
 
 	deleterID, err := resolveUserID(ctx, service, tmplDeleteBy)
 	if err != nil {
@@ -311,6 +358,19 @@ func runTmplDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := service.DeleteRejectionReasonTemplate(ctx, deleterID, uint(id)); err != nil {
+		return fmt.Errorf("failed to delete template: %w", err)
+	}
+	fmt.Printf("Template %d deleted.\n", id)
+	return nil
+}
+
+// runTmplDeleteRemote deletes id via DELETE
+// /api/v1/rejection-reason-templates/{id}, gated server-side on the same
+// global roles.assign as runTmplListRemote/runTmplAddRemote above. --by is
+// not consulted here: the server attributes the deletion to the caller's own
+// bearer token, not to any --by value.
+func runTmplDeleteRemote(ctx context.Context, rc *common.RemoteClient, id uint) error {
+	if err := rc.Delete(ctx, fmt.Sprintf("/api/v1/rejection-reason-templates/%d", id)); err != nil {
 		return fmt.Errorf("failed to delete template: %w", err)
 	}
 	fmt.Printf("Template %d deleted.\n", id)
@@ -346,6 +406,30 @@ func requireTemplateAuthority(ctx context.Context, svc *core.KeyorixCore, actorI
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+// printBulkApproveResult renders a bulk-approve outcome identically whether it
+// came from the embedded core's *core.BulkApproveResult or the remote
+// server's equivalent JSON response.
+func printBulkApproveResult(approved []uint, failed []core.BulkAccessError) {
+	fmt.Printf("Approved %d request(s), %d failure(s).\n", len(approved), len(failed))
+	for _, id := range approved {
+		fmt.Printf("  ✓ request %d approved\n", id)
+	}
+	for _, f := range failed {
+		fmt.Printf("  ✗ request %d: %s\n", f.RequestID, f.Error)
+	}
+}
+
+// printBulkRejectResult mirrors printBulkApproveResult for bulk-reject.
+func printBulkRejectResult(rejected []uint, failed []core.BulkAccessError) {
+	fmt.Printf("Rejected %d request(s), %d failure(s).\n", len(rejected), len(failed))
+	for _, id := range rejected {
+		fmt.Printf("  ✓ request %d rejected\n", id)
+	}
+	for _, f := range failed {
+		fmt.Printf("  ✗ request %d: %s\n", f.RequestID, f.Error)
+	}
+}
 
 // parseIDList parses a comma-separated string of uint IDs (e.g. "1,2,3").
 func parseIDList(s string) ([]uint, error) {
