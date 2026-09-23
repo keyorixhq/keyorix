@@ -95,6 +95,7 @@ func TestKeyorixCore_ShareSecretWithGroup_ValidationError(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 
@@ -167,6 +168,7 @@ func TestKeyorixCore_ShareSecretWithGroup_StorageError(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 
@@ -195,6 +197,7 @@ func TestKeyorixCore_ListGroupShares(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 
@@ -233,6 +236,7 @@ func TestKeyorixCore_ListGroupShares_ValidationError(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 

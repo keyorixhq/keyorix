@@ -19,7 +19,7 @@ func (c *KeyorixCore) ListSharedSecrets(ctx context.Context, userID uint) ([]*mo
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
-	secrets, err := c.storage.ListSharedSecrets(ctx, userID, time.Now())
+	secrets, err := c.storage.ListSharedSecrets(ctx, userID, c.shareEffectiveNow())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -37,7 +37,7 @@ func (c *KeyorixCore) ListSecretShares(ctx context.Context, secretID uint) ([]*m
 	if _, err := c.GetSecret(ctx, secretID); err != nil {
 		return nil, err
 	}
-	shares, err := c.storage.ListSharesBySecret(ctx, secretID, time.Now())
+	shares, err := c.storage.ListSharesBySecret(ctx, secretID, c.shareEffectiveNow())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -70,7 +70,7 @@ func (c *KeyorixCore) ListSecretSharesWithPermissionCheck(ctx context.Context, s
 	} else if !isLiveOwner {
 		return nil, fmt.Errorf("not authorized to view shares for this secret")
 	}
-	shares, err := c.storage.ListSharesBySecret(ctx, secretID, time.Now())
+	shares, err := c.storage.ListSharesBySecret(ctx, secretID, c.shareEffectiveNow())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -83,11 +83,11 @@ func (c *KeyorixCore) ListSharesByUser(ctx context.Context, userID uint) ([]*mod
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
-	received, err := c.storage.ListSharesByUser(ctx, userID, time.Now())
+	received, err := c.storage.ListSharesByUser(ctx, userID, c.shareEffectiveNow())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
-	owned, err := c.storage.ListSharesByOwner(ctx, userID, time.Now())
+	owned, err := c.storage.ListSharesByOwner(ctx, userID, c.shareEffectiveNow())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -193,5 +193,5 @@ func (c *KeyorixCore) CheckSharePermission(ctx context.Context, secretID, userID
 	if userID == 0 {
 		return "", fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
-	return c.storage.CheckSharePermission(ctx, secretID, userID, time.Now())
+	return c.storage.CheckSharePermission(ctx, secretID, userID, c.shareEffectiveNow())
 }

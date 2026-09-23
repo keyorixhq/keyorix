@@ -184,7 +184,7 @@ func (c *KeyorixCore) ComputeSecretRiskScoresBatch(ctx context.Context, secretID
 	sharesBySecret := map[uint][]*models.ShareRecord{}
 	sharesFailed := false
 	var sharesErr error
-	if shares, err := c.storage.ListSharesBySecretIDs(ctx, secretIDs, time.Now()); err != nil {
+	if shares, err := c.storage.ListSharesBySecretIDs(ctx, secretIDs, c.shareEffectiveNow()); err != nil {
 		sharesFailed = true
 		sharesErr = err
 	} else {
@@ -358,7 +358,7 @@ func (c *KeyorixCore) countPrincipals(ctx context.Context, secret *models.Secret
 	if secret.OwnerID != 0 { // an ownerless (machine-created) secret has no owner principal
 		principals[secret.OwnerID] = struct{}{}
 	}
-	shares, err := c.storage.ListSharesBySecret(ctx, secret.ID, time.Now())
+	shares, err := c.storage.ListSharesBySecret(ctx, secret.ID, c.shareEffectiveNow())
 	if err != nil {
 		return len(principals), true, []string{fmt.Sprintf("shares: %v", err)}
 	}

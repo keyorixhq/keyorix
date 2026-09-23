@@ -415,6 +415,7 @@ func TestKeyorixCore_ListSharedSecrets(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 
@@ -503,6 +504,7 @@ func TestKeyorixCore_ListSharesByUser(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 
@@ -654,6 +656,7 @@ func TestKeyorixCore_CheckSharePermission(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 

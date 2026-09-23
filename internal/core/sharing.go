@@ -232,7 +232,7 @@ func (c *KeyorixCore) RemoveSelfFromShare(ctx context.Context, secretID, userID 
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
 
-	shares, err := c.storage.ListSharesBySecret(ctx, secretID, time.Now())
+	shares, err := c.storage.ListSharesBySecret(ctx, secretID, c.shareEffectiveNow())
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}

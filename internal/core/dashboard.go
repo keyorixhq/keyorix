@@ -132,7 +132,7 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 		stats.degrade("total_secrets", err)
 	}
 
-	outgoing, err := c.storage.ListSharesByOwner(ctx, userID, time.Now())
+	outgoing, err := c.storage.ListSharesByOwner(ctx, userID, c.shareEffectiveNow())
 	sharedSecrets := 0
 	if err == nil {
 		sharedSecrets = len(outgoing)
@@ -140,7 +140,7 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 		stats.degrade("shared_secrets", err)
 	}
 
-	incoming, err := c.storage.ListSharesByUser(ctx, userID, time.Now())
+	incoming, err := c.storage.ListSharesByUser(ctx, userID, c.shareEffectiveNow())
 	sharedWithMe := 0
 	if err == nil {
 		sharedWithMe = len(incoming)
