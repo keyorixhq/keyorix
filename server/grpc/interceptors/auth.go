@@ -2,6 +2,7 @@ package interceptors
 
 import (
 	"context"
+	"errors"
 	"net"
 	"slices"
 	"strings"
@@ -303,6 +304,13 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 		user, _, err = coreService.ValidateSessionToken(ctx, token)
 	}
 	if err != nil {
+		// #1944: a storage failure resolving the (otherwise valid) credential's
+		// roles is retryable, not a bad token — answer Unavailable and don't
+		// count it against the peer's brute-force budget, matching the HTTP
+		// middleware's 503 for the same error.
+		if errors.Is(err, core.ErrRoleResolutionUnavailable) {
+			return nil, nil, status.Error(codes.Unavailable, "authentication temporarily unavailable, please retry")
+		}
 		return nil, nil, grpcAuthFailure(ctx)
 	}
 

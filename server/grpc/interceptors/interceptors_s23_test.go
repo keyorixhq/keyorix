@@ -68,16 +68,22 @@ func TestStreamAuthInterceptor_S23_InvalidMachineTokenRejected(t *testing.T) {
 //
 // After a session token passes ValidateSessionToken and enforceGRPCAccessPolicy,
 // the interceptor calls GetUserIdentity to resolve roles and permissions.  If
-// the underlying storage query fails (e.g. the roles table has been dropped),
-// the interceptor must return codes.Internal rather than panicking or exposing
-// the storage error.
+// the underlying storage query fails (e.g. the role_permissions table has been
+// dropped), the interceptor must return codes.Internal rather than panicking or
+// exposing the storage error.
+//
+// #1944: the fault is injected into role_permissions, NOT user_roles. A broken
+// user_roles now fails ValidateSessionToken itself (GetUserRoles →
+// core.ErrRoleResolutionUnavailable → codes.Unavailable, covered by
+// auth_roles_unavailable_test.go) before GetUserIdentity is ever reached;
+// role_permissions is read only by GetUserIdentity's permission lookup.
 // ---------------------------------------------------------------------------
 
 // TestAuthInterceptor_S23_GetUserIdentityFailureReturnsInternal exercises the
 // branch at auth.go line 287-289 by deliberately corrupting the roles storage
 // after a valid session has been created.  The session token passes validation;
-// the subsequent identity resolution then fails because user_roles no longer
-// exists, which must produce codes.Internal.
+// the subsequent identity resolution then fails because role_permissions no
+// longer exists, which must produce codes.Internal.
 func TestAuthInterceptor_S23_GetUserIdentityFailureReturnsInternal(t *testing.T) {
 	h := setupAuthHelper(t)
 	defer h.Cleanup()
@@ -85,11 +91,12 @@ func TestAuthInterceptor_S23_GetUserIdentityFailureReturnsInternal(t *testing.T)
 	// Create a live session for user 10001.
 	mintSessionForTest(t, h, 10001, "identity-fail-user", "identity-fail-token", time.Now().Add(time.Hour))
 
-	// Drop the user_roles table so that GetUserRolesByID (called inside
-	// GetUserIdentity) returns a storage error.  This is the only reliable way
-	// to force that branch without introducing a mock core service.
-	require.NoError(t, h.DB.Migrator().DropTable("user_roles"),
-		"prerequisite: drop user_roles to trigger GetUserIdentity failure")
+	// Drop the role_permissions table so that GetUserPermissions (called inside
+	// GetUserIdentity) returns a storage error while session validation's own
+	// GetUserRoles still succeeds (#1944).  This is the only reliable way to
+	// force that branch without introducing a mock core service.
+	require.NoError(t, h.DB.Migrator().DropTable("role_permissions"),
+		"prerequisite: drop role_permissions to trigger GetUserIdentity failure")
 
 	interceptor := AuthInterceptor(h.CoreService, false)
 	_, err := interceptor(bearerCtx("identity-fail-token"), nil,
@@ -108,8 +115,8 @@ func TestStreamAuthInterceptor_S23_GetUserIdentityFailureReturnsInternal(t *test
 
 	mintSessionForTest(t, h, 10002, "stream-identity-fail-user", "stream-identity-fail-token", time.Now().Add(time.Hour))
 
-	require.NoError(t, h.DB.Migrator().DropTable("user_roles"),
-		"prerequisite: drop user_roles to trigger GetUserIdentity failure")
+	require.NoError(t, h.DB.Migrator().DropTable("role_permissions"),
+		"prerequisite: drop role_permissions to trigger GetUserIdentity failure")
 
 	interceptor := StreamAuthInterceptor(h.CoreService, false)
 	info := &grpc.StreamServerInfo{FullMethod: secretMethod}

@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 
@@ -539,8 +540,29 @@ func (c *KeyorixCore) authEffectiveNow() time.Time {
 	return now
 }
 
+// ErrRoleResolutionUnavailable is returned by ValidateSessionToken and
+// ValidatePATToken when the credential itself checked out (found, unrevoked,
+// unexpired, owning account active and not blocked) but the owner's role
+// names could not be read from storage (#1944). It is deliberately distinct
+// from every "invalid credential" error: the failure says nothing about the
+// token, so callers must not treat it as a bad credential (no 401 / negative
+// cache / brute-force strike) — the HTTP middleware answers 503 and the gRPC
+// interceptor codes.Unavailable, so the client simply retries.
+//
+// Previously both validators soft-failed to an EMPTY role list with a nil
+// error, handing back a half-built identity the HTTP middleware then
+// positively cached (UserContext.Roles) for up to validTokenTTL — a snapshot
+// that silently misreported the user's roles even after storage recovered.
+// Not a privilege issue (zero roles only ever fails closed), but a wrong
+// answer is worse than an honest retryable error. The underlying storage
+// error is intentionally NOT wrapped in, so its detail never reaches an
+// unauthenticated caller.
+var ErrRoleResolutionUnavailable = errors.New("role resolution temporarily unavailable")
+
 // ValidateSessionToken looks up a session token, checks expiry, and returns the user and
 // their role names. Used by the auth middleware on every authenticated request.
+// A storage failure while reading the user's roles returns
+// ErrRoleResolutionUnavailable rather than an empty role list (#1944).
 func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*models.User, []string, error) { // NOSONAR -- cognitive complexity 17, suppress go:S3776
 	session, err := c.storage.GetSession(ctx, token)
 	if err != nil {
@@ -595,7 +617,7 @@ func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*
 	_ = c.storage.TouchSession(ctx, session.ID, c.now(), sessionTouchInterval)
 	roles, err := c.storage.GetUserRoles(ctx, user.ID)
 	if err != nil {
-		return user, []string{}, nil
+		return nil, nil, ErrRoleResolutionUnavailable
 	}
 	roleNames := make([]string, len(roles))
 	for i, r := range roles {

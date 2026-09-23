@@ -132,6 +132,9 @@ func (c *KeyorixCore) RevokeOwnPAT(ctx context.Context, userID, tokenID uint) (t
 // token actually succeeded from that request's source. The returned PAT id
 // lets the caller invoke TouchPATLastUsed itself, once its own restriction
 // check has actually passed.
+//
+// A storage failure while reading the owner's roles returns
+// ErrRoleResolutionUnavailable (#1944) — never an empty role list.
 func (c *KeyorixCore) ValidatePATToken(ctx context.Context, raw string) (*models.User, []string, *PATRestriction, uint, error) {
 	if !strings.HasPrefix(raw, patPrefix) {
 		return nil, nil, nil, 0, fmt.Errorf("not a personal access token")
@@ -167,7 +170,10 @@ func (c *KeyorixCore) ValidatePATToken(ctx context.Context, raw string) (*models
 
 	roles, err := c.storage.GetUserRoles(ctx, user.ID)
 	if err != nil {
-		return user, []string{}, restriction, pat.ID, nil
+		// #1944: fail the validation with a distinguishable, retryable error
+		// instead of returning a valid-looking identity with an empty role
+		// list (see ErrRoleResolutionUnavailable).
+		return nil, nil, nil, 0, ErrRoleResolutionUnavailable
 	}
 	roleNames := make([]string, len(roles))
 	for i, r := range roles {

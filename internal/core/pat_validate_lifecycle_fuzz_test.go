@@ -96,12 +96,11 @@ type patLifecycleFixtureEntry struct {
 // Migrating the roles/user_roles tables so GetUserRoles can succeed (needed to
 // reach ValidatePATToken's role-building success path at all) has a real
 // trade-off worth stating: GetUserRoles now never errors for an existing user
-// (Find on an empty result set is not a GORM error), so ValidatePATToken's own
-// soft-fail branch -- `if err != nil { return user, []string{}, ... }`, taken
-// when the tables didn't exist at all -- is no longer reachable from this
-// fixture. That branch is still real, documented behavior; it would need a
-// genuine storage-layer fault injected into a live query to exercise now, not
-// just table absence.
+// (Find on an empty result set is not a GORM error), so ValidatePATToken's
+// role-lookup failure branch -- which returns ErrRoleResolutionUnavailable
+// (#1944; it formerly soft-failed to an empty role list with a nil error) --
+// is not reachable from this fixture. It is covered directly by
+// validate_roles_unavailable_test.go with an injected storage fault.
 func buildPATLifecycleFixture(t *testing.T) (*KeyorixCore, []patLifecycleFixtureEntry) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -139,9 +138,9 @@ func buildPATLifecycleFixture(t *testing.T) (*KeyorixCore, []patLifecycleFixture
 	// A real role assignment for userA so ValidatePATToken's GetUserRoles call
 	// (pat.go) succeeds and actually builds a non-empty roleNames slice --
 	// without this, the roles/user_roles tables wouldn't exist at all and
-	// GetUserRoles would always error, which is itself a real behavior
-	// (ValidatePATToken soft-fails to an empty role list rather than denying
-	// the token) but leaves the success path that builds roleNames unexercised.
+	// GetUserRoles would always error (ValidatePATToken then returns
+	// ErrRoleResolutionUnavailable, #1944), leaving the success path that
+	// builds roleNames unexercised.
 	// userB is deliberately left with no role assignment: GetUserRoles for an
 	// existing user with zero rows still succeeds (empty slice, no error), so
 	// this also exercises the "assigned" and "unassigned but table present"

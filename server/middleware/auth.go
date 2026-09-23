@@ -429,6 +429,11 @@ func isTransientValidationError(ctx context.Context, err error) bool {
 	if ctx.Err() != nil {
 		return true
 	}
+	// #1944: the credential validated but the owner's roles could not be read
+	// — a storage-side failure, not a verdict on the token.
+	if errors.Is(err, core.ErrRoleResolutionUnavailable) {
+		return true
+	}
 	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
