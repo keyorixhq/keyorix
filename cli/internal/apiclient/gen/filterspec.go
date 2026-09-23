@@ -29,7 +29,23 @@ var keptPaths = []string{
 	"/health",
 	"/api/v1/version",
 	"/auth/login",
+	"/auth/logout",
 	"/api/v1/auth/profile",
+	// PR 2 (docs/cli-split-inventory.md §7) -- pat, auth (mfa/logout), machine.
+	"/api/v1/auth/mfa/stepup",
+	"/api/v1/auth/tokens",
+	"/api/v1/auth/tokens/{id}",
+	"/api/v1/auth/tokens/expired",
+	"/api/v1/pat-hygiene",
+	"/api/v1/projects/{id}/machine-identities",
+	"/api/v1/projects/{id}/machine-identities/{machineId}",
+	"/api/v1/projects/{id}/machine-identities/{machineId}/tokens",
+	"/api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}",
+	"/api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings",
+	"/api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings/{bindingId}",
+	"/api/v1/machine-token-hygiene",
+	"/api/v1/machine-identities/audit",
+	"/api/v1/projects",
 }
 
 func main() {

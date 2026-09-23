@@ -347,7 +347,14 @@ paths:
       operationId: listPATs
       security: [{bearerAuth: []}]
       responses:
-        '200': {description: 'Personal access tokens (secret never returned)'}
+        '200':
+          description: Envelope with `data` (array of personal access tokens; secret never returned).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: array, items: {$ref: '#/components/schemas/PATToken'}}
     post:
       tags: [Auth]
       summary: Create a personal access token (raw token returned once)
@@ -367,9 +374,69 @@ paths:
                 scopes: {type: array, items: {type: string}, description: 'ADR-042 least-privilege allowlist (e.g. ["secrets.read"], supports "*" and "secrets.*"). Omit/empty = inherit the owner''s full permissions. Only ever narrows below the owner.'}
                 project_scope: {type: integer, description: 'ADR-042: confine the token to a single project id; 0/omit = any project the owner can reach.'}
                 environment_scope: {type: integer, description: 'ADR-042: confine the token to a single environment id; 0/omit = any environment. Env ids are globally unique, so this also pins the project.'}
+                allowed_cidrs: {type: array, items: {type: string}, description: 'Restrict the token to source IPs in these CIDRs. Omit/empty = no network restriction.'}
       responses:
-        '201': {description: 'Token created; plaintext token in data.token shown once'}
+        '201':
+          description: Envelope with `data` (`token`, the plaintext secret shown once, and `pat`, its metadata).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      token: {type: string, description: 'Plaintext token, shown only in this response'}
+                      pat: {$ref: '#/components/schemas/PATToken'}
         '400': {$ref: '#/components/responses/Error'}
+  /api/v1/auth/tokens/expired:
+    get:
+      tags: [Auth]
+      summary: List the caller's own expired (non-revoked) personal access tokens
+      description: Self-service; lists expired PATs belonging to the authenticated user so they can be reviewed before cleanup.
+      operationId: listExpiredPATs
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Envelope with `data` (array of personal access tokens).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: array, items: {$ref: '#/components/schemas/PATToken'}}
+    delete:
+      tags: [Auth]
+      summary: Bulk-revoke all of the caller's expired personal access tokens
+      description: Self-service; revokes every expired (non-revoked) PAT belonging to the authenticated user in one call.
+      operationId: bulkRevokeExpiredPATs
+      security: [{bearerAuth: []}]
+      responses:
+        '204': {description: All expired tokens revoked.}
+  /api/v1/pat-hygiene:
+    get:
+      tags: [Auth]
+      summary: List stale or expired-but-active personal access tokens across all users (admin)
+      description: >-
+        Deployment-wide personal access tokens that should probably be revoked: expired-but-never-revoked,
+        and unused-for-a-long-window (token sprawl). Requires global audit.read. Never returns a token secret.
+      operationId: patHygiene
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: days, in: query, schema: {type: integer}, description: "Staleness window in days (default server-side: 90, cap 3650)."}
+      responses:
+        '200':
+          description: Envelope with `data.tokens` (array of PAT hygiene rows).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      tokens: {type: array, items: {$ref: '#/components/schemas/PATHygieneRow'}}
+        '403': {$ref: '#/components/responses/Error'}
   /api/v1/auth/tokens/{id}:
     delete:
       tags: [Auth]
@@ -381,6 +448,29 @@ paths:
       responses:
         '204': {description: Token revoked}
         '404': {$ref: '#/components/responses/Error'}
+  /api/v1/auth/mfa/stepup:
+    post:
+      tags: [Auth]
+      summary: Re-verify TOTP/recovery code to open a restricted-secret read window
+      description: >-
+        Re-verify the caller's TOTP (or a recovery code) without a full re-login. On
+        success, opens a 15-minute server-side window permitting reads of "restricted"
+        classified secrets. Blocked under impersonation.
+      operationId: mfaStepUp
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: {type: string, description: TOTP code or a recovery code}
+      responses:
+        '200': {description: Step-up verified; the 15-minute restricted-read window is open}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
   /api/v1/auth/end-impersonation:
     post:
       tags: [Auth]
@@ -445,6 +535,21 @@ paths:
       responses:
         '200':
           description: "Envelope {data, message}. data.projects is an array of project objects (including secret and environment counts; soft-deleted ones carry deleted/deleted_at)."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      projects:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: {type: integer}
+                            name: {type: string}
         '401': {$ref: '#/components/responses/Error'}
     post:
       tags: [Projects]
@@ -1346,6 +1451,15 @@ paths:
       responses:
         '200':
           description: Envelope with `data.machine_identities` (array of machine-identity objects).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      machine_identities: {type: array, items: {$ref: '#/components/schemas/MachineIdentity'}}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -1368,9 +1482,19 @@ paths:
                 name: {type: string}
                 identity_type: {type: string}
                 description: {type: string}
+                classification: {type: string, description: 'Data classification: public | internal | confidential | restricted'}
       responses:
         '201':
           description: Envelope with `data.machine_identity` (the created identity).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      machine_identity: {$ref: '#/components/schemas/MachineIdentity'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -1415,7 +1539,16 @@ paths:
         '200':
           description: >-
             Envelope with `data.tokens`; each item has `id`, `name`, `prefix`,
-            `last_used_at`, `expires_at`, `revoked`, `created_at` (never the raw token).
+            `last_used_at`, `expires_at`, `revoked` (never the raw token).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      tokens: {type: array, items: {$ref: '#/components/schemas/MachineToken'}}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -1438,11 +1571,24 @@ paths:
               properties:
                 name: {type: string}
                 expires_in_days: {type: integer, description: Optional; omit or 0 for no expiry}
+                classification: {type: string, description: 'Data classification: public | internal | confidential | restricted'}
       responses:
         '201':
           description: >-
             Envelope with `data.token` (raw token, returned ONCE), `data.id`,
             `data.prefix`, and `data.expires_at`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      token: {type: string, description: 'Plaintext token, shown only in this response'}
+                      id: {type: integer}
+                      prefix: {type: string}
+                      expires_at: {type: string, format: date-time, nullable: true}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -1512,6 +1658,127 @@ paths:
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings:
+    get:
+      tags: [MachineIdentities]
+      summary: List a machine identity's OIDC federation bindings
+      description: Return the OIDC (issuer, subject) bindings mapped to a machine identity (ADR-031).
+      operationId: listOIDCBindings
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: machineId, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope with `data.bindings` (array of OIDC bindings).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      bindings: {type: array, items: {$ref: '#/components/schemas/OIDCBinding'}}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [MachineIdentities]
+      summary: Bind an OIDC (issuer, subject) to a machine identity
+      description: >-
+        Create an OIDC federation binding (ADR-031) so a workload holding a matching
+        external JWT can authenticate as this machine identity with no stored credential.
+      operationId: createOIDCBinding
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: machineId, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [issuer, subject]
+              properties:
+                issuer: {type: string, description: "The token's iss claim"}
+                subject: {type: string, description: "The token's sub claim"}
+      responses:
+        '201':
+          description: Envelope with `data` (the created binding).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/OIDCBinding'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings/{bindingId}:
+    delete:
+      tags: [MachineIdentities]
+      summary: Remove an OIDC binding from a machine identity
+      description: Permanently remove a previously created OIDC federation binding.
+      operationId: deleteOIDCBinding
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: machineId, in: path, required: true, schema: {type: integer}}
+        - {name: bindingId, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200': {description: Envelope with null `data` and a confirmation message.}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/machine-token-hygiene:
+    get:
+      tags: [MachineIdentities]
+      summary: List stale or expired-but-active machine tokens across all identities (admin)
+      description: >-
+        Deployment-wide machine-identity credentials that should probably be revoked:
+        expired-but-never-revoked, and unused-for-a-long-window (non-human token
+        sprawl). Requires global audit.read. Never returns a token secret.
+      operationId: machineTokenHygiene
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: days, in: query, schema: {type: integer}, description: "Staleness window in days (default server-side: 90, cap 3650)."}
+      responses:
+        '200':
+          description: Envelope with `data.tokens` (array of machine token hygiene rows).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      tokens: {type: array, items: {$ref: '#/components/schemas/MachineTokenHygieneRow'}}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/machine-identities/audit:
+    get:
+      tags: [MachineIdentities]
+      summary: Deployment-wide machine identity audit report (admin)
+      description: >-
+        Credential counts, last-used timestamps, staleness, and revocation status
+        for every machine identity in the deployment. Requires global audit.read.
+      operationId: getMachineAuditReport
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Envelope with `data` (the audit report).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/MachineAuditReport'}
+        '403': {$ref: '#/components/responses/Error'}
   /api/v1/secrets:
     get:
       tags: [Secrets]
@@ -3418,3 +3685,106 @@ components:
           items: {type: string}
         granted_by: {type: integer}
         created_at: {type: string, format: date-time}
+    PATToken:
+      type: object
+      description: >-
+        A personal access token (ADR-027/ADR-042). The raw secret is never
+        returned except once, in the create response.
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        token_prefix: {type: string}
+        revoked: {type: boolean}
+        created_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time, nullable: true}
+        last_used_at: {type: string, format: date-time, nullable: true}
+        scopes: {type: array, items: {type: string}, nullable: true}
+        project_scope: {type: integer}
+        environment_scope: {type: integer}
+        allowed_cidrs: {type: array, items: {type: string}, nullable: true}
+    PATHygieneRow:
+      type: object
+      description: >-
+        A deployment-wide PAT hygiene entry (GET /pat-hygiene) -- never
+        includes the token secret.
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        token_prefix: {type: string}
+        user_id: {type: integer}
+        expires_at: {type: string}
+        last_used_at: {type: string}
+        expired: {type: boolean}
+        stale: {type: boolean}
+    MachineIdentity:
+      type: object
+      description: A project-scoped machine identity (ADR-023).
+      properties:
+        id: {type: integer}
+        project_id: {type: integer}
+        name: {type: string}
+        identity_type: {type: string}
+        state: {type: string, enum: [pending, active, suspended, revoked]}
+        description: {type: string}
+        created_by: {type: integer}
+        created_by_machine_identity_id: {type: integer}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        last_seen_at: {type: string, format: date-time, nullable: true}
+        revoked_at: {type: string, format: date-time, nullable: true}
+        classification: {type: string}
+    MachineToken:
+      type: object
+      description: Machine identity token metadata (never the raw secret, except once at issuance).
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        prefix: {type: string}
+        last_used_at: {type: string, format: date-time, nullable: true}
+        expires_at: {type: string, format: date-time, nullable: true}
+        revoked: {type: boolean}
+    MachineTokenHygieneRow:
+      type: object
+      description: >-
+        A deployment-wide machine-token hygiene entry (GET /machine-token-hygiene)
+        -- never includes the token secret.
+      properties:
+        id: {type: integer}
+        machine_identity_id: {type: integer}
+        name: {type: string}
+        token_prefix: {type: string}
+        last_used_at: {type: string}
+        expired: {type: boolean}
+        stale: {type: boolean}
+    OIDCBinding:
+      type: object
+      description: >-
+        An OIDC federation binding (ADR-031) mapping an external (issuer,
+        subject) to a machine identity.
+      properties:
+        id: {type: integer}
+        issuer: {type: string}
+        subject: {type: string}
+        created_at: {type: string, format: date-time}
+    MachineAuditRow:
+      type: object
+      properties:
+        machine_id: {type: integer}
+        name: {type: string}
+        description: {type: string}
+        credential_count: {type: integer}
+        last_used_at: {type: string, format: date-time, nullable: true}
+        is_stale: {type: boolean}
+        is_revoked: {type: boolean}
+        created_at: {type: string, format: date-time}
+    MachineAuditReport:
+      type: object
+      description: Deployment-wide machine identity audit report (GET /machine-identities/audit).
+      properties:
+        generated_at: {type: string, format: date-time}
+        total_count: {type: integer}
+        stale_count: {type: integer}
+        revoked_count: {type: integer}
+        machines:
+          type: array
+          items: {$ref: '#/components/schemas/MachineAuditRow'}

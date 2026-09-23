@@ -46,6 +46,12 @@ func TestSpecLoadsAndValidates(t *testing.T) {
 // getVersion added by ADR-108 PR 0 (docs/cli-split-inventory.md §5):
 // GET /api/v1/version carries a real `api_version`/`minimum_cli_version`
 // schema from the day it was added, not a later backfill.
+//
+// The 13 machine/PAT/project operations below were added by ADR-108 PR 2
+// (docs/cli-split-inventory.md §7): the thin CLI's generated client needs a
+// real response schema to produce typed accessors, so this batch backfilled
+// schemas for these previously-schema-less (or brand new, e.g. the OIDC
+// binding trio) operations and exercises each via openapi_contract_pr2_test.go.
 func TestEnforcedSetMatchesADR074(t *testing.T) {
 	want := map[string]bool{
 		"authGetSetupToken":             true,
@@ -58,6 +64,19 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		"exportSecretAccessLog":         true,
 		"exportAuditLogsCSV":            true,
 		"exportAccessReviewCampaignCSV": true,
+		"createMachineIdentity":         true,
+		"createOIDCBinding":             true,
+		"createPAT":                     true,
+		"getMachineAuditReport":         true,
+		"issueMachineToken":             true,
+		"listExpiredPATs":               true,
+		"listMachineIdentities":         true,
+		"listMachineTokens":             true,
+		"listOIDCBindings":              true,
+		"listPATs":                      true,
+		"listProjects":                  true,
+		"machineTokenHygiene":           true,
+		"patHygiene":                    true,
 	}
 
 	loadSpec()

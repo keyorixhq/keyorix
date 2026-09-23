@@ -13,6 +13,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/cli/internal/apiclient"
 	"github.com/keyorixhq/keyorix/cli/internal/credstore"
+	"github.com/keyorixhq/keyorix/cli/internal/migrate"
 )
 
 var (
@@ -40,6 +41,9 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	serverURL := loginServerURL
 	if serverURL == "" {
 		serverURL = os.Getenv("KEYORIX_SERVER")
+	}
+	if serverURL == "" {
+		serverURL = offerOldServerURLMigration()
 	}
 	if serverURL == "" {
 		return fmt.Errorf("no server given: pass --server or set KEYORIX_SERVER")
@@ -110,6 +114,27 @@ func runLogin(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Logged in to %s as %s.\n", serverURL, username)
 	return nil
+}
+
+// offerOldServerURLMigration looks for a server URL left behind by the old,
+// pre-ADR-108 CLI and, if one is found, asks the operator whether to reuse it --
+// it never imports a credential, only a URL (see internal/migrate's doc comment).
+// Returns "" if none is found or the operator declines, in which case runLogin
+// falls through to its existing "no server given" error exactly as before.
+func offerOldServerURLMigration() string {
+	c, ok := migrate.DetectOldServerURL()
+	if !ok {
+		return ""
+	}
+	answer, err := promptLine(fmt.Sprintf("Found a server URL from an older keyorix CLI config (%s): %s\nUse it? [Y/n]: ", c.Source, c.ServerURL))
+	if err != nil {
+		return ""
+	}
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	if answer == "" || answer == "y" || answer == "yes" {
+		return c.ServerURL
+	}
+	return ""
 }
 
 func promptLine(prompt string) (string, error) {

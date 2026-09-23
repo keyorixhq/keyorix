@@ -815,6 +815,75 @@ meaning). Size: medium. Tests: same golden-output comparison; a dedicated regres
 credential-file consolidation (old `~/.keyorix/cli.yaml` + `./keyorix.yaml` precedence collapses
 correctly to the new single mechanism, no credential silently dropped).
 
+**Closed by PR split/pr2-cli-pat-auth-machine (2026-09-24, stacked on split/pr0-cli-module —
+#2019 had not yet merged when this PR opened).** All 24 commands ported into `cli/cmd/` against
+the generated `apiclient`, REST-only, no new local mode. `login`/`status` were already PR 0's;
+this PR added `logout`, `mfa stepup`, `pat` (6 leaf), and `machine` (14 leaf: create/list/
+describe/suspend/reactivate/revoke, `binding` add/list/rm, `token` issue/list/revoke,
+token-hygiene, audit) as flat top-level commands, matching PR 0's convention of not nesting under
+an `auth` group. `machine`/`pat` have no "active project" concept yet (that lands with the
+`project` command group in a later PR per this table) — every command takes `--project` or
+`KEYORIX_PROJECT` directly, no fallback.
+
+**OpenAPI spec gap found and closed, not just filtered:** 13 of the 24 commands' REST operations
+either had no 2xx response schema in `server/http/handlers/openapi.yaml` (`createPAT`,
+`listPATs`, `createMachineIdentity`, `listMachineIdentities`, `issueMachineToken`,
+`listMachineTokens`, `listProjects`) or did not exist in the spec at all (`listExpiredPATs`,
+`bulkRevokeExpiredPATs`, `patHygiene`, `machineTokenHygiene`, `getMachineAuditReport`,
+`mfaStepUp`, and the three OIDC-binding operations) despite being real, working, `Zero-GAPs`
+routes reachable in `router.go` — filterspec.go's `run()` would have failed outright the moment
+any of these was added to `keptPaths` without a matching spec entry. Authored full operations
+(request + response schemas, 8 new `components/schemas` entries: `PATToken`,
+`PATHygieneRow`, `MachineIdentity`, `MachineToken`, `MachineTokenHygieneRow`, `OIDCBinding`,
+`MachineAuditRow`, `MachineAuditReport`) rather than terse description-only stubs, per
+CLAUDE.md's "generate it" preference — a schema-less operation cannot produce a typed generated
+accessor, which would have forced the CLI code back onto raw `json.Unmarshal`, the exact pattern
+ADR-106/108 are moving away from. This mechanically converted 13 operations from "pending" to
+"enforced" in `contracttest`'s ADR-074 registry (`registry.go`'s `pendingRegistry` →
+`exercisingTests`, `checks_test.go`'s `TestEnforcedSetMatchesADR074` pinned baseline) — closed
+with new, self-contained happy-path tests in `server/http/handlers/openapi_contract_pr2_test.go`,
+not by grafting onto an existing test whose fixture/path might not actually reach a 2xx.
+`bulkRevokeExpiredPATs` was reclassified to its real status code (204, `outOfScopeRegistry`) after
+tracing the handler; the two other net-new schema-less operations (`deleteOIDCBinding`,
+`mfaStepUp`) were added to `pendingRegistry`, matching the existing `removeMachineRole`/
+`revokeMachineToken` precedent of a 200-with-message response with no schema yet.
+
+Two real bugs the schema-authoring step itself caught (server/http/handlers/openapi.yaml, not
+CLI-side): an unquoted comma inside a YAML flow-mapping description silently produced a spurious
+"extra sibling field" that `contracttest`'s spec-load validation rejected outright (caught before
+merge, not after); and `PATToken.scopes`/`allowed_cidrs` needed `nullable: true` -- the real
+handler serializes a nil `[]string` as JSON `null`, which a non-nullable array schema rejects
+(`kx_pat_...`/scope round-trip, caught by `TestContractPR2_CreatePAT` failing against the real
+handler, not by hand-inspection).
+
+Credential/config: no consolidation work was actually needed beyond what PR 0 already decided —
+`login`/`status`/`logout`/`mfa` all use PR 0's single `credstore` file
+(`os.UserConfigDir()/keyorix/credentials.yaml`); the new CLI never had `config set-remote`/
+`use-local`/`test-connection`/`connect` to begin with, so there is nothing to drop. `logout` was
+the one real gap: the old CLI's `auth logout` never told the server (§8 Finding S12); this one
+calls `POST /auth/logout` first (`TestRunLogout_RevokesServerSideThenDeletesLocalCredentials`
+asserts the server actually received the call, not just that the local file is gone — asserting
+the return value alone would have passed even with the revocation call deleted, see CLAUDE.md's
+"assert the effect, not the return value"), then deletes the local credential file regardless of
+whether the server call succeeded (`TestRunLogout_StillDeletesLocalCredentialsWhenServerUnreachable`).
+Migration helper (`cli/internal/migrate`): `login` detects a server URL from either pre-ADR-108
+config file (`./keyorix.yaml`, `~/.keyorix/cli.yaml`/XDG) and offers it as a confirmable default
+-- never auto-imports, and structurally cannot read a credential (`Candidate` has no field for
+one); `./keyorix.yaml` takes precedence over `cli.yaml` per `internal/migrate`'s own doc comment
+(most-recent-explicit-login wins), confirmed by `TestDetectOldServerURL_CWDConfigTakesPrecedence`
+independently re-discovering the lower-precedence candidate once the higher one is removed (not
+lost, not merged).
+
+New shared package `cli/internal/cliout` (named to avoid the repo root `.gitignore`'s generic
+`output/` build-artifact rule): `Table` (tabwriter wrapper) and `SanitizeForTerminal`
+(control-character stripping for attacker-controlled free text -- mirrors the old CLI's
+`internal/cli/common.SanitizeForTerminal`), for reuse by later Phase 3 PRs.
+
+Verified: `go build`/`go vet`/`go test ./...` clean for both `cli` (depguard green -- no
+forbidden import pulled in by any of this PR's additions) and the main module's
+`server/http/handlers` + `.../contracttest` packages; `gosec -severity medium` and
+`golangci-lint` both clean on `cli/`.
+
 **PR 3 — `rbac`, `group`, `invite` (11+8+4 = 23 commands).** Zero hard GAPs. Requires an explicit
 decision on Finding S11 (D1: `rbac assign-role`/`remove-role`'s embedded-mode actor-0 attribution —
 moot once local mode is gone, but decide explicitly rather than silently drop) and Finding S9
