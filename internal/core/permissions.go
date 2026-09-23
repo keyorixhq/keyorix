@@ -181,7 +181,25 @@ func (c *KeyorixCore) CheckSecretPermission(ctx context.Context, secretID, userI
 	// before.
 	if aclPerm := permissionLevelToRBACPerm(requiredPermission); aclPerm != "" && aclPerm != "secrets.delete" &&
 		actorTypeFromContext(ctx) != ActorTypeMachine {
-		if hasACL, aerr := c.HasSecretACL(ctx, userID, secretID, aclPerm); aerr == nil && hasACL {
+		hasACL, aerr := c.HasSecretACL(ctx, userID, secretID, aclPerm)
+		if aerr != nil {
+			// A REAL read failure (not "no grant" -- HasSecretACL already degrades
+			// storage.ErrUnsupportedByBackend to (false, nil), so aerr is non-nil only
+			// for a genuine error, e.g. a faulted GetSecretAncestors). Must propagate,
+			// not silently fall through to the RBAC fallback below as if this ACL
+			// check had simply found nothing -- mirrors AuthorizeSecret's identical
+			// HasSecretACL call (the middleware's own path, authz.go), which already
+			// fails closed on this exact error. Found 2026-09-23: the mismatch between
+			// this function and AuthorizeSecret let FuzzStorageFaultOperations flag a
+			// GetSecretAncestors#2 fault on UpdateSecret as an apparent fail-open --
+			// traced to here, not a real bypass (ACL is additive-only, so silently
+			// falling through to RBAC can only ever under-grant relative to RBAC alone,
+			// never over-grant), but still wrong: a caller with a genuine ACL-only
+			// grant (no independent RBAC access) was wrongly DENIED under this fault
+			// instead of seeing the real error.
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), aerr)
+		}
+		if hasACL {
 			return &PermissionContext{
 				SecretID:   secretID,
 				UserID:     userID,
