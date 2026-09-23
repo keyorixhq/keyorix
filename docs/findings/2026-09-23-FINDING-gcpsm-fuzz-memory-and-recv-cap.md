@@ -9,6 +9,14 @@ by a planted assertion catching a regression — both are pre-existing gaps in t
 fuzz harness and the production connector, confirmed by direct measurement and
 source reading.
 
+Pre-push review added three checks against the initial fix, folded into their
+relevant sections below: (1) the reused fixture's per-input isolation is now a
+permanent regression test, not just asserted (§1); (2) production's
+per-`GetSecret` client dial was checked for the same leak mechanism and does
+not appear to reproduce it, reported but not fixed here (§3); (3) the 1 MiB
+receive cap's scope (every RPC the connection carries, not just
+`AccessSecretVersion`) and its value versus AWS/Azure's are made explicit (§2).
+
 ---
 
 ## 1. The CI kill: a per-iteration `grpc.Server`+`bufconn`+client leak, not a
@@ -84,6 +92,28 @@ never froze) and `-parallel=4` (90s, 70,014 execs, peak RSS ~509 MB via
 `/usr/bin/time -l` — down from the reported ~7.9 GB at the same settings
 pre-fix). Full `go test ./internal/connect/...` still passes.
 
+**Per-input isolation of the shared fixture — checked separately, because reuse
+on its own proves nothing about correctness**: removing the per-iteration
+teardown only removes what leaked; it says nothing about whether
+`setResponse`'s mutex-guarded overwrite actually replaces every field an
+earlier input set, or whether a stale in-flight response could race a new one.
+Either would make every downstream fuzz oracle unsound — checking the CURRENT
+input's expectations against a stale or mixed response, which could mask a
+real bypass (a stale error papering over what should have been a genuine
+failure) or manufacture a false one (a stale success reported against an input
+that should have failed). `TestGCPSMSharedFixture_NoCrossInputLeak`
+(`internal/connect/gcpsm_fixture_isolation_test.go`) drives four inputs
+back-to-back on the identical shared fixture through `GetSecret` itself (the
+same call path the fuzz oracles check) — error → different success → different
+error → different success — and asserts each call sees only its own input's
+response. Verified both directions matter: temporarily reverting `setResponse`
+to skip the field overwrite (keeping only the `hits` reset) makes this test
+fail immediately on input 1 (`gcpsm_fixture_isolation_test.go:77`, "expected a
+\"not found\" error, got ... has no value" — a zero-value fallthrough, not a
+stale value, since the fixture starts zeroed, but it demonstrates the test
+detects a broken overwrite); restoring the real implementation makes it pass
+again. Included in the PR as a permanent regression test, not a one-off check.
+
 ## 2. Production gap (independent, defense-in-depth): the real client path had no
    response-size bound at all
 
@@ -128,6 +158,80 @@ ADC touched). RED subtest reproduces the pre-fix shape (default alone, no
 override) and confirms it really does accept the oversized payload unbounded;
 GREEN subtest adds the override and confirms it's rejected with
 `codes.ResourceExhausted`.
+
+**Scope — does the cap cover every RPC the connector can make, not just
+`AccessSecretVersion`?** `gcpMaxRecvMsgSize` is applied as a
+`grpc.WithDefaultCallOptions` **dial** option (`gcpsm.go:107-109`), so it binds
+every RPC made over that `*grpc.ClientConn` — not specific to one method. But
+the connector's own `gcpSMAccessAPI` interface (`gcpsm.go:51-54`) declares only
+`AccessSecretVersion` and `Close()`; `client()`'s return type is
+`gcpSMAccessAPI`, not the full `*secretmanager.Client`, so the connector
+**cannot call any `List*` method through this seam at all** — not "doesn't
+today," but structurally can't without first widening the interface, which
+would be a visible, reviewable change. `List*` responses (paginated, and each
+page's size scales with the caller-controlled page size) were the concern
+worth checking precisely because they're the shape most likely to exceed a
+per-secret-sized cap — confirmed inapplicable here, not merely absent from a
+grep.
+
+**Comparison with AWS/Azure's cap**: `internal/connect/hardened_client.go:32`
+defines `connectMaxResponseBytes = vaultMaxResponseBytes`, and
+`internal/connect/vault.go:24` defines `vaultMaxResponseBytes = 1 << 20` — the
+same 1 MiB value `gcpMaxRecvMsgSize` uses. Not a coincidence to call out as a
+difference: it's the same number for the same reason (GCP's own 64 KiB secret
+payload cap and the other backends' comparable single-secret response sizes
+both leave the identical amount of headroom at 1 MiB), so all four connectors
+now share one consistent response-size ceiling.
+
+## 3. Checked, not fixed: production's per-`GetSecret` client dial — does it
+   leak the same way?
+
+`client()`'s fallback dials a brand-new gRPC client/connection on **every**
+call — `secretmanager.NewClient(ctx, ...)` at `gcpsm.go:107` — and `client()`
+itself is invoked on every single `GetSecret` call (`gcpsm.go:138`, no
+memoization on `*GCPSecretManagerConnector`). Unlike the harness's bug, it
+**does** close what it opens: `GetSecret`'s `defer func() { _ = cl.Close() }()`
+at `gcpsm.go:142` runs after every call. So this is not "dials and never
+closes" — it's "dials, calls once, and closes, every single time," which is
+structurally the same create/use/teardown shape §1's fix removed from the
+fuzz harness.
+
+That similarity is exactly why it needed checking rather than assuming safety
+from "it closes it": §1's leak occurred **despite** `Stop()`/`Close()` being
+called correctly on every iteration — the leaked goroutines were ones
+`Close()` didn't reliably unblock. So the open question was whether that
+specific leak mechanism is general to grpc-go's HTTP/2 transport lifecycle
+(in which case production, dialing constantly over real TCP/TLS, would be at
+risk too) or specific to `bufconn`'s cooperative `sync.Cond`-based pipe
+signaling (in which case production's real-socket path would not be).
+
+**Checked by isolating the transport**: reran the identical
+create-client/call/close-per-iteration loop (`fakeSecretManagerServer` +
+`secretmanagerpb` client, same shape as `client()`'s fallback) 3,000 times
+over a **real `127.0.0.1` TCP listener** instead of `bufconn` — still no ADC or
+real GCP endpoint touched, only the transport swapped. Result: flat throughput
+(no slowdown across the run, ~0.29 ms/iter throughout — contrast §1's bufconn
+loop, which degraded from 43 ms/iter to 80 ms/iter over 2,800 iterations and
+never finished 30,000 in 3 minutes) and flat goroutine count (2–4 throughout,
+ending at 3; contrast §1's leaked, still-blocked `bufconn.(*pipe).Read`
+goroutines at timeout). This isolates the leak to `bufconn`'s pipe signaling,
+not grpc-go's transport lifecycle in general — a real TCP `Close()` unblocks
+readers immediately at the OS level, where `bufconn`'s `sync.Cond`-based
+`Read()` apparently does not always get signaled promptly on `Stop()`/`Close()`.
+
+**Verdict: does not appear to reproduce the harness's leak mechanism** under
+this test (plain TCP + insecure creds; real TLS wasn't separately isolated,
+though a `tls.Conn.Close()` closes its underlying `net.Conn` the same way and
+isn't expected to differ). Not fixed or further investigated here, per scope —
+this section is a report, not a closure.
+
+**Separate, lower-severity observation, also not fixed here**: dialing a full
+new gRPC/TLS connection to `secretmanager.googleapis.com` for every single
+`GetSecret` call (rather than caching a connector-lifetime client) is a real
+efficiency cost — a TLS handshake and connection setup on every secret read —
+independent of whether it leaks. Worth a dedicated follow-up if GCP-backed
+secret read volume ever becomes latency- or connection-count-sensitive; out of
+scope for this PR.
 
 ---
 
