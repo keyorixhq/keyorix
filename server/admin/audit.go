@@ -35,9 +35,11 @@ func runAdminAudit(cmd *cobra.Command, args []string) error {
 	if cfg.Storage.Type == "" {
 		cfg.Storage.Type = "local"
 	}
-	if err := refuseIfServerRunning(cfg); err != nil {
+	lock, err := acquireDatabaseLock(cfg)
+	if err != nil {
 		return err
 	}
+	defer lock.Release() //nolint:errcheck
 
 	// Every key-material path below is config-driven and about to be
 	// Lstat'd/opened -- sanitized the same way validateFilePermissions and

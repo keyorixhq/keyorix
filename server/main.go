@@ -209,13 +209,20 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// Mark this process as a live server attached to cfg's database (ADR-108 §B,
 	// PR 11) — held for the whole process lifetime, released on shutdown. Lets
 	// `keyorix-server admin` commands detect and refuse to run concurrently
-	// with a live server (unless the operator passes --force). SHARED, so
+	// with a live server (unless the operator passes --force), and the
+	// reverse: refuses THIS boot, fast and with a specific message, if an
+	// admin command is already mid-operation against the same database,
+	// rather than racing it or hanging waiting for it to finish. SHARED, so
 	// concurrent server replicas against a shared Postgres database (ADR-039
 	// HA) never conflict with each other or with this check; see
-	// internal/serverguard's package doc for the full mechanism and its limits.
+	// internal/serverguard's package doc for the full mechanism and its
+	// limits. The error message here is exactly what AcquirePresence
+	// returns (already specific -- "an admin operation is running against
+	// this database; retry when it finishes" -- when that is the cause);
+	// this does not re-wrap it in a generic "failed to acquire..." prefix.
 	presence, err := serverguard.AcquirePresence(cfg)
 	if err != nil {
-		log.Fatalf("failed to acquire server-presence lock: %v", err)
+		log.Fatalf("%v", err)
 	}
 	defer presence.Release() //nolint:errcheck
 

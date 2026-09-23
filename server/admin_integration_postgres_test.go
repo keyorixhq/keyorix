@@ -8,6 +8,7 @@ package main
 // (not fails) when unset.
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
@@ -232,5 +234,110 @@ server:
 	if err == nil || !strings.Contains(out, "admin commands must not run concurrently") {
 		logBytes, _ := os.ReadFile(filepath.Join(dir, "server.log"))
 		t.Fatalf("expected admin migrate to refuse while the server is running, got (err=%v):\n%s\nserver log:\n%s", err, out, logBytes)
+	}
+}
+
+// TestServerStartup_RefusedWhileAdminHoldsExclusiveLock_Postgres is the
+// Postgres counterpart of the SQLite reverse-direction regression test in
+// admin_integration_test.go: a server starting while an admin operation
+// holds the exclusive lock must fail fast with the specific message, and
+// succeed once the admin operation releases it.
+func TestServerStartup_RefusedWhileAdminHoldsExclusiveLock_Postgres(t *testing.T) {
+	base := adminPgTestDSN(t)
+	dsn := adminPgIsolatedDatabaseDSN(t, base)
+
+	bin := buildServerBinary(t)
+	dir := t.TempDir()
+	env := append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD=test-passphrase-pg-reverse-guard")
+
+	configContent := fmt.Sprintf(`storage:
+  type: postgres
+  database:
+    dsn: %q
+  encryption:
+    enabled: true
+    dek_path: keys/dek.key
+    salt_path: keys/kek.salt
+server:
+  http:
+    enabled: true
+    port: "8082"
+  grpc:
+    enabled: false
+`, dsn)
+	if err := os.WriteFile(filepath.Join(dir, "keyorix.yaml"), []byte(configContent), 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "keys"), 0750); err != nil {
+		t.Fatalf("create keys dir: %v", err)
+	}
+
+	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin diagnose (key derivation) failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "migrate", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin migrate failed: %v\n%s", err, out)
+	}
+
+	hook := startLockHolderHook(t, bin, dir, env)
+
+	serverEnv := append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD=test-passphrase-pg-reverse-guard", "KEYORIX_CONFIG_PATH=./keyorix.yaml")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	serverCmd := exec.CommandContext(ctx, bin)
+	serverCmd.Dir = dir
+	serverCmd.Env = serverEnv
+	start := time.Now()
+	out, err := serverCmd.CombinedOutput()
+	elapsed := time.Since(start)
+
+	if ctx.Err() == context.DeadlineExceeded {
+		hook.release(t)
+		t.Fatalf("server startup did not fail fast while the admin lock was held -- still running after 8s (blocking regression)")
+	}
+	if err == nil {
+		hook.release(t)
+		t.Fatalf("expected server startup to fail while the admin lock is held, got success:\n%s", out)
+	}
+	if !strings.Contains(string(out), "admin operation is running against this database") {
+		hook.release(t)
+		t.Fatalf("expected the specific admin-operation-in-progress message, got:\n%s", out)
+	}
+	if !strings.Contains(string(out), "retry when it finishes") {
+		hook.release(t)
+		t.Fatalf("expected the message to tell the operator to retry, got:\n%s", out)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("server startup took %s to refuse -- expected a fast, non-blocking failure", elapsed)
+	}
+
+	hook.release(t)
+
+	serverCmd2 := exec.Command(bin)
+	serverCmd2.Dir = dir
+	serverCmd2.Env = serverEnv
+	logFile, err := os.Create(filepath.Join(dir, "server-after-release.log"))
+	if err != nil {
+		t.Fatalf("create server log: %v", err)
+	}
+	defer logFile.Close() //nolint:errcheck
+	serverCmd2.Stdout = logFile
+	serverCmd2.Stderr = logFile
+	if err := serverCmd2.Start(); err != nil {
+		t.Fatalf("start server after hook release: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = serverCmd2.Process.Kill()
+		_, _ = serverCmd2.Process.Wait()
+	})
+
+	probeCfg, err := adminConfigForProbe(filepath.Join(dir, "keyorix.yaml"))
+	if err != nil {
+		t.Fatalf("load config for probe: %v", err)
+	}
+	if !waitForPresence(t, probeCfg, 15) {
+		logBytes, _ := os.ReadFile(filepath.Join(dir, "server-after-release.log"))
+		t.Fatalf("expected the server to start successfully after the admin lock released; server log:\n%s", logBytes)
 	}
 }

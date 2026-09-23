@@ -11,7 +11,11 @@ package main
 // admin_integration_postgres_test.go (gated on KEYORIX_TEST_PG_DSN).
 
 import (
+	"bufio"
+	"bytes"
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -401,5 +405,156 @@ func TestAdminGuard_RefusesWhileServerRunning_ThenForceOverrides(t *testing.T) {
 	}
 	if strings.Contains(out, "admin commands must not run concurrently") {
 		t.Errorf("--force should have bypassed the server-presence guard entirely, got:\n%s", out)
+	}
+}
+
+// lockHolderHook wraps the `admin __hold-lock-for-test` hidden hook (see
+// server/admin/testhook.go): a subprocess that acquires and HOLDS the
+// exclusive database lock until told to stop, so tests can deterministically
+// hold it across a concurrent server-startup attempt without racing a real
+// command's own (often sub-second) actual work.
+type lockHolderHook struct {
+	cmd   *exec.Cmd
+	stdin io.WriteCloser
+}
+
+// startLockHolderHook starts the hook and blocks until it confirms (via a
+// "LOCKED" line on stdout) that it actually holds the lock.
+func startLockHolderHook(t *testing.T, bin, dir string, env []string) *lockHolderHook {
+	t.Helper()
+	cmd := exec.Command(bin, "admin", "__hold-lock-for-test", "--config", "./keyorix.yaml")
+	cmd.Dir = dir
+	cmd.Env = env
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("StdinPipe: %v", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("StdoutPipe: %v", err)
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start lock-holder hook: %v", err)
+	}
+	line := make(chan string, 1)
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		if scanner.Scan() {
+			line <- scanner.Text()
+		}
+	}()
+	select {
+	case got := <-line:
+		if got != "LOCKED" {
+			_ = cmd.Process.Kill()
+			t.Fatalf("expected lock-holder hook to print LOCKED, got %q (stderr: %s)", got, stderr.String())
+		}
+	case <-time.After(10 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatalf("timed out waiting for lock-holder hook to acquire the lock (stderr: %s)", stderr.String())
+	}
+	return &lockHolderHook{cmd: cmd, stdin: stdin}
+}
+
+// release tells the hook to stop holding the lock and waits for it to exit.
+func (h *lockHolderHook) release(t *testing.T) {
+	t.Helper()
+	_, _ = h.stdin.Write([]byte("\n"))
+	_ = h.stdin.Close()
+	if err := h.cmd.Wait(); err != nil {
+		t.Fatalf("lock-holder hook exited with error: %v", err)
+	}
+}
+
+// TestServerStartup_RefusedWhileAdminHoldsExclusiveLock_SQLite is the
+// reverse-direction regression test for the review finding: admin commands
+// only PROBED the presence lock and ran unlocked, so a server starting
+// after the probe raced the admin command's actual work. The fix makes
+// admin commands HOLD the exclusive lock for their whole operation --
+// this test confirms a server attempting to start while that lock is held
+// fails FAST (non-blocking) with the specific message, and succeeds once
+// the admin operation releases it.
+func TestServerStartup_RefusedWhileAdminHoldsExclusiveLock_SQLite(t *testing.T) {
+	bin := buildServerBinary(t)
+	dir := t.TempDir()
+	env := append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD=test-passphrase-reverse-guard")
+
+	if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin init failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin diagnose (key derivation) failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "migrate", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin migrate failed: %v\n%s", err, out)
+	}
+
+	hook := startLockHolderHook(t, bin, dir, env)
+
+	serverEnv := append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD=test-passphrase-reverse-guard", "KEYORIX_CONFIG_PATH=./keyorix.yaml")
+
+	// Bounded well above what a non-blocking lock check should ever take, so
+	// a regression back to blocking behavior fails this assertion instead of
+	// hanging the whole test run until `go test`'s own -timeout fires.
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	serverCmd := exec.CommandContext(ctx, bin)
+	serverCmd.Dir = dir
+	serverCmd.Env = serverEnv
+	start := time.Now()
+	out, err := serverCmd.CombinedOutput()
+	elapsed := time.Since(start)
+
+	if ctx.Err() == context.DeadlineExceeded {
+		hook.release(t)
+		t.Fatalf("server startup did not fail fast while the admin lock was held -- still running after 8s (blocking regression)")
+	}
+	if err == nil {
+		hook.release(t)
+		t.Fatalf("expected server startup to fail while the admin lock is held, got success:\n%s", out)
+	}
+	if !strings.Contains(string(out), "admin operation is running against this database") {
+		hook.release(t)
+		t.Fatalf("expected the specific admin-operation-in-progress message, got:\n%s", out)
+	}
+	if !strings.Contains(string(out), "retry when it finishes") {
+		hook.release(t)
+		t.Fatalf("expected the message to tell the operator to retry, got:\n%s", out)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("server startup took %s to refuse -- expected a fast, non-blocking failure", elapsed)
+	}
+
+	hook.release(t)
+
+	// Now that the admin operation released the lock, the server must start
+	// successfully.
+	serverCmd2 := exec.Command(bin)
+	serverCmd2.Dir = dir
+	serverCmd2.Env = serverEnv
+	logFile, err := os.Create(filepath.Join(dir, "server-after-release.log"))
+	if err != nil {
+		t.Fatalf("create server log: %v", err)
+	}
+	defer logFile.Close() //nolint:errcheck
+	serverCmd2.Stdout = logFile
+	serverCmd2.Stderr = logFile
+	if err := serverCmd2.Start(); err != nil {
+		t.Fatalf("start server after hook release: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = serverCmd2.Process.Kill()
+		_, _ = serverCmd2.Process.Wait()
+	})
+
+	probeCfg, err := adminConfigForProbe(filepath.Join(dir, "keyorix.yaml"))
+	if err != nil {
+		t.Fatalf("load config for probe: %v", err)
+	}
+	if !waitForPresence(t, probeCfg, 15) {
+		logBytes, _ := os.ReadFile(filepath.Join(dir, "server-after-release.log"))
+		t.Fatalf("expected the server to start successfully after the admin lock released; server log:\n%s", logBytes)
 	}
 }

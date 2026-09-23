@@ -46,9 +46,11 @@ func runAdminDiagnose(cmd *cobra.Command, args []string) error { // NOSONAR -- c
 	}
 	fmt.Println("[ OK ] config parse and schema validation")
 
-	if err := refuseIfServerRunning(cfg); err != nil {
+	lock, err := acquireDatabaseLock(cfg)
+	if err != nil {
 		return err
 	}
+	defer lock.Release() //nolint:errcheck
 
 	if cfg.Storage.Encryption.Enabled {
 		if err := diagnoseEncryption(cfg); err != nil {

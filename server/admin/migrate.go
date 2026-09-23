@@ -31,9 +31,11 @@ func runAdminMigrate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := refuseIfServerRunning(cfg); err != nil {
+	lock, err := acquireDatabaseLock(cfg)
+	if err != nil {
 		return err
 	}
+	defer lock.Release() //nolint:errcheck
 
 	fmt.Println("Applying pending migrations (idempotent — safe to re-run)...")
 	if _, err := storage.NewStorageFactory().CreateStorage(cfg); err != nil {

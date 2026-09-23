@@ -70,9 +70,11 @@ func runAdminInit(cmd *cobra.Command, args []string) error { // NOSONAR -- cogni
 		cfg.Storage.Type = "local"
 	}
 
-	if err := refuseIfServerRunning(cfg); err != nil {
+	lock, err := acquireDatabaseLock(cfg)
+	if err != nil {
 		return err
 	}
+	defer lock.Release() //nolint:errcheck
 
 	if setupAll || initEncryptionOnly {
 		if err := initializeAdminEncryption(cfg); err != nil {

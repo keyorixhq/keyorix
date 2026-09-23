@@ -84,23 +84,36 @@ func loadConfig() (*config.Config, error) {
 	return cfg, nil
 }
 
-// refuseIfServerRunning is the shared guard every admin command runs before
-// doing anything: refuse to proceed if a live server appears to be attached
-// to cfg's database, unless the operator passed --force. See
-// internal/serverguard's package doc for the detection mechanism and its
-// limits.
-func refuseIfServerRunning(cfg *config.Config) error {
-	if forceFlag {
-		return nil
-	}
-	running, detail, err := serverguard.ProbeRunning(cfg)
+// acquireDatabaseLock is the shared guard every admin command runs before
+// doing anything, and HOLDS for its entire operation -- not merely a check
+// released before the real work starts. A probe-then-release design leaves
+// a window between the check and the work in which a server (or another
+// admin command) could attach, which is exactly the race this guard exists
+// to close: found in review before this package's first use ever merged.
+//
+// Callers MUST defer Release() on the returned lock (nil-safe) for every
+// return path of their RunE, for as long as they touch the database.
+//
+// --force does not skip the acquisition attempt: it still tries to take the
+// lock (so two well-behaved commands, one of them --forced, still serialize
+// correctly against each other), and only proceeds unprotected -- with a
+// printed warning -- if that attempt itself fails. Skipping the attempt
+// entirely under --force would reopen the same race for the ONE case
+// (another concurrent admin command, not a stuck lock) where taking it is
+// still possible and still worth doing.
+//
+// See internal/serverguard's package doc for the underlying detection
+// mechanism and its limits.
+func acquireDatabaseLock(cfg *config.Config) (*serverguard.Exclusive, error) {
+	lock, err := serverguard.AcquireExclusive(cfg)
 	if err != nil {
-		return fmt.Errorf("could not determine whether a server is running against this database: %w", err)
+		if forceFlag {
+			fmt.Printf("WARNING: could not acquire this database's exclusive lock (%v) — proceeding anyway because --force was given. A live server or another admin command may be concurrently using this database; this command is not protected against that race.\n", err)
+			return nil, nil
+		}
+		return nil, fmt.Errorf("a Keyorix server (or another admin command) appears to be using this database (%v) — admin commands must not run concurrently with either; stop it first, or pass --force if you are certain this is safe", err)
 	}
-	if running {
-		return fmt.Errorf("a Keyorix server appears to be running against this database (%s) — admin commands must not run concurrently with a live server; stop it first, or pass --force if you are certain this is safe", detail)
-	}
-	return nil
+	return lock, nil
 }
 
 // withUsableStorage opens cfg's database via the same storage factory the

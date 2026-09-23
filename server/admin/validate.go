@@ -54,9 +54,11 @@ func runAdminValidate(cmd *cobra.Command, args []string) error { // NOSONAR -- c
 	if cfg.Storage.Type == "" {
 		cfg.Storage.Type = "local"
 	}
-	if err := refuseIfServerRunning(cfg); err != nil {
+	lock, err := acquireDatabaseLock(cfg)
+	if err != nil {
 		return err
 	}
+	defer lock.Release() //nolint:errcheck
 
 	// fixIssues (--fix) is read here and forwarded explicitly, so the flag
 	// actually drives remediation instead of silently depending on the
