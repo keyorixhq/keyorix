@@ -463,10 +463,21 @@ func (f *DefaultStorageFactory) createRemoteStorage(cfg *config.Config) (storage
 // ever added via this raw-SQL path and never via a struct tag would silently
 // never reach an existing SQLite database. pragma_table_info is a builtin
 // table-valued function on both the CGO (mattn) and pure-Go SQLite drivers.
+//
+// Postgres schema scoping (#1980): columnExists, tableExists, indexExists and
+// rolePKIsComplete all filter on current_schema() -- the schema GORM itself
+// creates into and inspects (its Postgres migrator's HasTable/HasIndex filter
+// on CURRENT_SCHEMA()). They previously hard-coded 'public' (tableExists,
+// rolePKIsComplete) or applied no schema filter at all (columnExists,
+// indexExists), so on any connection whose current_schema() isn't public
+// (a search_path DSN parameter, a role-level search_path, a "$user" schema)
+// every tableExists-gated index/constraint was silently skipped, and an
+// object of the same name in ANOTHER schema could satisfy the check. No
+// change for the default deployment, where current_schema() = 'public'.
 func columnExists(db *gorm.DB, table, column string) bool {
 	var count int64
 	if db.Dialector.Name() == "postgres" {
-		db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", table, column).Scan(&count)
+		db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?", table, column).Scan(&count)
 	} else {
 		db.Raw("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", table, column).Scan(&count)
 	}
@@ -487,7 +498,7 @@ func columnExists(db *gorm.DB, table, column string) bool {
 func tableExists(db *gorm.DB, table string) bool {
 	var count int64
 	if db.Dialector.Name() == "postgres" {
-		db.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?", table).Scan(&count)
+		db.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?", table).Scan(&count)
 	} else {
 		db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&count)
 	}
@@ -582,7 +593,7 @@ func recordSchemaEpoch(db *gorm.DB) error {
 func indexExists(db *gorm.DB, indexName string) bool {
 	var count int64
 	if db.Dialector.Name() == "postgres" {
-		db.Raw("SELECT COUNT(*) FROM pg_indexes WHERE indexname = ?", indexName).Scan(&count)
+		db.Raw("SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = ?", indexName).Scan(&count)
 	} else {
 		db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?", indexName).Scan(&count)
 	}
@@ -660,12 +671,12 @@ func rolePKIsComplete(db *gorm.DB, table string) bool {
 		var count int64
 		db.Raw(`
 			SELECT COUNT(*) FROM information_schema.key_column_usage
-			WHERE table_schema = 'public'
+			WHERE table_schema = current_schema()
 			  AND table_name   = ?
 			  AND constraint_name IN (
 				SELECT constraint_name
 				FROM   information_schema.table_constraints
-				WHERE  table_schema     = 'public'
+				WHERE  table_schema     = current_schema()
 				  AND  table_name       = ?
 				  AND  constraint_type  = 'PRIMARY KEY'
 			  )
