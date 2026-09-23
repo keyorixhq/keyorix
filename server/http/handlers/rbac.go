@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -196,7 +197,14 @@ func (h *RBACHandler) resolveAndAuthorizePermissions(w http.ResponseWriter, r *h
 	for _, permName := range names {
 		perm, err := h.findPermissionByName(r.Context(), permName)
 		if err != nil {
-			continue // skip unknown permission names
+			if errors.Is(err, errPermissionNameNotFound) {
+				continue // skip unknown permission names
+			}
+			// A real lookup failure (e.g. ListPermissions storage error) must abort,
+			// not be silently treated as "unknown name" — that would apply a
+			// truncated permission set while still reporting success.
+			sendError(w, "InternalError", "Failed to resolve permission", http.StatusInternalServerError, nil)
+			return nil, true
 		}
 		ok, aerr := h.coreService.Authorize(r.Context(), actorID, perm.Name, core.Scope{})
 		if aerr != nil {
@@ -366,7 +374,13 @@ func (h *RBACHandler) authorizeAndCollectPermissions(ctx context.Context, userCt
 	for _, permName := range permNames {
 		perm, err := h.findPermissionByName(ctx, permName)
 		if err != nil {
-			continue
+			if errors.Is(err, errPermissionNameNotFound) {
+				continue
+			}
+			// A real lookup failure (e.g. ListPermissions storage error) must abort,
+			// not be silently treated as "unknown name" — that would apply a
+			// truncated permission set while still reporting success.
+			return nil, fmt.Errorf("failed to resolve permission %q: %w", permName, err)
 		}
 		ok, aerr := h.coreService.Authorize(ctx, userCtx.UserID, perm.Name, core.Scope{})
 		if aerr != nil {
@@ -956,18 +970,30 @@ func GetUserRoles(w http.ResponseWriter, r *http.Request) {
 // Shared helper
 // ────────────────────────────────────────────────────────────────────────────
 
+// errPermissionNameNotFound distinguishes "this name genuinely isn't a real
+// permission" (safe to silently skip, matching CreateRole/UpdateRole's
+// unknown-name convention) from any other error findPermissionByName can
+// return (a ListPermissions storage failure) — the latter must never be
+// treated the same way. Found live by FuzzStorageFaultOperations: a transient
+// ListPermissions fault on one name in a multi-permission request used to be
+// swallowed identically to "unknown name," silently dropping that permission
+// from the role's final set while the request still reported success —
+// oracle (a) violation (reported SUCCESS, but the committed RolePermission/
+// AuditEvent state didn't match a fault-free run).
+var errPermissionNameNotFound = errors.New("permission name not found")
+
 // findPermissionByName looks up a permission by name via ListPermissions.
 func (h *RBACHandler) findPermissionByName(ctx context.Context, name string) (*models.Permission, error) {
 	perms, err := h.coreService.ListPermissions(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list permissions: %w", err)
 	}
 	for _, p := range perms {
 		if p.Name == name {
 			return p, nil
 		}
 	}
-	return nil, fmt.Errorf("permission %q not found", name)
+	return nil, fmt.Errorf("permission %q not found: %w", name, errPermissionNameNotFound)
 }
 
 func parseUintParam(w http.ResponseWriter, r *http.Request, param string) (uint, bool) {
