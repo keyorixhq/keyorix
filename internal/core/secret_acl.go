@@ -54,19 +54,6 @@ func EncodeSecretACLPerms(perms []string) (string, error) {
 	return string(b), nil
 }
 
-// DecodeSecretACLPerms parses a stored permissions column back into a slice.
-// An empty or invalid column yields nil.
-func DecodeSecretACLPerms(raw string) []string {
-	if raw == "" {
-		return nil
-	}
-	var out []string
-	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		return nil
-	}
-	return out
-}
-
 // GrantSecretACL creates or updates a SecretACL grant for (secretID, userID).
 // secretID may name either a leaf secret or a folder node — a folder-targeted
 // grant is inherited by every descendant secret via HasSecretACL's ancestor walk

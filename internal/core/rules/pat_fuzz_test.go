@@ -1,4 +1,4 @@
-package core
+package rules
 
 import (
 	"encoding/json"
@@ -12,14 +12,14 @@ import (
 // FuzzDecodePATScopes fuzzes DecodePATScopes, which parses a PAT's stored scopes
 // column back into a permission allowlist on the request-authentication path
 // (patRestrictionFrom -> CurrentPATRestriction, run for every PAT-authenticated
-// request). The column originates from encodePATScopes, but a PAT row can also be
+// request). The column originates from EncodePATScopes, but a PAT row can also be
 // migrated, restored from backup, or hand-edited, so the decoder treats the column
 // as untrusted input.
 //
 // The security-critical contract is FAIL-CLOSED (#r124 PAT scope fail-open): an
 // empty column means "unrestricted" (nil), but a NON-EMPTY column that cannot be
 // parsed must never silently become unrestricted — it must return the non-empty
-// patScopeCorrupted sentinel so the token is denied everywhere rather than widened
+// PATScopeCorrupted sentinel so the token is denied everywhere rather than widened
 // to full owner access on a corrupted/garbled row.
 //
 // This harness re-derives the expected branch independently from raw JSON and
@@ -28,7 +28,7 @@ import (
 // result (fail closed), never nil/[]; (d) a cleanly-parsing column mirrors what
 // json.Unmarshal yields. Note "null" and "[]" are valid JSON that legitimately
 // decode to no scopes — those hit branch (d), not (c), and are intentionally not
-// flagged (encodePATScopes never emits either).
+// flagged (EncodePATScopes never emits either).
 func FuzzDecodePATScopes(f *testing.F) {
 	seeds := []string{
 		"",                                 // empty column -> unrestricted (nil)
@@ -91,7 +91,7 @@ func FuzzDecodePATScopes(f *testing.F) {
 //
 // Same FAIL-CLOSED contract (#r125 PAT CIDR fail-open): empty column -> nil (no
 // network restriction), but a NON-EMPTY column that fails to parse must return the
-// non-empty patCIDRCorrupted sentinel so IPInCIDRs blocks every source IP, rather
+// non-empty PATCIDRCorrupted sentinel so IPInCIDRs blocks every source IP, rather
 // than nil which would silently grant global network access on a corrupted row.
 // DecodePATCIDRs unmarshals the raw (untrimmed) column, so this harness does too.
 func FuzzDecodePATCIDRs(f *testing.F) {

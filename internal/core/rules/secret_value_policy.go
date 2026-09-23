@@ -3,7 +3,7 @@
 // When enabled it rejects obviously-weak or placeholder secret values at create and
 // rotate time, so a "changeme" never silently becomes a production credential. The
 // policy is OFF by default, so existing installs are unaffected until they opt in.
-package core
+package rules
 
 import (
 	"fmt"

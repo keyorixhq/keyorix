@@ -2,7 +2,7 @@
 // reject_common_passwords rule. This is an offline, dependency-free check
 // against the most frequently breached/guessed passwords; an online HIBP
 // range check is a possible later enhancement. Matching is case-insensitive.
-package core
+package rules
 
 import "strings"
 

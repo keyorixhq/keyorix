@@ -1,13 +1,13 @@
-package core
+package rules
 
 import (
 	"net/url"
 	"testing"
 )
 
-// FuzzReturnToOpenRedirectDifferential is an open-redirect differential over sanitizeReturnTo
+// FuzzReturnToOpenRedirectDifferential is an open-redirect differential over SanitizeReturnTo
 // (sso.go), the post-login return-to path validator. The security contract is: any value
-// sanitizeReturnTo ACCEPTS must, when a browser resolves it as a redirect target against the app
+// SanitizeReturnTo ACCEPTS must, when a browser resolves it as a redirect target against the app
 // origin, stay on that origin. We assert ONLY the accept direction (a reject is always safe), and
 // we use Go's own url.ResolveReference — the same RFC-3986 resolution a browser applies to a
 // Location: / <a href> — as the oracle for "how the value is really interpreted". The oracle
@@ -42,20 +42,20 @@ func FuzzReturnToOpenRedirectDifferential(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, s string) {
-		got := sanitizeReturnTo(s)
+		got := SanitizeReturnTo(s)
 		if got == "" {
 			return // rejected — always safe, nothing to assert (we never assert "must accept")
 		}
-		// sanitizeReturnTo only returns its input unchanged, so got == s here; re-parse it the
+		// SanitizeReturnTo only returns its input unchanged, so got == s here; re-parse it the
 		// way the redirect layer would. An accepted value that no longer parses is itself a defect.
 		ref, err := url.Parse(got)
 		if err != nil {
-			t.Fatalf("OPEN-REDIRECT (unparseable accept): sanitizeReturnTo accepted %q which url.Parse rejects: %v", s, err)
+			t.Fatalf("OPEN-REDIRECT (unparseable accept): SanitizeReturnTo accepted %q which url.Parse rejects: %v", s, err)
 		}
 		// How a browser really interprets the returned Location against the app origin.
 		resolved := base.ResolveReference(ref)
 		if resolved.Scheme != base.Scheme || resolved.Hostname() != base.Hostname() {
-			t.Fatalf("OPEN-REDIRECT: sanitizeReturnTo accepted %q; resolves off-origin to scheme=%q host=%q (want scheme=%q host=%q)",
+			t.Fatalf("OPEN-REDIRECT: SanitizeReturnTo accepted %q; resolves off-origin to scheme=%q host=%q (want scheme=%q host=%q)",
 				s, resolved.Scheme, resolved.Hostname(), base.Scheme, base.Hostname())
 		}
 	})
