@@ -463,7 +463,7 @@ func (ls *LocalStorage) GetSecretsByIDs(ctx context.Context, ids []uint) ([]*mod
 func (ls *LocalStorage) GetSecretByName(ctx context.Context, name string, projectID, environmentID uint) (*models.SecretNode, error) {
 	normalized, nerr := identity.NewAddressName(name)
 	if nerr != nil {
-		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), storage.ErrSecretNotFound)
 	}
 	var secret models.SecretNode
 	err := ls.db.WithContext(ctx).Where(
@@ -472,7 +472,7 @@ func (ls *LocalStorage) GetSecretByName(ctx context.Context, name string, projec
 	).First(&secret).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), storage.ErrSecretNotFound)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -927,7 +927,7 @@ func (ls *LocalStorage) GetLatestSecretVersion(ctx context.Context, secretID uin
 	var version models.SecretVersion
 	if err := ls.db.WithContext(ctx).Where(sqlWhereSecretNodeID, secretID).Order("version_number DESC").First(&version).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%s", i18n.T("ErrorVersionNotFound", nil))
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorVersionNotFound", nil), storage.ErrSecretVersionNotFound)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}

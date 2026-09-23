@@ -239,3 +239,56 @@ func IsSessionNotFound(err error) bool {
 	}
 	return false
 }
+
+// ErrSecretNotFound is returned (wrapped) by GetSecret/GetSecretByName when no
+// secret exists for the given id/name, as distinct from a transient retrieval
+// failure. Same convention as ErrUserNotFound/ErrSoDPolicyNotFound — added
+// 2026-09-23 (docs/findings/2026-09-23-FINDING-update-secret-read-error-swallowed.md):
+// CreateSecret's duplicate-name pre-check previously could not distinguish "no
+// duplicate" from "the check itself failed" and silently assumed the former.
+var ErrSecretNotFound = errors.New("secret not found")
+
+// ErrSecretVersionNotFound is returned (wrapped) by GetLatestSecretVersion/
+// GetSecretVersion when no version exists, as distinct from a transient
+// retrieval failure. Same convention and same reason as ErrSecretNotFound above
+// — storeNextSecretVersion previously could not distinguish "no versions yet"
+// from "the read failed" and silently assumed the former, defaulting to
+// version 1 either way (see the finding doc cited above).
+var ErrSecretVersionNotFound = errors.New("secret version not found")
+
+// IsSecretNotFound is IsUserNotFound's secret counterpart — true only for a
+// definitive "this secret does not exist" (ErrSecretNotFound, or a mapped
+// RemoteStorage 4xx/5xx not-found), false for every other error.
+func IsSecretNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrSecretNotFound) {
+		return true
+	}
+	var httpErr *remote.HTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.IsNotFound()
+	}
+	return false
+}
+
+// IsSecretVersionNotFound is IsUserNotFound's secret-version counterpart —
+// true only for a definitive "this version does not exist" (ErrSecretVersionNotFound,
+// or a mapped RemoteStorage 4xx/5xx not-found), false for every other error —
+// including RemoteStorage's ErrRemoteUnsupported for GetLatestSecretVersion
+// (unsupported there today, per remote_secrets.go), which is "unknown," not
+// "confirmed absent," and callers must not conflate the two.
+func IsSecretVersionNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrSecretVersionNotFound) {
+		return true
+	}
+	var httpErr *remote.HTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.IsNotFound()
+	}
+	return false
+}
