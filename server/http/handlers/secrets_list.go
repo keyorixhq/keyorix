@@ -47,6 +47,18 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 		return
 	}
 
+	// `environment` (a bare name) has never been a recognized filter here — only
+	// the numeric `environment_id` below is honored — but it was silently
+	// ignored rather than rejected, so a caller could believe a listing was
+	// scoped by environment name when it was actually unscoped (#2012 inventory,
+	// finding S2: this let `secret render`/`secret rotate` in the CLI resolve a
+	// same-named secret from the wrong project/environment). Reject it loudly so
+	// no other caller can make the same mistake.
+	if r.URL.Query().Get("environment") != "" {
+		h.sendError(w, "BadRequest", "unsupported filter 'environment' (by name) — use environment_id (numeric), together with project_id", http.StatusBadRequest, nil)
+		return
+	}
+
 	page := 1
 	pageSize := 20
 
