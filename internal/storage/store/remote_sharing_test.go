@@ -116,7 +116,7 @@ func TestRemoteStorage_ListSharesBySecret(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	results, err := rs.ListSharesBySecret(context.Background(), 10)
+	results, err := rs.ListSharesBySecret(context.Background(), 10, time.Now())
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 	assert.Equal(t, uint(1), results[0].ID)
@@ -138,7 +138,7 @@ func TestRemoteStorage_ListSharesBySecretIDs(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	results, err := rs.ListSharesBySecretIDs(context.Background(), []uint{10, 20})
+	results, err := rs.ListSharesBySecretIDs(context.Background(), []uint{10, 20}, time.Now())
 	require.NoError(t, err)
 	assert.Len(t, results, 2)
 	assert.Equal(t, 2, callCount)
@@ -148,7 +148,7 @@ func TestRemoteStorage_ListSharesBySecretIDs_Empty(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	results, err := rs.ListSharesBySecretIDs(context.Background(), nil)
+	results, err := rs.ListSharesBySecretIDs(context.Background(), nil, time.Now())
 	require.NoError(t, err)
 	assert.Nil(t, results)
 }
@@ -170,7 +170,7 @@ func TestRemoteStorage_ListSharesByUser(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	results, err := rs.ListSharesByUser(context.Background(), 3)
+	results, err := rs.ListSharesByUser(context.Background(), 3, time.Now())
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 	assert.Equal(t, uint(3), results[0].RecipientID)
@@ -193,7 +193,7 @@ func TestRemoteStorage_ListSharesByOwner(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	results, err := rs.ListSharesByOwner(context.Background(), 2)
+	results, err := rs.ListSharesByOwner(context.Background(), 2, time.Now())
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 	assert.Equal(t, uint(2), results[0].OwnerID)
@@ -214,7 +214,7 @@ func TestRemoteStorage_ListSharesByGroup(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	results, err := rs.ListSharesByGroup(context.Background(), 5)
+	results, err := rs.ListSharesByGroup(context.Background(), 5, time.Now())
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 }
@@ -227,7 +227,7 @@ func TestRemoteStorage_ListSharedSecrets_Unsupported(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	_, err = rs.ListSharedSecrets(context.Background(), 3)
+	_, err = rs.ListSharedSecrets(context.Background(), 3, time.Now())
 	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported),
 		"expected ErrRemoteUnsupported, got %v", err)
 }
@@ -241,7 +241,7 @@ func TestRemoteStorage_CheckSharePermission_Unsupported(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfigNoRetry("http://127.0.0.1:0"))
 	require.NoError(t, err)
 
-	_, err = rs.CheckSharePermission(context.Background(), 10, 3)
+	_, err = rs.CheckSharePermission(context.Background(), 10, 3, time.Now())
 	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported),
 		"expected ErrRemoteUnsupported, got %v", err)
 }

@@ -346,7 +346,7 @@ func TestRemoveExpiredShares(t *testing.T) {
 	assert.Equal(t, 1, n)
 
 	// The permanent share survives; the expired one is gone.
-	shares, err := c.storage.ListSharesBySecret(ctx, secretID)
+	shares, err := c.storage.ListSharesBySecret(ctx, secretID, time.Now())
 	require.NoError(t, err)
 	require.Len(t, shares, 1)
 	assert.Equal(t, permanent.ID, shares[0].ID)

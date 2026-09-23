@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 )
@@ -171,7 +172,7 @@ func (c *KeyorixCore) revokeReviewShare(ctx context.Context, projectID uint, d A
 		return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil), "secret does not belong to this project")
 	}
 	isGroup := d.Source == "group_share"
-	shares, err := c.storage.ListSharesBySecret(ctx, d.SecretID)
+	shares, err := c.storage.ListSharesBySecret(ctx, d.SecretID, time.Now())
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -274,7 +275,7 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 				"the share being attested no longer exists — the review is stale, re-sync and try again")
 		}
 		isGroup := d.Source == "group_share"
-		shares, err := c.storage.ListSharesBySecret(ctx, d.SecretID)
+		shares, err := c.storage.ListSharesBySecret(ctx, d.SecretID, time.Now())
 		if err != nil {
 			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 		}

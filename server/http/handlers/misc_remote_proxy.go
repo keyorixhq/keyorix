@@ -189,7 +189,7 @@ func (h *ShareHandler) ListSharesByOwnerProxy(w http.ResponseWriter, r *http.Req
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid owner id")
 		return
 	}
-	shares, err := h.coreService.Storage().ListSharesByOwner(r.Context(), uint(ownerID))
+	shares, err := h.coreService.Storage().ListSharesByOwner(r.Context(), uint(ownerID), time.Now())
 	if err != nil {
 		log.Printf("shares proxy: list shares by owner failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -208,7 +208,7 @@ func (h *ShareHandler) ListSharesByUserProxy(w http.ResponseWriter, r *http.Requ
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid user id")
 		return
 	}
-	shares, err := h.coreService.Storage().ListSharesByUser(r.Context(), uint(userID))
+	shares, err := h.coreService.Storage().ListSharesByUser(r.Context(), uint(userID), time.Now())
 	if err != nil {
 		log.Printf("shares proxy: list shares by user failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))

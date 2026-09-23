@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
@@ -42,10 +43,10 @@ func TestGroupShare_SoftDeletedMemberExcluded(t *testing.T) {
 
 	// Both members see the group share and have permission.
 	for _, uid := range []uint{1, 2} {
-		secrets, lerr := ls.ListSharedSecrets(ctx, uid)
+		secrets, lerr := ls.ListSharedSecrets(ctx, uid, time.Now())
 		require.NoError(t, lerr)
 		assert.Len(t, secrets, 1, "user %d should see the group share", uid)
-		perm, perr := ls.CheckSharePermission(ctx, 100, uid)
+		perm, perr := ls.CheckSharePermission(ctx, 100, uid, time.Now())
 		require.NoError(t, perr)
 		assert.Equal(t, "read", perm, "user %d permission", uid)
 	}
@@ -57,10 +58,10 @@ func TestGroupShare_SoftDeletedMemberExcluded(t *testing.T) {
 	require.NoError(t, db.Delete(&models.User{}, 2).Error)
 
 	// User 2 no longer inherits the group share, has no permission, and is not listed.
-	secrets, lerr := ls.ListSharedSecrets(ctx, 2)
+	secrets, lerr := ls.ListSharedSecrets(ctx, 2, time.Now())
 	require.NoError(t, lerr)
 	assert.Empty(t, secrets, "a soft-deleted user must not inherit group shares")
-	perm, perr := ls.CheckSharePermission(ctx, 100, 2)
+	perm, perr := ls.CheckSharePermission(ctx, 100, 2, time.Now())
 	require.Error(t, perr, "a soft-deleted user must have no group-share permission")
 	assert.Equal(t, "", perm)
 	members, merr = ls.ListGroupMembers(ctx, 10)
@@ -69,7 +70,7 @@ func TestGroupShare_SoftDeletedMemberExcluded(t *testing.T) {
 	assert.Equal(t, uint(1), members[0].ID)
 
 	// The live member is unaffected.
-	secrets, lerr = ls.ListSharedSecrets(ctx, 1)
+	secrets, lerr = ls.ListSharedSecrets(ctx, 1, time.Now())
 	require.NoError(t, lerr)
 	assert.Len(t, secrets, 1)
 }

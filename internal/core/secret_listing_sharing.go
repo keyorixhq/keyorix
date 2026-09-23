@@ -32,7 +32,7 @@ func (c *KeyorixCore) GetSecretSharingStatus(ctx context.Context, actorKind stri
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "insufficient permissions")
 	}
 
-	shares, err := c.storage.ListSharesBySecret(ctx, secretID)
+	shares, err := c.storage.ListSharesBySecret(ctx, secretID, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -77,7 +77,7 @@ func (c *KeyorixCore) GetSecretSharingStatusWithIndicators(ctx context.Context, 
 		return nil, err
 	}
 
-	shares, err := c.storage.ListSharesBySecret(ctx, secretID)
+	shares, err := c.storage.ListSharesBySecret(ctx, secretID, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -183,7 +183,7 @@ func (c *KeyorixCore) GetUserSecretPermission(ctx context.Context, secretID, use
 		}, nil
 	}
 
-	shares, err := c.storage.ListSharesBySecret(ctx, secretID)
+	shares, err := c.storage.ListSharesBySecret(ctx, secretID, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}

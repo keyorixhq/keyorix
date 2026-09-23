@@ -128,7 +128,7 @@ func (c *KeyorixCore) CheckSecretPermission(ctx context.Context, secretID, userI
 		}, nil
 	}
 
-	shares, err := c.storage.ListSharesBySecret(ctx, secretID)
+	shares, err := c.storage.ListSharesBySecret(ctx, secretID, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -375,7 +375,7 @@ func (c *KeyorixCore) ListUserPermissions(ctx context.Context, userID uint) ([]*
 	// exists rather than after.
 	now := c.shareEffectiveNow()
 
-	directShares, err := c.storage.ListSharesByUser(ctx, userID)
+	directShares, err := c.storage.ListSharesByUser(ctx, userID, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -398,7 +398,7 @@ func (c *KeyorixCore) ListUserPermissions(ctx context.Context, userID uint) ([]*
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	for _, group := range groups {
-		groupShares, err := c.storage.ListSharesByGroup(ctx, group.ID)
+		groupShares, err := c.storage.ListSharesByGroup(ctx, group.ID, time.Now())
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 		}

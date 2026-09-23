@@ -53,7 +53,7 @@ func TestGroupSoftDelete_RevokesThenRestoresAccess(t *testing.T) {
 		return ids
 	}
 	sharedSecretIDs := func() []uint {
-		secs, e := ls.ListSharedSecrets(ctx, 1)
+		secs, e := ls.ListSharedSecrets(ctx, 1, time.Now())
 		require.NoError(t, e)
 		out := make([]uint, 0, len(secs))
 		for _, s := range secs {

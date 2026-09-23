@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 )
@@ -93,7 +94,7 @@ func (c *KeyorixCore) ListSecretAccessors(ctx context.Context, secretID, actorID
 
 	result := &SecretAccessorsResult{}
 
-	shares, err := c.storage.ListSharesBySecret(ctx, secretID)
+	shares, err := c.storage.ListSharesBySecret(ctx, secretID, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}

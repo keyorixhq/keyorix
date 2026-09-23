@@ -1044,6 +1044,27 @@ var proxyCorrectnessAllowlist = map[string]string{
 		"as ListNotifications above. Reviewed, not a bug.",
 	"MarkAllNotificationsRead:blank-identifier-param": "same self-scoped-by-session reasoning as " +
 		"MarkNotificationRead above (remote_notifications.go). Reviewed, not a bug.",
+
+	// The 4 entries below are #1983's clock-jump investigation follow-up:
+	// storage.Storage's 7 share-listing methods gained an explicit now
+	// time.Time parameter so LocalStorage stops reading time.Now() internally
+	// and instead uses the same watermarked clock its caller's own
+	// active-share check already uses. Unlike the blank params above, this
+	// one is NOT a security concern (a client-supplied clock here wouldn't
+	// let it manipulate anything the server doesn't already decide for
+	// itself) — there is simply no wire field to carry it, and the upstream
+	// server computes its own "now" via its own core layer
+	// (KeyorixCore.shareEffectiveNow) when it runs the equivalent local
+	// query. Kept only for storage.Storage interface parity with LocalStorage.
+	"ListSharesBySecret:blank-identifier-param": "remote_sharing.go's own doc comment: the now parameter is " +
+		"accepted only for interface parity — the upstream server computes its own \"now\" via its own core " +
+		"layer, not from this client. Reviewed, not a bug.",
+	"ListSharesByUser:blank-identifier-param": "same reasoning as ListSharesBySecret above (remote_sharing.go). " +
+		"Reviewed, not a bug.",
+	"ListSharesByOwner:blank-identifier-param": "same reasoning as ListSharesBySecret above (remote_sharing.go). " +
+		"Reviewed, not a bug.",
+	"ListSharesByGroup:blank-identifier-param": "same reasoning as ListSharesBySecret above (remote_sharing.go). " +
+		"Reviewed, not a bug.",
 }
 
 // TestLayer1StaticFindingsAreAllowlisted is the CI gate (issue #1786 parts 2

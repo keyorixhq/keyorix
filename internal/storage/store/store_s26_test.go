@@ -499,7 +499,7 @@ func TestCreateShareRecord_S26_SecretNotFound(t *testing.T) {
 // non-existent secret returns an error.
 func TestCheckSharePermission_S26_SecretNotFound(t *testing.T) {
 	ls := newS26Store(t, &models.SecretNode{}, &models.ShareRecord{})
-	_, err := ls.CheckSharePermission(context.Background(), 9999, 1)
+	_, err := ls.CheckSharePermission(context.Background(), 9999, 1, time.Now())
 	require.Error(t, err)
 }
 

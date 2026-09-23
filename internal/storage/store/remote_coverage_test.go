@@ -476,7 +476,7 @@ func TestRemoteCov_ListSharesBySecret_Error(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	_, err = rs.ListSharesBySecret(context.Background(), 999)
+	_, err = rs.ListSharesBySecret(context.Background(), 999, time.Now())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "list shares by secret failed")
 }
@@ -490,7 +490,7 @@ func TestRemoteCov_ListSharesByUser_Error(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	_, err = rs.ListSharesByUser(context.Background(), 999)
+	_, err = rs.ListSharesByUser(context.Background(), 999, time.Now())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "list shares by user failed")
 }
@@ -504,7 +504,7 @@ func TestRemoteCov_ListSharesByOwner_Error(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	_, err = rs.ListSharesByOwner(context.Background(), 999)
+	_, err = rs.ListSharesByOwner(context.Background(), 999, time.Now())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "list shares by owner failed")
 }
@@ -518,7 +518,7 @@ func TestRemoteCov_ListSharesByGroup_Error(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	_, err = rs.ListSharesByGroup(context.Background(), 999)
+	_, err = rs.ListSharesByGroup(context.Background(), 999, time.Now())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "list shares by group failed")
 }
