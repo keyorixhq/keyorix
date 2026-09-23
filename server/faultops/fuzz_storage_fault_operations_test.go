@@ -92,56 +92,28 @@ var authzReadMethods = map[string]bool{
 // by-design (exclusion with justification; I review these)" category, same as
 // bestEffortTables, but for oracle (c) rather than (a).
 //
-// REST DELETE /api/v1/secrets/{id}, GetSecretAncestors, NthCall=2: the
-// handler (server/http/handlers/secrets_crud.go:DeleteSecret) makes TWO
-// independent, separately-authorized calls for a non-machine caller:
-//  1. The route's own RequireScopedSecretPermission middleware gate
-//     (server/middleware/auth.go) calls AuthorizeSecretPrincipal ->
-//     AuthorizeSecret -> HasSecretACL -> GetSecretAncestors as call #1, and
-//     finishScopedPermissionRequest correctly fails closed
-//     (`if err != nil || !allowed { forbiddenResponse... }`) on any error
-//     from it. THIS is the real authorization gate.
-//  2. AFTER that gate has already passed, the handler body redundantly
-//     re-resolves the secret via GetSecretWithPermissionCheck purely "to
-//     pre-fetch name and project for audit log" (the handler's own comment)
-//     — its OWN internal AuthorizeSecret call is call #2 to
-//     GetSecretAncestors. Its error is captured as prefetchErr and
-//     deliberately NOT treated as fatal (`if prefetchErr == nil { ... }`,
-//     no else branch that aborts) — the delete proceeds regardless, using a
-//     generic "id=%d" audit description instead of the real secret name.
-//
-// A fault on call #1 correctly produces a 403 (confirmed by a fuzz run that
-// found NO surviving violation at NthCall=1 for this op/method). Only
-// call #2 — the redundant, audit-description-only prefetch — reaches this
-// exemption. The real authorization decision is provably unaffected by this
-// specific fault; only audit-log content quality degrades, the same
-// documented tradeoff bestEffortTables already covers for the DIRECT
-// LogAuditEvent/AddPasswordHistory cases. FLAG FOR REVIEW: this redundant
-// prefetch-and-swallow pattern (duplicate authz call whose failure is
-// silently tolerated) could plausibly recur at other call sites this sweep
-// didn't specifically look for — worth a dedicated grep as follow-up, not
-// done here.
-//
-// REST DELETE /api/v1/secrets/{id}, GetUserGroupRoleIDsAt, NthCall=2: the
-// predicted recurrence from the FLAG FOR REVIEW note directly above, found by
-// a later fuzz burst — same call #2 (the redundant GetSecretWithPermissionCheck
-// prefetch), just caught inside CheckSecretPermission's RBAC fallback
-// (permissions.go: AuthorizePrincipal -> Authorize -> scopedRoleIDs ->
-// GetUserGroupRoleIDsAt) rather than the ACL-inheritance branch GetSecretAncestors
-// sits in — same handler, same non-owner/non-share/non-ACL fallthrough, same
-// prefetchErr-is-not-fatal handling. The real authorization gate is call #1
-// (the route's RequireScopedSecretPermission middleware), traced fail-closed
-// exactly as for the GetSecretAncestors entry above; only the audit-description
-// prefetch is affected here too.
+// Empty as of 2026-09-23 (docs/findings/2026-09-23-FINDING-redundant-authz-prefetch.md):
+// both entries this list ever held (REST DELETE /api/v1/secrets/{id},
+// GetSecretAncestors/GetUserGroupRoleIDsAt, both NthCall=2) were the SAME root
+// cause — DeleteSecret's audit-only prefetch called GetSecretWithPermissionCheck
+// a second time after the route's RequireScopedSecretPermission middleware had
+// already authorized the request, so CheckSecretPermission ran twice per
+// request and a fault on that harmless second run looked like a fail-open
+// oracle (c) violation. The fix replaced that (and its gRPC DeleteSecret and
+// GetSecretVersions siblings) with a plain, unauthorized GetSecret — matching
+// the pattern every OTHER audit-only prefetch in this codebase already used
+// (UpdateSecret's pre-diff fetch, DeleteFolder, REST GetSecretVersions).
+// CheckSecretPermission now runs exactly once per DeleteSecret request, so
+// NthCall=2 never occurs for either method on this op — both exceptions are
+// unreachable, not merely inactive, and were deleted rather than kept around
+// unused. If a similar shape recurs, add a fresh entry with its own trace, not
+// by reviving these.
 type nonLoadBearingException struct {
 	op, method string
 	nth        int
 }
 
-var nonLoadBearingAuthzReadExceptions = []nonLoadBearingException{
-	{op: "REST DELETE /api/v1/secrets/{id}", method: "GetSecretAncestors", nth: 2},
-	{op: "REST DELETE /api/v1/secrets/{id}", method: "GetUserGroupRoleIDsAt", nth: 2},
-}
+var nonLoadBearingAuthzReadExceptions = []nonLoadBearingException{}
 
 // multiStepAmbiguousCommitExceptions narrowly flags a traced instance of
 // oracle (d) firing on the FIRST storage call of a multi-step create, NOT
