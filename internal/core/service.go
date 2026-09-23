@@ -380,6 +380,24 @@ type KeyorixCore struct {
 	// by "actorID:targetID" to reduce per-request DB load on the auth hot path for
 	// impersonation sessions (IMP-001). Zero value is ready to use (sync.Map).
 	impersonationCeilingCache sync.Map
+	// impersonationCeilingClockWatermark backs impersonationCeilingEffectiveNow
+	// (authz.go): an in-memory monotonic high-water mark of the latest c.now()
+	// reading legitimately observed while consulting impersonationCeilingCache.
+	// Found during the #1983 clock-jump investigation: unlike every sibling
+	// credential-expiry/permission-cache watermark in this file (authTokenClockWatermark,
+	// shareClockWatermark, connectClockWatermark), the ceiling cache compared a
+	// bare c.now() directly against entry.expiresAt with no regression
+	// protection -- a host clock stepped backward makes an already-cached
+	// entry (allow OR deny) look further from expiring than it really is, so a
+	// stale ceiling verdict is trusted PAST its intended ceilingCacheTTL (60s),
+	// directly extending the MT-007 exposure window ReauthorizeImpersonation
+	// exists to bound (a demoted admin, or a promoted target, mid-session).
+	// CLAMPs rather than refuses, matching authTokenClockWatermark/
+	// shareClockWatermark's reasoning: cachedImpersonationCeiling runs on every
+	// ValidateSessionToken call for an active impersonation session, a
+	// pervasive read path, not a single discrete action.
+	impersonationCeilingClockWatermarkMu sync.Mutex
+	impersonationCeilingClockWatermark   time.Time
 	// secretExpiryWatermark is an in-memory monotonic high-water mark of the
 	// latest wall-clock instant enforceSecretReadGuards has ever observed via
 	// c.now(), in this process's lifetime (#1632). Mirrors auditMaxCertified's

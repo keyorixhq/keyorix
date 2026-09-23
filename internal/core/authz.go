@@ -473,6 +473,26 @@ type ceilingCacheEntry struct {
 
 const ceilingCacheTTL = 60 * time.Second
 
+// impersonationCeilingEffectiveNow returns c.now() clamped so it never
+// regresses relative to a reading this process has already legitimately
+// observed while consulting impersonationCeilingCache. See
+// impersonationCeilingClockWatermark's doc comment (service.go) for what this
+// defends against.
+//
+// .UTC() strips any monotonic clock reading c.now() carries — see
+// authEffectiveNow's doc comment (auth.go) for why an unstripped comparison
+// here would never actually detect a backward wall-clock step.
+func (c *KeyorixCore) impersonationCeilingEffectiveNow() time.Time {
+	c.impersonationCeilingClockWatermarkMu.Lock()
+	defer c.impersonationCeilingClockWatermarkMu.Unlock()
+	now := c.now().UTC()
+	if now.Before(c.impersonationCeilingClockWatermark) {
+		return c.impersonationCeilingClockWatermark
+	}
+	c.impersonationCeilingClockWatermark = now
+	return now
+}
+
 // cachedImpersonationCeiling wraps requireStillAuthorizedToImpersonate with a
 // short-lived cache (ceilingCacheTTL) so the expensive DB reads it issues are
 // not repeated on every ValidateSessionToken call (IMP-001). The cache TTL is
@@ -481,12 +501,12 @@ const ceilingCacheTTL = 60 * time.Second
 func (c *KeyorixCore) cachedImpersonationCeiling(ctx context.Context, actorID, targetID uint) error {
 	key := fmt.Sprintf("%d:%d", actorID, targetID)
 	if v, ok := c.impersonationCeilingCache.Load(key); ok {
-		if entry := v.(ceilingCacheEntry); c.now().Before(entry.expiresAt) {
+		if entry := v.(ceilingCacheEntry); c.impersonationCeilingEffectiveNow().Before(entry.expiresAt) {
 			return entry.err
 		}
 	}
 	err := c.requireStillAuthorizedToImpersonate(ctx, actorID, targetID)
-	c.impersonationCeilingCache.Store(key, ceilingCacheEntry{err: err, expiresAt: c.now().Add(ceilingCacheTTL)})
+	c.impersonationCeilingCache.Store(key, ceilingCacheEntry{err: err, expiresAt: c.impersonationCeilingEffectiveNow().Add(ceilingCacheTTL)})
 	return err
 }
 
