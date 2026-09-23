@@ -915,6 +915,13 @@ func (c *KeyorixCore) verifyIDToken(ctx context.Context, p *SSOProvider, expecte
 		// otherwise guard against (docs/findings/
 		// 2026-09-23-FINDING-oidc-future-iat-and-crit.md).
 		jwt.WithIssuedAt(),
+		// Without this, golang-jwt reads the real wall clock directly for
+		// exp/nbf/iat-future, independent of and unsynchronized with every
+		// other auth-adjacent expiry check on KeyorixCore (session/PAT/
+		// machine-token, all via authEffectiveNow) — reusing that same
+		// watermarked clock here closes that gap and makes id_token
+		// verification's clock testable/injectable like the rest (#1983).
+		jwt.WithTimeFunc(c.authEffectiveNow),
 	)
 	keyfn := func(t *jwt.Token) (interface{}, error) {
 		iss, ierr := t.Claims.GetIssuer()
