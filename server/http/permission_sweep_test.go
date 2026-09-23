@@ -422,6 +422,7 @@ var noPermissionGateAllowlist = map[string]string{
 		"the OIDC callback above.",
 
 	"server/http/router.go:217":  justPublicInfra + " GET /health is a liveness probe (no DB touch).",
+	"server/http/router.go:223":  justPublicInfra + " GET /api/v1/version (ADR-108 PR 0) returns only api_version + minimum_cli_version so a thin CLI can check compatibility before it has credentials; never the build version/commit (see handlers/version.go).",
 	"server/http/router.go:227":  justPublicInfra + " GET /readyz is a readiness probe (DB reachability only).",
 	"server/http/router.go:246":  justPublicInfra + " /metrics is Prometheus scrape target; optionally protected by a separate static-bearer-token check (cfg.Server.HTTP.MetricsToken) when configured -- a deployment-perimeter control, not RBAC.",
 	"server/http/router.go:249":  justPublicInfra + " GET /status serves the public status dashboard (or falls back to the health check).",
