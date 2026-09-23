@@ -185,16 +185,27 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 		// AND a panic (found separately, by fuzz-injecting a panic on the same
 		// call) — must be OBSERVABLE, not swallowed, even though the user is
 		// still created regardless.
+		//
+		// Runs in its own nested tx.WithTransaction (a SAVEPOINT on PostgreSQL):
+		// on PostgreSQL a failed statement aborts the enclosing transaction at
+		// the protocol level, so an unguarded AssignRole failure would silently
+		// fail the whole CreateUser call, not just the non-fatal role grant —
+		// unlike SQLite, which has no equivalent transaction-abort behavior.
+		// Found reviewing PR #1996 before merge.
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
 					log.Printf("Warning: user %d (%s) created without its baseline system_viewer role: assignment panicked: %v", createdUser.ID, createdUser.Username, r)
 				}
 			}()
-			if role, err := tx.GetRoleByName(ctx, "system_viewer"); err == nil {
-				if err := tx.AssignRole(ctx, createdUser.ID, role.ID, Scope{}); err != nil {
-					log.Printf("Warning: user %d (%s) created without its baseline system_viewer role: %v", createdUser.ID, createdUser.Username, err)
+			if err := tx.WithTransaction(ctx, func(savepoint storage.Storage) error {
+				role, err := savepoint.GetRoleByName(ctx, "system_viewer")
+				if err != nil {
+					return err
 				}
+				return savepoint.AssignRole(ctx, createdUser.ID, role.ID, Scope{})
+			}); err != nil {
+				log.Printf("Warning: user %d (%s) created without its baseline system_viewer role: %v", createdUser.ID, createdUser.Username, err)
 			}
 		}()
 		return nil

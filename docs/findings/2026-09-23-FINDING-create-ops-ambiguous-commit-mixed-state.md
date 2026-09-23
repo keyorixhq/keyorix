@@ -232,6 +232,76 @@ iteration count, not correctness; a burst is validation-oriented here, not a
 throughput measurement, so proceeding under contention (rather than waiting
 indefinitely for a fully quiet machine) was the right tradeoff.
 
+## PostgreSQL follow-up: non-fatal steps need their own SAVEPOINT
+
+Pre-merge review of this PR caught a second, PostgreSQL-specific defect this
+PR's first PostgreSQL validation pass (above) did not catch: on PostgreSQL,
+**any** failed statement inside a transaction poisons the WHOLE transaction at
+the protocol level — every later statement errors, and `COMMIT` itself
+downgrades to `ROLLBACK` (pgx's `ErrTxCommitRollback`). SQLite has no
+equivalent behavior. `CreateProject`/`CreateProjectWithEnvs`'s environment-
+seeding loop and `CreateUser`'s baseline `system_viewer` role grant are both
+*intentionally* non-fatal — the surrounding create must still succeed even if
+these steps fail — but once they moved inside the outer transaction (this
+PR's whole point), a single faulted non-fatal step on PostgreSQL would
+silently fail the ENTIRE create, not just that one step.
+
+**Why the original PostgreSQL validation pass (above) didn't catch this:**
+`FuzzStorageFaultOperations`'s fault injection (`faultstorage`) cannot
+actually reproduce this condition. Its two relevant fault kinds:
+`KindError` returns a synthetic error without ever invoking the real storage
+method — no SQL reaches Postgres at all, so no real statement can poison
+anything. `KindEffectThenError` invokes the real method (so the real SQL
+statement runs and genuinely **succeeds**), then discards that result and
+reports a synthetic error to the caller anyway — the underlying transaction
+was never actually poisoned, because nothing really failed at the SQL layer.
+Neither models "a real statement genuinely fails" — the class of failure this
+bug depends on. This was verified by attempting to red-proof with the
+fault-fuzz harness first: faulting `AssignRole`/`CreateEnvironment` via
+`faultstorage` passed identically whether or not the fix was applied,
+because the harness's own fault mechanism can't produce the failure
+condition either way. Per this repo's own standing lesson ("a mechanism must
+be validated against a failure that actually happened, not against the one
+its author imagined") — this needed a different tool, not a fuzz seed.
+
+**Fix:** each non-fatal step (`CreateEnvironment` in both `CreateProject` and
+`CreateProjectWithEnvs`'s loops; the `GetRoleByName`+`AssignRole` pair in
+`CreateUser`) now runs inside its own nested `tx.WithTransaction(...)` call.
+gorm detects the already-open outer transaction and uses a real PostgreSQL
+`SAVEPOINT` instead of `BEGIN` — a failure inside the nested call rolls back
+only to that savepoint, leaving the outer transaction (and everything
+committed in it so far) intact. The panic-recovery wrapper already present
+around `CreateUser`'s role-assignment block is preserved unchanged, now
+wrapping the nested `WithTransaction` call instead of the raw storage calls.
+
+**Verified with a direct test of the underlying mechanism**, not the
+fault-fuzz harness: `internal/storage/store/local_transaction_pg_savepoint_test.go`
+(new, PostgreSQL-only, skips without `KEYORIX_TEST_PG_DSN`) forces a
+genuinely failing raw SQL statement (a syntax error — a real Postgres error,
+not a synthetic one) inside a transaction, both without and with the nested
+`WithTransaction`/`SAVEPOINT` wrap:
+
+- `TestPGTransaction_UnprotectedStatementFailure_PoisonsWholeTransaction`:
+  confirms the bug's mechanism in isolation — an unprotected failing statement
+  fails the WHOLE outer `WithTransaction` call, and an earlier, unrelated,
+  otherwise-successful write in the same transaction is rolled back too, even
+  though the calling code tried to treat the failure as non-fatal.
+- `TestPGTransaction_SavepointProtectedFailure_DoesNotPoisonOuterTransaction`:
+  the identical failure, wrapped in a nested `WithTransaction`, does NOT
+  poison the outer transaction — the earlier write commits successfully.
+
+Both pass against a local `postgres:16` container. Re-ran the full PostgreSQL
+validation from the section above (seed corpus, the 8-row per-(op,NthCall)
+table, all PASS) with the SAVEPOINT fix applied — no regressions. `AssignRole`
+turned out to already have its own internal `ls.db.Transaction(...)` wrapper
+(`assignUserRole`, `local_rbac.go`), which likely already got an implicit
+SAVEPOINT from gorm's nested-transaction detection even before this fix —
+`CreateEnvironment` (a bare, unwrapped `ls.db.Create(env).Error`,
+`local_secrets.go`) has no such self-protection and is the call this fix is
+actually load-bearing for; `CreateUser`'s wrap is kept regardless, both for
+defense-in-depth and because it also fixes the same class for
+`GetRoleByName` (a read, not independently transaction-wrapped).
+
 ## Red-proof
 
 **Direction 1 (fix removed → red):** reverting `CreateProject` to the

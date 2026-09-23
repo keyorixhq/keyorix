@@ -326,15 +326,14 @@ func (c *KeyorixCore) CreateProject(ctx context.Context, name, description strin
 	if err := validateDescription(description); err != nil {
 		return nil, err
 	}
-	// SCRATCH (fix/createproject-atomicity): wrap the project-row create and the
-	// default-environment seeding in one storage.WithTransaction, same pattern as
-	// CreateRole/UpdateRole (#1969-class). This closes the mixed-state half of the
-	// fault-fuzz finding (Project committed, Environment never attempted) — an
-	// effect-then-error fault on the FIRST call now rolls back to old state instead
-	// of leaving a mix; a lost-ack-after-commit fault yields the full new state.
-	// Both are old-OR-new, which oracle (d) accepts. Does NOT close the ambiguous-
-	// response half (the client is still told "error" even when the write commits)
-	// — that needs an idempotency key, tracked separately.
+	// Wrap the project-row create and the default-environment seeding in one
+	// storage.WithTransaction, same pattern as CreateRole/UpdateRole (#1969-class).
+	// This closes the mixed-state half of the fault-fuzz finding (Project committed,
+	// Environment never attempted) — an effect-then-error fault on the FIRST call now
+	// rolls back to old state instead of leaving a mix; a lost-ack-after-commit fault
+	// yields the full new state. Both are old-OR-new, which oracle (d) accepts. Does
+	// NOT close the ambiguous-response half (the client is still told "error" even
+	// when the write commits) — that needs an idempotency key, tracked separately.
 	var project *models.Project
 	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
 		var err error
@@ -349,11 +348,24 @@ func (c *KeyorixCore) CreateProject(ctx context.Context, name, description strin
 		// more of its expected default environments with zero operator
 		// visibility into why): the project row itself already committed, and a
 		// caller retries environment creation separately if seeding fails, but
-		// this must be OBSERVABLE, not a swallowed error. Left non-fatal even
-		// inside the transaction — this loop's own failure must not roll back
-		// the project row, matching the pre-existing accepted tradeoff.
+		// this must be OBSERVABLE, not a swallowed error.
+		//
+		// Each seed runs in its OWN nested tx.WithTransaction (a SAVEPOINT on
+		// PostgreSQL, gorm's own nested-transaction support). On PostgreSQL a
+		// FAILED STATEMENT aborts the enclosing transaction at the protocol
+		// level (any later statement errors, and COMMIT downgrades to ROLLBACK,
+		// pgx's ErrTxCommitRollback) — unlike SQLite, which has no such
+		// poisoning. Without the SAVEPOINT, a single faulted CreateEnvironment
+		// call would silently fail the WHOLE project create on Postgres, even
+		// though this loop is meant to be non-fatal. Found reviewing PR #1996
+		// before merge — SQLite-only fault-fuzz validation stayed green despite
+		// this, since SQLite has no equivalent transaction-abort behavior.
 		for _, envName := range defaultEnvironmentNames {
-			if _, err := tx.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID}); err != nil {
+			envName := envName
+			if err := tx.WithTransaction(ctx, func(savepoint storage.Storage) error {
+				_, err := savepoint.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID})
+				return err
+			}); err != nil {
 				log.Printf("Warning: project %d (%s) created without its default environment %q: %v", project.ID, project.Name, envName, err)
 			}
 		}
@@ -472,7 +484,9 @@ func (c *KeyorixCore) CreateProjectWithEnvs(ctx context.Context, name, descripti
 			return nil, err
 		}
 	}
-	// SCRATCH (fix/createproject-atomicity): same tx-wrap as CreateProject above.
+	// Same tx-wrap as CreateProject above, including the per-seed SAVEPOINT
+	// (nested tx.WithTransaction) — a failed CreateEnvironment must not abort the
+	// whole create on PostgreSQL, same reasoning as CreateProject's own loop.
 	var project *models.Project
 	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
 		var err error
@@ -481,7 +495,11 @@ func (c *KeyorixCore) CreateProjectWithEnvs(ctx context.Context, name, descripti
 			return err
 		}
 		for _, envName := range envNames {
-			if _, err := tx.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID}); err != nil {
+			envName := envName
+			if err := tx.WithTransaction(ctx, func(savepoint storage.Storage) error {
+				_, err := savepoint.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID})
+				return err
+			}); err != nil {
 				// Non-fatal, same rationale as CreateProject's default-environment
 				// seeding above — but must be observable, not silently discarded.
 				log.Printf("Warning: project %d (%s) created without requested environment %q: %v", project.ID, project.Name, envName, err)
