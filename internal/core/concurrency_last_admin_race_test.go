@@ -95,9 +95,16 @@ func runTwoAdminRace(t *testing.T, name string, removeA, removeB func(ctx contex
 // internal/core/users.go's DeleteUser.
 func TestConcurrency_DeleteUser_ExactlyOneOfTwoAdminsRemoved(t *testing.T) {
 	t.Parallel()
+	// S1 (CLI-split inventory #2012): DeleteUser now enforces the admin-rank
+	// ceiling (requireAdminRankCeilingForTarget) -- actor 99 (unseeded, holds
+	// nothing) would be correctly refused against both admin targets, which
+	// isn't the race this test exercises. The two admins (1, 2) race to
+	// remove EACH OTHER instead: both are real, ceiling-satisfying actors,
+	// and this fixture deliberately stays at exactly two admins so the
+	// last-admin guard's own counting is unaffected by this fix.
 	bothGone, neitherGone := runTwoAdminRace(t, "delete_user",
-		func(ctx context.Context, c *core.KeyorixCore) { _ = c.DeleteUser(ctx, 99, 1) },
-		func(ctx context.Context, c *core.KeyorixCore) { _ = c.DeleteUser(ctx, 99, 2) },
+		func(ctx context.Context, c *core.KeyorixCore) { _ = c.DeleteUser(ctx, 2, 1) },
+		func(ctx context.Context, c *core.KeyorixCore) { _ = c.DeleteUser(ctx, 1, 2) },
 	)
 	assert.Zero(t, bothGone, "%d/%d trials removed BOTH admins, stranding the install with zero admins", bothGone, lastAdminRaceTrials)
 	assert.Zero(t, neitherGone, "%d/%d trials refused BOTH removals (should allow exactly one)", neitherGone, lastAdminRaceTrials)

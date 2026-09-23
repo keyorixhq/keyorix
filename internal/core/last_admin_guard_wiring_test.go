@@ -38,6 +38,10 @@ func TestSuspendUser_AllowsWhenAnotherAdminExists(t *testing.T) {
 	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 10}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 10}).Error)
+	// S1 (CLI-split inventory #2012): actor 9 must itself be an admin for the
+	// admin-rank ceiling to permit suspending target 1 (also an admin).
+	require.NoError(t, db.Create(&models.User{ID: 9, Username: "acting-admin", IsActive: true, AccountState: AccountActive}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 9, RoleID: 10}).Error)
 
 	err := c.SuspendUser(ctx, 9, 1)
 	require.NoError(t, err, "suspending one of two admins is allowed")
@@ -52,9 +56,25 @@ func TestUpdateUser_RefusesLastAdminDeactivation(t *testing.T) {
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 10}).Error)
 
 	no := false
-	_, err := c.UpdateUser(ctx, &UpdateUserRequest{ID: 1, IsActive: &no})
+	// S1b (CLI-split inventory #2012): self-deactivation via UpdateUser is now
+	// refused UNCONDITIONALLY (ErrCannotActOnSelf), before guardLastAdminDeactivation
+	// is ever reached -- a strictly broader guard than "only when you're the
+	// last admin." For root (the install's sole admin) targeting themselves,
+	// this test's original scenario, that broader guard is what actually
+	// fires now: reaching guardLastAdminDeactivation via UpdateUser at all
+	// requires a non-self actor who ALSO satisfies the admin-rank ceiling --
+	// which, for a target that's genuinely the LAST admin, is structurally
+	// impossible (a second ceiling-satisfying actor would mean a second
+	// admin exists, and the guard would then correctly ALLOW the
+	// deactivation instead of refusing it). See
+	// TestSuspendUser_RefusesLastAdminDeactivation (above) for that guard's
+	// own coverage via a non-self actor -- SuspendUser calls
+	// guardLastAdminDeactivation OUTSIDE and before setAccountState's
+	// ceiling check, so an unprivileged actor still reaches it there;
+	// UpdateUser's deactivating branch checks the ceiling first.
+	_, err := c.UpdateUser(ctx, &UpdateUserRequest{ID: 1, ActorID: 1, IsActive: &no})
 	require.Error(t, err, "must refuse to deactivate the install's last global administrator via UpdateUser")
-	assert.Contains(t, err.Error(), "last install administrator")
+	assert.ErrorIs(t, err, ErrCannotActOnSelf)
 }
 
 func TestUpdateUser_AllowsDeactivationWhenAnotherAdminExists(t *testing.T) {
@@ -68,7 +88,10 @@ func TestUpdateUser_AllowsDeactivationWhenAnotherAdminExists(t *testing.T) {
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 10}).Error)
 
 	no := false
-	updated, err := c.UpdateUser(ctx, &UpdateUserRequest{ID: 1, IsActive: &no})
+	// S1 (CLI-split inventory #2012): ActorID: 2 -- the OTHER admin performing
+	// the deactivation, who must (and does, via the bypass role) satisfy the
+	// admin-rank ceiling against target 1.
+	updated, err := c.UpdateUser(ctx, &UpdateUserRequest{ID: 1, ActorID: 2, IsActive: &no})
 	require.NoError(t, err, "deactivating one of two admins via UpdateUser is allowed")
 	assert.False(t, updated.IsActive)
 }

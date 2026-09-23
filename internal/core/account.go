@@ -8,6 +8,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -61,6 +62,7 @@ func (c *KeyorixCore) UpdateOwnProfile(ctx context.Context, userID uint, display
 	}
 	return c.UpdateUser(ctx, &UpdateUserRequest{
 		ID:          userID,
+		ActorID:     userID,
 		DisplayName: displayName,
 		Email:       email,
 	})
@@ -132,7 +134,25 @@ func (c *KeyorixCore) invalidateTokenCache(hashes ...string) {
 // change (e.g. role removal) where the goal is only to force the NEXT request to
 // re-resolve the user's permissions from storage instead of serving a stale,
 // positively-cached authorization decision for up to validTokenTTL.
+//
+// Every caller of this function calls it AFTER its own primary operation has
+// already committed — the same "best-effort helper, primary effect already
+// succeeded" shape emitAudit protects against (service.go). Found live by
+// FuzzStorageFaultOperations during the break-glass revoke atomicity fix's own
+// validation burst (docs/findings/2026-09-23-FINDING-breakglass-revoke-half-commit.md):
+// a panic here, previously unrecovered, propagated past an ALREADY-COMMITTED
+// role removal + activation-revoke, and (worse) past the point where the
+// caller's own post-commit audit event gets written, reporting the whole
+// operation as a failure while the state had, in fact, already changed —
+// oracle (a). The recover here is this function's OWN choke point, closing it
+// for the role-removal call sites in rbac_management.go too, not just the one
+// the fuzzer happened to reach it through.
 func (c *KeyorixCore) evictUserSessionCache(ctx context.Context, userID uint) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: evictUserSessionCache panicked for user %d (best-effort, primary operation already succeeded): %v", userID, r)
+		}
+	}()
 	hashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, userID)
 	c.invalidateTokenCache(hashes...)
 }

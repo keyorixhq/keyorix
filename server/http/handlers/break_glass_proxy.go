@@ -279,21 +279,16 @@ func (h *CatalogHandler) RevokeBreakGlassActivationProxy(w http.ResponseWriter, 
 		return
 	}
 
-	// Remove the grant early — best-effort, mirroring core.RevokeBreakGlass: it may
-	// already be gone (auto-expired, or a racing revoke's own removal already ran);
-	// only a genuine storage failure aborts here, since proceeding to mark the
-	// record revoked while removal itself failed would leave the grant LIVE in
-	// user_roles but reported revoked everywhere else.
-	scope := coreStorage.Scope{ProjectID: activation.ProjectID}
-	if err := h.coreService.RemoveUserRole(r.Context(), revokedBy, activation.UserID, activation.RoleID, scope); err != nil && !errors.Is(err, coreStorage.ErrRoleNotAssigned) {
-		log.Printf("break-glass proxy: revoke activation: role removal failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-
+	// Role removal, activation-state update, and audit now commit atomically
+	// via RevokeBreakGlassActivationAtomic (internal/core/break_glass.go) — a
+	// fault landing between the two storage steps used to leave the role
+	// removed but the activation still "active" and unaudited
+	// (docs/findings/2026-09-23-FINDING-breakglass-revoke-half-commit.md).
 	// revokedBy is required nonzero human above (actorID(r)==0 denied) -- this
 	// route never represents a machine revoker, so 0 for the companion param.
-	if err := h.coreService.Storage().RevokeBreakGlassActivation(r.Context(), uint(id), revokedBy, 0, body.RevokedAt); err != nil {
+	// body.RevokedAt (not c.now()) because this proxy relays a downstream
+	// server's already-decided revoke, timestamp included.
+	if err := h.coreService.RevokeBreakGlassActivationAtomic(r.Context(), revokedBy, 0, activation, body.RevokedAt); err != nil {
 		if errors.Is(err, coreStorage.ErrBreakGlassNotActive) {
 			writeRemoteAPIError(w, http.StatusConflict, breakGlassNotActiveCode, coreStorage.ErrBreakGlassNotActive.Error())
 			return
@@ -302,6 +297,5 @@ func (h *CatalogHandler) RevokeBreakGlassActivationProxy(w http.ResponseWriter, 
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
 	}
-	h.coreService.LogBreakGlassRevoked(r.Context(), revokedBy, activation.ProjectID, activation.ID, activation.UserID, activation.RoleID, activation.RoleName)
 	writeRemoteAPISuccess(w, map[string]bool{"revoked": true})
 }

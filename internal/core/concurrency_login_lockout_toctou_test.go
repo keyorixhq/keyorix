@@ -67,7 +67,7 @@ func (s *raceInjectingStorage) GetUserByUsername(ctx context.Context, username s
 // minting, so it must now be refused.
 func TestLogin_TOCTOU_ConcurrentLockTripBeforeMintIsRefused(t *testing.T) {
 	t.Parallel()
-	dsn := "file:" + filepath.Join(t.TempDir(), "toctou.db") + "?_busy_timeout=10000&_journal_mode=WAL"
+	dsn := "file:" + filepath.Join(t.TempDir(), "toctou.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.AuditEvent{}))
@@ -110,7 +110,7 @@ func TestLogin_TOCTOU_ConcurrentLockTripBeforeMintIsRefused(t *testing.T) {
 // lockout transitions from the mixed workload racing the fix's recheck).
 func TestConcurrency_LoginLockout_MixedBurstCorrectPasswordAmongLockedNeverMintsExtra(t *testing.T) {
 	t.Parallel()
-	dsn := "file:" + filepath.Join(t.TempDir(), "mixed.db") + "?_busy_timeout=10000&_journal_mode=WAL"
+	dsn := "file:" + filepath.Join(t.TempDir(), "mixed.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.AuditEvent{}))

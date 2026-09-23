@@ -114,7 +114,7 @@ func sccSetupWorld(t *testing.T) *sccWorld {
 	t.Cleanup(i18n.ResetForTesting)
 
 	dbPath := filepath.Join(t.TempDir(), "scc.db")
-	db, err := gorm.Open(sqlite.Open(dbPath+"?_foreign_keys=1&_busy_timeout=10000&_journal_mode=WAL"), &gorm.Config{Logger: logger.Discard})
+	db, err := gorm.Open(sqlite.Open(dbPath+"?_foreign_keys=1&_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"), &gorm.Config{Logger: logger.Discard})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

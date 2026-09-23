@@ -284,31 +284,103 @@ func (c *KeyorixCore) RevokeBreakGlass(ctx context.Context, actorID, actorMachin
 	if activation.State == BreakGlassRevoked {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "activation is not active")
 	}
-	// Remove the grant early. A benign "the row is already gone" case (it already
-	// auto-expired, or a racing revoke already removed it — see the conditional
-	// state transition below) is not an error: proceed to reconcile the record. A
-	// genuine storage failure, however, must abort the revoke here — proceeding to
-	// mark the record "revoked" while the removal itself failed would leave the
-	// emergency role grant LIVE in user_roles (the table RBAC actually reads) but
-	// reported as revoked everywhere else (API response, audit trail).
-	scope := storage.Scope{ProjectID: projectID}
-	if err := c.RemoveUserRole(ctx, actorID, activation.UserID, activation.RoleID, scope); err != nil && !errors.Is(err, storage.ErrRoleNotAssigned) {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-
-	// Conditional UPDATE (WHERE state = active), not a read-modify-write: the initial
-	// state check above is only a fast-path convenience, not the enforcement — two
-	// concurrent revokes of the same activation can both pass it. Only the first
-	// concurrent caller's conditional update actually transitions state; the second
-	// gets ErrBreakGlassNotActive instead of silently overwriting RevokedBy/RevokedAt.
-	now := c.now()
-	if err := c.storage.RevokeBreakGlassActivation(ctx, activation.ID, actorID, actorMachineID, now); err != nil {
+	if err := c.RevokeBreakGlassActivationAtomic(ctx, actorID, actorMachineID, activation, c.now()); err != nil {
 		if errors.Is(err, storage.ErrBreakGlassNotActive) {
 			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "activation is not active")
 		}
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
-	c.LogBreakGlassRevoked(ctx, actorID, projectID, activation.ID, activation.UserID, activation.RoleID, activation.RoleName)
+	return nil
+}
+
+// RevokeBreakGlassActivationAtomic performs the two storage mutations a
+// break-glass revoke requires — removing the emergency role grant and marking
+// the activation record revoked — inside ONE storage.WithTransaction, so a
+// fault landing between them (including an "effect-then-error" storage fault,
+// where RemoveRole's own DELETE lands but the call still reports failure)
+// rolls back the whole thing instead of leaving a mix: role gone, activation
+// still "active", nothing audited
+// (docs/findings/2026-09-23-FINDING-breakglass-revoke-half-commit.md).
+// Exported so both RevokeBreakGlass (this file, backing the human-facing REST
+// and gRPC routes) and RevokeBreakGlassActivationProxy
+// (server/http/handlers/break_glass_proxy.go — the /system raw-storage-
+// primitive proxy, scheduled for deletion under ADR-108 Phase 6 but reachable
+// today) share the identical fix instead of drifting the way the pre-fix
+// versions of those two already had. Callers are responsible for their own
+// authorization and state-guard (activation.State == BreakGlassRevoked)
+// checks first — this function performs neither.
+//
+// Under storage.type: remote, WithTransaction is a documented no-op
+// (RemoteStorage.WithTransaction, internal/storage/store/remote_transaction.go)
+// — this only closes the atomicity gap for a LocalStorage-backed caller.
+// RevokeBreakGlassActivationProxy always runs against LocalStorage
+// (validateRemoteStorageNotServer forbids wiring RemoteStorage into
+// server/http/handlers at all), so it is fully covered. RevokeBreakGlass's own
+// role-removal step is independently broken under storage.type: remote already
+// (RemoveUserRole's project-scoped RemoveRole call has no registered wire
+// route, #1511, per RevokeBreakGlassActivationProxy's own doc comment) — this
+// fix does not worsen that pre-existing gap, and does not close it either;
+// #1511 is tracked separately.
+func (c *KeyorixCore) RevokeBreakGlassActivationAtomic(ctx context.Context, actorID, actorMachineID uint, activation *models.BreakGlassActivation, now time.Time) error {
+	scope := storage.Scope{ProjectID: activation.ProjectID}
+	// Same last-project-admin protection RemoveUserRole's project-scope branch
+	// applies (rbac_management.go) — run BEFORE the transaction below, for the
+	// same lock-ordering reason RemoveUserRole's own doc comment gives:
+	// WithNamedLock must never be held while a separate storage transaction is
+	// also open. A break-glass emergency role can never itself carry
+	// roles.assign at ACTIVATION time (ActivateBreakGlass's own policy check),
+	// but a role's permission set can be edited afterward, so this still runs a
+	// real check rather than assuming it can never fire.
+	if err := c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(scope.ProjectID), func(ctx context.Context) error {
+		existing, err := c.storage.GetUserRoleIDsExact(ctx, activation.UserID, scope)
+		if err != nil {
+			return err
+		}
+		after := make([]uint, 0, len(existing))
+		for _, id := range existing {
+			if id != activation.RoleID {
+				after = append(after, id)
+			}
+		}
+		return c.guardLastProjectAdmin(ctx, scope.ProjectID, activation.UserID, existing, after)
+	}); err != nil {
+		return err
+	}
+
+	var roleRemoved bool
+	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		if err := tx.RemoveRole(ctx, activation.UserID, activation.RoleID, scope); err != nil {
+			if !errors.Is(err, storage.ErrRoleNotAssigned) {
+				return err
+			}
+			// Already gone (auto-expired, or a racing revoke's own removal
+			// already ran) — not an error, proceed to reconcile the record.
+		} else {
+			roleRemoved = true
+		}
+		// Conditional UPDATE (WHERE state = active OR expired), not a
+		// read-modify-write: two concurrent revokes of the same activation can
+		// both reach here, but only the first's conditional update actually
+		// transitions state — the second gets ErrBreakGlassNotActive instead of
+		// silently overwriting RevokedBy/RevokedAt. Rolling this back together
+		// with the role removal above (rather than committing the removal
+		// unconditionally) is exactly what closes the half-commit: either both
+		// land, or neither does.
+		return tx.RevokeBreakGlassActivation(ctx, activation.ID, actorID, actorMachineID, now)
+	})
+	if txErr != nil {
+		return txErr
+	}
+
+	// Audit and cache-eviction happen AFTER commit, never before — same
+	// convention CreateRole/UpdateRole use (#1969/#1996): an event recorded
+	// before the transaction resolves could survive a later rollback and
+	// assert an effect that never actually landed.
+	if roleRemoved {
+		c.LogRoleRemoved(ctx, actorID, activation.UserID, activation.RoleID, scope)
+		c.evictUserSessionCache(ctx, activation.UserID)
+	}
+	c.LogBreakGlassRevoked(ctx, actorID, activation.ProjectID, activation.ID, activation.UserID, activation.RoleID, activation.RoleName)
 	return nil
 }
 

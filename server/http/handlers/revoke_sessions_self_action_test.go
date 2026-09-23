@@ -30,7 +30,14 @@ func setupUserHandlerTest(t *testing.T) *UserHandler {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.AuditEvent{}))
+	// S1 (CLI-split inventory #2012): RevokeUserSessions now calls the
+	// admin-rank ceiling (requireAdminRankCeilingForTarget), which reads
+	// role/permission tables via GetUserRoleScopes -- migrate them too, or
+	// that read 500s on a table that doesn't exist and the ceiling helper
+	// (which treats ANY resolution error as a refusal) masks it as 403.
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.AuditEvent{},
+		&models.Role{}, &models.UserRole{}, &models.Permission{}, &models.RolePermission{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
 
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "admin", Email: "admin@test.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "target", Email: "target@test.com"}).Error)
