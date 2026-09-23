@@ -174,25 +174,20 @@ func buildLinearizabilityWorld(f *testing.F, backend string, db *gorm.DB) *clWor
 	if err := i18n.InitializeForTesting(); err != nil {
 		f.Fatalf("i18n: %v", err)
 	}
+	// #1947: build the schema through the real production migration
+	// (fuzzworld.Bootstrap -> migrateDatabase). An AutoMigrate-only fixture
+	// lacks uniq_secret_versions_node_version, so storeNextSecretVersion's
+	// retry-on-conflict loop (#121) had no unique constraint to detect a lost
+	// race against -- this harness's first fuzz burst produced a duplicate
+	// version_number within ~2000 execs purely from that fixture gap. The
+	// explicit CREATE UNIQUE INDEX workaround that used to sit here is now
+	// redundant; assert the index instead of re-creating it.
+	fuzzworld.Bootstrap(f, db)
 	if err := db.AutoMigrate(models.AllTestModels()...); err != nil {
-		f.Fatalf("migrate (%s): %v", backend, err)
+		f.Fatalf("migrate test models (%s): %v", backend, err)
 	}
-	// AutoMigrate alone does NOT create uniq_secret_versions_node_version — in
-	// production that index is created by internal/storage/factory.go's
-	// ensureSecretVersionIndex, part of the real storage-factory bootstrap path
-	// this fixture (like FuzzCoreOperationSequence/FuzzKeyorixHTTPAPISequence's
-	// AutoMigrate-only setup) does not go through. Without it,
-	// storeNextSecretVersion's retry-on-conflict loop (#121) has no unique
-	// constraint to detect a lost race against — confirmed empirically: the
-	// very first fuzz burst against this harness produced a duplicate
-	// version_number within ~2000 execs, and reproduced ONLY as part of a
-	// long-running session (a fresh single-iteration re-run of the same input
-	// passed), which is the signature of a missing-constraint test-fixture gap
-	// rather than a reachable production race. Mirrors the explicit
-	// CREATE UNIQUE INDEX the #121 regression test
-	// (concurrency_rotate_secret_test.go) already adds for the same reason.
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_secret_versions_node_version ON secret_versions (secret_node_id, version_number)").Error; err != nil {
-		f.Fatalf("create secret_versions unique index (%s): %v", backend, err)
+	if !db.Migrator().HasIndex("secret_versions", "uniq_secret_versions_node_version") {
+		f.Fatalf("(%s) production bootstrap did not create uniq_secret_versions_node_version", backend)
 	}
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))

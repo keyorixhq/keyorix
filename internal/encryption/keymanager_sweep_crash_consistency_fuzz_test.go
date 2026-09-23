@@ -101,12 +101,7 @@ func FuzzDEKSweepCrashConsistency(f *testing.F) {
 	// Built ONCE per testing.F, before f.Fuzz (internal/testutil/fuzzworld) — reopening and
 	// migrating a DB per iteration was the dominant per-input cost.
 	// SQLite always; PostgreSQL too when KEYORIX_TEST_PG_DSN is set.
-	worlds := fuzzworld.Worlds(f, "sweepfuzz", ":memory:", 0, []any{
-		&models.SecretNode{}, &models.SecretVersion{}, &models.Session{},
-		&models.APIToken{}, &models.APIClient{}, &models.PasswordReset{},
-		&models.MFASecret{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
-		&models.SystemMetadata{}, // holds the DEK-rotation redo marker
-	})
+	worlds := fuzzworld.Worlds(f, "sweepfuzz", ":memory:", 0) // full production schema (#1947)
 
 	for i := range sweepCrashLabels {
 		f.Add(uint8(i), uint8(3), "rotate-passphrase", "secret-value-")

@@ -477,9 +477,7 @@ func FuzzFaultInjectedOperations(f *testing.F) {
 	// opRewrap/opKEKRotate never receive it (see runFaultInjectedCase below); they are pure
 	// file/PBKDF2 operations with zero database interaction, so they run once, not once per
 	// world.
-	dbWorlds := fuzzworld.Worlds(f, "faultopsfuzz", ":memory:", 0, []any{
-		&models.SecretNode{}, &models.SecretVersion{}, &models.ShareRecord{}, &models.SecretACL{},
-	})
+	dbWorlds := fuzzworld.Worlds(f, "faultopsfuzz", ":memory:", 0) // full production schema (#1947)
 
 	// Seed one case per (operation, seam, kind) combination decodeFault can
 	// produce, including kek:rename-dek's ambiguous kind — see decodeFault's

@@ -14,8 +14,11 @@
 //     file DSN), so the DSN stays the caller's decision.
 //   - OpenPostgres: schema-per-call isolation on the shared server, dropped
 //     on cleanup; nil when KEYORIX_TEST_PG_DSN is unset.
-//   - Worlds / World.Reset: the "SQLite + optional Postgres, migrated from a
-//     model list, reset from an explicit table list" shape two packages use.
+//   - Bootstrap: build the schema through the PRODUCTION migration
+//     (internal/storage.MigrateExisting), not a bare AutoMigrate, so fixture
+//     worlds carry every index/constraint a real deployment has (#1947).
+//   - Worlds / World.Reset: the "SQLite + optional Postgres, bootstrapped,
+//     reset from an explicit table list" shape two packages use.
 //
 // Test-only: nothing outside *_test.go files may import this package.
 package fuzzworld
@@ -31,6 +34,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	kxstorage "github.com/keyorixhq/keyorix/internal/storage"
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 )
@@ -110,8 +114,21 @@ func OpenPostgres(tb testing.TB, schemaPrefix string) *gorm.DB {
 	return db
 }
 
+// Bootstrap builds db's schema through the production migration path
+// (internal/storage.MigrateExisting -> migrateDatabase), the same one every
+// real deployment runs, instead of a bare AutoMigrate that silently lacks
+// every index/constraint migrateDatabase adds on top of the struct tags
+// (#1947). Idempotent. Fails tb on error.
+func Bootstrap(tb testing.TB, db *gorm.DB) {
+	tb.Helper()
+	if err := kxstorage.MigrateExisting(db); err != nil {
+		tb.Fatalf("production schema bootstrap: %v", err)
+	}
+}
+
 // Migrate AutoMigrates each model into w, one at a time so a failure names
-// the offending model and backend.
+// the offending model and backend. For test-only models on top of
+// Bootstrap's production schema; never a substitute for it.
 func (w *World) Migrate(tb testing.TB, models []any) {
 	tb.Helper()
 	for _, m := range models {
@@ -123,16 +140,17 @@ func (w *World) Migrate(tb testing.TB, models []any) {
 
 // Worlds returns the SQLite world (always, opened on sqliteDSN with
 // sqliteMaxOpenConns — see OpenSQLite) plus the PostgreSQL world (when
-// KEYORIX_TEST_PG_DSN is set), each migrated with models. Callers range over
-// the result, running one pass of the fuzz body per world.
-func Worlds(tb testing.TB, schemaPrefix, sqliteDSN string, sqliteMaxOpenConns int, models []any) []*World {
+// KEYORIX_TEST_PG_DSN is set), each with the full production schema (see
+// Bootstrap). Callers range over the result, running one pass of the fuzz
+// body per world.
+func Worlds(tb testing.TB, schemaPrefix, sqliteDSN string, sqliteMaxOpenConns int) []*World {
 	tb.Helper()
 	sq := &World{Backend: BackendSQLite, DB: OpenSQLite(tb, sqliteDSN, sqliteMaxOpenConns)}
-	sq.Migrate(tb, models)
+	Bootstrap(tb, sq.DB)
 	worlds := []*World{sq}
 	if db := OpenPostgres(tb, schemaPrefix); db != nil {
 		pg := &World{Backend: BackendPostgres, DB: db}
-		pg.Migrate(tb, models)
+		Bootstrap(tb, pg.DB)
 		worlds = append(worlds, pg)
 	} else {
 		tb.Logf("%s not set (%s) -- PostgreSQL backend skipped, SQLite only", PGDSNEnv, schemaPrefix)

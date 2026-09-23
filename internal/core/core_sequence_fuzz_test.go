@@ -13,17 +13,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/testutil/fuzzworld"
 )
 
-// coreSeqModels is the migration set for FuzzCoreOperationSequence's world.
-var coreSeqModels = []any{
-	&models.Project{}, &models.Environment{},
-	&models.SecretNode{}, &models.SecretVersion{}, &models.SecretAccessSchedule{},
-	&models.ShareRecord{}, &models.SecretACL{},
-	&models.User{}, &models.Group{}, &models.UserGroup{},
-	&models.Role{}, &models.Permission{}, &models.RolePermission{},
-	&models.UserRole{}, &models.GroupRole{},
-	&models.SoDPolicy{}, &models.AuditEvent{}, &models.Session{},
-}
-
 // coreSeqResetTables is the explicit, hand-named table list fuzzworld.World.Reset
 // clears between iterations that reuse the same per-worker world (see
 // fuzzworld.World.Reset for why it is hand-named). Dependent-first order.
@@ -143,8 +132,9 @@ func FuzzCoreOperationSequence(f *testing.F) {
 	// Built ONCE per testing.F, before f.Fuzz (internal/testutil/fuzzworld): opening and
 	// migrating a fresh DB per iteration was the dominant per-input cost.
 	// SetMaxOpenConns(1): a plain ":memory:" DSN gives each pooled connection its own DB.
-	// SQLite always; PostgreSQL too when KEYORIX_TEST_PG_DSN is set.
-	worlds := fuzzworld.Worlds(f, "coreseqfuzz", ":memory:", 1, coreSeqModels)
+	// SQLite always; PostgreSQL too when KEYORIX_TEST_PG_DSN is set. Full production schema
+	// (fuzzworld.Bootstrap, #1947), not an AutoMigrate-only subset.
+	worlds := fuzzworld.Worlds(f, "coreseqfuzz", ":memory:", 1)
 
 	f.Add([]byte{0, 0, 1, 0, 3, 0, 2, 0, 3, 0})
 	f.Add([]byte{0, 1, 3, 1, 1, 1, 3, 4, 2, 1, 3, 4})

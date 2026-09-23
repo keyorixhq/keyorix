@@ -113,16 +113,13 @@ func buildAPIFuzzWorld(f *testing.F, backend string, db *gorm.DB) *apiFuzzWorld 
 	if err := i18n.InitializeForTesting(); err != nil {
 		f.Fatalf("i18n: %v", err)
 	}
+	// #1947: the real production schema (migrateDatabase), not AutoMigrate plus a
+	// hand-copied subset of its partial unique indexes -- that copy (four indexes,
+	// errors discarded) is exactly the drift the issue describes. AllTestModels is
+	// AutoMigrated on top only for any test-only models production doesn't create.
+	fuzzworld.Bootstrap(f, db)
 	if err := db.AutoMigrate(models.AllTestModels()...); err != nil {
-		f.Fatalf("migrate: %v", err)
-	}
-	for _, ix := range []string{
-		"CREATE UNIQUE INDEX IF NOT EXISTS uniq_project_memberships_active ON project_memberships (project_id, user_id) WHERE state <> 'revoked'",
-		"CREATE UNIQUE INDEX IF NOT EXISTS uniq_legal_holds_active ON legal_holds (released) WHERE released = false",
-		"CREATE UNIQUE INDEX IF NOT EXISTS uniq_break_glass_active_project_user ON break_glass_activations (project_id, user_id) WHERE state = 'active'",
-		"CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''",
-	} {
-		_ = db.Exec(ix).Error
+		f.Fatalf("migrate test models (%s): %v", backend, err)
 	}
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
