@@ -95,6 +95,21 @@ func TestListSharedSecretsForUser_HandlerAdminViewsLowerRankedUser_NoSecretValue
 	assert.Equal(t, admin.ID, *event.UserID)
 }
 
+// TestListSharedSecretsForUser_HandlerRefusesOrdinaryUserAgainstSameRankPeer:
+// secrets.read alone (even bundled with users.read, the exact project_viewer
+// permission pair) is not an admin permission -- an actor holding only that
+// pair must be refused viewing a same-rank peer's shares, since the S1
+// ceiling alone never refuses a peer holding no MORE than the actor.
+func TestListSharedSecretsForUser_HandlerRefusesOrdinaryUserAgainstSameRankPeer(t *testing.T) {
+	cs, db := freshCoreS12WithAdmin(t)
+	actorID := seedUsersWriteOnlyActor(t, db, "s6_ordinary_actor", "secrets.read", "users.read")
+	peerID := seedUsersWriteOnlyActor(t, db, "s6_ordinary_peer", "secrets.read", "users.read")
+	seedShareForRecipient(t, db, peerID)
+
+	w := requestSharedSecretsForUser(cs, actorID, peerID, "s6_ordinary_actor")
+	assert.Equal(t, 403, w.Code, w.Body.String())
+}
+
 // TestListSharedSecretsForUser_HandlerRefusesLowerRankActorAgainstHigherTarget:
 // a users.write-only actor (not global admin) attempting to view the
 // install's real admin's shares is refused with a generic 403 that does not
@@ -104,7 +119,7 @@ func TestListSharedSecretsForUser_HandlerRefusesLowerRankActorAgainstHigherTarge
 	admin, err := cs.GetUserByUsername(t.Context(), "testuser_s12")
 	require.NoError(t, err)
 	seedShareForRecipient(t, db, admin.ID)
-	attackerID := seedUsersWriteOnlyActor(t, db, "s6_weak_attacker", "users.write")
+	attackerID := seedUsersWriteOnlyActor(t, db, "s6_weak_attacker", "users.write", "roles.read")
 
 	w := requestSharedSecretsForUser(cs, attackerID, admin.ID, "s6_weak_attacker")
 	assert.Equal(t, 403, w.Code, w.Body.String())
@@ -121,7 +136,7 @@ func TestListSharedSecretsForUser_HandlerUnknownTarget_SameResponseShapeAsForbid
 	admin, err := cs.GetUserByUsername(t.Context(), "testuser_s12")
 	require.NoError(t, err)
 	seedShareForRecipient(t, db, admin.ID)
-	attackerID := seedUsersWriteOnlyActor(t, db, "s6_probe_attacker", "users.write")
+	attackerID := seedUsersWriteOnlyActor(t, db, "s6_probe_attacker", "users.write", "roles.read")
 
 	forbiddenResp := requestSharedSecretsForUser(cs, attackerID, admin.ID, "s6_probe_attacker")
 	const nonexistentTargetID = uint(999999)

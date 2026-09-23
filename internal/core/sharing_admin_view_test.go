@@ -44,15 +44,17 @@ func freshSharedSecretsAdminViewCore(t *testing.T) (*core.KeyorixCore, *gorm.DB)
 	return core.NewKeyorixCore(store.NewLocalStorage(db)), db
 }
 
-// seedRoleWithPermission creates a role holding a single named permission
+// seedRoleWithPermissions creates a role holding the named permissions
 // (global scope, non-bypass) and returns its ID.
-func seedRoleWithPermission(t *testing.T, db *gorm.DB, roleName, permName string) uint {
+func seedRoleWithPermissions(t *testing.T, db *gorm.DB, roleName string, permNames ...string) uint {
 	t.Helper()
-	perm := &models.Permission{Name: permName}
-	require.NoError(t, db.Create(perm).Error)
 	role := &models.Role{Name: roleName, NameFolded: roleName}
 	require.NoError(t, db.Create(role).Error)
-	require.NoError(t, db.Create(&models.RolePermission{RoleID: role.ID, PermissionID: perm.ID}).Error)
+	for _, permName := range permNames {
+		perm := &models.Permission{Name: permName}
+		require.NoError(t, db.Create(perm).Error)
+		require.NoError(t, db.Create(&models.RolePermission{RoleID: role.ID, PermissionID: perm.ID}).Error)
+	}
 	return role.ID
 }
 
@@ -128,7 +130,7 @@ func TestListSharedSecretsForUser_AdminViewsLowerRankedUser_AllowedAndAudited(t 
 	cs, db := freshSharedSecretsAdminViewCore(t)
 	ctx := context.Background()
 
-	actorRoleID := seedRoleWithPermission(t, db, "s6_actor_role", "users.write")
+	actorRoleID := seedRoleWithPermissions(t, db, "s6_actor_role", "users.write", "roles.read")
 	actorID := seedSharedSecretsUser(t, db, "s6_admin_actor", actorRoleID)
 	targetID := seedSharedSecretsUser(t, db, "s6_ordinary_target", 0)
 	secretID := seedShareForRecipient(t, db, targetID)
@@ -148,14 +150,46 @@ func TestListSharedSecretsForUser_AdminViewsLowerRankedUser_AllowedAndAudited(t 
 	assert.True(t, *event.Success)
 }
 
+// TestListSharedSecretsForUser_OrdinaryUserRefusedAgainstSameRankPeer_MissingAdminPermission:
+// secrets.read + the S1 ceiling alone are NOT sufficient to gate a cross-user
+// view -- secrets.read is routinely bundled with users.read into ordinary,
+// non-admin roles (project_viewer holds exactly this pair), and the ceiling
+// only refuses a target holding MORE than the actor, which a same-rank peer
+// never does. An actor holding the SAME secrets.read+users.read bundle as an
+// ordinary project_viewer, with no roles.read, must be refused viewing a
+// same-rank peer's shares.
+func TestListSharedSecretsForUser_OrdinaryUserRefusedAgainstSameRankPeer_MissingAdminPermission(t *testing.T) {
+	cs, db := freshSharedSecretsAdminViewCore(t)
+	ctx := context.Background()
+
+	// Mirrors project_viewer's exact permission bundle (auth_bootstrap.go's
+	// defaultRoles) -- deliberately NOT roles.read.
+	ordinaryRoleID := seedRoleWithPermissions(t, db, "s6_project_viewer_like", "secrets.read", "users.read")
+	actorID := seedSharedSecretsUser(t, db, "s6_ordinary_actor", ordinaryRoleID)
+	peerID := seedSharedSecretsUser(t, db, "s6_ordinary_peer", ordinaryRoleID)
+	seedShareForRecipient(t, db, peerID)
+
+	secrets, err := cs.ListSharedSecretsForUser(ctx, actorID, peerID)
+	require.Error(t, err)
+	assert.Nil(t, secrets)
+	assert.True(t, errors.Is(err, core.ErrInsufficientAdminAuthority),
+		"secrets.read+users.read alone must not be enough to view a same-rank peer's shares")
+
+	assert.Equal(t, int64(1), countAuditEvents(t, db, core.EventAdminRankCeilingRefused))
+	assert.Zero(t, countAuditEvents(t, db, string(core.ShareAuditEventSharedSecretsAdminViewed)),
+		"a refused attempt must never also emit the disclosure event")
+}
+
 // TestListSharedSecretsForUser_LowerRankActorRefusedAgainstHigherRankedTarget:
-// an actor holding only users.write (not global admin) must be refused when
-// targeting a real admin-bypass user — the S1 ceiling extended to this route.
+// an actor holding roles.read (passes the admin-permission gate) but not
+// global admin must still be refused when targeting a real admin-bypass user
+// — the S1 ceiling extended to this route, exercised independently of the
+// roles.read gate above it.
 func TestListSharedSecretsForUser_LowerRankActorRefusedAgainstHigherRankedTarget(t *testing.T) {
 	cs, db := freshSharedSecretsAdminViewCore(t)
 	ctx := context.Background()
 
-	actorRoleID := seedRoleWithPermission(t, db, "s6_weak_actor_role", "users.write")
+	actorRoleID := seedRoleWithPermissions(t, db, "s6_weak_actor_role", "users.write", "roles.read")
 	actorID := seedSharedSecretsUser(t, db, "s6_weak_actor", actorRoleID)
 	adminRoleID := seedBypassRole(t, db, "system_admin")
 	targetID := seedSharedSecretsUser(t, db, "s6_admin_target", adminRoleID)
@@ -181,7 +215,7 @@ func TestListSharedSecretsForUser_UnknownTarget_RefusedIdenticallyToRealCeilingR
 	cs, db := freshSharedSecretsAdminViewCore(t)
 	ctx := context.Background()
 
-	actorRoleID := seedRoleWithPermission(t, db, "s6_probe_actor_role", "users.write")
+	actorRoleID := seedRoleWithPermissions(t, db, "s6_probe_actor_role", "users.write", "roles.read")
 	actorID := seedSharedSecretsUser(t, db, "s6_probe_actor", actorRoleID)
 	const nonexistentTargetID = uint(999999)
 
@@ -202,7 +236,7 @@ func TestListSharedSecretsForUser_EqualRankActorAllowed(t *testing.T) {
 	cs, db := freshSharedSecretsAdminViewCore(t)
 	ctx := context.Background()
 
-	roleID := seedRoleWithPermission(t, db, "s6_equal_role", "users.write")
+	roleID := seedRoleWithPermissions(t, db, "s6_equal_role", "users.write", "roles.read")
 	actorID := seedSharedSecretsUser(t, db, "s6_equal_actor", roleID)
 	targetID := seedSharedSecretsUser(t, db, "s6_equal_target", roleID)
 	secretID := seedShareForRecipient(t, db, targetID)
@@ -224,7 +258,7 @@ func TestListSharedSecretsForUser_TargetWithNoSharesReturnsEmptyNotNil(t *testin
 	cs, db := freshSharedSecretsAdminViewCore(t)
 	ctx := context.Background()
 
-	actorRoleID := seedRoleWithPermission(t, db, "s6_empty_actor_role", "users.write")
+	actorRoleID := seedRoleWithPermissions(t, db, "s6_empty_actor_role", "users.write", "roles.read")
 	actorID := seedSharedSecretsUser(t, db, "s6_empty_actor", actorRoleID)
 	targetID := seedSharedSecretsUser(t, db, "s6_empty_target", 0)
 
