@@ -478,15 +478,28 @@ const ceilingCacheTTL = 60 * time.Second
 // not repeated on every ValidateSessionToken call (IMP-001). The cache TTL is
 // intentionally 2× the auth-cache window so a cache miss here never triggers
 // two consecutive uncached ceiling checks within the same outer auth-cache miss.
+//
+// Uses authEffectiveNow(), not raw c.now() (2026-09-23 finding, docs/findings/
+// 2026-09-23-FINDING-impersonation-ceiling-cache-clock-regression.md): both the
+// cache write and the cache read must share ONE clock that never regresses, or
+// a server clock stepped backward (NTP correction, manual time change) after a
+// verdict is cached makes the read-side comparison keep landing before
+// expiresAt, extending a stale ALLOW past the intended 60s ceiling for as long
+// as the clock stays behind -- exactly the hazard authEffectiveNow's watermark
+// already exists to close for every other check on this same per-request
+// session-validation path (ValidateSessionToken calls it immediately before
+// this, for session ExpiresAt/AbsoluteExpiresAt -- auth.go). Reusing it here
+// keeps the impersonation ceiling on the SAME clock as the rest of that path,
+// rather than adding a dedicated watermark for one more check.
 func (c *KeyorixCore) cachedImpersonationCeiling(ctx context.Context, actorID, targetID uint) error {
 	key := fmt.Sprintf("%d:%d", actorID, targetID)
 	if v, ok := c.impersonationCeilingCache.Load(key); ok {
-		if entry := v.(ceilingCacheEntry); c.now().Before(entry.expiresAt) {
+		if entry := v.(ceilingCacheEntry); c.authEffectiveNow().Before(entry.expiresAt) {
 			return entry.err
 		}
 	}
 	err := c.requireStillAuthorizedToImpersonate(ctx, actorID, targetID)
-	c.impersonationCeilingCache.Store(key, ceilingCacheEntry{err: err, expiresAt: c.now().Add(ceilingCacheTTL)})
+	c.impersonationCeilingCache.Store(key, ceilingCacheEntry{err: err, expiresAt: c.authEffectiveNow().Add(ceilingCacheTTL)})
 	return err
 }
 
