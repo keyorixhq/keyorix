@@ -1365,6 +1365,21 @@ func TestImpersonationRoundTrip_CookieSwapAndRestore(t *testing.T) {
 	require.NoError(t, json.NewDecoder(endResp.Body).Decode(&endBody))
 	assert.True(t, endBody.Data.AdminSessionRestored)
 
+	// #1974: the restored cookie must carry the admin session's real expiry,
+	// not be a browser-session cookie with no Expires.
+	var restoredSetCookie *http.Cookie
+	for _, c := range endResp.Cookies() {
+		if c.Name == "kx_session" && c.Value != "" {
+			restoredSetCookie = c
+		}
+	}
+	require.NotNil(t, restoredSetCookie, "end-impersonation must re-set the admin's session cookie")
+	assert.False(t, restoredSetCookie.Expires.IsZero(), "restored session cookie must carry an Expires")
+	wantExpiry := testCore.SessionEffectiveExpiry(ctx, originalAdminCookie)
+	require.NotNil(t, wantExpiry)
+	assert.WithinDuration(t, *wantExpiry, restoredSetCookie.Expires, time.Second,
+		"restored cookie's Expires must match the admin session's own effective expiry")
+
 	restoredCookie := adminSessionCookie()
 	assert.Equal(t, originalAdminCookie, restoredCookie, "must restore the SAME original session, not a fresh one")
 	assert.Equal(t, "testadmin", getProfileUsername(), "admin's own identity and permissions are back with no re-login")
