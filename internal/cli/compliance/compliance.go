@@ -6,10 +6,8 @@
 package compliance
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -221,15 +219,24 @@ unless --force is passed (a scheduled/CI evidence run reusing a fixed path needs
 		if !ok {
 			return fmt.Errorf("not connected to a server — run: keyorix connect <server>")
 		}
-		var raw json.RawMessage
-		if err := c.Get(context.Background(), "/api/v1/compliance/evidence", &raw); err != nil {
+		var resp struct {
+			Filename  string `json:"filename"`
+			DataB64   string `json:"data_b64"`
+			Signature string `json:"signature"`
+			Signed    bool   `json:"signed"`
+		}
+		if err := c.Get(context.Background(), "/api/v1/compliance/evidence", &resp); err != nil {
 			return err
 		}
-		var pretty bytes.Buffer
-		if err := json.Indent(&pretty, raw, "", "  "); err != nil {
-			pretty.Write(raw) // fall back to the raw bytes if indent fails
+		// The server already pretty-prints (json.MarshalIndent) before base64-encoding,
+		// and these bytes are exactly what it signed -- do NOT re-indent/reformat them
+		// here: any reformatting would change what gets written to disk from what
+		// `keyorix compliance verify` later reads back, breaking the signature on a
+		// genuinely untampered pack.
+		data, err := base64.StdEncoding.DecodeString(resp.DataB64)
+		if err != nil {
+			return fmt.Errorf("server returned a malformed evidence payload: %w", err)
 		}
-		pretty.WriteByte('\n')
 		if exportOutput != "" {
 			// See emitCSV's doc comment (csv_export.go) for why --force switches to
 			// SecureWriteFile (overwrite allowed, symlink protection unchanged) rather
@@ -238,13 +245,32 @@ unless --force is passed (a scheduled/CI evidence run reusing a fixed path needs
 			if exportForce {
 				writeOut = securefiles.SecureWriteFile
 			}
-			if err := writeOut(filepath.Dir(exportOutput), filepath.Base(exportOutput), pretty.Bytes(), 0o600); err != nil {
+			if err := writeOut(filepath.Dir(exportOutput), filepath.Base(exportOutput), data, 0o600); err != nil {
 				return fmt.Errorf("cannot create output file %q (it may already exist — remove it, choose a different path, or pass --force): %w", exportOutput, err)
 			}
 			fmt.Printf("Evidence pack written to %s.\n", exportOutput)
+			if !resp.Signed {
+				fmt.Println("Note: evidence signing is unavailable on the server (encryption disabled) — this pack cannot be authenticated with `keyorix compliance verify`.")
+				return nil
+			}
+			// The signature is bound to resp.Filename (the server-assigned canonical
+			// name, AUD-009), not to exportOutput's operator-chosen basename -- --output
+			// may legitimately differ (a fixed path for a scheduled/CI run reusing it,
+			// per exportCmd's own --force doc comment). Carrying the canonical name
+			// alongside the signature, rather than re-deriving it from local disk state,
+			// is what `verify` actually checks against later.
+			sigPath := exportOutput + ".sig"
+			sigContent := []byte(resp.Filename + "\n" + resp.Signature + "\n")
+			if err := writeOut(filepath.Dir(sigPath), filepath.Base(sigPath), sigContent, 0o600); err != nil {
+				return fmt.Errorf("evidence pack written, but failed to write its detached signature %q: %w", sigPath, err)
+			}
+			fmt.Printf("Signature written to %s.\n", sigPath)
 			return nil
 		}
-		_, _ = os.Stdout.Write(pretty.Bytes())
+		_, _ = os.Stdout.Write(data)
+		if resp.Signed {
+			fmt.Fprintln(os.Stderr, "Note: signature not persisted (no --output) — re-run with --output FILE to produce a pack `keyorix compliance verify` can check.")
+		}
 		return nil
 	},
 }
@@ -375,17 +401,19 @@ not been modified. Requires server-side encryption (the signing key is DEK-deriv
 		if err != nil {
 			return fmt.Errorf("failed to read %s: %w", verifyFile, err)
 		}
-		sig, err := os.ReadFile(sigPath) // #nosec G304 -- operator-supplied path
+		sigRaw, err := os.ReadFile(sigPath) // #nosec G304 -- operator-supplied path
 		if err != nil {
 			return fmt.Errorf("failed to read signature %s: %w", sigPath, err)
 		}
+		filename, signature := parseEvidenceSignatureFile(sigRaw, verifyFile)
 		c, ok := common.NewRemoteClient()
 		if !ok {
 			return fmt.Errorf("not connected to a server — run: keyorix connect <server>")
 		}
 		body := map[string]string{
 			"data_b64":  base64.StdEncoding.EncodeToString(data),
-			"signature": strings.TrimSpace(string(sig)),
+			"signature": signature,
+			"filename":  filename,
 		}
 		var res struct {
 			Valid          bool   `json:"valid"`
@@ -403,6 +431,26 @@ not been modified. Requires server-side encryption (the signing key is DEK-deriv
 		fmt.Printf("NOT VERIFIED — %s\n", res.Reason)
 		return fmt.Errorf("evidence pack failed verification")
 	},
+}
+
+// parseEvidenceSignatureFile reads a detached ".sig" file. `compliance
+// export` writes two lines — the server-assigned canonical filename the
+// signature is bound to (AUD-009), then the signature itself — since
+// --output lets an operator pick any local path/name, which need not match
+// the canonical one the server signed under; the filename has to travel
+// WITH the signature, not be re-derived from local disk state, or the
+// AUD-009 binding would mean nothing (a valid pack's bytes, presented under
+// a different claimed identity, would still "verify"). A bare single-line
+// signature — the format the scheduled export (ExportComplianceEvidence)
+// writes locally on the server, where the local file is always already
+// named canonically — is also accepted: falls back to verifyFilePath's own
+// basename.
+func parseEvidenceSignatureFile(raw []byte, verifyFilePath string) (filename, signature string) {
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(lines) >= 2 && strings.TrimSpace(lines[0]) != "" && strings.TrimSpace(lines[1]) != "" {
+		return strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1])
+	}
+	return filepath.Base(verifyFilePath), strings.TrimSpace(string(raw))
 }
 
 func init() {

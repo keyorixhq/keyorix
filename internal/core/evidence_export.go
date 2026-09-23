@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
@@ -20,6 +21,36 @@ import (
 // evidenceFileTimeLayout names exported packs to the second, in UTC, sorted
 // lexicographically by time: keyorix-evidence-20060102T150405Z.json.
 const evidenceFileTimeLayout = "20060102T150405Z"
+
+// EvidenceCanonicalFilename returns the canonical archive name for an
+// evidence pack generated at t. Shared by every code path that names or
+// signs a pack (the scheduled export below, and the on-demand HTTP route
+// GenerateSignedComplianceEvidence backs), so the name a signature is bound
+// to (AUD-009) is always computed the same way.
+func EvidenceCanonicalFilename(t time.Time) string {
+	return fmt.Sprintf("keyorix-evidence-%s.json", t.UTC().Format(evidenceFileTimeLayout))
+}
+
+// GenerateSignedComplianceEvidence assembles the evidence pack, assigns it
+// its canonical archive name, and signs filename+data (AUD-009) exactly as
+// ExportComplianceEvidence does for the scheduled job -- the on-demand
+// equivalent for a caller (the GET /api/v1/compliance/evidence HTTP route)
+// that needs the (filename, data, signature) triple without writing
+// anything to the server's own local disk. signed is false, and signature
+// "", when no signing key is configured (encryption disabled).
+func (c *KeyorixCore) GenerateSignedComplianceEvidence(ctx context.Context) (ev *ComplianceEvidence, filename string, data []byte, signature string, signed bool, err error) {
+	ev, err = c.GenerateComplianceEvidence(ctx)
+	if err != nil {
+		return nil, "", nil, "", false, err
+	}
+	data, err = json.MarshalIndent(ev, "", "  ")
+	if err != nil {
+		return nil, "", nil, "", false, fmt.Errorf("evidence export: marshal: %w", err)
+	}
+	filename = EvidenceCanonicalFilename(ev.GeneratedAt)
+	signature, signed = c.signEvidence(filename, data)
+	return ev, filename, data, signature, signed, nil
+}
 
 // EvidenceForwarder ships a marshalled evidence pack to an off-box target (e.g. a
 // webhook / object store). Called only from the once-a-day evidence scheduler, so a
@@ -64,30 +95,22 @@ func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir st
 	if outputDir == "" && c.evidenceForwarder == nil {
 		return nil, fmt.Errorf("evidence export: no delivery target configured (set output_dir or a webhook)")
 	}
-	ev, err := c.GenerateComplianceEvidence(ctx)
+	// The pack's canonical name — used both as the local filename and the off-box
+	// object key, so a file and an object-store copy of the same run line up.
+	// Sign filename+data so the signature binds the pack to its canonical name
+	// (AUD-009: signing data alone let a valid signature be presented as authenticating
+	// a differently-named pack). Signature is "" when signing is unavailable.
+	ev, name, data, signature, signed, err := c.GenerateSignedComplianceEvidence(ctx)
 	if err != nil {
 		return nil, err
-	}
-	data, err := json.MarshalIndent(ev, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("evidence export: marshal: %w", err)
 	}
 
 	res := &EvidenceExportResult{
 		Bytes:           len(data),
 		Degraded:        ev.Posture != nil && ev.Posture.Degraded,
 		DegradedReasons: postureDegradedReasons(ev.Posture),
+		Signed:          signed,
 	}
-
-	// The pack's canonical name — used both as the local filename and the off-box
-	// object key, so a file and an object-store copy of the same run line up.
-	name := fmt.Sprintf("keyorix-evidence-%s.json", ev.GeneratedAt.UTC().Format(evidenceFileTimeLayout))
-
-	// Sign filename+data so the signature binds the pack to its canonical name
-	// (AUD-009: signing data alone let a valid signature be presented as authenticating
-	// a differently-named pack). Signature is "" when signing is unavailable.
-	signature, signed := c.signEvidence(name, data)
-	res.Signed = signed
 
 	if outputDir != "" {
 		if err := os.MkdirAll(outputDir, 0o700); err != nil {

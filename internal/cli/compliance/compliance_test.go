@@ -1,6 +1,8 @@
 package compliance
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -169,9 +171,22 @@ func TestControlsCSV_And_EmitCSV(t *testing.T) {
 }
 
 func TestExport_ToStdoutAndFile(t *testing.T) {
+	// Pretty-printed with the same 2-space indent the real server uses (the
+	// bytes returned in data_b64 are exactly what gets signed/written, never
+	// re-indented downstream — see exportCmd's own comment on this).
+	packBytes := []byte("{\n  \"anchor\": \"abc\",\n  \"posture\": {\n    \"ok\": true\n  }\n}")
 	setupRemote(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/compliance/evidence", r.URL.Path)
-		_, _ = w.Write([]byte(`{"success":true,"data":{"posture":{"ok":true},"anchor":"abc"}}`))
+		resp, err := json.Marshal(map[string]interface{}{
+			"data": map[string]interface{}{
+				"filename":  "keyorix-evidence-20260101T000000Z.json",
+				"data_b64":  base64.StdEncoding.EncodeToString(packBytes),
+				"signature": "",
+				"signed":    false,
+			},
+		})
+		require.NoError(t, err)
+		_, _ = w.Write(resp)
 	})
 
 	// stdout
@@ -188,6 +203,9 @@ func TestExport_ToStdoutAndFile(t *testing.T) {
 	got, err := os.ReadFile(exportOutput)
 	require.NoError(t, err)
 	assert.Contains(t, string(got), "anchor")
+	// signed=false: no detached signature is written (nothing to verify).
+	_, err = os.Stat(exportOutput + ".sig")
+	assert.True(t, os.IsNotExist(err))
 }
 
 func TestInventory_EmitsCSV(t *testing.T) {
