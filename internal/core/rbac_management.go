@@ -586,13 +586,17 @@ func (c *KeyorixCore) RemoveUserRole(ctx context.Context, actorID, userID, roleI
 		}
 	}
 	if scope.ProjectID != 0 && scope.EnvironmentID == 0 {
-		// #1646: the guard's read (existing roles) and the removal below must be
-		// serialized across every replica of an HA deployment, matching
-		// SetProjectMemberRole/RemoveProjectMember's identical use of the same
-		// per-project named lock — two concurrent removals of two different
-		// project admins' grants could otherwise each observe "another admin
-		// survives" before either write commits.
-		if err := c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(scope.ProjectID), func(ctx context.Context) error {
+		// #1646/TOCTOU-1: the guard's read (existing roles), the guard's verdict,
+		// and the removal itself must all happen under ONE WithNamedLock
+		// acquisition, matching SetProjectMemberRole/RemoveProjectMember's shape
+		// (project_members.go) — two concurrent removals of two different project
+		// admins' grants must never both observe "another admin survives" before
+		// either write commits. An earlier version of this function ran the guard
+		// inside WithNamedLock but released the lock BEFORE calling
+		// removeUserRoleUnguarded below, so the lock only serialized the reads,
+		// not the read-then-write sequence; live-reproduced by
+		// TestConcurrency_RemoveUserRole_ProjectScope_ExactlyOneOfTwoAdminsRemoved.
+		return c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(scope.ProjectID), func(ctx context.Context) error {
 			existing, err := c.storage.GetUserRoleIDsExact(ctx, userID, scope)
 			if err != nil {
 				return err
@@ -603,10 +607,11 @@ func (c *KeyorixCore) RemoveUserRole(ctx context.Context, actorID, userID, roleI
 					after = append(after, id)
 				}
 			}
-			return c.guardLastProjectAdmin(ctx, scope.ProjectID, userID, existing, after)
-		}); err != nil {
-			return err
-		}
+			if err := c.guardLastProjectAdmin(ctx, scope.ProjectID, userID, existing, after); err != nil {
+				return err
+			}
+			return c.removeUserRoleUnguarded(ctx, actorID, userID, roleID, scope)
+		})
 	}
 	return c.removeUserRoleUnguarded(ctx, actorID, userID, roleID, scope)
 }
