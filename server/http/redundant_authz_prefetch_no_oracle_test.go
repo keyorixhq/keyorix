@@ -110,7 +110,7 @@ func TestNoExistenceOracle_RESTDeleteSecret(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer "+session.SessionToken)
 		resp, derr := client.Do(req)
 		require.NoError(t, derr)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		body, rderr := io.ReadAll(resp.Body)
 		require.NoError(t, rderr)
 		return resp.StatusCode, string(body)
