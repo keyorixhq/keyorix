@@ -224,6 +224,7 @@ var exercisingTests = map[string][]string{
 	"authLogin":                     {"TestLogin_HappyPath_S8"},
 	"authRefresh":                   {"TestRefreshToken_ValidToken_S7"},
 	"healthCheck":                   {"TestHealthCheck"},
+	"getVersion":                    {"TestVersionHandler_ExposesOnlySkewFields"},
 	"listSecretACLs":                {"TestListSecretACLs_Empty", "TestGrantSecretACL_HappyPath"},
 	"systemInit":                    {"TestAuthHandler_InitSystem_Success"},
 	"exportSecretAccessLog":         {"TestExportAccessLog_JSONFormat", "TestExportAccessLog_CSVFormat"},

@@ -28,6 +28,14 @@ type Config struct {
 	Security    SecurityConfig   `yaml:"security"`
 	SoftDelete  SoftDeleteConfig `yaml:"soft_delete"`
 	Purge       PurgeConfig      `yaml:"purge"`
+	// MinimumCLIVersion is the lowest CLI semantic version (e.g. "1.2.0") this server
+	// accepts, per the tiered version-skew rule (ADR-108 §Decision 3): a CLI build older
+	// than this is refused outright, not just warned. Set this after shipping a CLI-side
+	// security fix, to force operators onto it. Empty (the default) means no floor beyond
+	// the same-major-version rule the CLI applies on its own. Read by
+	// GET /api/v1/version (server/http/handlers/version.go) -- unauthenticated, so a CLI
+	// can check compatibility before it has credentials.
+	MinimumCLIVersion string `yaml:"minimum_cli_version,omitempty"`
 	// RotationReminders configures the opt-in background scheduler that notifies
 	// project admins of secrets overdue / approaching their rotation deadline.
 	RotationReminders RotationRemindersConfig `yaml:"rotation_reminders"`

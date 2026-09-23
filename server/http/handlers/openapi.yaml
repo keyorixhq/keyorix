@@ -241,6 +241,26 @@ paths:
                   timestamp: {type: string, format: date-time}
                   version: {type: string}
                   checks: {type: object}
+  /api/v1/version:
+    get:
+      tags: [System]
+      summary: Version-skew check (unauthenticated)
+      description: >-
+        Return the server's REST API version and the minimum CLI version it accepts (ADR-108
+        PR 0). Unauthenticated, unlike /api/v1/system/info -- a thin CLI must be able to check
+        compatibility before it has credentials. Deliberately narrow: never returns the build
+        version or commit (see /health's own description for the same disclosure rationale).
+      operationId: getVersion
+      responses:
+        '200':
+          description: Version-skew info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api_version: {type: integer, example: 1}
+                  minimum_cli_version: {type: string, example: '1.0.0'}
   /metrics:
     get:
       tags: [System]

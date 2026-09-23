@@ -11,3 +11,10 @@ var (
 	// Commit is the short git commit the binary was built from, or "none".
 	Commit = "none"
 )
+
+// APIVersion is the server's REST API version (ADR-108 PR 0's version-skew mechanism,
+// docs/cli-split-inventory.md §5). Unlike Version/Commit above, it is NOT derived from the
+// build -- it is a small, explicit compatibility number that only changes on a breaking
+// change to the REST contract, so a thin CLI can compare itself against it before trusting
+// any response shape. Bump it by hand when a change would break an older CLI.
+const APIVersion = 1

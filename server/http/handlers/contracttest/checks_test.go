@@ -36,18 +36,23 @@ func TestSpecLoadsAndValidates(t *testing.T) {
 	}
 }
 
-// TestEnforcedSetMatchesADR074 pins the exact 9-operation enforced set
+// TestEnforcedSetMatchesADR074 pins the exact 10-operation enforced set
 // (schema'd minus outOfScopeRegistry's prometheusMetrics -- see ADR-074's
-// "honest enforced baseline" section for which of these 9 carry a real
+// "honest enforced baseline" section for which of these carry a real
 // structured schema vs. a near-content-free `{type: string, format:
 // binary}` one) so a future change to openapi.yaml's schema coverage is
 // visible here, not just via a silently growing/shrinking set.
+//
+// getVersion added by ADR-108 PR 0 (docs/cli-split-inventory.md §5):
+// GET /api/v1/version carries a real `api_version`/`minimum_cli_version`
+// schema from the day it was added, not a later backfill.
 func TestEnforcedSetMatchesADR074(t *testing.T) {
 	want := map[string]bool{
 		"authGetSetupToken":             true,
 		"authLogin":                     true,
 		"authRefresh":                   true,
 		"healthCheck":                   true,
+		"getVersion":                    true,
 		"listSecretACLs":                true,
 		"systemInit":                    true,
 		"exportSecretAccessLog":         true,

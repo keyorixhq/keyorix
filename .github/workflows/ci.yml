@@ -1045,6 +1045,62 @@ jobs:
           [ -x ~/go/bin/gosec ] || go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}" # NOSONAR githubactions:S8545 -- version is pinned via GOSEC_VERSION env var
           gosec -severity medium -exclude-generated ./...
 
+  # The thin CLI (ADR-108) is a separate Go module (cli/), same pattern as operator/ above:
+  # its own go.mod, excluded from the repo's go.work, gated here rather than by the root
+  # `go ./...` jobs. Unlike operator, that exclusion is load-bearing for a security property,
+  # not just dependency-tree hygiene -- cli/internal/depguard's test is what actually proves
+  # the module never imports server code or a cloud SDK; this job is what runs it on every PR.
+  cli:
+    needs: [changes]
+    # Deliberately NOT gated on any *_only flag -- same reasoning as operator above: a diff
+    # confined elsewhere still needs this job's own build/test/depguard result reported.
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: cli
+    env:
+      GOWORK: off
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+
+      - name: go vet + build
+        run: |
+          go vet ./...
+          go build ./...
+
+      - name: go test (includes the dependency guard, internal/depguard)
+        run: go test -race -timeout 600s -count=1 ./...
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (echo 'gofmt needed:'; gofmt -l .; exit 1)
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          working-directory: cli
+
+      - name: Cache gosec binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/bin/gosec
+          # Distinct key from operator's and static-analysis's own gosec caches -- same
+          # save-race reasoning as operator's own comment on this same step.
+          key: cli-gosec-${{ env.GOSEC_VERSION }}-${{ runner.os }}
+
+      - name: gosec
+        run: |
+          [ -x ~/go/bin/gosec ] || go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}" # NOSONAR githubactions:S8545 -- version is pinned via GOSEC_VERSION env var
+          gosec -severity medium -exclude-generated ./...
+
   # scripts/fuzzing/targets.conf is the hand-maintained canonical list of this
   # repo's fuzz targets (scripts/fuzzing/README.md) -- it has NO automated link
   # to what `func FuzzXxx` targets actually exist in the tree. (The rig itself

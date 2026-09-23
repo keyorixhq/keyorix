@@ -216,6 +216,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	// transient DB outage won't get the pod restarted).
 	r.Get("/health", handlers.HealthCheck)
 
+	// Version-skew endpoint (ADR-108 PR 0, docs/cli-split-inventory.md §5): unauthenticated,
+	// like /health, so a thin CLI can check compatibility before it has credentials. Kept
+	// separate from /system/info (system.read-gated) rather than adding fields there —
+	// see server/http/handlers/version.go's VersionInfo doc comment for why.
+	r.Get("/api/v1/version", handlers.MakeVersionHandler(cfg))
+
 	// Readiness probe — verifies the database is reachable before routing traffic to
 	// this replica. Unauthenticated, like /health (k8s probes are unauthenticated).
 	r.Get("/readyz", handlers.ReadinessCheck(coreService))
