@@ -21,6 +21,8 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +30,42 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
+
+// jsonRoundTripString returns what s becomes after passing through
+// encoding/json.Marshal then Unmarshal — the same transform a claim value
+// undergoes on its way into and back out of a signed JWT. encoding/json
+// silently rewrites invalid UTF-8 bytes to U+FFFD on Marshal (documented
+// behavior, not a bug), so a fuzzed subject containing invalid UTF-8 does
+// NOT round-trip byte-for-byte; the "0 violations" identity check must
+// compare against this, not the pre-encoding fuzz input, or a perfectly
+// valid accept gets misreported as "wrong identity".
+// boundaryMargin is how far past the verifier's clock-skew leeway an
+// exp/nbf violation is pushed. Originally 1 second — flaky under real fuzzing
+// load: golang-jwt's exp/nbf checks always use real wall-clock time (neither
+// oidc.go nor sso.go calls jwt.WithTimeFunc), so the gap between this test's
+// `now := time.Now()` and the library's own verification-time now() is not
+// zero, and under -parallel=2 CPU contention (GC pauses, goroutine scheduling
+// delays) that gap occasionally exceeded 1 second — enough to make a token
+// meant to be 1s past the boundary land back inside it, producing a false
+// CONSTRAINT BYPASS (found live: kind=nbf_future_beyond_skew accepted after
+// an 8s fuzz run, testdata/fuzz/FuzzOIDCIDTokenSingleConstraintViolation/de868c9cc60f40dd).
+// 10s is comfortably past any realistic scheduling delay while still testing
+// "the skew is bounded, not unlimited" — the ±1s-at-the-exact-edge case this
+// architecture can't reliably assert without clock injection wired into
+// production code, which nothing here calls for.
+const boundaryMargin = 10 * time.Second
+
+func jsonRoundTripString(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return s
+	}
+	var out string
+	if err := json.Unmarshal(b, &out); err != nil {
+		return s
+	}
+	return out
+}
 
 // jwtViolationKind identifies exactly one verification constraint violated by
 // a generated token. jwtViolationNone means "no violation" — the baseline
@@ -53,7 +91,7 @@ const (
 	jwtViolationAudArrayRightAndWrongNoAzp
 	jwtViolationAzpWrongMultiAud
 	jwtViolationExpMissing
-	jwtViolationExpPastSkewBoundary // exp = now - (skew + 1s): exactly 1s past the leeway
+	jwtViolationExpPastSkewBoundary // exp = now - (skew + boundaryMargin): past the leeway
 	jwtViolationNbfFutureBeyondSkew
 	jwtViolationSubEmpty
 	// jwtViolationCritHeader carries a "crit" JOSE header (RFC 7515 §4.1.11: a
@@ -262,9 +300,9 @@ func applySharedJWTViolation(kind jwtViolationKind, claims jwt.MapClaims, now ti
 	case jwtViolationExpMissing:
 		delete(claims, "exp")
 	case jwtViolationExpPastSkewBoundary:
-		claims["exp"] = now.Add(-(leeway + time.Second)).Unix()
+		claims["exp"] = now.Add(-(leeway + boundaryMargin)).Unix()
 	case jwtViolationNbfFutureBeyondSkew:
-		claims["nbf"] = now.Add(leeway + time.Second).Unix()
+		claims["nbf"] = now.Add(leeway + boundaryMargin).Unix()
 	case jwtViolationSubEmpty:
 		claims["sub"] = ""
 	case jwtViolationIatFutureBeyondLeeway:
@@ -325,7 +363,7 @@ func FuzzOIDCIDTokenSingleConstraintViolation(f *testing.F) {
 		if idx > 0 {
 			kind = kinds[idx-1]
 		}
-		if sub == "" && kind != jwtViolationSubEmpty {
+		if strings.TrimSpace(sub) == "" && kind != jwtViolationSubEmpty {
 			sub = "service-account:ns/fuzz" // don't let a fuzzed empty subject smuggle in a second, unintended violation
 		}
 
@@ -345,8 +383,8 @@ func FuzzOIDCIDTokenSingleConstraintViolation(f *testing.F) {
 			if verr != nil {
 				t.Fatalf("0 violations: expected acceptance, got rejection: %v", verr)
 			}
-			if issuer != trustedIss || subject != sub {
-				t.Fatalf("0 violations: accepted with the wrong identity: issuer=%q subject=%q want iss=%q sub=%q", issuer, subject, trustedIss, sub)
+			if wantSub := jsonRoundTripString(sub); issuer != trustedIss || subject != wantSub {
+				t.Fatalf("0 violations: accepted with the wrong identity: issuer=%q subject=%q want iss=%q sub=%q", issuer, subject, trustedIss, wantSub)
 			}
 			return
 		}
@@ -409,7 +447,7 @@ func FuzzSSOIDTokenSingleConstraintViolation(f *testing.F) {
 		if idx > 0 {
 			kind = kinds[idx-1]
 		}
-		if sub == "" && kind != jwtViolationSubEmpty {
+		if strings.TrimSpace(sub) == "" && kind != jwtViolationSubEmpty {
 			sub = "okta|fuzz"
 		}
 
@@ -429,8 +467,8 @@ func FuzzSSOIDTokenSingleConstraintViolation(f *testing.F) {
 			if verr != nil {
 				t.Fatalf("0 violations: expected acceptance, got rejection: %v", verr)
 			}
-			if subject != sub {
-				t.Fatalf("0 violations: accepted with the wrong identity: subject=%q want sub=%q", subject, sub)
+			if wantSub := jsonRoundTripString(sub); subject != wantSub {
+				t.Fatalf("0 violations: accepted with the wrong identity: subject=%q want sub=%q", subject, wantSub)
 			}
 			return
 		}
