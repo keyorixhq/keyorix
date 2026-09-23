@@ -44,6 +44,14 @@ func TestAddProjectMember_NonAdminRoleAllowed(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	actor := seedUserWithRole(t, st, "pm-actor", "project_developer", storage.Scope{ProjectID: 1})
+	// F6 sweep (2026-09-22): adding a member now ALSO requires roles.assign as
+	// a baseline -- project_developer itself does not bundle it. Give the
+	// actor project_admin too, at the same project, so this test still
+	// isolates "holds every permission the TARGET role bundles" (its actual
+	// subject) from that separate baseline.
+	adminRole, err := st.GetRoleByName(ctx, "project_admin")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRole(ctx, actor, adminRole.ID, storage.Scope{ProjectID: 1}))
 	victim := seedUserWithRole(t, st, "pm-victim2", "project_viewer", storage.Scope{ProjectID: 2})
 
 	require.NoError(t, c.AddProjectMember(ctx, actor, 1, victim, "project_developer", false))
@@ -90,6 +98,12 @@ func TestAssignUserRoleWithExpiry_NonAdminRoleAllowed(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	actor := seedUserWithRole(t, st, "jit-actor", "project_developer", storage.Scope{ProjectID: 1})
+	// F6 sweep (2026-09-22): granting ANY role now ALSO requires roles.assign
+	// as a baseline -- project_developer itself does not bundle it. See
+	// TestAddProjectMember_NonAdminRoleAllowed's identical comment above.
+	adminRole, err := st.GetRoleByName(ctx, "project_admin")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRole(ctx, actor, adminRole.ID, storage.Scope{ProjectID: 1}))
 	victim := seedUserWithRole(t, st, "jit-victim2", "project_viewer", storage.Scope{ProjectID: 2})
 	role, err := st.GetRoleByName(ctx, "project_developer")
 	require.NoError(t, err)

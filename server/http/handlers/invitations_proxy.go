@@ -156,10 +156,40 @@ func (h *CatalogHandler) CreateInvitationProxy(w http.ResponseWriter, r *http.Re
 	// authority) without that admin ever making the call -- one request planted
 	// a live, pending system_admin invitation to an attacker-controlled email,
 	// falsely attributed in the record to a real administrator. actorID(r)
-	// resolves the real caller instead; RequireAuthorityForRole is a
-	// user-scoped check (internal/core/authz.go's scopedRoleIDs walks user role
-	// grants only), so a machine actor's actorID(r) is always 0 here and
-	// correctly never passes -- inviting someone is a human-only decision.
+	// resolves the real caller instead.
+	//
+	// F6 sweep (2026-09-22): a genuine machine inviter must be tagged via
+	// WithSystemProxyMachineGranter before these checks (and the roles.assign
+	// baseline requireGranterHoldsRolePermissions now enforces) can ever
+	// resolve against its OWN real permissions -- mirroring InviteToProject's
+	// (internal/core/invitations.go) identical, already-established tagging
+	// for the conceptually equivalent human-facing operation. Without this, a
+	// prior version of this comment's claim that "a machine actor... correctly
+	// never passes" was actually just this proxy never having tagged itself,
+	// not a deliberate human-only policy -- InviteToProject's own ceiling
+	// applies to (and supports) machine inviters identically to human ones.
+	actorType, principalID := requestActorKindAndID(r)
+	ctx := r.Context()
+	if actorType == core.ActorTypeMachine {
+		ctx = core.WithSystemProxyMachineGranter(ctx, principalID)
+	}
+	r = r.WithContext(ctx)
+	// F6 sweep (2026-09-22), G3 probe TestG3Probe_CreateInvitationProxy_SystemWriteOnly_CreatesRoleLessInvitation:
+	// the three checks below are each gated on their own field being
+	// non-empty, so a request with Role/SystemRole/AssignmentsJSON all empty
+	// (still legal per the ProjectID-required check above) ran NONE of
+	// them -- a system.write-only caller with no roles.assign anywhere could
+	// plant a role-less project invitation. InviteToProject (the
+	// human-facing equivalent) cannot produce this shape at all: role is a
+	// mandatory, non-empty parameter there. Require roles.assign at the
+	// target project scope unconditionally, mirroring TransitionMembership's
+	// identical baseline-before-the-branches fix.
+	if body.ProjectID != 0 {
+		if err := h.coreService.RequireRolesAssignAuthority(r.Context(), actorType, principalID, core.Scope{ProjectID: body.ProjectID}); err != nil {
+			writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+			return
+		}
+	}
 	if body.Role != "" {
 		roleModel, roleErr := h.coreService.Storage().GetRoleByName(r.Context(), body.Role)
 		if roleErr != nil {

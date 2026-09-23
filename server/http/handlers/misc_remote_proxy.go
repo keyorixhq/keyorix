@@ -323,7 +323,17 @@ func (h *UserHandler) CreateUserWithRoleGrantsProxy(w http.ResponseWriter, r *ht
 			Scope:  storage.Scope{ProjectID: g.ProjectID, EnvironmentID: g.EnvironmentID},
 		})
 	}
-	if err := h.coreService.ValidateRoleGrantAuthority(r.Context(), actorID(r), isMachineActor(r), grants); err != nil {
+	// F6 sweep (2026-09-22): a genuine machine caller (this route's primary,
+	// documented use case -- a RemoteStorage node relaying its own already-
+	// built grant set) must be tagged via WithSystemProxyMachineGranter before
+	// ValidateRoleGrantAuthority's per-grant requireGranterHoldsRolePermissions
+	// calls (and the users.write/roles.assign baselines they now enforce) can
+	// resolve against its OWN real permissions.
+	ctx := r.Context()
+	if isMachineActor(r) {
+		ctx = core.WithSystemProxyMachineGranter(ctx, machineID(r))
+	}
+	if err := h.coreService.ValidateRoleGrantAuthority(ctx, actorID(r), isMachineActor(r), grants); err != nil {
 		// Fail closed: an underlying storage error while evaluating authority is
 		// indistinguishable from a genuine refusal at this layer, and reporting it
 		// as anything other than a flat denial risks leaking whether a specific

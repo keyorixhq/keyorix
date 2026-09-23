@@ -1748,6 +1748,7 @@ func TestAddGroupMemberProxy_HappyPath_S11(t *testing.T) {
 	body := fmt.Sprintf(`{"user_id":%d}`, user.ID)
 	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	r = withChiParamS8(r, "id", fmt.Sprintf("%d", grp.ID))
+	r = r.WithContext(contextWithUser(r.Context(), &middleware.UserContext{UserID: user.ID, Username: user.Username}))
 	w := httptest.NewRecorder()
 	h.AddGroupMemberProxy(w, r)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -1770,6 +1771,7 @@ func TestRemoveGroupMemberProxy_HappyPath_S11(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodDelete, "/", nil)
 	r = withChiParamsS8(r, map[string]string{"id": fmt.Sprintf("%d", grp.ID), "userId": fmt.Sprintf("%d", user.ID)})
+	r = r.WithContext(contextWithUser(r.Context(), &middleware.UserContext{UserID: user.ID, Username: user.Username}))
 	w := httptest.NewRecorder()
 	h.RemoveGroupMemberProxy(w, r)
 	assert.Equal(t, http.StatusOK, w.Code)

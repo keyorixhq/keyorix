@@ -62,6 +62,33 @@ func TestWireActorForgery_CreateInvitationProxy_RealAdminSucceeds(t *testing.T) 
 	require.Equal(t, http.StatusOK, status, "a genuine admin authenticating as themselves must still be able to create a system_admin invitation")
 }
 
+// grantRolesAssignAtProject gives userID a dedicated role bundling ONLY
+// roles.assign at the fixture's project. F6 sweep (2026-09-22): creating a
+// project invitation and approving a project access request now require a
+// roles.assign baseline at the project, independent of the granted role's own
+// (here empty) bundle. The PersistedXIsAlwaysCaller tests below need a request
+// that actually persists to check attribution, so their caller must clear it;
+// the forged-admin tests above deliberately keep the bare system.write caller.
+func grantRolesAssignAtProject(t *testing.T, f *machinePrivilegeCeilingFixture, userID uint, roleName string) {
+	t.Helper()
+	ctx := context.Background()
+	perms, err := f.core.Storage().ListPermissions(ctx)
+	require.NoError(t, err)
+	var permID uint
+	for _, p := range perms {
+		if p.Name == "roles.assign" {
+			permID = p.ID
+		}
+	}
+	require.NotZero(t, permID, "bootstrap must seed the roles.assign permission")
+	name, err := identity.NewFoldedName(roleName)
+	require.NoError(t, err)
+	role, err := f.core.Storage().CreateRole(ctx, name, "test-only role: roles.assign baseline")
+	require.NoError(t, err)
+	require.NoError(t, f.core.Storage().AssignPermissionToRole(ctx, role.ID, permID))
+	require.NoError(t, f.core.Storage().AssignRole(ctx, userID, role.ID, coreStorage.Scope{ProjectID: f.projectID}))
+}
+
 // TestWireActorForgery_CreateInvitationProxy_PersistedInvitedByIsAlwaysCaller
 // closes a gap in the two tests above: both only exercise a FORBIDDEN path
 // (system_admin is admin-tier, so the ceiling rejects the request before
@@ -80,6 +107,7 @@ func TestWireActorForgery_CreateInvitationProxy_PersistedInvitedByIsAlwaysCaller
 	ctx := context.Background()
 	caller, err := f.core.GetUserByEmail(ctx, "sys_write_only@example.com")
 	require.NoError(t, err)
+	grantRolesAssignAtProject(t, f, caller.ID, "attribution_test_roles_assign_inv")
 
 	roleName, err := identity.NewFoldedName("ceiling_test_non_admin_invitee_role")
 	require.NoError(t, err)
@@ -160,6 +188,7 @@ func TestWireActorForgery_UpdateAccessRequestProxy_PersistedResolvedByIsAlwaysCa
 	ctx := context.Background()
 	caller, err := f.core.GetUserByEmail(ctx, "sys_write_only@example.com")
 	require.NoError(t, err)
+	grantRolesAssignAtProject(t, f, caller.ID, "attribution_test_roles_assign_ar")
 
 	_, err = f.core.CreateUser(ctx, &core.CreateUserRequest{
 		Username: "wire_forge_requester3", Email: "wire_forge_requester3@example.com", Password: "Rq9!Qr7#Kp2$Lm5@",

@@ -406,29 +406,63 @@ func TestListGroupsPageProxy_DBError_S35(t *testing.T) {
 
 // AddGroupMemberProxy: broken DB → AddUserToGroup → GetUser fails with
 // "Data retrieval failed" → isGroupNotFound=false → 500.
+// AddGroupMemberProxy: DB write to user_groups fails → 500. freshCoreBrokenS35
+// (whole-storage-broken) no longer isolates this -- F6 sweep (2026-09-22)
+// added a roles.assign authority check that itself needs to READ storage
+// (GetUserRoleIDsAt/GetUserGroupRoleIDsAt) before the write is ever attempted,
+// so a fully-broken core now 403s there instead of reaching the write at all.
+// Mirrors TestRestoreGroupProxy_DBError_S35's SQL-trigger isolation: a
+// working admin-backed core with a trigger that blocks ONLY the targeted
+// INSERT, so the 500 is proven to come from THIS write, not the new check.
 func TestAddGroupMemberProxy_DBError_S35(t *testing.T) {
 	t.Parallel()
-	kc := freshCoreBrokenS35(t)
-	h, err := NewGroupHandler(kc)
+	cs, db := freshCoreS12WithAdmin(t)
+	h, err := NewGroupHandler(cs)
 	require.NoError(t, err)
-	body := bytes.NewBufferString(`{"user_id":2}`)
-	r := withChiParamS7(
-		httptest.NewRequest(http.MethodPost, "/api/v1/system/groups/1/members", body), "id", "1")
+	grp := &models.Group{Name: "s35-addmember-dberror", NameFolded: "s35-addmember-dberror"}
+	require.NoError(t, db.Create(grp).Error)
+	target := &models.User{Username: "s35-addmember-target", Email: "s35-addmember-target@example.com", AccountState: "active"}
+	require.NoError(t, db.Create(target).Error)
+	require.NoError(t, db.Exec(`
+		CREATE TRIGGER block_user_groups_insert
+		BEFORE INSERT ON user_groups
+		BEGIN
+			SELECT RAISE(ABORT, 'simulated write failure: disk quota exceeded on host db-07.internal');
+		END;
+	`).Error)
+	body := bytes.NewBufferString(fmt.Sprintf(`{"user_id":%d}`, target.ID))
+	r := withUserCtx(withChiParamS7(
+		httptest.NewRequest(http.MethodPost, "/api/v1/system/groups/1/members", body), "id", fmt.Sprintf("%d", grp.ID)))
 	w := httptest.NewRecorder()
 	h.AddGroupMemberProxy(w, r)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-// RemoveGroupMemberProxy: broken DB → RemoveUserFromGroup fails → 500.
+// RemoveGroupMemberProxy: DB delete on user_groups fails → 500. Same
+// isolation rationale and pattern as TestAddGroupMemberProxy_DBError_S35
+// above -- a working admin-backed core with a real membership row and a
+// trigger blocking only the targeted DELETE.
 func TestRemoveGroupMemberProxy_DBError_S35(t *testing.T) {
 	t.Parallel()
-	kc := freshCoreBrokenS35(t)
-	h, err := NewGroupHandler(kc)
+	cs, db := freshCoreS12WithAdmin(t)
+	h, err := NewGroupHandler(cs)
 	require.NoError(t, err)
-	r := withChiParamsMapS7(
+	grp := &models.Group{Name: "s35-removemember-dberror", NameFolded: "s35-removemember-dberror"}
+	require.NoError(t, db.Create(grp).Error)
+	target := &models.User{Username: "s35-removemember-target", Email: "s35-removemember-target@example.com", AccountState: "active"}
+	require.NoError(t, db.Create(target).Error)
+	require.NoError(t, db.Create(&models.UserGroup{UserID: target.ID, GroupID: grp.ID}).Error)
+	require.NoError(t, db.Exec(`
+		CREATE TRIGGER block_user_groups_delete
+		BEFORE DELETE ON user_groups
+		BEGIN
+			SELECT RAISE(ABORT, 'simulated write failure: disk quota exceeded on host db-07.internal');
+		END;
+	`).Error)
+	r := withUserCtx(withChiParamsMapS7(
 		httptest.NewRequest(http.MethodDelete, "/api/v1/system/groups/1/members/2", nil),
-		map[string]string{"id": "1", "userId": "2"},
-	)
+		map[string]string{"id": fmt.Sprintf("%d", grp.ID), "userId": fmt.Sprintf("%d", target.ID)},
+	))
 	w := httptest.NewRecorder()
 	h.RemoveGroupMemberProxy(w, r)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)

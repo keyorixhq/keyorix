@@ -33,6 +33,16 @@ func TestAssignMachineRole_MachineGranterHoldingRolePermissionsAllowed(t *testin
 	// bypassing the ceiling check itself (the same pattern
 	// TestAddUserToGroup_EscalationByProxyBlocked uses for its group's grant).
 	require.NoError(t, st.AssignMachineRole(ctx, granter.ID, devRole.ID, storage.Scope{ProjectID: 1}))
+	// F6 sweep (2026-09-22): granting ANY role now ALSO requires roles.assign
+	// as a baseline, independent of the target role's own bundle --
+	// project_developer itself does not bundle roles.assign (by design: a
+	// developer may read/write/rotate secrets but may not grant roles). Give
+	// the granter project_admin too, which does bundle roles.assign, so this
+	// test still isolates "holds every permission the TARGET role bundles"
+	// from the separate roles.assign baseline this fix adds.
+	adminRole, err := st.GetRoleByName(ctx, "project_admin")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignMachineRole(ctx, granter.ID, adminRole.ID, storage.Scope{ProjectID: 1}))
 
 	// Tag ctx exactly as a real direct (non-proxy) HTTP/gRPC handler does --
 	// WithSelfMachineGranter, NOT the general-purpose WithMachineActor a

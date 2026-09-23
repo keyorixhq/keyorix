@@ -257,6 +257,11 @@ func TestAuditService_GetRBACAuditLogs_ReturnsRoleChanges(t *testing.T) {
 	// auditCtx() is user 1 — grant it super_admin (global) so the audit.read check passes.
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "super_admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 0}).Error)
+	// F6 sweep (2026-09-22): granting ANY role now ALSO requires the actor (5)
+	// hold roles.assign as a baseline at the target scope -- give it super_admin
+	// too (global, covers the narrower project-scoped check), unrelated to this
+	// test's actual subject (the audit log correctly records the grant).
+	require.NoError(t, db.Create(&models.UserRole{UserID: 5, RoleID: 1, ProjectID: 0}).Error)
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	require.NoError(t, c.AssignUserRole(context.Background(), 5, 10, 2, core.Scope{ProjectID: 3}, false))
 

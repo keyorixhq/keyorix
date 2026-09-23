@@ -142,7 +142,15 @@ func (h *RBACHandler) AssignRoleWithExpiryProxy(w http.ResponseWriter, r *http.R
 		return
 	}
 	scope := coreStorage.Scope{ProjectID: body.ProjectID, EnvironmentID: body.EnvironmentID}
-	err := h.coreService.AssignUserRoleWithExpiry(r.Context(), actorID(r), body.UserID, body.RoleID, scope, body.ExpiresAt, isMachineActor(r))
+	// F6 sweep (2026-09-22): AssignUserRoleWithExpiry's own roles.assign
+	// baseline (requireGranterHoldsRolePermissions) reads the
+	// WithSystemProxyMachineGranter tag from ctx rather than tagging itself -- a
+	// genuine machine caller must be tagged here first.
+	ctx := r.Context()
+	if isMachineActor(r) {
+		ctx = core.WithSystemProxyMachineGranter(ctx, machineID(r))
+	}
+	err := h.coreService.AssignUserRoleWithExpiry(ctx, actorID(r), body.UserID, body.RoleID, scope, body.ExpiresAt, isMachineActor(r))
 	if err != nil {
 		log.Printf("rbac role-grants proxy: assign role with expiry failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -155,14 +163,16 @@ func (h *RBACHandler) AssignRoleWithExpiryProxy(w http.ResponseWriter, r *http.R
 // /api/v1/system/rbac/assign-role-to-group-with-expiry.
 //
 // #1542: routed through core.AssignGroupRoleWithExpiry instead of calling
-// storage.AssignRoleToGroupWithExpiry directly. Unlike AssignRoleWithExpiryProxy,
-// no node-vs-direct-caller branch is needed here: AssignGroupRoleWithExpiry's
-// ceiling (requireAuthorityForRole) only evaluates anything for admin-tier
-// roles, and for those it already denies actorID==0 with no special-casing
-// (the same construction PlaceLegalHold/LiftLegalHold/RestoreProject's
-// admin-tier branch rely on — see docs/adr-085-node-credential-permission-scope.md) —
-// correct for a node relay AND a direct system.write caller alike. A
-// non-admin-tier grant (the ordinary relay case) passes through unchanged.
+// storage.AssignRoleToGroupWithExpiry directly.
+//
+// F6 sweep (2026-09-22): the comment previously here claimed no node-vs-
+// direct-caller branch was needed because AssignGroupRoleWithExpiry's
+// ceiling (then a fixed-name admin-tier-only check) evaluated nothing for
+// non-admin-tier grants. That ceiling was replaced by
+// requireGranterHoldsRolePermissions, which now runs a roles.assign
+// baseline check for every grant regardless of tier, so the claim no longer
+// holds — a genuine machine caller must be tagged via
+// WithSystemProxyMachineGranter before that baseline can resolve.
 func (h *RBACHandler) AssignRoleToGroupWithExpiryProxy(w http.ResponseWriter, r *http.Request) {
 	var body roleWithExpiryProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -174,7 +184,11 @@ func (h *RBACHandler) AssignRoleToGroupWithExpiryProxy(w http.ResponseWriter, r 
 		return
 	}
 	scope := coreStorage.Scope{ProjectID: body.ProjectID, EnvironmentID: body.EnvironmentID}
-	if err := h.coreService.AssignGroupRoleWithExpiry(r.Context(), actorID(r), body.GroupID, body.RoleID, scope, body.ExpiresAt, isMachineActor(r)); err != nil {
+	ctx := r.Context()
+	if isMachineActor(r) {
+		ctx = core.WithSystemProxyMachineGranter(ctx, machineID(r))
+	}
+	if err := h.coreService.AssignGroupRoleWithExpiry(ctx, actorID(r), body.GroupID, body.RoleID, scope, body.ExpiresAt, isMachineActor(r)); err != nil {
 		log.Printf("rbac role-grants proxy: assign role to group with expiry failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return

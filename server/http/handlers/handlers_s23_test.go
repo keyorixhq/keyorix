@@ -70,10 +70,10 @@ func TestAddGroupMemberProxy_HappyPath_S23(t *testing.T) {
 	require.NoError(t, db.Create(user).Error)
 
 	body, _ := json.Marshal(map[string]interface{}{"user_id": user.ID})
-	req := withChiParam(
+	req := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPost, "/api/v1/system/groups/1/members", bytes.NewReader(body)),
 		"id", uintStr(created.ID),
-	)
+	))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.AddGroupMemberProxy(w, req)
@@ -90,14 +90,14 @@ func TestAddGroupMemberProxy_HappyPath_S23(t *testing.T) {
 // non-existent (or existing) member silently succeeds with {"removed":true}.
 // LocalStorage.RemoveUserFromGroup is a DELETE with no not-found error.
 func TestRemoveGroupMemberProxy_HappyPath_S23(t *testing.T) {
-	cs := freshCoreS12(t)
+	cs, _ := freshCoreS12WithAdmin(t)
 	h, err := NewGroupHandler(cs)
 	require.NoError(t, err)
 
-	req := withChiParams2_S23(
+	req := withUserCtx(withChiParams2_S23(
 		httptest.NewRequest(http.MethodDelete, "/api/v1/system/groups/1/members/2", nil),
 		"id", "1", "userId", "2",
-	)
+	))
 	w := httptest.NewRecorder()
 	h.RemoveGroupMemberProxy(w, req)
 
