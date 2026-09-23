@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"golang.org/x/text/language"
 )
@@ -37,25 +36,34 @@ var globalLocalizer *Localizer
 var once sync.Once
 var globMu sync.RWMutex
 
+// LocaleSource is what Initialize needs from the application config: the
+// configured language and fallback language. *config.Config implements it
+// (config.Config.LocaleSettings). Taking this narrow interface instead of
+// *config.Config keeps this package from importing internal/config, so the
+// many packages that translate messages don't link config's dependencies.
+type LocaleSource interface {
+	LocaleSettings() (language, fallbackLanguage string)
+}
+
+// fixedLocale is a LocaleSource with fixed values.
+type fixedLocale struct{ lang, fallback string }
+
+func (f fixedLocale) LocaleSettings() (string, string) { return f.lang, f.fallback }
+
 // InitializeForTesting sets up the i18n system with default config for testing
 func InitializeForTesting() error {
-	defaultConfig := &config.Config{
-		Locale: config.LocaleConfig{
-			Language:         "en",
-			FallbackLanguage: "en",
-		},
-	}
-	return Initialize(defaultConfig)
+	return Initialize(fixedLocale{lang: "en", fallback: "en"})
 }
 
 // Initialize sets up the i18n system with the provided config
-func Initialize(cfg *config.Config) error {
+func Initialize(cfg LocaleSource) error {
+	lang, fallback := cfg.LocaleSettings()
 	var initErr error
 	once.Do(func() {
 		l := &Localizer{
 			bundle:       i18n.NewBundle(language.English),
-			currentLang:  cfg.Locale.Language,
-			fallbackLang: cfg.Locale.FallbackLanguage,
+			currentLang:  lang,
+			fallbackLang: fallback,
 		}
 
 		// If no language is specified, use English
