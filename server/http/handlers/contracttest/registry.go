@@ -115,6 +115,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"listSecrets":                    reasonSchemaNotYetWritten, // get /api/v1/secrets
 	"listSessions":                   reasonSchemaNotYetWritten, // get /api/v1/auth/sessions
 	"listSharedSecrets":              reasonSchemaNotYetWritten, // get /api/v1/shared-secrets
+	"listSharedSecretsForUser":       reasonSchemaNotYetWritten, // get /api/v1/users/{id}/shared-secrets
 	"listShares":                     reasonSchemaNotYetWritten, // get /api/v1/shares
 	"listSoDPolicies":                reasonSchemaNotYetWritten, // get /api/v1/sod/policies
 	"listSoDViolations":              reasonSchemaNotYetWritten, // get /api/v1/sod/violations

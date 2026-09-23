@@ -2357,6 +2357,30 @@ paths:
           description: "Envelope `data.memberships[]` with project_id, project_name, role, state."
         '401': {$ref: '#/components/responses/Error'}
 
+  /api/v1/users/{id}/shared-secrets:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Users]
+      summary: List secrets shared with a specific user (admin-scoped)
+      description: >-
+        Return all secrets shared with the specified user — the same data as
+        GET /api/v1/shared-secrets (the caller's own shares), for an arbitrary
+        target. A self-view (id == the caller) needs only secrets.read;
+        viewing another user's shares additionally requires the S1
+        admin-rank ceiling (the caller must hold, at every scope, every
+        permission the target already holds). A target the caller lacks
+        authority over and a target that does not exist both return the same
+        403 — this route never confirms via status code whether a given user
+        ID exists.
+      operationId: listSharedSecretsForUser
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data.secrets` is the shared secret nodes array.
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
   /api/v1/admin/impersonate:
     post:
       tags: [Users]

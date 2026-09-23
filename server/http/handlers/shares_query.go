@@ -7,6 +7,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -192,6 +193,57 @@ func (h *ShareHandler) ListSharedSecrets(w http.ResponseWriter, r *http.Request)
 	}
 	// #G17: each SecretNode already carries its own ProjectID — no extra lookup
 	// needed. Mirrors the gRPC-side ListSharedSecrets fix in the same finding.
+	projectIDs := make([]uint, 0, len(secrets))
+	for _, sec := range secrets {
+		projectIDs = append(projectIDs, sec.ProjectID)
+	}
+	if middleware.ProjectsMFABlocked(r, h.coreService, projectIDs) {
+		middleware.WriteProjectMFARequired(w)
+		return
+	}
+	if secrets == nil {
+		secrets = []*models.SecretNode{}
+	}
+
+	h.sendSuccess(w, map[string]interface{}{"secrets": secrets}, "")
+}
+
+// ListSharedSecretsForUser handles GET /api/v1/users/{id}/shared-secrets — the
+// secrets shared WITH the target user, for an arbitrary target rather than
+// just the caller. Mirrors ListSharedSecrets (the caller's own shares) in
+// response shape and MFA gating; the authorization is core.KeyorixCore's
+// ListSharedSecretsForUser, which additionally enforces the S1 admin-rank
+// ceiling for any target other than the caller and collapses "target doesn't
+// exist" into the same refusal as a real ceiling refusal (no existence
+// oracle). #2012 CLI-split inventory §6 secondary gap: `keyorix share
+// shared-secrets --user-id N` had no REST route to reach for a target other
+// than the caller before this.
+func (h *ShareHandler) ListSharedSecretsForUser(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
+
+	targetID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		h.sendError(w, "InvalidParameter", errInvalidUserID, http.StatusBadRequest, nil)
+		return
+	}
+
+	secrets, err := h.coreService.ListSharedSecretsForUser(r.Context(), userCtx.UserID, uint(targetID))
+	if err != nil {
+		switch {
+		case errors.Is(err, core.ErrInsufficientAdminAuthority):
+			h.sendError(w, "PermissionDenied", clientSafe(err), http.StatusForbidden, nil)
+		default:
+			log.Printf("Error listing shared secrets for user: %v", err)
+			h.sendError(w, "InternalError", "Failed to list shared secrets", http.StatusInternalServerError, nil)
+		}
+		return
+	}
+	// #G17-style: each SecretNode already carries its own ProjectID — no extra
+	// lookup needed. Mirrors ListSharedSecrets' own MFA gate.
 	projectIDs := make([]uint, 0, len(secrets))
 	for _, sec := range secrets {
 		projectIDs = append(projectIDs, sec.ProjectID)

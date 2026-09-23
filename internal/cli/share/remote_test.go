@@ -56,5 +56,25 @@ func TestShareReadRemote(t *testing.T) {
 	require.True(t, ok)
 
 	require.NoError(t, runListRemote(rc, 7))
-	require.NoError(t, runSharedSecretsRemote(rc))
+	require.NoError(t, runSharedSecretsRemote(rc, 0))
+}
+
+// TestRunSharedSecretsRemote_UserID_RoutesThroughAdminScopedPath asserts that a
+// non-zero --user-id targets the admin-scoped GET /api/v1/users/{id}/shared-secrets
+// route rather than the caller-scoped GET /api/v1/shared-secrets — previously
+// --user-id was silently ignored in remote mode (CLI-split inventory §6).
+func TestRunSharedSecretsRemote_UserID_RoutesThroughAdminScopedPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"data":{"secrets":[]}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "test-token")
+	rc, ok := common.NewRemoteClient()
+	require.True(t, ok)
+
+	require.NoError(t, runSharedSecretsRemote(rc, 42))
+	require.Equal(t, "/api/v1/users/42/shared-secrets", gotPath)
 }

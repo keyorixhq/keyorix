@@ -932,6 +932,19 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission(permRolesAssign)).Put(pathIDRoles, usersRolesHandler.UpdateUserRoles)
 			// Per-user project assignments for the detail page (ADR-025).
 			r.Get("/{id}/memberships", usersRolesHandler.GetUserMembershipsForUser)
+			// Admin-scoped shared-secrets view (CLI-split inventory §6 secondary
+			// gap): the SAME data as GET /api/v1/shared-secrets (the caller's own
+			// shares) for an arbitrary target user. Gated on secrets.read (not
+			// just the group-wide users.read above) since the disclosed data is
+			// secret metadata (name, project, environment) — the same
+			// sensitivity tier as the self-service route, which itself requires
+			// secrets.read, not a user-account permission. A self-view (id ==
+			// caller) needs only that; a cross-user view additionally goes
+			// through the S1 admin-rank ceiling in-core
+			// (ListSharedSecretsForUser), matching the roles.read precedent
+			// above where a more specific, sensitive-data-appropriate
+			// permission was chosen over the blanket group-level gate.
+			r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/{id}/shared-secrets", shareHandler.ListSharedSecretsForUser)
 		})
 
 		// Admin impersonation — gated by users.impersonate, which only global

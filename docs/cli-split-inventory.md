@@ -212,7 +212,7 @@ every other command in these packages.
 | `share update` | update.go:37-92 | F | `PUT /shares/{id}` | write scoped (share) + in-core live-owner check | API — minor CLI output-parity gap only (remote branch prints 3 of ~8 available fields) |
 | `share revoke` | revoke.go:27-51 | F | `DELETE /shares/{id}` | write scoped (share) + in-core live-owner check | API |
 | `share self-remove` | self_remove.go:15-35 | **R**, no fallback | `DELETE /secrets/{id}/self-share` | self-service (RecipientID == caller) | API — the one command in the package already at ADR-107's target shape; structurally distinct from `revoke` (own-share removal vs. owner-driven revocation of anyone's share) |
-| `share shared-secrets [--user-id]` | shared_secrets.go:29-88 | F | `GET /shared-secrets` (self only, hardcoded to caller) | `secrets.read` (global) | API, with a **GAP**: no REST route can query an arbitrary user's shared-secrets list; embedded's `--user-id` can, with zero check (§8 Finding S10) — needs new admin-scoped REST surface, not a `keyorix-server admin` item |
+| `share shared-secrets [--user-id]` | shared_secrets.go:29-91 | F | `GET /shared-secrets` (self, `--user-id` omitted) or `GET /users/{id}/shared-secrets` (arbitrary target, admin-scoped) | `secrets.read` (global) + S1 admin-rank ceiling for a target other than the caller | API — **GAP CLOSED**: `GET /api/v1/users/{id}/shared-secrets` added (`ListSharedSecretsForUser`, `server/http/handlers/shares_query.go`); `--user-id` is now optional (defaults to the caller) and routes through the new admin-scoped endpoint in remote mode instead of being silently ignored. Embedded mode's own `--user-id` still has no actor check (§8 Finding S10's embedded-mode half stands, unchanged) |
 | `share group-shares` | group_shares.go:32-77 | F | `GET /groups/{id}/shares` | `secrets.read` (global) + in-core `#G10` actor-authorization check | API — the strongest-parity command in the package; `#G10` already closed the enumeration gap here specifically |
 
 **`user` (11 leaf):**
@@ -747,9 +747,9 @@ own PR.
    user-impact GAP that is purely a bug fix, not new capability — recommend fixing before or as
    part of the `request` package's migration PR, independent of any ADR decision.
 
-(Two more real gaps, lower individual user impact but both structural: OS-keychain-vs-plaintext
-credential storage — §4 — and `share shared-secrets --user-id`'s missing arbitrary-target REST
-route — §2.2.)
+(One more real gap, lower individual user impact but structural: OS-keychain-vs-plaintext
+credential storage — §4. `share shared-secrets --user-id`'s missing arbitrary-target REST route —
+§2.2 — is now closed: `GET /api/v1/users/{id}/shared-secrets`, admin-rank-ceiling-gated.)
 
 ---
 
@@ -860,9 +860,9 @@ or explicitly defer with a documented known-broken state. Every other command in
 trivial move (already REST-only, no fallback anywhere). Size: small once GAP-4 is resolved
 elsewhere.
 
-**PR 9 — `share` (7 commands).** **Needs a product decision**: `shared-secrets --user-id`'s
-missing arbitrary-target REST route (§6, secondary gap) — build new admin-scoped surface, or drop
-the admin capability from the thin CLI. Size: small.
+**PR 9 — `share` (7 commands).** `shared-secrets --user-id`'s missing arbitrary-target REST route
+(§6, secondary gap) is now closed — `GET /api/v1/users/{id}/shared-secrets`, admin-rank-ceiling-
+gated; no remaining product decision here. Size: small.
 
 **PR 10 — `bundle`, `license`, `system info`/`role-expiry-check`/`token-expiry-check`, `status`
 (remote branch only), `run` (remote branch only) — CLIENT-ONLY/API cleanup (~15 commands).** Drop
@@ -1048,10 +1048,11 @@ restriction respectively. Both are explicitly flagged in the CLI's own code comm
 ("cli-connect-007 (info, deliberate — not a bug)") as an accepted consequence of embedded mode
 having no authenticated-user concept — the residual-risk condition (embedded mode pointed at a
 genuinely multi-tenant backend) is exactly what ADR-108's removal of local mode closes structurally.
-`share shared-secrets --user-id` additionally has no REST equivalent at all (§6, secondary gap) —
-an admin-scoped "list user X's shared secrets" capability that would need new REST surface, not an
-ADR-108 B1-B4 item, if kept. Location: `internal/cli/share/list.go:41-55`,
-`internal/cli/share/shared_secrets.go:44-56`.
+`share shared-secrets --user-id`'s REST-equivalent gap (§6, secondary gap) is now closed —
+`GET /api/v1/users/{id}/shared-secrets` (admin-rank-ceiling-gated) — so this finding now stands
+only for `share list`'s embedded path and `share shared-secrets`'s own embedded path (still no
+actor check locally, per cli-connect-007). Location: `internal/cli/share/list.go:41-55`,
+`internal/cli/share/shared_secrets.go:46-58`.
 
 **S11 (= "D1" in the source inventory) — MEDIUM. `rbac assign-role`/`remove-role`'s embedded-mode
 core methods are structurally incapable of carrying an actor, where the identical group-scoped

@@ -52,7 +52,7 @@ func TestRunSharedSecretsRemote_EmptyResponse(t *testing.T) {
 	rc, ok := common.NewRemoteClient()
 	require.True(t, ok)
 
-	require.NoError(t, runSharedSecretsRemote(rc))
+	require.NoError(t, runSharedSecretsRemote(rc, 0))
 }
 
 func TestRunList_Remote_RoutesThroughRemoteClient(t *testing.T) {
