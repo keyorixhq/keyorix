@@ -2,6 +2,8 @@
 
 ## Status
 
+**Update 2026-09-23: accepted as part of ADR-108** (`docs/adr-108-cli-server-split.md`). ADR-108 goes further: a thin CLI in its own Go module that calls only the human-facing REST API, `keyorix-server admin` subcommands for offline operations, and removal of the `/system` storage-proxy tier. The original status below is kept for history.
+
 **Proposed.** This is a design document only — nothing in this ADR has been
 implemented. It formalizes and extends a pattern that, per the investigation
 below, is **already the dominant real-world CLI code path** — this ADR's
