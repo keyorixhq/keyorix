@@ -49,7 +49,7 @@ wherever a claim rests on a router/handler comment rather than a direct read of 
 | Classified **DROP** (dead, duplicate, or removed-by-design under ADR-108 Decision A) | ~10 |
 | Hard GAPs (CLI operation with no REST route and one is needed) | 7 (see §6) |
 | Candidate security findings (report only, not fixed) | 14 distinct findings across the whole surface (see §8) |
-| `/system` routes (current count) | 133 registered routes (down from ADR-102's 148 — see §3) |
+| `/system` routes (current count) | 151 registered routes (`rg`-verified; ADR-102's own snapshot was 148 — see §3) |
 | `/system` routes with a non-CLI caller | **0** — confirmed by repo-wide grep (web UI, k8s-sync, mcp, operator, SDKs all checked); every `/system` route is either CLI-only-reachable or zero-caller |
 
 **Headline findings, most important first:**
@@ -510,11 +510,16 @@ correct. Embedded/local path is **DROP** — and dropping it is a security fix, 
 
 `server/http/router.go:1126` registers the `/system` route group (`r.Route("/system", ...)`),
 gated by `RequirePermission(permSystemWrite)` at `router.go:1127`, closing at `router.go:2078`
-(verified by brace-depth matching, not assumed). **Current count: 133 route registrations**
-(down from ADR-102's snapshot of 148 — consistent with ADR-083's interim deletion passes: #1480
-alone converted 9 methods to stubs and removed 8 route registrations). It is the server-to-server
-proxy tier originally built for the ADR-049 downstream-node-relay topology and implements
-`storage.Storage` for `RemoteStorage`, the CLI's client-mode Go type.
+(verified by brace-depth matching, not assumed). **Current count: 151 route registrations**
+(`rg -c '\.(Get|Post|Put|Patch|Delete)\('` restricted to lines 1126–2078, re-run during final
+review — corrects an earlier draft of this section, which undercounted at 133; the resource-family
+table below sums to the earlier 133 figure and has not been re-derived line-by-line against the
+corrected count, so treat its per-family numbers as illustrative of the route mix, not as an
+exhaustive partition of all 151). ADR-102's own snapshot ("148") remains a reasonable prior count;
+the small drift from 148 to 151 is expected route churn since ADR-102 was written, not a
+discrepancy worth chasing further. It is the server-to-server proxy tier originally built for the
+ADR-049 downstream-node-relay topology and implements `storage.Storage` for `RemoteStorage`, the
+CLI's client-mode Go type.
 
 ### Architectural finding: no non-CLI caller can reach `/system` today, and none ever could
 
@@ -532,7 +537,7 @@ Two independent facts, both verified directly (not assumed):
    `operator/`: zero matches for `/api/v1/system` or `/system/`. `cmd/keyorix-mcp`: one match, an
    unrelated code comment, not a caller. No `sdk/`-named directory exists in the repo.
 
-**Conclusion: every one of the 133 `/system` routes has exactly one possible caller category — the
+**Conclusion: every one of the 151 `/system` routes has exactly one possible caller category — the
 CLI, in client mode, on the narrow fallback path where its `NewRemoteClient()`-first /
 `InitializeCoreService()`-under-`RemoteStorage`-fallback pattern (ADR-107) actually falls through to
 the fallback.** There is no "other caller: web UI / SDK / k8s-sync / mcp / operator" bucket for this
@@ -845,7 +850,7 @@ should not be scheduled until the design is scoped separately.
 **PR 14 (final, ADR-108 §Decision C) — delete `/system` and `RemoteStorage`.** Gated on every prior
 PR that removes an `InitializeCoreService()`/`NewRemoteClient()`-fallback pattern having landed
 (PRs 1-10) and on the `reachabilityLive`/`reachabilityUnresolved` 21 methods (§3) either getting a
-real REST route or being confirmed genuinely dead by that point. Delete the 133 route
+real REST route or being confirmed genuinely dead by that point. Delete the 151 route
 registrations, their handlers, `internal/storage/store/remote_*.go`, the `~18`
 `remote_storage_*_test.go` parity-fuzzer files, `validateRemoteStorageNotServer`'s enforcement
 (carefully — per its own doc comment, this must go LAST, after the topology it forbids is already
