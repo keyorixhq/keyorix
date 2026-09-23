@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/connect"
+	"github.com/keyorixhq/keyorix/internal/connect/connecttypes"
 	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"gopkg.in/yaml.v3"
@@ -329,6 +329,13 @@ func (p PasswordPolicyConfig) Resolve(defaults PasswordPolicyValues) PasswordPol
 type LocaleConfig struct {
 	Language         string `yaml:"language"`
 	FallbackLanguage string `yaml:"fallback_language"`
+}
+
+// LocaleSettings returns the configured language and fallback language. It
+// satisfies i18n.LocaleSource, so i18n.Initialize(cfg) works without the i18n
+// package importing this one.
+func (c *Config) LocaleSettings() (language, fallbackLanguage string) {
+	return c.Locale.Language, c.Locale.FallbackLanguage
 }
 
 type ServerConfig struct {
@@ -2179,7 +2186,7 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 }
 
 // validateConnectTypes enforces #1476: every cfg.Connect.Connectors entry's Type
-// must be one of connect.KnownTypes, the single source of truth for recognized
+// must be one of connecttypes.KnownTypes, the single source of truth for recognized
 // connector types (see that var's own doc comment for why server/main.go's
 // dispatch switch stays a literal switch rather than deriving from this list, and
 // how the two are kept from drifting apart). Runs BEFORE validateConnectScopes:
@@ -2193,8 +2200,8 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 // Connect-wiring switch used to silently skip (log.Printf, keep booting) a
 // connector whose Type matched no case label — see the v0.92.0 CHANGELOG entry.
 func validateConnectTypes(cc ConnectConfig) error {
-	known := make(map[string]bool, len(connect.KnownTypes))
-	for _, t := range connect.KnownTypes {
+	known := make(map[string]bool, len(connecttypes.KnownTypes))
+	for _, t := range connecttypes.KnownTypes {
 		known[t] = true
 	}
 	var invalid []string
@@ -2205,7 +2212,7 @@ func validateConnectTypes(cc ConnectConfig) error {
 	}
 	if len(invalid) > 0 {
 		return fmt.Errorf("connect: connector(s) with unrecognized type (must be one of %s): %s",
-			strings.Join(connect.KnownTypes, ", "), strings.Join(invalid, ", "))
+			strings.Join(connecttypes.KnownTypes, ", "), strings.Join(invalid, ", "))
 	}
 	return nil
 }
