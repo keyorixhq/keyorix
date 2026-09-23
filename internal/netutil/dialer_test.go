@@ -17,13 +17,14 @@ type fakeConn struct{ net.Conn }
 func TestDialer_DialContext_RefusesDisallowedLiteralIP(t *testing.T) {
 	var dialed string
 	d := Dialer{
+		Resolve:  noDNS(t),
 		Disallow: IsPrivateOrLinkLocal,
 		Dial: func(_ context.Context, _, addr string) (net.Conn, error) {
 			dialed = addr
 			return &fakeConn{}, nil
 		},
 	}
-	_, err := d.DialContext(context.Background(), "tcp", "169.254.169.254:443")
+	_, err := d.DialContext(testCtx(t), "tcp", "169.254.169.254:443")
 	require.Error(t, err, "cloud IMDS literal IP must be refused")
 	assert.Empty(t, dialed, "the underlying dial must never be reached")
 }
@@ -31,13 +32,14 @@ func TestDialer_DialContext_RefusesDisallowedLiteralIP(t *testing.T) {
 func TestDialer_DialContext_AllowsPublicLiteralIP(t *testing.T) {
 	var dialed string
 	d := Dialer{
+		Resolve:  noDNS(t),
 		Disallow: IsPrivateOrLinkLocal,
 		Dial: func(_ context.Context, _, addr string) (net.Conn, error) {
 			dialed = addr
 			return &fakeConn{}, nil
 		},
 	}
-	_, err := d.DialContext(context.Background(), "tcp", "93.184.216.34:443")
+	_, err := d.DialContext(testCtx(t), "tcp", "93.184.216.34:443")
 	require.NoError(t, err)
 	assert.Equal(t, "93.184.216.34:443", dialed)
 }
@@ -68,7 +70,7 @@ func TestDialer_DialContext_DNSRebind(t *testing.T) {
 			return &fakeConn{}, nil
 		},
 	}
-	_, err := d.DialContext(context.Background(), "tcp", net.JoinHostPort(rebindHost, "443"))
+	_, err := d.DialContext(testCtx(t), "tcp", net.JoinHostPort(rebindHost, "443"))
 	require.Error(t, err, "a hostname resolving to a private/link-local address at DIAL time must be refused, even though some earlier check may have seen a different, safe answer")
 	assert.Contains(t, err.Error(), "disallowed address")
 	assert.Empty(t, dialed, "the underlying dial must never be reached for a rebound target")
@@ -90,7 +92,7 @@ func TestDialer_DialContext_PinsFirstValidatedIP_NotHostname(t *testing.T) {
 			return &fakeConn{}, nil
 		},
 	}
-	_, err := d.DialContext(context.Background(), "tcp", net.JoinHostPort(host, "443"))
+	_, err := d.DialContext(testCtx(t), "tcp", net.JoinHostPort(host, "443"))
 	require.NoError(t, err)
 	// The crux of the fix: the actual dial target is the validated IP
 	// literal, never the original hostname — so the connection itself cannot
@@ -114,7 +116,7 @@ func TestDialer_DialContext_AnyDisallowedResolvedAddressRefuses(t *testing.T) {
 			return nil, nil
 		},
 	}
-	_, err := d.DialContext(context.Background(), "tcp", "mixed.example:443")
+	_, err := d.DialContext(testCtx(t), "tcp", "mixed.example:443")
 	require.Error(t, err)
 }
 
@@ -125,7 +127,7 @@ func TestDialer_DialContext_ResolveErrorPropagates(t *testing.T) {
 			return nil, errors.New("boom")
 		},
 	}
-	_, err := d.DialContext(context.Background(), "tcp", "unresolvable.example:443")
+	_, err := d.DialContext(testCtx(t), "tcp", "unresolvable.example:443")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "boom")
 }
@@ -133,12 +135,13 @@ func TestDialer_DialContext_ResolveErrorPropagates(t *testing.T) {
 func TestDialer_DialContext_NilDisallowPermitsEverything(t *testing.T) {
 	var dialed string
 	d := Dialer{
+		Resolve: noDNS(t),
 		Dial: func(_ context.Context, _, addr string) (net.Conn, error) {
 			dialed = addr
 			return &fakeConn{}, nil
 		},
 	}
-	_, err := d.DialContext(context.Background(), "tcp", "169.254.169.254:443")
+	_, err := d.DialContext(testCtx(t), "tcp", "169.254.169.254:443")
 	require.NoError(t, err, "a Dialer with no Disallow predicate is an explicit opt-out, e.g. allow_private_network_target")
 	assert.Equal(t, "169.254.169.254:443", dialed)
 }
@@ -146,20 +149,21 @@ func TestDialer_DialContext_NilDisallowPermitsEverything(t *testing.T) {
 func TestDialer_DialContextTCP_DelegatesToDialContext(t *testing.T) {
 	var network string
 	d := Dialer{
+		Resolve:  noDNS(t),
 		Disallow: IsPrivateOrLinkLocal,
 		Dial: func(_ context.Context, n, addr string) (net.Conn, error) {
 			network = n
 			return &fakeConn{}, nil
 		},
 	}
-	_, err := d.DialContextTCP(context.Background(), "203.0.113.10:443")
+	_, err := d.DialContextTCP(testCtx(t), "203.0.113.10:443")
 	require.NoError(t, err)
 	assert.Equal(t, "tcp", network)
 }
 
 func TestDialer_DialContext_InvalidAddressReturnsError(t *testing.T) {
-	d := Dialer{Disallow: IsPrivateOrLinkLocal}
-	_, err := d.DialContext(context.Background(), "tcp", "not-a-valid-host-port")
+	d := Dialer{Disallow: IsPrivateOrLinkLocal, Resolve: noDNS(t)}
+	_, err := d.DialContext(testCtx(t), "tcp", "not-a-valid-host-port")
 	require.Error(t, err, "an addr with no port must fail SplitHostPort")
 	assert.Contains(t, err.Error(), "invalid dial address")
 }
@@ -175,7 +179,7 @@ func TestDialer_DialContext_EmptyResolvedAddressesReturnsError(t *testing.T) {
 			return nil, nil
 		},
 	}
-	_, err := d.DialContext(context.Background(), "tcp", "no-addrs.example:443")
+	_, err := d.DialContext(testCtx(t), "tcp", "no-addrs.example:443")
 	require.Error(t, err, "a hostname that resolves to zero addresses must be refused, not silently pass through")
 	assert.Contains(t, err.Error(), "did not resolve to any address")
 }
@@ -191,7 +195,7 @@ func TestDialer_DialContext_NilDialDefaultsToNetDialer(t *testing.T) {
 	require.NoError(t, ln.Close(), "close immediately so the port is refusing connections")
 
 	d := Dialer{} // Disallow nil too: exercises the zero-value Dialer end to end.
-	_, dialErr := d.DialContext(context.Background(), "tcp", addr)
+	_, dialErr := d.DialContext(testCtx(t), "tcp", addr)
 	require.Error(t, dialErr, "connecting to a closed local port via the real net.Dialer must fail")
 }
 
@@ -207,7 +211,7 @@ func TestDialer_DialContext_NilResolveDefaultsToDefaultResolver(t *testing.T) {
 			return &fakeConn{}, nil
 		},
 	}
-	_, err := d.DialContext(context.Background(), "tcp", "localhost:443")
+	_, err := d.DialContext(testCtx(t), "tcp", "localhost:443")
 	require.NoError(t, err)
 	assert.NotEmpty(t, dialed)
 	dialedHost, dialedPort, splitErr := net.SplitHostPort(dialed)
@@ -216,8 +220,13 @@ func TestDialer_DialContext_NilResolveDefaultsToDefaultResolver(t *testing.T) {
 	assert.NotNil(t, net.ParseIP(dialedHost), "dialed host must be a resolved IP literal, not the original hostname")
 }
 
+// This test and TestDialer_DialContext_NilResolveDefaultsToDefaultResolver
+// deliberately exercise DefaultResolver (the real resolver) — the only
+// netutil unit tests that do. They look up "localhost",
+// which resolves from the hosts file with no DNS server involved, and run
+// under a bounded context (#1948).
 func TestDefaultResolver_ResolvesLoopback(t *testing.T) {
-	addrs, err := DefaultResolver(context.Background(), "localhost")
+	addrs, err := DefaultResolver(testCtx(t), "localhost")
 	require.NoError(t, err)
 	require.NotEmpty(t, addrs, "localhost must resolve to at least one address")
 	found := false
@@ -231,13 +240,13 @@ func TestDefaultResolver_ResolvesLoopback(t *testing.T) {
 }
 
 func TestDialer_ValidateHost_LiteralIPAllowed(t *testing.T) {
-	d := Dialer{Disallow: IsPrivateOrLinkLocal}
-	require.NoError(t, d.ValidateHost(context.Background(), "93.184.216.34"))
+	d := Dialer{Disallow: IsPrivateOrLinkLocal, Resolve: noDNS(t)}
+	require.NoError(t, d.ValidateHost(testCtx(t), "93.184.216.34"))
 }
 
 func TestDialer_ValidateHost_LiteralIPRefused(t *testing.T) {
-	d := Dialer{Disallow: IsPrivateOrLinkLocal}
-	err := d.ValidateHost(context.Background(), "169.254.169.254")
+	d := Dialer{Disallow: IsPrivateOrLinkLocal, Resolve: noDNS(t)}
+	err := d.ValidateHost(testCtx(t), "169.254.169.254")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "disallowed address")
 }
@@ -253,7 +262,7 @@ func TestDialer_ValidateHost_ResolvesAndValidatesEveryAddress(t *testing.T) {
 			}, nil
 		},
 	}
-	err := d.ValidateHost(context.Background(), "srv-target.example.net")
+	err := d.ValidateHost(testCtx(t), "srv-target.example.net")
 	require.Error(t, err, "a mix of public and private addresses must refuse the whole host")
 	assert.Contains(t, err.Error(), "disallowed address")
 }
@@ -269,7 +278,7 @@ func TestDialer_ValidateHost_DoesNotDial(t *testing.T) {
 			return nil, nil
 		},
 	}
-	require.NoError(t, d.ValidateHost(context.Background(), "safe.example"))
+	require.NoError(t, d.ValidateHost(testCtx(t), "safe.example"))
 }
 
 func TestIsPrivateOrLinkLocal(t *testing.T) {
@@ -284,4 +293,27 @@ func TestIsPrivateOrLinkLocal(t *testing.T) {
 	for _, ip := range allowed {
 		assert.False(t, IsPrivateOrLinkLocal(net.ParseIP(ip)), "%s must be allowed", ip)
 	}
+}
+
+// TestDialer_EmptyHostRefusedBeforeLookup: an empty or whitespace-only host
+// fails closed before any resolver call (#1948) — both via ValidateHost and
+// via DialContext with a port-only address (":443", whose SplitHostPort host
+// is ""; a raw dial of it would target the local host).
+func TestDialer_EmptyHostRefusedBeforeLookup(t *testing.T) {
+	d := Dialer{
+		Disallow: IsPrivateOrLinkLocal,
+		Resolve:  noDNS(t),
+		Dial: func(_ context.Context, _, addr string) (net.Conn, error) {
+			t.Fatalf("dial must not be reached, got addr %q", addr)
+			return nil, nil
+		},
+	}
+	for _, host := range []string{"", " ", "\t\n"} {
+		err := d.ValidateHost(testCtx(t), host)
+		require.Error(t, err, "host %q", host)
+		assert.Contains(t, err.Error(), "empty host")
+	}
+	_, err := d.DialContext(testCtx(t), "tcp", ":443")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty host")
 }
