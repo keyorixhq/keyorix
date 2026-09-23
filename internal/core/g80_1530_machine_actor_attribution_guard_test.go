@@ -63,6 +63,11 @@ var auditAttributionAllowlist = map[string]string{
 		"KNOWN, already-tracked, separately-scoped gap (#G79, this file's own auditIngestProxyMaxClockSkew doc " +
 		"comment) -- a distinct trust-boundary problem (attesting the submitter is a legitimate node) that " +
 		"#1626/#1628's single-process UserID-attribution fix was never going to close, deferred to Wave 4.",
+	"server/admin/admin.go:recordAdminAction": "hardcodes ActorType: adminActorType (\"admin_cli\", " +
+		"server/admin/admin.go) and never sets UserID (absent from the struct literal, so it's the zero value " +
+		"nil) -- a host-side `keyorix-server admin` CLI action with no HTTP/gRPC request context to derive a " +
+		"machine identity from in the first place (ADR-108 §B: no admin command starts a network listener), " +
+		"same never-machine-identity-typed shape as the anomaly.go and server/main.go entries above.",
 }
 
 var logAuditEventFuncRe = regexp.MustCompile(`^func\s+(?:\([^)]*\)\s*)?([A-Za-z0-9_]+)\(`)

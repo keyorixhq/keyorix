@@ -60,13 +60,29 @@ func adminPgIsolatedDatabaseDSN(t *testing.T, base string) string {
 		_ = admin.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbName)).Error
 	})
 
-	dsn := base
-	if idx := strings.Index(base, "/postgres"); idx != -1 {
-		dsn = base[:idx] + "/" + dbName + base[idx+len("/postgres"):]
-	} else {
-		t.Fatalf("could not derive an isolated-database DSN from base DSN %q", base)
+	return replaceAdminDBName(base, dbName)
+}
+
+// replaceAdminDBName swaps the dbname= field in a libpq-style "key=value ..."
+// DSN -- identical to internal/storage/postgres_pk_rebuild_helpers_test.go's
+// own replaceDBName; KEYORIX_TEST_PG_DSN is always this form, never a
+// "postgres://" URL, so the two helpers can and should agree.
+func replaceAdminDBName(dsn, newName string) string {
+	fields := strings.Fields(dsn)
+	out := make([]string, 0, len(fields)+1)
+	found := false
+	for _, f := range fields {
+		if strings.HasPrefix(f, "dbname=") {
+			out = append(out, "dbname="+newName)
+			found = true
+			continue
+		}
+		out = append(out, f)
 	}
-	return dsn
+	if !found {
+		out = append(out, "dbname="+newName)
+	}
+	return strings.Join(out, " ")
 }
 
 func TestAdminWorkflow_Postgres(t *testing.T) {
