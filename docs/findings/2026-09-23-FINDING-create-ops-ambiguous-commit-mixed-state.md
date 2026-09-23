@@ -183,6 +183,55 @@ against the fixed code. `internal/core`, `internal/core/storage`, and
 harness limit unrelated to this fix — confirmed by running it standalone and
 green at 864s) all pass with no regressions.
 
+## PostgreSQL validation
+
+`server/faultops`'s fuzz world (`world_test.go`) had no PostgreSQL backend at
+all before this PR — `newFaultWorld` was hard-coded to SQLite, silently
+ignoring `KEYORIX_TEST_PG_DSN` even when set. Since transaction semantics
+genuinely differ between the two backends (this fix's entire mechanism is
+`storage.WithTransaction`), SQLite-only validation was not sufficient
+evidence for a transaction-correctness fix. Added real Postgres support to
+`newFaultWorld` in this PR: gated on `KEYORIX_TEST_PG_DSN` (same convention as
+`.github/workflows/ci.yml`'s `test-suite` job and every other PG-gated fuzz
+world in this repo), a fresh, uniquely-named schema per world (created and
+dropped via a short-lived admin connection, not held open for the world's
+lifetime — an early version of this held the admin connection open per world
+and exhausted Postgres's default `max_connections` under `-parallel >1`,
+fixed before landing).
+
+Validated against a local `postgres:16` container (matching CI's own image
+and credentials exactly):
+
+**Seed/crasher corpus** (all 17 entries, `go test ./server/faultops/ -run
+'FuzzStorageFaultOperations$'` with `KEYORIX_TEST_PG_DSN` set): PASS, 32s.
+
+**Per-(operation, NthCall) validation table, same 8 rows as the SQLite table
+above, replayed individually against Postgres:**
+
+| Op | Method | NthCall | Result (SQLite) | Result (PostgreSQL) |
+|---|---|---|---|---|
+| `POST /api/v1/projects` | `CreateProject` | 1 | PASS | PASS |
+| `POST /api/v1/projects` | `CreateEnvironment` | 1 | PASS | PASS |
+| `POST /api/v1/projects` | `CreateEnvironment` | 2 | PASS | PASS |
+| `POST /api/v1/projects` | `CreateEnvironment` | 3 | PASS | PASS |
+| `POST /api/v1/secrets/` | `CreateSecret` | 1 | PASS | PASS |
+| `POST /api/v1/secrets/` | `CreateSecretVersion` | 1 | PASS | PASS |
+| `POST /api/v1/users/` | `CreateUser` | 1 | PASS | PASS |
+| `POST /api/v1/users/` | `AssignRole` | 1 | PASS | PASS |
+
+**5-minute fuzz burst** (`-fuzz 'FuzzStorageFaultOperations$' -fuzztime 300s
+-parallel 2`, `KEYORIX_TEST_PG_DSN` set): PASS, no violations. 130 corpus
+entries explored in the 5-minute window (vs. 619 execs in the equivalent
+10-minute SQLite burst reported above) — real network+disk-backed Postgres
+schema creation costs ~500ms-1s per world (two worlds per iteration) vs.
+SQLite's in-memory opens, so materially lower throughput is expected, not a
+regression signal. Run under contention from an unrelated concurrent
+session's own fuzz workers on this machine (network/SSRF-parity fuzzers,
+confirmed via `pgrep` immediately before starting) — this affects total
+iteration count, not correctness; a burst is validation-oriented here, not a
+throughput measurement, so proceeding under contention (rather than waiting
+indefinitely for a fully quiet machine) was the right tradeoff.
+
 ## Red-proof
 
 **Direction 1 (fix removed → red):** reverting `CreateProject` to the
