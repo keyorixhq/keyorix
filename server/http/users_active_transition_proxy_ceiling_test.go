@@ -23,6 +23,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -76,13 +77,26 @@ func TestUpdateUserIfActiveStateMatchesProxy_SystemWriteOnly_CannotRewriteAdminE
 // authority the human-facing PUT /api/v1/users/{id} route already requires)
 // must still be able to use this route -- the fix must not turn into a
 // blanket denial.
+//
+// The target is an ORDINARY, unprivileged user, not testadmin -- the F5
+// admin-rank ceiling (core.RequireEqualOrGreaterAdminAuthority,
+// active-transition-admin-rank-001, active_transition_admin_rank_ceiling_test.go)
+// now correctly refuses a non-admin-tier users.write holder against an
+// admin-tier target, so probing this control case against testadmin would
+// assert the exact behavior that closure intentionally removed. This test
+// is about the ORIGINAL users.write gate, which still applies unchanged to
+// a target the admin-rank ceiling has nothing to protect.
 func TestUpdateUserIfActiveStateMatchesProxy_UsersWriteHolder_CanRewriteOtherUserEmail(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	defer i18n.ResetForTesting()
 	c := newTestCore(t)
 	ctx := context.Background()
 	createTestToken(t, c)
-	admin, err := c.Storage().GetUserByUsername(ctx, "testadmin")
+	target, err := c.Storage().CreateUser(ctx, &models.User{
+		Username: "f5-users-write-control-target", UsernameFolded: "f5-users-write-control-target",
+		Email: "f5-users-write-control-target@example.com", EmailFolded: "f5-users-write-control-target@example.com",
+		DisplayName: "F5 Users-Write Control Target", IsActive: true, AccountState: "active",
+	})
 	require.NoError(t, err)
 
 	router, err := NewRouter(&config.Config{}, c)
@@ -93,11 +107,11 @@ func TestUpdateUserIfActiveStateMatchesProxy_UsersWriteHolder_CanRewriteOtherUse
 	token := createSystemWriteAndUsersWriteToken(t, c)
 	const newEmail = "ceiling-probe-authorized@example.invalid"
 	body, err := json.Marshal(map[string]any{
-		"username": admin.Username, "email": newEmail,
-		"display_name": admin.DisplayName, "active": admin.IsActive, "updated_at": admin.UpdatedAt, "from_active": admin.IsActive,
+		"username": target.Username, "email": newEmail,
+		"display_name": target.DisplayName, "active": target.IsActive, "updated_at": target.UpdatedAt, "from_active": target.IsActive,
 	})
 	require.NoError(t, err)
-	req, err := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/api/v1/system/users/%d/active-transition", srv.URL, admin.ID), bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/api/v1/system/users/%d/active-transition", srv.URL, target.ID), bytes.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -105,7 +119,7 @@ func TestUpdateUserIfActiveStateMatchesProxy_UsersWriteHolder_CanRewriteOtherUse
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 
-	after, err := c.Storage().GetUser(ctx, admin.ID)
+	after, err := c.Storage().GetUser(ctx, target.ID)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, newEmail, after.Email,
@@ -128,7 +142,11 @@ func TestUpdateUserIfActiveStateMatchesProxy_MachineUsersWriteHolder_CanRewriteO
 	c := newTestCore(t)
 	ctx := context.Background()
 	createTestToken(t, c)
-	admin, err := c.Storage().GetUserByUsername(ctx, "testadmin")
+	target, err := c.Storage().CreateUser(ctx, &models.User{
+		Username: "f5-machine-users-write-control-target", UsernameFolded: "f5-machine-users-write-control-target",
+		Email: "f5-machine-users-write-control-target@example.com", EmailFolded: "f5-machine-users-write-control-target@example.com",
+		DisplayName: "F5 Machine Users-Write Control Target", IsActive: true, AccountState: "active",
+	})
 	require.NoError(t, err)
 
 	router, err := NewRouter(&config.Config{}, c)
@@ -140,11 +158,11 @@ func TestUpdateUserIfActiveStateMatchesProxy_MachineUsersWriteHolder_CanRewriteO
 	token := createUsersWriteNodeToken(t, c)
 	const newEmail = "ceiling-probe-machine-authorized@example.invalid"
 	body, err := json.Marshal(map[string]any{
-		"username": admin.Username, "email": newEmail,
-		"display_name": admin.DisplayName, "active": admin.IsActive, "updated_at": admin.UpdatedAt, "from_active": admin.IsActive,
+		"username": target.Username, "email": newEmail,
+		"display_name": target.DisplayName, "active": target.IsActive, "updated_at": target.UpdatedAt, "from_active": target.IsActive,
 	})
 	require.NoError(t, err)
-	req, err := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/api/v1/system/users/%d/active-transition", srv.URL, admin.ID), bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/api/v1/system/users/%d/active-transition", srv.URL, target.ID), bytes.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -152,7 +170,7 @@ func TestUpdateUserIfActiveStateMatchesProxy_MachineUsersWriteHolder_CanRewriteO
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 
-	after, err := c.Storage().GetUser(ctx, admin.ID)
+	after, err := c.Storage().GetUser(ctx, target.ID)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, newEmail, after.Email,

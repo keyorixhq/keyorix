@@ -144,9 +144,30 @@ func (h *UserHandler) UpdateUserIfActiveStateMatchesProxy(w http.ResponseWriter,
 	// ceiling here -- see the package doc. Check before any storage read, so
 	// an unauthorized caller can't use this route's uniqueness pre-checks
 	// below as a users.write-gated username/email existence oracle.
-	actorType, actorID := requestActorKindAndID(r)
-	if err := h.coreService.RequireUsersWriteAuthority(r.Context(), actorType, actorID); err != nil {
+	humanActorID := actorID(r)
+	actorType, principalID := requestActorKindAndID(r)
+	if err := h.coreService.RequireUsersWriteAuthority(r.Context(), actorType, principalID); err != nil {
 		writeUserCredentialsRevokeError(w, "active-transition", err)
+		return
+	}
+	// F5 (system-proxy-target-authority audit): users.write alone stops a
+	// system.write-only caller, but not a users.write HOLDER whose own
+	// effective authority is LESS than the target's -- they could still
+	// rewrite a higher-authority account's identity (email, in particular)
+	// and pivot into hijacking it via a password-reset flow. Require the
+	// SAME admin-rank ceiling impersonation already applies (derived from
+	// the target's own effective privileges, not a fixed threshold).
+	// humanActorID (actorID(r)), not principalID above: this ceiling is
+	// inherently a HUMAN decision -- RequireEqualOrGreaterAdminAuthority
+	// resolves USER role grants only, never a machine identity's. actorID(r)
+	// correctly resolves to 0 for a machine caller (ADR-030, no UserID),
+	// never principalID's machine-identity row ID, which would be
+	// misinterpreted as an unrelated user ID by this human-only check.
+	// actorID 0 correctly refuses whenever the target holds ANY permission
+	// at ANY scope and passes through unaffected for an ordinary,
+	// unprivileged target.
+	if err := h.coreService.RequireEqualOrGreaterAdminAuthority(r.Context(), humanActorID, uint(id), "modify"); err != nil {
+		writeRemoteAPIError(w, http.StatusForbidden, "PERMISSION_DENIED", clientSafe(err))
 		return
 	}
 	if body.Username != "" {

@@ -139,6 +139,39 @@ type markTOTPStepUsedWire struct {
 	Step   int64 `json:"step"`
 }
 
+// totpStepPeriodSeconds mirrors internal/core/mfa.go's unexported totpPeriod
+// (30s) — duplicated here rather than imported, since core does not export
+// it and this package must not reach into core internals for a constant.
+// Must stay in sync with that value; see maxTOTPStepClockSkew's doc for why
+// a mismatch is self-limiting (this route would just reject legitimate
+// requests, never accept a wider window than intended).
+const totpStepPeriodSeconds = 30
+
+// maxTOTPStepClockSkew bounds how many totpStepPeriodSeconds steps the
+// wire's step value may differ from THIS server's own clock, in either
+// direction. core.validateTOTPStep (the only legitimate producer of a step
+// value, on the CALLING server) never returns a step more than 1 period from
+// ITS OWN clock — this is generously wider (~10 minutes) purely to tolerate
+// clock skew between two different servers, not to legitimize a value an
+// honest caller would ever actually send.
+const maxTOTPStepClockSkew = 20
+
+// totpStepBoundsOK reports whether step falls within maxTOTPStepClockSkew
+// periods of now.
+//
+// F6 (system-proxy-target-authority audit): before this bound, a
+// system.write-only caller could pass an arbitrary step far in the future
+// (there is no upper bound on int64), permanently advancing
+// MFASecret.LastUsedStep past every value a genuine future TOTP code could
+// ever produce — LocalStorage.MarkTOTPStepUsed's own anti-replay WHERE
+// clause ("last_used_step IS NULL OR last_used_step < ?") would then refuse
+// EVERY subsequent real code for that user forever, a permanent TOTP
+// lockout, not the "one step blocked" a first read suggests.
+func totpStepBoundsOK(step int64, now time.Time) bool {
+	nowStep := now.UTC().Unix() / totpStepPeriodSeconds
+	return step >= nowStep-maxTOTPStepClockSkew && step <= nowStep+maxTOTPStepClockSkew
+}
+
 // MarkTOTPStepUsedProxy handles POST /api/v1/system/mfa/totp-step-used.
 // Atomically advances the per-user last-used TOTP step so the downstream
 // core's requireReauth/VerifyMFACredentials anti-replay guard works correctly
@@ -151,6 +184,10 @@ func (h *AuthHandler) MarkTOTPStepUsedProxy(w http.ResponseWriter, r *http.Reque
 	}
 	if body.UserID == 0 {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "user_id is required")
+		return
+	}
+	if !totpStepBoundsOK(body.Step, time.Now()) {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "step is outside the acceptable clock-skew window")
 		return
 	}
 	// #MarkTOTPStepUsed (system-proxy-target-authority audit): a "self-only"
