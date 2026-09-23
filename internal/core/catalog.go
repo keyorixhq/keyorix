@@ -340,11 +340,24 @@ func (c *KeyorixCore) CreateProject(ctx context.Context, name, description strin
 	// more of its expected default environments with zero operator
 	// visibility into why): the project row itself already committed, and a
 	// caller retries environment creation separately if seeding fails, but
-	// this must be OBSERVABLE, not a swallowed error.
+	// this must be OBSERVABLE, not a swallowed error. A panic from the same
+	// call must be recovered too (found live by FuzzStorageFaultOperations,
+	// same class as CreateUser's password-history/system_viewer seeding in
+	// users.go): without it, a panic propagates straight past the
+	// already-committed Project row and out to the real Recovery middleware,
+	// misreporting an already-successful project creation as a failed
+	// request (oracle (a)).
 	for _, envName := range defaultEnvironmentNames {
-		if _, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID}); err != nil {
-			log.Printf("Warning: project %d (%s) created without its default environment %q: %v", project.ID, project.Name, envName, err)
-		}
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("Warning: project %d (%s) created without its default environment %q: seeding panicked: %v", project.ID, project.Name, envName, r)
+				}
+			}()
+			if _, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID}); err != nil {
+				log.Printf("Warning: project %d (%s) created without its default environment %q: %v", project.ID, project.Name, envName, err)
+			}
+		}()
 	}
 	return project, nil
 }
@@ -461,11 +474,20 @@ func (c *KeyorixCore) CreateProjectWithEnvs(ctx context.Context, name, descripti
 		return nil, fmt.Errorf("failed to create project: %w", err)
 	}
 	for _, envName := range envNames {
-		if _, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID}); err != nil {
-			// Non-fatal, same rationale as CreateProject's default-environment
-			// seeding above — but must be observable, not silently discarded.
-			log.Printf("Warning: project %d (%s) created without requested environment %q: %v", project.ID, project.Name, envName, err)
-		}
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					// Panic recovery, same rationale as CreateProject's
+					// default-environment seeding above.
+					log.Printf("Warning: project %d (%s) created without requested environment %q: seeding panicked: %v", project.ID, project.Name, envName, r)
+				}
+			}()
+			if _, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID}); err != nil {
+				// Non-fatal, same rationale as CreateProject's default-environment
+				// seeding above — but must be observable, not silently discarded.
+				log.Printf("Warning: project %d (%s) created without requested environment %q: %v", project.ID, project.Name, envName, err)
+			}
+		}()
 	}
 	return project, nil
 }

@@ -5,9 +5,12 @@
 called from `secrets.go`'s `DeleteSecret`/`RestoreSecret`); `internal/core/users.go`
 (`CreateUser`'s password-history seed + `system_viewer` auto-assign);
 `internal/core/service.go` (`emitAudit`, the single choke point every
-`c.Log*`/audit-write helper funnels through).
-**Status:** Fixed, same PR as this finding doc (policy change: first-party
-findings are fixed and disclosed together — no customers yet).
+`c.Log*`/audit-write helper funnels through); `internal/core/catalog.go`
+(`CreateProject`/`CreateProjectWithEnvs`'s default/requested-environment seeding).
+**Status:** Fixed. First two occurrences landed with this finding doc; a
+third live occurrence (`internal/core/catalog.go`, below) was found and
+fixed 2026-09-23 in PR #1988 (policy change: first-party findings are fixed
+and disclosed together — no customers yet).
 
 Found by two separate unattended final-checks fuzz bursts
 (`FuzzStorageFaultOperations`, `server/faultops`), run back-to-back after
@@ -184,6 +187,42 @@ at `server/faultops/testdata/fuzz/FuzzStorageFaultOperations/8ee52322e0585924`.
 `emitDependencyLifecycleEvents` received above, applied to the second live
 instance of the identical shape.
 
+### Third live occurrence: CreateProject/CreateProjectWithEnvs's environment seeding
+
+Found 2026-09-23 by `FuzzStorageFaultOperations` running unattended against
+`fix/1962-shared-fuzzworld` in CI (PR #1988) — coverage-guided fuzzing on the
+refreshed shared `fuzzworld` harness landing in that PR, not a hand-written
+seed. `core.CreateProject` (`internal/core/catalog.go`) already treated a
+*returned error* from its default-environment-seeding `CreateEnvironment`
+call as non-fatal/best-effort, with an explicit doc comment saying so — but,
+identically to the first two occurrences above, had no protection against a
+**panic** from that same call. `CreateProjectWithEnvs`'s requested-environment
+seeding loop had the identical gap.
+
+Worse, `internal/core/users.go`'s own comment (on the `system_viewer`
+auto-assign fix, second occurrence above) already said "same class as
+CreateProjectWithEnvs's CreateEnvironment fix above" — asserting this fix
+already existed. It did not: the comment was aspirational/mis-stated, not a
+description of shipped code, and nothing had re-verified it.
+
+**Reproduction:** fault `(op="REST POST /api/v1/projects", method=CreateEnvironment,
+NthCall=1, kind=panic)`. The panic propagated through `CreateProject`, past
+the already-committed `Project` row, out to the real Recovery middleware,
+producing a 500 for a request that had, in fact, already succeeded —
+`Differing tables: [Project]`. Minimized input saved at
+`server/faultops/testdata/fuzz/FuzzStorageFaultOperations/ad8a1c49b476fc19`
+(hand-constructed via the harness's own `opCatalog`/`storageInterfaceMethodNames`
+lookup and `decodeFuzzOp` byte layout to exactly reproduce CI's finding,
+`REPLAY_HEX`-confirmed against the pre-fix commit before being fixed).
+
+**Fix:** both environment-seeding loops (`CreateProject`'s default set,
+`CreateProjectWithEnvs`'s requested set) now wrap their `CreateEnvironment`
+call in the same IIFE-with-`defer recover()` idiom as the first two
+occurrences, logging a warning and continuing — the harness's own
+`acceptableByDesign` classification for `CreateEnvironment`
+(`fuzz_storage_fault_operations_test.go`) now correctly covers the panic
+path, not just the returned-error path.
+
 ### Proactive fix: emitAudit, the shared audit choke point
 
 Given the SAME defect shape recurred live twice in immediate succession
@@ -204,14 +243,18 @@ codebase in one fix, not sixty separate ones.
 
 **FLAG FOR REVIEW (not swept here):** a repo-wide grep for `best-effort`
 across `internal/core` still turns up roughly sixty comparable call sites
-beyond the three fixed here (see `account.go`, `login_lockout.go`,
+beyond the four fixed here (see `account.go`, `login_lockout.go`,
 `dashboard.go`, `notifications.go`, `compliance_posture.go`, and many
-others). This finding fixes the two the fuzzer actually landed a panic fault
-on, plus the one shared choke point (`emitAudit`) whose leverage justified a
-proactive fix once the pattern recurred live — not a systematic panic-safety
-audit of every remaining "best-effort" helper in the codebase. Whether the
-same gap recurs at any of those other sites is a real open question worth a
-dedicated sweep, not decided or attempted here.
+others). This finding fixes the three the fuzzer actually landed a panic
+fault on, plus the one shared choke point (`emitAudit`) whose leverage
+justified a proactive fix once the pattern recurred live — not a systematic
+panic-safety audit of every remaining "best-effort" helper in the codebase.
+The third occurrence (`CreateProject`/`CreateProjectWithEnvs`) is itself
+proof this list isn't self-policing: `users.go`'s own comment already
+*claimed* that exact site was fixed, and it wasn't, until the fuzzer found
+it live a second time. Whether the same gap recurs at any of the remaining
+sixty sites is a real open question worth a dedicated sweep, not decided or
+attempted here.
 
 ## Red-proof
 
@@ -241,3 +284,12 @@ all clean. `emitAudit`'s own fix had no dedicated fuzz-found trigger (it was
 proactive, not reactive) — its correctness rests on the same `-race` suite
 pass plus the existing `TestDirectLogAuditEventCallersAreSafe` guard
 continuing to pass unchanged.
+
+Third occurrence: reverting `internal/core/catalog.go` alone (`git stash`
+just that file, the commit immediately before this third fix) and re-running
+`FuzzStorageFaultOperations/ad8a1c49b476fc19` in isolation reproduced the
+exact `ORACLE (a) VIOLATION ... Differing tables: [Project]` message quoted
+above, deterministically. Restoring the file made that corpus entry (and the
+full `server/faultops`, `internal/core`, and
+`server/http/handlers` -run CreateProject* suites) pass again; `go build
+./...` and `go vet ./...` stayed clean throughout.

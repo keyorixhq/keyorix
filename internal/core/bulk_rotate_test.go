@@ -525,8 +525,15 @@ func TestBulkRotateSecrets_RotateOnDemandError(t *testing.T) {
 // TestBulkRotateSecrets_ValueGenError covers bulkRotateOne when generateRotatedValueSpec
 // fails (lines 184-190 and 131-135 of bulk_rotate.go). We substitute bulkValueGen with a
 // stub that returns an error to simulate a crypto/rand failure.
+//
+// Deliberately NOT t.Parallel(): bulkValueGen is a package-level var this test mutates
+// and restores via t.Cleanup, which every OTHER parallel test in this file reads through
+// bulkRotateOne. Running this test in parallel with them raced a live write against a
+// live read (WARNING: DATA RACE, TestBulkRotateSecrets_ByClassification vs. this test's
+// cleanup) -- serial top-level tests run to completion, cleanup included, before the
+// parallel group starts, which is the only way to mutate shared package state safely
+// alongside t.Parallel() siblings that read it.
 func TestBulkRotateSecrets_ValueGenError(t *testing.T) {
-	t.Parallel()
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := &KeyorixCore{storage: ms, now: time.Now}

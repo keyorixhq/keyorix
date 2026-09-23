@@ -156,6 +156,30 @@ var multiStepAmbiguousCommitExceptions = []nonLoadBearingException{
 	// orphaned User row with neither. Same root cause, same "needs a design
 	// decision, not a small patch" conclusion as the CreateSecret entry above.
 	{op: "REST POST /api/v1/users/", method: "CreateUser", nth: 1},
+	// internal/core/catalog.go's CreateProject has the identical shape: an
+	// ambiguous commit on c.storage.CreateProject (the FIRST call) returns
+	// immediately, before ever reaching the default-environment-seeding loop
+	// that follows — leaving a real, orphaned Project row with none of its 3
+	// default environments. CreateProjectWithEnvs (same file) has the
+	// identical shape on its own c.storage.CreateProject call, but isn't
+	// independently reachable through this op's fixed request body
+	// (opcatalog_test.go's "REST POST /api/v1/projects" sends no
+	// `environments` field, so it only ever routes to CreateProject) — noted
+	// here for the next person who wires a second op that does.
+	//
+	// TEMPORARY until #1996 merges; #1996 removes this entry. #1996
+	// (https://github.com/keyorixhq/keyorix/pull/1996) wraps CreateProject's
+	// full multi-step sequence in one storage.WithTransaction, closing the
+	// MIXED-STATE half of this gap (a fault rolls back cleanly to old state,
+	// or the real effect lands as full new state — never a mix), same as it
+	// already does for CreateSecret/CreateUser. "Needs a product decision,
+	// not a small patch" is true only of the OTHER half — the
+	// ambiguous-response problem (the caller still can't tell "failed" apart
+	// from "succeeded, ack lost") — which #1996 deliberately leaves open (see
+	// its docs/adr-draft-request-idempotency-for-create-operations.md); the
+	// mixed-state half this entry exists for is not actually a product
+	// decision, just not yet landed.
+	{op: "REST POST /api/v1/projects", method: "CreateProject", nth: 1},
 }
 
 // opScopedBestEffortTables narrows bestEffortTables' method-only scope to a
