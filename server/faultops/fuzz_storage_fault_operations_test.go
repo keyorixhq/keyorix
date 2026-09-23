@@ -156,6 +156,19 @@ var multiStepAmbiguousCommitExceptions = []nonLoadBearingException{
 	// orphaned User row with neither. Same root cause, same "needs a design
 	// decision, not a small patch" conclusion as the CreateSecret entry above.
 	{op: "REST POST /api/v1/users/", method: "CreateUser", nth: 1},
+	// internal/core/catalog.go's CreateProject has the identical shape: an
+	// ambiguous commit on c.storage.CreateProject (the FIRST call) returns
+	// immediately, before ever reaching the default-environment-seeding loop
+	// that follows — leaving a real, orphaned Project row with none of its 3
+	// default environments. Same root cause, same "needs a design decision,
+	// not a small patch" conclusion as the CreateSecret/CreateUser entries
+	// above. CreateProjectWithEnvs (same file) has the identical shape on its
+	// own c.storage.CreateProject call, but isn't independently reachable
+	// through this op's fixed request body (opcatalog_test.go's
+	// "REST POST /api/v1/projects" sends no `environments` field, so it only
+	// ever routes to CreateProject) — noted here for the next person who
+	// wires a second op that does.
+	{op: "REST POST /api/v1/projects", method: "CreateProject", nth: 1},
 }
 
 // opScopedBestEffortTables narrows bestEffortTables' method-only scope to a
