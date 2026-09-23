@@ -32,7 +32,7 @@ import (
 // constraint-violation error or a silently-duplicated identity.
 func TestConcurrency_CreateUser_NoDuplicateEmail(t *testing.T) {
 	t.Parallel()
-	dsn := "file:" + filepath.Join(t.TempDir(), "users.db") + "?_busy_timeout=10000&_journal_mode=WAL"
+	dsn := "file:" + filepath.Join(t.TempDir(), "users.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}))

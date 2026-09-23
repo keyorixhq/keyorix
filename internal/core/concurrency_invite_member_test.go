@@ -29,7 +29,7 @@ import (
 // row.
 func TestConcurrency_InviteMember_NoDuplicateActiveMembership(t *testing.T) {
 	t.Parallel()
-	dsn := "file:" + filepath.Join(t.TempDir(), "invite.db") + "?_busy_timeout=10000&_journal_mode=WAL"
+	dsn := "file:" + filepath.Join(t.TempDir(), "invite.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Role{}, &models.ProjectMembership{}, &models.AuditEvent{}, &models.Permission{}, &models.RolePermission{}))

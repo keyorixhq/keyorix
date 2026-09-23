@@ -68,7 +68,7 @@ func TestSessionRevoke_ConcurrentRevokeDoesNotResurrectCachedAuth(t *testing.T) 
 	t.Cleanup(i18n.ResetForTesting)
 
 	dbPath := filepath.Join(t.TempDir(), "srr.db")
-	db, err := gorm.Open(sqlite.Open(dbPath+"?_foreign_keys=1&_busy_timeout=10000&_journal_mode=WAL"), &gorm.Config{Logger: logger.Discard})
+	db, err := gorm.Open(sqlite.Open(dbPath+"?_foreign_keys=1&_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"), &gorm.Config{Logger: logger.Discard})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -240,7 +240,7 @@ func srrSetupWorld(t testing.TB, dbName string) *srrWorld {
 	t.Cleanup(i18n.ResetForTesting)
 
 	dbPath := filepath.Join(t.TempDir(), dbName)
-	db, err := gorm.Open(sqlite.Open(dbPath+"?_foreign_keys=1&_busy_timeout=10000&_journal_mode=WAL"), &gorm.Config{Logger: logger.Discard})
+	db, err := gorm.Open(sqlite.Open(dbPath+"?_foreign_keys=1&_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"), &gorm.Config{Logger: logger.Discard})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

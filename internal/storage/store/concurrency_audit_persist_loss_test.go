@@ -51,8 +51,8 @@ import (
 
 // auditPersistLossConcurrentDB opens a temp file-backed SQLite database with
 // the same pragmas production's sqliteDSN (internal/storage/factory.go)
-// applies -- _foreign_keys=1, _journal_mode=WAL -- except _busy_timeout,
-// which is deliberately far shorter than production's 10000ms.
+// applies -- _foreign_keys=1, _journal_mode=WAL, _txlock=immediate -- except
+// _busy_timeout, which is deliberately far shorter than production's 10000ms.
 //
 // Why: production's real 10s busy_timeout DID eventually get exhausted
 // under real sustained load (25 concurrent clients, 30 real minutes), but
@@ -66,7 +66,7 @@ import (
 // behavior, only the patience budget is compressed.
 func auditPersistLossConcurrentDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	dsn := "file:" + filepath.Join(t.TempDir(), "audit-loss.db") + "?_foreign_keys=1&_busy_timeout=5&_journal_mode=WAL"
+	dsn := "file:" + filepath.Join(t.TempDir(), "audit-loss.db") + "?_foreign_keys=1&_busy_timeout=5&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.AuditEvent{}))

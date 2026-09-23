@@ -123,7 +123,13 @@ for pkg in $(awk -F'\t' '$4=="default-ci" || $4=="pg-gated" {print $2}' <<<"$row
     out=$(cd "$REPO_ROOT" && go test -count=1 -v -run "^(${pattern})\$" "$pkg" 2>&1); rc=$?
     set -e
     if [ "$rc" -ne 0 ]; then
-        die "$pkg: go test exited $rc"; sed -n '1,40p' <<<"$out" | sed 's/^/      /'; continue
+        die "$pkg: go test exited $rc"
+        # Show the actual failures, not just the head of the log: the first 40
+        # lines are usually a passing test's chatter, which hid every real
+        # failure in this step (2026-09-23, #2016/#2021/#2022).
+        { grep -nE -- '--- FAIL|^FAIL|panic:|_test\.go:[0-9]+: ' <<<"$out" | head -60
+          echo "      ... last 40 lines:"; tail -n 40 <<<"$out"; } | sed 's/^/      /'
+        continue
     fi
     while IFS= read -r test; do
         [ -z "$test" ] && continue
