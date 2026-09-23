@@ -187,3 +187,19 @@ func TestConcurrency_RemoveProjectMember_ExactlyOneOfTwoProjectAdminsRemoved(t *
 	assert.Zero(t, bothRemoved, "%d/%d trials removed BOTH project admins, stranding the project with zero roles.assign holders", bothRemoved, trials)
 	assert.Zero(t, neitherRemoved, "%d/%d trials refused BOTH removals (should allow exactly one)", neitherRemoved, trials)
 }
+
+// The TOCTOU-1 regression for rbac_management.go's RemoveUserRole
+// (project-scope branch: the named lock covered only the guard's read, not the
+// write that followed) is NOT covered by a plain goroutine race here, unlike
+// the trials above. A 2-way (and even an 8-way) timing race against it,
+// empirically, could not land the bug reliably: the winning goroutine's
+// unguarded write is a single round trip after its own unlock, while a losing
+// goroutine needs two (lock-acquire, then read) before it could even observe
+// stale data -- a structural head start that consistently let the write land
+// first. See TestConcurrency_RemoveUserRole_ProjectScope_TOCTOU_Deterministic
+// (concurrency_remove_user_role_toctou_test.go) for the deterministic
+// reproduction (a storage decorator that pauses the real write call so the
+// exact vulnerable interleaving lands every time), and
+// TestConcurrency_RemoveUserRole_ProjectScope_CrossReplicaPostgres
+// (concurrency_remove_user_role_project_postgres_test.go) for the same
+// technique across two genuinely independent Postgres connections.

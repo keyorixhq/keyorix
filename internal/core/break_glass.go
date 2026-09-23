@@ -321,17 +321,39 @@ func (c *KeyorixCore) RevokeBreakGlass(ctx context.Context, actorID, actorMachin
 // route, #1511, per RevokeBreakGlassActivationProxy's own doc comment) — this
 // fix does not worsen that pre-existing gap, and does not close it either;
 // #1511 is tracked separately.
+//
+// TOCTOU-1 sibling fix (rbac_management.go's RemoveUserRole had the identical
+// bug): the last-project-admin guard's read+decide and the role removal must
+// happen under the SAME WithNamedLock acquisition, or two concurrent revokes
+// targeting two different project admins' emergency grants can each pass the
+// guard before either write commits and both succeed, stripping the project
+// of every roles.assign holder — exactly RemoveUserRole's bug, reproduced
+// here independently because this function bypasses RemoveUserRole entirely
+// (it calls tx.RemoveRole directly, to share ONE transaction with the
+// activation-state update below). The transaction therefore runs INSIDE the
+// WithNamedLock closure, not after it. This does not reintroduce the
+// documented lock-ordering hazard (namedLockConnCtxKey's doc comment,
+// local_named_lock.go): that hazard is specifically about a NESTED
+// WithNamedLock call needing a SECOND connection from the pool while the
+// outer call still holds the first, for every additional distinct lock key
+// — unbounded with nesting depth. WithTransaction is never itself a
+// WithNamedLock call and takes no named lock inside; it needs at most one
+// additional connection, the same single extra connection any ordinary
+// storage call already needs when run inside a WithNamedLock closure (see
+// the guard's own GetUserRoleIDsExact call two lines below, or
+// RemoveUserRole/SetProjectMemberRole/RemoveProjectMember's identical
+// shape) — a constraint already implicit in every existing WithNamedLock
+// caller in this package, not a new one. It requires the pool to have at
+// least 2 connections available, which is already required for this server
+// to function at all under ordinary concurrent load.
 func (c *KeyorixCore) RevokeBreakGlassActivationAtomic(ctx context.Context, actorID, actorMachineID uint, activation *models.BreakGlassActivation, now time.Time) error {
 	scope := storage.Scope{ProjectID: activation.ProjectID}
-	// Same last-project-admin protection RemoveUserRole's project-scope branch
-	// applies (rbac_management.go) — run BEFORE the transaction below, for the
-	// same lock-ordering reason RemoveUserRole's own doc comment gives:
-	// WithNamedLock must never be held while a separate storage transaction is
-	// also open. A break-glass emergency role can never itself carry
-	// roles.assign at ACTIVATION time (ActivateBreakGlass's own policy check),
-	// but a role's permission set can be edited afterward, so this still runs a
-	// real check rather than assuming it can never fire.
-	if err := c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(scope.ProjectID), func(ctx context.Context) error {
+	var roleRemoved bool
+	err := c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(scope.ProjectID), func(ctx context.Context) error {
+		// A break-glass emergency role can never itself carry roles.assign at
+		// ACTIVATION time (ActivateBreakGlass's own policy check), but a role's
+		// permission set can be edited afterward, so this still runs a real
+		// check rather than assuming it can never fire.
 		existing, err := c.storage.GetUserRoleIDsExact(ctx, activation.UserID, scope)
 		if err != nil {
 			return err
@@ -342,34 +364,32 @@ func (c *KeyorixCore) RevokeBreakGlassActivationAtomic(ctx context.Context, acto
 				after = append(after, id)
 			}
 		}
-		return c.guardLastProjectAdmin(ctx, scope.ProjectID, activation.UserID, existing, after)
-	}); err != nil {
-		return err
-	}
-
-	var roleRemoved bool
-	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
-		if err := tx.RemoveRole(ctx, activation.UserID, activation.RoleID, scope); err != nil {
-			if !errors.Is(err, storage.ErrRoleNotAssigned) {
-				return err
-			}
-			// Already gone (auto-expired, or a racing revoke's own removal
-			// already ran) — not an error, proceed to reconcile the record.
-		} else {
-			roleRemoved = true
+		if err := c.guardLastProjectAdmin(ctx, scope.ProjectID, activation.UserID, existing, after); err != nil {
+			return err
 		}
-		// Conditional UPDATE (WHERE state = active OR expired), not a
-		// read-modify-write: two concurrent revokes of the same activation can
-		// both reach here, but only the first's conditional update actually
-		// transitions state — the second gets ErrBreakGlassNotActive instead of
-		// silently overwriting RevokedBy/RevokedAt. Rolling this back together
-		// with the role removal above (rather than committing the removal
-		// unconditionally) is exactly what closes the half-commit: either both
-		// land, or neither does.
-		return tx.RevokeBreakGlassActivation(ctx, activation.ID, actorID, actorMachineID, now)
+		return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+			if err := tx.RemoveRole(ctx, activation.UserID, activation.RoleID, scope); err != nil {
+				if !errors.Is(err, storage.ErrRoleNotAssigned) {
+					return err
+				}
+				// Already gone (auto-expired, or a racing revoke's own removal
+				// already ran) — not an error, proceed to reconcile the record.
+			} else {
+				roleRemoved = true
+			}
+			// Conditional UPDATE (WHERE state = active OR expired), not a
+			// read-modify-write: two concurrent revokes of the same activation can
+			// both reach here, but only the first's conditional update actually
+			// transitions state — the second gets ErrBreakGlassNotActive instead of
+			// silently overwriting RevokedBy/RevokedAt. Rolling this back together
+			// with the role removal above (rather than committing the removal
+			// unconditionally) is exactly what closes the half-commit: either both
+			// land, or neither does.
+			return tx.RevokeBreakGlassActivation(ctx, activation.ID, actorID, actorMachineID, now)
+		})
 	})
-	if txErr != nil {
-		return txErr
+	if err != nil {
+		return err
 	}
 
 	// Audit and cache-eviction happen AFTER commit, never before — same
