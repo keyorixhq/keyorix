@@ -147,6 +147,16 @@ func (v *OIDCVerifier) Verify(ctx context.Context, raw string) (issuer, subject 
 		// positive bound, so nothing rejected it (docs/findings/
 		// 2026-09-23-FINDING-oidc-future-iat-and-crit.md).
 		jwt.WithIssuedAt(),
+		// Pins the library's own exp/nbf/iat-future checks to the SAME clock as
+		// the manual max-age check below (v.effectiveNow()), restoring "one
+		// clock per verification" (#1983). Without this, golang-jwt reads real
+		// wall-clock time.Now() for exp/nbf while the max-age check below reads
+		// v.effectiveNow() — harmless today only because effectiveNow defaults
+		// to wall time; a configured/trusted clock source (or a test) would
+		// silently diverge the two checks. effectiveNow (not v.now) so the
+		// parser's time floor participates in the same backward-clock-step
+		// clamp as the age check — see effectiveNow's doc comment above.
+		jwt.WithTimeFunc(v.effectiveNow),
 	)
 
 	keyfunc := func(token *jwt.Token) (interface{}, error) {

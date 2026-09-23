@@ -915,6 +915,16 @@ func (c *KeyorixCore) verifyIDToken(ctx context.Context, p *SSOProvider, expecte
 		// otherwise guard against (docs/findings/
 		// 2026-09-23-FINDING-oidc-future-iat-and-crit.md).
 		jwt.WithIssuedAt(),
+		// Pins the library's own exp/nbf/iat-future checks to c.now — this path
+		// had no other time-based check to stay in sync with (unlike
+		// OIDCVerifier.Verify's max-age check in oidc.go), but leaving it on
+		// golang-jwt's own real time.Now() meant it silently ignored a clock
+		// KeyorixCore was configured or tested with (#1983). Plain c.now, not
+		// authEffectiveNow: this runs once per login exchange, not on the
+		// pervasive per-request auth path authEffectiveNow's watermark clamp
+		// exists for (see authEffectiveNow's doc comment, auth.go) — matches
+		// this file's existing c.now() calls for SSO state TTLs above.
+		jwt.WithTimeFunc(c.now),
 	)
 	keyfn := func(t *jwt.Token) (interface{}, error) {
 		iss, ierr := t.Claims.GetIssuer()

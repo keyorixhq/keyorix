@@ -40,20 +40,21 @@ import (
 // compare against this, not the pre-encoding fuzz input, or a perfectly
 // valid accept gets misreported as "wrong identity".
 // boundaryMargin is how far past the verifier's clock-skew leeway an
-// exp/nbf violation is pushed. Originally 1 second — flaky under real fuzzing
-// load: golang-jwt's exp/nbf checks always use real wall-clock time (neither
-// oidc.go nor sso.go calls jwt.WithTimeFunc), so the gap between this test's
-// `now := time.Now()` and the library's own verification-time now() is not
-// zero, and under -parallel=2 CPU contention (GC pauses, goroutine scheduling
-// delays) that gap occasionally exceeded 1 second — enough to make a token
-// meant to be 1s past the boundary land back inside it, producing a false
-// CONSTRAINT BYPASS (found live: kind=nbf_future_beyond_skew accepted after
-// an 8s fuzz run, testdata/fuzz/FuzzOIDCIDTokenSingleConstraintViolation/de868c9cc60f40dd).
-// 10s is comfortably past any realistic scheduling delay while still testing
-// "the skew is bounded, not unlimited" — the ±1s-at-the-exact-edge case this
-// architecture can't reliably assert without clock injection wired into
-// production code, which nothing here calls for.
-const boundaryMargin = 10 * time.Second
+// exp/nbf violation is pushed. Was widened to 10s (#1982) as a workaround for
+// flakiness under real fuzzing load: golang-jwt's exp/nbf checks read real
+// wall-clock time.Now() while this test's claims are built from a separate
+// `now := time.Now()` call, so under -parallel=2 CPU contention (GC pauses,
+// scheduling delays) the gap between the two occasionally exceeded 1 second —
+// enough to pull a token meant to land 1s past the boundary back inside it,
+// producing a false CONSTRAINT BYPASS (found live: kind=nbf_future_beyond_skew
+// accepted after an 8s fuzz run, testdata/fuzz/
+// FuzzOIDCIDTokenSingleConstraintViolation/de868c9cc60f40dd). #1983 wired
+// jwt.WithTimeFunc into both oidc.go's Verify and sso.go's verifyIDToken, so
+// every time-based check in a single verification (library's exp/nbf/iat-
+// future checks + this test's own claim construction) now reads the SAME
+// injected clock — the gap that caused the flake no longer exists, so the
+// margin is restored to 1s for exact edge-of-tolerance coverage.
+const boundaryMargin = 1 * time.Second
 
 func jsonRoundTripString(s string) string {
 	b, err := json.Marshal(s)
@@ -343,13 +344,6 @@ func FuzzOIDCIDTokenSingleConstraintViolation(f *testing.F) {
 	if err != nil {
 		f.Fatal(err)
 	}
-	v, err := NewOIDCVerifier(
-		[]OIDCTrustedIssuer{{Issuer: trustedIss, Audiences: []string{trustedAud}}},
-		staticResolver{kid: trustedKid, key: &key.PublicKey},
-	)
-	if err != nil {
-		f.Fatal(err)
-	}
 
 	kinds := oidcJWTViolationKinds
 	f.Add(uint8(0), "service-account:ns/name") // 0 violations
@@ -367,7 +361,24 @@ func FuzzOIDCIDTokenSingleConstraintViolation(f *testing.F) {
 			sub = "service-account:ns/fuzz" // don't let a fuzzed empty subject smuggle in a second, unintended violation
 		}
 
+		// A fresh verifier per iteration, its clock pinned to this iteration's
+		// `now` (#1983): now that oidc.go wires jwt.WithTimeFunc(v.effectiveNow),
+		// a SHARED verifier defaulting to real time.Now would read the wall
+		// clock again, independently, inside Verify — the exact gap that made
+		// boundaryMargin need to be 10s (real time.Now() drifting from this
+		// `now` under -parallel scheduling delays). Pinning eliminates the gap
+		// entirely, making the 1s margin below deterministic. A fresh instance
+		// (not a shared v.now reassigned per iteration) avoids a data race
+		// across parallel fuzz workers.
 		now := time.Now()
+		v, err := NewOIDCVerifier(
+			[]OIDCTrustedIssuer{{Issuer: trustedIss, Audiences: []string{trustedAud}}},
+			staticResolver{kid: trustedKid, key: &key.PublicKey},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v.now = func() time.Time { return now }
 		claims := oidcSingleConstraintBaseClaims(now, sub, trustedIss, trustedAud)
 		applySharedJWTViolation(kind, claims, now, trustedIss, trustedAud, leeway)
 		applyOIDCOnlyViolation(kind, claims, now, defaultOIDCMaxTokenAge, leeway)
@@ -429,10 +440,6 @@ func FuzzSSOIDTokenSingleConstraintViolation(f *testing.F) {
 	if err != nil {
 		f.Fatal(err)
 	}
-	c := &KeyorixCore{
-		now:     time.Now,
-		ssoJWKS: staticResolver{kid: trustedKid, key: &key.PublicKey},
-	}
 	p := &SSOProvider{Name: "okta", Issuer: trustedIss, ClientID: clientID}
 
 	kinds := ssoJWTViolationKinds
@@ -451,7 +458,13 @@ func FuzzSSOIDTokenSingleConstraintViolation(f *testing.F) {
 			sub = "okta|fuzz"
 		}
 
+		// Fresh KeyorixCore per iteration, clock pinned to this iteration's
+		// `now` — see the matching comment in FuzzOIDCIDTokenSingleConstraintViolation.
 		now := time.Now()
+		c := &KeyorixCore{
+			now:     func() time.Time { return now },
+			ssoJWKS: staticResolver{kid: trustedKid, key: &key.PublicKey},
+		}
 		claims := ssoSingleConstraintBaseClaims(now, sub, trustedIss, clientID, correctNonce)
 		applySharedJWTViolation(kind, claims, now, trustedIss, clientID, leeway)
 		applySSOOnlyViolation(kind, claims)
