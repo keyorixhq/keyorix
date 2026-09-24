@@ -42,6 +42,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -84,6 +85,18 @@ const (
 	adminFaultCorruptDEK
 	adminFaultWrongPassphrase
 	adminFaultEncryptionDisabled
+	// adminFaultReadOnlyDir models a filesystem-permission failure (a real
+	// production condition none of the three fault types above reach: a
+	// disk gone read-only, a permissions mistake, ENOSPC-adjacent EROFS) --
+	// the working directory (and every direct file inside it: dek.key,
+	// kek.salt, the SQLite DB, both config files) is made read-only
+	// immediately before the command runs, then restored before any oracle
+	// check needs write access again. See chmodAdminFuzzDir and
+	// TestFuzzAdminEncryptionCommandFaultHandlingSeedsReachEveryCase's own
+	// doc comment for why this fault type specifically needs an
+	// independently-verified reachability guard, not just a seed that looks
+	// like it covers it.
+	adminFaultReadOnlyDir
 	numAdminFaults
 )
 
@@ -146,6 +159,56 @@ func lockIsFree(dbPath string) bool {
 	return true
 }
 
+// chmodAdminFuzzDir sets mode on dir and every direct entry inside it
+// (dek.key, kek.salt, the SQLite DB, both config files — this harness's
+// directory is flat, no subdirectories) and reports whether dir's own mode
+// bits were actually verified changed afterward. A test suite running as
+// root would make os.Chmod(dir, 0o500) a complete no-op against root's own
+// writes, silently defeating adminFaultReadOnlyDir's entire premise without
+// this check — see TestFuzzAdminEncryptionCommandFaultHandlingSeedsReachEveryCase.
+func chmodAdminFuzzDir(dir string, mode os.FileMode) bool {
+	_ = os.Chmod(dir, mode)
+	verified := false
+	if info, err := os.Stat(dir); err == nil {
+		verified = info.Mode().Perm() == mode
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return verified
+	}
+	for _, e := range entries {
+		_ = os.Chmod(filepath.Join(dir, e.Name()), mode)
+	}
+	return verified
+}
+
+// adminEncFaultHandlingReachMu/Set back the seed-reachability guard test:
+// recordAdminEncFaultHandlingReadOnlyVerified is called ONLY when
+// chmodAdminFuzzDir's own stat check confirms the read-only fault actually
+// took effect at the OS level, never merely when that case ran.
+var (
+	adminEncFaultHandlingReachMu  sync.Mutex
+	adminEncFaultHandlingReachSet = map[string]bool{}
+)
+
+func recordAdminEncFaultHandlingReadOnlyVerified(cmdLabel string) {
+	adminEncFaultHandlingReachMu.Lock()
+	adminEncFaultHandlingReachSet[cmdLabel] = true
+	adminEncFaultHandlingReachMu.Unlock()
+}
+
+func resetAdminEncFaultHandlingReach() {
+	adminEncFaultHandlingReachMu.Lock()
+	adminEncFaultHandlingReachSet = map[string]bool{}
+	adminEncFaultHandlingReachMu.Unlock()
+}
+
+func adminEncFaultHandlingReadOnlyVerified(cmdLabel string) bool {
+	adminEncFaultHandlingReachMu.Lock()
+	defer adminEncFaultHandlingReachMu.Unlock()
+	return adminEncFaultHandlingReachSet[cmdLabel]
+}
+
 // captureStdout redirects os.Stdout for the duration of fn and returns
 // everything written to it. Not safe under t.Parallel() (global process
 // state) — this fuzzer never calls it.
@@ -174,91 +237,152 @@ func FuzzAdminEncryptionCommandFaultHandling(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, cmdSel, faultSel byte) {
-		cmdCase := adminFuzzCommands[int(cmdSel)%len(adminFuzzCommands)]
-		fault := adminFuzzFault(int(faultSel) % int(numAdminFaults))
-
-		dir := t.TempDir()
-		dbPath := filepath.Join(dir, "keyorix.db")
-		enabledCfgPath := writeAdminFuzzConfig(t, dir, "enabled.yaml", dbPath, true)
-		disabledCfgPath := writeAdminFuzzConfig(t, dir, "disabled.yaml", dbPath, false)
-
-		// CWD-dependent: every encryptionops.*WithConfig function resolves
-		// DEKPath/SaltPath against os.Getwd(), not the config file's directory.
-		// Fuzz workers are separate processes and this fuzzer never calls
-		// t.Parallel(), so per-invocation os.Chdir is safe.
-		origWD, err := os.Getwd()
-		if err != nil {
-			t.Fatalf("harness: os.Getwd: %v", err)
-		}
-		if err := os.Chdir(dir); err != nil {
-			t.Fatalf("harness: os.Chdir(%s): %v", dir, err)
-		}
-		defer func() { _ = os.Chdir(origWD) }()
-
-		origConfigPath := configPathFlag
-		defer func() { configPathFlag = origConfigPath }()
-
-		// Bootstrap: a REAL, unfaulted init establishes a working keydir + DB
-		// every non-init command needs to already exist — matching production,
-		// where every command but `init` assumes keys already exist.
-		t.Setenv("KEYORIX_MASTER_PASSWORD", adminFuzzBaselinePassphrase)
-		configPathFlag = enabledCfgPath
-		if _, err := captureStdout(t, func() error { return runEncInit(nil, nil) }); err != nil {
-			t.Fatalf("harness: baseline bootstrap init failed: %v", err)
-		}
-		if !lockIsFree(dbPath) {
-			t.Fatalf("harness: lock not free after bootstrap init")
-		}
-
-		activeCfgPath := enabledCfgPath
-		switch fault {
-		case adminFaultCorruptDEK:
-			if err := os.WriteFile(filepath.Join(dir, "dek.key"), []byte("bad"), 0600); err != nil { // #nosec G306 -- test-only harness temp file
-				t.Fatalf("harness: corrupting dek.key: %v", err)
-			}
-			t.Setenv("KEYORIX_MASTER_PASSWORD", adminFuzzBaselinePassphrase)
-		case adminFaultWrongPassphrase:
-			t.Setenv("KEYORIX_MASTER_PASSWORD", adminFuzzWrongPassphrase)
-		case adminFaultEncryptionDisabled:
-			activeCfgPath = disabledCfgPath
-			t.Setenv("KEYORIX_MASTER_PASSWORD", adminFuzzBaselinePassphrase)
-		case adminFaultNone:
-			t.Setenv("KEYORIX_MASTER_PASSWORD", adminFuzzBaselinePassphrase)
-		}
-		configPathFlag = activeCfgPath
-
-		beforeCount := countAuditEvents(t, dbPath)
-		stdout, runErr := captureStdout(t, func() error { return cmdCase.run(nil, nil) })
-
-		// oracle (a): the lock must be free immediately after the call returns,
-		// on EVERY path — success, real failure, or a fault-induced failure.
-		if !lockIsFree(dbPath) {
-			t.Fatalf("LOCK LEAK: cmd=%s fault=%v the exclusive database lock is still held after the command returned (err=%v)", cmdCase.label, fault, runErr)
-		}
-
-		afterCount := countAuditEvents(t, dbPath)
-		wroteAudit := afterCount > beforeCount
-
-		// oracle (b): audit event written iff the call succeeded.
-		switch {
-		case runErr == nil && !wroteAudit:
-			t.Fatalf("AUDIT GAP: cmd=%s fault=%v the command reported success but no audit event was recorded", cmdCase.label, fault)
-		case runErr != nil && wroteAudit:
-			t.Fatalf("AUDIT OVER-REPORT: cmd=%s fault=%v the command reported failure (%v) but an audit event was recorded anyway", cmdCase.label, fault, runErr)
-		}
-
-		// oracle (d): no success glyph in stdout on a failure path.
-		if runErr != nil && strings.Contains(stdout, "✅") {
-			t.Fatalf("FALSE SUCCESS OUTPUT: cmd=%s fault=%v command failed (%v) but printed a success glyph:\n%s", cmdCase.label, fault, runErr, stdout)
-		}
-
-		// Positive control (this repo's own "check green as well as red"
-		// discipline): the clean, unfaulted baseline case for every command
-		// must actually succeed — a fuzzer whose harness setup is itself
-		// broken would otherwise report every case as a correctly-detected
-		// failure and never notice.
-		if fault == adminFaultNone && runErr != nil {
-			t.Fatalf("HARNESS: cmd=%s the unfaulted baseline case failed: %v\nstdout:\n%s", cmdCase.label, runErr, stdout)
-		}
+		runAdminEncFaultHandlingCase(t, cmdSel, faultSel)
 	})
+}
+
+// runAdminEncFaultHandlingCase is FuzzAdminEncryptionCommandFaultHandling's
+// own case body, factored out so
+// TestFuzzAdminEncryptionCommandFaultHandlingSeedsReachEveryCase can replay
+// it directly outside `go test -fuzz`.
+func runAdminEncFaultHandlingCase(t *testing.T, cmdSel, faultSel byte) {
+	cmdCase := adminFuzzCommands[int(cmdSel)%len(adminFuzzCommands)]
+	fault := adminFuzzFault(int(faultSel) % int(numAdminFaults))
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "keyorix.db")
+	enabledCfgPath := writeAdminFuzzConfig(t, dir, "enabled.yaml", dbPath, true)
+	disabledCfgPath := writeAdminFuzzConfig(t, dir, "disabled.yaml", dbPath, false)
+
+	// CWD-dependent: every encryptionops.*WithConfig function resolves
+	// DEKPath/SaltPath against os.Getwd(), not the config file's directory.
+	// Fuzz workers are separate processes and this fuzzer never calls
+	// t.Parallel(), so per-invocation os.Chdir is safe.
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("harness: os.Getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("harness: os.Chdir(%s): %v", dir, err)
+	}
+	defer func() { _ = os.Chdir(origWD) }()
+
+	origConfigPath := configPathFlag
+	defer func() { configPathFlag = origConfigPath }()
+
+	// Bootstrap: a REAL, unfaulted init establishes a working keydir + DB
+	// every non-init command needs to already exist — matching production,
+	// where every command but `init` assumes keys already exist.
+	t.Setenv("KEYORIX_MASTER_PASSWORD", adminFuzzBaselinePassphrase)
+	configPathFlag = enabledCfgPath
+	if _, err := captureStdout(t, func() error { return runEncInit(nil, nil) }); err != nil {
+		t.Fatalf("harness: baseline bootstrap init failed: %v", err)
+	}
+	if !lockIsFree(dbPath) {
+		t.Fatalf("harness: lock not free after bootstrap init")
+	}
+
+	activeCfgPath := enabledCfgPath
+	switch fault {
+	case adminFaultCorruptDEK:
+		if err := os.WriteFile(filepath.Join(dir, "dek.key"), []byte("bad"), 0600); err != nil { // #nosec G306 -- test-only harness temp file
+			t.Fatalf("harness: corrupting dek.key: %v", err)
+		}
+		t.Setenv("KEYORIX_MASTER_PASSWORD", adminFuzzBaselinePassphrase)
+	case adminFaultWrongPassphrase:
+		t.Setenv("KEYORIX_MASTER_PASSWORD", adminFuzzWrongPassphrase)
+	case adminFaultEncryptionDisabled:
+		activeCfgPath = disabledCfgPath
+		t.Setenv("KEYORIX_MASTER_PASSWORD", adminFuzzBaselinePassphrase)
+	case adminFaultReadOnlyDir, adminFaultNone:
+		t.Setenv("KEYORIX_MASTER_PASSWORD", adminFuzzBaselinePassphrase)
+	}
+	configPathFlag = activeCfgPath
+
+	beforeCount := countAuditEvents(t, dbPath)
+
+	if fault == adminFaultReadOnlyDir {
+		if chmodAdminFuzzDir(dir, 0o500) {
+			recordAdminEncFaultHandlingReadOnlyVerified(cmdCase.label)
+		}
+	}
+	stdout, runErr := captureStdout(t, func() error { return cmdCase.run(nil, nil) })
+	if fault == adminFaultReadOnlyDir {
+		// Restore write access BEFORE any oracle check below — lockIsFree
+		// and countAuditEvents both need to write (a lock file, WAL/journal
+		// sidecars) against dir.
+		chmodAdminFuzzDir(dir, 0o700)
+	}
+
+	// oracle (a): the lock must be free immediately after the call returns,
+	// on EVERY path — success, real failure, or a fault-induced failure.
+	if !lockIsFree(dbPath) {
+		t.Fatalf("LOCK LEAK: cmd=%s fault=%v the exclusive database lock is still held after the command returned (err=%v)", cmdCase.label, fault, runErr)
+	}
+
+	afterCount := countAuditEvents(t, dbPath)
+	wroteAudit := afterCount > beforeCount
+
+	// oracle (b): audit event written iff the call succeeded.
+	switch {
+	case runErr == nil && !wroteAudit:
+		t.Fatalf("AUDIT GAP: cmd=%s fault=%v the command reported success but no audit event was recorded", cmdCase.label, fault)
+	case runErr != nil && wroteAudit:
+		t.Fatalf("AUDIT OVER-REPORT: cmd=%s fault=%v the command reported failure (%v) but an audit event was recorded anyway", cmdCase.label, fault, runErr)
+	}
+
+	// oracle (d): no success glyph in stdout on a failure path.
+	if runErr != nil && strings.Contains(stdout, "✅") {
+		t.Fatalf("FALSE SUCCESS OUTPUT: cmd=%s fault=%v command failed (%v) but printed a success glyph:\n%s", cmdCase.label, fault, runErr, stdout)
+	}
+
+	// Positive control (this repo's own "check green as well as red"
+	// discipline): the clean, unfaulted baseline case for every command
+	// must actually succeed — a fuzzer whose harness setup is itself
+	// broken would otherwise report every case as a correctly-detected
+	// failure and never notice.
+	if fault == adminFaultNone && runErr != nil {
+		t.Fatalf("HARNESS: cmd=%s the unfaulted baseline case failed: %v\nstdout:\n%s", cmdCase.label, runErr, stdout)
+	}
+}
+
+// TestFuzzAdminEncryptionCommandFaultHandlingSeedsReachEveryCase replays this
+// fuzzer's own seed set (every (cmdSel, faultSel) pair its f.Add loop uses,
+// now including adminFaultReadOnlyDir) through runAdminEncFaultHandlingCase
+// directly, outside `go test -fuzz`. For adminFaultReadOnlyDir specifically,
+// asserts chmodAdminFuzzDir's own stat check verified the fault actually took
+// effect at the OS level for every command in the catalog — independent of
+// whether the subtests above happened to pass, since some of their oracles
+// could in principle still pass by accident even if the permission fault
+// silently no-op'd (e.g. this whole suite running as root). This is the
+// dead-seed class of bug PR #2047 found in FuzzAdminDispatch: a seed that
+// looks like it covers something without the underlying condition it claims
+// to model ever actually being true.
+func TestFuzzAdminEncryptionCommandFaultHandlingSeedsReachEveryCase(t *testing.T) {
+	resetAdminEncFaultHandlingReach()
+	readOnlyDirFaultSel := -1
+	for faultSel := 0; faultSel < int(numAdminFaults); faultSel++ {
+		if adminFuzzFault(faultSel) == adminFaultReadOnlyDir {
+			readOnlyDirFaultSel = faultSel
+		}
+	}
+	if readOnlyDirFaultSel < 0 {
+		t.Fatal("harness: adminFaultReadOnlyDir not found in the fault enum")
+	}
+
+	for cmdSel := range adminFuzzCommands {
+		for faultSel := 0; faultSel < int(numAdminFaults); faultSel++ {
+			cmdCase := adminFuzzCommands[cmdSel]
+			fault := adminFuzzFault(faultSel)
+			t.Run(fmt.Sprintf("%s/fault=%d", cmdCase.label, fault), func(t *testing.T) {
+				runAdminEncFaultHandlingCase(t, byte(cmdSel), byte(faultSel))
+			})
+		}
+	}
+
+	for _, cmdCase := range adminFuzzCommands {
+		if !adminEncFaultHandlingReadOnlyVerified(cmdCase.label) {
+			t.Errorf("DEAD SEED: command %q's adminFaultReadOnlyDir case never verified the working directory actually became read-only (chmodAdminFuzzDir's stat check failed) — the fault model may be silently defeated (e.g. running as root)", cmdCase.label)
+		}
+	}
 }
