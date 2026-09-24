@@ -35,7 +35,7 @@ func TestRemoveUserRole_RefusesLastProjectAdminAtThePrimitive(t *testing.T) {
 	const actor = uint(55)
 	grantGlobalAdmin(t, st, actor)
 
-	u, err := st.CreateUser(ctx, &models.User{Username: "priya", Email: "priya@example.com", IsActive: true})
+	u, err := st.CreateUser(ctx, foldedTestUser(t, "priya", "priya@example.com"))
 	require.NoError(t, err)
 	adminRole, err := st.GetRoleByName(ctx, "project_admin")
 	require.NoError(t, err)
@@ -63,9 +63,9 @@ func TestRemoveUserRole_AllowsProjectAdminRemovalWhenAnotherSurvives(t *testing.
 	const actor = uint(55)
 	grantGlobalAdmin(t, st, actor)
 
-	u, err := st.CreateUser(ctx, &models.User{Username: "priya", Email: "priya@example.com", IsActive: true})
+	u, err := st.CreateUser(ctx, foldedTestUser(t, "priya", "priya@example.com"))
 	require.NoError(t, err)
-	other, err := st.CreateUser(ctx, &models.User{Username: "raj", Email: "raj@example.com", IsActive: true})
+	other, err := st.CreateUser(ctx, foldedTestUser(t, "raj", "raj@example.com"))
 	require.NoError(t, err)
 	adminRole, err := st.GetRoleByName(ctx, "project_admin")
 	require.NoError(t, err)
@@ -91,7 +91,7 @@ func TestRemoveUserRole_EnvironmentScopeUnaffected(t *testing.T) {
 	const actor = uint(55)
 	grantGlobalAdmin(t, st, actor)
 
-	u, err := st.CreateUser(ctx, &models.User{Username: "priya", Email: "priya@example.com", IsActive: true})
+	u, err := st.CreateUser(ctx, foldedTestUser(t, "priya", "priya@example.com"))
 	require.NoError(t, err)
 	adminRole, err := st.GetRoleByName(ctx, "project_admin")
 	require.NoError(t, err)
@@ -147,7 +147,7 @@ func TestRemoveRoleFromGroup_AllowsWhenAnotherProjectAdminExists(t *testing.T) {
 	const actor = uint(55)
 	grantGlobalAdmin(t, st, actor)
 
-	other, err := st.CreateUser(ctx, &models.User{Username: "raj", Email: "raj@example.com", IsActive: true})
+	other, err := st.CreateUser(ctx, foldedTestUser(t, "raj", "raj@example.com"))
 	require.NoError(t, err)
 	adminRole, err := st.GetRoleByName(ctx, "project_admin")
 	require.NoError(t, err)
@@ -198,7 +198,7 @@ func TestReconcileSSOGroups_RefusesStrandingLastProjectAdmin(t *testing.T) {
 	const actor = uint(55)
 	grantGlobalAdmin(t, st, actor)
 
-	u, err := st.CreateUser(ctx, &models.User{Username: "priya", Email: "priya@example.com", IsActive: true})
+	u, err := st.CreateUser(ctx, foldedTestUser(t, "priya", "priya@example.com"))
 	require.NoError(t, err)
 	adminRole, err := st.GetRoleByName(ctx, "project_admin")
 	require.NoError(t, err)

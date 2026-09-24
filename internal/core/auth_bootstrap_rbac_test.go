@@ -12,6 +12,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
+	kxstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
@@ -26,20 +28,14 @@ func newBootstrappedCore(t *testing.T) (*KeyorixCore, *store.LocalStorage) {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(
-		&models.User{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
-		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
-		&models.Project{}, &models.Environment{}, &models.SystemMetadata{},
-		&models.MachineIdentity{}, &models.MachineIdentityRole{},
-		&models.PersonalAccessToken{}, &models.Session{}, &models.ShareRecord{},
-		&models.AuditEvent{},
-		&models.AccessRequest{}, &models.AccessRequestApproval{}, &models.ProjectMembership{},
-		&models.SecretNode{}, &models.SecretVersion{}, &models.DynamicSecretConfig{}, &models.SoDPolicy{},
-		&models.StatsSnapshot{}, &models.DeploymentStatsSnapshot{},
-		&models.MFAStepupToken{}, &models.MFAStepUpGrant{},
-		&models.SecretACL{}, &models.PasswordHistory{},
-		&models.SecretAccessSchedule{},
-	))
+	// A plain ":memory:" DSN gives every pooled connection its own separate,
+	// empty database -- cap the pool at 1 so migration and every later query
+	// share the single connection that actually has the schema (see
+	// internal/testutil/fuzzworld.OpenSQLite for the same constraint).
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, kxstorage.MigrateExisting(db))
 
 	st := store.NewLocalStorage(db)
 	c := NewKeyorixCore(st)
@@ -52,17 +48,72 @@ func newBootstrappedCore(t *testing.T) (*KeyorixCore, *store.LocalStorage) {
 	return c, st
 }
 
+// sqliteTableNames returns every user table name (sqlite_% internal tables
+// excluded) present in db.
+func sqliteTableNames(t *testing.T, db *gorm.DB) []string {
+	t.Helper()
+	var names []string
+	require.NoError(t, db.Raw(
+		"SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+	).Scan(&names).Error)
+	return names
+}
+
+// TestNewBootstrappedCore_SchemaMatchesProductionMigration guards against
+// newBootstrappedCore's schema silently drifting from what production
+// actually creates -- the failure mode that let it lack the notifications
+// table (and others) for as long as it did with a hand-picked AutoMigrate
+// list nobody re-diffed against migrateDatabase. newBootstrappedCore now
+// delegates to kxstorage.MigrateExisting directly, so this test only fails
+// if a future edit reintroduces a hand-picked list or otherwise diverges --
+// exactly the case that must fail loudly instead of being swallowed.
+func TestNewBootstrappedCore_SchemaMatchesProductionMigration(t *testing.T) {
+	_, st := newBootstrappedCore(t)
+	got := sqliteTableNames(t, st.DB())
+
+	prodDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, kxstorage.MigrateExisting(prodDB))
+	want := sqliteTableNames(t, prodDB)
+
+	assert.ElementsMatch(t, want, got,
+		"newBootstrappedCore's table set must match production's migration (kxstorage.MigrateExisting) exactly")
+}
+
 // seedUserWithRole creates a fresh user and assigns it roleName at the given
 // scope, bypassing core.CreateUser so no default role is attached.
 func seedUserWithRole(t *testing.T, st *store.LocalStorage, username, roleName string, scope storage.Scope) uint {
 	t.Helper()
 	ctx := context.Background()
-	u, err := st.CreateUser(ctx, &models.User{Username: username, Email: username + "@example.com", IsActive: true})
+	u, err := st.CreateUser(ctx, foldedTestUser(t, username, username+"@example.com"))
 	require.NoError(t, err)
 	role, err := st.GetRoleByName(ctx, roleName)
 	require.NoErrorf(t, err, "role %s must be seeded", roleName)
 	require.NoError(t, st.AssignRole(ctx, u.ID, role.ID, scope))
 	return u.ID
+}
+
+// foldedTestUser builds a models.User with UsernameFolded/EmailFolded
+// populated the same way core.CreateUser does (internal/core/users.go), for
+// fixtures that call st.CreateUser directly instead of going through
+// core.CreateUser. Without this, every such user gets an empty EmailFolded
+// and collides with any other bypass-created active user under the real
+// production schema's partial unique index uniq_users_email_folded_active
+// (#117) -- invisible before newBootstrappedCore built its schema from a
+// hand-picked AutoMigrate list that never created this index.
+func foldedTestUser(t *testing.T, username, email string) *models.User {
+	t.Helper()
+	foldedUsername, err := identity.NewFoldedName(username)
+	require.NoError(t, err)
+	foldedEmail, err := identity.NewFoldedName(email)
+	require.NoError(t, err)
+	return &models.User{
+		Username:       username,
+		UsernameFolded: foldedUsername.Folded(),
+		Email:          email,
+		EmailFolded:    foldedEmail.Folded(),
+		IsActive:       true,
+	}
 }
 
 // BootstrapSystem must seed the legacy roles plus the ADR-021 two-tier catalog.

@@ -16,6 +16,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	kxstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
@@ -37,13 +38,7 @@ func newBootstrappedCore(t *testing.T) (*core.KeyorixCore, *store.LocalStorage) 
 	dsn := fmt.Sprintf("file:test_migrate_s3_%s_%d?mode=memory&cache=shared", t.Name(), migrateS3DBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(
-		&models.User{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
-		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
-		&models.Project{}, &models.Environment{}, &models.SystemMetadata{},
-		&models.MachineIdentity{}, &models.MachineIdentityRole{},
-		&models.PersonalAccessToken{}, &models.Session{}, &models.AuditEvent{},
-	))
+	require.NoError(t, kxstorage.MigrateExisting(db))
 
 	st := store.NewLocalStorage(db)
 	c := core.NewKeyorixCore(st)
@@ -55,6 +50,30 @@ func newBootstrappedCore(t *testing.T) (*core.KeyorixCore, *store.LocalStorage) 
 	})
 	require.NoError(t, err)
 	return c, st
+}
+
+// TestNewBootstrappedCore_SchemaMatchesProductionMigration guards against
+// this package's newBootstrappedCore silently drifting from what production
+// actually creates -- see the identical guard in
+// internal/core/auth_bootstrap_rbac_test.go for the incident this closes.
+func TestNewBootstrappedCore_SchemaMatchesProductionMigration(t *testing.T) {
+	_, st := newBootstrappedCore(t)
+
+	var got []string
+	require.NoError(t, st.DB().Raw(
+		"SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+	).Scan(&got).Error)
+
+	prodDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, kxstorage.MigrateExisting(prodDB))
+	var want []string
+	require.NoError(t, prodDB.Raw(
+		"SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+	).Scan(&want).Error)
+
+	assert.ElementsMatch(t, want, got,
+		"newBootstrappedCore's table set must match production's migration (kxstorage.MigrateExisting) exactly")
 }
 
 // writeConfigYAML writes a minimal keyorix YAML config file and sets
