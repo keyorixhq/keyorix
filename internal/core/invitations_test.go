@@ -411,7 +411,7 @@ func TestRequestProjectAccess_RejectsSoftDeletedProject(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
-	requester, err := st.CreateUser(ctx, &models.User{Username: "requester", Email: "requester@example.com", IsActive: true})
+	requester, err := st.CreateUser(ctx, foldedTestUser(t, "requester", "requester@example.com"))
 	require.NoError(t, err)
 	proj, err := st.CreateProject(ctx, &models.Project{Name: "retiring"})
 	require.NoError(t, err)
@@ -431,7 +431,7 @@ func TestRequestProjectAccess_RefusesDuplicatePending(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
-	requester, err := st.CreateUser(ctx, &models.User{Username: "requester", Email: "requester@example.com", IsActive: true})
+	requester, err := st.CreateUser(ctx, foldedTestUser(t, "requester", "requester@example.com"))
 	require.NoError(t, err)
 	proj, err := st.CreateProject(ctx, &models.Project{Name: "flood-target"})
 	require.NoError(t, err)
@@ -459,12 +459,12 @@ func TestApproveAccessRequestWithExpiry_RejectsSoftDeletedProject(t *testing.T) 
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
-	approver, err := st.CreateUser(ctx, &models.User{Username: "approver2", Email: "approver2@example.com", IsActive: true})
+	approver, err := st.CreateUser(ctx, foldedTestUser(t, "approver2", "approver2@example.com"))
 	require.NoError(t, err)
 	adminRole, err := st.GetRoleByName(ctx, "admin")
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRole(ctx, approver.ID, adminRole.ID, storage.Scope{}))
-	requester, err := st.CreateUser(ctx, &models.User{Username: "requester2", Email: "requester2@example.com", IsActive: true})
+	requester, err := st.CreateUser(ctx, foldedTestUser(t, "requester2", "requester2@example.com"))
 	require.NoError(t, err)
 
 	proj, err := st.CreateProject(ctx, &models.Project{Name: "retiring2"})
@@ -667,7 +667,7 @@ func TestApproveAccessRequestWithExpiry_IsRBACAudited(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 
-	approver, err := st.CreateUser(ctx, &models.User{Username: "approver", Email: "approver@example.com", IsActive: true})
+	approver, err := st.CreateUser(ctx, foldedTestUser(t, "approver", "approver@example.com"))
 	require.NoError(t, err)
 	// #93/#107/#141: the approver must themselves hold every permission of the
 	// role being granted — grant "admin" globally so the ceiling check's admin
@@ -675,7 +675,7 @@ func TestApproveAccessRequestWithExpiry_IsRBACAudited(t *testing.T) {
 	adminRole, err := st.GetRoleByName(ctx, "admin")
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRole(ctx, approver.ID, adminRole.ID, storage.Scope{}))
-	requester, err := st.CreateUser(ctx, &models.User{Username: "requester", Email: "requester@example.com", IsActive: true})
+	requester, err := st.CreateUser(ctx, foldedTestUser(t, "requester", "requester@example.com"))
 	require.NoError(t, err)
 	req, err := st.CreateAccessRequest(ctx, &models.AccessRequest{
 		ProjectID: 1, UserID: requester.ID, SuggestedRole: "project_viewer", State: AccessRequestPending,

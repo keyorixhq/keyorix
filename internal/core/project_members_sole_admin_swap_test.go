@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/identity"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -50,7 +49,7 @@ func TestSetProjectMemberRole_SoleAdminSwapBetweenTwoAdminRolesAllowed(t *testin
 	require.NoError(t, err)
 	require.NoError(t, c.AssignPermissionToRole(ctx, 0, roleB.ID, rolesAssignID, false))
 
-	u, err := st.CreateUser(ctx, &models.User{Username: "sole-admin", Email: "sole-admin@example.com", IsActive: true})
+	u, err := st.CreateUser(ctx, foldedTestUser(t, "sole-admin", "sole-admin@example.com"))
 	require.NoError(t, err)
 	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "sole-admin-swap-role-a", false))
 

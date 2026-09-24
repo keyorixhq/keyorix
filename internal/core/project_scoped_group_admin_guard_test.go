@@ -28,7 +28,7 @@ func TestDeleteGroup_RefusesLastProjectAdmin(t *testing.T) {
 	const actor = uint(55)
 	grantGlobalAdmin(t, st, actor)
 
-	u, err := st.CreateUser(ctx, &models.User{Username: "priya", Email: "priya@example.com", IsActive: true})
+	u, err := st.CreateUser(ctx, foldedTestUser(t, "priya", "priya@example.com"))
 	require.NoError(t, err)
 
 	adminRole, err := st.GetRoleByName(ctx, "project_admin")
@@ -54,9 +54,9 @@ func TestDeleteGroup_AllowsWhenAnotherProjectAdminExists(t *testing.T) {
 	const actor = uint(55)
 	grantGlobalAdmin(t, st, actor)
 
-	u, err := st.CreateUser(ctx, &models.User{Username: "priya", Email: "priya@example.com", IsActive: true})
+	u, err := st.CreateUser(ctx, foldedTestUser(t, "priya", "priya@example.com"))
 	require.NoError(t, err)
-	other, err := st.CreateUser(ctx, &models.User{Username: "raj", Email: "raj@example.com", IsActive: true})
+	other, err := st.CreateUser(ctx, foldedTestUser(t, "raj", "raj@example.com"))
 	require.NoError(t, err)
 
 	adminRole, err := st.GetRoleByName(ctx, "project_admin")
@@ -95,9 +95,9 @@ func TestDeleteGroup_RefusesWhenGroupAdminsMultipleProjects(t *testing.T) {
 	const actor = uint(55)
 	grantGlobalAdmin(t, st, actor)
 
-	u, err := st.CreateUser(ctx, &models.User{Username: "priya", Email: "priya@example.com", IsActive: true})
+	u, err := st.CreateUser(ctx, foldedTestUser(t, "priya", "priya@example.com"))
 	require.NoError(t, err)
-	other, err := st.CreateUser(ctx, &models.User{Username: "raj", Email: "raj@example.com", IsActive: true})
+	other, err := st.CreateUser(ctx, foldedTestUser(t, "raj", "raj@example.com"))
 	require.NoError(t, err)
 
 	adminRole, err := st.GetRoleByName(ctx, "project_admin")
@@ -123,7 +123,7 @@ func TestRemoveUserFromGroup_RefusesLastProjectAdminMember(t *testing.T) {
 	const actor = uint(55)
 	grantGlobalAdmin(t, st, actor)
 
-	u, err := st.CreateUser(ctx, &models.User{Username: "priya", Email: "priya@example.com", IsActive: true})
+	u, err := st.CreateUser(ctx, foldedTestUser(t, "priya", "priya@example.com"))
 	require.NoError(t, err)
 
 	adminRole, err := st.GetRoleByName(ctx, "project_admin")
@@ -150,9 +150,9 @@ func TestRemoveUserFromGroup_AllowsWhenAnotherGroupMemberSurvives(t *testing.T) 
 	const actor = uint(55)
 	grantGlobalAdmin(t, st, actor)
 
-	u1, err := st.CreateUser(ctx, &models.User{Username: "priya", Email: "priya@example.com", IsActive: true})
+	u1, err := st.CreateUser(ctx, foldedTestUser(t, "priya", "priya@example.com"))
 	require.NoError(t, err)
-	u2, err := st.CreateUser(ctx, &models.User{Username: "raj", Email: "raj@example.com", IsActive: true})
+	u2, err := st.CreateUser(ctx, foldedTestUser(t, "raj", "raj@example.com"))
 	require.NoError(t, err)
 
 	adminRole, err := st.GetRoleByName(ctx, "project_admin")
@@ -183,7 +183,9 @@ func TestDeprovisionSCIMGroup_RefusesLastProjectAdmin(t *testing.T) {
 	const actor = uint(55)
 	grantGlobalAdmin(t, st, actor)
 
-	u, err := st.CreateUser(ctx, &models.User{Username: "priya", Email: "priya@example.com", IsActive: true, ExternalID: "okta|priya"})
+	priyaUser := foldedTestUser(t, "priya", "priya@example.com")
+	priyaUser.ExternalID = "okta|priya"
+	u, err := st.CreateUser(ctx, priyaUser)
 	require.NoError(t, err)
 
 	adminRole, err := st.GetRoleByName(ctx, "project_admin")

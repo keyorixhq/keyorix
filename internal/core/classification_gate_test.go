@@ -24,7 +24,7 @@ func seedClassificationGateFixture(t *testing.T, st *store.LocalStorage, classif
 	proj, err := st.CreateProject(ctx, &models.Project{Name: "classification-gate-" + classification + "-test"})
 	require.NoError(t, err)
 
-	requester, err := st.CreateUser(ctx, &models.User{Username: "requester-" + classification, Email: "requester-" + classification + "@example.com", IsActive: true})
+	requester, err := st.CreateUser(ctx, foldedTestUser(t, "requester-"+classification, "requester-"+classification+"@example.com"))
 	require.NoError(t, err)
 
 	// Assign the requester a project-scoped viewer role so IsProjectMember
@@ -34,7 +34,7 @@ func seedClassificationGateFixture(t *testing.T, st *store.LocalStorage, classif
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRole(ctx, requester.ID, viewerRole.ID, storage.Scope{ProjectID: proj.ID}))
 
-	approver, err := st.CreateUser(ctx, &models.User{Username: "approver-" + classification, Email: "approver-" + classification + "@example.com", IsActive: true})
+	approver, err := st.CreateUser(ctx, foldedTestUser(t, "approver-"+classification, "approver-"+classification+"@example.com"))
 	require.NoError(t, err)
 	adminRole, err := st.GetRoleByName(ctx, "admin")
 	require.NoError(t, err)
@@ -180,7 +180,7 @@ func TestApproveSecretAccessRequest_Guards(t *testing.T) {
 	assert.Contains(t, err.Error(), "cannot approve their own")
 
 	// A non-admin approver is refused.
-	nonAdmin, err := st.CreateUser(ctx, &models.User{Username: "nonadmin", Email: "nonadmin@example.com", IsActive: true})
+	nonAdmin, err := st.CreateUser(ctx, foldedTestUser(t, "nonadmin", "nonadmin@example.com"))
 	require.NoError(t, err)
 	_, err = c.ApproveSecretAccessRequest(ctx, req.ID, nonAdmin.ID)
 	require.Error(t, err)
@@ -225,7 +225,7 @@ func seedRestrictedPermissionFixture(t *testing.T, st *store.LocalStorage) (secr
 
 	require.NoError(t, st.AssignPermissionToRole(ctx, role.ID, perm.ID))
 
-	grantedUser, err := st.CreateUser(ctx, &models.User{Username: "granted-user", Email: "granted@example.com", IsActive: true})
+	grantedUser, err := st.CreateUser(ctx, foldedTestUser(t, "granted-user", "granted@example.com"))
 	require.NoError(t, err)
 
 	require.NoError(t, st.AssignRole(ctx, grantedUser.ID, role.ID, storage.Scope{ProjectID: projectID}))
@@ -296,7 +296,7 @@ func TestClassificationPermissionGate_On_AdminAllowed(t *testing.T) {
 	proj, err := st.CreateProject(ctx, &models.Project{Name: "admin-restricted-gate-test"})
 	require.NoError(t, err)
 
-	admin, err := st.CreateUser(ctx, &models.User{Username: "admin-owner", Email: "admin-owner@example.com", IsActive: true})
+	admin, err := st.CreateUser(ctx, foldedTestUser(t, "admin-owner", "admin-owner@example.com"))
 	require.NoError(t, err)
 	adminRole, err := st.GetRoleByName(ctx, "admin")
 	require.NoError(t, err)
