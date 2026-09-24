@@ -3519,6 +3519,220 @@ paths:
             {iso_27001[], soc2[], nis2[], dora[]}}}.
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/compliance/controls.csv:
+    get:
+      tags: [Dashboard]
+      summary: Compliance control matrix as CSV (ADR-108 PR 8 addition)
+      description: >-
+        The same control matrix as GET /compliance/controls, as a raw CSV download
+        (not the {data} envelope). Requires audit.read. Added for ADR-108 PR 8 (thin
+        CLI `compliance controls --csv`) -- was already a live route
+        (dashboardHandler.ExportComplianceControlsCSV, router.go), just undocumented
+        in this spec until now.
+      operationId: exportComplianceControlsCSV
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: "Raw text/csv body (not the JSON envelope)."}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/compliance/digest:
+    get:
+      tags: [Dashboard]
+      summary: On-demand compliance digest (ADR-108 PR 8 addition)
+      description: >-
+        The same title + body normally broadcast on a schedule to configured
+        notification channels. Requires audit.read. Added for ADR-108 PR 8 (thin CLI
+        `compliance digest`) -- was already a live route
+        (dashboardHandler.GetComplianceDigest, router.go), just undocumented in this
+        spec until now.
+      operationId: getComplianceDigest
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: "Envelope {data}. data: {title, body}."}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/compliance/digest/send:
+    post:
+      tags: [Dashboard]
+      summary: Broadcast the compliance digest now (ADR-108 PR 8 addition)
+      description: >-
+        Trigger an immediate broadcast of the compliance digest to configured
+        notification channels. Requires audit.read (matches its read sibling above).
+        Added for ADR-108 PR 8 (thin CLI `compliance digest --send`) -- was already a
+        live route (dashboardHandler.SendComplianceDigest, router.go), just
+        undocumented in this spec until now.
+      operationId: sendComplianceDigest
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: "Envelope {data}. data: {sent}."}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/compliance/permission-changes:
+    get:
+      tags: [Dashboard]
+      summary: Role grant/revoke events from the audit trail (ADR-108 PR 8 addition)
+      description: >-
+        Structured permission-change audit: role grants and revokes in a time
+        window. Requires audit.read. Added for ADR-108 PR 8 (thin CLI `compliance
+        permission-changes`) -- was already a live route
+        (dashboardHandler.GetPermissionChangeAudit, router.go), just undocumented in
+        this spec until now.
+      operationId: getCompliancePermissionChanges
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: since, in: query, schema: {type: string, format: date-time}, description: "RFC3339 lower bound; defaults to 30 days ago."}
+        - {name: until, in: query, schema: {type: string, format: date-time}, description: "RFC3339 upper bound; defaults to now."}
+        - {name: limit, in: query, schema: {type: integer}, description: "Max events (default 100, max 1000)."}
+      responses:
+        '200':
+          description: >-
+            Envelope {data}. data: {since, until, total, changes[] {event_id, action,
+            actor_name, target_user, role_name, scope, changed_at}}.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/compliance/permission-baseline:
+    get:
+      tags: [Dashboard]
+      summary: Every user's effective permissions (ADR-108 PR 8 addition)
+      description: >-
+        The full permission baseline, expanded through direct role grants and group
+        membership, as JSON. Requires audit.read. Added for ADR-108 PR 8 (thin CLI
+        `compliance permission-baseline --format json`) -- was already a live route
+        (dashboardHandler.GetPermissionBaseline, router.go), just undocumented in
+        this spec until now.
+      operationId: getCompliancePermissionBaseline
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: "Envelope {data}. data: the baseline edge list."}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/compliance/permission-baseline.csv:
+    get:
+      tags: [Dashboard]
+      summary: Every user's effective permissions as CSV (ADR-108 PR 8 addition)
+      description: >-
+        The same permission baseline as GET /compliance/permission-baseline, as a raw
+        CSV download (not the {data} envelope). Requires audit.read. Added for
+        ADR-108 PR 8 (thin CLI `compliance permission-baseline`, its default format)
+        -- was already a live route (dashboardHandler.GetPermissionBaselineCSV,
+        router.go), just undocumented in this spec until now.
+      operationId: getCompliancePermissionBaselineCSV
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: "Raw text/csv body (not the JSON envelope)."}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/compliance/credential-trends:
+    get:
+      tags: [Dashboard]
+      summary: 30/60/90-day credential hygiene trends (ADR-108 PR 8 addition)
+      description: >-
+        Per-day stale/expired PAT and stale machine-credential counts over a
+        30/60/90-day window. Requires audit.read. Added for ADR-108 PR 8 (thin CLI
+        `compliance credential-trends`) -- was already a live route
+        (hygieneTrendsHandler.GetCredentialTrends, router.go), just undocumented in
+        this spec until now.
+      operationId: getComplianceCredentialTrends
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: days, in: query, schema: {type: integer, enum: [30, 60, 90], default: 30}}
+      responses:
+        '200':
+          description: >-
+            Envelope {data}. data: {days, points[] {date, stale_pats, expired_pats,
+            stale_machines, total_pats, total_machines}}.
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/compliance/rotation-by-backend:
+    get:
+      tags: [Dashboard]
+      summary: Rotation-overdue secrets grouped by backend (ADR-108 PR 8 addition)
+      description: >-
+        A deployment-wide tally of rotation-overdue secrets grouped by
+        RotationBackend. Requires audit.read. Added for ADR-108 PR 8 (thin CLI
+        `compliance rotation-by-backend`) -- was already a live route
+        (secretHandler.RotationByBackend, router.go), just undocumented in this spec
+        until now.
+      operationId: getComplianceRotationByBackend
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: >-
+            Envelope {data}. data: {generated_at, total_overdue, backends[] {backend,
+            total, overdue, up_to_date, never_rotated}}.
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/secrets/inventory.csv:
+    get:
+      tags: [Secrets]
+      summary: Deployment-wide secret asset inventory as CSV (ADR-108 PR 8 addition)
+      description: >-
+        Secrets listed by name, project, environment, type, classification, owner,
+        and lifecycle status -- no secret values. Requires audit.read. Added for
+        ADR-108 PR 8 (thin CLI `compliance inventory`, deployment-wide) -- was
+        already a live route (secretHandler.DeploymentSecretsInventoryCSV,
+        router.go), just undocumented in this spec until now.
+      operationId: getSecretsInventoryCSV
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: "Raw text/csv body (not the JSON envelope)."}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}/secrets/inventory.csv:
+    get:
+      tags: [Secrets]
+      summary: One project's secret asset inventory as CSV (ADR-108 PR 8 addition)
+      description: >-
+        Same as GET /secrets/inventory.csv, scoped to one project. Requires
+        secrets.read on that project. Added for ADR-108 PR 8 (thin CLI `compliance
+        inventory --project`) -- was already a live route
+        (secretHandler.SecretsInventoryCSV, router.go), just undocumented in this
+        spec until now.
+      operationId: getProjectSecretsInventoryCSV
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+      responses:
+        '200': {description: "Raw text/csv body (not the JSON envelope)."}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/hygiene:
+    get:
+      tags: [Secrets]
+      summary: Deployment-wide secret-hygiene rollup (ADR-108 PR 8 addition)
+      description: >-
+        Install-wide totals of every project's cleanup signals plus a per-project
+        breakdown of the projects that carry debt. Requires audit.read. Added for
+        ADR-108 PR 8 (thin CLI `hygiene`) -- was already a live route
+        (secretHandler.DeploymentHygiene, router.go), just undocumented in this spec
+        until now.
+      operationId: getDeploymentHygiene
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: unused_days, in: query, schema: {type: integer}, description: "Unused-secret window in days (server default: 90)."}
+        - {name: expiring_days, in: query, schema: {type: integer}, description: "Expiring-secret window in days (server default: 30)."}
+        - {name: stale_days, in: query, schema: {type: integer}, description: "Stale-machine-identity window in days (server default: 90)."}
+      responses:
+        '200':
+          description: >-
+            Envelope {data}. data: {totals {orphaned_secrets, unused_secrets,
+            expiring_secrets, stale_machine_identities, rotation_overdue},
+            projects[] {project_id, project_name, ...same counts}}.
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
   /api/v1/compliance/evidence:
     get:
       tags: [Dashboard]
@@ -3606,9 +3820,24 @@ paths:
     delete:
       tags: [Dashboard]
       summary: Lift the active legal hold (resume purges)
-      description: Remove the active deployment-wide legal hold, allowing background purge jobs to resume.
+      description: >-
+        Remove the active deployment-wide legal hold, allowing background purge jobs
+        to resume. The handler reads a JSON body on this DELETE (unusual for REST,
+        but genuinely how the wire protocol works here -- LiftLegalHold requires a
+        non-empty reason, mapped to 400 when absent); this requestBody was missing
+        from the spec until now (ADR-108 PR 8 addition) even though the route itself
+        predates this PR.
       operationId: liftLegalHold
       security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: {type: string, description: "Why the hold is lifted (recorded for audit)."}
       responses:
         '200': {description: "Envelope {data, message}. Legal hold lifted."}
         '400': {$ref: '#/components/responses/Error'}
@@ -3656,6 +3885,27 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+  /api/v1/risk-exceptions/{id}/approve:
+    post:
+      tags: [Dashboard]
+      summary: Approve a risk exception so it takes effect (ADR-108 PR 8 addition)
+      description: >-
+        Dual control: an exception only suppresses its matched violation from the
+        compliance posture once a DIFFERENT system.write holder than its creator
+        approves it. Requires system.write. Added for ADR-108 PR 8 (thin CLI `risk
+        approve`) -- was already a live route (dashboardHandler.ApproveRiskException,
+        router.go), just undocumented in this spec until now.
+      operationId: approveRiskException
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200': {description: "Envelope {data, message}. Risk exception approved."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
   /api/v1/risk-exceptions/{id}:
     delete:
       tags: [Dashboard]
