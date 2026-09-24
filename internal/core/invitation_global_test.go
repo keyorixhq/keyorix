@@ -240,7 +240,7 @@ func TestApplyInvitationGrants_SystemRoleIsRBACAudited(t *testing.T) {
 	// ceiling check's admin bypass applies, same as a real install where only an
 	// admin can invite someone into a system_auditor-or-richer role.
 	inviterID := seedUserWithRole(t, st, "admin-inviter", "admin", storage.Scope{})
-	invitee, err := st.CreateUser(ctx, &models.User{Username: "carol", Email: "carol@example.com", IsActive: true})
+	invitee, err := st.CreateUser(ctx, foldedTestUser(t, "carol", "carol@example.com"))
 	require.NoError(t, err)
 
 	inv := &models.ProjectInvitation{
