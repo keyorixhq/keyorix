@@ -463,6 +463,15 @@ anywhere in either package.
 | `usage show` | `GET /admin/usage[?days=&project_id=]` | `audit.read` | API — **embedded mode calls `core.GetUsageReport` directly with literally no `userID` parameter on the method signature — nothing for a permission check to even thread through** (§8 Finding S17) |
 | `billing report` | `GET /admin/billing/report[?from=&to=&project_id=]` | `audit.read` | API — same shape, same missing-signature-parameter root cause (§8 Finding S17); the license-feature gate itself IS shared (lives inside `core.GenerateBillingReport`), only the `audit.read` authorization is skipped |
 
+**`system info`/`role-expiry-check`/`token-expiry-check` moved to `cli/cmd/system.go` (PR 10,
+#2062).** `system init`/`audit`/`validate` remain ADMIN-B1, not ported to the thin CLI (see below).
+`status` (remote branch) was ported in an earlier PR, already on `origin/main`. `bundle`/`license`
+were deliberately left out of PR 10 — porting `verify`/`import`/`install`/`status` hits a real
+architecture question (`internal/bundle`/`internal/license` contain security-critical
+verification/evaluation logic that `cli/internal/depguard` currently forbids importing; duplicating
+it locally would violate this repo's own "prefer the machine-checked over the asserted" principle).
+Flagged to the coordinator in #2062's PR body with three options; not yet decided.
+
 **`system` (6 leaf)** — a genuine mix, half ADMIN-B1, half already-correct API:
 
 | Command | What it does | Class |
@@ -933,9 +942,13 @@ elsewhere.
 gated; no remaining product decision here. Size: small.
 
 **PR 10 — `bundle`, `license`, `system info`/`role-expiry-check`/`token-expiry-check`, `status`
-(remote branch only), `run` (remote branch only) — CLIENT-ONLY/API cleanup (~15 commands).** Drop
-`status`'s and `run`'s local/embedded branches (Findings S18, §2.7) — dropping `run`'s is a
-security fix, not just cleanup. Size: small.
+(remote branch only), `run` (remote branch only) — CLIENT-ONLY/API cleanup (~15 commands).**
+**`system info`/`role-expiry-check`/`token-expiry-check` DONE (#2062)**; `status`'s remote branch
+was already done in an earlier PR. `bundle`/`license` deliberately deferred — real architecture
+question (depguard vs. duplicating security-critical verification code), flagged in #2062's body,
+not yet decided. `run`'s local/embedded-branch drop (Finding S18, security fix not just cleanup)
+is still open. Drop `status`'s and `run`'s local/embedded branches (Findings S18, §2.7) — dropping
+`run`'s is a security fix, not just cleanup. Size: small.
 
 **PR 11 (parallel track, `keyorix-server admin`) — B1 subcommands.** `system init` (local mode),
 `system audit`, `system validate` port near-verbatim (`internal/startup.ValidateStartup`,
