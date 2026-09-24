@@ -111,6 +111,15 @@ func (c *client) Encrypt(ctx context.Context, plaintext []byte) ([]byte, error) 
 	if err != nil {
 		return nil, fmt.Errorf("aws-kms: encrypt: %w", err)
 	}
+	// A 2xx response with a missing/empty CiphertextBlob is not success: the
+	// caller (kms_provider.go's generateAndWrap) persists this value verbatim
+	// as the wrapped-KEK file, so an unchecked empty blob would look like a
+	// successful first-run startup and then be unusable on the next restart.
+	// Same class as the already-fixed SecretString=="" gap in
+	// internal/connect/awssm.go (docs/findings/2026-09-20-FINDING-awssm-empty-secret-response.md).
+	if len(out.CiphertextBlob) == 0 {
+		return nil, fmt.Errorf("aws-kms: encrypt: response had no ciphertext")
+	}
 	return out.CiphertextBlob, nil
 }
 
