@@ -16,7 +16,15 @@ permissions:
   contents: read
 
 jobs:
-  check:
+  # Named `dco-check`, not the generic `check` this job originally used --
+  # security-fix-regression-test.yml has its own job also named `check`, and
+  # a required-status-check context matches by name alone: two different
+  # workflows' jobs sharing one name would make branch protection's "check"
+  # requirement satisfiable by EITHER succeeding, independent of the other.
+  # Found while drafting the required-context ruleset payload for the
+  # CI-scheduling quick-tier change (both were about to become required in
+  # the same PR, which is what surfaced the collision).
+  dco-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,8 +53,8 @@ jobs:
           # own commits, and its diffs are machine-generated version bumps
           # with no attributable human author to certify authorship of in the
           # DCO sense — exempt it rather than block every automated
-          # dependency-update PR forever. `check` is a REQUIRED status check
-          # (branch protection), so this exemption must still let the JOB
+          # dependency-update PR forever. `dco-check` is a REQUIRED status
+          # check (branch protection), so this exemption must still let the JOB
           # complete with a real success exit code, not skip the step
           # entirely — a skipped/never-run required check blocks merge
           # exactly as much as a failed one ("Expected — waiting for status").
