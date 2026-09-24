@@ -900,6 +900,70 @@ command, explicit regression tests for the 4 documented audit-skip findings (S-s
 S-secret-4 in §8) being *closed by deletion* (once local mode is gone, there's no path left to
 regress) rather than fixed in place.
 
+**Closed by PR split/pr4-cli-secret-core (2026-09-24, from fresh `origin/main` — independent of
+split/pr3-cli-rbac-group-invite, does not stack on it).** ~40 commands ported into `cli/cmd/`:
+core CRUD (create/get/update/delete/list), versions (list/rollback/diff, version comments
+add/list/delete), metadata (tags get/set, description, classify), organize (move/copy/copy-
+environment), ACL (list/grant/revoke), dependencies (list/add/remove/impact), access
+(list/access-log), schedule (get/set/delete), lifecycle (suspend/resume/restore/list-deleted),
+folder (list/create/delete), and secret templates (list/get/create/update/delete/apply) — all
+REST-only against the generated `apiclient`, no local mode.
+
+**OpenAPI spec gaps found and closed, not just filtered:** `createSecret`'s request schema never
+documented `description`/`expiration`, even though the handler has accepted both since #1808 —
+added both fields. ~25 routes existed in `router.go` (folder CRUD, secret templates, version
+comments/diff, dependencies, access/access-log, schedule, organize, lifecycle,
+`GET /secrets/by-name`, `GET /secrets/value`, `GET /projects/{id}/secrets/deleted`) with no
+OpenAPI path entry at all; authored full request+response schemas for all of them (16 new
+`components/schemas` entries: `Secret`, `SecretGetResult`, `SecretListEntry`, `SecretVersion`,
+`SecretVersionDiffChange`, `SecretVersionDiffResult`, `SecretVersionComment`,
+`SecretDependencyEdge`, `SecretDependencies`, `SecretImpactedSecret`, `SecretImpact`,
+`SecretAccessor`, `SecretAccessLogEntry`, `SecretAccessSchedule`, `SecretTemplate`,
+`DeletedSecretEntry`), per CLAUDE.md's "generate it" preference — matching PR 2's precedent of
+full operations over description-only stubs. `SecretListEntry` hit the same oapi-codegen
+field-collision PR 3 hit (`SecretWithSharingInfo` embeds `*SecretNode`, so `IsShared` is
+promoted onto the same object as the model's own `is_shared` field, producing two Go fields
+with the identical generated name `IsShared`); resolved the same way, dropping the unused
+`is_shared` property and documenting the collision in the schema comment. This mechanically
+moved 35 operations from `pendingRegistry`/unregistered to `exercisingTests` in `contracttest`'s
+ADR-074 registry (`registry.go`, `checks_test.go`'s `TestEnforcedSetMatchesADR074` pinned
+baseline) — 8 (`createSecret`, `getSecret`, `updateSecret`, `getSecretVersions`,
+`grantSecretACL`, `revokeSecretACL`, `classifySecret`, `listSecrets`) backfilled schemas for
+previously-schema-less existing routes, the other 27 are the brand-new routes above. Each is
+closed with a new, self-contained happy-path test in
+`server/http/handlers/openapi_contract_pr4_test.go`, not grafted onto an existing test. 5
+operations (`deleteSecretVersionComment`, `removeSecretDependency`, `deleteSecretSchedule`,
+`deleteFolder`, `deleteSecretTemplate`) are 204 No Content and landed in `outOfScopeRegistry`
+instead. Two real schema gaps the contract tests themselves caught (not hand-inspection):
+`DiffSecretVersions`' `acl_user_ids` and `changes` fields are both nil, not empty-array, when
+there is nothing to report (no ACL grants; no tracked-field differences between the two
+versions) — a non-nullable array schema rejected the real handler's actual JSON `null` output,
+exactly the same class of gap PR 2's `PATToken.scopes` fix closed.
+
+One real, deliberate behavior fix, not a faithful port: the old CLI's `secret diff`
+`--project`/`--environment` flags sent them as non-numeric name filters to
+`GET /secrets/by-name`, which actually requires numeric `project_id`/`environment_id` — a
+pre-existing bug (the old CLI's by-name lookup would 400 whenever a diff needed the by-name
+path). The new CLI's `secret diff` takes required numeric `--project`/`--environment` IDs
+instead, matching the real route's actual requirements and every sibling command's convention;
+documented in code rather than silently ported.
+
+Security-critical test (per this PR's own explicit instruction): `cli/cmd/secret_test.go`'s
+`TestNoSecretCommandLeaksTheCanaryValue` runs `create --value`/`update --value` with a
+distinctive canary value and asserts it never appears on stdout or stderr — verified red→green
+by planting a debug leak into `runSecretCreate`, confirming the test caught it, then reverting.
+`TestSecretGet_ShowValueOnlyReachesStdout` and `TestSecretGet_DefaultHidesValue` cover the
+`get`/`--show-value` value-hiding parity the old CLI has (value hidden by default,
+`include_value` never sent unless `--show-value`, decrypted value only ever reaches stdout).
+`TestWarnInsecureFlag_NeverPrintsTheValue` covers the shared `--value`-is-insecure warning path
+that every mutating secret command with a `--value` flag reuses — it names the flag, never
+prints the flag's value.
+
+Verified: `go build`/`go vet`/`go test ./...` clean for both `cli` (depguard green) and the main
+module's `server/http/handlers` + `.../contracttest` packages; `gosec -severity medium` and
+`golangci-lint` both clean on `cli/`; `gosec` clean on `server/http/handlers`; `spectral lint`
+zero errors on `openapi.yaml`; `scripts/check-closures.sh --self-test` green.
+
 **PR 5 — `secret` bulk/rotation/export/import/scan/hygiene (~22 commands).** **Hard prerequisite,
 must land first and independently, NOT gated on this program**: fix Finding S2 (the broken
 `?environment=<name>` filter in `rotate`/`render` — a live correctness/security bug on `main`

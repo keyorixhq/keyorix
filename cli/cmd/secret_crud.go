@@ -1,0 +1,807 @@
+package cmd
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+	"golang.org/x/term"
+
+	"github.com/keyorixhq/keyorix/cli/internal/apiclient"
+)
+
+// ── create ──────────────────────────────────────────────────────────────────────
+
+var (
+	secretCreateName          string
+	secretCreateType          string
+	secretCreateProjectID     int
+	secretCreateEnvironmentID int
+	secretCreateMaxReads      int
+	secretCreateExpiration    string
+	secretCreateValue         string
+	secretCreateFromFile      string
+	secretCreateInteractive   bool
+	secretCreateDescription   string
+)
+
+var secretCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create a new secret",
+	RunE:  runSecretCreate,
+}
+
+func init() {
+	secretCreateCmd.Flags().StringVar(&secretCreateName, "name", "", "Secret name (required)")
+	secretCreateCmd.Flags().StringVar(&secretCreateType, "type", "generic", "Secret type")
+	secretCreateCmd.Flags().IntVar(&secretCreateProjectID, "project", 1, "Project ID")
+	secretCreateCmd.Flags().IntVar(&secretCreateEnvironmentID, "environment", 1, "Environment ID")
+	secretCreateCmd.Flags().IntVar(&secretCreateMaxReads, "max-reads", 0, "Maximum number of reads (0 = unlimited)")
+	secretCreateCmd.Flags().StringVar(&secretCreateExpiration, "expires", "", "Expiration time (RFC3339 format)")
+	secretCreateCmd.Flags().StringVar(&secretCreateValue, "value", "", "Secret value")
+	secretCreateCmd.Flags().StringVar(&secretCreateFromFile, "from-file", "", "Read secret value from file")
+	secretCreateCmd.Flags().BoolVar(&secretCreateInteractive, "interactive", false, "Interactive mode (value read from a hidden prompt)")
+	secretCreateCmd.Flags().StringVar(&secretCreateDescription, "description", "", "Optional free-text note about the secret")
+	SecretCmd.AddCommand(secretCreateCmd)
+}
+
+// readSecretValueFromFile reads a secret value from a caller-supplied path.
+// Mirrors the old CLI's buildCreateRequest/buildUpdateRequest guard exactly:
+// only a relative path is accepted, and the path must not be a symlink --
+// both refusals exist so a secret value can't be read from an arbitrary
+// absolute location or through a planted symlink.
+func readSecretValueFromFile(path string) ([]byte, error) {
+	cleanPath := filepath.Clean(path)
+	if filepath.IsAbs(cleanPath) {
+		return nil, fmt.Errorf("absolute paths are not allowed: %s", cleanPath)
+	}
+	fileInfo, err := os.Lstat(cleanPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot stat file: %w", err)
+	}
+	if fileInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("symlinks are not allowed: %s", cleanPath)
+	}
+	return os.ReadFile(cleanPath) // #nosec G304 -- cleanPath is relative-only and symlink-checked above
+}
+
+// readHiddenValue prompts on stderr and reads a value from stdin with echo
+// disabled (golang.org/x/term), so the value never appears in the terminal
+// scrollback or a screen-recording. Matches the old CLI's --interactive mode.
+func readHiddenValue(prompt string) ([]byte, error) {
+	fmt.Fprint(os.Stderr, prompt)
+	valueBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read value: %w", err)
+	}
+	return valueBytes, nil
+}
+
+func resolveSecretCreateValue() ([]byte, error) {
+	switch {
+	case secretCreateInteractive:
+		v, err := readHiddenValue("Secret value (hidden): ")
+		if err != nil {
+			return nil, err
+		}
+		if len(v) == 0 {
+			return nil, fmt.Errorf("secret value is required")
+		}
+		return v, nil
+	case secretCreateFromFile != "":
+		return readSecretValueFromFile(secretCreateFromFile)
+	case secretCreateValue != "":
+		return []byte(secretCreateValue), nil
+	default:
+		return nil, fmt.Errorf("secret value is required (use --value, --from-file, or --interactive)")
+	}
+}
+
+func runSecretCreate(cmd *cobra.Command, args []string) error {
+	warnInsecureFlag(cmd, "value", "use --interactive or --from-file instead.")
+	if secretCreateName == "" {
+		return fmt.Errorf("secret name is required (use --name)")
+	}
+	value, err := resolveSecretCreateValue()
+	if err != nil {
+		return err
+	}
+
+	client, err := secretAPIClient()
+	if err != nil {
+		return err
+	}
+	body := apiclient.CreateSecretJSONRequestBody{
+		Name:          secretCreateName,
+		Value:         string(value),
+		Type:          secretCreateType,
+		EnvironmentId: secretCreateEnvironmentID,
+	}
+	if secretCreateProjectID != 0 {
+		body.ProjectId = &secretCreateProjectID
+	}
+	if secretCreateMaxReads > 0 {
+		body.MaxReads = &secretCreateMaxReads
+	}
+	if secretCreateDescription != "" {
+		body.Description = &secretCreateDescription
+	}
+	if secretCreateExpiration != "" {
+		exp, perr := time.Parse(time.RFC3339, secretCreateExpiration)
+		if perr != nil {
+			return fmt.Errorf("invalid expiration format: %w", perr)
+		}
+		body.Expiration = &exp
+	}
+
+	resp, err := client.CreateSecretWithResponse(context.Background(), body)
+	if err != nil {
+		return fmt.Errorf("failed to create secret: %w", err)
+	}
+	if resp.JSON201 == nil || resp.JSON201.Data == nil {
+		return fmt.Errorf("failed to create secret: HTTP %d", resp.StatusCode())
+	}
+	printCreatedSecret(resp.JSON201.Data)
+	return nil
+}
+
+func printCreatedSecret(s *apiclient.Secret) {
+	fmt.Println("Secret created successfully!")
+	fmt.Printf("ID:          %d\n", derefSecretInt(s.ID))
+	fmt.Printf("Name:        %s\n", derefStr(s.Name))
+	fmt.Printf("Type:        %s\n", derefStr(s.Type))
+	fmt.Printf("Project:     %d\n", derefSecretInt(s.ProjectID))
+	fmt.Printf("Environment: %d\n", derefSecretInt(s.EnvironmentID))
+	if s.CreatedAt != nil {
+		fmt.Printf("Created:     %s\n", s.CreatedAt.Format(time.RFC3339))
+	}
+	if s.Expiration != nil {
+		fmt.Printf("Expires:     %s\n", s.Expiration.Format(time.RFC3339))
+	}
+}
+
+// ── get ─────────────────────────────────────────────────────────────────────────
+
+var (
+	secretGetID        int
+	secretGetName      string
+	secretGetRef       string
+	secretGetShowValue bool
+	secretGetProject   int
+	secretGetEnv       int
+)
+
+var secretGetCmd = &cobra.Command{
+	Use:   "get",
+	Short: "Get a secret",
+	Long: `Retrieve a secret by ID, by name, or by a project/environment/name reference.
+
+--ref reads the secret's value by a human-readable "project/environment/name"
+reference (ADR-059) -- handy for scripts and automation. It always reads the
+value (so it counts toward max_reads and is audited like any value read).`,
+	RunE: runSecretGet,
+}
+
+func init() {
+	secretGetCmd.Flags().IntVar(&secretGetID, "id", 0, "Secret ID")
+	secretGetCmd.Flags().StringVar(&secretGetName, "name", "", "Secret name")
+	secretGetCmd.Flags().StringVar(&secretGetRef, "ref", "", "Reference: project/environment/name (reads the value)")
+	secretGetCmd.Flags().IntVar(&secretGetProject, "project", 1, "Project ID (required with --name)")
+	secretGetCmd.Flags().IntVar(&secretGetEnv, "environment", 1, "Environment ID (required with --name)")
+	secretGetCmd.Flags().BoolVar(&secretGetShowValue, "show-value", false, "Show the decrypted secret value")
+	SecretCmd.AddCommand(secretGetCmd)
+}
+
+func runSecretGet(cmd *cobra.Command, args []string) error {
+	selectors := 0
+	for _, set := range []bool{secretGetID != 0, secretGetName != "", secretGetRef != ""} {
+		if set {
+			selectors++
+		}
+	}
+	if selectors == 0 {
+		return fmt.Errorf("one of --id, --name, or --ref is required")
+	}
+	if selectors > 1 {
+		return fmt.Errorf("--id, --name, and --ref are mutually exclusive")
+	}
+	// A reference read is value-oriented (it resolves to one secret and returns its value).
+	showValue := secretGetShowValue || secretGetRef != ""
+
+	client, err := secretAPIClient()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+
+	if secretGetRef != "" {
+		resp, err := client.GetSecretValueByRefWithResponse(ctx, &apiclient.GetSecretValueByRefParams{Ref: secretGetRef})
+		if err != nil {
+			return fmt.Errorf("get secret by ref: %w", err)
+		}
+		if resp.JSON200 == nil || resp.JSON200.Data == nil {
+			return fmt.Errorf("get secret by ref: HTTP %d", resp.StatusCode())
+		}
+		displaySecret(resp.JSON200.Data.Secret, derefStr(resp.JSON200.Data.Value), showValue)
+		return nil
+	}
+
+	if secretGetID != 0 {
+		return runSecretGetByID(ctx, client, secretGetID, showValue)
+	}
+	return runSecretGetByName(ctx, client, showValue)
+}
+
+func runSecretGetByID(ctx context.Context, client *apiclient.ClientWithResponses, id int, showValue bool) error {
+	var params *apiclient.GetSecretParams
+	if showValue {
+		t := true
+		params = &apiclient.GetSecretParams{IncludeValue: &t}
+	}
+	resp, err := client.GetSecretWithResponse(ctx, id, params)
+	if err != nil {
+		return fmt.Errorf("get secret: %w", err)
+	}
+	if resp.JSON200 == nil || resp.JSON200.Data == nil {
+		return fmt.Errorf("get secret: HTTP %d", resp.StatusCode())
+	}
+	d := resp.JSON200.Data
+	if showValue && d.Secret != nil {
+		displaySecret(d.Secret, derefStr(d.Value), true)
+		return nil
+	}
+	displaySecret(secretGetResultToSecret(d), "", false)
+	return nil
+}
+
+func runSecretGetByName(ctx context.Context, client *apiclient.ClientWithResponses, showValue bool) error {
+	// Resolve name -> secret via the filtered list, then optionally fetch the value.
+	params := &apiclient.ListSecretsParams{ProjectId: &secretGetProject, EnvironmentId: &secretGetEnv, PageSize: intPtr(1000)}
+	resp, err := client.ListSecretsWithResponse(ctx, params)
+	if err != nil {
+		return fmt.Errorf("list secrets: %w", err)
+	}
+	if resp.JSON200 == nil || resp.JSON200.Data == nil {
+		return fmt.Errorf("list secrets: HTTP %d", resp.StatusCode())
+	}
+	var found *apiclient.SecretListEntry
+	for _, s := range derefSecretListEntrySlice(resp.JSON200.Data.Secrets) {
+		if derefStr(s.Name) == secretGetName {
+			entry := s
+			found = &entry
+			break
+		}
+	}
+	if found == nil {
+		return fmt.Errorf("secret %q not found", secretGetName)
+	}
+	if !showValue {
+		displaySecret(secretListEntryToSecret(found), "", false)
+		return nil
+	}
+	id := derefSecretInt(found.ID)
+	t := true
+	vresp, err := client.GetSecretWithResponse(ctx, id, &apiclient.GetSecretParams{IncludeValue: &t})
+	if err != nil {
+		return fmt.Errorf("get secret value: %w", err)
+	}
+	if vresp.JSON200 == nil || vresp.JSON200.Data == nil {
+		return fmt.Errorf("get secret value: HTTP %d", vresp.StatusCode())
+	}
+	d := vresp.JSON200.Data
+	if d.Secret != nil {
+		displaySecret(d.Secret, derefStr(d.Value), true)
+	} else {
+		displaySecret(secretGetResultToSecret(d), derefStr(d.Value), true)
+	}
+	return nil
+}
+
+func intPtr(n int) *int { return &n }
+
+// ── Display ───────────────────────────────────────────────────────────────────
+
+func displaySecret(s *apiclient.Secret, value string, showValue bool) {
+	if s == nil {
+		fmt.Println("(secret not found)")
+		return
+	}
+	fmt.Println("Secret Information")
+	fmt.Println("==================")
+	fmt.Printf("ID:          %d\n", derefSecretInt(s.ID))
+	fmt.Printf("Name:        %s\n", derefStr(s.Name))
+	fmt.Printf("Type:        %s\n", derefStr(s.Type))
+	fmt.Printf("Status:      %s\n", derefStr(s.Status))
+	fmt.Printf("Project:     %d\n", derefSecretInt(s.ProjectID))
+	fmt.Printf("Environment: %d\n", derefSecretInt(s.EnvironmentID))
+	fmt.Printf("Created By:  %s\n", derefStr(s.CreatedBy))
+	if s.CreatedAt != nil {
+		fmt.Printf("Created:     %s\n", s.CreatedAt.Format(time.RFC3339))
+	}
+	if s.UpdatedAt != nil {
+		fmt.Printf("Updated:     %s\n", s.UpdatedAt.Format(time.RFC3339))
+	}
+	if s.MaxReads != nil {
+		fmt.Printf("Max Reads:   %d\n", *s.MaxReads)
+	}
+	if s.Expiration != nil {
+		fmt.Printf("Expires:     %s\n", s.Expiration.Format(time.RFC3339))
+		if time.Now().After(*s.Expiration) {
+			fmt.Println("WARNING: secret is EXPIRED")
+		}
+	}
+
+	switch {
+	case value != "":
+		fmt.Println()
+		fmt.Println("Decrypted Value")
+		fmt.Println("---------------")
+		fmt.Println(value)
+	case showValue:
+		fmt.Println()
+		fmt.Println("(value unavailable)")
+	default:
+		fmt.Println()
+		fmt.Println("Use --show-value to display the decrypted value.")
+	}
+}
+
+// secretGetResultToSecret projects the metadata-only fields of a
+// SecretGetResult onto a Secret for display, used when include_value was not
+// requested (the server sends the secret's fields directly at the top level).
+func secretGetResultToSecret(d *apiclient.SecretGetResult) *apiclient.Secret {
+	return &apiclient.Secret{
+		ID: d.ID, ParentID: d.ParentID, ProjectID: d.ProjectID, EnvironmentID: d.EnvironmentID,
+		Name: d.Name, IsSecret: d.IsSecret, Type: d.Type, Description: d.Description,
+		MaxReads: d.MaxReads, ReadCount: d.ReadCount, Expiration: d.Expiration,
+		Classification: d.Classification, Status: d.Status, CreatedBy: d.CreatedBy,
+		OwnerID: d.OwnerID, IsShared: d.IsShared, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
+		LastRotatedAt: d.LastRotatedAt,
+	}
+}
+
+func secretListEntryToSecret(e *apiclient.SecretListEntry) *apiclient.Secret {
+	return &apiclient.Secret{
+		ID: e.ID, ParentID: e.ParentID, ProjectID: e.ProjectID, EnvironmentID: e.EnvironmentID,
+		Name: e.Name, IsSecret: e.IsSecret, Type: e.Type, Description: e.Description,
+		MaxReads: e.MaxReads, ReadCount: e.ReadCount, Expiration: e.Expiration,
+		Classification: e.Classification, Status: e.Status, CreatedBy: e.CreatedBy,
+		OwnerID: e.OwnerID, IsShared: e.IsShared, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt,
+	}
+}
+
+func derefSecretListEntrySlice(s *[]apiclient.SecretListEntry) []apiclient.SecretListEntry {
+	if s == nil {
+		return nil
+	}
+	return *s
+}
+
+// ── update ──────────────────────────────────────────────────────────────────────
+
+var (
+	secretUpdateID          int
+	secretUpdateMaxReads    int
+	secretUpdateExpiration  string
+	secretUpdateValue       string
+	secretUpdateFromFile    string
+	secretUpdateInteractive bool
+	secretUpdateClearExp    bool
+)
+
+var secretUpdateCmd = &cobra.Command{
+	Use:   "update",
+	Short: "Update an existing secret",
+	RunE:  runSecretUpdate,
+}
+
+func init() {
+	secretUpdateCmd.Flags().IntVar(&secretUpdateID, "id", 0, "Secret ID (required)")
+	secretUpdateCmd.Flags().IntVar(&secretUpdateMaxReads, "max-reads", -1, "Update max reads (-1 = no change, 0 = unlimited)")
+	secretUpdateCmd.Flags().StringVar(&secretUpdateExpiration, "expires", "", "Update expiration (RFC3339 format)")
+	secretUpdateCmd.Flags().StringVar(&secretUpdateValue, "value", "", "New secret value")
+	secretUpdateCmd.Flags().StringVar(&secretUpdateFromFile, "from-file", "", "Read new value from file")
+	secretUpdateCmd.Flags().BoolVar(&secretUpdateInteractive, "interactive", false, "Interactive mode (value read from a hidden prompt)")
+	secretUpdateCmd.Flags().BoolVar(&secretUpdateClearExp, "clear-expiration", false, "Remove expiration")
+	SecretCmd.AddCommand(secretUpdateCmd)
+}
+
+func runSecretUpdate(cmd *cobra.Command, args []string) error {
+	if secretUpdateID == 0 {
+		return fmt.Errorf("secret ID is required (use --id)")
+	}
+	warnInsecureFlag(cmd, "value", "use --interactive or --from-file instead.")
+
+	var value []byte
+	var err error
+	switch {
+	case secretUpdateInteractive:
+		value, err = readHiddenValue("New secret value (hidden): ")
+	case secretUpdateFromFile != "":
+		value, err = readSecretValueFromFile(secretUpdateFromFile)
+	case secretUpdateValue != "":
+		value = []byte(secretUpdateValue)
+	}
+	if err != nil {
+		return err
+	}
+
+	body := apiclient.UpdateSecretJSONRequestBody{}
+	if len(value) > 0 {
+		v := string(value)
+		body.Value = &v
+	}
+	if secretUpdateMaxReads >= 0 {
+		body.MaxReads = &secretUpdateMaxReads
+	}
+	if secretUpdateClearExp {
+		t := true
+		body.ClearExpiration = &t
+	} else if secretUpdateExpiration != "" {
+		exp, perr := time.Parse(time.RFC3339, secretUpdateExpiration)
+		if perr != nil {
+			return fmt.Errorf("invalid expiration format (use RFC3339): %w", perr)
+		}
+		body.Expiration = &exp
+	}
+
+	client, err := secretAPIClient()
+	if err != nil {
+		return err
+	}
+	resp, err := client.UpdateSecretWithResponse(context.Background(), secretUpdateID, body)
+	if err != nil {
+		return fmt.Errorf("failed to update secret: %w", err)
+	}
+	if resp.JSON200 == nil || resp.JSON200.Data == nil {
+		return fmt.Errorf("failed to update secret: HTTP %d", resp.StatusCode())
+	}
+	s := resp.JSON200.Data
+	fmt.Println("Secret updated successfully!")
+	fmt.Printf("ID: %d\n", derefSecretInt(s.ID))
+	fmt.Printf("Name: %s\n", derefStr(s.Name))
+	fmt.Printf("Type: %s\n", derefStr(s.Type))
+	if len(value) > 0 {
+		fmt.Println("New encrypted version created")
+	}
+	return nil
+}
+
+// ── delete ──────────────────────────────────────────────────────────────────────
+
+var (
+	secretDeleteID      int
+	secretDeleteName    string
+	secretDeleteProject int
+	secretDeleteEnv     int
+	secretDeleteForce   bool
+)
+
+var secretDeleteCmd = &cobra.Command{
+	Use:   "delete",
+	Short: "Delete a secret",
+	RunE:  runSecretDelete,
+}
+
+func init() {
+	secretDeleteCmd.Flags().IntVar(&secretDeleteID, "id", 0, "Secret ID")
+	secretDeleteCmd.Flags().StringVar(&secretDeleteName, "name", "", "Secret name")
+	secretDeleteCmd.Flags().IntVar(&secretDeleteProject, "project", 1, "Project ID (required with --name)")
+	secretDeleteCmd.Flags().IntVar(&secretDeleteEnv, "environment", 1, "Environment ID (required with --name)")
+	secretDeleteCmd.Flags().BoolVar(&secretDeleteForce, "force", false, "Skip confirmation prompt")
+	SecretCmd.AddCommand(secretDeleteCmd)
+}
+
+func runSecretDelete(cmd *cobra.Command, args []string) error {
+	if secretDeleteID == 0 && secretDeleteName == "" {
+		return fmt.Errorf("either --id or --name is required")
+	}
+	client, err := secretAPIClient()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+
+	var secretID int
+	var secretName string
+	if secretDeleteID != 0 {
+		t := false
+		resp, gerr := client.GetSecretWithResponse(ctx, secretDeleteID, &apiclient.GetSecretParams{IncludeValue: &t})
+		if gerr != nil || resp.JSON200 == nil || resp.JSON200.Data == nil {
+			return fmt.Errorf("secret not found: %w", gerr)
+		}
+		secretID = secretDeleteID
+		secretName = derefStr(resp.JSON200.Data.Name)
+	} else {
+		id, name, ferr := findRemoteSecretByName(ctx, client, secretDeleteName, secretDeleteProject, secretDeleteEnv)
+		if ferr != nil {
+			return ferr
+		}
+		secretID, secretName = id, name
+	}
+
+	fmt.Println("About to delete secret:")
+	fmt.Printf("ID: %d\n", secretID)
+	fmt.Printf("Name: %s\n", secretName)
+
+	vresp, err := client.GetSecretVersionsWithResponse(ctx, secretID)
+	if err != nil {
+		return fmt.Errorf("failed to get versions: %w", err)
+	}
+	var versionCount int
+	if vresp.JSON200 != nil && vresp.JSON200.Data != nil {
+		versionCount = len(derefSecretVersionSlice(vresp.JSON200.Data.Versions))
+	}
+	fmt.Printf("Versions: %d\n", versionCount)
+
+	if !secretDeleteForce {
+		fmt.Println()
+		fmt.Println("This action cannot be undone!")
+		fmt.Println("All versions and metadata will be permanently deleted.")
+		fmt.Println()
+		if !confirmSecretDeletion(secretName) {
+			fmt.Println("Deletion cancelled")
+			return nil
+		}
+	}
+
+	dresp, err := client.DeleteSecretWithResponse(ctx, secretID)
+	if err != nil {
+		return fmt.Errorf("failed to delete secret: %w", err)
+	}
+	if dresp.StatusCode() != 204 {
+		return fmt.Errorf("failed to delete secret: HTTP %d", dresp.StatusCode())
+	}
+	fmt.Printf("Secret '%s' (ID: %d) deleted successfully\n", secretName, secretID)
+	fmt.Printf("%d version(s) were also deleted\n", versionCount)
+	return nil
+}
+
+// findRemoteSecretByName resolves a secret name to its (ID, name) via the
+// list endpoint's fuzzy "search" filter, then requires an EXACT name match
+// among the results -- the list endpoint has no exact-name filter, and
+// treating a fuzzy substring hit as a confirmed match could delete the wrong
+// secret.
+func findRemoteSecretByName(ctx context.Context, client *apiclient.ClientWithResponses, name string, projectID, environmentID int) (int, string, error) {
+	search := name
+	resp, err := client.ListSecretsWithResponse(ctx, &apiclient.ListSecretsParams{
+		ProjectId: &projectID, EnvironmentId: &environmentID, Search: &search, PageSize: intPtr(100),
+	})
+	if err != nil {
+		return 0, "", fmt.Errorf("secret not found: %w", err)
+	}
+	if resp.JSON200 == nil || resp.JSON200.Data == nil {
+		return 0, "", fmt.Errorf("secret not found: HTTP %d", resp.StatusCode())
+	}
+	var matches []apiclient.SecretListEntry
+	for _, s := range derefSecretListEntrySlice(resp.JSON200.Data.Secrets) {
+		if derefStr(s.Name) == name {
+			matches = append(matches, s)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return 0, "", fmt.Errorf("secret not found: no secret named %q in project %d, environment %d", name, projectID, environmentID)
+	case 1:
+		return derefSecretInt(matches[0].ID), derefStr(matches[0].Name), nil
+	default:
+		return 0, "", fmt.Errorf("ambiguous: %d secrets named %q in project %d, environment %d -- use --id instead", len(matches), name, projectID, environmentID)
+	}
+}
+
+func confirmSecretDeletion(secretName string) bool {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Printf("Type the secret name '%s' to confirm deletion: ", secretName)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+	if input != secretName {
+		fmt.Printf("Name mismatch. Expected '%s', got '%s'\n", secretName, input)
+		return false
+	}
+	fmt.Print("Are you absolutely sure? (yes/no): ")
+	confirmation, _ := reader.ReadString('\n')
+	confirmation = strings.TrimSpace(strings.ToLower(confirmation))
+	return confirmation == "yes"
+}
+
+func derefSecretVersionSlice(s *[]apiclient.SecretVersion) []apiclient.SecretVersion {
+	if s == nil {
+		return nil
+	}
+	return *s
+}
+
+// ── list ────────────────────────────────────────────────────────────────────────
+
+var (
+	secretListProject string
+	secretListEnv     int
+	secretListLimit   int
+	secretListOffset  int
+	secretListSearch  string
+	secretListFormat  string
+)
+
+var secretListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List secrets",
+	Long: `List secrets with filtering and pagination.
+
+The server applies authentication-based filtering automatically: you see
+only what you're authorized to read.`,
+	RunE: runSecretList,
+}
+
+func init() {
+	secretListCmd.Flags().StringVar(&secretListProject, "project", "", "Project name")
+	secretListCmd.Flags().IntVar(&secretListEnv, "environment", 0, "Filter by environment ID (0 = all)")
+	secretListCmd.Flags().IntVar(&secretListLimit, "limit", 50, "Maximum number of results")
+	secretListCmd.Flags().IntVar(&secretListOffset, "offset", 0, "Number of results to skip")
+	secretListCmd.Flags().StringVar(&secretListSearch, "search", "", "Search query")
+	secretListCmd.Flags().StringVar(&secretListFormat, "format", "table", "Output format (table, json)")
+	SecretCmd.AddCommand(secretListCmd)
+}
+
+func runSecretList(cmd *cobra.Command, args []string) error {
+	client, err := secretAPIClient()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+
+	page := (secretListOffset / secretListLimit) + 1
+	params := &apiclient.ListSecretsParams{Page: &page, PageSize: &secretListLimit}
+	if secretListProject != "" {
+		_, id, rerr := resolveMachineProjectID(client, secretListProject)
+		if rerr != nil {
+			return rerr
+		}
+		params.ProjectId = &id
+	}
+	if secretListEnv != 0 {
+		params.EnvironmentId = &secretListEnv
+	}
+	if secretListSearch != "" {
+		params.Search = &secretListSearch
+	}
+
+	resp, err := client.ListSecretsWithResponse(ctx, params)
+	if err != nil {
+		return fmt.Errorf("failed to list secrets: %w", err)
+	}
+	if resp.JSON200 == nil || resp.JSON200.Data == nil {
+		return fmt.Errorf("failed to list secrets: HTTP %d", resp.StatusCode())
+	}
+	secrets := derefSecretListEntrySlice(resp.JSON200.Data.Secrets)
+	total := int64(derefSecretInt(resp.JSON200.Data.Total))
+
+	switch secretListFormat {
+	case "json":
+		return displaySecretsJSON(secrets, total, page, secretListLimit)
+	case "table":
+		displaySecretsTable(secrets, total, page, secretListLimit)
+		return nil
+	default:
+		return fmt.Errorf("unsupported format: %s (use 'table' or 'json')", secretListFormat)
+	}
+}
+
+func displaySecretsTable(secrets []apiclient.SecretListEntry, total int64, page, pageSize int) {
+	fmt.Println("Secrets List")
+	fmt.Println("============")
+	if secretListSearch != "" {
+		fmt.Printf("Search: %s\n", secretListSearch)
+	}
+	nsLabel := "all"
+	if secretListProject != "" {
+		nsLabel = secretListProject
+	}
+	envLabel := "all"
+	if secretListEnv != 0 {
+		envLabel = fmt.Sprintf("%d", secretListEnv)
+	}
+	fmt.Printf("Project: %s, Environment: %s\n", nsLabel, envLabel)
+
+	offset := (page - 1) * pageSize
+	fmt.Printf("Total: %d, Showing: %d (offset: %d, limit: %d)\n\n", total, len(secrets), offset, pageSize)
+
+	if len(secrets) == 0 {
+		fmt.Println("No secrets found.")
+		return
+	}
+
+	fmt.Printf("%-5s %-20s %-12s %-8s %-20s %-20s\n", "ID", "NAME", "TYPE", "STATUS", "CREATED", "EXPIRES")
+	fmt.Printf("%-5s %-20s %-12s %-8s %-20s %-20s\n",
+		"-----", "--------------------", "------------", "--------", "--------------------", "--------------------")
+	for _, s := range secrets {
+		expires := "Never"
+		if s.Expiration != nil {
+			expires = s.Expiration.Format("2006-01-02 15:04")
+			if time.Now().After(*s.Expiration) {
+				expires += " (EXPIRED)"
+			}
+		}
+		created := ""
+		if s.CreatedAt != nil {
+			created = s.CreatedAt.Format("2006-01-02 15:04")
+		}
+		fmt.Printf("%-5d %-20s %-12s %-8s %-20s %-20s\n",
+			derefSecretInt(s.ID), truncateSecretString(derefStr(s.Name), 20), truncateSecretString(derefStr(s.Type), 12),
+			derefStr(s.Status), created, truncateSecretString(expires, 20))
+	}
+	if total > int64(pageSize) {
+		fmt.Printf("\nPagination: Showing %d-%d of %d total\n", offset+1, minInt(offset+len(secrets), int(total)), total)
+		if offset+pageSize < int(total) {
+			fmt.Printf("Use --offset %d to see more results\n", offset+pageSize)
+		}
+	}
+}
+
+type jsonSecretEntry struct {
+	ID            int     `json:"id"`
+	Name          string  `json:"name"`
+	Type          string  `json:"type"`
+	Status        string  `json:"status"`
+	ProjectID     int     `json:"project_id"`
+	EnvironmentID int     `json:"environment_id"`
+	CreatedBy     string  `json:"created_by"`
+	CreatedAt     string  `json:"created_at"`
+	UpdatedAt     string  `json:"updated_at"`
+	MaxReads      *int    `json:"max_reads,omitempty"`
+	Expiration    *string `json:"expiration,omitempty"`
+}
+
+type jsonSecretsOutput struct {
+	Total   int64             `json:"total"`
+	Offset  int               `json:"offset"`
+	Limit   int               `json:"limit"`
+	Count   int               `json:"count"`
+	Secrets []jsonSecretEntry `json:"secrets"`
+}
+
+func displaySecretsJSON(secrets []apiclient.SecretListEntry, total int64, page, pageSize int) error {
+	offset := (page - 1) * pageSize
+	out := jsonSecretsOutput{Total: total, Offset: offset, Limit: pageSize, Count: len(secrets), Secrets: make([]jsonSecretEntry, 0, len(secrets))}
+	for _, s := range secrets {
+		entry := jsonSecretEntry{
+			ID: derefSecretInt(s.ID), Name: derefStr(s.Name), Type: derefStr(s.Type), Status: derefStr(s.Status),
+			ProjectID: derefSecretInt(s.ProjectID), EnvironmentID: derefSecretInt(s.EnvironmentID), CreatedBy: derefStr(s.CreatedBy),
+			MaxReads: s.MaxReads,
+		}
+		if s.CreatedAt != nil {
+			entry.CreatedAt = s.CreatedAt.Format(time.RFC3339)
+		}
+		if s.UpdatedAt != nil {
+			entry.UpdatedAt = s.UpdatedAt.Format(time.RFC3339)
+		}
+		if s.Expiration != nil {
+			exp := s.Expiration.Format(time.RFC3339)
+			entry.Expiration = &exp
+		}
+		out.Secrets = append(out.Secrets, entry)
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
+}
+
+func truncateSecretString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

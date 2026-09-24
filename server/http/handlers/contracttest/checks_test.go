@@ -52,6 +52,13 @@ func TestSpecLoadsAndValidates(t *testing.T) {
 // real response schema to produce typed accessors, so this batch backfilled
 // schemas for these previously-schema-less (or brand new, e.g. the OIDC
 // binding trio) operations and exercises each via openapi_contract_pr2_test.go.
+//
+// The 35 secret-core-CRUD-and-metadata operations below were added by
+// ADR-108 PR 4 (docs/cli-split-inventory.md §7): 8 (createSecret, getSecret,
+// updateSecret, getSecretVersions, grantSecretACL, revokeSecretACL,
+// classifySecret, listSecrets) backfilled schemas for previously-schema-less
+// existing routes; the other 27 are brand-new routes added in the same PR.
+// Each is exercised via openapi_contract_pr4_test.go.
 func TestEnforcedSetMatchesADR074(t *testing.T) {
 	want := map[string]bool{
 		"authGetSetupToken":             true,
@@ -77,6 +84,41 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		"listProjects":                  true,
 		"machineTokenHygiene":           true,
 		"patHygiene":                    true,
+		"addSecretDependency":           true,
+		"addSecretVersionComment":       true,
+		"classifySecret":                true,
+		"copyEnvironmentSecrets":        true,
+		"copySecret":                    true,
+		"createFolder":                  true,
+		"createSecret":                  true,
+		"createSecretTemplate":          true,
+		"describeSecret":                true,
+		"diffSecretVersions":            true,
+		"getSecret":                     true,
+		"getSecretAccessLog":            true,
+		"getSecretByName":               true,
+		"getSecretImpact":               true,
+		"getSecretSchedule":             true,
+		"getSecretTags":                 true,
+		"getSecretValueByRef":           true,
+		"getSecretVersions":             true,
+		"grantSecretACL":                true,
+		"listAccessors":                 true,
+		"listDeletedSecrets":            true,
+		"listFolders":                   true,
+		"listSecretDependencies":        true,
+		"listSecretTemplates":           true,
+		"listSecretVersionComments":     true,
+		"listSecrets":                   true,
+		"moveSecret":                    true,
+		"restoreSecret":                 true,
+		"resumeSecret":                  true,
+		"revokeSecretACL":               true,
+		"rollbackSecret":                true,
+		"setSecretSchedule":             true,
+		"setSecretTags":                 true,
+		"suspendSecret":                 true,
+		"updateSecret":                  true,
 	}
 
 	loadSpec()

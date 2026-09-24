@@ -34,6 +34,24 @@ const (
 	Suspend  TransitionMachineIdentityJSONBodyAction = "suspend"
 )
 
+// Defines values for ListSecretsParamsClassification.
+const (
+	Confidential ListSecretsParamsClassification = "confidential"
+	Internal     ListSecretsParamsClassification = "internal"
+	Public       ListSecretsParamsClassification = "public"
+	Restricted   ListSecretsParamsClassification = "restricted"
+	Unclassified ListSecretsParamsClassification = "unclassified"
+)
+
+// DeletedSecretEntry One row of a project's recycle bin (GET /projects/{id}/secrets/deleted) -- a snake_case DTO, not the raw Secret model.
+type DeletedSecretEntry struct {
+	Classification *string `json:"classification,omitempty"`
+	DeletedAt      *string `json:"deleted_at,omitempty"`
+	Id             *int    `json:"id,omitempty"`
+	Name           *string `json:"name,omitempty"`
+	Type           *string `json:"type,omitempty"`
+}
+
 // MachineAuditReport Deployment-wide machine identity audit report (GET /machine-identities/audit).
 type MachineAuditReport struct {
 	GeneratedAt  *time.Time         `json:"generated_at,omitempty"`
@@ -131,6 +149,215 @@ type PATToken struct {
 	TokenPrefix      *string    `json:"token_prefix,omitempty"`
 }
 
+// Secret A secret or folder node (internal/storage/models.SecretNode). No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4). Only the fields the thin CLI actually displays are declared; the model has more.
+type Secret struct {
+	Classification *string    `json:"Classification,omitempty"`
+	CreatedAt      *time.Time `json:"CreatedAt,omitempty"`
+	CreatedBy      *string    `json:"CreatedBy,omitempty"`
+	Description    *string    `json:"Description,omitempty"`
+	EnvironmentID  *int       `json:"EnvironmentID,omitempty"`
+	Expiration     *time.Time `json:"Expiration"`
+	ID             *int       `json:"ID,omitempty"`
+
+	// IsSecret false = this node is a folder.
+	IsSecret      *bool      `json:"IsSecret,omitempty"`
+	IsShared      *bool      `json:"IsShared,omitempty"`
+	LastRotatedAt *time.Time `json:"LastRotatedAt"`
+	MaxReads      *int       `json:"MaxReads"`
+	Name          *string    `json:"Name,omitempty"`
+	OwnerID       *int       `json:"OwnerID,omitempty"`
+	ParentID      *int       `json:"ParentID"`
+	ProjectID     *int       `json:"ProjectID,omitempty"`
+	ReadCount     *int       `json:"ReadCount,omitempty"`
+	Status        *string    `json:"Status,omitempty"`
+	Type          *string    `json:"Type,omitempty"`
+	UpdatedAt     *time.Time `json:"UpdatedAt,omitempty"`
+}
+
+// SecretACL Per-secret ACL grant. Confers the listed permissions on a specific user for one secret, independently of project RBAC (RBAC Phase 3).
+type SecretACL struct {
+	CreatedAt   *time.Time `json:"created_at,omitempty"`
+	GrantedBy   *int       `json:"granted_by,omitempty"`
+	Id          *int       `json:"id,omitempty"`
+	Permissions *[]string  `json:"permissions,omitempty"`
+	SecretId    *int       `json:"secret_id,omitempty"`
+	UserId      *int       `json:"user_id,omitempty"`
+}
+
+// SecretAccessLogEntry One read event from a secret's access log. Mirrors a GET .../access-log entry (a PascalCase raw-model response, not snake_case).
+type SecretAccessLogEntry struct {
+	AccessTime *string `json:"AccessTime,omitempty"`
+	AccessedBy *string `json:"AccessedBy,omitempty"`
+	Action     *string `json:"Action,omitempty"`
+	IPAddress  *string `json:"IPAddress,omitempty"`
+}
+
+// SecretAccessSchedule A secret's temporal access-window policy (internal/storage/models.SecretAccessSchedule -- properly snake_case-tagged, unlike SecretNode).
+type SecretAccessSchedule struct {
+	// AllowedDays Comma-separated ISO weekday list (1=Mon..7=Sun), or "*".
+	AllowedDays  *string    `json:"allowed_days,omitempty"`
+	CreatedAt    *time.Time `json:"created_at,omitempty"`
+	EndHour      *int       `json:"end_hour,omitempty"`
+	Id           *int       `json:"id,omitempty"`
+	SecretNodeId *int       `json:"secret_node_id,omitempty"`
+	StartHour    *int       `json:"start_hour,omitempty"`
+	Timezone     *string    `json:"timezone,omitempty"`
+	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
+}
+
+// SecretAccessor One entry in a secret's effective access list (owner, direct share, or group share).
+type SecretAccessor struct {
+	Permission *string `json:"permission,omitempty"`
+
+	// Source How access was granted: owner, direct share, or group share.
+	Source   *string `json:"source,omitempty"`
+	Username *string `json:"username,omitempty"`
+}
+
+// SecretDependencies defines model for SecretDependencies.
+type SecretDependencies struct {
+	Dependents *[]SecretDependencyEdge `json:"dependents,omitempty"`
+	DependsOn  *[]SecretDependencyEdge `json:"depends_on,omitempty"`
+	SecretId   *int                    `json:"secret_id,omitempty"`
+}
+
+// SecretDependencyEdge defines model for SecretDependencyEdge.
+type SecretDependencyEdge struct {
+	Id         *int    `json:"id,omitempty"`
+	Note       *string `json:"note,omitempty"`
+	SecretId   *int    `json:"secret_id,omitempty"`
+	SecretName *string `json:"secret_name,omitempty"`
+}
+
+// SecretGetResult GET /api/v1/secrets/{id}'s response `data`: the bare Secret fields directly (metadata-only), OR, when include_value=true, `{secret, value}` instead. Declared as one flat schema combining both shapes' properties (rather than oneOf) since the CLI always knows in advance which branch a given request will get -- it controls include_value.
+type SecretGetResult struct {
+	Classification *string    `json:"Classification,omitempty"`
+	CreatedAt      *time.Time `json:"CreatedAt,omitempty"`
+	CreatedBy      *string    `json:"CreatedBy,omitempty"`
+	Description    *string    `json:"Description,omitempty"`
+	EnvironmentID  *int       `json:"EnvironmentID,omitempty"`
+	Expiration     *time.Time `json:"Expiration"`
+	ID             *int       `json:"ID,omitempty"`
+	IsSecret       *bool      `json:"IsSecret,omitempty"`
+	IsShared       *bool      `json:"IsShared,omitempty"`
+	LastRotatedAt  *time.Time `json:"LastRotatedAt"`
+	MaxReads       *int       `json:"MaxReads"`
+	Name           *string    `json:"Name,omitempty"`
+	OwnerID        *int       `json:"OwnerID,omitempty"`
+	ParentID       *int       `json:"ParentID"`
+	ProjectID      *int       `json:"ProjectID,omitempty"`
+	ReadCount      *int       `json:"ReadCount,omitempty"`
+	Status         *string    `json:"Status,omitempty"`
+	Type           *string    `json:"Type,omitempty"`
+	UpdatedAt      *time.Time `json:"UpdatedAt,omitempty"`
+
+	// Secret A secret or folder node (internal/storage/models.SecretNode). No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4). Only the fields the thin CLI actually displays are declared; the model has more.
+	Secret *Secret `json:"secret,omitempty"`
+
+	// Value The decrypted value. Present only when include_value=true.
+	Value *string `json:"value,omitempty"`
+}
+
+// SecretImpact The blast radius of rotating a secret -- every transitively-dependent secret.
+type SecretImpact struct {
+	Affected   *[]SecretImpactedSecret `json:"affected,omitempty"`
+	SecretId   *int                    `json:"secret_id,omitempty"`
+	SecretName *string                 `json:"secret_name,omitempty"`
+}
+
+// SecretImpactedSecret defines model for SecretImpactedSecret.
+type SecretImpactedSecret struct {
+	// Depth Hops from the rotated secret in the dependency graph.
+	Depth      *int    `json:"depth,omitempty"`
+	SecretId   *int    `json:"secret_id,omitempty"`
+	SecretName *string `json:"secret_name,omitempty"`
+}
+
+// SecretListEntry One row of GET /api/v1/secrets's data.secrets[] (internal/storage/models.SecretWithSharingInfo, which anonymously embeds *SecretNode -- Go's encoding/json promotes the embedded struct's fields onto this same object). Wire keys are a genuine MIX of case conventions: SecretNode's own fields are bare capitalized (ID, Name, IsShared, ...), while SecretWithSharingInfo's own fields are snake_case (project_name, is_shared, ...) -- IsShared and is_shared are both present as DIFFERENT keys on the same object, from the two different structs.
+type SecretListEntry struct {
+	Classification *string    `json:"Classification,omitempty"`
+	CreatedAt      *time.Time `json:"CreatedAt,omitempty"`
+	CreatedBy      *string    `json:"CreatedBy,omitempty"`
+	Description    *string    `json:"Description,omitempty"`
+	EnvironmentID  *int       `json:"EnvironmentID,omitempty"`
+	Expiration     *time.Time `json:"Expiration"`
+	ID             *int       `json:"ID,omitempty"`
+	IsSecret       *bool      `json:"IsSecret,omitempty"`
+
+	// IsShared From the embedded SecretNode. SecretWithSharingInfo's own is_shared field also exists on the wire, distinct from this one -- omitted here (oapi-codegen mangles snake_case to the same Go field name, IsShared, as this property, causing a real generation collision) since no CLI command reads it.
+	IsShared        *bool      `json:"IsShared,omitempty"`
+	MaxReads        *int       `json:"MaxReads"`
+	Name            *string    `json:"Name,omitempty"`
+	OwnerID         *int       `json:"OwnerID,omitempty"`
+	ParentID        *int       `json:"ParentID"`
+	ProjectID       *int       `json:"ProjectID,omitempty"`
+	ReadCount       *int       `json:"ReadCount,omitempty"`
+	Status          *string    `json:"Status,omitempty"`
+	Type            *string    `json:"Type,omitempty"`
+	UpdatedAt       *time.Time `json:"UpdatedAt,omitempty"`
+	EnvironmentName *string    `json:"environment_name,omitempty"`
+	IsOwnedByUser   *bool      `json:"is_owned_by_user,omitempty"`
+	OwnerUsername   *string    `json:"owner_username,omitempty"`
+	ProjectName     *string    `json:"project_name,omitempty"`
+	ShareCount      *int       `json:"share_count,omitempty"`
+	UserPermission  *string    `json:"user_permission,omitempty"`
+}
+
+// SecretTemplate A reusable secret-creation metadata preset (internal/storage/models.SecretTemplate -- properly snake_case-tagged).
+type SecretTemplate struct {
+	CreatedAt             *time.Time `json:"created_at,omitempty"`
+	CreatedBy             *int       `json:"created_by,omitempty"`
+	DefaultClassification *string    `json:"default_classification,omitempty"`
+
+	// DefaultTags Comma-separated tag names.
+	DefaultTags        *string    `json:"default_tags,omitempty"`
+	Description        *string    `json:"description,omitempty"`
+	DescriptionPattern *string    `json:"description_pattern,omitempty"`
+	Id                 *int       `json:"id,omitempty"`
+	Name               *string    `json:"name,omitempty"`
+	RotationHintDays   *int       `json:"rotation_hint_days,omitempty"`
+	UpdatedAt          *time.Time `json:"updated_at,omitempty"`
+}
+
+// SecretVersion A secret version's metadata (internal/storage/models.SecretVersion). No `json:` tags except EncryptedValue/EncryptionMetadata (both `json:"-"`, never sent) -- wire keys for the rest are bare capitalized Go field names.
+type SecretVersion struct {
+	CreatedAt     *time.Time `json:"CreatedAt,omitempty"`
+	ID            *int       `json:"ID,omitempty"`
+	ReadCount     *int       `json:"ReadCount,omitempty"`
+	SecretNodeID  *int       `json:"SecretNodeID,omitempty"`
+	VersionNumber *int       `json:"VersionNumber,omitempty"`
+}
+
+// SecretVersionComment defines model for SecretVersionComment.
+type SecretVersionComment struct {
+	Comment   *string    `json:"comment,omitempty"`
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	Id        *int       `json:"id,omitempty"`
+	Username  *string    `json:"username,omitempty"`
+}
+
+// SecretVersionDiffChange defines model for SecretVersionDiffChange.
+type SecretVersionDiffChange struct {
+	Field    *string `json:"field,omitempty"`
+	NewValue *string `json:"new_value,omitempty"`
+	OldValue *string `json:"old_value,omitempty"`
+}
+
+// SecretVersionDiffResult defines model for SecretVersionDiffResult.
+type SecretVersionDiffResult struct {
+	// AclUserIds Current ACL snapshot. Null (not an empty array) when the secret has no ACL grants -- the underlying nil Go slice marshals as null -- or when the caller lacks secrets.manage and the handler strips it entirely (see degraded below).
+	AclUserIds *[]int `json:"acl_user_ids"`
+
+	// Changes Null (not an empty array) when nothing tracked (classification, expiry, read count) differs between the two versions -- values themselves are never compared or included here.
+	Changes *[]SecretVersionDiffChange `json:"changes"`
+
+	// Degraded True when the server's ACL lookup itself failed (#G54) -- acl_user_ids is then an unreliable, possibly-empty placeholder, NOT an authoritative "no ACL grants" answer.
+	Degraded    *bool   `json:"degraded,omitempty"`
+	FromVersion *int    `json:"from_version,omitempty"`
+	SecretName  *string `json:"secret_name,omitempty"`
+	ToVersion   *int    `json:"to_version,omitempty"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	Code    *int                    `json:"code,omitempty"`
@@ -173,6 +400,25 @@ type CreatePATJSONBody struct {
 	Scopes *[]string `json:"scopes,omitempty"`
 }
 
+// ListFoldersParams defines parameters for ListFolders.
+type ListFoldersParams struct {
+	ProjectId *int `form:"project_id,omitempty" json:"project_id,omitempty"`
+
+	// ParentId 0/omit = no filter.
+	ParentId *int `form:"parent_id,omitempty" json:"parent_id,omitempty"`
+	PageSize *int `form:"page_size,omitempty" json:"page_size,omitempty"`
+}
+
+// CreateFolderJSONBody defines parameters for CreateFolder.
+type CreateFolderJSONBody struct {
+	EnvironmentId int    `json:"environment_id"`
+	Name          string `json:"name"`
+
+	// ParentId 0/omit = root.
+	ParentId  *int `json:"parent_id,omitempty"`
+	ProjectId *int `json:"project_id,omitempty"`
+}
+
 // MachineTokenHygieneParams defines parameters for MachineTokenHygiene.
 type MachineTokenHygieneParams struct {
 	// Days Staleness window in days (default server-side: 90, cap 3650).
@@ -198,6 +444,11 @@ type ListProjectsParamsIncludeDeleted string
 type CreateProjectJSONBody struct {
 	Description *string `json:"description,omitempty"`
 	Name        string  `json:"name"`
+}
+
+// CopyEnvironmentSecretsJSONBody defines parameters for CopyEnvironmentSecrets.
+type CopyEnvironmentSecretsJSONBody struct {
+	TargetEnvironmentId int `json:"target_environment_id"`
 }
 
 // CreateMachineIdentityJSONBody defines parameters for CreateMachineIdentity.
@@ -236,6 +487,171 @@ type IssueMachineTokenJSONBody struct {
 	Name          string `json:"name"`
 }
 
+// ListDeletedSecretsParams defines parameters for ListDeletedSecrets.
+type ListDeletedSecretsParams struct {
+	// Limit Max entries (default server-side: 100, cap 500).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// CreateSecretTemplateJSONBody defines parameters for CreateSecretTemplate.
+type CreateSecretTemplateJSONBody struct {
+	DefaultClassification *string `json:"default_classification,omitempty"`
+
+	// DefaultTags Comma-separated tag names.
+	DefaultTags        *string `json:"default_tags,omitempty"`
+	Description        *string `json:"description,omitempty"`
+	DescriptionPattern *string `json:"description_pattern,omitempty"`
+	Name               string  `json:"name"`
+	RotationHintDays   *int    `json:"rotation_hint_days,omitempty"`
+}
+
+// ListSecretsParams defines parameters for ListSecrets.
+type ListSecretsParams struct {
+	ProjectId     *int    `form:"project_id,omitempty" json:"project_id,omitempty"`
+	EnvironmentId *int    `form:"environment_id,omitempty" json:"environment_id,omitempty"`
+	Search        *string `form:"search,omitempty" json:"search,omitempty"`
+	Type          *string `form:"type,omitempty" json:"type,omitempty"`
+
+	// Classification Data-classification filter (A.5.12); 'unclassified' matches secrets with no label.
+	Classification *ListSecretsParamsClassification `form:"classification,omitempty" json:"classification,omitempty"`
+
+	// ExpiresBefore RFC3339 — return only secrets with a non-null expiration before this time (expired or expiring soon).
+	ExpiresBefore  *time.Time `form:"expires_before,omitempty" json:"expires_before,omitempty"`
+	Page           *int       `form:"page,omitempty" json:"page,omitempty"`
+	PageSize       *int       `form:"page_size,omitempty" json:"page_size,omitempty"`
+	ShowOwnedOnly  *bool      `form:"show_owned_only,omitempty" json:"show_owned_only,omitempty"`
+	ShowSharedOnly *bool      `form:"show_shared_only,omitempty" json:"show_shared_only,omitempty"`
+}
+
+// ListSecretsParamsClassification defines parameters for ListSecrets.
+type ListSecretsParamsClassification string
+
+// CreateSecretJSONBody defines parameters for CreateSecret.
+type CreateSecretJSONBody struct {
+	// Classification Optional data-sensitivity label (A.5.12): public|internal|confidential|restricted.
+	Classification *string `json:"classification,omitempty"`
+
+	// Description Optional free-text note. Metadata only -- never the value. Fixed missing from this spec (ADR-108 PR 4) -- the real handler (secrets_crud.go's CreateSecret) has accepted this field since #1808, this spec just never documented it.
+	Description   *string `json:"description,omitempty"`
+	EnvironmentId int     `json:"environment_id"`
+
+	// Expiration Optional RFC3339 expiration. Fixed missing from this spec (ADR-108 PR 4) -- same #1808 gap as description above.
+	Expiration *time.Time         `json:"expiration,omitempty"`
+	MaxReads   *int               `json:"max_reads"`
+	Metadata   *map[string]string `json:"metadata,omitempty"`
+	Name       string             `json:"name"`
+	ProjectId  *int               `json:"project_id,omitempty"`
+	Tags       *[]string          `json:"tags,omitempty"`
+	Type       string             `json:"type"`
+	Value      string             `json:"value"`
+}
+
+// GetSecretByNameParams defines parameters for GetSecretByName.
+type GetSecretByNameParams struct {
+	Name          string `form:"name" json:"name"`
+	ProjectId     int    `form:"project_id" json:"project_id"`
+	EnvironmentId int    `form:"environment_id" json:"environment_id"`
+}
+
+// GetSecretValueByRefParams defines parameters for GetSecretValueByRef.
+type GetSecretValueByRefParams struct {
+	// Ref project/environment/name
+	Ref string `form:"ref" json:"ref"`
+}
+
+// GetSecretParams defines parameters for GetSecret.
+type GetSecretParams struct {
+	// IncludeValue When `true`, response `data` becomes `{secret, value}` with the decrypted value.
+	IncludeValue *bool `form:"include_value,omitempty" json:"include_value,omitempty"`
+}
+
+// UpdateSecretJSONBody defines parameters for UpdateSecret.
+type UpdateSecretJSONBody struct {
+	ClearExpiration *bool      `json:"clear_expiration,omitempty"`
+	Expiration      *time.Time `json:"expiration,omitempty"`
+	MaxReads        *int       `json:"max_reads"`
+	Value           *string    `json:"value,omitempty"`
+}
+
+// GetSecretAccessLogParams defines parameters for GetSecretAccessLog.
+type GetSecretAccessLogParams struct {
+	// Days Lookback window (default server-side: 30).
+	Days *int `form:"days,omitempty" json:"days,omitempty"`
+}
+
+// GrantSecretACLJSONBody defines parameters for GrantSecretACL.
+type GrantSecretACLJSONBody struct {
+	// Permissions List of permission strings to grant, e.g. ["secrets.read"].
+	Permissions []string `json:"permissions"`
+
+	// UserId ID of the user to grant access to.
+	UserId int `json:"user_id"`
+}
+
+// ClassifySecretJSONBody defines parameters for ClassifySecret.
+type ClassifySecretJSONBody struct {
+	// Classification public|internal|confidential|restricted, or empty to clear.
+	Classification *string `json:"classification,omitempty"`
+}
+
+// CopySecretJSONBody defines parameters for CopySecret.
+type CopySecretJSONBody struct {
+	EnvironmentId int `json:"environment_id"`
+
+	// Name Name for the copy (default: the source name).
+	Name *string `json:"name,omitempty"`
+}
+
+// AddSecretDependencyJSONBody defines parameters for AddSecretDependency.
+type AddSecretDependencyJSONBody struct {
+	DependsOnId int     `json:"depends_on_id"`
+	Note        *string `json:"note,omitempty"`
+}
+
+// DescribeSecretJSONBody defines parameters for DescribeSecret.
+type DescribeSecretJSONBody struct {
+	Description *string `json:"description,omitempty"`
+}
+
+// MoveSecretJSONBody defines parameters for MoveSecret.
+type MoveSecretJSONBody struct {
+	// ParentId 0 = move to root.
+	ParentId *int `json:"parent_id,omitempty"`
+}
+
+// RollbackSecretJSONBody defines parameters for RollbackSecret.
+type RollbackSecretJSONBody struct {
+	// Version Version number to restore.
+	Version int `json:"version"`
+}
+
+// SetSecretScheduleJSONBody defines parameters for SetSecretSchedule.
+type SetSecretScheduleJSONBody struct {
+	// AllowedDays Comma-separated ISO weekday list (1=Mon..7=Sun), or "*" for all days.
+	AllowedDays string `json:"allowed_days"`
+	EndHour     int    `json:"end_hour"`
+	StartHour   int    `json:"start_hour"`
+
+	// Timezone IANA timezone name, e.g. UTC or America/New_York.
+	Timezone *string `json:"timezone,omitempty"`
+}
+
+// SuspendSecretJSONBody defines parameters for SuspendSecret.
+type SuspendSecretJSONBody struct {
+	// Reason Optional reason recorded in the audit event.
+	Reason *string `json:"reason,omitempty"`
+}
+
+// SetSecretTagsJSONBody defines parameters for SetSecretTags.
+type SetSecretTagsJSONBody struct {
+	Tags []string `json:"tags"`
+}
+
+// AddSecretVersionCommentJSONBody defines parameters for AddSecretVersionComment.
+type AddSecretVersionCommentJSONBody struct {
+	Comment string `json:"comment"`
+}
+
 // AuthLoginJSONBody defines parameters for AuthLogin.
 type AuthLoginJSONBody struct {
 	Password string `json:"password"`
@@ -251,8 +667,14 @@ type UpdateAuthProfileJSONRequestBody UpdateAuthProfileJSONBody
 // CreatePATJSONRequestBody defines body for CreatePAT for application/json ContentType.
 type CreatePATJSONRequestBody CreatePATJSONBody
 
+// CreateFolderJSONRequestBody defines body for CreateFolder for application/json ContentType.
+type CreateFolderJSONRequestBody CreateFolderJSONBody
+
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody CreateProjectJSONBody
+
+// CopyEnvironmentSecretsJSONRequestBody defines body for CopyEnvironmentSecrets for application/json ContentType.
+type CopyEnvironmentSecretsJSONRequestBody CopyEnvironmentSecretsJSONBody
 
 // CreateMachineIdentityJSONRequestBody defines body for CreateMachineIdentity for application/json ContentType.
 type CreateMachineIdentityJSONRequestBody CreateMachineIdentityJSONBody
@@ -265,6 +687,48 @@ type CreateOIDCBindingJSONRequestBody CreateOIDCBindingJSONBody
 
 // IssueMachineTokenJSONRequestBody defines body for IssueMachineToken for application/json ContentType.
 type IssueMachineTokenJSONRequestBody IssueMachineTokenJSONBody
+
+// CreateSecretTemplateJSONRequestBody defines body for CreateSecretTemplate for application/json ContentType.
+type CreateSecretTemplateJSONRequestBody CreateSecretTemplateJSONBody
+
+// CreateSecretJSONRequestBody defines body for CreateSecret for application/json ContentType.
+type CreateSecretJSONRequestBody CreateSecretJSONBody
+
+// UpdateSecretJSONRequestBody defines body for UpdateSecret for application/json ContentType.
+type UpdateSecretJSONRequestBody UpdateSecretJSONBody
+
+// GrantSecretACLJSONRequestBody defines body for GrantSecretACL for application/json ContentType.
+type GrantSecretACLJSONRequestBody GrantSecretACLJSONBody
+
+// ClassifySecretJSONRequestBody defines body for ClassifySecret for application/json ContentType.
+type ClassifySecretJSONRequestBody ClassifySecretJSONBody
+
+// CopySecretJSONRequestBody defines body for CopySecret for application/json ContentType.
+type CopySecretJSONRequestBody CopySecretJSONBody
+
+// AddSecretDependencyJSONRequestBody defines body for AddSecretDependency for application/json ContentType.
+type AddSecretDependencyJSONRequestBody AddSecretDependencyJSONBody
+
+// DescribeSecretJSONRequestBody defines body for DescribeSecret for application/json ContentType.
+type DescribeSecretJSONRequestBody DescribeSecretJSONBody
+
+// MoveSecretJSONRequestBody defines body for MoveSecret for application/json ContentType.
+type MoveSecretJSONRequestBody MoveSecretJSONBody
+
+// RollbackSecretJSONRequestBody defines body for RollbackSecret for application/json ContentType.
+type RollbackSecretJSONRequestBody RollbackSecretJSONBody
+
+// SetSecretScheduleJSONRequestBody defines body for SetSecretSchedule for application/json ContentType.
+type SetSecretScheduleJSONRequestBody SetSecretScheduleJSONBody
+
+// SuspendSecretJSONRequestBody defines body for SuspendSecret for application/json ContentType.
+type SuspendSecretJSONRequestBody SuspendSecretJSONBody
+
+// SetSecretTagsJSONRequestBody defines body for SetSecretTags for application/json ContentType.
+type SetSecretTagsJSONRequestBody SetSecretTagsJSONBody
+
+// AddSecretVersionCommentJSONRequestBody defines body for AddSecretVersionComment for application/json ContentType.
+type AddSecretVersionCommentJSONRequestBody AddSecretVersionCommentJSONBody
 
 // AuthLoginJSONRequestBody defines body for AuthLogin for application/json ContentType.
 type AuthLoginJSONRequestBody AuthLoginJSONBody

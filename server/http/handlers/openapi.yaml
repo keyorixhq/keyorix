@@ -1909,6 +1909,19 @@ paths:
           description: >-
             Envelope `{data, message}`. `data` holds the paginated list
             (`secrets` array plus pagination fields).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      secrets: {type: array, items: {$ref: '#/components/schemas/SecretListEntry'}}
+                      total: {type: integer}
+                      page: {type: integer}
+                      page_size: {type: integer}
+                      total_pages: {type: integer}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -1935,11 +1948,19 @@ paths:
                 metadata: {type: object, additionalProperties: {type: string}}
                 tags: {type: array, items: {type: string}}
                 classification: {type: string, description: "Optional data-sensitivity label (A.5.12): public|internal|confidential|restricted."}
+                description: {type: string, maxLength: 1024, description: "Optional free-text note. Metadata only -- never the value. Fixed missing from this spec (ADR-108 PR 4) -- the real handler (secrets_crud.go's CreateSecret) has accepted this field since #1808, this spec just never documented it."}
+                expiration: {type: string, format: date-time, description: "Optional RFC3339 expiration. Fixed missing from this spec (ADR-108 PR 4) -- same #1808 gap as description above."}
       responses:
         '201':
           description: >-
             Envelope `{data, message}`. `data` is the created secret node
             (`id`, `name`, `project_id`, `environment_id`, `type`).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/Secret'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -1961,6 +1982,12 @@ paths:
           description: >-
             Envelope `{data, message}`. `data` is the secret node, or
             `{secret, value}` when `include_value=true`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/SecretGetResult'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -1990,6 +2017,12 @@ paths:
       responses:
         '200':
           description: Envelope `{data, message}`. `data` is the updated secret node.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/Secret'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -2063,6 +2096,15 @@ paths:
       responses:
         '200':
           description: "Envelope `data` is `{granted: true}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      granted: {type: boolean}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -2082,6 +2124,15 @@ paths:
       responses:
         '200':
           description: "Envelope `data` is `{revoked: true}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      revoked: {type: boolean}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
@@ -2107,8 +2158,845 @@ paths:
                   type: string
                   description: "public|internal|confidential|restricted, or empty to clear."
       responses:
-        '200': {description: "Envelope {data, message}. data is the updated secret node."}
+        '200':
+          description: "Envelope {data, message}. data is the updated secret node."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/Secret'}
         '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/by-name:
+    get:
+      tags: [Secrets]
+      summary: Get a secret's metadata by name
+      description: >-
+        Look up a secret's metadata (never the value) by name, scoped to a
+        project/environment. For callers that only have the name, not the
+        numeric ID.
+      operationId: getSecretByName
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: name, in: query, required: true, schema: {type: string}}
+        - {name: project_id, in: query, required: true, schema: {type: integer}}
+        - {name: environment_id, in: query, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the secret node.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/Secret'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/value:
+    get:
+      tags: [Secrets]
+      summary: Read a secret's value by reference
+      description: >-
+        Resolve a "project/environment/name" reference (ADR-059) directly to
+        its decrypted value -- for scripts/integrations (e.g. the External
+        Secrets Operator) that template a key string instead of tracking a
+        numeric ID. Always reads and audits the value, like any value read.
+      operationId: getSecretValueByRef
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: ref, in: query, required: true, schema: {type: string}, description: "project/environment/name"}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is `{secret, value}`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      secret: {$ref: '#/components/schemas/Secret'}
+                      value: {type: string}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/versions/{from}/diff/{to}:
+    get:
+      tags: [Secrets]
+      summary: Diff metadata between two versions of a secret
+      description: >-
+        Compare metadata (classification, expiry, read count, current ACL
+        snapshot) between two versions of a secret. Values are never
+        compared or returned.
+      operationId: diffSecretVersions
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: from, in: path, required: true, schema: {type: integer}}
+        - {name: to, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the version diff result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/SecretVersionDiffResult'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/versions/{versionId}/comments:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: versionId, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Secrets]
+      summary: List comments on a secret version
+      description: List all free-text comments on a specific secret version, oldest first.
+      operationId: listSecretVersionComments
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is `{comments, total}`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      comments: {type: array, items: {$ref: '#/components/schemas/SecretVersionComment'}}
+                      total: {type: integer}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Secrets]
+      summary: Add a comment to a secret version
+      description: Add a free-text comment to a specific secret version.
+      operationId: addSecretVersionComment
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [comment]
+              properties:
+                comment: {type: string}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the created comment.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/SecretVersionComment'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/versions/{versionId}/comments/{commentId}:
+    delete:
+      tags: [Secrets]
+      summary: Delete a comment from a secret version
+      description: Delete a comment from a specific secret version by comment ID. Requires secrets.manage.
+      operationId: deleteSecretVersionComment
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: versionId, in: path, required: true, schema: {type: integer}}
+        - {name: commentId, in: path, required: true, schema: {type: integer}}
+      responses:
+        '204': {description: Comment deleted.}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/tags:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Secrets]
+      summary: Get a secret's tags
+      description: Metadata only -- never the value. Requires secrets.read.
+      operationId: getSecretTags
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is `{tags}`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      tags: {type: array, items: {type: string}}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    put:
+      tags: [Secrets]
+      summary: Replace a secret's tags
+      description: Replaces the full tag set. Requires secrets.write.
+      operationId: setSecretTags
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tags]
+              properties:
+                tags: {type: array, items: {type: string}}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is `{tags}` (the stored set).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      tags: {type: array, items: {type: string}}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/description:
+    patch:
+      tags: [Secrets]
+      summary: Set a secret's free-text description
+      description: Metadata only -- never the value. Requires secrets.write.
+      operationId: describeSecret
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description: {type: string, maxLength: 1024}
+      responses:
+        '200':
+          description: >-
+            Envelope `{data, message}`. `data` is the updated secret node --
+            declared as a generic object here (not $ref Secret) since no CLI
+            command reads any field from it, only the status code.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: object}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/move:
+    post:
+      tags: [Secrets]
+      summary: Move a secret or folder to a different parent folder
+      description: Use parent_id 0 to move the node to the root (no parent). Requires secrets.write.
+      operationId: moveSecret
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                parent_id: {type: integer, description: "0 = move to root."}
+      responses:
+        '200':
+          description: >-
+            Envelope `{data, message}`. Declared as a generic object -- no
+            CLI command reads any field from the response, only the status code.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: object}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/copy:
+    post:
+      tags: [Secrets]
+      summary: Copy a secret's value and metadata into another environment
+      description: >-
+        Promote a secret into another environment of the same project without
+        re-typing the value. Creates a new, independently-owned secret.
+        Requires secrets.read on the source and secrets.write on the target.
+      operationId: copySecret
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [environment_id]
+              properties:
+                environment_id: {type: integer}
+                name: {type: string, description: "Name for the copy (default: the source name)."}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data.ID` is the new secret's ID.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      ID: {type: integer}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/dependencies:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Secrets]
+      summary: Show what a secret depends on and what depends on it
+      description: ADR-052 dependency graph. Drives rotation impact analysis and ordering.
+      operationId: listSecretDependencies
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is `{secret_id, depends_on, dependents}`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/SecretDependencies'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Secrets]
+      summary: Declare that this secret depends on another
+      description: ADR-052 dependency graph edge. Drives rotation impact analysis and ordering. Requires secrets.write.
+      operationId: addSecretDependency
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [depends_on_id]
+              properties:
+                depends_on_id: {type: integer}
+                note: {type: string}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the created dependency edge.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/SecretDependencyEdge'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/dependencies/{depId}:
+    delete:
+      tags: [Secrets]
+      summary: Remove a dependency edge
+      description: Remove a dependency edge by ID (from the depends_on/dependents list). Requires secrets.write.
+      operationId: removeSecretDependency
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: depId, in: path, required: true, schema: {type: integer}}
+      responses:
+        '204': {description: Dependency edge removed.}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/impact:
+    get:
+      tags: [Secrets]
+      summary: Show the blast radius of rotating a secret
+      description: Transitive dependents -- every secret that would be affected by rotating this one.
+      operationId: getSecretImpact
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is `{secret_id, secret_name, affected}`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/SecretImpact'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/access:
+    get:
+      tags: [Secrets]
+      summary: List who can read a secret
+      description: Effective access list -- every user who can read the secret, with their permission and how it was granted (owner, direct share, group share).
+      operationId: listAccessors
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is `{accessors}`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      accessors: {type: array, items: {$ref: '#/components/schemas/SecretAccessor'}}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/access-log:
+    get:
+      tags: [Secrets]
+      summary: Show a secret's recent reads
+      description: Recent access-log entries -- who read it, when, from where.
+      operationId: getSecretAccessLog
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: days, in: query, schema: {type: integer}, description: "Lookback window (default server-side: 30)."}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is `{access_log}`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      access_log: {type: array, items: {$ref: '#/components/schemas/SecretAccessLogEntry'}}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/schedule:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Secrets]
+      summary: Get a secret's temporal access schedule
+      description: Requires secrets.manage.
+      operationId: getSecretSchedule
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the schedule.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/SecretAccessSchedule'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    put:
+      tags: [Secrets]
+      summary: Set a secret's temporal access schedule
+      description: >-
+        Restrict read access to a day-of-week + hour window. Applies to
+        permission-checked human reads; admin/machine reads bypass it.
+      operationId: setSecretSchedule
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [allowed_days, start_hour, end_hour]
+              properties:
+                allowed_days: {type: string, description: "Comma-separated ISO weekday list (1=Mon..7=Sun), or \"*\" for all days."}
+                start_hour: {type: integer, minimum: 0, maximum: 23}
+                end_hour: {type: integer, minimum: 1, maximum: 24}
+                timezone: {type: string, description: "IANA timezone name, e.g. UTC or America/New_York."}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the stored schedule.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/SecretAccessSchedule'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [Secrets]
+      summary: Remove a secret's temporal access schedule
+      description: Idempotent.
+      operationId: deleteSecretSchedule
+      security: [{bearerAuth: []}]
+      responses:
+        '204': {description: Schedule removed.}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/suspend:
+    post:
+      tags: [Secrets]
+      summary: Suspend a secret
+      description: >-
+        Block value reads without deleting the secret. Versions, shares, and
+        the audit trail are preserved. Requires secrets.write.
+      operationId: suspendSecret
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: {type: string, description: "Optional reason recorded in the audit event."}
+      responses:
+        '200':
+          description: >-
+            Envelope `{data, message}`. Declared as a generic object -- no
+            CLI command reads any field from it, only the status code.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: object}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/resume:
+    post:
+      tags: [Secrets]
+      summary: Resume a suspended secret
+      description: Restore value reads. Requires secrets.write.
+      operationId: resumeSecret
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: >-
+            Envelope `{data, message}`. Declared as a generic object -- no
+            CLI command reads any field from it, only the status code.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: object}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/rollback:
+    post:
+      tags: [Secrets]
+      summary: Restore a secret to the value of a prior version
+      description: >-
+        The old value is re-instated as a NEW version -- history stays
+        append-only, so the rollback itself can be undone. Requires secrets.write.
+      operationId: rollbackSecret
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version: {type: integer, description: "Version number to restore."}
+      responses:
+        '200':
+          description: >-
+            Envelope `{data, message}`. Declared as a generic object -- no
+            CLI command reads any field from it, only the status code.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: object}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/restore:
+    post:
+      tags: [Secrets]
+      summary: Restore a soft-deleted secret
+      description: >-
+        Clears the deletion, returning the secret to the live list. Find
+        restorable secrets with GET /projects/{id}/secrets/deleted.
+      operationId: restoreSecret
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: "Envelope `{data, message}`. `data` is `{id, restored}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: {type: integer}
+                      restored: {type: boolean}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/secrets/deleted:
+    get:
+      tags: [Secrets]
+      summary: List a project's soft-deleted (restorable) secrets
+      description: >-
+        The recycle bin for a project -- secrets that were deleted but are
+        still restorable until the purge job reaps them, newest-deleted
+        first. Requires secrets.read at the project scope.
+      operationId: listDeletedSecrets
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: limit, in: query, schema: {type: integer}, description: "Max entries (default server-side: 100, cap 500)."}
+      responses:
+        '200':
+          description: "Envelope `{data, message}`. `data` is `{deleted}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      deleted: {type: array, items: {$ref: '#/components/schemas/DeletedSecretEntry'}}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/environments/{envId}/copy-secrets:
+    post:
+      tags: [Secrets]
+      summary: Copy every secret from one environment into another
+      description: >-
+        Bulk-promote a whole environment (e.g. seed production from staging)
+        in a single call. Name clashes in the target are skipped, never
+        overwritten. Requires secrets.write on the target, secrets.read on
+        the source environment.
+      operationId: copyEnvironmentSecrets
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}, description: Project ID.}
+        - {name: envId, in: path, required: true, schema: {type: integer}, description: Source environment ID.}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_environment_id]
+              properties:
+                target_environment_id: {type: integer}
+      responses:
+        '200':
+          description: "Envelope `{data, message}`. `data` is `{copied, skipped}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      copied: {type: integer}
+                      skipped: {type: integer}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/folders:
+    get:
+      tags: [Secrets]
+      summary: List folders
+      description: Folders are secret nodes with IsSecret=false. Filterable by project and parent.
+      operationId: listFolders
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: project_id, in: query, schema: {type: integer}}
+        - {name: parent_id, in: query, schema: {type: integer}, description: "0/omit = no filter."}
+        - {name: page_size, in: query, schema: {type: integer}}
+      responses:
+        '200':
+          description: "Envelope `data` is an array of folder nodes."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: array, items: {$ref: '#/components/schemas/Secret'}}
+        '401': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Secrets]
+      summary: Create a folder
+      description: Authorized in-handler against the project/environment in the body.
+      operationId: createFolder
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, environment_id]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 255}
+                project_id: {type: integer}
+                environment_id: {type: integer}
+                parent_id: {type: integer, description: "0/omit = root."}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the created folder node.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/Secret'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/folders/{id}:
+    delete:
+      tags: [Secrets]
+      summary: Delete a folder
+      description: Requires secrets.delete at the folder's scope. Refuses if the target node is a secret, not a folder.
+      operationId: deleteFolder
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '204': {description: Folder deleted.}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secret-templates:
+    get:
+      tags: [Secrets]
+      summary: List secret templates
+      description: Reusable metadata presets (tags, classification, description hints) for secret creation. Requires secrets.read.
+      operationId: listSecretTemplates
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `{data, message}`. `data` is `{templates}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      templates: {type: array, items: {$ref: '#/components/schemas/SecretTemplate'}}
+        '401': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Secrets]
+      summary: Create a secret template
+      description: Requires secrets.write. Templates are deployment-wide, not project-scoped.
+      operationId: createSecretTemplate
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+                description: {type: string}
+                default_classification: {type: string}
+                default_tags: {type: string, description: "Comma-separated tag names."}
+                description_pattern: {type: string}
+                rotation_hint_days: {type: integer}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the created template.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/SecretTemplate'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/secret-templates/{id}:
+    delete:
+      tags: [Secrets]
+      summary: Delete a secret template
+      description: Requires secrets.write.
+      operationId: deleteSecretTemplate
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '204': {description: Template deleted.}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
@@ -2148,6 +3036,15 @@ paths:
       responses:
         '200':
           description: Envelope `{data, message}`. `data.versions` is the version history array.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      versions: {type: array, items: {$ref: '#/components/schemas/SecretVersion'}}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -3933,3 +4830,231 @@ components:
         machines:
           type: array
           items: {$ref: '#/components/schemas/MachineAuditRow'}
+    Secret:
+      type: object
+      description: >-
+        A secret or folder node (internal/storage/models.SecretNode). No
+        `json:` tags on the model -- wire keys are the bare Go field names
+        (ID, ProjectID, ...), not snake_case (ADR-108 PR 4). Only the fields
+        the thin CLI actually displays are declared; the model has more.
+      properties:
+        ID: {type: integer}
+        ParentID: {type: integer, nullable: true}
+        ProjectID: {type: integer}
+        EnvironmentID: {type: integer}
+        Name: {type: string}
+        IsSecret: {type: boolean, description: "false = this node is a folder."}
+        Type: {type: string}
+        Description: {type: string}
+        MaxReads: {type: integer, nullable: true}
+        ReadCount: {type: integer}
+        Expiration: {type: string, format: date-time, nullable: true}
+        Classification: {type: string}
+        Status: {type: string}
+        CreatedBy: {type: string}
+        OwnerID: {type: integer}
+        IsShared: {type: boolean}
+        CreatedAt: {type: string, format: date-time}
+        UpdatedAt: {type: string, format: date-time}
+        LastRotatedAt: {type: string, format: date-time, nullable: true}
+    SecretGetResult:
+      type: object
+      description: >-
+        GET /api/v1/secrets/{id}'s response `data`: the bare Secret fields
+        directly (metadata-only), OR, when include_value=true, `{secret,
+        value}` instead. Declared as one flat schema combining both shapes'
+        properties (rather than oneOf) since the CLI always knows in advance
+        which branch a given request will get -- it controls include_value.
+      properties:
+        ID: {type: integer}
+        ParentID: {type: integer, nullable: true}
+        ProjectID: {type: integer}
+        EnvironmentID: {type: integer}
+        Name: {type: string}
+        IsSecret: {type: boolean}
+        Type: {type: string}
+        Description: {type: string}
+        MaxReads: {type: integer, nullable: true}
+        ReadCount: {type: integer}
+        Expiration: {type: string, format: date-time, nullable: true}
+        Classification: {type: string}
+        Status: {type: string}
+        CreatedBy: {type: string}
+        OwnerID: {type: integer}
+        IsShared: {type: boolean}
+        CreatedAt: {type: string, format: date-time}
+        UpdatedAt: {type: string, format: date-time}
+        LastRotatedAt: {type: string, format: date-time, nullable: true}
+        secret: {$ref: '#/components/schemas/Secret'}
+        value: {type: string, description: "The decrypted value. Present only when include_value=true."}
+    SecretListEntry:
+      type: object
+      description: >-
+        One row of GET /api/v1/secrets's data.secrets[]
+        (internal/storage/models.SecretWithSharingInfo, which anonymously
+        embeds *SecretNode -- Go's encoding/json promotes the embedded
+        struct's fields onto this same object). Wire keys are a genuine MIX
+        of case conventions: SecretNode's own fields are bare capitalized
+        (ID, Name, IsShared, ...), while SecretWithSharingInfo's own fields
+        are snake_case (project_name, is_shared, ...) -- IsShared and
+        is_shared are both present as DIFFERENT keys on the same object,
+        from the two different structs.
+      properties:
+        ID: {type: integer}
+        ParentID: {type: integer, nullable: true}
+        ProjectID: {type: integer}
+        EnvironmentID: {type: integer}
+        Name: {type: string}
+        IsSecret: {type: boolean}
+        Type: {type: string}
+        Description: {type: string}
+        MaxReads: {type: integer, nullable: true}
+        ReadCount: {type: integer}
+        Expiration: {type: string, format: date-time, nullable: true}
+        Classification: {type: string}
+        Status: {type: string}
+        CreatedBy: {type: string}
+        OwnerID: {type: integer}
+        IsShared: {type: boolean, description: "From the embedded SecretNode. SecretWithSharingInfo's own is_shared field also exists on the wire, distinct from this one -- omitted here (oapi-codegen mangles snake_case to the same Go field name, IsShared, as this property, causing a real generation collision) since no CLI command reads it."}
+        CreatedAt: {type: string, format: date-time}
+        UpdatedAt: {type: string, format: date-time}
+        project_name: {type: string}
+        environment_name: {type: string}
+        is_owned_by_user: {type: boolean}
+        owner_username: {type: string}
+        user_permission: {type: string}
+        share_count: {type: integer}
+    SecretVersion:
+      type: object
+      description: >-
+        A secret version's metadata (internal/storage/models.SecretVersion).
+        No `json:` tags except EncryptedValue/EncryptionMetadata (both
+        `json:"-"`, never sent) -- wire keys for the rest are bare
+        capitalized Go field names.
+      properties:
+        ID: {type: integer}
+        SecretNodeID: {type: integer}
+        VersionNumber: {type: integer}
+        ReadCount: {type: integer}
+        CreatedAt: {type: string, format: date-time}
+    SecretVersionDiffChange:
+      type: object
+      properties:
+        field: {type: string}
+        old_value: {type: string}
+        new_value: {type: string}
+    SecretVersionDiffResult:
+      type: object
+      properties:
+        secret_name: {type: string}
+        from_version: {type: integer}
+        to_version: {type: integer}
+        changes:
+          type: array
+          items: {$ref: '#/components/schemas/SecretVersionDiffChange'}
+          nullable: true
+          description: >-
+            Null (not an empty array) when nothing tracked (classification,
+            expiry, read count) differs between the two versions -- values
+            themselves are never compared or included here.
+        acl_user_ids:
+          type: array
+          items: {type: integer}
+          nullable: true
+          description: >-
+            Current ACL snapshot. Null (not an empty array) when the secret has
+            no ACL grants -- the underlying nil Go slice marshals as null -- or
+            when the caller lacks secrets.manage and the handler strips it
+            entirely (see degraded below).
+        degraded:
+          type: boolean
+          description: >-
+            True when the server's ACL lookup itself failed (#G54) --
+            acl_user_ids is then an unreliable, possibly-empty placeholder,
+            NOT an authoritative "no ACL grants" answer.
+    SecretVersionComment:
+      type: object
+      properties:
+        id: {type: integer}
+        comment: {type: string}
+        username: {type: string}
+        created_at: {type: string, format: date-time}
+    SecretDependencyEdge:
+      type: object
+      properties:
+        id: {type: integer}
+        secret_id: {type: integer}
+        secret_name: {type: string}
+        note: {type: string}
+    SecretDependencies:
+      type: object
+      properties:
+        secret_id: {type: integer}
+        depends_on: {type: array, items: {$ref: '#/components/schemas/SecretDependencyEdge'}}
+        dependents: {type: array, items: {$ref: '#/components/schemas/SecretDependencyEdge'}}
+    SecretImpactedSecret:
+      type: object
+      properties:
+        secret_id: {type: integer}
+        secret_name: {type: string}
+        depth: {type: integer, description: "Hops from the rotated secret in the dependency graph."}
+    SecretImpact:
+      type: object
+      description: The blast radius of rotating a secret -- every transitively-dependent secret.
+      properties:
+        secret_id: {type: integer}
+        secret_name: {type: string}
+        affected: {type: array, items: {$ref: '#/components/schemas/SecretImpactedSecret'}}
+    SecretAccessor:
+      type: object
+      description: One entry in a secret's effective access list (owner, direct share, or group share).
+      properties:
+        username: {type: string}
+        permission: {type: string}
+        source: {type: string, description: "How access was granted: owner, direct share, or group share."}
+    SecretAccessLogEntry:
+      type: object
+      description: >-
+        One read event from a secret's access log. Mirrors a GET
+        .../access-log entry (a PascalCase raw-model response, not
+        snake_case).
+      properties:
+        AccessedBy: {type: string}
+        Action: {type: string}
+        IPAddress: {type: string}
+        AccessTime: {type: string}
+    SecretAccessSchedule:
+      type: object
+      description: A secret's temporal access-window policy (internal/storage/models.SecretAccessSchedule -- properly snake_case-tagged, unlike SecretNode).
+      properties:
+        id: {type: integer}
+        secret_node_id: {type: integer}
+        allowed_days: {type: string, description: "Comma-separated ISO weekday list (1=Mon..7=Sun), or \"*\"."}
+        start_hour: {type: integer}
+        end_hour: {type: integer}
+        timezone: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    SecretTemplate:
+      type: object
+      description: A reusable secret-creation metadata preset (internal/storage/models.SecretTemplate -- properly snake_case-tagged).
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        description: {type: string}
+        default_classification: {type: string}
+        default_tags: {type: string, description: "Comma-separated tag names."}
+        description_pattern: {type: string}
+        rotation_hint_days: {type: integer}
+        created_by: {type: integer}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    DeletedSecretEntry:
+      type: object
+      description: One row of a project's recycle bin (GET /projects/{id}/secrets/deleted) -- a snake_case DTO, not the raw Secret model.
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        type: {type: string}
+        classification: {type: string}
+        deleted_at: {type: string}
