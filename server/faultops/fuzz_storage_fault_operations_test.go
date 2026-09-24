@@ -457,6 +457,15 @@ type knownOpenTolerance struct {
 // update, permission replace, and audit inside one storage.WithTransaction
 // (internal/core/rbac_roles.go). The fuzzer is now the regression test for
 // both; no entries needed unless a new finding is filed.
+//
+// docs/findings/2026-09-24-FINDING-secret-access-request-notify-panic.md was
+// tolerated here and is now fixed (#2041, merged) — notifySecretAccessRequested
+// (internal/core/classification_gate.go) recovers a panic in its own
+// best-effort ListProjectMembers fan-out instead of letting it propagate past
+// the already-committed AccessRequest row. The fuzzer is now the regression
+// test (see the committed seed
+// testdata/fuzz/FuzzStorageFaultOperations/630357d238f9c51b); no entry needed
+// unless a new finding is filed.
 var knownOpenTolerances = []knownOpenTolerance{}
 
 func matchingKnownOpen(in oracleInput) *knownOpenTolerance {
