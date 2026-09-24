@@ -514,7 +514,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           changed=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
-          pkgs=$(echo "$changed" | python3 ../scripts/ci-test-quick.py cli)
+          # ci-test-quick.py resolves <moddir> relative to the repo root (it runs `go list` with
+          # cwd=<moddir>), but this job's working-directory is already cli/, so run it from the root.
+          pkgs=$(echo "$changed" | (cd .. && python3 scripts/ci-test-quick.py cli))
           # See test-quick-root's own comment on this same pattern: FULL
           # fallback runs the whole module, which deserves the same
           # generous-timeout treatment even though cli/ itself is small
