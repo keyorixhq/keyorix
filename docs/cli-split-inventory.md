@@ -163,7 +163,7 @@ commands — **already authority-equivalent** to the REST path (the `/system` pr
 ADR-107 during the F5/F6 campaign). This inventory re-verified all 5 and extended the same trace to
 every other command in these packages.
 
-**`project` (14 leaf + 1 container):**
+**`project` (14 leaf + 1 container):** moved to `cli/cmd/project.go` (PR 6, #2049).
 
 | Command | File:line | Pattern | REST route | Permission | Class |
 |---|---|---|---|---|---|
@@ -215,7 +215,7 @@ every other command in these packages.
 | `share shared-secrets [--user-id]` | shared_secrets.go:29-91 | F | `GET /shared-secrets` (self, `--user-id` omitted) or `GET /users/{id}/shared-secrets` (arbitrary target, admin-scoped) | `secrets.read` (global) + S1 admin-rank ceiling for a target other than the caller | API — **GAP CLOSED**: `GET /api/v1/users/{id}/shared-secrets` added (`ListSharedSecretsForUser`, `server/http/handlers/shares_query.go`); `--user-id` is now optional (defaults to the caller) and routes through the new admin-scoped endpoint in remote mode instead of being silently ignored. Embedded mode's own `--user-id` still has no actor check (§8 Finding S10's embedded-mode half stands, unchanged) |
 | `share group-shares` | group_shares.go:32-77 | F | `GET /groups/{id}/shares` | `secrets.read` (global) + in-core `#G10` actor-authorization check | API — the strongest-parity command in the package; `#G10` already closed the enumeration gap here specifically |
 
-**`user` (11 leaf):**
+**`user` (11 leaf):** moved to `cli/cmd/user.go` (PR 6, #2049).
 
 | Command | File:line | Pattern | REST route | Permission | Class |
 |---|---|---|---|---|---|
@@ -913,6 +913,13 @@ deletes `user update`'s local fallback — today's fallback is, ironically, the 
 two paths; deleting it first would narrow the CLI's own protection against the F5-class attack.
 Also decide Finding S8 (`project env clone`'s misleading local-mode failure report — DROP recommended,
 not a fix). Size: medium.
+
+**Status: open (#2049).** S1 confirmed already merged (#2017). Finding S8 doesn't apply to the
+thin CLI's port (there is no local-mode fallback to have a misleading failure report at all);
+`project environments` (legacy alias) kept for flag compatibility, flagged as a conservative
+default rather than a unilateral drop. Also closed 7 live-but-undocumented OpenAPI routes this
+port needed, and a real HTTP-layer gap found while porting `user update`: the last-install-
+administrator refusal wasn't surfaced readably (fixed, see the PR).
 
 **PR 7 — `audit`, `anomalies`, `notification`, `accessreview`, `request` (37 commands).** **Hard
 prerequisite**: fix GAP-F-BULK (Finding S15 / §6 GAP-5) — 3 of 6 `request bulk.go` commands need
