@@ -1,11 +1,13 @@
 // Package securefiles provides symlink-safe file-write primitives for the CLI's local
-// file operations (secret export, render --output, scan --report, fix's source-tree
-// edits). Ported from internal/securefiles (the main module) -- the cli module cannot
-// import it directly, since cli/go.mod carries no dependency on the main module at all
-// (ADR-108 Decision A, enforced by cli/internal/depguard). Trimmed to exactly the two
-// primitives this module's callers need (SecureOpenBeneath, SecureCreateFileHandle);
-// see the main module's internal/securefiles/securefiles.go for the full original and
-// its own extensive doc comments on the TOCTOU this closes.
+// file operations: secret export, render --output, scan --report, fix's source-tree
+// edits, compliance --output/--csv, and trust keygen. It is ported from the main
+// module's internal/securefiles. The cli module cannot import that package directly,
+// since cli/go.mod carries no dependency on the main module (ADR-108 Decision A,
+// enforced by cli/internal/depguard). It is trimmed to the primitives this module's
+// callers need: SecureOpenBeneath and SecureCreateFileHandle here, and CreateFile,
+// CreateFileSync and WriteFile in write.go. See the main module's
+// internal/securefiles/securefiles.go for the full original and its doc comments on
+// the TOCTOU this closes.
 package securefiles
 
 import (

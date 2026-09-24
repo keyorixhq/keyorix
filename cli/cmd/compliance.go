@@ -31,7 +31,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/cli/internal/apiclient"
 	"github.com/keyorixhq/keyorix/cli/internal/cliout"
-	"github.com/keyorixhq/keyorix/cli/internal/securefile"
+	"github.com/keyorixhq/keyorix/cli/internal/securefiles"
 )
 
 var complianceCmd = &cobra.Command{
@@ -47,12 +47,12 @@ func init() {
 }
 
 // ── shared: operator-supplied --output write, with the export/verify round-trip's own
-// symlink/overwrite-safety guarantee (see securefile's package doc). ───────────────────
+// symlink/overwrite-safety guarantee (see the securefiles package). ───────────────────
 
 func writeOutput(outputPath string, data []byte, force bool, label string) error {
-	writeOut := securefile.CreateFile
+	writeOut := securefiles.CreateFile
 	if force {
-		writeOut = securefile.WriteFile
+		writeOut = securefiles.WriteFile
 	}
 	if err := writeOut(filepath.Dir(outputPath), filepath.Base(outputPath), data, 0o600); err != nil {
 		return fmt.Errorf("cannot create output file %q (it may already exist — remove it, choose a different path, or pass --force): %w", outputPath, err)
