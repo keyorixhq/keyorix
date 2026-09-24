@@ -257,8 +257,8 @@ func writeMatrixTable(out io.Writer, rows []apiclient.PermissionMatrixRow) error
 
 func matrixRowToCSV(r apiclient.PermissionMatrixRow) []string {
 	return []string{
-		derefStr(r.Username), derefStr(r.Email), derefStr(r.RoleName), derefStr(r.PermissionName),
-		derefStr(r.Resource), derefStr(r.Action), derefMatrixScope(r.Scope), derefStr(r.ProjectName), derefStr(r.EnvironmentName), matrixExpiresAt(r.ExpiresAt),
+		csvSafe(derefStr(r.Username)), csvSafe(derefStr(r.Email)), csvSafe(derefStr(r.RoleName)), csvSafe(derefStr(r.PermissionName)),
+		csvSafe(derefStr(r.Resource)), csvSafe(derefStr(r.Action)), derefMatrixScope(r.Scope), csvSafe(derefStr(r.ProjectName)), csvSafe(derefStr(r.EnvironmentName)), matrixExpiresAt(r.ExpiresAt),
 	}
 }
 
