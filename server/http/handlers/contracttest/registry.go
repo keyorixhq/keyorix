@@ -92,11 +92,8 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"listProjectMemberships":         reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/memberships
 	"listRiskExceptions":             reasonSchemaNotYetWritten, // get /api/v1/risk-exceptions
 	"listSecretAccessRequests":       reasonSchemaNotYetWritten, // get /api/v1/secret-access-requests
-	"listSecretShares":               reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}/shares
 	"listSecrets":                    reasonSchemaNotYetWritten, // get /api/v1/secrets
 	"listSessions":                   reasonSchemaNotYetWritten, // get /api/v1/auth/sessions
-	"listSharedSecrets":              reasonSchemaNotYetWritten, // get /api/v1/shared-secrets
-	"listSharedSecretsForUser":       reasonSchemaNotYetWritten, // get /api/v1/users/{id}/shared-secrets
 	"listShares":                     reasonSchemaNotYetWritten, // get /api/v1/shares
 	"listSoDPolicies":                reasonSchemaNotYetWritten, // get /api/v1/sod/policies
 	"listSoDViolations":              reasonSchemaNotYetWritten, // get /api/v1/sod/violations
@@ -125,7 +122,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"rotateSecret":                   reasonSchemaNotYetWritten, // post /api/v1/secrets/{id}/rotate
 	"searchAuditLogs":                reasonSchemaNotYetWritten, // get /api/v1/audit/search
 	"searchUsers":                    reasonSchemaNotYetWritten, // get /api/v1/users/search
-	"shareSecret":                    reasonSchemaNotYetWritten, // post /api/v1/secrets/{id}/share
 	"startImpersonation":             reasonSchemaNotYetWritten, // post /api/v1/admin/impersonate
 	"suspendInactiveUsers":           reasonSchemaNotYetWritten, // post /api/v1/admin/jobs/suspend-inactive-users
 	"suspendUser":                    reasonSchemaNotYetWritten, // post /api/v1/users/{id}/suspend
@@ -137,7 +133,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"updateRole":                     reasonSchemaNotYetWritten, // put /api/v1/roles/{id}
 	"updateRotationPolicy":           reasonSchemaNotYetWritten, // put /api/v1/rotation-policies/{id}
 	"updateSecret":                   reasonSchemaNotYetWritten, // put /api/v1/secrets/{id}
-	"updateSharePermission":          reasonSchemaNotYetWritten, // put /api/v1/shares/{id}
 	"updateUser":                     reasonSchemaNotYetWritten, // put /api/v1/users/{id}
 	"updateUserRoles":                reasonSchemaNotYetWritten, // put /api/v1/users/{id}/roles
 	"verifyAuditChain":               reasonSchemaNotYetWritten, // get /api/v1/audit/verify
@@ -174,6 +169,7 @@ var outOfScopeRegistry = map[string]string{ // #nosec G101 -- operationId keys, 
 	"removeGroupMember":        reason204NoContent, // delete /api/v1/groups/{id}/members/{userId}
 	"removePermissionFromRole": reason204NoContent, // delete /api/v1/roles/{id}/permissions/{permissionId}
 	"removeRoleFromGroup":      reason204NoContent, // delete /api/v1/groups/{id}/roles/{roleId}
+	"removeSelfFromShare":      reason204NoContent, // delete /api/v1/secrets/{id}/self-share
 	"removeUserRole":           reason204NoContent, // delete /api/v1/user-roles
 	"revokePAT":                reason204NoContent, // delete /api/v1/auth/tokens/{id}
 	"revokeSession":            reason204NoContent, // delete /api/v1/auth/sessions/{id}
@@ -271,4 +267,12 @@ var exercisingTests = map[string][]string{
 	"getProjectRotationOrder":      {"TestContractPR1_GetProjectRotationOrder"},
 	"getProjectRotationPlan":       {"TestContractPR1_GetProjectRotationPlan"},
 	"getDeploymentRotationPlan":    {"TestContractPR1_GetDeploymentRotationPlan"},
+	// docs/cli-split-inventory.md §7 PR 9 (share) --
+	// openapi_contract_pr9_test.go.
+	"shareSecret":              {"TestContractPR9_ShareSecret"},
+	"listSecretShares":         {"TestContractPR9_ListSecretShares"},
+	"updateSharePermission":    {"TestContractPR9_UpdateSharePermission"},
+	"listSharedSecrets":        {"TestContractPR9_ListSharedSecrets"},
+	"listSharedSecretsForUser": {"TestContractPR9_ListSharedSecretsForUser"},
+	"listGroupShares":          {"TestContractPR9_ListGroupShares"},
 }

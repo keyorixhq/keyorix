@@ -1088,6 +1088,29 @@ elsewhere.
 (§6, secondary gap) is now closed — `GET /api/v1/users/{id}/shared-secrets`, admin-rank-ceiling-
 gated; no remaining product decision here. Size: small.
 
+**Closed by PR split/pr9-cli-share.** Ported all 7 commands (`create`, `list`, `update`, `revoke`,
+`self-remove`, `shared-secrets`, `group-shares`) to `cli/cmd/share.go` against a freshly generated
+client. Two REST routes this PR needed already had live server handlers with no route wired
+(`RemoveSelfFromShare`, `ListGroupShares` in `shares_query.go`) — only the OpenAPI path/schema and
+CLI client were missing, not the underlying logic; both `#G66` findings the old CLI's own comments
+already named as the reason those handlers existed unreached. Spec gaps closed in this PR: added the
+`Share` and a PR9-local `Secret` component schema (both PascalCase, `models.ShareRecord`/`SecretNode`
+have no json tags — sibling-PR duplication of `Secret` is expected, see PR4/PR5's identical note);
+added `expires_at` to `shareSecret`'s request body and a full response schema; added
+`expires_at`/`clear_expiry` to `updateSharePermission`'s request body and a full response schema;
+added response schemas to `listSecretShares`, `listSharedSecrets`, `listSharedSecretsForUser`; added
+the brand-new `DELETE /api/v1/secrets/{id}/self-share` and `GET /api/v1/groups/{id}/shares` paths
+outright (previously absent from the spec, not just schema-less). `revokeShare` was already
+204-typed and out-of-scope; `removeSelfFromShare` (also 204) was added to `outOfScopeRegistry`
+alongside it, matching the existing 204 convention. The other 6 newly-schema'd operations moved from
+`pendingRegistry` to enforced, each exercised by a dedicated `openapi_contract_pr9_test.go` test —
+`TestEnforcedSetMatchesADR074`'s pinned baseline and `exercisingTests` updated accordingly. Deliberate
+output-parity fix (not a faithful port): `share update`'s old CLI remote-mode output printed only 3
+of the ~8 fields the embedded branch and `share create` print (§2.x inventory table, "API — minor
+CLI output-parity gap only"). This port prints all 8 (adding Secret ID, Owner ID, Recipient ID, Is
+Group, replacing the label with "Updated At"), matching create/list/revoke's shape instead of
+carrying the narrower one forward.
+
 **PR 10 — `bundle`, `license`, `system info`/`role-expiry-check`/`token-expiry-check`, `status`
 (remote branch only), `run` (remote branch only) — CLIENT-ONLY/API cleanup (~15 commands).** Drop
 `status`'s and `run`'s local/embedded branches (Findings S18, §2.7) — dropping `run`'s is a

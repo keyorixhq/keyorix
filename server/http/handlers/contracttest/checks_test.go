@@ -71,6 +71,15 @@ func TestSpecLoadsAndValidates(t *testing.T) {
 // schema); getRotationStatus and revokeBreakGlass stay in pendingRegistry
 // since none of PR 1's 19 commands needed a typed accessor for them beyond
 // what the envelope's bare success/message already gives the CLI.
+//
+// The 6 share operations below were added by ADR-108 PR 9 (docs/cli-split-
+// inventory.md §7, "share -- 7 commands"): shareSecret, listSecretShares, and
+// updateSharePermission had only a narrative, schema-less description before
+// this; listSharedSecrets/listSharedSecretsForUser/listGroupShares needed one
+// for the first time. removeSelfFromShare (also new to the spec, a 204) and
+// revokeShare (already schema-less-by-design, also 204) are deliberately NOT
+// in this batch -- both are 204 No Content, tracked in outOfScopeRegistry
+// instead, matching every other 204 route in this package.
 func TestEnforcedSetMatchesADR074(t *testing.T) {
 	want := map[string]bool{
 		"authGetSetupToken":             true,
@@ -134,6 +143,12 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		"getProjectRotationOrder":       true,
 		"getProjectRotationPlan":        true,
 		"getDeploymentRotationPlan":     true,
+		"shareSecret":                   true,
+		"listSecretShares":              true,
+		"updateSharePermission":         true,
+		"listSharedSecrets":             true,
+		"listSharedSecretsForUser":      true,
+		"listGroupShares":               true,
 	}
 
 	loadSpec()
