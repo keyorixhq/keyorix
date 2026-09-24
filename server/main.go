@@ -493,16 +493,7 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			"can restore ANY admin account on HOST ACCESS ALONE, with no recovery key required or checked. This " +
 			"collapses host access and admin access into one trust boundary. Intended for labs/demo use only; " +
 			"disable it for any real deployment.")
-		ok := true
-		if err := store.LogAuditEvent(context.Background(), &models.AuditEvent{
-			EventType:   "admin.keyless_mode_enabled_at_startup",
-			Description: "server started with security.recover_admin.keyless_mode enabled -- recover-admin can restore any admin account on host access alone",
-			Success:     &ok,
-			ActorType:   core.ActorTypeSystem,
-			EventTime:   time.Now(),
-		}); err != nil {
-			log.Printf("note: could not record the keyless-mode startup event to the audit chain (%v)", err)
-		}
+		auditKeylessModeStartup(store)
 	}
 
 	// Top up the canonical RBAC permission catalog (ADR-044): adds any permission
@@ -2586,4 +2577,22 @@ func buildSAMLProvider(pc config.SSOProviderConfig) (*samlpkg.Provider, error) {
 		NameAttr:          pc.SAML.NameAttribute,
 		GroupsAttr:        pc.SAML.GroupsAttribute,
 	})
+}
+
+// auditKeylessModeStartup records, at every boot while security.recover_admin.keyless_mode is
+// enabled, a system-actor audit event (no UserID, never machine-identity-typed), so the
+// tamper-evident chain itself carries a repeated record of the weaker mode. Direct
+// LogAuditEvent: this runs before any request context exists, the same shape as
+// auditConnectorProjectBindingCreate (listed in core's auditAttributionAllowlist).
+func auditKeylessModeStartup(store corestorage.Storage) {
+	ok := true
+	if err := store.LogAuditEvent(context.Background(), &models.AuditEvent{
+		EventType:   "admin.keyless_mode_enabled_at_startup",
+		Description: "server started with security.recover_admin.keyless_mode enabled -- recover-admin can restore any admin account on host access alone",
+		Success:     &ok,
+		ActorType:   core.ActorTypeSystem,
+		EventTime:   time.Now(),
+	}); err != nil {
+		log.Printf("note: could not record the keyless-mode startup event to the audit chain (%v)", err)
+	}
 }
