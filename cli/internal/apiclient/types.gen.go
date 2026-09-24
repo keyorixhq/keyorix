@@ -13,6 +13,27 @@ const (
 	BearerAuthScopes = "bearerAuth.Scopes"
 )
 
+// Defines values for AccessReviewDecisionPrincipalType.
+const (
+	AccessReviewDecisionPrincipalTypeGroup AccessReviewDecisionPrincipalType = "group"
+	AccessReviewDecisionPrincipalTypeUser  AccessReviewDecisionPrincipalType = "user"
+)
+
+// Defines values for AccessReviewDecisionSource.
+const (
+	DirectShare AccessReviewDecisionSource = "direct_share"
+	GroupShare  AccessReviewDecisionSource = "group_share"
+	Role        AccessReviewDecisionSource = "role"
+)
+
+// Defines values for BlastRadiusNodeRiskLevel.
+const (
+	BlastRadiusNodeRiskLevelCritical BlastRadiusNodeRiskLevel = "critical"
+	BlastRadiusNodeRiskLevelHigh     BlastRadiusNodeRiskLevel = "high"
+	BlastRadiusNodeRiskLevelLow      BlastRadiusNodeRiskLevel = "low"
+	BlastRadiusNodeRiskLevelMedium   BlastRadiusNodeRiskLevel = "medium"
+)
+
 // Defines values for BreakGlassActivationState.
 const (
 	BreakGlassActivationStateActive  BreakGlassActivationState = "active"
@@ -42,10 +63,40 @@ const (
 
 // Defines values for MachineIdentityState.
 const (
-	Active    MachineIdentityState = "active"
-	Pending   MachineIdentityState = "pending"
-	Revoked   MachineIdentityState = "revoked"
-	Suspended MachineIdentityState = "suspended"
+	MachineIdentityStateActive    MachineIdentityState = "active"
+	MachineIdentityStatePending   MachineIdentityState = "pending"
+	MachineIdentityStateRevoked   MachineIdentityState = "revoked"
+	MachineIdentityStateSuspended MachineIdentityState = "suspended"
+)
+
+// Defines values for PermissionMatrixRowScope.
+const (
+	PermissionMatrixRowScopeEnvironment PermissionMatrixRowScope = "environment"
+	PermissionMatrixRowScopeGlobal      PermissionMatrixRowScope = "global"
+	PermissionMatrixRowScopeProject     PermissionMatrixRowScope = "project"
+)
+
+// Defines values for ProjectInvitationState.
+const (
+	ProjectInvitationStateAccepted ProjectInvitationState = "accepted"
+	ProjectInvitationStateExpired  ProjectInvitationState = "expired"
+	ProjectInvitationStatePending  ProjectInvitationState = "pending"
+	ProjectInvitationStateRevoked  ProjectInvitationState = "revoked"
+)
+
+// Defines values for ProvisionSetupResultChannel.
+const (
+	Log       ProvisionSetupResultChannel = "log"
+	OutOfBand ProvisionSetupResultChannel = "out_of_band"
+	Smtp      ProvisionSetupResultChannel = "smtp"
+)
+
+// Defines values for QuotaReportRowStatus.
+const (
+	QuotaReportRowStatusCritical  QuotaReportRowStatus = "critical"
+	QuotaReportRowStatusExhausted QuotaReportRowStatus = "exhausted"
+	QuotaReportRowStatusOk        QuotaReportRowStatus = "ok"
+	QuotaReportRowStatusWarning   QuotaReportRowStatus = "warning"
 )
 
 // Defines values for RotationPlanSecretStatus.
@@ -58,6 +109,39 @@ const (
 const (
 	RotationPolicyScopeEnvironment RotationPolicyScope = "environment"
 	RotationPolicyScopeProject     RotationPolicyScope = "project"
+)
+
+// Defines values for SecretRiskScoreBand.
+const (
+	High   SecretRiskScoreBand = "high"
+	Low    SecretRiskScoreBand = "low"
+	Medium SecretRiskScoreBand = "medium"
+)
+
+// Defines values for ListAuditLogsParamsActorType.
+const (
+	ListAuditLogsParamsActorTypeMachineIdentity ListAuditLogsParamsActorType = "machine_identity"
+	ListAuditLogsParamsActorTypeSystem          ListAuditLogsParamsActorType = "system"
+	ListAuditLogsParamsActorTypeUser            ListAuditLogsParamsActorType = "user"
+)
+
+// Defines values for MigrateAuditChainEncodingParamsDryRun.
+const (
+	MigrateAuditChainEncodingParamsDryRunFalse MigrateAuditChainEncodingParamsDryRun = "false"
+	MigrateAuditChainEncodingParamsDryRunTrue  MigrateAuditChainEncodingParamsDryRun = "true"
+)
+
+// Defines values for SearchAuditLogsParamsSuccess.
+const (
+	SearchAuditLogsParamsSuccessFalse SearchAuditLogsParamsSuccess = "false"
+	SearchAuditLogsParamsSuccessTrue  SearchAuditLogsParamsSuccess = "true"
+)
+
+// Defines values for GetComplianceCredentialTrendsParamsDays.
+const (
+	N30 GetComplianceCredentialTrendsParamsDays = 30
+	N60 GetComplianceCredentialTrendsParamsDays = 60
+	N90 GetComplianceCredentialTrendsParamsDays = 90
 )
 
 // Defines values for CreateDynamicSecretConfigJSONBodyClassification.
@@ -80,15 +164,48 @@ const (
 
 // Defines values for ListProjectsParamsIncludeDeleted.
 const (
-	False ListProjectsParamsIncludeDeleted = "false"
-	True  ListProjectsParamsIncludeDeleted = "true"
+	ListProjectsParamsIncludeDeletedFalse ListProjectsParamsIncludeDeleted = "false"
+	ListProjectsParamsIncludeDeletedTrue  ListProjectsParamsIncludeDeleted = "true"
+)
+
+// Defines values for ResolveAccessRequestJSONBodyAction.
+const (
+	ResolveAccessRequestJSONBodyActionApprove ResolveAccessRequestJSONBodyAction = "approve"
+	ResolveAccessRequestJSONBodyActionReject  ResolveAccessRequestJSONBodyAction = "reject"
+)
+
+// Defines values for DecideAccessReviewCampaignItemJSONBodyAction.
+const (
+	DecideAccessReviewCampaignItemJSONBodyActionAttest DecideAccessReviewCampaignItemJSONBodyAction = "attest"
+	DecideAccessReviewCampaignItemJSONBodyActionRevoke DecideAccessReviewCampaignItemJSONBodyAction = "revoke"
+)
+
+// Defines values for ListProjectEnvironmentsParamsIncludeDeleted.
+const (
+	ListProjectEnvironmentsParamsIncludeDeletedFalse ListProjectEnvironmentsParamsIncludeDeleted = "false"
+	ListProjectEnvironmentsParamsIncludeDeletedTrue  ListProjectEnvironmentsParamsIncludeDeleted = "true"
 )
 
 // Defines values for TransitionMachineIdentityJSONBodyAction.
 const (
-	Activate TransitionMachineIdentityJSONBodyAction = "activate"
-	Revoke   TransitionMachineIdentityJSONBodyAction = "revoke"
-	Suspend  TransitionMachineIdentityJSONBodyAction = "suspend"
+	TransitionMachineIdentityJSONBodyActionActivate TransitionMachineIdentityJSONBodyAction = "activate"
+	TransitionMachineIdentityJSONBodyActionRevoke   TransitionMachineIdentityJSONBodyAction = "revoke"
+	TransitionMachineIdentityJSONBodyActionSuspend  TransitionMachineIdentityJSONBodyAction = "suspend"
+)
+
+// Defines values for GetPermissionMatrixParamsFormat.
+const (
+	Csv GetPermissionMatrixParamsFormat = "csv"
+)
+
+// Defines values for CreateRiskExceptionJSONBodyCategory.
+const (
+	Classification CreateRiskExceptionJSONBodyCategory = "classification"
+	DormantAccess  CreateRiskExceptionJSONBodyCategory = "dormant_access"
+	Mfa            CreateRiskExceptionJSONBodyCategory = "mfa"
+	Other          CreateRiskExceptionJSONBodyCategory = "other"
+	Rotation       CreateRiskExceptionJSONBodyCategory = "rotation"
+	Sod            CreateRiskExceptionJSONBodyCategory = "sod"
 )
 
 // Defines values for CreateRotationPolicyJSONBodyScope.
@@ -96,6 +213,76 @@ const (
 	CreateRotationPolicyJSONBodyScopeEnvironment CreateRotationPolicyJSONBodyScope = "environment"
 	CreateRotationPolicyJSONBodyScopeProject     CreateRotationPolicyJSONBodyScope = "project"
 )
+
+// Defines values for ResolveSecretAccessRequestJSONBodyAction.
+const (
+	ResolveSecretAccessRequestJSONBodyActionApprove ResolveSecretAccessRequestJSONBodyAction = "approve"
+	ResolveSecretAccessRequestJSONBodyActionReject  ResolveSecretAccessRequestJSONBodyAction = "reject"
+)
+
+// Defines values for ListSecretsParamsClassification.
+const (
+	Confidential ListSecretsParamsClassification = "confidential"
+	Internal     ListSecretsParamsClassification = "internal"
+	Public       ListSecretsParamsClassification = "public"
+	Restricted   ListSecretsParamsClassification = "restricted"
+	Unclassified ListSecretsParamsClassification = "unclassified"
+)
+
+// Defines values for ListUsersParamsFilter.
+const (
+	Inactive ListUsersParamsFilter = "inactive"
+)
+
+// AccessReviewDecision Identifies one access-review entry for a recertification decision (attest or revoke). Mirrors an entry from GET .../access-review.
+type AccessReviewDecision struct {
+	// EnvironmentId Environment scope of a role grant (0 = whole project).
+	EnvironmentId *uint32 `json:"environment_id,omitempty"`
+
+	// PrincipalId The user or group ID the grant is for.
+	PrincipalId *uint32 `json:"principal_id,omitempty"`
+
+	// PrincipalType For a role grant, whether the principal is a user or a group.
+	PrincipalType *AccessReviewDecisionPrincipalType `json:"principal_type,omitempty"`
+
+	// RoleId Required when source=role.
+	RoleId *uint32 `json:"role_id,omitempty"`
+
+	// SecretId Required when source=direct_share or group_share.
+	SecretId *uint32 `json:"secret_id,omitempty"`
+
+	// Source Which mechanism conferred the grant.
+	Source AccessReviewDecisionSource `json:"source"`
+}
+
+// AccessReviewDecisionPrincipalType For a role grant, whether the principal is a user or a group.
+type AccessReviewDecisionPrincipalType string
+
+// AccessReviewDecisionSource Which mechanism conferred the grant.
+type AccessReviewDecisionSource string
+
+// BlastRadiusNode defines model for BlastRadiusNode.
+type BlastRadiusNode struct {
+	Depth      *int                      `json:"depth,omitempty"`
+	OwnerId    *int                      `json:"owner_id,omitempty"`
+	ProjectId  *int                      `json:"project_id,omitempty"`
+	RiskLevel  *BlastRadiusNodeRiskLevel `json:"risk_level,omitempty"`
+	SecretId   *int                      `json:"secret_id,omitempty"`
+	SecretName *string                   `json:"secret_name,omitempty"`
+}
+
+// BlastRadiusNodeRiskLevel defines model for BlastRadiusNode.RiskLevel.
+type BlastRadiusNodeRiskLevel string
+
+// BlastRadiusReport defines model for BlastRadiusReport.
+type BlastRadiusReport struct {
+	Dependents       *[]BlastRadiusNode `json:"dependents,omitempty"`
+	MaxDepth         *int               `json:"max_depth,omitempty"`
+	SourceSecretId   *int               `json:"source_secret_id,omitempty"`
+	SourceSecretName *string            `json:"source_secret_name,omitempty"`
+	TotalImpact      *int               `json:"total_impact,omitempty"`
+	Truncated        *bool              `json:"truncated,omitempty"`
+}
 
 // BreakGlassActivation One emergency-access self-grant (ADR-108 PR 1 addition).
 type BreakGlassActivation struct {
@@ -111,6 +298,62 @@ type BreakGlassActivation struct {
 // BreakGlassActivationState defines model for BreakGlassActivation.State.
 type BreakGlassActivationState string
 
+// BulkDeleteResult defines model for BulkDeleteResult.
+type BulkDeleteResult struct {
+	Deleted *[]int         `json:"deleted,omitempty"`
+	Failed  *[]BulkOpError `json:"failed,omitempty"`
+	Total   *int           `json:"total,omitempty"`
+}
+
+// BulkOpError defines model for BulkOpError.
+type BulkOpError struct {
+	Error    *string `json:"error,omitempty"`
+	Name     *string `json:"name,omitempty"`
+	SecretId *int    `json:"secret_id,omitempty"`
+}
+
+// BulkRenameReport defines model for BulkRenameReport.
+type BulkRenameReport struct {
+	DryRun   *bool                  `json:"dry_run,omitempty"`
+	Outcomes *[]SecretRenameOutcome `json:"outcomes,omitempty"`
+	Renamed  *int                   `json:"renamed,omitempty"`
+	Skipped  *int                   `json:"skipped,omitempty"`
+}
+
+// BulkRotateResult defines model for BulkRotateResult.
+type BulkRotateResult struct {
+	Failed    *[]BulkOpError `json:"failed,omitempty"`
+	Total     *int           `json:"total,omitempty"`
+	Triggered *[]int         `json:"triggered,omitempty"`
+}
+
+// CertificateInfo Public X.509 metadata of a certificate-valued secret. Never the value or key.
+type CertificateInfo struct {
+	DaysUntilExpiry    *int       `json:"days_until_expiry,omitempty"`
+	DnsNames           *[]string  `json:"dns_names,omitempty"`
+	IsCa               *bool      `json:"is_ca,omitempty"`
+	IsExpired          *bool      `json:"is_expired,omitempty"`
+	Issuer             *string    `json:"issuer,omitempty"`
+	NotAfter           *time.Time `json:"not_after,omitempty"`
+	NotBefore          *time.Time `json:"not_before,omitempty"`
+	PublicKeyAlgorithm *string    `json:"public_key_algorithm,omitempty"`
+	SecretId           *int       `json:"secret_id,omitempty"`
+	SecretName         *string    `json:"secret_name,omitempty"`
+	SelfSigned         *bool      `json:"self_signed,omitempty"`
+	SerialNumber       *string    `json:"serial_number,omitempty"`
+	SignatureAlgorithm *string    `json:"signature_algorithm,omitempty"`
+	Subject            *string    `json:"subject,omitempty"`
+}
+
+// DeletedSecretEntry One row of a project's recycle bin (GET /projects/{id}/secrets/deleted) -- a snake_case DTO, not the raw Secret model.
+type DeletedSecretEntry struct {
+	Classification *string `json:"classification,omitempty"`
+	DeletedAt      *string `json:"deleted_at,omitempty"`
+	Id             *int    `json:"id,omitempty"`
+	Name           *string `json:"name,omitempty"`
+	Type           *string `json:"type,omitempty"`
+}
+
 // DeploymentRotationPlan The install-wide roll-up of every project's rotation plan (ADR-108 PR 1 addition, ADR-053) -- a roll-up of per-project plans, most pressing first.
 type DeploymentRotationPlan struct {
 	DueSoonCount     *int            `json:"due_soon_count,omitempty"`
@@ -119,6 +362,28 @@ type DeploymentRotationPlan struct {
 	ProjectsScanned  *int            `json:"projects_scanned,omitempty"`
 	ProjectsWithWork *int            `json:"projects_with_work,omitempty"`
 	TotalSecrets     *int            `json:"total_secrets,omitempty"`
+}
+
+// DeploymentSecretNameConformanceReport defines model for DeploymentSecretNameConformanceReport.
+type DeploymentSecretNameConformanceReport struct {
+	MaxLength     *int                             `json:"max_length,omitempty"`
+	Pattern       *string                          `json:"pattern,omitempty"`
+	PolicyEnabled *bool                            `json:"policy_enabled,omitempty"`
+	TotalSecrets  *int                             `json:"total_secrets,omitempty"`
+	Truncated     *bool                            `json:"truncated,omitempty"`
+	Violations    *[]DeploymentSecretNameViolation `json:"violations,omitempty"`
+}
+
+// DeploymentSecretNameViolation A SecretNameViolation tagged with its project (org-wide report).
+type DeploymentSecretNameViolation struct {
+	Classification *string `json:"classification,omitempty"`
+	EnvironmentId  *int    `json:"environment_id,omitempty"`
+	Id             *int    `json:"id,omitempty"`
+	Name           *string `json:"name,omitempty"`
+	ProjectId      *int    `json:"project_id,omitempty"`
+	ProjectName    *string `json:"project_name,omitempty"`
+	Reason         *string `json:"reason,omitempty"`
+	Type           *string `json:"type,omitempty"`
 }
 
 // DynamicSecretConfig A registered dynamic-secret target config (ADR-108 PR 1 addition).
@@ -156,6 +421,48 @@ type DynamicSecretLease struct {
 
 // DynamicSecretLeaseStatus defines model for DynamicSecretLease.Status.
 type DynamicSecretLeaseStatus string
+
+// Environment A project environment (internal/storage/models.Environment). No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, Name, CreatedAt, UpdatedAt), not snake_case. Unlike Permission/RoleWithPermissions above, ProjectID/CreatedAt/UpdatedAt do NOT case-insensitively match a snake_case tag (the underscore makes "project_id" a different string from "projectid"), so a generated client MUST use these exact capitalized property names to decode correctly.
+type Environment struct {
+	CreatedAt *time.Time `json:"CreatedAt,omitempty"`
+	ID        *int       `json:"ID,omitempty"`
+	Name      *string    `json:"Name,omitempty"`
+	ProjectID *int       `json:"ProjectID,omitempty"`
+	UpdatedAt *time.Time `json:"UpdatedAt,omitempty"`
+}
+
+// ExpiringSecretEntry defines model for ExpiringSecretEntry.
+type ExpiringSecretEntry struct {
+	Classification *string    `json:"classification,omitempty"`
+	EnvironmentId  *int       `json:"environment_id,omitempty"`
+	Expiration     *time.Time `json:"expiration,omitempty"`
+	Expired        *bool      `json:"expired,omitempty"`
+	Id             *int       `json:"id,omitempty"`
+	Name           *string    `json:"name,omitempty"`
+	Type           *string    `json:"type,omitempty"`
+}
+
+// ExpiringSecretsReport defines model for ExpiringSecretsReport.
+type ExpiringSecretsReport struct {
+	Expiring  *[]ExpiringSecretEntry `json:"expiring,omitempty"`
+	Total     *int                   `json:"total,omitempty"`
+	Truncated *bool                  `json:"truncated,omitempty"`
+}
+
+// Group A group (server/http/handlers/groups_handler.go's groupToAPIResponse).
+type Group struct {
+	Description *string `json:"description,omitempty"`
+	Id          *int    `json:"id,omitempty"`
+	Name        *string `json:"name,omitempty"`
+}
+
+// GroupRoleGrant One role a group holds, with its time-bound expiry if any (internal/core/storage.GroupRoleGrant).
+type GroupRoleGrant struct {
+	Description *string    `json:"description,omitempty"`
+	ExpiresAt   *time.Time `json:"expires_at"`
+	Id          *int       `json:"id,omitempty"`
+	Name        *string    `json:"name,omitempty"`
+}
 
 // MachineAuditReport Deployment-wide machine identity audit report (GET /machine-identities/audit).
 type MachineAuditReport struct {
@@ -227,6 +534,32 @@ type OIDCBinding struct {
 	Subject   *string    `json:"subject,omitempty"`
 }
 
+// OrphanedSecretEntry A secret whose owner is no longer a live user. Metadata only.
+type OrphanedSecretEntry struct {
+	Classification *string `json:"classification,omitempty"`
+	EnvironmentId  *int    `json:"environment_id,omitempty"`
+	Id             *int    `json:"id,omitempty"`
+	Name           *string `json:"name,omitempty"`
+	OwnerId        *int    `json:"owner_id,omitempty"`
+	Type           *string `json:"type,omitempty"`
+}
+
+// OrphanedSecretsReport defines model for OrphanedSecretsReport.
+type OrphanedSecretsReport struct {
+	Orphaned *[]OrphanedSecretEntry `json:"orphaned,omitempty"`
+	Total    *int                   `json:"total,omitempty"`
+}
+
+// OwnershipRecord defines model for OwnershipRecord.
+type OwnershipRecord struct {
+	ChangedAt   *time.Time `json:"changed_at,omitempty"`
+	ChangedBy   *int       `json:"changed_by,omitempty"`
+	Description *string    `json:"description,omitempty"`
+	EventId     *int       `json:"event_id,omitempty"`
+	FromId      *int       `json:"from_id,omitempty"`
+	ToId        *int       `json:"to_id,omitempty"`
+}
+
 // PATHygieneRow A deployment-wide PAT hygiene entry (GET /pat-hygiene) -- never includes the token secret.
 type PATHygieneRow struct {
 	Expired     *bool   `json:"expired,omitempty"`
@@ -252,6 +585,129 @@ type PATToken struct {
 	Revoked          *bool      `json:"revoked,omitempty"`
 	Scopes           *[]string  `json:"scopes"`
 	TokenPrefix      *string    `json:"token_prefix,omitempty"`
+}
+
+// Permission A permission. internal/storage/models.Permission carries no `json:` tags, so the wire keys are the bare (capitalized) Go field names, not the snake_case this file uses elsewhere -- documented as such rather than as an idealized snake_case shape it does not actually have. Single-word field names still decode correctly into a snake_case-tagged Go client: encoding/json's Unmarshal falls back to a case-insensitive match ("ID" ~ "id") when no exact tag match exists.
+type Permission struct {
+	Action      *string `json:"Action,omitempty"`
+	Description *string `json:"Description,omitempty"`
+	ID          *int    `json:"ID,omitempty"`
+	Name        *string `json:"Name,omitempty"`
+	Resource    *string `json:"Resource,omitempty"`
+}
+
+// PermissionMatrixRow One (user, role, permission, scope) tuple (internal/core.PermissionMatrixRow), GET /api/v1/rbac/permission-matrix.
+type PermissionMatrixRow struct {
+	Action          *string                   `json:"action,omitempty"`
+	Email           *string                   `json:"email,omitempty"`
+	EnvironmentId   *int                      `json:"environment_id,omitempty"`
+	EnvironmentName *string                   `json:"environment_name,omitempty"`
+	ExpiresAt       *time.Time                `json:"expires_at"`
+	PermissionName  *string                   `json:"permission_name,omitempty"`
+	ProjectId       *int                      `json:"project_id,omitempty"`
+	ProjectName     *string                   `json:"project_name,omitempty"`
+	Resource        *string                   `json:"resource,omitempty"`
+	RoleId          *int                      `json:"role_id,omitempty"`
+	RoleName        *string                   `json:"role_name,omitempty"`
+	Scope           *PermissionMatrixRowScope `json:"scope,omitempty"`
+	UserId          *int                      `json:"user_id,omitempty"`
+	Username        *string                   `json:"username,omitempty"`
+}
+
+// PermissionMatrixRowScope defines model for PermissionMatrixRow.Scope.
+type PermissionMatrixRowScope string
+
+// ProjectInvitation A project invitation (ADR-024, internal/storage/models.ProjectInvitation). No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, Email, ...), not snake_case. As with Environment above, the multi-word field names here do not case-insensitively match a snake_case tag, so a generated client must use these exact property names.
+type ProjectInvitation struct {
+	AcceptedAt                 *time.Time              `json:"AcceptedAt"`
+	CreatedAt                  *time.Time              `json:"CreatedAt,omitempty"`
+	Email                      *string                 `json:"Email,omitempty"`
+	ExpiresAt                  *time.Time              `json:"ExpiresAt"`
+	ID                         *int                    `json:"ID,omitempty"`
+	InvitedBy                  *int                    `json:"InvitedBy,omitempty"`
+	InvitedByMachineIdentityID *int                    `json:"InvitedByMachineIdentityID,omitempty"`
+	ProjectID                  *int                    `json:"ProjectID,omitempty"`
+	RevokedAt                  *time.Time              `json:"RevokedAt"`
+	Role                       *string                 `json:"Role,omitempty"`
+	State                      *ProjectInvitationState `json:"State,omitempty"`
+	SystemRole                 *string                 `json:"SystemRole,omitempty"`
+}
+
+// ProjectInvitationState defines model for ProjectInvitation.State.
+type ProjectInvitationState string
+
+// ProvisionSetupResult Outcome of provisioning and delivering a setup/accept link (ADR-028, internal/core.ProvisionSetupResult).
+type ProvisionSetupResult struct {
+	Channel   *ProvisionSetupResultChannel `json:"channel,omitempty"`
+	Delivered *bool                        `json:"delivered,omitempty"`
+	Email     *string                      `json:"email,omitempty"`
+
+	// LinkForAdmin Set only in out-of-band mode.
+	LinkForAdmin *string `json:"link_for_admin,omitempty"`
+}
+
+// ProvisionSetupResultChannel defines model for ProvisionSetupResult.Channel.
+type ProvisionSetupResultChannel string
+
+// QuotaReportRow defines model for QuotaReportRow.
+type QuotaReportRow struct {
+	MaxReads   *int                  `json:"max_reads,omitempty"`
+	ReadCount  *int                  `json:"read_count,omitempty"`
+	SecretId   *int                  `json:"secret_id,omitempty"`
+	SecretName *string               `json:"secret_name,omitempty"`
+	Status     *QuotaReportRowStatus `json:"status,omitempty"`
+	UsagePct   *int                  `json:"usage_pct,omitempty"`
+}
+
+// QuotaReportRowStatus defines model for QuotaReportRow.Status.
+type QuotaReportRowStatus string
+
+// RBACAuditLogEntry One RBAC audit trail entry (GET /api/v1/audit/rbac-logs).
+type RBACAuditLogEntry struct {
+	Action        *string    `json:"action,omitempty"`
+	ActorUserId   *int       `json:"actor_user_id"`
+	CreatedAt     *time.Time `json:"created_at,omitempty"`
+	Details       *string    `json:"details,omitempty"`
+	EnvironmentId *int       `json:"environment_id"`
+	GroupId       *int       `json:"group_id"`
+	Id            *int       `json:"id,omitempty"`
+	PermissionId  *int       `json:"permission_id"`
+	ProjectId     *int       `json:"project_id"`
+	RoleId        *int       `json:"role_id"`
+	TargetUserId  *int       `json:"target_user_id"`
+}
+
+// RoleRef A minimal role reference (id, name only) -- GET /api/v1/users/{id}/roles's shape.
+type RoleRef struct {
+	Id   *int    `json:"id,omitempty"`
+	Name *string `json:"name,omitempty"`
+}
+
+// RoleWithPermissions A role with its assigned permissions (internal/core.RoleWithPermissions, embeds models.Role). Same untagged-model caveat as Permission above: wire keys are the bare Go field names (ID, Name, Description, BypassesPermissionChecks, Permissions), not snake_case.
+type RoleWithPermissions struct {
+	BypassesPermissionChecks *bool         `json:"BypassesPermissionChecks,omitempty"`
+	Description              *string       `json:"Description,omitempty"`
+	ID                       *int          `json:"ID,omitempty"`
+	Name                     *string       `json:"Name,omitempty"`
+	Permissions              *[]Permission `json:"Permissions,omitempty"`
+}
+
+// RotationDryRunCheck defines model for RotationDryRunCheck.
+type RotationDryRunCheck struct {
+	Message *string `json:"message,omitempty"`
+	Name    *string `json:"name,omitempty"`
+	Passed  *bool   `json:"passed,omitempty"`
+}
+
+// RotationDryRunResult defines model for RotationDryRunResult.
+type RotationDryRunResult struct {
+	Backend     *string                `json:"backend,omitempty"`
+	Checks      *[]RotationDryRunCheck `json:"checks,omitempty"`
+	Ref         *string                `json:"ref,omitempty"`
+	SecretId    *int                   `json:"secret_id,omitempty"`
+	SecretName  *string                `json:"secret_name,omitempty"`
+	SimulatedAt *time.Time             `json:"simulated_at,omitempty"`
+	Valid       *bool                  `json:"valid,omitempty"`
 }
 
 // RotationOrder A safe rotation sequence for a project's secret dependency graph (ADR-108 PR 1 addition, ADR-052): each secret is listed before anything that depends on it.
@@ -324,6 +780,302 @@ type RotationPolicyEvaluation struct {
 	SecretName    *string `json:"secret_name,omitempty"`
 }
 
+// Secret A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
+type Secret struct {
+	AutoRotate     *bool      `json:"AutoRotate,omitempty"`
+	Classification *string    `json:"Classification,omitempty"`
+	CreatedAt      *time.Time `json:"CreatedAt,omitempty"`
+	CreatedBy      *string    `json:"CreatedBy,omitempty"`
+	Description    *string    `json:"Description,omitempty"`
+	EnvironmentID  *int       `json:"EnvironmentID,omitempty"`
+	Expiration     *time.Time `json:"Expiration"`
+	ID             *int       `json:"ID,omitempty"`
+
+	// IsSecret false = this node is a folder.
+	IsSecret               *bool      `json:"IsSecret,omitempty"`
+	IsShared               *bool      `json:"IsShared,omitempty"`
+	LastRotatedAt          *time.Time `json:"LastRotatedAt"`
+	MaxReads               *int       `json:"MaxReads"`
+	Name                   *string    `json:"Name,omitempty"`
+	OwnerID                *int       `json:"OwnerID,omitempty"`
+	OwnerMachineIdentityID *int       `json:"OwnerMachineIdentityID,omitempty"`
+	ParentID               *int       `json:"ParentID"`
+	ProjectID              *int       `json:"ProjectID,omitempty"`
+	ReadCount              *int       `json:"ReadCount,omitempty"`
+	RotationBackend        *string    `json:"RotationBackend,omitempty"`
+	RotationCharset        *string    `json:"RotationCharset,omitempty"`
+	RotationLength         *int       `json:"RotationLength,omitempty"`
+	RotationRef            *string    `json:"RotationRef,omitempty"`
+	Status                 *string    `json:"Status,omitempty"`
+	Type                   *string    `json:"Type,omitempty"`
+	UpdatedAt              *time.Time `json:"UpdatedAt,omitempty"`
+}
+
+// SecretACL Per-secret ACL grant. Confers the listed permissions on a specific user for one secret, independently of project RBAC (RBAC Phase 3).
+type SecretACL struct {
+	CreatedAt   *time.Time `json:"created_at,omitempty"`
+	GrantedBy   *int       `json:"granted_by,omitempty"`
+	Id          *int       `json:"id,omitempty"`
+	Permissions *[]string  `json:"permissions,omitempty"`
+	SecretId    *int       `json:"secret_id,omitempty"`
+	UserId      *int       `json:"user_id,omitempty"`
+}
+
+// SecretAccessLogEntry One read event from a secret's access log. Mirrors a GET .../access-log entry (a PascalCase raw-model response, not snake_case).
+type SecretAccessLogEntry struct {
+	AccessTime *string `json:"AccessTime,omitempty"`
+	AccessedBy *string `json:"AccessedBy,omitempty"`
+	Action     *string `json:"Action,omitempty"`
+	IPAddress  *string `json:"IPAddress,omitempty"`
+}
+
+// SecretAccessSchedule A secret's temporal access-window policy (internal/storage/models.SecretAccessSchedule -- properly snake_case-tagged, unlike SecretNode).
+type SecretAccessSchedule struct {
+	// AllowedDays Comma-separated ISO weekday list (1=Mon..7=Sun), or "*".
+	AllowedDays  *string    `json:"allowed_days,omitempty"`
+	CreatedAt    *time.Time `json:"created_at,omitempty"`
+	EndHour      *int       `json:"end_hour,omitempty"`
+	Id           *int       `json:"id,omitempty"`
+	SecretNodeId *int       `json:"secret_node_id,omitempty"`
+	StartHour    *int       `json:"start_hour,omitempty"`
+	Timezone     *string    `json:"timezone,omitempty"`
+	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
+}
+
+// SecretAccessor One entry in a secret's effective access list (owner, direct share, or group share).
+type SecretAccessor struct {
+	Permission *string `json:"permission,omitempty"`
+
+	// Source How access was granted: owner, direct share, or group share.
+	Source   *string `json:"source,omitempty"`
+	Username *string `json:"username,omitempty"`
+}
+
+// SecretAuditEntry One lifecycle event of a secret. Never carries a plaintext value.
+type SecretAuditEntry struct {
+	ActorType     *string                 `json:"actor_type,omitempty"`
+	Description   *string                 `json:"description,omitempty"`
+	Diff          *map[string]interface{} `json:"diff"`
+	EventType     *string                 `json:"event_type,omitempty"`
+	Id            *int                    `json:"id,omitempty"`
+	Impersonation *bool                   `json:"impersonation,omitempty"`
+	Success       *bool                   `json:"success,omitempty"`
+	Timestamp     *string                 `json:"timestamp,omitempty"`
+	UserId        *int                    `json:"user_id"`
+}
+
+// SecretDependencies defines model for SecretDependencies.
+type SecretDependencies struct {
+	Dependents *[]SecretDependencyEdge `json:"dependents,omitempty"`
+	DependsOn  *[]SecretDependencyEdge `json:"depends_on,omitempty"`
+	SecretId   *int                    `json:"secret_id,omitempty"`
+}
+
+// SecretDependencyEdge defines model for SecretDependencyEdge.
+type SecretDependencyEdge struct {
+	Id         *int    `json:"id,omitempty"`
+	Note       *string `json:"note,omitempty"`
+	SecretId   *int    `json:"secret_id,omitempty"`
+	SecretName *string `json:"secret_name,omitempty"`
+}
+
+// SecretGetResult GET /api/v1/secrets/{id}'s response `data`: the bare Secret fields directly (metadata-only), OR, when include_value=true, `{secret, value}` instead. Declared as one flat schema combining both shapes' properties (rather than oneOf) since the CLI always knows in advance which branch a given request will get -- it controls include_value.
+type SecretGetResult struct {
+	Classification *string    `json:"Classification,omitempty"`
+	CreatedAt      *time.Time `json:"CreatedAt,omitempty"`
+	CreatedBy      *string    `json:"CreatedBy,omitempty"`
+	Description    *string    `json:"Description,omitempty"`
+	EnvironmentID  *int       `json:"EnvironmentID,omitempty"`
+	Expiration     *time.Time `json:"Expiration"`
+	ID             *int       `json:"ID,omitempty"`
+	IsSecret       *bool      `json:"IsSecret,omitempty"`
+	IsShared       *bool      `json:"IsShared,omitempty"`
+	LastRotatedAt  *time.Time `json:"LastRotatedAt"`
+	MaxReads       *int       `json:"MaxReads"`
+	Name           *string    `json:"Name,omitempty"`
+	OwnerID        *int       `json:"OwnerID,omitempty"`
+	ParentID       *int       `json:"ParentID"`
+	ProjectID      *int       `json:"ProjectID,omitempty"`
+	ReadCount      *int       `json:"ReadCount,omitempty"`
+	Status         *string    `json:"Status,omitempty"`
+	Type           *string    `json:"Type,omitempty"`
+	UpdatedAt      *time.Time `json:"UpdatedAt,omitempty"`
+
+	// Secret A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
+	Secret *Secret `json:"secret,omitempty"`
+
+	// Value The decrypted value. Present only when include_value=true.
+	Value *string `json:"value,omitempty"`
+}
+
+// SecretImpact The blast radius of rotating a secret -- every transitively-dependent secret.
+type SecretImpact struct {
+	Affected   *[]SecretImpactedSecret `json:"affected,omitempty"`
+	SecretId   *int                    `json:"secret_id,omitempty"`
+	SecretName *string                 `json:"secret_name,omitempty"`
+}
+
+// SecretImpactedSecret defines model for SecretImpactedSecret.
+type SecretImpactedSecret struct {
+	// Depth Hops from the rotated secret in the dependency graph.
+	Depth      *int    `json:"depth,omitempty"`
+	SecretId   *int    `json:"secret_id,omitempty"`
+	SecretName *string `json:"secret_name,omitempty"`
+}
+
+// SecretListEntry One row of GET /api/v1/secrets's data.secrets[] (internal/storage/models.SecretWithSharingInfo, which anonymously embeds *SecretNode -- Go's encoding/json promotes the embedded struct's fields onto this same object). Wire keys are a genuine MIX of case conventions: SecretNode's own fields are bare capitalized (ID, Name, IsShared, ...), while SecretWithSharingInfo's own fields are snake_case (project_name, is_shared, ...) -- IsShared and is_shared are both present as DIFFERENT keys on the same object, from the two different structs.
+type SecretListEntry struct {
+	Classification *string    `json:"Classification,omitempty"`
+	CreatedAt      *time.Time `json:"CreatedAt,omitempty"`
+	CreatedBy      *string    `json:"CreatedBy,omitempty"`
+	Description    *string    `json:"Description,omitempty"`
+	EnvironmentID  *int       `json:"EnvironmentID,omitempty"`
+	Expiration     *time.Time `json:"Expiration"`
+	ID             *int       `json:"ID,omitempty"`
+	IsSecret       *bool      `json:"IsSecret,omitempty"`
+
+	// IsShared From the embedded SecretNode. SecretWithSharingInfo's own is_shared field also exists on the wire, distinct from this one -- omitted here (oapi-codegen mangles snake_case to the same Go field name, IsShared, as this property, causing a real generation collision) since no CLI command reads it.
+	IsShared        *bool      `json:"IsShared,omitempty"`
+	MaxReads        *int       `json:"MaxReads"`
+	Name            *string    `json:"Name,omitempty"`
+	OwnerID         *int       `json:"OwnerID,omitempty"`
+	ParentID        *int       `json:"ParentID"`
+	ProjectID       *int       `json:"ProjectID,omitempty"`
+	ReadCount       *int       `json:"ReadCount,omitempty"`
+	Status          *string    `json:"Status,omitempty"`
+	Type            *string    `json:"Type,omitempty"`
+	UpdatedAt       *time.Time `json:"UpdatedAt,omitempty"`
+	EnvironmentName *string    `json:"environment_name,omitempty"`
+	IsOwnedByUser   *bool      `json:"is_owned_by_user,omitempty"`
+	OwnerUsername   *string    `json:"owner_username,omitempty"`
+	ProjectName     *string    `json:"project_name,omitempty"`
+	ShareCount      *int       `json:"share_count,omitempty"`
+	UserPermission  *string    `json:"user_permission,omitempty"`
+}
+
+// SecretNameConformanceReport defines model for SecretNameConformanceReport.
+type SecretNameConformanceReport struct {
+	MaxLength     *int                   `json:"max_length,omitempty"`
+	Pattern       *string                `json:"pattern,omitempty"`
+	PolicyEnabled *bool                  `json:"policy_enabled,omitempty"`
+	TotalSecrets  *int                   `json:"total_secrets,omitempty"`
+	Truncated     *bool                  `json:"truncated,omitempty"`
+	Violations    *[]SecretNameViolation `json:"violations,omitempty"`
+}
+
+// SecretNameViolation defines model for SecretNameViolation.
+type SecretNameViolation struct {
+	Classification *string `json:"classification,omitempty"`
+	EnvironmentId  *int    `json:"environment_id,omitempty"`
+	Id             *int    `json:"id,omitempty"`
+	Name           *string `json:"name,omitempty"`
+	Reason         *string `json:"reason,omitempty"`
+	Type           *string `json:"type,omitempty"`
+}
+
+// SecretRenameOutcome defines model for SecretRenameOutcome.
+type SecretRenameOutcome struct {
+	Id      *int    `json:"id,omitempty"`
+	NewName *string `json:"new_name,omitempty"`
+	OldName *string `json:"old_name,omitempty"`
+	Reason  *string `json:"reason,omitempty"`
+	Status  *string `json:"status,omitempty"`
+}
+
+// SecretRiskFactor defines model for SecretRiskFactor.
+type SecretRiskFactor struct {
+	Detail *string  `json:"detail,omitempty"`
+	Key    *string  `json:"key,omitempty"`
+	Label  *string  `json:"label,omitempty"`
+	Score  *int     `json:"score,omitempty"`
+	Weight *float32 `json:"weight,omitempty"`
+}
+
+// SecretRiskScore Composite risk score (0-100, higher = riskier) for one secret.
+type SecretRiskScore struct {
+	Band       *SecretRiskScoreBand `json:"band,omitempty"`
+	Degraded   *bool                `json:"degraded,omitempty"`
+	Factors    *[]SecretRiskFactor  `json:"factors,omitempty"`
+	Score      *int                 `json:"score,omitempty"`
+	SecretId   *int                 `json:"secret_id,omitempty"`
+	SecretName *string              `json:"secret_name,omitempty"`
+}
+
+// SecretRiskScoreBand defines model for SecretRiskScore.Band.
+type SecretRiskScoreBand string
+
+// SecretTemplate A reusable secret-creation metadata preset (internal/storage/models.SecretTemplate -- properly snake_case-tagged).
+type SecretTemplate struct {
+	CreatedAt             *time.Time `json:"created_at,omitempty"`
+	CreatedBy             *int       `json:"created_by,omitempty"`
+	DefaultClassification *string    `json:"default_classification,omitempty"`
+
+	// DefaultTags Comma-separated tag names.
+	DefaultTags        *string    `json:"default_tags,omitempty"`
+	Description        *string    `json:"description,omitempty"`
+	DescriptionPattern *string    `json:"description_pattern,omitempty"`
+	Id                 *int       `json:"id,omitempty"`
+	Name               *string    `json:"name,omitempty"`
+	RotationHintDays   *int       `json:"rotation_hint_days,omitempty"`
+	UpdatedAt          *time.Time `json:"updated_at,omitempty"`
+}
+
+// SecretVersion A secret version's metadata (internal/storage/models.SecretVersion). No `json:` tags except EncryptedValue/EncryptionMetadata (both `json:"-"`, never sent) -- wire keys for the rest are bare capitalized Go field names.
+type SecretVersion struct {
+	CreatedAt     *time.Time `json:"CreatedAt,omitempty"`
+	ID            *int       `json:"ID,omitempty"`
+	ReadCount     *int       `json:"ReadCount,omitempty"`
+	SecretNodeID  *int       `json:"SecretNodeID,omitempty"`
+	VersionNumber *int       `json:"VersionNumber,omitempty"`
+}
+
+// SecretVersionComment defines model for SecretVersionComment.
+type SecretVersionComment struct {
+	Comment   *string    `json:"comment,omitempty"`
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	Id        *int       `json:"id,omitempty"`
+	Username  *string    `json:"username,omitempty"`
+}
+
+// SecretVersionDiffChange defines model for SecretVersionDiffChange.
+type SecretVersionDiffChange struct {
+	Field    *string `json:"field,omitempty"`
+	NewValue *string `json:"new_value,omitempty"`
+	OldValue *string `json:"old_value,omitempty"`
+}
+
+// SecretVersionDiffResult defines model for SecretVersionDiffResult.
+type SecretVersionDiffResult struct {
+	// AclUserIds Current ACL snapshot. Null (not an empty array) when the secret has no ACL grants -- the underlying nil Go slice marshals as null -- or when the caller lacks secrets.manage and the handler strips it entirely (see degraded below).
+	AclUserIds *[]int `json:"acl_user_ids"`
+
+	// Changes Null (not an empty array) when nothing tracked (classification, expiry, read count) differs between the two versions -- values themselves are never compared or included here.
+	Changes *[]SecretVersionDiffChange `json:"changes"`
+
+	// Degraded True when the server's ACL lookup itself failed (#G54) -- acl_user_ids is then an unreliable, possibly-empty placeholder, NOT an authoritative "no ACL grants" answer.
+	Degraded    *bool   `json:"degraded,omitempty"`
+	FromVersion *int    `json:"from_version,omitempty"`
+	SecretName  *string `json:"secret_name,omitempty"`
+	ToVersion   *int    `json:"to_version,omitempty"`
+}
+
+// UserSummary A user as returned in list/membership contexts (userToAPIResponse, server/http/handlers/users_handler.go). project_count/active_project_count are attached only by GET /api/v1/users (listUsers), not by GET /api/v1/groups/{id}/members.
+type UserSummary struct {
+	AccountState       *string    `json:"account_state,omitempty"`
+	Active             *bool      `json:"active,omitempty"`
+	ActiveProjectCount *int       `json:"active_project_count,omitempty"`
+	CreatedAt          *time.Time `json:"created_at,omitempty"`
+	DeletedAt          *time.Time `json:"deleted_at"`
+	DisplayName        *string    `json:"display_name,omitempty"`
+	Email              *string    `json:"email,omitempty"`
+	ExternalId         *string    `json:"external_id,omitempty"`
+	Id                 *int       `json:"id,omitempty"`
+	LastLoginAt        *time.Time `json:"last_login_at"`
+	ProjectCount       *int       `json:"project_count,omitempty"`
+	UpdatedAt          *time.Time `json:"updated_at,omitempty"`
+	Username           *string    `json:"username,omitempty"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	Code    *int                    `json:"code,omitempty"`
@@ -334,6 +1086,154 @@ type Error struct {
 	Message *string `json:"message,omitempty"`
 	Success *bool   `json:"success,omitempty"`
 }
+
+// BulkApproveAccessRequestsJSONBody defines parameters for BulkApproveAccessRequests.
+type BulkApproveAccessRequestsJSONBody struct {
+	RequestIds []int `json:"request_ids"`
+}
+
+// BulkRejectAccessRequestsJSONBody defines parameters for BulkRejectAccessRequests.
+type BulkRejectAccessRequestsJSONBody struct {
+	Reason     string `json:"reason"`
+	RequestIds []int  `json:"request_ids"`
+}
+
+// UpdateAnomalyConfigJSONBody defines parameters for UpdateAnomalyConfig.
+type UpdateAnomalyConfigJSONBody struct {
+	LookbackDays     *int     `json:"lookback_days,omitempty"`
+	MlEnabled        *bool    `json:"ml_enabled,omitempty"`
+	MlNumTrees       *int     `json:"ml_num_trees,omitempty"`
+	MlSampleSize     *int     `json:"ml_sample_size,omitempty"`
+	MlThreshold      *float32 `json:"ml_threshold,omitempty"`
+	OffHoursEnabled  *bool    `json:"off_hours_enabled,omitempty"`
+	OffHoursEnd      *int     `json:"off_hours_end,omitempty"`
+	OffHoursStart    *int     `json:"off_hours_start,omitempty"`
+	OffHoursTimezone *string  `json:"off_hours_timezone,omitempty"`
+	QuarantineHours  *int     `json:"quarantine_hours,omitempty"`
+}
+
+// SuspendInactiveUsersJSONBody defines parameters for SuspendInactiveUsers.
+type SuspendInactiveUsersJSONBody struct {
+	// DryRun Preview which users would be suspended without making changes.
+	DryRun *bool `json:"dry_run,omitempty"`
+
+	// InactiveDays Inactivity threshold in days (must be > 0).
+	InactiveDays int `json:"inactive_days"`
+}
+
+// CreateAlertEscalationPolicyJSONBody defines parameters for CreateAlertEscalationPolicy.
+type CreateAlertEscalationPolicyJSONBody struct {
+	// ChannelIds Comma-separated NotificationChannel IDs.
+	ChannelIds           *string `json:"channel_ids,omitempty"`
+	Enabled              *bool   `json:"enabled,omitempty"`
+	EscalateAfterMinutes *int    `json:"escalate_after_minutes,omitempty"`
+
+	// MinSeverity low | medium | high | critical
+	MinSeverity *string `json:"min_severity,omitempty"`
+	Name        string  `json:"name"`
+}
+
+// ListAnomalyAlertsParams defines parameters for ListAnomalyAlerts.
+type ListAnomalyAlertsParams struct {
+	// Acknowledged Filter by acknowledged state; omit to return all.
+	Acknowledged *bool `form:"acknowledged,omitempty" json:"acknowledged,omitempty"`
+
+	// Unacknowledged Legacy alias (CLI) — true returns only unacknowledged alerts.
+	Unacknowledged *bool `form:"unacknowledged,omitempty" json:"unacknowledged,omitempty"`
+}
+
+// ExportAuditLogsParams defines parameters for ExportAuditLogs.
+type ExportAuditLogsParams struct {
+	// AfterId Cursor — pass the last returned event id to fetch the next page.
+	AfterId *int `form:"after_id,omitempty" json:"after_id,omitempty"`
+
+	// Since RFC3339 lower bound on event time.
+	Since *time.Time `form:"since,omitempty" json:"since,omitempty"`
+	Limit *int       `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListAuditLogsParams defines parameters for ListAuditLogs.
+type ListAuditLogsParams struct {
+	// Action Filter by event type/action.
+	Action *string `form:"action,omitempty" json:"action,omitempty"`
+
+	// UserId Filter by acting user ID.
+	UserId *int `form:"user_id,omitempty" json:"user_id,omitempty"`
+
+	// ProjectId Filter by project ID.
+	ProjectId *int `form:"project_id,omitempty" json:"project_id,omitempty"`
+
+	// ActorType Segment human vs machine activity (ADR-023).
+	ActorType *ListAuditLogsParamsActorType `form:"actor_type,omitempty" json:"actor_type,omitempty"`
+
+	// StartTime RFC3339 lower bound (inclusive).
+	StartTime *time.Time `form:"start_time,omitempty" json:"start_time,omitempty"`
+
+	// EndTime RFC3339 upper bound (inclusive).
+	EndTime  *time.Time `form:"end_time,omitempty" json:"end_time,omitempty"`
+	Page     *int       `form:"page,omitempty" json:"page,omitempty"`
+	PageSize *int       `form:"page_size,omitempty" json:"page_size,omitempty"`
+}
+
+// ListAuditLogsParamsActorType defines parameters for ListAuditLogs.
+type ListAuditLogsParamsActorType string
+
+// MigrateAuditChainEncodingParams defines parameters for MigrateAuditChainEncoding.
+type MigrateAuditChainEncodingParams struct {
+	// DryRun false applies the migration for real; true (default) only previews.
+	DryRun *MigrateAuditChainEncodingParamsDryRun `form:"dry_run,omitempty" json:"dry_run,omitempty"`
+}
+
+// MigrateAuditChainEncodingParamsDryRun defines parameters for MigrateAuditChainEncoding.
+type MigrateAuditChainEncodingParamsDryRun string
+
+// ListRBACAuditLogsParams defines parameters for ListRBACAuditLogs.
+type ListRBACAuditLogsParams struct {
+	Page     *int `form:"page,omitempty" json:"page,omitempty"`
+	PageSize *int `form:"page_size,omitempty" json:"page_size,omitempty"`
+}
+
+// SearchAuditLogsParams defines parameters for SearchAuditLogs.
+type SearchAuditLogsParams struct {
+	// Actor Partial username match on the acting principal.
+	Actor *string `form:"actor,omitempty" json:"actor,omitempty"`
+
+	// UserId Exact numeric user ID.
+	UserId *int `form:"user_id,omitempty" json:"user_id,omitempty"`
+
+	// ProjectId Exact project ID.
+	ProjectId *int `form:"project_id,omitempty" json:"project_id,omitempty"`
+
+	// Action Exact event_type (e.g. secret.read).
+	Action *string `form:"action,omitempty" json:"action,omitempty"`
+
+	// ResourceType Resource kind prefix (e.g. secret).
+	ResourceType *string `form:"resource_type,omitempty" json:"resource_type,omitempty"`
+
+	// ResourceId Exact secret_node_id.
+	ResourceId *int `form:"resource_id,omitempty" json:"resource_id,omitempty"`
+
+	// Ip Exact originating IP address.
+	Ip *string `form:"ip,omitempty" json:"ip,omitempty"`
+
+	// Success Filter by operation success/failure.
+	Success *SearchAuditLogsParamsSuccess `form:"success,omitempty" json:"success,omitempty"`
+
+	// Since RFC3339 start of time range (inclusive).
+	Since *time.Time `form:"since,omitempty" json:"since,omitempty"`
+
+	// Until RFC3339 end of time range (inclusive).
+	Until *time.Time `form:"until,omitempty" json:"until,omitempty"`
+
+	// Limit Maximum results.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Offset Pagination offset.
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// SearchAuditLogsParamsSuccess defines parameters for SearchAuditLogs.
+type SearchAuditLogsParamsSuccess string
 
 // MfaStepUpJSONBody defines parameters for MfaStepUp.
 type MfaStepUpJSONBody struct {
@@ -364,6 +1264,35 @@ type CreatePATJSONBody struct {
 
 	// Scopes ADR-042 least-privilege allowlist (e.g. ["secrets.read"], supports "*" and "secrets.*"). Omit/empty = inherit the owner's full permissions. Only ever narrows below the owner.
 	Scopes *[]string `json:"scopes,omitempty"`
+}
+
+// GetComplianceCredentialTrendsParams defines parameters for GetComplianceCredentialTrends.
+type GetComplianceCredentialTrendsParams struct {
+	Days *GetComplianceCredentialTrendsParamsDays `form:"days,omitempty" json:"days,omitempty"`
+}
+
+// GetComplianceCredentialTrendsParamsDays defines parameters for GetComplianceCredentialTrends.
+type GetComplianceCredentialTrendsParamsDays int
+
+// VerifyComplianceEvidenceJSONBody defines parameters for VerifyComplianceEvidence.
+type VerifyComplianceEvidenceJSONBody struct {
+	// DataB64 Base64 of the evidence-pack bytes.
+	DataB64 string `json:"data_b64"`
+
+	// Signature The detached signature ('<keyVersion>:<hmac-hex>').
+	Signature string `json:"signature"`
+}
+
+// GetCompliancePermissionChangesParams defines parameters for GetCompliancePermissionChanges.
+type GetCompliancePermissionChangesParams struct {
+	// Since RFC3339 lower bound; defaults to 30 days ago.
+	Since *time.Time `form:"since,omitempty" json:"since,omitempty"`
+
+	// Until RFC3339 upper bound; defaults to now.
+	Until *time.Time `form:"until,omitempty" json:"until,omitempty"`
+
+	// Limit Max events (default 100, max 1000).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ListDynamicSecretConfigsParams defines parameters for ListDynamicSecretConfigs.
@@ -408,10 +1337,122 @@ type RenewDynamicSecretLeaseJSONBody struct {
 	TtlSeconds *int `json:"ttl_seconds,omitempty"`
 }
 
+// ListFoldersParams defines parameters for ListFolders.
+type ListFoldersParams struct {
+	ProjectId *int `form:"project_id,omitempty" json:"project_id,omitempty"`
+
+	// ParentId 0/omit = no filter.
+	ParentId *int `form:"parent_id,omitempty" json:"parent_id,omitempty"`
+	PageSize *int `form:"page_size,omitempty" json:"page_size,omitempty"`
+}
+
+// CreateFolderJSONBody defines parameters for CreateFolder.
+type CreateFolderJSONBody struct {
+	EnvironmentId int    `json:"environment_id"`
+	Name          string `json:"name"`
+
+	// ParentId 0/omit = root.
+	ParentId  *int `json:"parent_id,omitempty"`
+	ProjectId *int `json:"project_id,omitempty"`
+}
+
+// CreateGroupJSONBody defines parameters for CreateGroup.
+type CreateGroupJSONBody struct {
+	Description *string `json:"description,omitempty"`
+	Name        string  `json:"name"`
+}
+
+// UpdateGroupJSONBody defines parameters for UpdateGroup.
+type UpdateGroupJSONBody struct {
+	Description *string `json:"description,omitempty"`
+	Name        *string `json:"name,omitempty"`
+}
+
+// AddGroupMemberJSONBody defines parameters for AddGroupMember.
+type AddGroupMemberJSONBody struct {
+	// ProjectId 0 = global membership (default); non-zero = scoped to that project only.
+	ProjectId *int `json:"project_id,omitempty"`
+	UserId    int  `json:"user_id"`
+}
+
+// RemoveGroupMemberParams defines parameters for RemoveGroupMember.
+type RemoveGroupMemberParams struct {
+	// ProjectId Scope to the same project the membership was added with (0/omit = global membership). Fixed missing from this spec (ADR-108 PR 3) -- the real handler (groups_members.go's RemoveGroupMember) has always read this query param; every other caller sent it, this spec just never documented it.
+	ProjectId *int `form:"project_id,omitempty" json:"project_id,omitempty"`
+}
+
+// AssignRoleToGroupJSONBody defines parameters for AssignRoleToGroup.
+type AssignRoleToGroupJSONBody struct {
+	// EnvironmentId Scope (0 = global).
+	EnvironmentId *int `json:"environment_id,omitempty"`
+
+	// ExpiresAt RFC3339; omit or null for a non-expiring grant. JIT access — the assignment is automatically revoked when the timestamp is reached.
+	ExpiresAt *time.Time `json:"expires_at"`
+
+	// ProjectId Scope (0 = global).
+	ProjectId *int `json:"project_id,omitempty"`
+	RoleId    int  `json:"role_id"`
+}
+
+// RemoveRoleFromGroupParams defines parameters for RemoveRoleFromGroup.
+type RemoveRoleFromGroupParams struct {
+	// ProjectId Scope (0 = global).
+	ProjectId *int `form:"project_id,omitempty" json:"project_id,omitempty"`
+
+	// EnvironmentId Scope (0 = global).
+	EnvironmentId *int `form:"environment_id,omitempty" json:"environment_id,omitempty"`
+}
+
+// GetDeploymentHygieneParams defines parameters for GetDeploymentHygiene.
+type GetDeploymentHygieneParams struct {
+	// UnusedDays Unused-secret window in days (server default: 90).
+	UnusedDays *int `form:"unused_days,omitempty" json:"unused_days,omitempty"`
+
+	// ExpiringDays Expiring-secret window in days (server default: 30).
+	ExpiringDays *int `form:"expiring_days,omitempty" json:"expiring_days,omitempty"`
+
+	// StaleDays Stale-machine-identity window in days (server default: 90).
+	StaleDays *int `form:"stale_days,omitempty" json:"stale_days,omitempty"`
+}
+
+// LiftLegalHoldJSONBody defines parameters for LiftLegalHold.
+type LiftLegalHoldJSONBody struct {
+	// Reason Why the hold is lifted (recorded for audit).
+	Reason string `json:"reason"`
+}
+
+// PlaceLegalHoldJSONBody defines parameters for PlaceLegalHold.
+type PlaceLegalHoldJSONBody struct {
+	// Reason Why the hold is placed (recorded for audit)
+	Reason string `json:"reason"`
+}
+
 // MachineTokenHygieneParams defines parameters for MachineTokenHygiene.
 type MachineTokenHygieneParams struct {
 	// Days Staleness window in days (default server-side: 90, cap 3650).
 	Days *int `form:"days,omitempty" json:"days,omitempty"`
+}
+
+// CreateNotificationChannelJSONBody defines parameters for CreateNotificationChannel.
+type CreateNotificationChannelJSONBody struct {
+	Email   *string `json:"email,omitempty"`
+	Enabled *bool   `json:"enabled,omitempty"`
+
+	// Events Comma-separated event types; empty = all.
+	Events *string `json:"events,omitempty"`
+	Name   string  `json:"name"`
+
+	// Type webhook | slack | teams | email
+	Type string  `json:"type"`
+	Url  *string `json:"url,omitempty"`
+}
+
+// UpdateNotificationChannelJSONBody defines parameters for UpdateNotificationChannel.
+type UpdateNotificationChannelJSONBody struct {
+	Email   *string `json:"email,omitempty"`
+	Enabled *bool   `json:"enabled,omitempty"`
+	Events  *string `json:"events,omitempty"`
+	Url     *string `json:"url,omitempty"`
 }
 
 // PatHygieneParams defines parameters for PatHygiene.
@@ -432,8 +1473,59 @@ type ListProjectsParamsIncludeDeleted string
 // CreateProjectJSONBody defines parameters for CreateProject.
 type CreateProjectJSONBody struct {
 	Description *string `json:"description,omitempty"`
-	Name        string  `json:"name"`
+
+	// Environments Environment names to seed (default, if omitted: development, staging, production).
+	Environments *[]string `json:"environments,omitempty"`
+	Name         string    `json:"name"`
 }
+
+// CreateAccessRequestJSONBody defines parameters for CreateAccessRequest.
+type CreateAccessRequestJSONBody struct {
+	Reason *string `json:"reason,omitempty"`
+
+	// SuggestedRole Project role the requester would like
+	SuggestedRole *string `json:"suggested_role,omitempty"`
+}
+
+// ResolveAccessRequestJSONBody defines parameters for ResolveAccessRequest.
+type ResolveAccessRequestJSONBody struct {
+	Action ResolveAccessRequestJSONBodyAction `json:"action"`
+
+	// GrantTtl Optional on approve — time-bound (just-in-time) the granted role; a Go duration (e.g. 4h, 30m). Empty/absent = permanent. The grant stops authorizing once the TTL elapses and is swept by the JIT expiry scheduler.
+	GrantTtl *string `json:"grant_ttl,omitempty"`
+
+	// GrantedRole Role to grant on approve
+	GrantedRole *string `json:"granted_role,omitempty"`
+
+	// Reason Reason on reject
+	Reason *string `json:"reason,omitempty"`
+}
+
+// ResolveAccessRequestJSONBodyAction defines parameters for ResolveAccessRequest.
+type ResolveAccessRequestJSONBodyAction string
+
+// OpenAccessReviewCampaignJSONBody defines parameters for OpenAccessReviewCampaign.
+type OpenAccessReviewCampaignJSONBody struct {
+	// Name Campaign label, e.g. "Q4 2026 access recertification"
+	Name *string `json:"name,omitempty"`
+}
+
+// CloseAccessReviewCampaignJSONBody defines parameters for CloseAccessReviewCampaign.
+type CloseAccessReviewCampaignJSONBody struct {
+	// Force Close even if items remain pending
+	Force *bool `json:"force,omitempty"`
+}
+
+// DecideAccessReviewCampaignItemJSONBody defines parameters for DecideAccessReviewCampaignItem.
+type DecideAccessReviewCampaignItemJSONBody struct {
+	Action DecideAccessReviewCampaignItemJSONBodyAction `json:"action"`
+
+	// Reason Optional reviewer note
+	Reason *string `json:"reason,omitempty"`
+}
+
+// DecideAccessReviewCampaignItemJSONBodyAction defines parameters for DecideAccessReviewCampaignItem.
+type DecideAccessReviewCampaignItemJSONBodyAction string
 
 // ActivateBreakGlassJSONBody defines parameters for ActivateBreakGlass.
 type ActivateBreakGlassJSONBody struct {
@@ -442,6 +1534,44 @@ type ActivateBreakGlassJSONBody struct {
 
 	// Ttl Optional grant-lifetime override, a Go duration (e.g. 2h); capped at the server max
 	Ttl *string `json:"ttl,omitempty"`
+}
+
+// ListProjectEnvironmentsParams defines parameters for ListProjectEnvironments.
+type ListProjectEnvironmentsParams struct {
+	// IncludeDeleted When 'true', also returns soft-deleted environments.
+	IncludeDeleted *ListProjectEnvironmentsParamsIncludeDeleted `form:"include_deleted,omitempty" json:"include_deleted,omitempty"`
+}
+
+// ListProjectEnvironmentsParamsIncludeDeleted defines parameters for ListProjectEnvironments.
+type ListProjectEnvironmentsParamsIncludeDeleted string
+
+// CreateProjectEnvironmentJSONBody defines parameters for CreateProjectEnvironment.
+type CreateProjectEnvironmentJSONBody struct {
+	Name string `json:"name"`
+}
+
+// CloneEnvironmentJSONBody defines parameters for CloneEnvironment.
+type CloneEnvironmentJSONBody struct {
+	DestinationEnvironmentId uint32 `json:"destination_environment_id"`
+}
+
+// CopyEnvironmentSecretsJSONBody defines parameters for CopyEnvironmentSecrets.
+type CopyEnvironmentSecretsJSONBody struct {
+	TargetEnvironmentId int `json:"target_environment_id"`
+}
+
+// GetProjectHealthParams defines parameters for GetProjectHealth.
+type GetProjectHealthParams struct {
+	// Limit Maximum number of secrets to display (1-100, default 20).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// CreateProjectInvitationJSONBody defines parameters for CreateProjectInvitation.
+type CreateProjectInvitationJSONBody struct {
+	Email openapi_types.Email `json:"email"`
+
+	// Role Project role to assign on accept
+	Role string `json:"role"`
 }
 
 // CreateMachineIdentityJSONBody defines parameters for CreateMachineIdentity.
@@ -480,6 +1610,103 @@ type IssueMachineTokenJSONBody struct {
 	Name          string `json:"name"`
 }
 
+// BulkDeleteSecretsJSONBody defines parameters for BulkDeleteSecrets.
+type BulkDeleteSecretsJSONBody struct {
+	SecretIds []int `json:"secret_ids"`
+}
+
+// BulkRenameSecretsJSONBody defines parameters for BulkRenameSecrets.
+type BulkRenameSecretsJSONBody struct {
+	DryRun  *bool `json:"dry_run,omitempty"`
+	Renames []struct {
+		Id      *int    `json:"id,omitempty"`
+		NewName *string `json:"new_name,omitempty"`
+	} `json:"renames"`
+}
+
+// BulkRotateSecretsJSONBody defines parameters for BulkRotateSecrets.
+type BulkRotateSecretsJSONBody struct {
+	Classification *string `json:"classification,omitempty"`
+	EnvironmentId  *int    `json:"environment_id,omitempty"`
+	SecretIds      *[]int  `json:"secret_ids,omitempty"`
+}
+
+// ListDeletedSecretsParams defines parameters for ListDeletedSecrets.
+type ListDeletedSecretsParams struct {
+	// Limit Max entries (default server-side: 100, cap 500).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListExpiringSecretsParams defines parameters for ListExpiringSecrets.
+type ListExpiringSecretsParams struct {
+	Days *int `form:"days,omitempty" json:"days,omitempty"`
+}
+
+// ReassignSecretOwnerJSONBody defines parameters for ReassignSecretOwner.
+type ReassignSecretOwnerJSONBody struct {
+	FromOwnerId int `json:"from_owner_id"`
+	ToOwnerId   int `json:"to_owner_id"`
+}
+
+// RenderSecretTemplateJSONBody defines parameters for RenderSecretTemplate.
+type RenderSecretTemplateJSONBody struct {
+	Template string `json:"template"`
+}
+
+// GetPermissionMatrixParams defines parameters for GetPermissionMatrix.
+type GetPermissionMatrixParams struct {
+	// ProjectId Filter to one project (0/omit = every project, including global grants).
+	ProjectId *int `form:"project_id,omitempty" json:"project_id,omitempty"`
+
+	// Format When 'csv', return text/csv instead of the JSON envelope.
+	Format *GetPermissionMatrixParamsFormat `form:"format,omitempty" json:"format,omitempty"`
+}
+
+// GetPermissionMatrixParamsFormat defines parameters for GetPermissionMatrix.
+type GetPermissionMatrixParamsFormat string
+
+// CreateRejectionReasonTemplateJSONBody defines parameters for CreateRejectionReasonTemplate.
+type CreateRejectionReasonTemplateJSONBody struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+}
+
+// ListRiskExceptionsParams defines parameters for ListRiskExceptions.
+type ListRiskExceptionsParams struct {
+	// All Include expired exceptions.
+	All *bool `form:"all,omitempty" json:"all,omitempty"`
+}
+
+// CreateRiskExceptionJSONBody defines parameters for CreateRiskException.
+type CreateRiskExceptionJSONBody struct {
+	Category *CreateRiskExceptionJSONBodyCategory `json:"category,omitempty"`
+
+	// ExpiresAt RFC3339; must be in the future.
+	ExpiresAt     time.Time `json:"expires_at"`
+	Justification string    `json:"justification"`
+
+	// Reference What it applies to (a user, an SoD pair, a secret).
+	Reference *string `json:"reference,omitempty"`
+	Title     string  `json:"title"`
+}
+
+// CreateRiskExceptionJSONBodyCategory defines parameters for CreateRiskException.
+type CreateRiskExceptionJSONBodyCategory string
+
+// CreateRoleJSONBody defines parameters for CreateRole.
+type CreateRoleJSONBody struct {
+	Description string `json:"description"`
+	Name        string `json:"name"`
+
+	// Permissions Permission names.
+	Permissions []string `json:"permissions"`
+}
+
+// AssignPermissionToRoleJSONBody defines parameters for AssignPermissionToRole.
+type AssignPermissionToRoleJSONBody struct {
+	PermissionId int `json:"permission_id"`
+}
+
 // ListRotationPoliciesParams defines parameters for ListRotationPolicies.
 type ListRotationPoliciesParams struct {
 	ProjectId     *int `form:"project_id,omitempty" json:"project_id,omitempty"`
@@ -516,11 +1743,323 @@ type UpdateRotationPolicyJSONBody struct {
 	NotifyOnBreach  *bool   `json:"notify_on_breach,omitempty"`
 }
 
+// CreateSecretAccessRequestJSONBody defines parameters for CreateSecretAccessRequest.
+type CreateSecretAccessRequestJSONBody struct {
+	Reason   string `json:"reason"`
+	SecretId int    `json:"secret_id"`
+}
+
+// ResolveSecretAccessRequestJSONBody defines parameters for ResolveSecretAccessRequest.
+type ResolveSecretAccessRequestJSONBody struct {
+	Action ResolveSecretAccessRequestJSONBodyAction `json:"action"`
+
+	// Reason Reason on reject
+	Reason *string `json:"reason,omitempty"`
+}
+
+// ResolveSecretAccessRequestJSONBodyAction defines parameters for ResolveSecretAccessRequest.
+type ResolveSecretAccessRequestJSONBodyAction string
+
+// CreateSecretTemplateJSONBody defines parameters for CreateSecretTemplate.
+type CreateSecretTemplateJSONBody struct {
+	DefaultClassification *string `json:"default_classification,omitempty"`
+
+	// DefaultTags Comma-separated tag names.
+	DefaultTags        *string `json:"default_tags,omitempty"`
+	Description        *string `json:"description,omitempty"`
+	DescriptionPattern *string `json:"description_pattern,omitempty"`
+	Name               string  `json:"name"`
+	RotationHintDays   *int    `json:"rotation_hint_days,omitempty"`
+}
+
+// ListSecretsParams defines parameters for ListSecrets.
+type ListSecretsParams struct {
+	ProjectId     *int    `form:"project_id,omitempty" json:"project_id,omitempty"`
+	EnvironmentId *int    `form:"environment_id,omitempty" json:"environment_id,omitempty"`
+	Search        *string `form:"search,omitempty" json:"search,omitempty"`
+	Type          *string `form:"type,omitempty" json:"type,omitempty"`
+
+	// Classification Data-classification filter (A.5.12); 'unclassified' matches secrets with no label.
+	Classification *ListSecretsParamsClassification `form:"classification,omitempty" json:"classification,omitempty"`
+
+	// ExpiresBefore RFC3339 — return only secrets with a non-null expiration before this time (expired or expiring soon).
+	ExpiresBefore  *time.Time `form:"expires_before,omitempty" json:"expires_before,omitempty"`
+	Page           *int       `form:"page,omitempty" json:"page,omitempty"`
+	PageSize       *int       `form:"page_size,omitempty" json:"page_size,omitempty"`
+	ShowOwnedOnly  *bool      `form:"show_owned_only,omitempty" json:"show_owned_only,omitempty"`
+	ShowSharedOnly *bool      `form:"show_shared_only,omitempty" json:"show_shared_only,omitempty"`
+}
+
+// ListSecretsParamsClassification defines parameters for ListSecrets.
+type ListSecretsParamsClassification string
+
+// CreateSecretJSONBody defines parameters for CreateSecret.
+type CreateSecretJSONBody struct {
+	// Classification Optional data-sensitivity label (A.5.12): public|internal|confidential|restricted.
+	Classification *string `json:"classification,omitempty"`
+
+	// Description Optional free-text note. Metadata only -- never the value. Fixed missing from this spec (ADR-108 PR 4) -- the real handler (secrets_crud.go's CreateSecret) has accepted this field since #1808, this spec just never documented it.
+	Description   *string `json:"description,omitempty"`
+	EnvironmentId int     `json:"environment_id"`
+
+	// Expiration Optional RFC3339 expiration. Fixed missing from this spec (ADR-108 PR 4) -- same #1808 gap as description above.
+	Expiration *time.Time         `json:"expiration,omitempty"`
+	MaxReads   *int               `json:"max_reads"`
+	Metadata   *map[string]string `json:"metadata,omitempty"`
+	Name       string             `json:"name"`
+	ProjectId  *int               `json:"project_id,omitempty"`
+	Tags       *[]string          `json:"tags,omitempty"`
+	Type       string             `json:"type"`
+	Value      string             `json:"value"`
+}
+
+// GetSecretByNameParams defines parameters for GetSecretByName.
+type GetSecretByNameParams struct {
+	Name          string `form:"name" json:"name"`
+	ProjectId     int    `form:"project_id" json:"project_id"`
+	EnvironmentId int    `form:"environment_id" json:"environment_id"`
+}
+
+// GetSecretValueByRefParams defines parameters for GetSecretValueByRef.
+type GetSecretValueByRefParams struct {
+	// Ref project/environment/name
+	Ref string `form:"ref" json:"ref"`
+}
+
+// GetSecretParams defines parameters for GetSecret.
+type GetSecretParams struct {
+	// IncludeValue When `true`, response `data` becomes `{secret, value}` with the decrypted value.
+	IncludeValue *bool `form:"include_value,omitempty" json:"include_value,omitempty"`
+}
+
+// UpdateSecretJSONBody defines parameters for UpdateSecret.
+type UpdateSecretJSONBody struct {
+	ClearExpiration *bool      `json:"clear_expiration,omitempty"`
+	Expiration      *time.Time `json:"expiration,omitempty"`
+	MaxReads        *int       `json:"max_reads"`
+	Value           *string    `json:"value,omitempty"`
+}
+
+// GetSecretAccessLogParams defines parameters for GetSecretAccessLog.
+type GetSecretAccessLogParams struct {
+	// Days Lookback window (default server-side: 30).
+	Days *int `form:"days,omitempty" json:"days,omitempty"`
+}
+
+// GrantSecretACLJSONBody defines parameters for GrantSecretACL.
+type GrantSecretACLJSONBody struct {
+	// Permissions List of permission strings to grant, e.g. ["secrets.read"].
+	Permissions []string `json:"permissions"`
+
+	// UserId ID of the user to grant access to.
+	UserId int `json:"user_id"`
+}
+
+// GetSecretAuditTrailParams defines parameters for GetSecretAuditTrail.
+type GetSecretAuditTrailParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// SetSecretAutoRotateJSONBody defines parameters for SetSecretAutoRotate.
+type SetSecretAutoRotateJSONBody struct {
+	Backend *string `json:"backend,omitempty"`
+	Charset *string `json:"charset,omitempty"`
+	Enabled *bool   `json:"enabled,omitempty"`
+	Length  *int    `json:"length,omitempty"`
+	Ref     *string `json:"ref,omitempty"`
+}
+
+// ClassifySecretJSONBody defines parameters for ClassifySecret.
+type ClassifySecretJSONBody struct {
+	// Classification public|internal|confidential|restricted, or empty to clear.
+	Classification *string `json:"classification,omitempty"`
+}
+
+// CopySecretJSONBody defines parameters for CopySecret.
+type CopySecretJSONBody struct {
+	EnvironmentId int `json:"environment_id"`
+
+	// Name Name for the copy (default: the source name).
+	Name *string `json:"name,omitempty"`
+}
+
+// AddSecretDependencyJSONBody defines parameters for AddSecretDependency.
+type AddSecretDependencyJSONBody struct {
+	DependsOnId int     `json:"depends_on_id"`
+	Note        *string `json:"note,omitempty"`
+}
+
+// DescribeSecretJSONBody defines parameters for DescribeSecret.
+type DescribeSecretJSONBody struct {
+	Description *string `json:"description,omitempty"`
+}
+
+// MoveSecretJSONBody defines parameters for MoveSecret.
+type MoveSecretJSONBody struct {
+	// ParentId 0 = move to root.
+	ParentId *int `json:"parent_id,omitempty"`
+}
+
+// RollbackSecretJSONBody defines parameters for RollbackSecret.
+type RollbackSecretJSONBody struct {
+	// Version Version number to restore.
+	Version int `json:"version"`
+}
+
+// RotateSecretJSONBody defines parameters for RotateSecret.
+type RotateSecretJSONBody struct {
+	NewValue string `json:"new_value"`
+}
+
+// SetSecretScheduleJSONBody defines parameters for SetSecretSchedule.
+type SetSecretScheduleJSONBody struct {
+	// AllowedDays Comma-separated ISO weekday list (1=Mon..7=Sun), or "*" for all days.
+	AllowedDays string `json:"allowed_days"`
+	EndHour     int    `json:"end_hour"`
+	StartHour   int    `json:"start_hour"`
+
+	// Timezone IANA timezone name, e.g. UTC or America/New_York.
+	Timezone *string `json:"timezone,omitempty"`
+}
+
+// SuspendSecretJSONBody defines parameters for SuspendSecret.
+type SuspendSecretJSONBody struct {
+	// Reason Optional reason recorded in the audit event.
+	Reason *string `json:"reason,omitempty"`
+}
+
+// SetSecretTagsJSONBody defines parameters for SetSecretTags.
+type SetSecretTagsJSONBody struct {
+	Tags []string `json:"tags"`
+}
+
+// AddSecretVersionCommentJSONBody defines parameters for AddSecretVersionComment.
+type AddSecretVersionCommentJSONBody struct {
+	Comment string `json:"comment"`
+}
+
+// CreateSoDPolicyJSONBody defines parameters for CreateSoDPolicy.
+type CreateSoDPolicyJSONBody struct {
+	Description *string `json:"description,omitempty"`
+	Name        string  `json:"name"`
+
+	// PermissionA e.g. roles.assign
+	PermissionA string `json:"permission_a"`
+
+	// PermissionB e.g. secrets.delete (must differ from permission_a)
+	PermissionB string `json:"permission_b"`
+}
+
+// RemoveUserRoleJSONBody defines parameters for RemoveUserRole.
+type RemoveUserRoleJSONBody struct {
+	// EnvironmentId Scope (0 = global).
+	EnvironmentId *int `json:"environment_id,omitempty"`
+
+	// ProjectId Scope (0 = global).
+	ProjectId *int `json:"project_id,omitempty"`
+	RoleId    int  `json:"role_id"`
+	UserId    int  `json:"user_id"`
+}
+
+// AssignUserRoleJSONBody defines parameters for AssignUserRole.
+type AssignUserRoleJSONBody struct {
+	// EnvironmentId Scope (0 = global).
+	EnvironmentId *int `json:"environment_id,omitempty"`
+
+	// ExpiresAt RFC3339; omit or null for a non-expiring grant. JIT access — the assignment is automatically revoked when the timestamp is reached.
+	ExpiresAt *time.Time `json:"expires_at"`
+
+	// ProjectId Scope (0 = global).
+	ProjectId *int `json:"project_id,omitempty"`
+	RoleId    int  `json:"role_id"`
+	UserId    int  `json:"user_id"`
+}
+
+// ListUsersParams defines parameters for ListUsers.
+type ListUsersParams struct {
+	Page           *int    `form:"page,omitempty" json:"page,omitempty"`
+	PageSize       *int    `form:"page_size,omitempty" json:"page_size,omitempty"`
+	Search         *string `form:"search,omitempty" json:"search,omitempty"`
+	Username       *string `form:"username,omitempty" json:"username,omitempty"`
+	Email          *string `form:"email,omitempty" json:"email,omitempty"`
+	IsActive       *bool   `form:"is_active,omitempty" json:"is_active,omitempty"`
+	IncludeDeleted *bool   `form:"include_deleted,omitempty" json:"include_deleted,omitempty"`
+
+	// Filter Set to `inactive` for users with no login in the last 30 days.
+	Filter *ListUsersParamsFilter `form:"filter,omitempty" json:"filter,omitempty"`
+}
+
+// ListUsersParamsFilter defines parameters for ListUsers.
+type ListUsersParamsFilter string
+
+// CreateUserJSONBody defines parameters for CreateUser.
+type CreateUserJSONBody struct {
+	// DeliverSetupLink Provision via account-setup link instead of an admin-set password.
+	DeliverSetupLink *bool               `json:"deliver_setup_link,omitempty"`
+	DisplayName      string              `json:"display_name"`
+	Email            openapi_types.Email `json:"email"`
+
+	// GenerateOneTimePassword Server-generated one-time password, returned once. Mutually exclusive with deliver_setup_link.
+	GenerateOneTimePassword *bool `json:"generate_one_time_password,omitempty"`
+	IsActive                *bool `json:"is_active,omitempty"`
+
+	// Password Required unless deliver_setup_link or generate_one_time_password is set.
+	Password *string `json:"password,omitempty"`
+
+	// ProjectAssignments Project-scoped role assignments applied atomically (admin-set-password path only).
+	ProjectAssignments *[]struct {
+		ProjectId *int    `json:"project_id,omitempty"`
+		Role      *string `json:"role,omitempty"`
+	} `json:"project_assignments,omitempty"`
+
+	// Role Optional system role override (admin-set-password path only).
+	Role     *string `json:"role,omitempty"`
+	Username string  `json:"username"`
+}
+
+// GetUserByEmailParams defines parameters for GetUserByEmail.
+type GetUserByEmailParams struct {
+	Email string `form:"email" json:"email"`
+}
+
+// UpdateUserJSONBody defines parameters for UpdateUser.
+type UpdateUserJSONBody struct {
+	Active      *bool                `json:"active,omitempty"`
+	DisplayName *string              `json:"display_name,omitempty"`
+	Email       *openapi_types.Email `json:"email,omitempty"`
+	Username    *string              `json:"username,omitempty"`
+}
+
+// UpdateUserRolesJSONBody defines parameters for UpdateUserRoles.
+type UpdateUserRolesJSONBody struct {
+	// EnvironmentId Scope (0 = global).
+	EnvironmentId *int `json:"environment_id,omitempty"`
+
+	// ProjectId Scope (0 = global).
+	ProjectId *int   `json:"project_id,omitempty"`
+	RoleIds   *[]int `json:"role_ids,omitempty"`
+}
+
 // AuthLoginJSONBody defines parameters for AuthLogin.
 type AuthLoginJSONBody struct {
 	Password string `json:"password"`
 	Username string `json:"username"`
 }
+
+// BulkApproveAccessRequestsJSONRequestBody defines body for BulkApproveAccessRequests for application/json ContentType.
+type BulkApproveAccessRequestsJSONRequestBody BulkApproveAccessRequestsJSONBody
+
+// BulkRejectAccessRequestsJSONRequestBody defines body for BulkRejectAccessRequests for application/json ContentType.
+type BulkRejectAccessRequestsJSONRequestBody BulkRejectAccessRequestsJSONBody
+
+// UpdateAnomalyConfigJSONRequestBody defines body for UpdateAnomalyConfig for application/json ContentType.
+type UpdateAnomalyConfigJSONRequestBody UpdateAnomalyConfigJSONBody
+
+// SuspendInactiveUsersJSONRequestBody defines body for SuspendInactiveUsers for application/json ContentType.
+type SuspendInactiveUsersJSONRequestBody SuspendInactiveUsersJSONBody
+
+// CreateAlertEscalationPolicyJSONRequestBody defines body for CreateAlertEscalationPolicy for application/json ContentType.
+type CreateAlertEscalationPolicyJSONRequestBody CreateAlertEscalationPolicyJSONBody
 
 // MfaStepUpJSONRequestBody defines body for MfaStepUp for application/json ContentType.
 type MfaStepUpJSONRequestBody MfaStepUpJSONBody
@@ -530,6 +2069,9 @@ type UpdateAuthProfileJSONRequestBody UpdateAuthProfileJSONBody
 
 // CreatePATJSONRequestBody defines body for CreatePAT for application/json ContentType.
 type CreatePATJSONRequestBody CreatePATJSONBody
+
+// VerifyComplianceEvidenceJSONRequestBody defines body for VerifyComplianceEvidence for application/json ContentType.
+type VerifyComplianceEvidenceJSONRequestBody VerifyComplianceEvidenceJSONBody
 
 // CreateDynamicSecretConfigJSONRequestBody defines body for CreateDynamicSecretConfig for application/json ContentType.
 type CreateDynamicSecretConfigJSONRequestBody CreateDynamicSecretConfigJSONBody
@@ -543,11 +2085,71 @@ type IssueDynamicSecretLeaseJSONRequestBody IssueDynamicSecretLeaseJSONBody
 // RenewDynamicSecretLeaseJSONRequestBody defines body for RenewDynamicSecretLease for application/json ContentType.
 type RenewDynamicSecretLeaseJSONRequestBody RenewDynamicSecretLeaseJSONBody
 
+// CreateFolderJSONRequestBody defines body for CreateFolder for application/json ContentType.
+type CreateFolderJSONRequestBody CreateFolderJSONBody
+
+// CreateGroupJSONRequestBody defines body for CreateGroup for application/json ContentType.
+type CreateGroupJSONRequestBody CreateGroupJSONBody
+
+// UpdateGroupJSONRequestBody defines body for UpdateGroup for application/json ContentType.
+type UpdateGroupJSONRequestBody UpdateGroupJSONBody
+
+// AddGroupMemberJSONRequestBody defines body for AddGroupMember for application/json ContentType.
+type AddGroupMemberJSONRequestBody AddGroupMemberJSONBody
+
+// AssignRoleToGroupJSONRequestBody defines body for AssignRoleToGroup for application/json ContentType.
+type AssignRoleToGroupJSONRequestBody AssignRoleToGroupJSONBody
+
+// LiftLegalHoldJSONRequestBody defines body for LiftLegalHold for application/json ContentType.
+type LiftLegalHoldJSONRequestBody LiftLegalHoldJSONBody
+
+// PlaceLegalHoldJSONRequestBody defines body for PlaceLegalHold for application/json ContentType.
+type PlaceLegalHoldJSONRequestBody PlaceLegalHoldJSONBody
+
+// CreateNotificationChannelJSONRequestBody defines body for CreateNotificationChannel for application/json ContentType.
+type CreateNotificationChannelJSONRequestBody CreateNotificationChannelJSONBody
+
+// UpdateNotificationChannelJSONRequestBody defines body for UpdateNotificationChannel for application/json ContentType.
+type UpdateNotificationChannelJSONRequestBody UpdateNotificationChannelJSONBody
+
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody CreateProjectJSONBody
 
+// CreateAccessRequestJSONRequestBody defines body for CreateAccessRequest for application/json ContentType.
+type CreateAccessRequestJSONRequestBody CreateAccessRequestJSONBody
+
+// ResolveAccessRequestJSONRequestBody defines body for ResolveAccessRequest for application/json ContentType.
+type ResolveAccessRequestJSONRequestBody ResolveAccessRequestJSONBody
+
+// AttestProjectAccessReviewJSONRequestBody defines body for AttestProjectAccessReview for application/json ContentType.
+type AttestProjectAccessReviewJSONRequestBody = AccessReviewDecision
+
+// OpenAccessReviewCampaignJSONRequestBody defines body for OpenAccessReviewCampaign for application/json ContentType.
+type OpenAccessReviewCampaignJSONRequestBody OpenAccessReviewCampaignJSONBody
+
+// CloseAccessReviewCampaignJSONRequestBody defines body for CloseAccessReviewCampaign for application/json ContentType.
+type CloseAccessReviewCampaignJSONRequestBody CloseAccessReviewCampaignJSONBody
+
+// DecideAccessReviewCampaignItemJSONRequestBody defines body for DecideAccessReviewCampaignItem for application/json ContentType.
+type DecideAccessReviewCampaignItemJSONRequestBody DecideAccessReviewCampaignItemJSONBody
+
+// RevokeProjectAccessReviewJSONRequestBody defines body for RevokeProjectAccessReview for application/json ContentType.
+type RevokeProjectAccessReviewJSONRequestBody = AccessReviewDecision
+
 // ActivateBreakGlassJSONRequestBody defines body for ActivateBreakGlass for application/json ContentType.
 type ActivateBreakGlassJSONRequestBody ActivateBreakGlassJSONBody
+
+// CreateProjectEnvironmentJSONRequestBody defines body for CreateProjectEnvironment for application/json ContentType.
+type CreateProjectEnvironmentJSONRequestBody CreateProjectEnvironmentJSONBody
+
+// CloneEnvironmentJSONRequestBody defines body for CloneEnvironment for application/json ContentType.
+type CloneEnvironmentJSONRequestBody CloneEnvironmentJSONBody
+
+// CopyEnvironmentSecretsJSONRequestBody defines body for CopyEnvironmentSecrets for application/json ContentType.
+type CopyEnvironmentSecretsJSONRequestBody CopyEnvironmentSecretsJSONBody
+
+// CreateProjectInvitationJSONRequestBody defines body for CreateProjectInvitation for application/json ContentType.
+type CreateProjectInvitationJSONRequestBody CreateProjectInvitationJSONBody
 
 // CreateMachineIdentityJSONRequestBody defines body for CreateMachineIdentity for application/json ContentType.
 type CreateMachineIdentityJSONRequestBody CreateMachineIdentityJSONBody
@@ -561,11 +2163,110 @@ type CreateOIDCBindingJSONRequestBody CreateOIDCBindingJSONBody
 // IssueMachineTokenJSONRequestBody defines body for IssueMachineToken for application/json ContentType.
 type IssueMachineTokenJSONRequestBody IssueMachineTokenJSONBody
 
+// BulkDeleteSecretsJSONRequestBody defines body for BulkDeleteSecrets for application/json ContentType.
+type BulkDeleteSecretsJSONRequestBody BulkDeleteSecretsJSONBody
+
+// BulkRenameSecretsJSONRequestBody defines body for BulkRenameSecrets for application/json ContentType.
+type BulkRenameSecretsJSONRequestBody BulkRenameSecretsJSONBody
+
+// BulkRotateSecretsJSONRequestBody defines body for BulkRotateSecrets for application/json ContentType.
+type BulkRotateSecretsJSONRequestBody BulkRotateSecretsJSONBody
+
+// ReassignSecretOwnerJSONRequestBody defines body for ReassignSecretOwner for application/json ContentType.
+type ReassignSecretOwnerJSONRequestBody ReassignSecretOwnerJSONBody
+
+// RenderSecretTemplateJSONRequestBody defines body for RenderSecretTemplate for application/json ContentType.
+type RenderSecretTemplateJSONRequestBody RenderSecretTemplateJSONBody
+
+// CreateRejectionReasonTemplateJSONRequestBody defines body for CreateRejectionReasonTemplate for application/json ContentType.
+type CreateRejectionReasonTemplateJSONRequestBody CreateRejectionReasonTemplateJSONBody
+
+// CreateRiskExceptionJSONRequestBody defines body for CreateRiskException for application/json ContentType.
+type CreateRiskExceptionJSONRequestBody CreateRiskExceptionJSONBody
+
+// CreateRoleJSONRequestBody defines body for CreateRole for application/json ContentType.
+type CreateRoleJSONRequestBody CreateRoleJSONBody
+
+// AssignPermissionToRoleJSONRequestBody defines body for AssignPermissionToRole for application/json ContentType.
+type AssignPermissionToRoleJSONRequestBody AssignPermissionToRoleJSONBody
+
 // CreateRotationPolicyJSONRequestBody defines body for CreateRotationPolicy for application/json ContentType.
 type CreateRotationPolicyJSONRequestBody CreateRotationPolicyJSONBody
 
 // UpdateRotationPolicyJSONRequestBody defines body for UpdateRotationPolicy for application/json ContentType.
 type UpdateRotationPolicyJSONRequestBody UpdateRotationPolicyJSONBody
+
+// CreateSecretAccessRequestJSONRequestBody defines body for CreateSecretAccessRequest for application/json ContentType.
+type CreateSecretAccessRequestJSONRequestBody CreateSecretAccessRequestJSONBody
+
+// ResolveSecretAccessRequestJSONRequestBody defines body for ResolveSecretAccessRequest for application/json ContentType.
+type ResolveSecretAccessRequestJSONRequestBody ResolveSecretAccessRequestJSONBody
+
+// CreateSecretTemplateJSONRequestBody defines body for CreateSecretTemplate for application/json ContentType.
+type CreateSecretTemplateJSONRequestBody CreateSecretTemplateJSONBody
+
+// CreateSecretJSONRequestBody defines body for CreateSecret for application/json ContentType.
+type CreateSecretJSONRequestBody CreateSecretJSONBody
+
+// UpdateSecretJSONRequestBody defines body for UpdateSecret for application/json ContentType.
+type UpdateSecretJSONRequestBody UpdateSecretJSONBody
+
+// GrantSecretACLJSONRequestBody defines body for GrantSecretACL for application/json ContentType.
+type GrantSecretACLJSONRequestBody GrantSecretACLJSONBody
+
+// SetSecretAutoRotateJSONRequestBody defines body for SetSecretAutoRotate for application/json ContentType.
+type SetSecretAutoRotateJSONRequestBody SetSecretAutoRotateJSONBody
+
+// ClassifySecretJSONRequestBody defines body for ClassifySecret for application/json ContentType.
+type ClassifySecretJSONRequestBody ClassifySecretJSONBody
+
+// CopySecretJSONRequestBody defines body for CopySecret for application/json ContentType.
+type CopySecretJSONRequestBody CopySecretJSONBody
+
+// AddSecretDependencyJSONRequestBody defines body for AddSecretDependency for application/json ContentType.
+type AddSecretDependencyJSONRequestBody AddSecretDependencyJSONBody
+
+// DescribeSecretJSONRequestBody defines body for DescribeSecret for application/json ContentType.
+type DescribeSecretJSONRequestBody DescribeSecretJSONBody
+
+// MoveSecretJSONRequestBody defines body for MoveSecret for application/json ContentType.
+type MoveSecretJSONRequestBody MoveSecretJSONBody
+
+// RollbackSecretJSONRequestBody defines body for RollbackSecret for application/json ContentType.
+type RollbackSecretJSONRequestBody RollbackSecretJSONBody
+
+// RotateSecretJSONRequestBody defines body for RotateSecret for application/json ContentType.
+type RotateSecretJSONRequestBody RotateSecretJSONBody
+
+// SetSecretScheduleJSONRequestBody defines body for SetSecretSchedule for application/json ContentType.
+type SetSecretScheduleJSONRequestBody SetSecretScheduleJSONBody
+
+// SuspendSecretJSONRequestBody defines body for SuspendSecret for application/json ContentType.
+type SuspendSecretJSONRequestBody SuspendSecretJSONBody
+
+// SetSecretTagsJSONRequestBody defines body for SetSecretTags for application/json ContentType.
+type SetSecretTagsJSONRequestBody SetSecretTagsJSONBody
+
+// AddSecretVersionCommentJSONRequestBody defines body for AddSecretVersionComment for application/json ContentType.
+type AddSecretVersionCommentJSONRequestBody AddSecretVersionCommentJSONBody
+
+// CreateSoDPolicyJSONRequestBody defines body for CreateSoDPolicy for application/json ContentType.
+type CreateSoDPolicyJSONRequestBody CreateSoDPolicyJSONBody
+
+// RemoveUserRoleJSONRequestBody defines body for RemoveUserRole for application/json ContentType.
+type RemoveUserRoleJSONRequestBody RemoveUserRoleJSONBody
+
+// AssignUserRoleJSONRequestBody defines body for AssignUserRole for application/json ContentType.
+type AssignUserRoleJSONRequestBody AssignUserRoleJSONBody
+
+// CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
+type CreateUserJSONRequestBody CreateUserJSONBody
+
+// UpdateUserJSONRequestBody defines body for UpdateUser for application/json ContentType.
+type UpdateUserJSONRequestBody UpdateUserJSONBody
+
+// UpdateUserRolesJSONRequestBody defines body for UpdateUserRoles for application/json ContentType.
+type UpdateUserRolesJSONRequestBody UpdateUserRolesJSONBody
 
 // AuthLoginJSONRequestBody defines body for AuthLogin for application/json ContentType.
 type AuthLoginJSONRequestBody AuthLoginJSONBody

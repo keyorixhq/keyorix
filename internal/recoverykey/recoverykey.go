@@ -25,14 +25,13 @@ import (
 const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 // keyLength is the number of alphabet symbols in a generated key.
-// len(alphabet)=33, so log2(33)≈5.044 bits/symbol; 51 symbols yields
-// ≈257.2 bits, comfortably over the design's 256-bit target even before
-// accounting for randomSymbol's rejection sampling removing all bias (see
-// its doc comment) — unlike generateRecoveryCodes' per-byte-modulo draw,
-// which accepts a small bias because MFA backup codes are a second factor
-// to an already-checked password, not the standalone secret-equivalent
-// value this key is.
-const keyLength = 51
+// len(alphabet)=32 (24 letters without I/O + digits 2-9), so each symbol carries exactly 5 bits;
+// 52 symbols yield 260 bits, over the design's 256-bit target (51 would give only 255).
+// randomSymbol's draw is exactly uniform (see its doc comment) -- unlike
+// generateRecoveryCodes' per-byte-modulo draw, which accepts a small bias because MFA backup
+// codes are a second factor to an already-checked password, not the standalone
+// secret-equivalent value this key is. TestKeyEntropyAtLeast256Bits pins this.
+const keyLength = 52
 
 // groupSize matches the MFA-recovery-code display convention (grouped
 // "XXXXX-XXXXX...").
@@ -54,10 +53,9 @@ func Generate() (string, error) {
 
 // randomSymbol draws one alphabet index uniformly via rejection sampling:
 // crypto/rand one byte at a time, discarding any draw that would otherwise
-// introduce modulo bias. 256 is not a multiple of len(alphabet) (33*7=231),
-// so only byte values in [0,231) are accepted; each is then reduced mod 33,
-// giving each of the 33 symbols exactly 7 equally-likely source values —
-// an exact, unbiased draw, not an approximation.
+// introduce modulo bias. With len(alphabet)=32, 256 is an exact multiple, so
+// limit is 256 and every byte is accepted (b%32 is exactly uniform); the
+// rejection loop stays so the draw remains unbiased if the alphabet changes.
 func randomSymbol() (byte, error) {
 	limit := 256 - (256 % len(alphabet))
 	b := make([]byte, 1)

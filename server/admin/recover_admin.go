@@ -166,7 +166,10 @@ func readRecoveryKeyFromStdin() (string, error) {
 // resolveTargetUser parses --user as either a numeric ID or an email
 // address, per design §3's "--user <email-or-id>".
 func resolveTargetUser(ctx context.Context, store corestorage.Storage, identifier string) (*models.User, error) {
-	if id, err := strconv.ParseUint(identifier, 10, 64); err == nil {
+	// bitSize 32: user IDs fit in 32 bits on every platform, and a parsed value can never
+	// overflow the uint conversion below (CodeQL go/incorrect-integer-conversion). An
+	// out-of-range number is not a valid ID and falls through to the email lookup.
+	if id, err := strconv.ParseUint(identifier, 10, 32); err == nil {
 		user, err := store.GetUser(ctx, uint(id))
 		if err != nil {
 			return nil, fmt.Errorf("no account with id %d: %w", id, err)

@@ -62,6 +62,24 @@ func OrNever(s string) string {
 	return s
 }
 
+// CSVSafe prefixes a single quote to any value beginning with =, +, -, @, TAB, or CR so
+// that Excel / LibreOffice / Sheets treat the cell as text rather than executing it as a
+// formula (CWE-1236). Apply it to any user- or server-supplied free-text field written to
+// a CSV export. An empty string is returned unchanged. Mirrors the old CLI's
+// internal/csvsafe.Neutralize exactly -- reimplemented here (not imported) since this
+// module cannot depend on internal/csvsafe (a main-module internal/ package; see
+// internal/depguard's whole reason for existing).
+func CSVSafe(s string) string {
+	if s == "" {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return "'" + s
+	}
+	return s
+}
+
 // OrDash renders s, or "-" when s is empty.
 func OrDash(s string) string {
 	if s == "" {
