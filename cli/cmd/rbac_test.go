@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/cli/internal/apiclient"
 )
 
 // rbacRoute is one (method, path) -> responder pair for rbacTestServer.
@@ -362,5 +364,19 @@ func TestRunRBACExportMatrix_JSONFormat(t *testing.T) {
 	})
 	if !containsAll(out, `"username": "user"`, `"permission_name": "secrets.read"`) {
 		t.Fatalf("json output missing expected fields, got: %q", out)
+	}
+}
+
+// TestMatrixRowToCSV_NeutralizesFormulaInjection guards against CWE-1236
+// (spreadsheet formula injection, CI's repo-wide csv_writer_completeness_test.go):
+// a role/username/etc. value beginning with =, +, -, or @ must be prefixed with
+// a leading single quote so Excel/Sheets/LibreOffice treat it as text, not a
+// formula, when an auditor opens the export.
+func TestMatrixRowToCSV_NeutralizesFormulaInjection(t *testing.T) {
+	malicious := "=cmd|' /C calc'!A0"
+	row := apiclient.PermissionMatrixRow{Username: &malicious}
+	got := matrixRowToCSV(row)
+	if got[0] != "'"+malicious {
+		t.Fatalf("username field = %q, want a leading single quote to neutralize the formula", got[0])
 	}
 }
