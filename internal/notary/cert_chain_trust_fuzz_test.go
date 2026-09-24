@@ -81,6 +81,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -137,6 +138,14 @@ type certSpec struct {
 
 func mustMintCert(tb testing.TB, spec certSpec, key *ecdsa.PrivateKey) *x509.Certificate {
 	tb.Helper()
+	return mustMintCertSigner(tb, spec, key)
+}
+
+// mustMintCertSigner is mustMintCert generalized to any crypto.Signer subject key
+// (RSA included) — the chain-trust decision under test does not depend on the
+// signer's key algorithm, so the fixture-building side shouldn't be locked to one.
+func mustMintCertSigner(tb testing.TB, spec certSpec, key crypto.Signer) *x509.Certificate {
+	tb.Helper()
 	keyUsage := x509.KeyUsageDigitalSignature
 	if spec.isCA {
 		keyUsage |= x509.KeyUsageCertSign
@@ -153,12 +162,12 @@ func mustMintCert(tb testing.TB, spec certSpec, key *ecdsa.PrivateKey) *x509.Cer
 		SubjectKeyId:          spec.subjectKeyID,
 	}
 	parent := tmpl
-	parentKey := crypto.Signer(key)
+	parentKey := key
 	if spec.parent != nil {
 		parent = spec.parent
 		parentKey = spec.parentKey
 	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, &key.PublicKey, parentKey)
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, key.Public(), parentKey)
 	if err != nil {
 		tb.Fatalf("minting test cert %q: %v", spec.subject.CommonName, err)
 	}
@@ -221,6 +230,13 @@ type certPKI struct {
 	intermediateUnderRKey *ecdsa.PrivateKey
 	leafUnderIntermediate *x509.Certificate
 	leafUnderIntermKey    *ecdsa.PrivateKey
+
+	// rsaLeafUnderR chains to the real root R like leafUnderR, but with an RSA
+	// signer key — every other fixture here is ECDSA-only (mustGenKey), so without
+	// this the RSA branches of pkcs7.getSignatureAlgorithm (SHA256WithRSA etc.) are
+	// never exercised by this harness at all.
+	rsaLeafUnderR    *x509.Certificate
+	rsaLeafUnderRKey *rsa.PrivateKey
 }
 
 func buildCertPKI(tb testing.TB) *certPKI {
@@ -337,6 +353,19 @@ func buildCertPKI(tb testing.TB) *certPKI {
 		parent: pki.intermediateUnderR, parentKey: pki.intermediateUnderRKey,
 	}, pki.leafUnderIntermKey)
 
+	// RSA-keyed leaf under the real root R.
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		tb.Fatalf("generating RSA test key: %v", err)
+	}
+	pki.rsaLeafUnderRKey = rsaKey
+	pki.rsaLeafUnderR = mustMintCertSigner(tb, certSpec{
+		subject:   pkix.Name{CommonName: "Keyorix Test TSA RSA Leaf"},
+		ekus:      []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
+		notBefore: nb, notAfter: na,
+		parent: pki.rootR, parentKey: pki.rootRKey,
+	}, rsaKey)
+
 	return pki
 }
 
@@ -415,6 +444,58 @@ func referenceAccepts(token []byte, onlyR *x509.CertPool) bool {
 	return err == nil
 }
 
+// oidTSTInfoContentType mirrors notary.go's own oidTSTInfoContentType constant.
+// Duplicated rather than exported from notary.go: this is test-only fixture
+// code building a token from raw parts, not consuming one.
+var certChainOIDTSTInfoContentType = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 1, 4}
+
+// signerKeyPair is one (cert, key) pair to sign with in buildMultiSignerToken.
+type signerKeyPair struct {
+	cert *x509.Certificate
+	key  crypto.Signer
+}
+
+// buildMultiSignerToken builds a single TimeStampToken whose SignedData carries
+// len(signers) independent SignerInfos — each one a genuinely valid signature
+// by its own (cert, key) pair, all covering the SAME TSTInfo content. Nothing
+// in pkcs7.SignedData.AddSignerChain caps how many times it can be called on
+// the same SignedData (confirmed by reading sign.go: it appends to
+// sd.sd.SignerInfos on every call) even though RFC 3161 defines exactly one
+// signer per TimeStampToken.
+//
+// The TSTInfo content itself is pulled from a real single-signer token built
+// via buildToken (with signers[0]), so the content is byte-for-byte what a real
+// TSA would produce for certChainMessage/claimedTime — only the SignedData
+// envelope around it is rebuilt from scratch with multiple signers.
+func buildMultiSignerToken(tb testing.TB, signers []signerKeyPair, claimedTime time.Time) []byte {
+	tb.Helper()
+	if len(signers) == 0 {
+		tb.Fatalf("buildMultiSignerToken: need at least one signer")
+	}
+	base := buildToken(tb, signers[0].cert, signers[0].key, nil, claimedTime, true)
+	baseP7, err := pkcs7.Parse(base)
+	if err != nil {
+		tb.Fatalf("parsing base single-signer token: %v", err)
+	}
+
+	sd, err := pkcs7.NewSignedData(baseP7.Content)
+	if err != nil {
+		tb.Fatalf("pkcs7.NewSignedData: %v", err)
+	}
+	sd.SetDigestAlgorithm(pkcs7.OIDDigestAlgorithmSHA256)
+	sd.SetContentType(certChainOIDTSTInfoContentType)
+	for i, s := range signers {
+		if err := sd.AddSignerChain(s.cert, s.key, nil, pkcs7.SignerInfoConfig{}); err != nil {
+			tb.Fatalf("AddSignerChain signer %d: %v", i, err)
+		}
+	}
+	token, err := sd.Finish()
+	if err != nil {
+		tb.Fatalf("Finish: %v", err)
+	}
+	return token
+}
+
 // certChainScenario names one chain-composition shape and builds its token.
 type certChainScenario struct {
 	name  string
@@ -443,6 +524,22 @@ func buildScenarios(tb testing.TB, pki *certPKI) []certChainScenario {
 		{"legit-2tier-chain-with-redundant-root", buildToken(tb, pki.leafUnderIntermediate, pki.leafUnderIntermKey, []*x509.Certificate{pki.intermediateUnderR, pki.rootR}, now, true)},
 		{"duplicate-attacker-intermediates", buildToken(tb, pki.leafUnderRPrime, pki.leafUnderRPrimeKey, []*x509.Certificate{pki.rootRPrime, pki.rootRPrime, pki.rootRPrime}, now, true)},
 		{"100-cert-chain", buildToken(tb, pki.leafUnderRPrime, pki.leafUnderRPrimeKey, hundredCopies(pki.rootRPrime), now, true)},
+		// Appended, never inserted: scenarioSel is a stored-corpus index into this
+		// slice (fuzz-seeds-are-position-encoded), so an existing entry's meaning must
+		// never shift. RSA closes the only signature-algorithm family every other
+		// scenario in this file leaves completely unexercised (all ECDSA via
+		// mustGenKey) — see mustMintCertSigner.
+		{"rsa-leaf-legit-chain", buildToken(tb, pki.rsaLeafUnderR, pki.rsaLeafUnderRKey, nil, now, true)},
+		// Two DISTINCT signers, both individually valid and trusted under R — RFC
+		// 3161 defines exactly one signer per token, so this must be REJECTED
+		// despite every individual signature being genuine. referenceAccepts
+		// already treats this as reject (p7.GetOnlySigner returns nil for
+		// len(Signers) != 1), so this scenario's own presence in this harness is
+		// itself a red/green check on VerifyReceipt's SignerInfo-count cap.
+		{"two-distinct-valid-signers", buildMultiSignerToken(tb, []signerKeyPair{
+			{pki.leafUnderR, pki.leafUnderRKey},
+			{pki.rsaLeafUnderR, pki.rsaLeafUnderRKey},
+		}, now)},
 	}
 }
 
