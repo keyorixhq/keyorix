@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
-# cli-parity-check.sh — live-server golden-output parity check for ADR-108 PR 2
-# (docs/cli-split-inventory.md §7): builds the old thick `keyorix` CLI, the new
-# thin `keyorix-next` CLI, and `keyorix-server`, boots a real local SQLite
-# server, bootstraps an admin, and runs all 24 pat/auth/machine commands
-# through both CLIs against the SAME live server -- comparing stdout and exit
-# codes, not mocked responses.
+# cli-parity-check.sh — live-server golden-output parity check for ADR-108
+# PR 2 and PR 1 (docs/cli-split-inventory.md §7): builds the old thick
+# `keyorix` CLI, the new thin `keyorix-next` CLI, and `keyorix-server`, boots
+# a real local SQLite server, bootstraps an admin, and runs the pat/auth/
+# machine commands (PR 2) plus the dynamic-secret/rotation/break-glass
+# commands (PR 1) through both CLIs against the SAME live server -- comparing
+# stdout and exit codes, not mocked responses.
 #
 # This is a manual verification tool (like PR 0's own "exercised against a
 # real running server ... not just unit tests"), not a CI gate: it needs to
 # bootstrap a real server instance, which is more than a unit test should do.
-# Run it by hand after touching cli/cmd/{pat,machine,logout,mfa,login,status}.go
-# or their server-side handlers.
+# Run it by hand after touching cli/cmd/{pat,machine,logout,mfa,login,status,
+# dynamicsecret,rotation,breakglass}.go or their server-side handlers.
+#
+# Known gap (stated, not silent): dynamic-secret issue/renew/revoke need a
+# real backend connection this SQLite-only instance can't provide. Those three
+# are parity-checked as "both CLIs get the identical HTTP failure against the
+# same unreachable admin DSN," not a successful credential mint -- see the
+# dynamic-secret section below.
 #
 # Usage: scripts/cli-parity-check.sh [workdir]
 #   workdir defaults to a fresh mktemp -d. Must NOT be the repo working tree
@@ -29,6 +36,19 @@
 #     session-token/single-credential-file model; the auth mechanism itself
 #     changed, so the commands are expected to differ. Verified instead: the
 #     new commands do what THEIR OWN spec says (see cli/cmd/*_test.go).
+#   - rotation list/show/create: NOT compared for literal parity -- the OLD
+#     CLI's policyView struct decodes the server's RotationPolicy response with
+#     snake_case json tags against a model that actually marshals PascalCase
+#     (models.RotationPolicy has no json tags at all), so every multi-word
+#     field (interval, alert, active, created-by, target's project/env number)
+#     silently decodes as its zero value in the OLD CLI today. The NEW CLI's
+#     generated apiclient.RotationPolicy type was fixed (see cli/cmd/rotation.go's
+#     rotScopeTarget doc comment, and openapi.yaml's RotationPolicy schema doc)
+#     to actually match the real wire format, so these three commands now show
+#     the CORRECT values in the new CLI while the old CLI keeps showing zeros --
+#     a deliberate, verified bug fix, not a divergence to chase into parity.
+#     Verified instead: TestRunRotList_MatchesOldCLIOutputShape and siblings in
+#     cli/cmd/rotation_test.go assert the new CLI's OWN correct output.
 #   - machine audit --format json: NOT byte-compared -- the new CLI's
 #     generated-client struct fields serialize in alphabetical order,
 #     the old CLI's hand-written struct in declaration order. Semantically
@@ -67,12 +87,15 @@ check() {
 # timestamps) so two independently-created resources compare structurally.
 normalize() {
   sed -E \
+    -e 's/keyorix-next/keyorix/g' \
     -e 's/kx_(pat|machine)_[A-Za-z0-9_-]+/TOKEN/g' \
     -e 's/^[[:space:]]*[0-9]+([[:space:]]|$)/ID\1/' \
     -e 's/id=[0-9]+/id=N/' \
     -e 's/id:[[:space:]]+[0-9]+/id: N/' \
+    -e 's/#[0-9]+/#N/' \
+    -e 's/(issue|revoke|renew|describe|show) [0-9]+$/\1 N/' \
     -e 's/[0-9]{4}-[0-9]{2}-[0-9]{2}([T ][0-9:.]+(Z|[+-][0-9:]+)?)?/TIMESTAMP/g' \
-    -e 's/(old|new)-(pat|machine|token|sub)-?1?/NAME/g' \
+    -e 's/(old|new)-(pat|machine|token|sub|dyn|rot)-?1?/NAME/g' \
     "$1"
 }
 
@@ -93,6 +116,22 @@ log "provisioning a local SQLite instance at $INSTANCE"
 # real dev server without colliding.
 sed -i.bak -E 's/port: "8080"/port: "18080"/' "$INSTANCE/keyorix.yaml"
 rm -f "$INSTANCE/keyorix.yaml.bak"
+# The dynamic-secret section below deliberately registers a config against a
+# loopback admin DSN (127.0.0.1) so `issue` fails deterministically without a
+# real backend -- CreateDynamicSecretConfig's SSRF guard
+# (enforceDynamicSecretSSRFGuard) refuses any private/loopback target unless
+# this is explicitly opted into, so without this the very first
+# `dynamic-secret create` call below would fail closed and abort the whole
+# script under `set -e`.
+cat >>"$INSTANCE/keyorix.yaml" <<'EOF'
+dynamic_secrets:
+  allow_private_network_targets: true
+break_glass:
+  enabled: true
+  emergency_role: project_developer
+  default_ttl: 4h
+  max_ttl: 24h
+EOF
 ( cd "$INSTANCE" && echo "$PASSPHRASE" | "$BIN/keyorix" encryption init --passphrase-stdin >/dev/null )
 
 log "starting keyorix-server"
@@ -273,6 +312,216 @@ run_new machine revoke new-machine-1 --project default --force > "$RESULTS/new_m
 sed -E 's/(old|new)-machine-1/M/' "$RESULTS/old_m_revoke.raw" > "$RESULTS/old_m_revoke.norm"
 sed -E 's/(old|new)-machine-1/M/' "$RESULTS/new_m_revoke.raw" > "$RESULTS/new_m_revoke.norm"
 check "machine revoke (normalized)" "$RESULTS/old_m_revoke.norm" "$RESULTS/new_m_revoke.norm"
+
+# ── dynamic-secret, rotation, break-glass (ADR-108 PR 1) ──────────────────────
+# These need a numeric project id (unlike machine's --project <name>).
+PROJECT_ID=$(run_old project list | awk '$2=="default"{print $1; exit}')
+# dynamic-secret create's --environment-id flag help says "0 = project-wide",
+# but CreateDynamicSecretConfig (internal/core/dynamic_secrets.go) unconditionally
+# calls GetEnvironment(ctx, req.EnvironmentID) even when it's 0, which always 404s
+# ("environment 0 not found") -- the flag's own documented default doesn't work
+# against a real server. A real, pre-existing server-side bug (0 isn't a valid
+# environment ID and never will be), out of scope for this CLI-porting PR to fix
+# there -- this script just avoids it by always passing a real environment id.
+ENV_ID=$(run_old project environments "$PROJECT_ID" | awk '$1 ~ /^[0-9]+$/{print $1; exit}')
+
+# dynamic-secret create/get-config/classify/leases/revoke-all don't need a live
+# backend (the admin DSN is stored encrypted, never connected to, until issue).
+# issue/renew/revoke DO need a real connection, which this script's SQLite-only
+# instance can't provide -- for those three, parity is checked as "both CLIs get
+# the identical HTTP failure against the same bogus DSN", not a successful mint.
+# This is a real, stated gap (not a silent one): a genuinely successful
+# issue/renew/revoke round-trip is NOT exercised here.
+export KEYORIX_DYNAMIC_ADMIN_DSN="postgres://u:p@127.0.0.1:1/does-not-exist"
+
+run_old dynamic-secret create --name old-dyn-1 --project-id "$PROJECT_ID" --environment-id "$ENV_ID" --backend postgres \
+  --creation-template 'GRANT SELECT ON ALL TABLES IN SCHEMA public TO {{name}};' > "$RESULTS/old_dyn_create.raw" 2>&1
+run_new dynamic-secret create --name new-dyn-1 --project-id "$PROJECT_ID" --environment-id "$ENV_ID" --backend postgres \
+  --creation-template 'GRANT SELECT ON ALL TABLES IN SCHEMA public TO {{name}};' > "$RESULTS/new_dyn_create.raw" 2>&1
+normalize "$RESULTS/old_dyn_create.raw" | sed -E 's/(old|new)-dyn-1/D/' > "$RESULTS/old_dyn_create.norm"
+normalize "$RESULTS/new_dyn_create.raw" | sed -E 's/(old|new)-dyn-1/D/' > "$RESULTS/new_dyn_create.norm"
+check "dynamic-secret create (normalized format)" "$RESULTS/old_dyn_create.norm" "$RESULTS/new_dyn_create.norm"
+
+run_old dynamic-secret list --project-id "$PROJECT_ID" > "$RESULTS/old_dyn_list.raw" 2>&1
+run_new dynamic-secret list --project-id "$PROJECT_ID" > "$RESULTS/new_dyn_list.raw" 2>&1
+check "dynamic-secret list (same underlying configs)" "$RESULTS/old_dyn_list.raw" "$RESULTS/new_dyn_list.raw"
+
+old_dyn_id=$(run_old dynamic-secret list --project-id "$PROJECT_ID" | awk '$2=="old-dyn-1"{print $1}')
+new_dyn_id=$(run_new dynamic-secret list --project-id "$PROJECT_ID" | awk '$2=="new-dyn-1"{print $1}')
+
+run_old dynamic-secret get-config "$old_dyn_id" > "$RESULTS/old_dyn_get.raw" 2>&1
+run_new dynamic-secret get-config "$new_dyn_id" > "$RESULTS/new_dyn_get.raw" 2>&1
+sed -E 's/^ID:.*$/ID: N/; s/(old|new)-dyn-1/D/' "$RESULTS/old_dyn_get.raw" > "$RESULTS/old_dyn_get.norm"
+sed -E 's/^ID:.*$/ID: N/; s/(old|new)-dyn-1/D/' "$RESULTS/new_dyn_get.raw" > "$RESULTS/new_dyn_get.norm"
+check "dynamic-secret get-config (normalized)" "$RESULTS/old_dyn_get.norm" "$RESULTS/new_dyn_get.norm"
+
+run_old dynamic-secret leases "$old_dyn_id" > "$RESULTS/old_dyn_leases.raw" 2>&1
+run_new dynamic-secret leases "$new_dyn_id" > "$RESULTS/new_dyn_leases.raw" 2>&1
+check "dynamic-secret leases (both empty)" "$RESULTS/old_dyn_leases.raw" "$RESULTS/new_dyn_leases.raw"
+
+run_old dynamic-secret classify "$old_dyn_id" --level confidential > "$RESULTS/old_dyn_classify.raw" 2>&1
+run_new dynamic-secret classify "$new_dyn_id" --level confidential > "$RESULTS/new_dyn_classify.raw" 2>&1
+sed -E "s/$old_dyn_id/N/" "$RESULTS/old_dyn_classify.raw" > "$RESULTS/old_dyn_classify.norm"
+sed -E "s/$new_dyn_id/N/" "$RESULTS/new_dyn_classify.raw" > "$RESULTS/new_dyn_classify.norm"
+check "dynamic-secret classify (normalized)" "$RESULTS/old_dyn_classify.norm" "$RESULTS/new_dyn_classify.norm"
+
+run_old dynamic-secret issue "$old_dyn_id" > "$RESULTS/old_dyn_issue.raw" 2>&1 || true
+run_new dynamic-secret issue "$new_dyn_id" > "$RESULTS/new_dyn_issue.raw" 2>&1 || true
+old_issue_status=$(grep -oE 'HTTP [0-9]+' "$RESULTS/old_dyn_issue.raw" | head -1 | grep -oE '[0-9]+')
+new_issue_status=$(grep -oE 'HTTP [0-9]+' "$RESULTS/new_dyn_issue.raw" | head -1 | grep -oE '[0-9]+')
+if [ -n "$old_issue_status" ] && [ "$old_issue_status" = "$new_issue_status" ]; then
+  pass_count=$((pass_count + 1)); log "PASS  dynamic-secret issue (both HTTP $old_issue_status against an unreachable DSN)"
+else
+  fail_count=$((fail_count + 1)); log "FAIL  dynamic-secret issue: old=$old_issue_status new=$new_issue_status"
+fi
+
+run_old dynamic-secret renew no-such-lease > "$RESULTS/old_dyn_renew.raw" 2>&1 || true
+run_new dynamic-secret renew no-such-lease > "$RESULTS/new_dyn_renew.raw" 2>&1 || true
+old_renew_status=$(grep -oE 'HTTP [0-9]+' "$RESULTS/old_dyn_renew.raw" | head -1 | grep -oE '[0-9]+')
+new_renew_status=$(grep -oE 'HTTP [0-9]+' "$RESULTS/new_dyn_renew.raw" | head -1 | grep -oE '[0-9]+')
+if [ "$old_renew_status" = "$new_renew_status" ] && [ "$old_renew_status" = "404" ]; then
+  pass_count=$((pass_count + 1)); log "PASS  dynamic-secret renew (both HTTP 404, no such lease)"
+else
+  fail_count=$((fail_count + 1)); log "FAIL  dynamic-secret renew: old=$old_renew_status new=$new_renew_status"
+fi
+
+run_old dynamic-secret revoke no-such-lease > "$RESULTS/old_dyn_revoke.raw" 2>&1 || true
+run_new dynamic-secret revoke no-such-lease > "$RESULTS/new_dyn_revoke.raw" 2>&1 || true
+old_revoke_status=$(grep -oE 'HTTP [0-9]+' "$RESULTS/old_dyn_revoke.raw" | head -1 | grep -oE '[0-9]+')
+new_revoke_status=$(grep -oE 'HTTP [0-9]+' "$RESULTS/new_dyn_revoke.raw" | head -1 | grep -oE '[0-9]+')
+if [ "$old_revoke_status" = "$new_revoke_status" ] && [ "$old_revoke_status" = "404" ]; then
+  pass_count=$((pass_count + 1)); log "PASS  dynamic-secret revoke (both HTTP 404, no such lease)"
+else
+  fail_count=$((fail_count + 1)); log "FAIL  dynamic-secret revoke: old=$old_revoke_status new=$new_revoke_status"
+fi
+
+run_old dynamic-secret revoke-all "$old_dyn_id" --yes > "$RESULTS/old_dyn_revokeall.raw" 2>&1
+run_new dynamic-secret revoke-all "$new_dyn_id" --yes > "$RESULTS/new_dyn_revokeall.raw" 2>&1
+sed -E "s/Config $old_dyn_id:/Config N:/" "$RESULTS/old_dyn_revokeall.raw" > "$RESULTS/old_dyn_revokeall.norm"
+sed -E "s/Config $new_dyn_id:/Config N:/" "$RESULTS/new_dyn_revokeall.raw" > "$RESULTS/new_dyn_revokeall.norm"
+check "dynamic-secret revoke-all (normalized, zero leases)" "$RESULTS/old_dyn_revokeall.norm" "$RESULTS/new_dyn_revokeall.norm"
+unset KEYORIX_DYNAMIC_ADMIN_DSN
+
+# ── rotation ─────────────────────────────────────────────────────────────────
+# Both create calls are allowed to fail (set +e/-e around each): the grep-based
+# check below inspects success/failure explicitly, so a real failure here should
+# be reported as a FAIL by that check, not silently abort the whole script under
+# this file's `set -e`.
+set +e
+run_old rotation create --name old-rot-1 --scope project --project-id "$PROJECT_ID" \
+  --interval-days 30 > "$RESULTS/old_rot_create.raw" 2>&1
+run_new rotation create --name new-rot-1 --scope project --project-id "$PROJECT_ID" \
+  --interval-days 30 > "$RESULTS/new_rot_create.raw" 2>&1
+set -e
+# Not literal-parity-checked: see this script's header ("rotation list/show/create").
+if grep -q "Created rotation policy #" "$RESULTS/old_rot_create.raw" && grep -q "Created rotation policy #" "$RESULTS/new_rot_create.raw"; then
+  pass_count=$((pass_count + 1)); log "PASS  rotation create (both succeeded; NOT byte-compared, see header)"
+else
+  fail_count=$((fail_count + 1)); log "FAIL  rotation create: old=$(cat "$RESULTS/old_rot_create.raw") new=$(cat "$RESULTS/new_rot_create.raw")"
+fi
+
+run_old rotation list --project-id "$PROJECT_ID" > "$RESULTS/old_rot_list.raw" 2>&1
+run_new rotation list --project-id "$PROJECT_ID" > "$RESULTS/new_rot_list.raw" 2>&1
+# Not literal-parity-checked: see this script's header ("rotation list/show/create").
+if grep -q "old-rot-1" "$RESULTS/old_rot_list.raw" && grep -q "new-rot-1" "$RESULTS/new_rot_list.raw"; then
+  pass_count=$((pass_count + 1)); log "PASS  rotation list (both list their policy; NOT byte-compared, see header)"
+else
+  fail_count=$((fail_count + 1)); log "FAIL  rotation list: old=$(cat "$RESULTS/old_rot_list.raw") new=$(cat "$RESULTS/new_rot_list.raw")"
+fi
+
+old_rot_id=$(run_old rotation list --project-id "$PROJECT_ID" | awk '$2=="old-rot-1"{print $1}')
+new_rot_id=$(run_new rotation list --project-id "$PROJECT_ID" | awk '$2=="new-rot-1"{print $1}')
+
+run_old rotation show "$old_rot_id" > "$RESULTS/old_rot_show.raw" 2>&1
+run_new rotation show "$new_rot_id" > "$RESULTS/new_rot_show.raw" 2>&1
+# Not literal-parity-checked: see this script's header ("rotation list/show/create").
+# The new CLI must show the CORRECT interval (30 days); the old CLI is expected
+# to still show its pre-existing "0 days" decoding bug.
+if grep -q "interval:         30 days" "$RESULTS/new_rot_show.raw"; then
+  pass_count=$((pass_count + 1)); log "PASS  rotation show (new CLI decodes interval_days correctly; NOT byte-compared with old, see header)"
+else
+  fail_count=$((fail_count + 1)); log "FAIL  rotation show: new CLI did not show the correct interval: $(cat "$RESULTS/new_rot_show.raw")"
+fi
+
+run_old rotation status --project-id "$PROJECT_ID" > "$RESULTS/old_rot_status.raw" 2>&1
+run_new rotation status --project-id "$PROJECT_ID" > "$RESULTS/new_rot_status.raw" 2>&1
+check "rotation status (no covered secrets overdue)" "$RESULTS/old_rot_status.raw" "$RESULTS/new_rot_status.raw"
+
+run_old rotation plan "$PROJECT_ID" > "$RESULTS/old_rot_plan.raw" 2>&1
+run_new rotation plan "$PROJECT_ID" > "$RESULTS/new_rot_plan.raw" 2>&1
+check "rotation plan (nothing to rotate)" "$RESULTS/old_rot_plan.raw" "$RESULTS/new_rot_plan.raw"
+
+run_old rotation order "$PROJECT_ID" > "$RESULTS/old_rot_order.raw" 2>&1
+run_new rotation order "$PROJECT_ID" > "$RESULTS/new_rot_order.raw" 2>&1
+check "rotation order (no dependencies)" "$RESULTS/old_rot_order.raw" "$RESULTS/new_rot_order.raw"
+
+run_old rotation delete "$old_rot_id" > "$RESULTS/old_rot_delete.raw" 2>&1
+run_new rotation delete "$new_rot_id" > "$RESULTS/new_rot_delete.raw" 2>&1
+sed -E "s/$old_rot_id/N/" "$RESULTS/old_rot_delete.raw" > "$RESULTS/old_rot_delete.norm"
+sed -E "s/$new_rot_id/N/" "$RESULTS/new_rot_delete.raw" > "$RESULTS/new_rot_delete.norm"
+check "rotation delete (normalized)" "$RESULTS/old_rot_delete.norm" "$RESULTS/new_rot_delete.norm"
+
+# ── break-glass ──────────────────────────────────────────────────────────────
+# ActivateBreakGlass is deliberately not RBAC-gated, but it does require the
+# ACTIVATING user to be a project MEMBER (IsProjectMember) -- a global-only role
+# grant (what "keyorix system init" bootstraps the admin with) does not count
+# (internal/core/break_glass.go's own doc: "a user scoped only globally ... is
+# refused"). Grant the admin a project-scoped role first so activation can
+# succeed at all.
+# rbac assign-role's --project takes a NAME, not a numeric id (unlike every
+# other --project-id flag in this script). project_viewer (membership) must
+# differ from project_developer (the configured break_glass.emergency_role
+# above) -- ActivateBreakGlass's own grant step fails with "Role already
+# assigned" if the activating user already holds the emergency role itself.
+run_old rbac assign-role --user admin@parity-check.test --role project_viewer --project default >/dev/null
+
+# ActivateBreakGlass refuses a second concurrent activation for the same
+# (user, project) pair (prevents indefinite renewal), and both CLIs activate
+# as the SAME admin user against the SAME project here -- so each activate is
+# immediately paired with its own revoke (old activate+revoke, then new
+# activate+revoke) rather than trying to hold both active at once.
+#
+# set +e for this whole pair: the admin session's token was observed going
+# intermittently stale (HTTP 401) right around here in practice, root cause
+# not pinned down (a real TTL/invalidation interaction with the old CLI's own
+# concurrent auth activity against the same account, or something else). A
+# failure here should surface as a FAIL from the check()s below, not silently
+# abort the rest of this script under `set -e`.
+set +e
+run_old break-glass activate --project-id "$PROJECT_ID" --justification "old parity test" \
+  > "$RESULTS/old_bg_activate.raw" 2>&1
+old_bg_id=$(grep -oE 'id=[0-9]+' "$RESULTS/old_bg_activate.raw" | head -1 | grep -oE '[0-9]+')
+run_old break-glass revoke --project-id "$PROJECT_ID" --activation-id "$old_bg_id" > "$RESULTS/old_bg_revoke.raw" 2>&1
+
+"$BIN/keyorix-next" login --server "$SERVER_URL" --username admin --password "$ADMIN_PASSWORD" >/dev/null 2>&1
+run_new break-glass activate --project-id "$PROJECT_ID" --justification "new parity test" \
+  > "$RESULTS/new_bg_activate.raw" 2>&1
+new_bg_id=$(grep -oE 'id=[0-9]+' "$RESULTS/new_bg_activate.raw" | head -1 | grep -oE '[0-9]+')
+run_new break-glass revoke --project-id "$PROJECT_ID" --activation-id "$new_bg_id" > "$RESULTS/new_bg_revoke.raw" 2>&1
+set -e
+
+normalize "$RESULTS/old_bg_activate.raw" | sed -E 's/(old|new) parity test/J/' > "$RESULTS/old_bg_activate.norm"
+normalize "$RESULTS/new_bg_activate.raw" | sed -E 's/(old|new) parity test/J/' > "$RESULTS/new_bg_activate.norm"
+check "break-glass activate (normalized)" "$RESULTS/old_bg_activate.norm" "$RESULTS/new_bg_activate.norm"
+
+sed -E "s/activation $old_bg_id /activation N /" "$RESULTS/old_bg_revoke.raw" > "$RESULTS/old_bg_revoke.norm"
+sed -E "s/activation $new_bg_id /activation N /" "$RESULTS/new_bg_revoke.raw" > "$RESULTS/new_bg_revoke.norm"
+check "break-glass revoke (normalized)" "$RESULTS/old_bg_revoke.norm" "$RESULTS/new_bg_revoke.norm"
+
+# Both activations are revoked by now -- list shows the same 2 (revoked)
+# entries regardless of which CLI is asking.
+# Both CLIs' admin sessions were observed going stale intermittently around
+# the rbac assign-role call earlier in this section (plausibly a "permissions
+# changed, invalidate existing sessions for this principal" security measure,
+# not root-caused further -- see the set +e block above's comment). Re-auth
+# both immediately before this final check for the same reason.
+KEYORIX_PASSWORD="$ADMIN_PASSWORD" "$BIN/keyorix" connect "$SERVER_URL" --username admin --insecure >/dev/null 2>&1
+"$BIN/keyorix-next" login --server "$SERVER_URL" --username admin --password "$ADMIN_PASSWORD" >/dev/null 2>&1
+set +e
+run_old break-glass list --project-id "$PROJECT_ID" > "$RESULTS/old_bg_list.raw" 2>&1
+run_new break-glass list --project-id "$PROJECT_ID" > "$RESULTS/new_bg_list.raw" 2>&1
+set -e
+check "break-glass list (same underlying activations)" "$RESULTS/old_bg_list.raw" "$RESULTS/new_bg_list.raw"
 
 log ""
 log "=== $pass_count passed, $fail_count failed (results in $RESULTS) ==="
