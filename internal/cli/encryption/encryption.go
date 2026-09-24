@@ -5,23 +5,18 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
-	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/encryptionops"
 	"github.com/spf13/cobra"
 	"gorm.io/gorm"
 )
 
-// masterPassphrase, wipeBytes, and printProviderStatus are thin re-exports of
+// masterPassphrase and printProviderStatus are thin re-exports of
 // internal/encryptionops's equivalents (docs/cli-split-inventory.md §7 PR 12)
 // — kept as package-local names because this package's tests call them
 // directly. The actual logic lives exactly once, in encryptionops.
 func masterPassphrase(cfg *config.Config) (string, error) {
 	return encryptionops.MasterPassphrase(cfg, common.PassphraseSource)
-}
-
-func wipeBytes(b []byte) {
-	crypto.WipeBytes(b)
 }
 
 func printProviderStatus(kp config.KeyProviderConfig) {
