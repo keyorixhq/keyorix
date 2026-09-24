@@ -16,7 +16,13 @@ permissions:
   contents: read
 
 jobs:
-  check:
+  # Named `security-fix-regression-check`, not the generic `check` this job
+  # originally used -- dco.yml has its own job also named `check`, and a
+  # required-status-check context matches by name alone: two different
+  # workflows' jobs sharing one name would make branch protection's "check"
+  # requirement satisfiable by EITHER succeeding, independent of the other.
+  # See dco.yml's own dco-check job comment for the full reasoning.
+  security-fix-regression-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
