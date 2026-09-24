@@ -90,6 +90,12 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
+	// RunRoleExpiryCheck request
+	RunRoleExpiryCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RunTokenExpiryCheck request
+	RunTokenExpiryCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// MfaStepUpWithBody request with any body
 	MfaStepUpWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -172,6 +178,9 @@ type ClientInterface interface {
 	// RevokeMachineToken request
 	RevokeMachineToken(ctx context.Context, id int, machineId int, tokenId int, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetSystemInfo request
+	GetSystemInfo(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetVersion request
 	GetVersion(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -185,6 +194,30 @@ type ClientInterface interface {
 
 	// HealthCheck request
 	HealthCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+func (c *Client) RunRoleExpiryCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRunRoleExpiryCheckRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RunTokenExpiryCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRunTokenExpiryCheckRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 func (c *Client) MfaStepUpWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -547,6 +580,18 @@ func (c *Client) RevokeMachineToken(ctx context.Context, id int, machineId int, 
 	return c.Client.Do(req)
 }
 
+func (c *Client) GetSystemInfo(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSystemInfoRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) GetVersion(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetVersionRequest(c.Server)
 	if err != nil {
@@ -605,6 +650,60 @@ func (c *Client) HealthCheck(ctx context.Context, reqEditors ...RequestEditorFn)
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewRunRoleExpiryCheckRequest generates requests for RunRoleExpiryCheck
+func NewRunRoleExpiryCheckRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/admin/jobs/role-expiry-check")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRunTokenExpiryCheckRequest generates requests for RunTokenExpiryCheck
+func NewRunTokenExpiryCheckRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/admin/jobs/token-expiry-check")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
 }
 
 // NewMfaStepUpRequest calls the generic MfaStepUp builder with application/json body
@@ -1504,6 +1603,33 @@ func NewRevokeMachineTokenRequest(server string, id int, machineId int, tokenId 
 	return req, nil
 }
 
+// NewGetSystemInfoRequest generates requests for GetSystemInfo
+func NewGetSystemInfoRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/system/info")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetVersionRequest generates requests for GetVersion
 func NewGetVersionRequest(server string) (*http.Request, error) {
 	var err error
@@ -1668,6 +1794,12 @@ func WithBaseURL(baseURL string) ClientOption {
 
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
+	// RunRoleExpiryCheckWithResponse request
+	RunRoleExpiryCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RunRoleExpiryCheckResponse, error)
+
+	// RunTokenExpiryCheckWithResponse request
+	RunTokenExpiryCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RunTokenExpiryCheckResponse, error)
+
 	// MfaStepUpWithBodyWithResponse request with any body
 	MfaStepUpWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MfaStepUpResponse, error)
 
@@ -1750,6 +1882,9 @@ type ClientWithResponsesInterface interface {
 	// RevokeMachineTokenWithResponse request
 	RevokeMachineTokenWithResponse(ctx context.Context, id int, machineId int, tokenId int, reqEditors ...RequestEditorFn) (*RevokeMachineTokenResponse, error)
 
+	// GetSystemInfoWithResponse request
+	GetSystemInfoWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetSystemInfoResponse, error)
+
 	// GetVersionWithResponse request
 	GetVersionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetVersionResponse, error)
 
@@ -1763,6 +1898,52 @@ type ClientWithResponsesInterface interface {
 
 	// HealthCheckWithResponse request
 	HealthCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*HealthCheckResponse, error)
+}
+
+type RunRoleExpiryCheckResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON401      *Error
+	JSON403      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r RunRoleExpiryCheckResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RunRoleExpiryCheckResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RunTokenExpiryCheckResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON401      *Error
+	JSON403      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r RunTokenExpiryCheckResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RunTokenExpiryCheckResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
 }
 
 type MfaStepUpResponse struct {
@@ -2346,6 +2527,28 @@ func (r RevokeMachineTokenResponse) StatusCode() int {
 	return 0
 }
 
+type GetSystemInfoResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON403      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetSystemInfoResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetSystemInfoResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetVersionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2462,6 +2665,24 @@ func (r HealthCheckResponse) StatusCode() int {
 		return r.HTTPResponse.StatusCode
 	}
 	return 0
+}
+
+// RunRoleExpiryCheckWithResponse request returning *RunRoleExpiryCheckResponse
+func (c *ClientWithResponses) RunRoleExpiryCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RunRoleExpiryCheckResponse, error) {
+	rsp, err := c.RunRoleExpiryCheck(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRunRoleExpiryCheckResponse(rsp)
+}
+
+// RunTokenExpiryCheckWithResponse request returning *RunTokenExpiryCheckResponse
+func (c *ClientWithResponses) RunTokenExpiryCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RunTokenExpiryCheckResponse, error) {
+	rsp, err := c.RunTokenExpiryCheck(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRunTokenExpiryCheckResponse(rsp)
 }
 
 // MfaStepUpWithBodyWithResponse request with arbitrary body returning *MfaStepUpResponse
@@ -2726,6 +2947,15 @@ func (c *ClientWithResponses) RevokeMachineTokenWithResponse(ctx context.Context
 	return ParseRevokeMachineTokenResponse(rsp)
 }
 
+// GetSystemInfoWithResponse request returning *GetSystemInfoResponse
+func (c *ClientWithResponses) GetSystemInfoWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetSystemInfoResponse, error) {
+	rsp, err := c.GetSystemInfo(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSystemInfoResponse(rsp)
+}
+
 // GetVersionWithResponse request returning *GetVersionResponse
 func (c *ClientWithResponses) GetVersionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetVersionResponse, error) {
 	rsp, err := c.GetVersion(ctx, reqEditors...)
@@ -2768,6 +2998,72 @@ func (c *ClientWithResponses) HealthCheckWithResponse(ctx context.Context, reqEd
 		return nil, err
 	}
 	return ParseHealthCheckResponse(rsp)
+}
+
+// ParseRunRoleExpiryCheckResponse parses an HTTP response from a RunRoleExpiryCheckWithResponse call
+func ParseRunRoleExpiryCheckResponse(rsp *http.Response) (*RunRoleExpiryCheckResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RunRoleExpiryCheckResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRunTokenExpiryCheckResponse parses an HTTP response from a RunTokenExpiryCheckWithResponse call
+func ParseRunTokenExpiryCheckResponse(rsp *http.Response) (*RunTokenExpiryCheckResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RunTokenExpiryCheckResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseMfaStepUpResponse parses an HTTP response from a MfaStepUpWithResponse call
@@ -3658,6 +3954,32 @@ func ParseRevokeMachineTokenResponse(rsp *http.Response) (*RevokeMachineTokenRes
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetSystemInfoResponse parses an HTTP response from a GetSystemInfoWithResponse call
+func ParseGetSystemInfoResponse(rsp *http.Response) (*GetSystemInfoResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetSystemInfoResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	}
 

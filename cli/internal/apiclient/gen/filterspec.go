@@ -46,6 +46,11 @@ var keptPaths = []string{
 	"/api/v1/machine-token-hygiene",
 	"/api/v1/machine-identities/audit",
 	"/api/v1/projects",
+	// PR 10 (docs/cli-split-inventory.md §7) -- status, system info/role-expiry-check/
+	// token-expiry-check.
+	"/api/v1/system/info",
+	"/api/v1/admin/jobs/role-expiry-check",
+	"/api/v1/admin/jobs/token-expiry-check",
 }
 
 func main() {
