@@ -46,6 +46,28 @@ func (h *RotationPolicyHandler) sendSuccess(w http.ResponseWriter, data interfac
 	}
 }
 
+// sendCreated writes a 201 Created JSON success response with correctly ordered
+// headers -- mirrors helpers.go's package-level sendCreated (used by every OTHER
+// handler's own 201 path). Calling w.WriteHeader(http.StatusCreated) before
+// sendSuccess's Header().Set() calls (Create's previous shape) silently drops the
+// Content-Type header: net/http only flushes headers set BEFORE the first
+// WriteHeader/Write call, so a caller that inspects the response's Content-Type to
+// decide whether to parse it as JSON (as ADR-108 PR 1's generated CLI client does)
+// received no signal at all that this actually was JSON -- confirmed live: the new
+// CLI's CreateRotationPolicyWithResponse got a nil JSON201 despite an HTTP 201 with
+// a genuinely JSON body, because oapi-codegen's response parser gates JSON
+// decoding on the Content-Type header. Found via scripts/cli-parity-check.sh
+// against a real running server, not a unit test -- see docs/cli-split-
+// inventory.md §7 PR 1's test notes.
+func (h *RotationPolicyHandler) sendCreated(w http.ResponseWriter, data interface{}, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(SuccessResponse{Success: true, Data: data, Message: message}); err != nil {
+		log.Printf("Error encoding JSON response: %v", err)
+	}
+}
+
 func (h *RotationPolicyHandler) sendError(w http.ResponseWriter, errorType, message string, statusCode int, details interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -170,8 +192,7 @@ func (h *RotationPolicyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	h.sendSuccess(w, policy, "Rotation policy created successfully")
+	h.sendCreated(w, policy, "Rotation policy created successfully")
 }
 
 // Get handles GET /api/v1/rotation-policies/{id}
