@@ -93,9 +93,9 @@ var operationOverrides = map[string]overrideEntry{
 	// entirely absent from this catalog. Create, self-service withdraw, and the
 	// admin approve/reject decision (the requester-cannot-approve-their-own,
 	// admin-authority-ceiling-gated state transition).
-	"REST POST /api/v1/secret-access-requests":                         {StatusFuzzed, "opCatalog[\"CreateSecretAccessRequest\"] — batch 8"},
-	"REST POST /api/v1/secret-access-requests/{requestId}/withdraw":    {StatusFuzzed, "opCatalog[\"WithdrawSecretAccessRequest\"] — batch 8"},
-	"REST PUT /api/v1/secret-access-requests/{requestId}":              {StatusFuzzed, "opCatalog[\"ResolveSecretAccessRequest\"] — batch 8"},
+	"REST POST /api/v1/secret-access-requests":                      {StatusFuzzed, "opCatalog[\"CreateSecretAccessRequest\"] — batch 8"},
+	"REST POST /api/v1/secret-access-requests/{requestId}/withdraw": {StatusFuzzed, "opCatalog[\"WithdrawSecretAccessRequest\"] — batch 8"},
+	"REST PUT /api/v1/secret-access-requests/{requestId}":           {StatusFuzzed, "opCatalog[\"ResolveSecretAccessRequest\"] — batch 8"},
 }
 
 func statusOf(key string) overrideEntry {
