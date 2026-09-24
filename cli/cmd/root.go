@@ -24,4 +24,6 @@ func init() {
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(logoutCmd)
 	rootCmd.AddCommand(mfaCmd)
+	rootCmd.AddCommand(projectCmd)
+	rootCmd.AddCommand(userCmd)
 }

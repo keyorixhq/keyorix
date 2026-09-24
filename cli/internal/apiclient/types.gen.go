@@ -23,8 +23,14 @@ const (
 
 // Defines values for ListProjectsParamsIncludeDeleted.
 const (
-	False ListProjectsParamsIncludeDeleted = "false"
-	True  ListProjectsParamsIncludeDeleted = "true"
+	ListProjectsParamsIncludeDeletedFalse ListProjectsParamsIncludeDeleted = "false"
+	ListProjectsParamsIncludeDeletedTrue  ListProjectsParamsIncludeDeleted = "true"
+)
+
+// Defines values for ListProjectEnvironmentsParamsIncludeDeleted.
+const (
+	ListProjectEnvironmentsParamsIncludeDeletedFalse ListProjectEnvironmentsParamsIncludeDeleted = "false"
+	ListProjectEnvironmentsParamsIncludeDeletedTrue  ListProjectEnvironmentsParamsIncludeDeleted = "true"
 )
 
 // Defines values for TransitionMachineIdentityJSONBodyAction.
@@ -32,6 +38,11 @@ const (
 	Activate TransitionMachineIdentityJSONBodyAction = "activate"
 	Revoke   TransitionMachineIdentityJSONBodyAction = "revoke"
 	Suspend  TransitionMachineIdentityJSONBodyAction = "suspend"
+)
+
+// Defines values for ListUsersParamsFilter.
+const (
+	Inactive ListUsersParamsFilter = "inactive"
 )
 
 // MachineAuditReport Deployment-wide machine identity audit report (GET /machine-identities/audit).
@@ -142,6 +153,15 @@ type Error struct {
 	Success *bool   `json:"success,omitempty"`
 }
 
+// SuspendInactiveUsersJSONBody defines parameters for SuspendInactiveUsers.
+type SuspendInactiveUsersJSONBody struct {
+	// DryRun Preview which users would be suspended without making changes.
+	DryRun *bool `json:"dry_run,omitempty"`
+
+	// InactiveDays Inactivity threshold in days (must be > 0).
+	InactiveDays int `json:"inactive_days"`
+}
+
 // MfaStepUpJSONBody defines parameters for MfaStepUp.
 type MfaStepUpJSONBody struct {
 	// Code TOTP code or a recovery code
@@ -197,7 +217,35 @@ type ListProjectsParamsIncludeDeleted string
 // CreateProjectJSONBody defines parameters for CreateProject.
 type CreateProjectJSONBody struct {
 	Description *string `json:"description,omitempty"`
-	Name        string  `json:"name"`
+
+	// Environments Environment names to seed (default, if omitted: development, staging, production).
+	Environments *[]string `json:"environments,omitempty"`
+	Name         string    `json:"name"`
+}
+
+// ListProjectEnvironmentsParams defines parameters for ListProjectEnvironments.
+type ListProjectEnvironmentsParams struct {
+	// IncludeDeleted When 'true', also returns soft-deleted environments.
+	IncludeDeleted *ListProjectEnvironmentsParamsIncludeDeleted `form:"include_deleted,omitempty" json:"include_deleted,omitempty"`
+}
+
+// ListProjectEnvironmentsParamsIncludeDeleted defines parameters for ListProjectEnvironments.
+type ListProjectEnvironmentsParamsIncludeDeleted string
+
+// CreateProjectEnvironmentJSONBody defines parameters for CreateProjectEnvironment.
+type CreateProjectEnvironmentJSONBody struct {
+	Name string `json:"name"`
+}
+
+// CloneEnvironmentJSONBody defines parameters for CloneEnvironment.
+type CloneEnvironmentJSONBody struct {
+	DestinationEnvironmentId uint32 `json:"destination_environment_id"`
+}
+
+// GetProjectHealthParams defines parameters for GetProjectHealth.
+type GetProjectHealthParams struct {
+	// Limit Maximum number of secrets to display (1-100, default 20).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // CreateMachineIdentityJSONBody defines parameters for CreateMachineIdentity.
@@ -236,11 +284,69 @@ type IssueMachineTokenJSONBody struct {
 	Name          string `json:"name"`
 }
 
+// ListUsersParams defines parameters for ListUsers.
+type ListUsersParams struct {
+	Page           *int    `form:"page,omitempty" json:"page,omitempty"`
+	PageSize       *int    `form:"page_size,omitempty" json:"page_size,omitempty"`
+	Search         *string `form:"search,omitempty" json:"search,omitempty"`
+	Username       *string `form:"username,omitempty" json:"username,omitempty"`
+	Email          *string `form:"email,omitempty" json:"email,omitempty"`
+	IsActive       *bool   `form:"is_active,omitempty" json:"is_active,omitempty"`
+	IncludeDeleted *bool   `form:"include_deleted,omitempty" json:"include_deleted,omitempty"`
+
+	// Filter Set to `inactive` for users with no login in the last 30 days.
+	Filter *ListUsersParamsFilter `form:"filter,omitempty" json:"filter,omitempty"`
+}
+
+// ListUsersParamsFilter defines parameters for ListUsers.
+type ListUsersParamsFilter string
+
+// CreateUserJSONBody defines parameters for CreateUser.
+type CreateUserJSONBody struct {
+	// DeliverSetupLink Provision via account-setup link instead of an admin-set password.
+	DeliverSetupLink *bool               `json:"deliver_setup_link,omitempty"`
+	DisplayName      string              `json:"display_name"`
+	Email            openapi_types.Email `json:"email"`
+
+	// GenerateOneTimePassword Server-generated one-time password, returned once. Mutually exclusive with deliver_setup_link.
+	GenerateOneTimePassword *bool `json:"generate_one_time_password,omitempty"`
+	IsActive                *bool `json:"is_active,omitempty"`
+
+	// Password Required unless deliver_setup_link or generate_one_time_password is set.
+	Password *string `json:"password,omitempty"`
+
+	// ProjectAssignments Project-scoped role assignments applied atomically (admin-set-password path only).
+	ProjectAssignments *[]struct {
+		ProjectId *int    `json:"project_id,omitempty"`
+		Role      *string `json:"role,omitempty"`
+	} `json:"project_assignments,omitempty"`
+
+	// Role Optional system role override (admin-set-password path only).
+	Role     *string `json:"role,omitempty"`
+	Username string  `json:"username"`
+}
+
+// GetUserByEmailParams defines parameters for GetUserByEmail.
+type GetUserByEmailParams struct {
+	Email string `form:"email" json:"email"`
+}
+
+// UpdateUserJSONBody defines parameters for UpdateUser.
+type UpdateUserJSONBody struct {
+	Active      *bool                `json:"active,omitempty"`
+	DisplayName *string              `json:"display_name,omitempty"`
+	Email       *openapi_types.Email `json:"email,omitempty"`
+	Username    *string              `json:"username,omitempty"`
+}
+
 // AuthLoginJSONBody defines parameters for AuthLogin.
 type AuthLoginJSONBody struct {
 	Password string `json:"password"`
 	Username string `json:"username"`
 }
+
+// SuspendInactiveUsersJSONRequestBody defines body for SuspendInactiveUsers for application/json ContentType.
+type SuspendInactiveUsersJSONRequestBody SuspendInactiveUsersJSONBody
 
 // MfaStepUpJSONRequestBody defines body for MfaStepUp for application/json ContentType.
 type MfaStepUpJSONRequestBody MfaStepUpJSONBody
@@ -254,6 +360,12 @@ type CreatePATJSONRequestBody CreatePATJSONBody
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody CreateProjectJSONBody
 
+// CreateProjectEnvironmentJSONRequestBody defines body for CreateProjectEnvironment for application/json ContentType.
+type CreateProjectEnvironmentJSONRequestBody CreateProjectEnvironmentJSONBody
+
+// CloneEnvironmentJSONRequestBody defines body for CloneEnvironment for application/json ContentType.
+type CloneEnvironmentJSONRequestBody CloneEnvironmentJSONBody
+
 // CreateMachineIdentityJSONRequestBody defines body for CreateMachineIdentity for application/json ContentType.
 type CreateMachineIdentityJSONRequestBody CreateMachineIdentityJSONBody
 
@@ -265,6 +377,12 @@ type CreateOIDCBindingJSONRequestBody CreateOIDCBindingJSONBody
 
 // IssueMachineTokenJSONRequestBody defines body for IssueMachineToken for application/json ContentType.
 type IssueMachineTokenJSONRequestBody IssueMachineTokenJSONBody
+
+// CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
+type CreateUserJSONRequestBody CreateUserJSONBody
+
+// UpdateUserJSONRequestBody defines body for UpdateUser for application/json ContentType.
+type UpdateUserJSONRequestBody UpdateUserJSONBody
 
 // AuthLoginJSONRequestBody defines body for AuthLogin for application/json ContentType.
 type AuthLoginJSONRequestBody AuthLoginJSONBody
