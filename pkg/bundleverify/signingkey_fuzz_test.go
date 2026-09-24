@@ -1,4 +1,4 @@
-package bundle
+package bundleverify
 
 import (
 	"crypto/ed25519"

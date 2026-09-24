@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/securefiles"
-	itrust "github.com/keyorixhq/keyorix/internal/trust"
+	itrust "github.com/keyorixhq/keyorix/pkg/trust"
 	"github.com/spf13/cobra"
 )
 
@@ -118,7 +118,7 @@ var keygenCmd = &cobra.Command{
 		fmt.Printf("  private key: %s  (KEEP OFFLINE — never commit or ship)\n", privPath)
 		fmt.Printf("  public key:  %s\n\n", pubPath)
 		fmt.Printf("Embed the public key into release builds via:\n")
-		fmt.Printf("  -ldflags \"-X github.com/keyorixhq/keyorix/internal/trust.%s=%s\"\n", ldVar, spec)
+		fmt.Printf("  -ldflags \"-X github.com/keyorixhq/keyorix/pkg/trust.%s=%s\"\n", ldVar, spec)
 		return nil
 	},
 }

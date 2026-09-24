@@ -36,7 +36,7 @@
 //     "/") that would be needed to produce an empty path segment or an escaping join — see
 //     bundle_s26_test.go's TestSafeJoin_S26_ValidNestedPath comment, which reached the same
 //     conclusion for the safeJoin branch.
-package bundle
+package bundleverify
 
 import (
 	"archive/tar"
@@ -49,7 +49,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/trust"
+	"github.com/keyorixhq/keyorix/pkg/trust"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

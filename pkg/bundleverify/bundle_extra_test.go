@@ -1,4 +1,4 @@
-package bundle
+package bundleverify
 
 import (
 	"archive/tar"
@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/trust"
+	"github.com/keyorixhq/keyorix/pkg/trust"
 )
 
 // TestParsePrivateKeyPEM_ValidKey verifies that a well-formed ed25519 private key

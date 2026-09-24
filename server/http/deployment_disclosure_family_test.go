@@ -32,7 +32,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/license"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
-	"github.com/keyorixhq/keyorix/internal/trust"
+	"github.com/keyorixhq/keyorix/pkg/trust"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

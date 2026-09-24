@@ -21,7 +21,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/notary"
 	"github.com/keyorixhq/keyorix/internal/rotation"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/keyorixhq/keyorix/internal/trust"
+	"github.com/keyorixhq/keyorix/pkg/trust"
 )
 
 // KeyorixCore represents the core business logic layer.

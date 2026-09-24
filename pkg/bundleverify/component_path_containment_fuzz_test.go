@@ -1,4 +1,4 @@
-package bundle
+package bundleverify
 
 // FuzzComponentPathContainment fuzzes cleanComponentPath — the per-entry path-traversal gate the
 // bundle EXTRACT/staging loop applies to every tar header name (bundle.go: `cleanComponentPath(hdr.Name)`)

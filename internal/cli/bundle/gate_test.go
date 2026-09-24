@@ -9,7 +9,7 @@ import (
 	"time"
 
 	ilicense "github.com/keyorixhq/keyorix/internal/license"
-	"github.com/keyorixhq/keyorix/internal/trust"
+	"github.com/keyorixhq/keyorix/pkg/trust"
 )
 
 // licenseTok issues a license with the given features and writes it to a temp file,

@@ -4,8 +4,8 @@ package trust
 // release time, each a comma-separated list of "keyID=base64publickey":
 //
 //	go build -ldflags "\
-//	  -X github.com/keyorixhq/keyorix/internal/trust.updateKeysB64=upd-2026=<base64> \
-//	  -X github.com/keyorixhq/keyorix/internal/trust.licenseKeysB64=lic-2026=<base64>"
+//	  -X github.com/keyorixhq/keyorix/pkg/trust.updateKeysB64=upd-2026=<base64> \
+//	  -X github.com/keyorixhq/keyorix/pkg/trust.licenseKeysB64=lic-2026=<base64>"
 //
 // They default to empty, so a plain `go build` trusts no keys and every Verify fails
 // closed. `keyorix trust keygen` prints the exact -ldflags snippet for a generated key.

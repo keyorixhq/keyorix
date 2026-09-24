@@ -15,7 +15,7 @@
 //   - readNamedEntry: tr.Next() error (truncated archive)
 //   - safeJoin: escape-detection branch (joinedAbs outside destDir)
 //   - hashFile: io.Copy error (file disappears between open and copy)
-package bundle
+package bundleverify
 
 import (
 	"archive/tar"
@@ -30,7 +30,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/trust"
+	"github.com/keyorixhq/keyorix/pkg/trust"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

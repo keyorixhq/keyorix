@@ -18,7 +18,7 @@ TRUST_LICENSE_KEYS?=
 # Inject the build identity into both the CLI (internal/cli.version) and the shared
 # internal/version package (read by the server's /health + /system/info). Commit is
 # deterministic per source revision, so release builds stay reproducible (no build date).
-VERSION_LDFLAGS=-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Commit=$(GIT_COMMIT) -X github.com/keyorixhq/keyorix/internal/trust.updateKeysB64=$(TRUST_UPDATE_KEYS) -X github.com/keyorixhq/keyorix/internal/trust.licenseKeysB64=$(TRUST_LICENSE_KEYS)
+VERSION_LDFLAGS=-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Commit=$(GIT_COMMIT) -X github.com/keyorixhq/keyorix/pkg/trust.updateKeysB64=$(TRUST_UPDATE_KEYS) -X github.com/keyorixhq/keyorix/pkg/trust.licenseKeysB64=$(TRUST_LICENSE_KEYS)
 LDFLAGS=-ldflags "$(VERSION_LDFLAGS)"
 # RELEASE_LDFLAGS additionally strips the symbol table + DWARF debug info (-s -w):
 # ~92MB -> ~62MB for keyorix-server. Only the `release` target uses this — build-cli/
