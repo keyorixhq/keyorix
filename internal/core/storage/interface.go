@@ -1371,6 +1371,14 @@ type Storage interface {
 	GetSystemMetadata(ctx context.Context, key string) (value string, found bool, err error)
 	// SetSystemMetadata upserts a system-metadata key/value (last write wins).
 	SetSystemMetadata(ctx context.Context, key, value string) error
+	// GetRecoveryKeyRecord returns the local admin recovery key's verifier
+	// record (docs/design-b2-recover-admin.md §2); found is false on an
+	// install that predates this feature or has never generated one.
+	GetRecoveryKeyRecord(ctx context.Context) (record *models.RecoveryKeyRecord, found bool, err error)
+	// SetRecoveryKeyRecord upserts the singleton recovery-key record —
+	// generation and rotation are the same call; the caller sets KeyVersion
+	// (and RotatedAt on rotation). Exactly one row ever exists.
+	SetRecoveryKeyRecord(ctx context.Context, record *models.RecoveryKeyRecord) error
 	GetDistinctActiveUserIDs(ctx context.Context, since time.Time) ([]uint, error)
 	// CountImpersonatedActions returns the number of impersonated audit events
 	// recorded for actingAs by impersonator since `since`, excluding the

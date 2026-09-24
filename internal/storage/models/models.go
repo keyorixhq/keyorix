@@ -1574,6 +1574,24 @@ type SystemMetadata struct {
 	UpdatedAt time.Time
 }
 
+// RecoveryKeyRecord stores the local admin recovery key's verifier
+// (docs/design-b2-recover-admin.md §2): a single singleton row (id is
+// always recoveryKeySingletonID, internal/storage/store/local_recovery_key.go)
+// holding a plain SHA-256 hash of the 256-bit key — not a slow KDF; the key
+// is already high-entropy random, matching the PersonalAccessToken and
+// MFARecoveryCode precedent, not the password/passphrase-KEK one. KeyHash
+// is tagged json:"-": this record must never round-trip through any JSON
+// response, even the verifier hash. KeyVersion is a monotonic counter
+// bumped on every rotation, so an audit event can name which generation of
+// key was used without ever storing or logging the key itself.
+type RecoveryKeyRecord struct {
+	ID         uint       `gorm:"primaryKey"`
+	KeyHash    string     `gorm:"not null" json:"-"`
+	KeyVersion int        `gorm:"not null" json:"key_version"`
+	CreatedAt  time.Time  `json:"created_at"`
+	RotatedAt  *time.Time `json:"rotated_at,omitempty"`
+}
+
 // StatsSnapshot stores daily dashboard stat counts for trend calculation
 // StatsSnapshot deliberately has NO BeforeSave hook, even though CreatedAt is
 // range-queried (local_stats.go, GetPreviousStatsSnapshot: "created_at < ?").

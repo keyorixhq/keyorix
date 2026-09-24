@@ -255,6 +255,21 @@ func (rs *RemoteStorage) SetSystemMetadata(_ context.Context, _, _ string) error
 	return remoteUnsupported("SetSystemMetadata")
 }
 
+// GetRecoveryKeyRecord is not available in remote mode: `keyorix-server admin
+// recover-admin`/`recovery-key rotate` are local, host-side admin CLI
+// subcommands (ADR-108 §B) with no HTTP/gRPC route at all, and only ever run
+// against a directly-reachable local/postgres backend (design-b2-recover-
+// admin.md §3) — never through the API.
+func (rs *RemoteStorage) GetRecoveryKeyRecord(_ context.Context) (*models.RecoveryKeyRecord, bool, error) {
+	return nil, false, remoteUnsupported("GetRecoveryKeyRecord")
+}
+
+// SetRecoveryKeyRecord is not available in remote mode; see
+// GetRecoveryKeyRecord's doc comment.
+func (rs *RemoteStorage) SetRecoveryKeyRecord(_ context.Context, _ *models.RecoveryKeyRecord) error {
+	return remoteUnsupported("SetRecoveryKeyRecord")
+}
+
 // CreateAnomalyAlert is not available in remote mode; anomaly detection is server-side.
 func (rs *RemoteStorage) CreateAnomalyAlert(_ context.Context, _ *models.AnomalyAlert) error {
 	return remoteUnsupported("CreateAnomalyAlert")
