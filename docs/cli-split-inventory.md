@@ -769,6 +769,38 @@ for now, revisit later." No command migration yet. Size: medium (new module scaf
 one small new server endpoint). Tests: dependency-guard CI test (a forbidden import fails the
 build); a version-skew unit test matrix (same-major-older/newer, different-major, below-minimum).
 
+**Closed by PR split/pr0-cli-module (2026-09-23).** `cli/` (module
+`github.com/keyorixhq/keyorix/cli`), excluded from the root `go.work` and gated by its own
+`cli` CI job, matching `operator/`'s existing precedent. `cli/internal/depguard`'s test walks
+the module's real dependency graph (`go list -deps`, not a source grep) and fails on any
+`internal/core`/`internal/storage`/`internal/config`/`server/` or cloud-SDK import;
+red/green-proven on this PR (a forbidden `internal/core` import pulled in the full AWS/Azure/
+GCP SDK surface transitively — see the PR description for the exact failure output). The
+server side adds `GET /api/v1/version` (`server/http/handlers/version.go`), unauthenticated
+like `/health`, returning only `api_version` (`internal/version.APIVersion`, starts at 1) and
+`minimum_cli_version` (new `Config.MinimumCLIVersion`, empty by default) — deliberately never
+the build version/commit, matching `/health`'s own disclosure rationale; a handler test
+asserts exactly those two fields and nothing else. `cli/internal/skew.Check` implements the
+tiered rule (§ above this PR's own reasoning, in the package doc comment): `minimum_cli_version`
+(when set) is a hard floor checked by both major-line and numeric comparison; independently,
+the CLI's compiled `TargetAPIVersion` vs. the server's `api_version` produces a soft
+same-major-older/newer warning, with the true "server too old for this command" case surfacing
+per-request when a specific route actually 404s. Credential storage: single mechanism (§4's
+"one mechanism only" decision), a 0600 plaintext file at `os.UserConfigDir()/keyorix/
+credentials.yaml` (`cli/internal/credstore`) behind a `Store` interface that refuses to `Load`
+on any permission wider than 0600 or through a symlink — an OS-keychain implementation is a
+later option behind the same interface, not decided here. The HTTP client
+(`cli/internal/apiclient`) is generated (`oapi-codegen`, `cli/Makefile`'s `client` target) from
+a filtered copy of `server/http/handlers/openapi.yaml` (`cli/internal/apiclient/gen/
+filterspec.go`'s `keptPaths`, extended by each future Phase 3 PR) rather than the full spec —
+narrows the generated surface to what's actually wired (`/health`, `/api/v1/version`,
+`/auth/login`, `/api/v1/auth/profile`) while still being real generation from the canonical
+spec, not a hand-maintained subset. Commands: `keyorix-next version`, `login`, `status` — all
+three exercised against a real running server (SQLite, no mocks) as part of this PR's manual
+verification, not just unit tests. Follow-up needed outside this PR: add `cli` to the
+repository's required-status-checks branch-protection list (a repo setting, not a file this PR
+can change).
+
 **PR 1 — `dynamic-secret`, `rotation`, `breakglass` (9+7+3 = 19 commands).** Zero GAPs, zero
 security findings, already 100% REST with no fallback anywhere — the lowest-risk group, proves the
 new module's plumbing end-to-end before anything harder. Size: small. Tests: golden-output
