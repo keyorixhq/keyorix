@@ -15,7 +15,7 @@ import (
 	"testing"
 )
 
-var groupedRecoveryKeyForm = regexp.MustCompile(`[A-HJ-NP-Z2-9]{5}(-[A-HJ-NP-Z2-9]{5}){9}-[A-HJ-NP-Z2-9]`)
+var groupedRecoveryKeyForm = regexp.MustCompile(`[A-HJ-NP-Z2-9]{5}(-[A-HJ-NP-Z2-9]{5}){9}-[A-HJ-NP-Z2-9]{2}`)
 
 func TestAdminRecoveryKey_GenerateThenRotate_SQLite(t *testing.T) {
 	bin := buildServerBinary(t)
