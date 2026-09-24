@@ -12,18 +12,19 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// models.RotationPolicy carries no json tags, so posting it directly serialized
-// every field in Go's default PascalCase -- "IntervalDays", not "interval_days".
-// encoding/json's fallback match is case-INsensitive but not
-// separator-insensitive, so "IntervalDays" never matched the server's
-// `json:"interval_days"`. Every multi-word field arrived as its zero value, and
-// interval_days (validate:"required,min=1") then failed validation: create and
-// update were rejected on every single call.
-//
-// These two types are the request bodies the server actually binds (see
-// server/http/handlers/rotation_policies_handler.go). They deliberately mirror
-// only what each endpoint accepts -- create takes the scope fields, update does
-// not and takes is_active instead.
+// models.RotationPolicy now carries explicit snake_case json tags (fixed at the
+// source -- see the model's own doc comment), so posting it directly would no
+// longer hit the historical bug this file's wire types were originally written
+// to route around (Go's default PascalCase marshaling never matching the
+// server's snake_case request-binding structs; case-insensitive JSON decode
+// fallback matches "ID"~"id" but not "IntervalDays"~"interval_days", so every
+// multi-word field arrived as its zero value and interval_days
+// (validate:"required,min=1") then failed validation on every create/update).
+// These two types stay separate from the model regardless: they are the exact
+// request bodies the server actually binds (see
+// server/http/handlers/rotation_policies_handler.go), deliberately narrower
+// than the full model -- create takes the scope fields, update does not and
+// takes is_active instead -- not merely a casing workaround.
 
 type rotationPolicyCreateWire struct {
 	Name            string `json:"name"`

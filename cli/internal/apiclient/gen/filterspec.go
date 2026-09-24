@@ -64,6 +64,23 @@ var keptPaths = []string{
 	"/api/v1/projects/{id}/invitations",
 	"/api/v1/projects/{id}/invitations/{invitationId}",
 	"/api/v1/projects/{id}/invitations/{invitationId}/resend",
+	// PR 1 (docs/cli-split-inventory.md §7) -- dynamic-secret, rotation, breakglass.
+	"/api/v1/dynamic-secrets/configs",
+	"/api/v1/dynamic-secrets/configs/{id}",
+	"/api/v1/dynamic-secrets/configs/{id}/classification",
+	"/api/v1/dynamic-secrets/configs/{id}/issue",
+	"/api/v1/dynamic-secrets/configs/{id}/leases",
+	"/api/v1/dynamic-secrets/configs/{id}/revoke-all",
+	"/api/v1/dynamic-secrets/leases/{leaseID}/renew",
+	"/api/v1/dynamic-secrets/leases/{leaseID}/revoke",
+	"/api/v1/rotation-policies",
+	"/api/v1/rotation-policies/evaluate",
+	"/api/v1/rotation-policies/{id}",
+	"/api/v1/projects/{id}/rotation-plan",
+	"/api/v1/rotation-plan",
+	"/api/v1/projects/{id}/rotation-order",
+	"/api/v1/projects/{id}/break-glass",
+	"/api/v1/projects/{id}/break-glass/{activationId}/revoke",
 }
 
 func main() {

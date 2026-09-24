@@ -19,6 +19,7 @@ const (
 var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not credentials; some contain "Token"/"PAT" (createPAT, issueMachineToken, ...), values are all the literal reason string "schema not yet written"
 	"acknowledgeAnomalyAlert":        reasonSchemaNotYetWritten, // post /api/v1/audit/anomalies/{id}/acknowledge
 	"activateBreakGlass":             reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/break-glass
+	"addGroupMember":                 reasonSchemaNotYetWritten, // post /api/v1/groups/{id}/members
 	"addProjectMember":               reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/members
 	"assignPermissionToRole":         reasonSchemaNotYetWritten, // post /api/v1/roles/{id}/permissions
 	"attestProjectAccessReview":      reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/attest
@@ -34,7 +35,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"createProjectEnvironment":       reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/environments
 	"createRiskException":            reasonSchemaNotYetWritten, // post /api/v1/risk-exceptions
 	"createRole":                     reasonSchemaNotYetWritten, // post /api/v1/roles
-	"createRotationPolicy":           reasonSchemaNotYetWritten, // post /api/v1/rotation-policies
 	"createSecret":                   reasonSchemaNotYetWritten, // post /api/v1/secrets
 	"createSecretAccessRequest":      reasonSchemaNotYetWritten, // post /api/v1/secret-access-requests
 	"createSoDPolicy":                reasonSchemaNotYetWritten, // post /api/v1/sod/policies
@@ -45,7 +45,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"deleteProject":                  reasonSchemaNotYetWritten, // delete /api/v1/projects/{id}
 	"deleteSoDPolicy":                reasonSchemaNotYetWritten, // delete /api/v1/sod/policies/{id}
 	"endImpersonation":               reasonSchemaNotYetWritten, // post /api/v1/auth/end-impersonation
-	"evaluateRotationPolicies":       reasonSchemaNotYetWritten, // get /api/v1/rotation-policies/evaluate
 	"exportAuditLogs":                reasonSchemaNotYetWritten, // get /api/v1/audit/export
 	"getAccessReviewCampaign":        reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-review/campaigns/{campaignId}
 	"getAuditRetention":              reasonSchemaNotYetWritten, // get /api/v1/audit/retention
@@ -64,6 +63,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getProjectAccessReview":         reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-review
 	"getProjectDrift":                reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/drift
 	"getRole":                        reasonSchemaNotYetWritten, // get /api/v1/roles/{id}
+	"getRolePermissions":             reasonSchemaNotYetWritten, // get /api/v1/roles/{id}/permissions
 	"getRotationPolicy":              reasonSchemaNotYetWritten, // get /api/v1/rotation-policies/{id}
 	"getRotationStatus":              reasonSchemaNotYetWritten, // get /api/v1/rotation-policies/status
 	"getSecret":                      reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}
@@ -84,13 +84,13 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"listAccessReviewCampaigns":      reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-review/campaigns
 	"listAnomalyAlerts":              reasonSchemaNotYetWritten, // get /api/v1/audit/anomalies
 	"listAuditLogs":                  reasonSchemaNotYetWritten, // get /api/v1/audit/logs
-	"listBreakGlassActivations":      reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/break-glass
 	"listEnvironments":               reasonSchemaNotYetWritten, // get /api/v1/environments
 	"listNotifications":              reasonSchemaNotYetWritten, // get /api/v1/notifications
 	"listPermissions":                reasonSchemaNotYetWritten, // get /api/v1/permissions
 	"listProjectMembers":             reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/members
 	"listProjectMemberships":         reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/memberships
 	"listRiskExceptions":             reasonSchemaNotYetWritten, // get /api/v1/risk-exceptions
+	"listRoles":                      reasonSchemaNotYetWritten, // get /api/v1/roles
 	"listRotationPolicies":           reasonSchemaNotYetWritten, // get /api/v1/rotation-policies
 	"listSecretAccessRequests":       reasonSchemaNotYetWritten, // get /api/v1/secret-access-requests
 	"listSecretShares":               reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}/shares
@@ -250,4 +250,24 @@ var exercisingTests = map[string][]string{
 	"resendProjectInvitation": {"TestContractPR3_ResendProjectInvitation"},
 	"revokeProjectInvitation": {"TestContractPR3_RevokeProjectInvitation"},
 	"updateGroup":             {"TestContractPR3_UpdateGroup"},
+	// docs/cli-split-inventory.md §7 PR 1 (dynamic-secret, rotation, breakglass) --
+	// openapi_contract_pr1_test.go.
+	"activateBreakGlass":           {"TestContractPR1_ActivateBreakGlass"},
+	"listBreakGlassActivations":    {"TestContractPR1_ListBreakGlassActivations"},
+	"createDynamicSecretConfig":    {"TestContractPR1_CreateDynamicSecretConfig"},
+	"listDynamicSecretConfigs":     {"TestContractPR1_ListDynamicSecretConfigs"},
+	"getDynamicSecretConfig":       {"TestContractPR1_GetDynamicSecretConfig"},
+	"classifyDynamicSecretConfig":  {"TestContractPR1_ClassifyDynamicSecretConfig"},
+	"issueDynamicSecretLease":      {"TestContractPR1_IssueDynamicSecretLease"},
+	"listDynamicSecretLeases":      {"TestContractPR1_ListDynamicSecretLeases"},
+	"renewDynamicSecretLease":      {"TestContractPR1_RenewDynamicSecretLease"},
+	"revokeDynamicSecretLease":     {"TestContractPR1_RevokeDynamicSecretLease"},
+	"revokeAllDynamicSecretLeases": {"TestContractPR1_RevokeAllDynamicSecretLeases"},
+	"listRotationPolicies":         {"TestContractPR1_ListRotationPolicies"},
+	"createRotationPolicy":         {"TestContractPR1_CreateRotationPolicy"},
+	"getRotationPolicy":            {"TestContractPR1_GetRotationPolicy"},
+	"evaluateRotationPolicies":     {"TestContractPR1_EvaluateRotationPolicies"},
+	"getProjectRotationOrder":      {"TestContractPR1_GetProjectRotationOrder"},
+	"getProjectRotationPlan":       {"TestContractPR1_GetProjectRotationPlan"},
+	"getDeploymentRotationPlan":    {"TestContractPR1_GetDeploymentRotationPlan"},
 }

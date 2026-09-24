@@ -18,12 +18,23 @@ import (
 	"crypto"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/asn1"
 	"fmt"
 	"time"
 
 	"github.com/digitorus/pkcs7"
 	"github.com/digitorus/timestamp"
 )
+
+// oidTSTInfoContentType is id-ct-TSTInfo (RFC 3161 §2.4.2) — the eContentType a
+// TimeStampToken's SignedData must carry. digitorus/pkcs7's verify path never
+// checks the signed content-type attribute against the actual content it covers
+// (a literal `// TODO(fullsailor): First check the content type match` is left in
+// both verifySignature and verifySignatureAtTime as of the version this repo
+// pins) — RFC 5652 §11.1 requires the attribute be present whenever any signed
+// attributes are present, and requires its value match the real eContentType.
+// VerifyReceipt enforces it here since the library does not.
+var oidTSTInfoContentType = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 1, 4}
 
 // Receipt is an external authority's proof over an anchored message.
 type Receipt struct {
@@ -105,6 +116,47 @@ func VerifyReceipt(roots *x509.CertPool, message, token []byte) (_ time.Time, er
 	p7, err := pkcs7.Parse(token)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("notary: parse token for chain verification: %w", err)
+	}
+	// RFC 3161 defines exactly one signer per TimeStampToken, but digitorus/pkcs7's
+	// VerifyWithOpts imposes no such cap — it loops over every SignerInfo present,
+	// requiring all to independently verify (AND-of-all: adding a signer can only
+	// make verification MORE likely to fail, never less, so this is not a bypass).
+	// It IS a spec non-conformance and an attacker-controlled linear cost multiplier
+	// — N signers means N full chain verifications inside this call. Reject before
+	// paying that cost: pkcs7.Parse's own work is already bounded independently
+	// (internal/libconformance.FuzzDigitorusPKCS7BoundedWork), so this keeps a
+	// many-signer token's rejection cost at O(1) regardless of N.
+	if len(p7.Signers) != 1 {
+		return time.Time{}, fmt.Errorf("notary: token has %d signers, want exactly 1", len(p7.Signers))
+	}
+	// Every signer that carries authenticated attributes MUST carry a content-type
+	// attribute (RFC 5652 §11.1), and it MUST name id-ct-TSTInfo — this is a
+	// TimeStampToken, never anything else. Without this check, a SignedData the TSA's
+	// key produced for some OTHER content type (with the same authenticated-attribute
+	// shape) would verify identically: pkcs7.Verify only binds the message-digest
+	// attribute to the actual bytes, never the declared content type to the real one.
+	for _, signer := range p7.Signers {
+		if len(signer.AuthenticatedAttributes) == 0 {
+			continue
+		}
+		var contentType asn1.ObjectIdentifier
+		found := false
+		for _, attr := range signer.AuthenticatedAttributes {
+			if !attr.Type.Equal(pkcs7.OIDAttributeContentType) {
+				continue
+			}
+			if _, err := asn1.Unmarshal(attr.Value.Bytes, &contentType); err != nil {
+				return time.Time{}, fmt.Errorf("notary: malformed content-type signed attribute: %w", err)
+			}
+			found = true
+			break
+		}
+		if !found {
+			return time.Time{}, fmt.Errorf("notary: signed attributes present but content-type attribute is missing")
+		}
+		if !contentType.Equal(oidTSTInfoContentType) {
+			return time.Time{}, fmt.Errorf("notary: signed content-type %v is not id-ct-TSTInfo — not a timestamp token", contentType)
+		}
 	}
 	intermediates := x509.NewCertPool()
 	for _, c := range p7.Certificates {
