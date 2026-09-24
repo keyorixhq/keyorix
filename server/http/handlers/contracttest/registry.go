@@ -27,6 +27,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"changePassword":                 reasonSchemaNotYetWritten, // post /api/v1/auth/change-password
 	"classifySecret":                 reasonSchemaNotYetWritten, // patch /api/v1/secrets/{id}/classification
 	"closeAccessReviewCampaign":      reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close
+	"cloneEnvironment":               reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/environments/{envId}/clone
 	"createAccessRequest":            reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-requests
 	"createGlobalInvitation":         reasonSchemaNotYetWritten, // post /api/v1/invitations
 	"createProject":                  reasonSchemaNotYetWritten, // post /api/v1/projects
@@ -60,6 +61,9 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getProject":                     reasonSchemaNotYetWritten, // get /api/v1/projects/{id}
 	"getProjectAccessReview":         reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-review
 	"getProjectDrift":                reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/drift
+	"getProjectHealth":               reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/health
+	"getProjectHygiene":              reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/hygiene
+	"getProjectStats":                reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/stats
 	"getRole":                        reasonSchemaNotYetWritten, // get /api/v1/roles/{id}
 	"getRotationStatus":              reasonSchemaNotYetWritten, // get /api/v1/rotation-policies/status
 	"getSecret":                      reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}
@@ -70,6 +74,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getSystemMetrics":               reasonSchemaNotYetWritten, // get /api/v1/system/metrics
 	"getUnusedSecrets":               reasonSchemaNotYetWritten, // get /api/v1/secrets/usage/unused
 	"getUser":                        reasonSchemaNotYetWritten, // get /api/v1/users/{id}
+	"getUserByEmail":                 reasonSchemaNotYetWritten, // get /api/v1/users/by-email
 	"getUserMembershipsForUser":      reasonSchemaNotYetWritten, // get /api/v1/users/{id}/memberships
 	"getUserRoleAssignment":          reasonSchemaNotYetWritten, // get /api/v1/user-roles/user/{userId}
 	"grantMachineRole":               reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/machine-identities/{machineId}/roles
@@ -116,11 +121,13 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"revokeProjectAccessReview":      reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/revoke
 	"revokeRiskException":            reasonSchemaNotYetWritten, // delete /api/v1/risk-exceptions/{id}
 	"revokeSecretACL":                reasonSchemaNotYetWritten, // delete /api/v1/secrets/{id}/acl/{aclId}
+	"revokeUserSessions":             reasonSchemaNotYetWritten, // post /api/v1/users/{id}/revoke-sessions
 	"rotateSecret":                   reasonSchemaNotYetWritten, // post /api/v1/secrets/{id}/rotate
 	"searchAuditLogs":                reasonSchemaNotYetWritten, // get /api/v1/audit/search
 	"searchUsers":                    reasonSchemaNotYetWritten, // get /api/v1/users/search
 	"shareSecret":                    reasonSchemaNotYetWritten, // post /api/v1/secrets/{id}/share
 	"startImpersonation":             reasonSchemaNotYetWritten, // post /api/v1/admin/impersonate
+	"suspendInactiveUsers":           reasonSchemaNotYetWritten, // post /api/v1/admin/jobs/suspend-inactive-users
 	"suspendUser":                    reasonSchemaNotYetWritten, // post /api/v1/users/{id}/suspend
 	"transitionMachineIdentity":      reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/machine-identities/{machineId}
 	"transitionMembership":           reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/memberships/{membershipId}

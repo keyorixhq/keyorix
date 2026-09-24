@@ -506,6 +506,15 @@ type Error struct {
 	Success *bool   `json:"success,omitempty"`
 }
 
+// SuspendInactiveUsersJSONBody defines parameters for SuspendInactiveUsers.
+type SuspendInactiveUsersJSONBody struct {
+	// DryRun Preview which users would be suspended without making changes.
+	DryRun *bool `json:"dry_run,omitempty"`
+
+	// InactiveDays Inactivity threshold in days (must be > 0).
+	InactiveDays int `json:"inactive_days"`
+}
+
 // ListRBACAuditLogsParams defines parameters for ListRBACAuditLogs.
 type ListRBACAuditLogsParams struct {
 	Page     *int `form:"page,omitempty" json:"page,omitempty"`
@@ -656,7 +665,10 @@ type ListProjectsParamsIncludeDeleted string
 // CreateProjectJSONBody defines parameters for CreateProject.
 type CreateProjectJSONBody struct {
 	Description *string `json:"description,omitempty"`
-	Name        string  `json:"name"`
+
+	// Environments Environment names to seed (default, if omitted: development, staging, production).
+	Environments *[]string `json:"environments,omitempty"`
+	Name         string    `json:"name"`
 }
 
 // ActivateBreakGlassJSONBody defines parameters for ActivateBreakGlass.
@@ -680,6 +692,17 @@ type ListProjectEnvironmentsParamsIncludeDeleted string
 // CreateProjectEnvironmentJSONBody defines parameters for CreateProjectEnvironment.
 type CreateProjectEnvironmentJSONBody struct {
 	Name string `json:"name"`
+}
+
+// CloneEnvironmentJSONBody defines parameters for CloneEnvironment.
+type CloneEnvironmentJSONBody struct {
+	DestinationEnvironmentId uint32 `json:"destination_environment_id"`
+}
+
+// GetProjectHealthParams defines parameters for GetProjectHealth.
+type GetProjectHealthParams struct {
+	// Limit Maximum number of secrets to display (1-100, default 20).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // CreateProjectInvitationJSONBody defines parameters for CreateProjectInvitation.
@@ -855,6 +878,19 @@ type CreateUserJSONBody struct {
 	Username string  `json:"username"`
 }
 
+// GetUserByEmailParams defines parameters for GetUserByEmail.
+type GetUserByEmailParams struct {
+	Email string `form:"email" json:"email"`
+}
+
+// UpdateUserJSONBody defines parameters for UpdateUser.
+type UpdateUserJSONBody struct {
+	Active      *bool                `json:"active,omitempty"`
+	DisplayName *string              `json:"display_name,omitempty"`
+	Email       *openapi_types.Email `json:"email,omitempty"`
+	Username    *string              `json:"username,omitempty"`
+}
+
 // UpdateUserRolesJSONBody defines parameters for UpdateUserRoles.
 type UpdateUserRolesJSONBody struct {
 	// EnvironmentId Scope (0 = global).
@@ -870,6 +906,9 @@ type AuthLoginJSONBody struct {
 	Password string `json:"password"`
 	Username string `json:"username"`
 }
+
+// SuspendInactiveUsersJSONRequestBody defines body for SuspendInactiveUsers for application/json ContentType.
+type SuspendInactiveUsersJSONRequestBody SuspendInactiveUsersJSONBody
 
 // MfaStepUpJSONRequestBody defines body for MfaStepUp for application/json ContentType.
 type MfaStepUpJSONRequestBody MfaStepUpJSONBody
@@ -913,6 +952,9 @@ type ActivateBreakGlassJSONRequestBody ActivateBreakGlassJSONBody
 // CreateProjectEnvironmentJSONRequestBody defines body for CreateProjectEnvironment for application/json ContentType.
 type CreateProjectEnvironmentJSONRequestBody CreateProjectEnvironmentJSONBody
 
+// CloneEnvironmentJSONRequestBody defines body for CloneEnvironment for application/json ContentType.
+type CloneEnvironmentJSONRequestBody CloneEnvironmentJSONBody
+
 // CreateProjectInvitationJSONRequestBody defines body for CreateProjectInvitation for application/json ContentType.
 type CreateProjectInvitationJSONRequestBody CreateProjectInvitationJSONBody
 
@@ -948,6 +990,9 @@ type AssignUserRoleJSONRequestBody AssignUserRoleJSONBody
 
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody CreateUserJSONBody
+
+// UpdateUserJSONRequestBody defines body for UpdateUser for application/json ContentType.
+type UpdateUserJSONRequestBody UpdateUserJSONBody
 
 // UpdateUserRolesJSONRequestBody defines body for UpdateUserRoles for application/json ContentType.
 type UpdateUserRolesJSONRequestBody UpdateUserRolesJSONBody

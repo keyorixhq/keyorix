@@ -551,11 +551,12 @@ paths:
                           properties:
                             id: {type: integer}
                             name: {type: string}
+                            description: {type: string}
         '401': {$ref: '#/components/responses/Error'}
     post:
       tags: [Projects]
       summary: Create a project
-      description: Create a new project with the given name and optional description.
+      description: Create a new project with the given name and optional description, optionally seeding a specific set of environment names.
       operationId: createProject
       security: [{bearerAuth: []}]
       requestBody:
@@ -568,6 +569,10 @@ paths:
               properties:
                 name: {type: string}
                 description: {type: string}
+                environments:
+                  type: array
+                  description: "Environment names to seed (default, if omitted: development, staging, production)."
+                  items: {type: string}
       responses:
         '201':
           description: "Envelope {data, message='Project created'}. data is the created project object."
@@ -675,6 +680,71 @@ paths:
           description: "Envelope {data, message}. data is the drift report: environments[] (per-environment listing), drifted_keys[] (keys missing in some environments or with diverging settings), and summary."
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}/stats:
+    get:
+      tags: [Projects]
+      summary: Rich per-project statistics (ADR-108 PR 6 addition)
+      description: >-
+        Secret counts, rotation health, unique accessors, open anomalies, and a
+        classification breakdown for a project. Added for ADR-108 PR 6 (thin CLI
+        `project stats`) -- was already a live route (secretHandler.GetProjectStats,
+        router.go), just undocumented in this spec until now.
+      operationId: getProjectStats
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+      responses:
+        '200':
+          description: "Envelope {data, message}. data is a per-project stats object (project_id, project_name, total/active/expired/expiring_in_30_days secrets, rotation_enabled, overdue_rotation, last_rotation_at, unique_accessors, open_anomalies, classification_counts, computed_at)."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}/hygiene:
+    get:
+      tags: [Projects]
+      summary: A project's security-hygiene posture, counts only (ADR-108 PR 6 addition)
+      description: >-
+        Outstanding cleanup signals for a project in one call: secrets whose owner
+        departed, secrets unused for a long window, secrets expiring/expired, and
+        stale machine identities. Added for ADR-108 PR 6 (thin CLI `project hygiene`)
+        -- was already a live route (secretHandler.ProjectHygiene, router.go), just
+        undocumented in this spec until now.
+      operationId: getProjectHygiene
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+      responses:
+        '200':
+          description: "Envelope {data, message}. data has orphaned_secrets, unused_secrets, expiring_secrets, stale_machine_identities, rotation_overdue (all integer counts)."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}/health:
+    get:
+      tags: [Projects]
+      summary: Secret health summary for a project (ADR-108 PR 6 addition)
+      description: >-
+        A ranked list of the highest-risk secrets in a project together with overall
+        band counts (HIGH/MEDIUM/LOW). Added for ADR-108 PR 6 (thin CLI `project
+        health`) -- was already a live route (secretHandler.GetProjectHealth,
+        router.go), just undocumented in this spec until now.
+      operationId: getProjectHealth
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+        - name: limit
+          in: query
+          description: Maximum number of secrets to display (1-100, default 20).
+          schema: {type: integer}
+      responses:
+        '200':
+          description: "Envelope {data, message}. data has project_id, total_secrets, high_risk_count, medium_risk_count, low_risk_count, and secrets[] (secret_id, secret_name, score, band, factors[] of key/label/score/weight/detail)."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
 
   /api/v1/projects/{id}/rotation-order:
     get:
@@ -1281,6 +1351,45 @@ paths:
           description: "Envelope {data, message='Environment created'}. data is the created environment object (project_id, name)."
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}/environments/{envId}/clone:
+    post:
+      tags: [Environments]
+      summary: Clone all secrets from one environment to another in the same project (ADR-108 PR 6 addition)
+      description: >-
+        Copies every secret from the source environment (path envId) into the
+        destination environment (body destination_environment_id). Secrets that
+        already exist by name in the destination are skipped, not overwritten. Only
+        the latest version of each secret is copied. Requires secrets.write on the
+        project scope (creates in destination) and secrets.read on the source
+        environment scope. Added for ADR-108 PR 6 (thin CLI `project env clone`) --
+        was already a live route (catalogHandler.CloneEnvironment, router.go), just
+        undocumented in this spec until now.
+      operationId: cloneEnvironment
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, description: Project ID, schema: {type: integer, format: uint32}}
+        - {name: envId, in: path, required: true, description: Source environment ID, schema: {type: integer, format: uint32}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [destination_environment_id]
+              properties:
+                destination_environment_id: {type: integer, format: uint32}
+      responses:
+        '200':
+          description: >-
+            Envelope {data, message}. data is an EnvCloneResult: SourceEnv, DestEnv
+            (names), SecretsCloned, SecretsSkipped (counts), Errors (array of
+            strings) -- PascalCase, untagged Go struct fields (core.EnvCloneResult
+            has no json tags, matching RotationPolicy's documented precedent above).
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
 
   /api/v1/projects/{projectId}/environments/{id}/restore:
     post:
@@ -3051,6 +3160,28 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
 
+  /api/v1/users/by-email:
+    get:
+      tags: [Users]
+      summary: Get a user by email (ADR-108 PR 6 addition)
+      description: >-
+        Return a single user by email address, for a caller that only has the
+        email, not the numeric ID. Same gate (users.read) and not-found shape as
+        GET /users/{id} -- grants no new capability, since users.read already lets
+        a caller enumerate every user (including email) via GET /users. Added for
+        ADR-108 PR 6 (thin CLI `user get --email`) -- was already a live route
+        (handlers.GetUserByEmail, router.go), just undocumented in this spec until
+        now.
+      operationId: getUserByEmail
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: email, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: "Envelope `data` is the user (id, username, email, display_name, active, created_at, updated_at)."
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
   /api/v1/users/{id}:
     parameters:
       - {name: id, in: path, required: true, schema: {type: integer}}
@@ -3174,6 +3305,28 @@ paths:
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
 
+  /api/v1/users/{id}/revoke-sessions:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    post:
+      tags: [Users]
+      summary: Force-logout a user (ADR-108 PR 6 addition)
+      description: >-
+        Terminate every active session of a user immediately, without changing
+        their account state. Requires users.write; refuses to target the caller's
+        own account (400). Added for ADR-108 PR 6 (thin CLI `user revoke-sessions`)
+        -- was already a live route (UserHandler.RevokeSessions, router.go), just
+        undocumented in this spec until now.
+      operationId: revokeUserSessions
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `data` is {revoked: <count>}."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
   /api/v1/users/{id}/roles:
     parameters:
       - {name: id, in: path, required: true, schema: {type: integer}}
@@ -3254,6 +3407,37 @@ paths:
       responses:
         '200':
           description: Envelope `{data, message}`. `data.secrets` is the shared secret nodes array.
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/admin/jobs/suspend-inactive-users:
+    post:
+      tags: [Users]
+      summary: Suspend users inactive beyond a threshold (ADR-108 PR 6 addition)
+      description: >-
+        Suspend all non-admin users whose last login (or account creation, if they
+        have never logged in) is older than inactive_days days. dry_run evaluates
+        without making changes. Requires system.write (deployment-wide sweep, not a
+        resource-scoped users.* permission). Added for ADR-108 PR 6 (thin CLI `user
+        suspend-inactive`) -- was already a live route
+        (adminJobsHandler.SuspendInactiveUsers, router.go), just undocumented in
+        this spec until now.
+      operationId: suspendInactiveUsers
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [inactive_days]
+              properties:
+                inactive_days: {type: integer, description: "Inactivity threshold in days (must be > 0)."}
+                dry_run: {type: boolean, description: "Preview which users would be suspended without making changes."}
+      responses:
+        '200':
+          description: "Envelope `data` is {suspended: [<user ids>], skipped: <count>, total: <count>}."
+        '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
 
