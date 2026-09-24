@@ -4,6 +4,14 @@ on:
   push:
     branches: [main]
   pull_request:
+    # `labeled` added (on top of the implicit opened/synchronize/reopened
+    # default) so adding the ci:full label actually fires a new run -- a
+    # label change alone reaches no other trigger type. This does mean any
+    # label add (not just ci:full) spins up a full new FAST-job run; the
+    # existing concurrency block below cancels a superseded one immediately,
+    # so this costs one extra ~5min run per irrelevant label event, not a
+    # pile-up.
+    types: [opened, synchronize, reopened, labeled]
     # main plus the stacked-PR branch conventions used for multi-PR review
     # chains (each PR in a stack targets its predecessor's branch, not main
     # directly, until it's that PR's turn to land) — without these, a PR
@@ -14,6 +22,9 @@ on:
   # simply does not run is indistinguishable from one still pending, and it
   # blocks the queue forever rather than failing loudly.
   merge_group:
+  # Manual trigger for the full -race test-suite matrix outside a PR/queue
+  # context (e.g. investigating a suspected flake on a specific ref).
+  workflow_dispatch:
 
 # Workflow-level default: zero permissions. No job here writes to the repo,
 # comments on PRs, or publishes anything — a compromised dependency/action in
@@ -421,6 +432,109 @@ jobs:
       - name: go build
         run: go build ./...
 
+  # Quick-tier feedback for a pull_request push: `go test -short`, no -race,
+  # SQLite only, on just the packages the PR's diff can plausibly affect
+  # (scripts/ci-test-quick.py: changed packages + their in-repo reverse deps,
+  # via go list -json's already-transitive Deps field). Does NOT replace
+  # test-suite's 18-shard -race matrix as the correctness gate -- it runs
+  # only when test-suite doesn't (see test-suite's own if: above), and the
+  # merge queue guarantees test-suite runs against the exact merge result
+  # before anything reaches main. See build-and-test's gate-logic step for
+  # the truth table these two tiers combine into one required context.
+  test-quick-root:
+    needs: [preflight, changes]
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+
+      - name: Select affected root-module packages and run go test -short
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          changed=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
+          pkgs=$(echo "$changed" | python3 scripts/ci-test-quick.py .)
+          # 480s (8min) is right for the common case -- a handful of affected
+          # packages. The FULL fallback runs the entire root-module package
+          # list, which includes packages the full test-suite matrix gives
+          # their own 1800s-timeout leg specifically because they're slow
+          # (internal/storage/store measured 867s-1363s alone; server/http
+          # measured 1904s alone -- see test-suite's own leg comments below).
+          # 480s killed a real, still-running test package on this exact PR
+          # (#2052's own first CI run: `panic: test timed out after 8m0s`
+          # mid server/http, not a real failure, just too short a clock) --
+          # match test-suite's own generous-timeout precedent instead of
+          # re-discovering that the hard way on every future ci.yml/go.mod
+          # change.
+          timeout=480s
+          if [ "$pkgs" = "FULL" ]; then
+            echo "Fallback trigger fired (go.mod/go.sum/.github/ or internal/testutil/ changed) -- running the full root-module package list."
+            pkgs=$(go list ./... | grep -vE '^github\.com/keyorixhq/keyorix/(cli|operator)(/|$)')
+            timeout=1800s
+          fi
+          if [ -z "$pkgs" ]; then
+            echo "No root-module package is affected by this PR's diff -- nothing to run."
+            exit 0
+          fi
+          echo "Affected packages:"
+          echo "$pkgs"
+          # shellcheck disable=SC2086
+          go test -short -timeout "$timeout" $pkgs
+
+  test-quick-cli:
+    needs: [preflight, changes]
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    defaults:
+      run:
+        working-directory: cli
+    env:
+      GOWORK: off
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+
+      - name: Select affected cli-module packages and run go test -short
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          changed=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
+          pkgs=$(echo "$changed" | python3 ../scripts/ci-test-quick.py cli)
+          # See test-quick-root's own comment on this same pattern: FULL
+          # fallback runs the whole module, which deserves the same
+          # generous-timeout treatment even though cli/ itself is small
+          # today -- consistent behavior beats a timeout that's only
+          # actually been sized for the common (small-subset) case.
+          timeout=480s
+          if [ "$pkgs" = "FULL" ]; then
+            echo "Fallback trigger fired (go.mod/go.sum/.github/ or internal/testutil/ changed) -- running the full cli-module package list."
+            pkgs=$(go list ./...)
+            timeout=1800s
+          fi
+          if [ -z "$pkgs" ]; then
+            echo "No cli-module package is affected by this PR's diff -- nothing to run."
+            exit 0
+          fi
+          echo "Affected packages:"
+          echo "$pkgs"
+          # shellcheck disable=SC2086
+          go test -short -timeout "$timeout" -count=1 $pkgs
+
   # Runs the two `go test` legs (root minus known-excluded/handlers packages,
   # and server/http/handlers on its own longer timeout, see the step comment
   # below) as parallel matrix runners instead of two sequential steps in one
@@ -435,7 +549,17 @@ jobs:
     # default, so preflight's success must be checked explicitly here too --
     # otherwise a docs_only-unrelated broken build would no longer be
     # fast-failed by preflight before this (expensive) job starts.
-    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    #
+    # CI quick-tier split: this 18-shard -race matrix no longer runs on every
+    # pull_request push -- it runs on merge_group (the merge queue proves the
+    # full suite against the exact commit about to land before it reaches
+    # main), on push (post-merge, belt-and-suspenders), on workflow_dispatch
+    # (manual), and on a pull_request carrying the ci:full label (opt-in for
+    # a PR an author wants the full matrix on before it queues). Every other
+    # pull_request push instead gets test-quick-root/test-quick-cli below --
+    # see build-and-test's own gate-logic step for the pass/fail truth table
+    # this split creates.
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')))
     strategy:
       fail-fast: false
       matrix:
@@ -845,12 +969,12 @@ jobs:
   # status-check context by name -- a matrix or renamed job would report as
   # e.g. "build-and-test (root)" and never satisfy it.
   build-and-test:
-    needs: [preflight, test-suite, static-analysis, changes]
+    needs: [preflight, test-suite, test-quick-root, test-quick-cli, static-analysis, changes]
     # always() so this still runs (and reports the failure below) even when
-    # test-suite/static-analysis genuinely fail, not just when they're
-    # skipped -- combined with the docs_only/web_only/go_unaffected/
-    # operator_only checks so the whole aggregator itself is skipped (not run
-    # at all) when test-suite/static-analysis are skipped too.
+    # test-suite/test-quick-root/test-quick-cli/static-analysis genuinely
+    # fail, not just when they're skipped -- combined with the docs_only/
+    # web_only/go_unaffected/operator_only checks so the whole aggregator
+    # itself is skipped (not run at all) when they're skipped too.
     #
     # needs.changes.result == 'success' is required too, and NOT redundant
     # with always(): if the `changes` job itself is cancelled (e.g. a
@@ -872,29 +996,73 @@ jobs:
       contents: read
       actions: read
     steps:
-      - name: Check upstream job results
+      # Two-tier CI truth table (test-suite's and test-quick-root/
+      # test-quick-cli's own `if:` above decide whether each tier runs at
+      # all; this is what decides which one build-and-test REQUIRES):
+      #
+      # | event                                   | ci:full label | required                          |
+      # |------------------------------------------|----------------|-----------------------------------|
+      # | pull_request                              | absent         | test-quick-root, test-quick-cli   |
+      # | pull_request                              | present        | test-suite                        |
+      # | merge_group / push / workflow_dispatch    | n/a            | test-suite                        |
+      #
+      # static-analysis is required in every row. Fail CLOSED: the tier that
+      # SHOULD have run reporting anything other than 'success' -- including
+      # 'skipped' -- is a failure here, not a silent pass. A required check
+      # that never runs is indistinguishable from one still pending, and
+      # this is the one job branch protection actually names.
+      - name: Check upstream job results (two-tier gate)
+        id: gate
         run: |
-          if [ "${{ needs.test-suite.result }}" != "success" ] || [ "${{ needs.static-analysis.result }}" != "success" ]; then
-            echo "::error::test-suite=${{ needs.test-suite.result }} static-analysis=${{ needs.static-analysis.result }}"
+          is_full_tier=false
+          if [ "${{ github.event_name }}" = "merge_group" ] || [ "${{ github.event_name }}" = "push" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            is_full_tier=true
+          elif [ "${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full') }}" = "true" ]; then
+            is_full_tier=true
+          fi
+          echo "full_tier=$is_full_tier" >> "$GITHUB_OUTPUT"
+
+          if [ "${{ needs.static-analysis.result }}" != "success" ]; then
+            echo "::error::static-analysis=${{ needs.static-analysis.result }}"
             exit 1
           fi
 
+          if [ "$is_full_tier" = "true" ]; then
+            if [ "${{ needs.test-suite.result }}" != "success" ]; then
+              echo "::error::full tier (event=${{ github.event_name }}) requires test-suite=success, got test-suite=${{ needs.test-suite.result }}"
+              exit 1
+            fi
+          else
+            if [ "${{ needs.test-quick-root.result }}" != "success" ] || [ "${{ needs.test-quick-cli.result }}" != "success" ]; then
+              echo "::error::quick tier (pull_request, no ci:full label) requires test-quick-root=success and test-quick-cli=success, got test-quick-root=${{ needs.test-quick-root.result }} test-quick-cli=${{ needs.test-quick-cli.result }}"
+              exit 1
+            fi
+          fi
+
+      # The coverage-floor gate below only has data to check on the full
+      # tier -- test-quick-root/test-quick-cli don't produce coverage
+      # profiles (they run `-short`, no -coverprofile, against a partial
+      # package set, so a floor check against them would be meaningless).
       # go tool cover -func (below) reads the actual source files to attribute
       # coverage ranges to functions, not just the coverage profile text.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.gate.outputs.full_tier == 'true'
 
       - name: Set up Go
+        if: steps.gate.outputs.full_tier == 'true'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.1'
 
       - name: Download coverage artifacts
+        if: steps.gate.outputs.full_tier == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: coverage-*
           merge-multiple: true
 
       - name: Merge coverage profiles
+        if: steps.gate.outputs.full_tier == 'true'
         run: |
           echo "mode: atomic" > coverage_merged.out
           # File-pattern exclusions from the coverage-FLOOR sum (as opposed to
@@ -915,6 +1083,7 @@ jobs:
           mv coverage_merged.out coverage.out
 
       - name: Check coverage floor (≥${{ env.COVERAGE_FLOOR }}%)
+        if: steps.gate.outputs.full_tier == 'true'
         run: |
           pct=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $3}' | tr -d '%')
           awk -v pct="$pct" -v floor="${COVERAGE_FLOOR}" 'BEGIN {
