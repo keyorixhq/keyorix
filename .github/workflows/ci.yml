@@ -1149,17 +1149,19 @@ jobs:
           # "ok  <pkg>  <time>" (or "FAIL"/"?   <pkg> [no test files]") summary
           # line, so the parse below buffers pending names and flushes them,
           # tagged with the package they preceded, the moment it sees that
-          # summary line. $1 is prefixed onto each package path so the
-          # operator module's targets (see below) stay namespaced separately
-          # from the root module's -- a relative package path like
-          # "internal/foo" could in principle exist under both modules.
+          # summary line. Only the ROOT module prefix is stripped (never the
+          # operator/cli submodule's own path segment) -- each submodule's
+          # import path is "github.com/keyorixhq/keyorix/<operator|cli>/...",
+          # so stripping just the root leaves "operator/..." or "cli/..."
+          # already disambiguated from the root module's own package paths;
+          # re-adding that segment as a separate prefix would double it
+          # (e.g. "cli/cli/internal/skew").
           extract_fuzz_targets() {
-            local prefix="$1"
-            awk -v modprefix="${MODULE_PREFIX}/" -v outprefix="$prefix" '
+            awk -v modprefix="${MODULE_PREFIX}/" '
               /^(ok|FAIL)[ \t]/ {
                 pkg = $2
                 sub("^" modprefix, "", pkg)
-                for (i = 1; i <= n; i++) print outprefix pkg "|" names[i]
+                for (i = 1; i <= n; i++) print pkg "|" names[i]
                 n = 0
                 next
               }
@@ -1177,9 +1179,17 @@ jobs:
           # that job's own established convention for module-specific checks.
           echo "== true FuzzXxx functions: operator module (GOWORK=off) =="
           (cd operator && GOWORK=off go test -list '^Fuzz' ./...) | tee operator-fuzz-list.txt
+          # cli is also a separate Go module (see the `cli` job above, which
+          # sets GOWORK: off for the same reason), and not listed in go.work's
+          # `use` directives -- without this pass, any FuzzXxx function added
+          # under cli/ is invisible to this check and its targets.conf entry
+          # is wrongly reported as stale.
+          echo "== true FuzzXxx functions: cli module (GOWORK=off) =="
+          (cd cli && GOWORK=off go test -list '^Fuzz' ./...) | tee cli-fuzz-list.txt
 
-          extract_fuzz_targets "" < root-fuzz-list.txt > true-targets.txt
-          extract_fuzz_targets "operator/" < operator-fuzz-list.txt >> true-targets.txt
+          extract_fuzz_targets < root-fuzz-list.txt > true-targets.txt
+          extract_fuzz_targets < operator-fuzz-list.txt >> true-targets.txt
+          extract_fuzz_targets < cli-fuzz-list.txt >> true-targets.txt
           sort -u true-targets.txt -o true-targets.txt
 
           grep -vE '^[[:space:]]*(#|$)' scripts/fuzzing/targets.conf \

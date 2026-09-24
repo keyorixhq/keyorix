@@ -776,6 +776,73 @@ var opCatalog = []operation{
 		},
 	},
 	{
+		// Coverage batch 7 (2026-09-24, fuzz/new-surfaces): RevokeBreakGlass —
+		// the ORDINARY, roles.assign-gated self-service revoke path
+		// (server/http/handlers/break_glass.go), sibling to
+		// RevokeBreakGlassActivationProxy above but reached through
+		// core.RevokeBreakGlass directly (no /system proxy hop, no
+		// guard+role-removal+conditional-revoke sequence of its own — that
+		// logic lives once, in core.RevokeBreakGlass/
+		// RevokeBreakGlassActivationAtomic, shared by both callers). Exercises
+		// PR #2018's break-glass revoke role-removal + state-update atomicity
+		// fix from this OTHER caller path into the same core function. Setup
+		// seeds the activation directly through the unfaulted storage wrapper
+		// (same shortcut the /system entry above uses), since going through
+		// the real self-service ActivateBreakGlass REST route would also
+		// require configuring c.breakGlassPolicy's emergency role in this
+		// world, which no other opCatalog entry needs.
+		Key: "REST POST /api/v1/projects/{id}/break-glass/{activationId}/revoke",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			pStatus, pBody, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects", map[string]any{"name": "fuzz-bg2-project"})
+			if err != nil {
+				return nil, err
+			}
+			if pStatus/100 != 2 {
+				return nil, fmt.Errorf("setup CreateProject: HTTP %d: %s", pStatus, pBody)
+			}
+			var proj struct {
+				Data struct {
+					ID uint `json:"ID"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(pBody, &proj); err != nil || proj.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateProject response: %w (body=%s)", err, pBody)
+			}
+			userID, err := createUserForFuzz(ctx, w, "fuzz-bg2-user")
+			if err != nil {
+				return nil, err
+			}
+			roleID, err := createRoleForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			if err := w.faulty.AssignRole(ctx, userID, roleID, coreStorage.Scope{ProjectID: proj.Data.ID}); err != nil {
+				return nil, fmt.Errorf("setup AssignRole: %w", err)
+			}
+			activation, err := w.faulty.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
+				ProjectID:     proj.Data.ID,
+				UserID:        userID,
+				RoleID:        roleID,
+				RoleName:      "fuzz-role",
+				Justification: "fuzz break-glass ordinary path",
+				State:         core.BreakGlassActive,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("setup CreateBreakGlassActivation: %w", err)
+			}
+			return map[string]uint{"projectID": proj.Data.ID, "activationID": activation.ID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			s := state.(map[string]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost,
+				fmt.Sprintf("/api/v1/projects/%d/break-glass/%d/revoke", s["projectID"], s["activationID"]), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
 		// Coverage batch 6: CreateSecretDependencyExclusiveProxy — the ONE
 		// deliberately non-passthrough method in secret_dependencies_proxy.go
 		// (evaluates the duplicate/cycle invariant itself, since no real
@@ -818,6 +885,106 @@ var opCatalog = []operation{
 			s := state.(map[string]uint)
 			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/system/secret-dependencies/exclusive", map[string]any{
 				"project_id": 1, "dependent_secret_id": s["dependent"], "depends_on_secret_id": s["dependsOn"],
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// Coverage batch 8 (2026-09-24, fuzz/new-surfaces): CreateSecretAccessRequest
+		// — self-service creation of a secret-scoped access request
+		// (internal/core/classification_gate.go's RequestSecretAccess, introduced
+		// by #2032), previously entirely absent from this catalog.
+		Key: "REST POST /api/v1/secret-access-requests",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			return secretID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			secretID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/secret-access-requests", map[string]any{
+				"secret_id": secretID, "reason": "fuzz access request",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// Coverage batch 8: WithdrawSecretAccessRequest — self-service withdraw of
+		// the caller's own pending secret-scoped request (invitations.go's generic
+		// WithdrawAccessRequest, unchanged for this SecretID-scoped shape). State
+		// is seeded directly through the unfaulted storage wrapper (same shortcut
+		// break-glass batch 7 uses) as the world's own bootstrap admin
+		// ("faultadmin"), since Execute authenticates as that same admin token and
+		// withdraw requires requester == caller.
+		Key: "REST POST /api/v1/secret-access-requests/{requestId}/withdraw",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			admin, err := w.faulty.GetUserByUsername(ctx, "faultadmin")
+			if err != nil {
+				return nil, fmt.Errorf("setup GetUserByUsername(faultadmin): %w", err)
+			}
+			expires := time.Now().Add(24 * time.Hour)
+			created, err := w.faulty.CreateAccessRequest(ctx, &models.AccessRequest{
+				ProjectID: 1, UserID: admin.ID, SecretID: &secretID,
+				State: core.AccessRequestPending, Reason: "fuzz withdraw setup", ExpiresAt: &expires,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("setup CreateAccessRequest: %w", err)
+			}
+			return created.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			reqID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secret-access-requests/%d/withdraw", reqID), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// Coverage batch 8: ResolveSecretAccessRequest (approve) — the
+		// requester-cannot-approve-their-own, admin-authority-ceiling-gated state
+		// transition (ApproveSecretAccessRequest), the most state-machine-shaped
+		// operation in this family. Requester is a freshly created ordinary user
+		// (never the world's own admin), so the real Execute call — as the
+		// bootstrap admin, who never made the request — exercises the actual
+		// authority/self-approval guards rather than short-circuiting them.
+		Key: "REST PUT /api/v1/secret-access-requests/{requestId}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			requesterID, err := createUserForFuzz(ctx, w, "fuzz-sar-requester")
+			if err != nil {
+				return nil, err
+			}
+			expires := time.Now().Add(24 * time.Hour)
+			created, err := w.faulty.CreateAccessRequest(ctx, &models.AccessRequest{
+				ProjectID: 1, UserID: requesterID, SecretID: &secretID,
+				State: core.AccessRequestPending, Reason: "fuzz approve setup", ExpiresAt: &expires,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("setup CreateAccessRequest: %w", err)
+			}
+			return created.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			reqID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/secret-access-requests/%d", reqID), map[string]any{
+				"action": "approve",
 			})
 			if err != nil {
 				return opResult{}, err
