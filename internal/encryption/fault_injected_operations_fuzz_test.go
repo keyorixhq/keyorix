@@ -255,6 +255,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -390,6 +391,7 @@ func armFileFault(seam string, ff *fileFault) (restore func()) {
 	prev := fileFaultHook
 	fileFaultHook = func(s string) *fileFault {
 		if s == seam {
+			recordSeamHit(seam)
 			return ff
 		}
 		return nil
@@ -404,6 +406,7 @@ func armMultiFileFault(faults map[string]*fileFault) (restore func()) {
 	prev := fileFaultHook
 	fileFaultHook = func(s string) *fileFault {
 		if f, ok := faults[s]; ok {
+			recordSeamHit(s)
 			return f
 		}
 		return nil
@@ -440,6 +443,7 @@ func armSQLFault(db *gorm.DB, seam string) (restore func()) {
 	case "sql:create-node", "sql:create-version", "sql:update-version":
 		_ = db.Callback().Create().Before("gorm:before_create").Register(name, func(d *gorm.DB) {
 			if match(d.Statement.Dest, seam) {
+				recordSeamHit(seam)
 				_ = d.AddError(errInjectedFault)
 			}
 		})
@@ -447,6 +451,7 @@ func armSQLFault(db *gorm.DB, seam string) (restore func()) {
 	case "sql:delete-node", "sql:delete-shares", "sql:delete-acls":
 		_ = db.Callback().Delete().Before("gorm:before_delete").Register(name, func(d *gorm.DB) {
 			if match(d.Statement.Dest, seam) {
+				recordSeamHit(seam)
 				_ = d.AddError(errInjectedFault)
 			}
 		})
@@ -483,6 +488,7 @@ func armSQLUpdateFault(db *gorm.DB, seam string) (restore func()) {
 	}
 	_ = db.Callback().Update().Before("gorm:before_update").Register(name, func(d *gorm.DB) {
 		if match(d.Statement.Model, seam) {
+			recordSeamHit(seam)
 			_ = d.AddError(errInjectedFault)
 		}
 	})
@@ -604,14 +610,14 @@ func FuzzFaultInjectedOperations(f *testing.F) {
 	// Seed one case per (operation, seam, kind) combination decodeFault can
 	// produce, including kek:rename-dek's ambiguous kind — see decodeFault's
 	// comment: that case is deterministic post-fix (transparent recovery), not
-	// a tolerated finding anymore.
-	for opSel := 0; opSel < int(numOps); opSel++ {
-		seams := opSeams[opID(opSel)]
-		for seamSel := range seams {
-			for kindSel := 0; kindSel < 2; kindSel++ {
-				f.Add(byte(opSel), byte(seamSel), byte(kindSel), byte(3), "old-pass", "new-pass", "secret-val")
-			}
-		}
+	// a tolerated finding anymore. Shared with
+	// TestFuzzFaultInjectedOperationsSeedsReachEveryOpAndSeam below, which
+	// replays this EXACT set outside `go test -fuzz` and asserts every
+	// declared (op, seam) pair was actually reached by real production code —
+	// not just that decodeFault's arithmetic selects it (PR #2047's lesson:
+	// a seed that looks like it covers something can silently not reach it).
+	for _, s := range allFaultInjectedSeedTriples() {
+		f.Add(s.opSel, s.seamSel, s.kindSel, byte(3), "old-pass", "new-pass", "secret-val")
 	}
 	f.Add(byte(0), byte(0), byte(0), byte(0), "", "", "")
 
@@ -1509,5 +1515,103 @@ func runMigrateProviderBackupFaultCase(t *testing.T, seam string, ff *fileFault,
 
 	if hits := scanForPlaintext(dir, probe); len(hits) > 0 {
 		t.Fatalf("PLAINTEXT SPILL: op=migrate-provider seam=%q probe found on disk: %v", seam, hits)
+	}
+}
+
+// ── seed-corpus reachability guard ───────────────────────────────────────
+//
+// PR #2047's lesson: a seed can look like it covers a code path (its bytes
+// decode, via this file's own decodeFault, to a specific op/seam) without
+// that path ever actually being exercised at runtime. decodeFault here is
+// simpler than #2047's argv-construction bug (pure, and oracle (c) already
+// demands the fault fire for every case) — but "the decode function selects
+// seam X" and "seam X's hook was actually consulted by real production code"
+// are still two different claims. This guard checks the second one directly,
+// independent of oracle (c), so a future refactor that silently stops
+// calling a seam (e.g. a code path rerouted around durableWriteSync) fails
+// CI here even if some other oracle happened to still pass.
+
+var (
+	seamHitMu    sync.Mutex
+	seamHitCount = map[string]int{}
+)
+
+// recordSeamHit is called by armFileFault/armMultiFileFault/armSQLFault/
+// armSQLUpdateFault's installed hooks ONLY when the seam label they were
+// armed for is actually consulted by real production code — never merely
+// when a case is selected.
+func recordSeamHit(seam string) {
+	seamHitMu.Lock()
+	seamHitCount[seam]++
+	seamHitMu.Unlock()
+}
+
+func resetSeamHitCounts() {
+	seamHitMu.Lock()
+	seamHitCount = map[string]int{}
+	seamHitMu.Unlock()
+}
+
+func seamHits(seam string) int {
+	seamHitMu.Lock()
+	defer seamHitMu.Unlock()
+	return seamHitCount[seam]
+}
+
+type faultSeedTriple struct {
+	opSel, seamSel, kindSel byte
+}
+
+// allFaultInjectedSeedTriples enumerates one (op, seam, kind) triple per
+// combination decodeFault can produce — the same set FuzzFaultInjectedOperations
+// seeds itself with (via f.Add) and TestFuzzFaultInjectedOperationsSeedsReachEveryOpAndSeam
+// replays directly, so the two can never silently drift apart.
+func allFaultInjectedSeedTriples() []faultSeedTriple {
+	var triples []faultSeedTriple
+	for opSel := 0; opSel < int(numOps); opSel++ {
+		seams := opSeams[opID(opSel)]
+		for seamSel := range seams {
+			for kindSel := 0; kindSel < 2; kindSel++ {
+				triples = append(triples, faultSeedTriple{byte(opSel), byte(seamSel), byte(kindSel)})
+			}
+		}
+	}
+	return triples
+}
+
+// TestFuzzFaultInjectedOperationsSeedsReachEveryOpAndSeam replays this
+// fuzzer's own committed seed set (allFaultInjectedSeedTriples, the exact
+// triples FuzzFaultInjectedOperations' f.Add loop uses) through the SAME
+// case runner the real fuzz target uses, and asserts every seam declared in
+// opSeams was actually consulted by real production code at least once — a
+// dead seed (one that decodes to a seam the runner never really reaches)
+// fails this test, not just silently contributes zero coverage. Plain `go
+// test`, not `-fuzz`: this runs on every CI invocation of this package's
+// test suite, same as any other Test function.
+func TestFuzzFaultInjectedOperationsSeedsReachEveryOpAndSeam(t *testing.T) {
+	resetSeamHitCounts()
+
+	dbWorlds := fuzzworld.Worlds(t, "faultopsfuzzreachguard", ":memory:", 0)
+	for _, s := range allFaultInjectedSeedTriples() {
+		runFaultInjectedCase(t, dbWorlds, s.opSel, s.seamSel, s.kindSel, 3, "old-pass", "new-pass", "secret-val")
+	}
+
+	for op, seams := range opSeams {
+		for _, s := range seams {
+			if s.kind == seamCombined {
+				// The combined case (kek:rename-dek-verify-unknown) fires two
+				// DIFFERENT sub-seam labels via armMultiFileFault, never its
+				// own label — checked directly, not via s.label.
+				for _, sub := range []string{"kek:rename-dek", "kek:verify-rename-dek"} {
+					if seamHits(sub) == 0 {
+						t.Errorf("DEAD SEED: op=%v combined seam %q's sub-seam %q was never actually consulted by production code", op, s.label, sub)
+					}
+				}
+				continue
+			}
+			if seamHits(s.label) == 0 {
+				t.Errorf("DEAD SEED: op=%v seam %q was never actually consulted by production code — a committed seed exists for it, but nothing reached it", op, s.label)
+			}
+		}
 	}
 }
