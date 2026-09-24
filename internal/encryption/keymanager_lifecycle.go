@@ -354,7 +354,12 @@ func (km *KeyManager) Initialize(passphrase string) error {
 	return nil
 }
 
-// ensureSaltExists returns the existing salt or generates a new one.
+// ensureSaltExists returns the existing salt or generates a new one. Only
+// reached via deriveKEK's legacy (km.keyProvider == nil) branch — unreachable
+// from any live production caller today (Service.NewService, the only
+// production constructor of a KeyManager, always calls SetKeyProvider before
+// Initialize), so no fault-injection seam is wired here; see
+// FuzzFaultInjectedOperations/opInit's doc comment.
 func (km *KeyManager) ensureSaltExists() ([]byte, error) {
 	saltFullPath := filepath.Join(km.baseDir, km.saltPath)
 
@@ -381,6 +386,19 @@ func (km *KeyManager) ensureSaltExists() ([]byte, error) {
 }
 
 // ensureWrappedDEKExists generates and wraps a new DEK if none exists on disk.
+//
+// Writes via a .pending file, renamed into place, rather than straight to
+// dekFullPath (durableWriteSync's "init:write-dek" / durableRename's
+// "init:rename-dek" seams, FuzzFaultInjectedOperations/opInit): a short/torn
+// write straight to the final path would leave a file that EXISTS (so the
+// os.Stat/IsNotExist check below never regenerates it) but fails to unwrap —
+// permanently bricking that install's encryption bootstrap until an operator
+// manually deletes the corrupt file, since first-run generation (unlike
+// rewrap/KEK-rotation) previously had no recovery step at all. A leftover
+// .pending file from a prior interrupted attempt is never read — this branch
+// only runs when dekFullPath itself doesn't exist yet, so a retry simply
+// overwrites the stale .pending in place before renaming; no CleanPendingDEK
+// equivalent is needed here.
 func (km *KeyManager) ensureWrappedDEKExists(kek []byte) error {
 	dekFullPath := filepath.Join(km.baseDir, km.dekPath)
 
@@ -395,8 +413,17 @@ func (km *KeyManager) ensureWrappedDEKExists(kek []byte) error {
 		if err != nil {
 			return fmt.Errorf("failed to wrap DEK: %w", err)
 		}
-		if err := securefiles.SecureWriteFileSync(km.baseDir, km.dekPath, wrapped, 0600); err != nil {
+		pendingRel := km.dekPath + ".pending"
+		if err := durableWriteSync(km.baseDir, pendingRel, wrapped, 0600, "init:write-dek"); err != nil {
 			return fmt.Errorf("failed to write wrapped DEK: %w", err)
+		}
+		pendingFullPath := filepath.Join(km.baseDir, pendingRel)
+		if err := durableRename(pendingFullPath, dekFullPath, "init:rename-dek"); err != nil {
+			_ = os.Remove(pendingFullPath)
+			return fmt.Errorf("failed to commit wrapped DEK: %w", err)
+		}
+		if err := durableSyncDir(filepath.Dir(dekFullPath), "init:syncdir-dek"); err != nil {
+			return fmt.Errorf("failed to sync key directory: %w", err)
 		}
 		fmt.Printf("✅ Generated and wrapped new DEK at %s\n", dekFullPath)
 	}
