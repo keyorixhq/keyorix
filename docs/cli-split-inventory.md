@@ -1120,6 +1120,86 @@ today). File and fix this as its own PR before this group's migration PR opens, 
 doesn't carry the bug into the new module under a "matches old behavior" banner. `bulk-delete` and
 `score`'s embedded paths are DROP (Findings S5/S6). Size: large.
 
+**Prerequisite status: already closed.** Finding S2 landed on `main` in #2013
+("fix(cli): scope secret render/rotate/score to project+environment (inventory #2012, S2)")
+before this PR opened — `render.go` calls the purpose-built
+`POST /projects/{id}/secrets/render`, and `rotate.go`'s `findExactSecretID` resolves the
+environment name to a numeric ID first and scopes its lookup by both `project_id` and
+`environment_id`, refusing to guess on an ambiguous match. Verified directly against this PR's
+own fresh `origin/main` checkout before starting the migration, not assumed from the citation.
+
+**Decision: `secret import --source {vault,aws,azure,gcp}` is moved out, not dropped.** This PR
+ports `secret import` in file mode only (REST-only, no cloud SDKs) — matching ADR-108's "SBOM
+lists no cloud SDKs" goal for the new thin CLI. The cloud/Vault-credential import modes stay on
+the OLD CLI until a separate migration tool (working name `keyorix-migrate`: its own module and
+binary, cloud SDKs allowed there since it never ships as part of the client surface, writes via
+REST like everything else) replaces them. The Phase 5 deletion of the old CLI is gated on that
+tool existing — Vault/cloud import is a real customer migration path, not a command to silently
+lose. Decided 2026-09-24, not unilaterally — this is a scope call with SBOM/dependency-graph
+consequences beyond this one PR.
+
+**Closed by PR split/pr5-cli-secret-bulk (2026-09-24, from fresh `origin/main` — independent
+of split/pr3-cli-rbac-group-invite and split/pr4-cli-secret-core, does not stack on either).**
+21 commands ported into `cli/cmd/`: rotation (`rotate`, `rotation-simulate`, `auto-rotate`),
+bulk (`bulk-rotate`, `bulk-rename`, `bulk-delete`), hygiene reports (`expiring`, `orphaned`,
+`name-conformance`, `quota-report`, `ownership-history`, `reassign-owner`), risk/inspection
+(`score`, `blast-radius`, `cert`, `audit`), `render`, `export`, `import` (file mode), and the
+local-only tools `scan`, `explain`, `fix` — all REST-only against the generated `apiclient`
+except the three local-only tools, which have no server call at all. `bulk-delete`'s and
+`score`'s embedded-mode paths (Findings S5/S6) are moot by construction — this module has no
+local/embedded mode.
+
+Every command that took a project/environment **by name** in the old CLI (`export`, `render`,
+`import`, `score` — via `common.ResolveProject`/`ResolveProjectIDRemote`/
+`ResolveEnvironmentIDRemote`, an "active project" fallback concept) now takes required numeric
+`--project`/`--environment` IDs instead, matching PR 4's `secret diff` precedent and the
+convention every other command in this module already uses — that name-resolution
+infrastructure doesn't exist yet in the new CLI (it's PR 6's job), and porting it here would
+have been scope creep. `bulk-rotate`/`bulk-rename`/`bulk-delete` already used numeric IDs in
+the old CLI, so those three needed no change.
+
+**Prerequisite status: already closed.** Finding S2 (the broken `?environment=<name>` filter
+in `rotate`/`render`) landed on `main` in #2013 before this PR opened — verified directly
+against this PR's own fresh `origin/main` checkout, not assumed from the citation (see the note
+above PR 5's plan bullet).
+
+**New shared package `cli/internal/securefiles`** — a trimmed port of the main module's
+`internal/securefiles` (`SecureOpenBeneath`'s per-path-component `O_NOFOLLOW` walk,
+`SecureCreateFileHandle`'s `O_EXCL` + that same walk), since the `cli` module cannot import
+the main module's package at all (ADR-108 Decision A: `cli/go.mod` carries no dependency on
+the main module). Used by `export --output`, `render --output`, `scan --report`, and `fix`'s
+source-tree rewrites — the exact same symlink-TOCTOU protection the old CLI's equivalents had,
+not a downgrade.
+
+**OpenAPI spec gaps found and closed:** 16 routes existed in `router.go` with no OpenAPI path
+entry at all (bulk-rotate/rename/delete, expiring, orphaned, name-conformance ×2, reassign-owner,
+render, rotation/simulate, auto-rotate, audit, ownership-history, certificate, blast-radius,
+quota-report); 2 more (`rotateSecret`, `getSecretRisk`) existed with no response schema.
+Authored full request+response schemas for all 18 (18 new `components/schemas` entries), moving
+each from `pendingRegistry`/unregistered into `contracttest`'s `exercisingTests` registry, each
+closed by a new, self-contained happy-path test in
+`server/http/handlers/openapi_contract_pr5_test.go`.
+
+**Decision (this PR): `secret export`/`import`/list-name-resolution decode local DTOs off the
+raw generated client methods (`ListSecretsWithResponse`'s `.Body []byte`), not typed
+`JSON200` accessors** — `listSecrets`/`createSecret`/`getSecret` have no response schema in
+*this* PR's branch point (authoring `Secret`/`SecretGetResult`/`SecretListEntry` is PR 4's job,
+a sibling independent PR on its own branch); waiting on that schema to land here would have
+made this PR depend on PR 4's merge order. `filterspec.go`'s `keptPaths` comment documents this
+explicitly so the reason doesn't get lost. When PR 4 merges, this decode path becomes just as
+correct with a typed accessor available — a follow-up simplification, not a functional gap.
+
+Verified: `go build`/`go vet`/`go test ./...` clean for both `cli` (depguard green) and the main
+module's `server/http/handlers` + `.../contracttest` packages; `gosec -severity medium` and
+`golangci-lint` both clean on `cli/`; `gosec` clean on `server/http/handlers`; `spectral lint`
+zero errors on `openapi.yaml`; `scripts/check-closures.sh --self-test` green. Security-critical
+regression tests (per this track's standing mandate): `TestSecretRotate_NeverLeaksTheCanaryValue`
+and `TestSecretImport_NeverLeaksTheCanaryValue`/`..._DryRunNeverLeaksTheCanaryValue` run a
+canary value through `rotate --value` and `import`, asserting it never reaches stdout or
+stderr — verified red→green by planting a debug leak into `runSecretRotate`, confirming the
+test caught it, then reverting. New `cli/internal/securefiles` package carries its own
+symlink-refusal tests (leaf symlink, intermediate-component symlink, pre-existing-path refusal).
+
 **PR 6 — `project`, `user` (14+11 = 25 commands).** **Hard prerequisite**: Finding S1 (admin-rank
 ceiling gap on `PUT /api/v1/users/{id}`) must be fixed on the server route itself before this PR
 deletes `user update`'s local fallback — today's fallback is, ironically, the better-guarded of the

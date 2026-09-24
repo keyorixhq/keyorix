@@ -5,6 +5,9 @@
 // commands were already remote-only in the old CLI (no embedded fallback to
 // strip) -- this is a straightforward retarget onto the generated apiclient.
 //
+// PR 5 (§7) adds bulk/rotation/export/import/scan/hygiene to the same
+// command group.
+//
 // This is the highest-scrutiny command group in the whole split: secret
 // VALUES must never appear in a log line, an argv-visible flag echo, or an
 // error message. See secret_test.go's
@@ -12,14 +15,17 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/keyorixhq/keyorix/cli/internal/apiclient"
+	"github.com/keyorixhq/keyorix/cli/internal/securefiles"
 )
 
 // SecretCmd is the root command for secret operations, exported (matching
@@ -28,7 +34,7 @@ import (
 var SecretCmd = &cobra.Command{
 	Use:   "secret",
 	Short: "Manage secrets",
-	Long:  "Create, read, update, delete, and manage secrets and their metadata.",
+	Long:  "Create, read, update, delete, and manage secrets and their metadata; bulk operations, rotation, export/import, and hygiene reports.",
 }
 
 func init() {
@@ -51,10 +57,11 @@ func secretAPIClient() (*apiclient.ClientWithResponses, error) {
 
 // warnInsecureFlag mirrors the old CLI's internal/cli/common.WarnInsecureFlag:
 // warns to stderr when a secret-bearing flag was passed on the command line
-// (visible to other local users via ps/proc, and saved in shell history).
+// (visible to other local users via ps/proc, and saved in shell history). It
+// names the FLAG only -- it must never print the flag's value.
 func warnInsecureFlag(cmd *cobra.Command, flagName, advice string) {
 	if cmd.Flags().Changed(flagName) {
-		fmt.Fprintf(os.Stderr, "Warning: passing --%s on the command line is insecure (visible to other local users via ps/proc, and saved in shell history); %s\n", flagName, advice)
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: passing --%s on the command line is insecure (visible to other local users via ps/proc, and saved in shell history); %s\n", flagName, advice)
 	}
 }
 
@@ -81,4 +88,23 @@ func derefSecretBool(b *bool) bool {
 		return false
 	}
 	return *b
+}
+
+// secureCreateOutputFile opens path for a fresh output file (render --output, export
+// --output, scan --report). Delegates to securefiles.SecureCreateFileHandle, which
+// combines O_EXCL (refuses to write through OR overwrite a pre-existing path,
+// including a symlink an attacker with write access to a shared directory planted at
+// the target ahead of time) with a per-path-component O_NOFOLLOW walk. path may be an
+// arbitrary operator-supplied absolute or relative path, so it's split into
+// (baseDir, relPath) the way securefiles expects.
+func secureCreateOutputFile(path string) (*os.File, error) {
+	return securefiles.SecureCreateFileHandle(filepath.Dir(path), filepath.Base(path), 0o600)
+}
+
+// decodeJSONBody unmarshals a raw generated-client response body into v. Used for the
+// operations this module's own openapi.yaml filter kept without a response schema
+// (listSecrets, createSecret, getSecret — PR 4's job, a sibling independent PR), whose
+// generated methods return only a raw []byte body rather than a typed JSON200 field.
+func decodeJSONBody(body []byte, v interface{}) error {
+	return json.Unmarshal(body, v)
 }
