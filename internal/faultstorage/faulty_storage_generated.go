@@ -2899,6 +2899,24 @@ func (w *FaultyStorage) GetProjectUsageStats(ctx context.Context, projectIDs []u
 	return w.real.GetProjectUsageStats(ctx, projectIDs, windowDays)
 }
 
+func (w *FaultyStorage) GetRecoveryKeyRecord(ctx context.Context) (*models.RecoveryKeyRecord, bool, error) {
+	fire, kind, injected := w.check("GetRecoveryKeyRecord")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 *models.RecoveryKeyRecord
+			var zero2 bool
+			return zero1, zero2, injected
+		case KindEffectThenError:
+			rv1, rv2, _ := w.real.GetRecoveryKeyRecord(ctx)
+			return rv1, rv2, injected
+		}
+	}
+	return w.real.GetRecoveryKeyRecord(ctx)
+}
+
 func (w *FaultyStorage) GetRiskException(ctx context.Context, id uint) (*models.RiskException, error) {
 	fire, kind, injected := w.check("GetRiskException")
 	if fire {
@@ -6102,6 +6120,22 @@ func (w *FaultyStorage) SetPasswordHash(ctx context.Context, id uint, hash strin
 		}
 	}
 	return w.real.SetPasswordHash(ctx, id, hash, changedAt)
+}
+
+func (w *FaultyStorage) SetRecoveryKeyRecord(ctx context.Context, record *models.RecoveryKeyRecord) error {
+	fire, kind, injected := w.check("SetRecoveryKeyRecord")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			return injected
+		case KindEffectThenError:
+			_ = w.real.SetRecoveryKeyRecord(ctx, record)
+			return injected
+		}
+	}
+	return w.real.SetRecoveryKeyRecord(ctx, record)
 }
 
 func (w *FaultyStorage) SetRetentionOverride(ctx context.Context, secretID uint, days int) error {

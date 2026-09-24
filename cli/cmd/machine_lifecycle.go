@@ -17,14 +17,14 @@ var machineSuspendCmd = &cobra.Command{
 	Use:   "suspend <name|id>",
 	Short: "Suspend a machine identity",
 	Args:  cobra.ExactArgs(1),
-	RunE:  machineLifecycleRunE(apiclient.Suspend, "suspended"),
+	RunE:  machineLifecycleRunE(apiclient.TransitionMachineIdentityJSONBodyActionSuspend, "suspended"),
 }
 
 var machineReactivateCmd = &cobra.Command{
 	Use:   "reactivate <name|id>",
 	Short: "Reactivate a suspended machine identity",
 	Args:  cobra.ExactArgs(1),
-	RunE:  machineLifecycleRunE(apiclient.Activate, "active"),
+	RunE:  machineLifecycleRunE(apiclient.TransitionMachineIdentityJSONBodyActionActivate, "active"),
 }
 
 var machineRevokeForce bool
@@ -91,7 +91,7 @@ func runMachineRevoke(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 	}
-	return transitionMachine(client, projectID, m, apiclient.Revoke, "revoked")
+	return transitionMachine(client, projectID, m, apiclient.TransitionMachineIdentityJSONBodyActionRevoke, "revoked")
 }
 
 func transitionMachine(client *apiclient.ClientWithResponses, projectID int, m apiclient.MachineIdentity, action apiclient.TransitionMachineIdentityJSONBodyAction, targetStateLabel string) error {

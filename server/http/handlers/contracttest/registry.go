@@ -140,6 +140,42 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"withdrawAccessRequest":          reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-requests/{requestId}/withdraw
 	"withdrawSecretAccessRequest":    reasonSchemaNotYetWritten, // post /api/v1/secret-access-requests/{requestId}/withdraw
 	"writeAuditCheckpoint":           reasonSchemaNotYetWritten, // post /api/v1/audit/checkpoint
+	"bulkApproveAccessRequests":          reasonSchemaNotYetWritten, // post /api/v1/access-requests/bulk-approve
+	"bulkRejectAccessRequests":           reasonSchemaNotYetWritten, // post /api/v1/access-requests/bulk-reject
+	"createAlertEscalationPolicy":        reasonSchemaNotYetWritten, // post /api/v1/alert-escalation-policies
+	"createNotificationChannel":          reasonSchemaNotYetWritten, // post /api/v1/notification-channels
+	"createRejectionReasonTemplate":      reasonSchemaNotYetWritten, // post /api/v1/rejection-reason-templates
+	"deleteAlertEscalationPolicy":        reasonSchemaNotYetWritten, // delete /api/v1/alert-escalation-policies/{id}
+	"deleteNotificationChannel":          reasonSchemaNotYetWritten, // delete /api/v1/notification-channels/{id}
+	"deleteRejectionReasonTemplate":      reasonSchemaNotYetWritten, // delete /api/v1/rejection-reason-templates/{id}
+	"getAnomalyConfig":                   reasonSchemaNotYetWritten, // get /api/v1/admin/anomaly-config
+	"getNotificationChannel":             reasonSchemaNotYetWritten, // get /api/v1/notification-channels/{id}
+	"listAlertEscalationPolicies":        reasonSchemaNotYetWritten, // get /api/v1/alert-escalation-policies
+	"listNotificationChannels":           reasonSchemaNotYetWritten, // get /api/v1/notification-channels
+	"listRejectionReasonTemplates":       reasonSchemaNotYetWritten, // get /api/v1/rejection-reason-templates
+	"listSecretShares":                   reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}/shares
+	"listSharedSecrets":                  reasonSchemaNotYetWritten, // get /api/v1/shared-secrets
+	"listSharedSecretsForUser":           reasonSchemaNotYetWritten, // get /api/v1/users/{id}/shared-secrets
+	"migrateAuditChainEncoding":          reasonSchemaNotYetWritten, // post /api/v1/audit/migrate-chain-encoding
+	"runAlertEscalation":                 reasonSchemaNotYetWritten, // post /api/v1/admin/jobs/run-alert-escalation
+	"runRoleExpiryCheck":                 reasonSchemaNotYetWritten, // post /api/v1/admin/jobs/role-expiry-check
+	"runTokenExpiryCheck":                reasonSchemaNotYetWritten, // post /api/v1/admin/jobs/token-expiry-check
+	"shareSecret":                        reasonSchemaNotYetWritten, // post /api/v1/secrets/{id}/share
+	"updateAnomalyConfig":                reasonSchemaNotYetWritten, // put /api/v1/admin/anomaly-config
+	"updateNotificationChannel":          reasonSchemaNotYetWritten, // put /api/v1/notification-channels/{id}
+	"updateSharePermission":              reasonSchemaNotYetWritten, // put /api/v1/shares/{id}
+	"approveRiskException":               reasonSchemaNotYetWritten, // post /api/v1/risk-exceptions/{id}/approve
+	"exportComplianceControlsCSV":        reasonSchemaNotYetWritten, // get /api/v1/compliance/controls.csv
+	"getComplianceCredentialTrends":      reasonSchemaNotYetWritten, // get /api/v1/compliance/credential-trends
+	"getComplianceDigest":                reasonSchemaNotYetWritten, // get /api/v1/compliance/digest
+	"getCompliancePermissionBaseline":    reasonSchemaNotYetWritten, // get /api/v1/compliance/permission-baseline
+	"getCompliancePermissionBaselineCSV": reasonSchemaNotYetWritten, // get /api/v1/compliance/permission-baseline.csv
+	"getCompliancePermissionChanges":     reasonSchemaNotYetWritten, // get /api/v1/compliance/permission-changes
+	"getComplianceRotationByBackend":     reasonSchemaNotYetWritten, // get /api/v1/compliance/rotation-by-backend
+	"getDeploymentHygiene":               reasonSchemaNotYetWritten, // get /api/v1/hygiene
+	"getProjectSecretsInventoryCSV":      reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/secrets/inventory.csv
+	"getSecretsInventoryCSV":             reasonSchemaNotYetWritten, // get /api/v1/secrets/inventory.csv
+	"sendComplianceDigest":               reasonSchemaNotYetWritten, // post /api/v1/compliance/digest/send
 }
 
 // outOfScopeRegistry lists every operationId that will never be enforced,
@@ -174,6 +210,11 @@ var outOfScopeRegistry = map[string]string{ // #nosec G101 -- operationId keys, 
 	"revokePAT":                reason204NoContent, // delete /api/v1/auth/tokens/{id}
 	"revokeSession":            reason204NoContent, // delete /api/v1/auth/sessions/{id}
 	"revokeShare":              reason204NoContent, // delete /api/v1/shares/{id}
+	"deleteFolder":               reason204NoContent, // delete /api/v1/folders/{id}
+	"deleteSecretSchedule":       reason204NoContent, // delete /api/v1/secrets/{id}/schedule
+	"deleteSecretTemplate":       reason204NoContent, // delete /api/v1/secret-templates/{id}
+	"deleteSecretVersionComment": reason204NoContent, // delete /api/v1/secrets/{id}/versions/{versionId}/comments/{commentId}
+	"removeSecretDependency":     reason204NoContent, // delete /api/v1/secrets/{id}/dependencies/{depId}
 
 	"prometheusMetrics": "promhttp.Handler, third-party code, no generated client will ever read Prometheus exposition format", // get /metrics
 }
@@ -225,6 +266,43 @@ var exercisingTests = map[string][]string{
 	"listProjects":          {"TestContractPR2_ListProjects"},
 	"machineTokenHygiene":   {"TestContractPR2_MachineTokenHygiene"},
 	"patHygiene":            {"TestContractPR2_PATHygiene"},
+	// docs/cli-split-inventory.md §7 PR 4 (secret core CRUD + metadata) --
+	// openapi_contract_pr4_test.go.
+	"addSecretDependency":       {"TestContractPR4_AddSecretDependency"},
+	"addSecretVersionComment":   {"TestContractPR4_AddSecretVersionComment"},
+	"classifySecret":            {"TestContractPR4_ClassifySecret"},
+	"copyEnvironmentSecrets":    {"TestContractPR4_CopyEnvironmentSecrets"},
+	"copySecret":                {"TestContractPR4_CopySecret"},
+	"createFolder":              {"TestContractPR4_CreateFolder"},
+	"createSecret":              {"TestContractPR4_CreateSecret"},
+	"createSecretTemplate":      {"TestContractPR4_CreateSecretTemplate"},
+	"describeSecret":            {"TestContractPR4_DescribeSecret"},
+	"diffSecretVersions":        {"TestContractPR4_DiffSecretVersions"},
+	"getSecret":                 {"TestContractPR4_GetSecret"},
+	"getSecretAccessLog":        {"TestContractPR4_GetSecretAccessLog"},
+	"getSecretByName":           {"TestContractPR4_GetSecretByName"},
+	"getSecretImpact":           {"TestContractPR4_GetSecretImpact"},
+	"getSecretSchedule":         {"TestContractPR4_GetSecretSchedule"},
+	"getSecretTags":             {"TestContractPR4_GetSecretTags"},
+	"getSecretValueByRef":       {"TestContractPR4_GetSecretValueByRef"},
+	"getSecretVersions":         {"TestContractPR4_GetSecretVersions"},
+	"grantSecretACL":            {"TestContractPR4_GrantSecretACL"},
+	"listAccessors":             {"TestContractPR4_ListAccessors"},
+	"listDeletedSecrets":        {"TestContractPR4_ListDeletedSecrets"},
+	"listFolders":               {"TestContractPR4_ListFolders"},
+	"listSecretDependencies":    {"TestContractPR4_ListSecretDependencies"},
+	"listSecretTemplates":       {"TestContractPR4_ListSecretTemplates"},
+	"listSecretVersionComments": {"TestContractPR4_ListSecretVersionComments"},
+	"listSecrets":               {"TestContractPR4_ListSecrets"},
+	"moveSecret":                {"TestContractPR4_MoveSecret"},
+	"restoreSecret":             {"TestContractPR4_RestoreSecret"},
+	"resumeSecret":              {"TestContractPR4_ResumeSecret"},
+	"revokeSecretACL":           {"TestContractPR4_RevokeSecretACL"},
+	"rollbackSecret":            {"TestContractPR4_RollbackSecret"},
+	"setSecretSchedule":         {"TestContractPR4_SetSecretSchedule"},
+	"setSecretTags":             {"TestContractPR4_SetSecretTags"},
+	"suspendSecret":             {"TestContractPR4_SuspendSecret"},
+	"updateSecret":              {"TestContractPR4_UpdateSecret"},
 	// docs/cli-split-inventory.md §7 PR 3 (rbac, group, invite) --
 	// openapi_contract_pr3_test.go.
 	"addGroupMember":          {"TestContractPR3_AddGroupMember"},
@@ -275,4 +353,24 @@ var exercisingTests = map[string][]string{
 	"listSharedSecrets":        {"TestContractPR9_ListSharedSecrets"},
 	"listSharedSecretsForUser": {"TestContractPR9_ListSharedSecretsForUser"},
 	"listGroupShares":          {"TestContractPR9_ListGroupShares"},
+	// docs/cli-split-inventory.md §7 PR 5 (secret bulk/rotation/export/import/scan/
+	// hygiene) -- openapi_contract_pr5_test.go.
+	"listExpiringSecrets":             {"TestContractPR5_ListExpiringSecrets"},
+	"listOrphanedSecrets":             {"TestContractPR5_ListOrphanedSecrets"},
+	"secretNameConformance":           {"TestContractPR5_SecretNameConformance"},
+	"deploymentSecretNameConformance": {"TestContractPR5_DeploymentSecretNameConformance"},
+	"reassignSecretOwner":             {"TestContractPR5_ReassignSecretOwner"},
+	"bulkRotateSecrets":               {"TestContractPR5_BulkRotateSecrets"},
+	"bulkRenameSecrets":               {"TestContractPR5_BulkRenameSecrets"},
+	"bulkDeleteSecrets":               {"TestContractPR5_BulkDeleteSecrets"},
+	"renderSecretTemplate":            {"TestContractPR5_RenderTemplate"},
+	"rotateSecret":                    {"TestContractPR5_RotateSecret"},
+	"simulateSecretRotation":          {"TestContractPR5_SimulateRotation"},
+	"setSecretAutoRotate":             {"TestContractPR5_SetAutoRotate"},
+	"getSecretAuditTrail":             {"TestContractPR5_AuditTrail"},
+	"getSecretOwnershipHistory":       {"TestContractPR5_OwnershipHistory"},
+	"getSecretCertificate":            {"TestContractPR5_GetSecretCertificate"},
+	"getSecretBlastRadius":            {"TestContractPR5_GetBlastRadius"},
+	"getSecretRisk":                   {"TestContractPR5_GetSecretRisk"},
+	"getQuotaReport":                  {"TestContractPR5_GetQuotaReport"},
 }

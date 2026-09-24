@@ -24,6 +24,11 @@ func init() {
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(logoutCmd)
 	rootCmd.AddCommand(mfaCmd)
+	rootCmd.AddCommand(auditCmd)
+	rootCmd.AddCommand(anomaliesCmd)
+	rootCmd.AddCommand(notificationCmd)
+	rootCmd.AddCommand(accessReviewCmd)
+	rootCmd.AddCommand(requestCmd)
 	rootCmd.AddCommand(projectCmd)
 	rootCmd.AddCommand(userCmd)
 }
