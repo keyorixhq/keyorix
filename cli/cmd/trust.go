@@ -9,8 +9,8 @@
 // constants) and internal/securefiles (for the symlink/overwrite-safe key writes);
 // neither can be imported here (depguard). GenerateKey is one line of stdlib
 // (crypto/ed25519.GenerateKey) reimplemented directly below; the secure-write guarantee
-// is cli/internal/securefile (see its package doc for the documented scope reduction
-// from internal/securefiles).
+// is cli/internal/securefiles (CreateFileSync/WriteFile, a port of the main module's
+// internal/securefiles).
 package cmd
 
 import (
@@ -26,7 +26,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/keyorixhq/keyorix/cli/internal/securefile"
+	"github.com/keyorixhq/keyorix/cli/internal/securefiles"
 )
 
 var trustCmd = &cobra.Command{
@@ -115,10 +115,10 @@ var trustKeygenCmd = &cobra.Command{
 		// non-race case; O_EXCL is the actual enforcement). --force intentionally allows
 		// overwrite, so it uses the non-exclusive write instead. Sync'd since this is
 		// unrecoverable key material.
-		writeKey := securefile.CreateFileSync
+		writeKey := securefiles.CreateFileSync
 		if trustKeygenForce {
 			writeKey = func(dir, name string, data []byte, perm os.FileMode) error {
-				return securefile.WriteFile(dir, name, data, perm)
+				return securefiles.WriteFile(dir, name, data, perm)
 			}
 		}
 		if err := writeKey(trustKeygenDir, keyID+".private.pem", privPEM, 0o600); err != nil {
