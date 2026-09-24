@@ -134,6 +134,28 @@ func TestAWSKMS_FallbackEnabled_LegacyBlobDecryptsAsMigrationAid(t *testing.T) {
 	}
 }
 
+// fakeKMSEmptyCiphertext models a KMS Encrypt response with no usable
+// CiphertextBlob (missing/empty field) -- the shape a malicious/compromised
+// endpoint could return under an operator AWS_ENDPOINT_URL[_KMS] override,
+// or a genuine (if unlikely) real-AWS response anomaly. Before the fix,
+// client.Encrypt returned this zero-length blob as success; the caller
+// (kms_provider.go's generateAndWrap) would then persist it verbatim as the
+// wrapped-KEK file, making the current run's KEK unrecoverable on the next
+// restart. See docs/findings/2026-09-20-FINDING-awssm-empty-secret-response.md
+// for the analogous, already-fixed Secrets Manager case this mirrors.
+type fakeKMSEmptyCiphertext struct{ fakeKMS }
+
+func (fakeKMSEmptyCiphertext) Encrypt(_ context.Context, _ *kms.EncryptInput, _ ...func(*kms.Options)) (*kms.EncryptOutput, error) {
+	return &kms.EncryptOutput{}, nil // CiphertextBlob is nil: a syntactically successful, semantically empty response
+}
+
+func TestAWSKMS_Encrypt_EmptyCiphertextBlobRejected(t *testing.T) {
+	c := &client{kms: fakeKMSEmptyCiphertext{}, keyID: "test-key"}
+	if _, err := c.Encrypt(context.Background(), []byte("kek-material")); err == nil {
+		t.Fatal("Encrypt must reject a 2xx response with no CiphertextBlob, not return it as a successful (empty) wrap")
+	}
+}
+
 func TestAWSKMS_CrossInstallDenied(t *testing.T) {
 	a := newTestClient(map[string]string{"keyorix-install": "inst-A"}, false)
 	ct, _ := a.Encrypt(context.Background(), []byte("kek-A"))
