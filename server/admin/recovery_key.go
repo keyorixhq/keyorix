@@ -112,13 +112,21 @@ func runRotateRecoveryKey(cmd *cobra.Command, args []string) error {
 		"or unset), this key does not protect your secrets from host root -- it " +
 		"protects your admin account from anyone who is not you.")
 
-	// Admin-notification fan-out ("fires the same admin-notification path as
-	// a recovery event," design §2) is intentionally NOT wired here: it needs
-	// the same shared helper recover-admin's own PR builds (design §4), and
-	// building it twice would duplicate logic this PR would then have to
-	// reconcile. Deferred to that PR; this action's audit event below is
-	// still written regardless, so the rotation is never silently unrecorded
-	// in the interim.
+	// "Fires the same admin-notification path as a recovery event" (design
+	// §2) -- a key rotation is exactly the kind of event every admin should
+	// see, not just recovery itself. Best-effort: opened separately from the
+	// key-storage transaction above, same convention recordAdminAction below
+	// uses for its own post-action storage open.
+	notifyErr := withUsableStorage(cfg, func(store corestorage.Storage) error {
+		notifyAllAdmins(store, "Recovery key "+action,
+			fmt.Sprintf("The local admin recovery key was %s on this host (now generation %d). "+
+				"If you did not expect this, investigate immediately.", action, newVersion))
+		return nil
+	})
+	if notifyErr != nil {
+		fmt.Printf("note: could not notify admins (%v)\n", notifyErr)
+	}
+
 	recordAdminAction(cfg, "admin.recovery_key."+action,
 		fmt.Sprintf("%s the recovery key (now generation %d)", action, newVersion), true)
 
