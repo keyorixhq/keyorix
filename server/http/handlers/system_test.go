@@ -78,6 +78,37 @@ func TestMakeSystemInfoHandler_TLSFeaturesReflectConfig(t *testing.T) {
 	assert.True(t, features["grpc_enabled"].(bool), "grpc_enabled must reflect config")
 }
 
+// TestMakeSystemInfoHandler_KeylessRecoveryModeReflectsConfig exercises
+// docs/design-b2-recover-admin.md §5: the keyless-mode boolean must be
+// surfaced in GET /system/info so a customer's own compliance scanning can
+// catch a misconfigured install, and must default to false when unset.
+func TestMakeSystemInfoHandler_KeylessRecoveryModeReflectsConfig(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Security.RecoverAdmin.KeylessMode = true
+
+	req := userCtxForTest(httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil))
+	rr := httptest.NewRecorder()
+	MakeSystemInfoHandler(cfg)(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp map[string]interface{}
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	data := resp["data"].(map[string]interface{})
+	security := data["security"].(map[string]interface{})
+	assert.True(t, security["keyless_recovery_mode"].(bool), "keyless_recovery_mode must reflect config when enabled")
+
+	// Default (zero-value config) must be false, never a silent true.
+	cfg2 := &config.Config{}
+	req2 := userCtxForTest(httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil))
+	rr2 := httptest.NewRecorder()
+	MakeSystemInfoHandler(cfg2)(rr2, req2)
+	var resp2 map[string]interface{}
+	require.NoError(t, json.NewDecoder(rr2.Body).Decode(&resp2))
+	data2 := resp2["data"].(map[string]interface{})
+	security2 := data2["security"].(map[string]interface{})
+	assert.False(t, security2["keyless_recovery_mode"].(bool), "keyless_recovery_mode must default to false")
+}
+
 // TestGetMetrics_Unauthenticated verifies a request without a user context is 401.
 func TestGetMetrics_Unauthenticated(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/metrics", nil)

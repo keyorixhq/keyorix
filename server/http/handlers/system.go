@@ -46,6 +46,12 @@ type SecurityInfo struct {
 	AuthEnabled      bool   `json:"auth_enabled"`
 	EncryptionMethod string `json:"encryption_method"`
 	AuditEnabled     bool   `json:"audit_enabled"`
+	// KeylessRecoveryMode surfaces security.recover_admin.keyless_mode
+	// (docs/design-b2-recover-admin.md §5) so a customer's own compliance
+	// scanning can catch a misconfigured install running the labs/demo
+	// escape hatch -- one of the three places design §5 requires this to be
+	// flagged (alongside the startup warning and the startup audit event).
+	KeylessRecoveryMode bool `json:"keyless_recovery_mode"`
 }
 
 // SystemMetrics represents system performance metrics
@@ -164,10 +170,11 @@ func MakeSystemInfoHandler(cfg *config.Config) http.HandlerFunc {
 				},
 			},
 			Security: SecurityInfo{
-				TLSEnabled:       tlsEnabled,
-				AuthEnabled:      true,
-				EncryptionMethod: "AES-256-GCM",
-				AuditEnabled:     true,
+				TLSEnabled:          tlsEnabled,
+				AuthEnabled:         true,
+				EncryptionMethod:    "AES-256-GCM",
+				AuditEnabled:        true,
+				KeylessRecoveryMode: cfg.Security.RecoverAdmin.KeylessMode,
 			},
 		}
 

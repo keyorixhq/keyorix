@@ -47,6 +47,9 @@ key alone, or holding the host alone, is not enough.
 
 --recovery-key must be exactly "-": the key is always read from stdin, never
 a command-line argument, to keep it out of shell history and process listings.
+Omit it entirely if security.recover_admin.keyless_mode is enabled in this
+host's config (a labs/demo escape hatch -- see the config field's own doc
+comment for why this is not recommended for a real deployment).
 
 What this resets, on the target account ONLY: reactivates it if deactivated,
 clears the password (forcing a reset on next login), clears MFA enrollment
@@ -60,7 +63,7 @@ server is running.`,
 
 func init() {
 	recoverAdminCmd.Flags().StringVar(&recoverAdminUser, "user", "", "The account to recover: numeric user ID or email address (required)")
-	recoverAdminCmd.Flags().StringVar(&recoverAdminKey, "recovery-key", "", `Must be "-" -- the key is read from stdin, never a CLI argument (required)`)
+	recoverAdminCmd.Flags().StringVar(&recoverAdminKey, "recovery-key", "", `Must be "-" -- the key is read from stdin, never a CLI argument (required unless security.recover_admin.keyless_mode is enabled)`)
 	rootCmd.AddCommand(recoverAdminCmd)
 }
 
@@ -68,18 +71,33 @@ func runRecoverAdmin(cmd *cobra.Command, args []string) error {
 	if recoverAdminUser == "" {
 		return fmt.Errorf("--user is required (numeric user ID or email address)")
 	}
-	if recoverAdminKey != "-" {
-		return fmt.Errorf(`--recovery-key must be exactly "-" -- the key is read from stdin, never passed as a value here`)
-	}
-
-	rawKey, err := readRecoveryKeyFromStdin()
-	if err != nil {
-		return err
-	}
 
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
+	}
+	keyless := cfg.Security.RecoverAdmin.KeylessMode
+
+	var rawKey string
+	if keyless {
+		// design §1/§5: keyless mode collapses host access and admin access
+		// into one trust boundary -- loud every time, never a silent
+		// downgrade, matching the startup warning's own "every boot, not
+		// just the first" posture.
+		fmt.Fprintln(os.Stderr, "WARNING: keyless mode is enabled (security.recover_admin.keyless_mode) -- "+
+			"proceeding on HOST ACCESS ALONE, no recovery key required or checked. This collapses host access "+
+			"and admin access into one trust boundary; see docs/design-b2-recover-admin.md §1/§5.")
+		if recoverAdminKey != "" && recoverAdminKey != "-" {
+			return fmt.Errorf(`--recovery-key must be exactly "-", or omitted entirely in keyless mode`)
+		}
+	} else {
+		if recoverAdminKey != "-" {
+			return fmt.Errorf(`--recovery-key must be exactly "-" -- the key is read from stdin, never passed as a value here`)
+		}
+		rawKey, err = readRecoveryKeyFromStdin()
+		if err != nil {
+			return err
+		}
 	}
 
 	// Held for the WHOLE run (same reasoning as recovery-key rotate): a
@@ -93,7 +111,7 @@ func runRecoverAdmin(cmd *cobra.Command, args []string) error {
 
 	var summary *recoverAdminSummary
 	err = withUsableStorage(cfg, func(store corestorage.Storage) error {
-		s, err := performRecoverAdmin(context.Background(), store, recoverAdminUser, rawKey)
+		s, err := performRecoverAdmin(context.Background(), store, recoverAdminUser, rawKey, keyless)
 		summary = s
 		return err
 	})
@@ -112,10 +130,14 @@ func runRecoverAdmin(cmd *cobra.Command, args []string) error {
 	}
 
 	notifyErr := withUsableStorage(cfg, func(store corestorage.Storage) error {
+		keyDetail := fmt.Sprintf("generation %d of the recovery key", summary.recoveryKeyVersion)
+		if summary.keyless {
+			keyDetail = "KEYLESS MODE (host access alone, no recovery key checked)"
+		}
 		notifyAllAdmins(store, "Admin account recovered",
 			fmt.Sprintf("keyorix-server admin recover-admin restored account %q (user id %d) on this host, "+
-				"generation %d of the recovery key. If you did not expect this, investigate immediately.",
-				summary.username, summary.userID, summary.recoveryKeyVersion))
+				"using %s. If you did not expect this, investigate immediately.",
+				summary.username, summary.userID, keyDetail))
 		return nil
 	})
 	if notifyErr != nil {

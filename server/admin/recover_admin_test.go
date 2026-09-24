@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -168,7 +169,7 @@ func TestPerformRecoverAdmin_HappyPath(t *testing.T) {
 		t.Fatalf("seed lockout state: %v", err)
 	}
 
-	summary, err := performRecoverAdmin(ctx, store, fmt.Sprintf("%d", user.ID), rawKey)
+	summary, err := performRecoverAdmin(ctx, store, fmt.Sprintf("%d", user.ID), rawKey, false)
 	if err != nil {
 		t.Fatalf("performRecoverAdmin: %v", err)
 	}
@@ -248,7 +249,7 @@ func TestPerformRecoverAdmin_WrongKeyRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
-	_, err = performRecoverAdmin(ctx, store, fmt.Sprintf("%d", user.ID), other)
+	_, err = performRecoverAdmin(ctx, store, fmt.Sprintf("%d", user.ID), other, false)
 	if err == nil {
 		t.Fatalf("expected performRecoverAdmin to fail with the wrong key")
 	}
@@ -271,9 +272,49 @@ func TestPerformRecoverAdmin_NoKeyGeneratedYetRefuses(t *testing.T) {
 	store := newRecoverAdminTestStore(t)
 	user := seedAdminUser(t, ctx, store, "admin3", "admin3@example.com", "OldPassw0rd!")
 
-	_, err := performRecoverAdmin(ctx, store, fmt.Sprintf("%d", user.ID), "ANYTHING")
+	_, err := performRecoverAdmin(ctx, store, fmt.Sprintf("%d", user.ID), "ANYTHING", false)
 	if err == nil {
 		t.Fatalf("expected performRecoverAdmin to refuse when no recovery key has ever been generated")
+	}
+}
+
+// TestPerformRecoverAdmin_KeylessModeSkipsKeyVerification exercises design
+// §5's labs/demo escape hatch: with keyless=true, recovery succeeds on host
+// access alone even when NO recovery key has ever been generated on this
+// install, and the summary records that no key generation backs it.
+func TestPerformRecoverAdmin_KeylessModeSkipsKeyVerification(t *testing.T) {
+	ctx := context.Background()
+	store := newRecoverAdminTestStore(t)
+	user := seedAdminUser(t, ctx, store, "admin6", "admin6@example.com", "OldPassw0rd!")
+
+	summary, err := performRecoverAdmin(ctx, store, fmt.Sprintf("%d", user.ID), "", true)
+	if err != nil {
+		t.Fatalf("expected keyless recovery to succeed with no recovery key generated, got: %v", err)
+	}
+	if !summary.keyless {
+		t.Errorf("expected summary.keyless = true")
+	}
+	if summary.recoveryKeyVersion != 0 {
+		t.Errorf("recoveryKeyVersion = %d, want 0 (no key was checked)", summary.recoveryKeyVersion)
+	}
+
+	got, err := store.GetUser(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if got.AccountState != "password_reset_required" {
+		t.Errorf("AccountState = %q, want password_reset_required", got.AccountState)
+	}
+
+	// The audit event must say so explicitly — keyless recovery must never
+	// look, on the record, like a genuine key-backed one.
+	action := "admin.recover_admin"
+	events, _, err := store.GetAuditLogs(ctx, &storage.AuditFilter{Action: &action, PageSize: 10})
+	if err != nil {
+		t.Fatalf("GetAuditLogs: %v", err)
+	}
+	if len(events) != 1 || !strings.Contains(events[0].Description, "KEYLESS MODE") {
+		t.Fatalf("expected the audit event to explicitly say KEYLESS MODE, got: %+v", events)
 	}
 }
 
@@ -297,7 +338,7 @@ func TestPerformRecoverAdmin_NonAdminTargetRefused(t *testing.T) {
 		t.Fatalf("create regular user: %v", err)
 	}
 
-	_, err = performRecoverAdmin(ctx, store, fmt.Sprintf("%d", regular.ID), rawKey)
+	_, err = performRecoverAdmin(ctx, store, fmt.Sprintf("%d", regular.ID), rawKey, false)
 	if err == nil {
 		t.Fatalf("expected performRecoverAdmin to refuse a non-admin target")
 	}
@@ -308,10 +349,10 @@ func TestPerformRecoverAdmin_UnknownUserRefused(t *testing.T) {
 	store := newRecoverAdminTestStore(t)
 	rawKey := seedRecoveryKey(t, ctx, store)
 
-	if _, err := performRecoverAdmin(ctx, store, "999999", rawKey); err == nil {
+	if _, err := performRecoverAdmin(ctx, store, "999999", rawKey, false); err == nil {
 		t.Errorf("expected refusal for an unknown numeric user id")
 	}
-	if _, err := performRecoverAdmin(ctx, store, "nobody@example.com", rawKey); err == nil {
+	if _, err := performRecoverAdmin(ctx, store, "nobody@example.com", rawKey, false); err == nil {
 		t.Errorf("expected refusal for an unknown email")
 	}
 }
@@ -338,11 +379,11 @@ func TestPerformRecoverAdmin_OldKeyRejectedAfterRotation(t *testing.T) {
 		t.Fatalf("rotate: %v", err)
 	}
 
-	if _, err := performRecoverAdmin(ctx, store, fmt.Sprintf("%d", user.ID), oldKey); err == nil {
+	if _, err := performRecoverAdmin(ctx, store, fmt.Sprintf("%d", user.ID), oldKey, false); err == nil {
 		t.Fatalf("expected the OLD (pre-rotation) key to be rejected")
 	}
 
-	summary, err := performRecoverAdmin(ctx, store, fmt.Sprintf("%d", user.ID), newKey)
+	summary, err := performRecoverAdmin(ctx, store, fmt.Sprintf("%d", user.ID), newKey, false)
 	if err != nil {
 		t.Fatalf("expected the NEW key to succeed: %v", err)
 	}
@@ -380,7 +421,7 @@ func TestPerformRecoverAdmin_BrokenAuditChainStillRecovers(t *testing.T) {
 		t.Fatalf("corrupt audit row: %v", err)
 	}
 
-	summary, err := performRecoverAdmin(ctx, store, fmt.Sprintf("%d", user.ID), rawKey)
+	summary, err := performRecoverAdmin(ctx, store, fmt.Sprintf("%d", user.ID), rawKey, false)
 	if err != nil {
 		t.Fatalf("performRecoverAdmin must still succeed on a broken chain (refusing would be worse), got: %v", err)
 	}

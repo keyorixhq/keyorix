@@ -480,6 +480,22 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 
 	coreService := core.NewKeyorixCore(store)
 
+	// keyless mode (docs/design-b2-recover-admin.md §5): flagged loudly and
+	// repeatedly wherever an operator or auditor would look -- a startup
+	// warning EVERY boot (not just the first), a boolean in /system/info
+	// (server/http/handlers/system.go), and an audit event at every startup
+	// while it's enabled, so the tamper-evident chain itself carries a
+	// durable, repeated record that this install has been running in the
+	// weaker mode -- an auditor reading the chain doesn't have to trust a
+	// point-in-time config dump.
+	if cfg.Security.RecoverAdmin.KeylessMode {
+		log.Printf("WARNING: security.recover_admin.keyless_mode is ENABLED -- `keyorix-server admin recover-admin` " +
+			"can restore ANY admin account on HOST ACCESS ALONE, with no recovery key required or checked. This " +
+			"collapses host access and admin access into one trust boundary. Intended for labs/demo use only; " +
+			"disable it for any real deployment.")
+		auditKeylessModeStartup(store)
+	}
+
 	// Top up the canonical RBAC permission catalog (ADR-044): adds any permission
 	// introduced in a later release to an already-initialised install, granting it to
 	// its baseline roles. No-op pre-bootstrap and best-effort (never blocks startup).
@@ -2561,4 +2577,22 @@ func buildSAMLProvider(pc config.SSOProviderConfig) (*samlpkg.Provider, error) {
 		NameAttr:          pc.SAML.NameAttribute,
 		GroupsAttr:        pc.SAML.GroupsAttribute,
 	})
+}
+
+// auditKeylessModeStartup records, at every boot while security.recover_admin.keyless_mode is
+// enabled, a system-actor audit event (no UserID, never machine-identity-typed), so the
+// tamper-evident chain itself carries a repeated record of the weaker mode. Direct
+// LogAuditEvent: this runs before any request context exists, the same shape as
+// auditConnectorProjectBindingCreate (listed in core's auditAttributionAllowlist).
+func auditKeylessModeStartup(store corestorage.Storage) {
+	ok := true
+	if err := store.LogAuditEvent(context.Background(), &models.AuditEvent{
+		EventType:   "admin.keyless_mode_enabled_at_startup",
+		Description: "server started with security.recover_admin.keyless_mode enabled -- recover-admin can restore any admin account on host access alone",
+		Success:     &ok,
+		ActorType:   core.ActorTypeSystem,
+		EventTime:   time.Now(),
+	}); err != nil {
+		log.Printf("note: could not record the keyless-mode startup event to the audit chain (%v)", err)
+	}
 }
