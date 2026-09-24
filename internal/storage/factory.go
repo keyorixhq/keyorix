@@ -1394,6 +1394,14 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		}
 	}
 
+	// Recovery-key verifier record (design-b2-recover-admin.md §2). Additive,
+	// safe on existing DBs: a singleton table, empty until `keyorix-server
+	// admin recovery-key rotate` (or recover-admin's own retrofit path)
+	// generates the first key.
+	if err := db.AutoMigrate(&models.RecoveryKeyRecord{}); err != nil {
+		return fmt.Errorf("failed to migrate recovery_key_records table: %w", err)
+	}
+
 	// Create the audit_checkpoints table if missing (ADR-029 signed checkpoints,
 	// additive, safe on existing DBs).
 	if !auditCkptExists {

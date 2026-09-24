@@ -1403,6 +1403,19 @@ func (m *MockStorage) SetSystemMetadata(ctx context.Context, key, value string) 
 	return args.Error(0)
 }
 
+func (m *MockStorage) GetRecoveryKeyRecord(ctx context.Context) (*models.RecoveryKeyRecord, bool, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Bool(1), args.Error(2)
+	}
+	return args.Get(0).(*models.RecoveryKeyRecord), args.Bool(1), args.Error(2)
+}
+
+func (m *MockStorage) SetRecoveryKeyRecord(ctx context.Context, record *models.RecoveryKeyRecord) error {
+	args := m.Called(ctx, record)
+	return args.Error(0)
+}
+
 func (m *MockStorage) UnusedSecrets(ctx context.Context, projectID, environmentID *uint, notReadSince time.Time) ([]storage.UnusedSecretStat, error) {
 	args := m.Called(ctx, projectID, environmentID, notReadSince)
 	if args.Get(0) == nil {
