@@ -418,6 +418,40 @@ var noPermissionGateAllowlist = map[string]string{
 		"the OIDC callback above.",
 
 	"GET /health": justPublicInfra + " GET /health is a liveness probe (no DB touch).",
+	"POST /api/v1/secret-access-requests": "Self-service, same reasoning as CreateAccessRequest above: POST " +
+		"/secret-access-requests lets an authenticated user request approval to read ONE restricted " +
+		"secret's value they DO NOT YET HAVE. Visibility is enforced INSIDE the handler " +
+		"(GetSecretWithPermissionCheck, mapped to an identical 404 for a nonexistent or invisible " +
+		"secret -- no route-level permission check could express that anti-enumeration property " +
+		"anyway) and core.RequestSecretAccess scopes the created row to the caller's own user ID. " +
+		"See secret_access_requests.go's CreateSecretAccessRequest.",
+	"GET /api/v1/secret-access-requests": "GET /secret-access-requests returns only rows core." +
+		"ListSecretAccessRequestsForUser computes as visible to the CALLER: \"mine\" (the caller's own " +
+		"requests) and \"pending_approval\" (pending requests at a project where the caller holds " +
+		"admin authority, via requireAdminAuthorityAt -- the classification gate's own bar, not " +
+		"roles.assign). The function itself is the authorization boundary; a route-level permission " +
+		"gate would either be redundant (mine, always visible to its own owner) or wrong (pending_" +
+		"approval's bar isn't a single static permission string). See ListSecretAccessRequests.",
+	"GET /api/v1/secret-access-requests/{requestId}": "GET /secret-access-requests/{requestId} is authorized INSIDE core." +
+		"GetSecretAccessRequest: visible only to the requester or an admin at the request's project " +
+		"(requireAdminAuthorityAt), returning an IDENTICAL not-found for a nonexistent request, a " +
+		"project/role request ID (out of scope for this accessor), and a real secret-scoped request " +
+		"the caller may not see -- the same anti-enumeration property Create above relies on. See " +
+		"GetSecretAccessRequest (handler) and its core-layer namesake.",
+	"PUT /api/v1/secret-access-requests/{requestId}": "PUT /secret-access-requests/{requestId} (approve/reject) is authorized " +
+		"INSIDE core.ApproveSecretAccessRequest/RejectSecretAccessRequest, both of which call " +
+		"requireAdminAuthorityAt(ctx, approverID, req.ProjectID) before mutating -- the classification " +
+		"gate's own bar (admin authority at the request's own project, resolved from the request row, " +
+		"never a URL parameter this route's path doesn't even carry), not roles.assign " +
+		"(classification_gate.go's own doc comment explains why the weaker project/role family's " +
+		"permission doesn't fit a grant that carries no role at all). A route-level permission gate " +
+		"here would either be wrong (roles.assign is not sufficient) or a duplicate of the exact " +
+		"check core already performs. See ResolveSecretAccessRequest.",
+	"POST /api/v1/secret-access-requests/{requestId}/withdraw": "Self-service, same reasoning as WithdrawAccessRequest above: POST " +
+		"secret-access-requests/{requestId}/withdraw cancels only the CALLER'S OWN pending request " +
+		"(core.WithdrawAccessRequest, reused unchanged, scopes to the requester -- #G14's identical " +
+		"\"not found\" for a nonexistent request and one belonging to someone else). See " +
+		"WithdrawSecretAccessRequest.",
 	"GET /readyz": justPublicInfra + " GET /readyz is a readiness probe (DB reachability only).",
 	"GET /api/v1/version": justPublicInfra + " GET /api/v1/version is the version-skew endpoint (ADR-108 " +
 		"PR 0, docs/cli-split-inventory.md §5) -- unauthenticated like /health, so a thin CLI can check " +

@@ -128,18 +128,25 @@ func runReview(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitiv
 	return nil
 }
 
-// runReviewRemote resolves and approves/rejects the request via PUT
-// /api/v1/projects/{id}/access-requests/{requestId}, gated server-side on
-// roles.assign scoped to the project -- the SAME authority
-// requireReviewAuthority enforces manually in embedded mode. --by is not
-// consulted here: the server determines the approver from the caller's own
-// bearer token, not from any --by value in the request body.
+// runReviewRemote resolves and approves/rejects the request. A project/role
+// request goes through PUT /api/v1/projects/{id}/access-requests/{requestId},
+// gated server-side on roles.assign scoped to the project -- the SAME
+// authority requireReviewAuthority enforces manually in embedded mode. A
+// secret-scoped request (SecretID set) instead goes through PUT
+// /api/v1/secret-access-requests/{requestId}, gated on admin authority at the
+// request's own project (classification_gate.go's ApproveSecretAccessRequest/
+// RejectSecretAccessRequest). --by is not consulted for either shape: the
+// server determines the approver from the caller's own bearer token, not from
+// any --by value in the request body.
 //
 // --project is required here (unlike embedded mode, which reads the request's
-// ProjectID straight off the row) because the PUT route is project-scoped in
-// its URL and there is no human-facing GET-by-ID-alone lookup this CLI can use
-// to discover it -- see fetchAccessRequest's doc comment for why this
-// deliberately does not scan every project to find it.
+// ProjectID straight off the row) to first FIND the request -- there is no
+// human-facing GET-by-ID-alone lookup for a project/role request this CLI can
+// use to discover it -- see fetchAccessRequest's doc comment for why this
+// deliberately does not scan every project to find it. A secret-scoped
+// request's own resolve endpoint carries no project ID, but --project is
+// still needed up front since the request's shape isn't known until after
+// this initial lookup.
 func runReviewRemote(ctx context.Context, rc *common.RemoteClient) error {
 	if reviewProject == "" {
 		return fmt.Errorf("--project is required when a remote server is configured (PUT " +
@@ -159,20 +166,33 @@ func runReviewRemote(ctx context.Context, rc *common.RemoteClient) error {
 	fmt.Printf("Resolved access request %d in project %q: requester %s, state=%s.\n",
 		reviewID, reviewProject, requesterLabel, existing.State)
 
-	// A secret-scoped request (SecretID set) grants no role at all -- approving
-	// it must go through ApproveSecretAccessRequest (classification_gate.go),
-	// which has NO HTTP handler anywhere in server/http (only the /system
-	// RemoteStorage storage-primitive proxy's doc comments mention it, and
-	// that proxy is off-limits to the CLI). Refuse loudly instead of forwarding
-	// to the generic PUT, whose ApproveAccessRequestWithExpiry path would reject
-	// it anyway (a secret-scoped request has no SuggestedRole to fall back on)
-	// with a confusing "a role to grant is required" rather than this direct
-	// explanation. Reject is unaffected: RejectAccessRequest is generic and
-	// works the same for both request shapes.
-	if reviewAction == "approve" && existing.SecretID != nil {
-		return fmt.Errorf("access request %d is secret-scoped (secret #%d); approving a secret-scoped access "+
-			"request has no remote API equivalent -- run this against the local embedded database directly, "+
-			"or reject it remotely instead", existing.ID, *existing.SecretID)
+	// A secret-scoped request (SecretID set) grants no role at all -- resolve it
+	// through PUT /api/v1/secret-access-requests/{requestId} instead
+	// (classification_gate.go's ApproveSecretAccessRequest/RejectSecretAccessRequest),
+	// gated on admin authority at the request's own project rather than
+	// roles.assign -- classification_gate.go's own doc comment explains why the
+	// weaker project/role family's bar doesn't fit a grant that carries no role
+	// at all. Forwarding to the generic PUT below instead would either be
+	// refused with a confusing "a role to grant is required" (approve) or
+	// succeed under a weaker bar than this family's own endpoint enforces
+	// (reject) -- neither is right now that a real remote equivalent exists.
+	if existing.SecretID != nil {
+		if reviewRole != "" || reviewTTL != "" {
+			return fmt.Errorf("--role and --ttl do not apply to a secret-scoped request (id %d) -- it grants no role", reviewID)
+		}
+		body := map[string]interface{}{"action": reviewAction, "reason": reviewReason}
+		path := fmt.Sprintf("/api/v1/secret-access-requests/%d", reviewID)
+		if err := rc.Put(ctx, path, body, nil); err != nil {
+			return fmt.Errorf("failed to %s secret access request: %w", reviewAction, err)
+		}
+		switch reviewAction {
+		case "approve":
+			fmt.Printf("Secret access request %d approved for %s to read secret %d.\n",
+				reviewID, requesterLabel, *existing.SecretID)
+		case "reject":
+			fmt.Printf("Secret access request %d rejected.\n", reviewID)
+		}
+		return nil
 	}
 
 	var ttl time.Duration

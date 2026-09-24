@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
 )
 
@@ -28,44 +29,27 @@ var secretAccessCmd = &cobra.Command{
 func init() {
 	secretAccessCmd.Flags().UintVar(&secretAccessSecretID, "secret-id", 0, "Secret ID (or use --ref)")
 	secretAccessCmd.Flags().StringVar(&secretAccessRef, "ref", "", "Secret reference \"project/environment/name\" (or use --secret-id)")
-	secretAccessCmd.Flags().StringVar(&secretAccessUser, "user", "", "Requester email address (required)")
-	secretAccessCmd.Flags().StringVar(&secretAccessReason, "reason", "", "Reason for the request (optional)")
-	_ = secretAccessCmd.MarkFlagRequired("user")
+	secretAccessCmd.Flags().StringVar(&secretAccessUser, "user", "", "Requester email address (embedded mode only, required there; ignored when a remote server is configured -- the server attributes the request to the caller's own authenticated identity)")
+	secretAccessCmd.Flags().StringVar(&secretAccessReason, "reason", "", "Reason for the request (required when a remote server is configured; optional in embedded mode)")
 }
 
 func runSecretAccess(cmd *cobra.Command, args []string) error {
-	if secretAccessUser == "" {
-		return fmt.Errorf("--user is required")
-	}
 	if secretAccessSecretID == 0 && secretAccessRef == "" {
 		return fmt.Errorf("--secret-id or --ref is required")
 	}
+	ctx := context.Background()
 
-	// Local mode only, enforced at runtime, not just documented: RequestSecretAccess
-	// (internal/core/classification_gate.go) has no HTTP handler anywhere in
-	// server/http -- only the /system RemoteStorage storage-primitive proxy's doc
-	// comments mention it (access_request_proxy.go), and that proxy is off-limits to
-	// the CLI (see internal/cli/user/create.go's package doc for why). There is no
-	// REST endpoint a secret-scoped access request can be relayed to. If keyorix
-	// connect (or any other remote config source) is active, refuse loudly rather
-	// than silently operating on a stray local SQLite file the operator likely
-	// didn't intend to touch -- see migrate/user_to_machine.go for the identical
-	// pattern applied to another genuinely-local-only command, and the
-	// opt-in-correctness design note (2026-09-05): a documented-only limitation is
-	// not enforcement.
-	if _, ok := common.NewRemoteClient(); ok {
-		return fmt.Errorf("this command operates on local embedded storage only and has no remote " +
-			"equivalent; a remote server is configured (via KEYORIX_SERVER/KEYORIX_TOKEN, " +
-			"~/.keyorix/cli.yaml, or keyorix.yaml) — there is no REST endpoint for a secret-scoped access " +
-			"request; use 'keyorix request access' for a project/role-scoped request instead, or run this " +
-			"against the local embedded database directly")
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runSecretAccessRemote(ctx, rc)
 	}
 
+	if secretAccessUser == "" {
+		return fmt.Errorf("--user is required")
+	}
 	service, err := common.InitializeCoreService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
-	ctx := context.Background()
 
 	secretID := secretAccessSecretID
 	if secretID == 0 {
@@ -86,5 +70,37 @@ func runSecretAccess(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to request secret access: %w", err)
 	}
 	fmt.Printf("Secret access requested: id=%d secret=%d state=%s\n", req.ID, secretID, req.State)
+	return nil
+}
+
+// runSecretAccessRemote creates the request via POST
+// /api/v1/secret-access-requests, gated server-side only on the caller
+// already being able to see the secret (GetSecretWithPermissionCheck, inside
+// the handler -- CreateSecretAccessRequest's own doc comment). --user is
+// ignored: there is no server capability to attribute a self-service request
+// to anyone other than the caller's own authenticated identity (mirrors
+// runReviewRemote's identical --by handling).
+func runSecretAccessRemote(ctx context.Context, rc *common.RemoteClient) error {
+	if secretAccessReason == "" {
+		return fmt.Errorf("--reason is required when a remote server is configured")
+	}
+	if secretAccessUser != "" {
+		fmt.Println("Note: --user is ignored when a remote server is configured; the request is attributed to your own authenticated identity.")
+	}
+	secretID, err := resolveSecretIDRemote(ctx, rc, secretAccessSecretID, secretAccessRef)
+	if err != nil {
+		return err
+	}
+	body := map[string]interface{}{"secret_id": secretID, "reason": secretAccessReason}
+	var resp struct {
+		AccessRequest *models.AccessRequest `json:"access_request"`
+	}
+	if err := rc.Post(ctx, "/api/v1/secret-access-requests", body, &resp); err != nil {
+		return fmt.Errorf("failed to request secret access: %w", err)
+	}
+	if resp.AccessRequest == nil {
+		return fmt.Errorf("secret access requested, but the server response carried no access_request to confirm it")
+	}
+	fmt.Printf("Secret access requested: id=%d secret=%d state=%s\n", resp.AccessRequest.ID, secretID, resp.AccessRequest.State)
 	return nil
 }

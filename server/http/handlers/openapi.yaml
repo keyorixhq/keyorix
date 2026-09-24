@@ -1439,6 +1439,113 @@ paths:
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
+  /api/v1/secret-access-requests:
+    get:
+      tags: [AccessRequests]
+      summary: List your own and approvable secret access requests
+      description: >-
+        Returns two buckets scoped to the caller: `mine` (the caller's own
+        secret-scoped access requests, any state) and `pending_approval`
+        (pending requests at a project where the caller holds admin
+        authority — never including the caller's own requests).
+      operationId: listSecretAccessRequests
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Envelope with `data.mine` and `data.pending_approval` (arrays of access-request objects).
+        '401': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [AccessRequests]
+      summary: Request approval to read one restricted secret's value (self-service)
+      description: >-
+        Submit a self-service request for approval to read ONE specific
+        secret's value, distinct from the project/role access-request
+        family. `reason` is required. A restricted secret's existence is
+        never inferable from this endpoint's response: an unknown secret ID
+        and one the caller cannot see both produce an identical 404.
+      operationId: createSecretAccessRequest
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [secret_id, reason]
+              properties:
+                secret_id: {type: integer}
+                reason: {type: string}
+      responses:
+        '201':
+          description: Envelope with `data.access_request` (the created pending request).
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /api/v1/secret-access-requests/{requestId}:
+    get:
+      tags: [AccessRequests]
+      summary: Get one secret access request
+      description: >-
+        Visible only to the request's own requester or an admin at its
+        project. A nonexistent request ID, a project/role request ID (out of
+        scope for this endpoint), and a real secret-scoped request the
+        caller may not see all produce an identical 404.
+      operationId: getSecretAccessRequest
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: requestId, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope with `data.access_request`.
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    put:
+      tags: [AccessRequests]
+      summary: Approve or reject a secret access request
+      description: >-
+        Unlike the project/role family's resolve endpoint, no
+        granted_role/grant_ttl — a secret-scoped approval grants no role at
+        all. Authority (admin at the request's own project) is enforced
+        entirely inside core, since this route carries no project ID to gate
+        on at the HTTP layer.
+      operationId: resolveSecretAccessRequest
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: requestId, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: {type: string, enum: [approve, reject]}
+                reason: {type: string, description: Reason on reject}
+      responses:
+        '200':
+          description: Envelope with null `data` and a confirmation message.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /api/v1/secret-access-requests/{requestId}/withdraw:
+    post:
+      tags: [AccessRequests]
+      summary: Withdraw your own pending secret access request (self-service)
+      description: Cancel a previously submitted secret access request that is still pending approval.
+      operationId: withdrawSecretAccessRequest
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: requestId, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope with null `data` and a confirmation message.
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
   /api/v1/projects/{id}/machine-identities:
     get:
       tags: [MachineIdentities]

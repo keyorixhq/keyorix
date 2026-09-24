@@ -225,6 +225,24 @@ func (c *KeyorixCore) RequestSecretAccess(ctx context.Context, secretID, userID 
 	if err != nil {
 		return nil, fmt.Errorf("secret %d not found: %w", secretID, err)
 	}
+	// #G82's sibling gap for this request shape: without this, any authenticated
+	// user could call this in a tight loop and flood a secret with an unbounded
+	// number of pending AccessRequest rows, each firing its own approver
+	// notification (notifySecretAccessRequested below). Scoped to SecretID ==
+	// secretID specifically (not just UserID+ProjectID) — RequestProjectAccess's
+	// own dedup guard is scoped by (UserID, ProjectID) with SecretID == nil, a
+	// disjoint request shape this one doesn't collide with. ListAccessRequests
+	// lazily expires stale pending rows on read, so this is never blocked by a
+	// request that's actually expired.
+	existing, err := c.storage.ListAccessRequests(ctx, secret.ProjectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check existing access requests: %w", err)
+	}
+	for _, e := range existing {
+		if e.UserID == userID && e.State == AccessRequestPending && e.SecretID != nil && *e.SecretID == secretID {
+			return nil, fmt.Errorf("you already have a pending access request for this secret")
+		}
+	}
 	now := c.now()
 	expires := now.Add(accessRequestTTL)
 	sid := secretID
@@ -316,6 +334,100 @@ func (c *KeyorixCore) ApproveSecretAccessRequest(ctx context.Context, requestID,
 		fmt.Sprintf("approved access request %d for user %d to read secret %d (%s)", req.ID, req.UserID, *req.SecretID, secret.Name))
 	c.notifySecretAccessResolved(ctx, req, secret, true)
 	return req, nil
+}
+
+// GetSecretAccessRequest fetches a single secret-scoped access request,
+// visible only to its requester or to someone holding admin authority at its
+// project (the same ceiling ApproveSecretAccessRequest enforces). #G14-style
+// anti-enumeration: a nonexistent request ID, a project/role request ID (nil
+// SecretID — out of scope for this accessor), and a real secret-scoped
+// request the caller may not see all yield the SAME "access request not
+// found" error, so the response shape never confirms which case occurred.
+func (c *KeyorixCore) GetSecretAccessRequest(ctx context.Context, requestID, actorID uint) (*models.AccessRequest, error) {
+	notFound := fmt.Errorf("access request not found")
+	req, err := c.storage.GetAccessRequest(ctx, requestID)
+	if err != nil {
+		return nil, notFound
+	}
+	if req.SecretID == nil {
+		return nil, notFound
+	}
+	if req.UserID == actorID {
+		return req, nil
+	}
+	if err := c.requireAdminAuthorityAt(ctx, actorID, req.ProjectID); err != nil {
+		return nil, notFound
+	}
+	return req, nil
+}
+
+// RejectSecretAccessRequest rejects a pending secret-scoped access request,
+// mirroring ApproveSecretAccessRequest's own authority ceiling
+// (requireAdminAuthorityAt) rather than the project/role family's roles.assign
+// HTTP-layer gate — RejectAccessRequest itself performs no authority check of
+// its own (that family's HTTP handler is the only enforcement point today),
+// which doesn't fit a secret-scoped route with no project ID in its URL to
+// gate on. Reuses RejectAccessRequest's own state-transition/audit/notify
+// logic unchanged once the ceiling has cleared, rather than re-deriving it.
+func (c *KeyorixCore) RejectSecretAccessRequest(ctx context.Context, requestID, approverID, approverMachineID uint, reason string) (*models.AccessRequest, error) {
+	req, err := c.storage.GetAccessRequest(ctx, requestID)
+	if err != nil {
+		return nil, fmt.Errorf("access request not found")
+	}
+	if req.SecretID == nil {
+		return nil, fmt.Errorf("access request %d is a project/role request, not a secret-scoped one", requestID)
+	}
+	if req.State != AccessRequestPending {
+		return nil, fmt.Errorf("only a pending request can be rejected (state is %s)", req.State)
+	}
+	if err := c.requireAdminAuthorityAt(ctx, approverID, req.ProjectID); err != nil {
+		return nil, fmt.Errorf("only an administrator can reject access to a restricted secret: %w", err)
+	}
+	return c.RejectAccessRequest(ctx, req.ProjectID, requestID, approverID, approverMachineID, reason)
+}
+
+// ListSecretAccessRequestsForUser splits every secret-scoped access request
+// visible to userID into two buckets: "mine" (userID is the requester,
+// any state) and "pendingApproval" (still pending, userID holds admin
+// authority at the request's project, and userID is not the requester — no
+// self-approval listing). Iterates every project rather than requiring a
+// project ID up front, mirroring RequestSecretAccess/ApproveSecretAccessRequest
+// themselves, neither of which take one either. Bounded by this
+// deployment's total project count, the same order of magnitude other
+// cross-project admin views in this codebase already accept.
+func (c *KeyorixCore) ListSecretAccessRequestsForUser(ctx context.Context, userID uint) (mine, pendingApproval []*models.AccessRequest, err error) {
+	projects, err := c.storage.ListProjects(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to list projects: %w", err)
+	}
+	adminAt := make(map[uint]bool, len(projects))
+	for _, p := range projects {
+		rows, lerr := c.ListAccessRequests(ctx, p.ID)
+		if lerr != nil {
+			return nil, nil, fmt.Errorf("failed to list access requests for project %d: %w", p.ID, lerr)
+		}
+		for _, req := range rows {
+			if req.SecretID == nil {
+				continue
+			}
+			if req.UserID == userID {
+				mine = append(mine, req)
+				continue
+			}
+			if req.State != AccessRequestPending {
+				continue
+			}
+			isAdmin, ok := adminAt[p.ID]
+			if !ok {
+				isAdmin = c.requireAdminAuthorityAt(ctx, userID, p.ID) == nil
+				adminAt[p.ID] = isAdmin
+			}
+			if isAdmin {
+				pendingApproval = append(pendingApproval, req)
+			}
+		}
+	}
+	return mine, pendingApproval, nil
 }
 
 // accessRequestApprovalClockRegressionTolerance bounds how far now may read

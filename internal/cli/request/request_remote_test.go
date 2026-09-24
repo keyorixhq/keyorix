@@ -79,11 +79,30 @@ func TestRunWithdraw_ServiceInitFails(t *testing.T) {
 
 // ──────────────────────────── runSecretAccess ──────────────────────────────
 
-// TestRunSecretAccess_MissingUser verifies the in-RunE --user guard.
+// TestRunSecretAccess_MissingUser verifies the in-RunE --user guard, which
+// fires only in embedded mode (no remote server configured) and only once
+// the secret-id/ref guard ahead of it has already passed.
 func TestRunSecretAccess_MissingUser(t *testing.T) {
-	orig := secretAccessUser
-	defer func() { secretAccessUser = orig }()
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Isolate HOME/XDG_CONFIG_HOME too, not just KEYORIX_SERVER/KEYORIX_TOKEN: a
+	// leftover ~/.keyorix/cli.yaml in client mode on the machine running this test
+	// would otherwise still be picked up by common.ResolveRemote, taking the
+	// remote branch (which requires --reason, not --user) instead of embedded --
+	// see request_s24_test.go's identical isolation for the same reason.
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_TOKEN", "")
+	origUser, origID, origRef := secretAccessUser, secretAccessSecretID, secretAccessRef
+	defer func() {
+		secretAccessUser = origUser
+		secretAccessSecretID = origID
+		secretAccessRef = origRef
+	}()
 	secretAccessUser = ""
+	secretAccessSecretID = 1
+	secretAccessRef = ""
 	err := runSecretAccess(nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--user is required")

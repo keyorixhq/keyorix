@@ -41,6 +41,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"createRole":                     reasonSchemaNotYetWritten, // post /api/v1/roles
 	"createRotationPolicy":           reasonSchemaNotYetWritten, // post /api/v1/rotation-policies
 	"createSecret":                   reasonSchemaNotYetWritten, // post /api/v1/secrets
+	"createSecretAccessRequest":      reasonSchemaNotYetWritten, // post /api/v1/secret-access-requests
 	"createSoDPolicy":                reasonSchemaNotYetWritten, // post /api/v1/sod/policies
 	"createUser":                     reasonSchemaNotYetWritten, // post /api/v1/users
 	"decideAccessReviewCampaignItem": reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide
@@ -75,6 +76,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getRotationPolicy":              reasonSchemaNotYetWritten, // get /api/v1/rotation-policies/{id}
 	"getRotationStatus":              reasonSchemaNotYetWritten, // get /api/v1/rotation-policies/status
 	"getSecret":                      reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}
+	"getSecretAccessRequest":         reasonSchemaNotYetWritten, // get /api/v1/secret-access-requests/{requestId}
 	"getSecretRisk":                  reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}/risk
 	"getSecretVersions":              reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}/versions
 	"getSystemInfo":                  reasonSchemaNotYetWritten, // get /api/v1/system/info
@@ -105,6 +107,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"listRiskExceptions":             reasonSchemaNotYetWritten, // get /api/v1/risk-exceptions
 	"listRoles":                      reasonSchemaNotYetWritten, // get /api/v1/roles
 	"listRotationPolicies":           reasonSchemaNotYetWritten, // get /api/v1/rotation-policies
+	"listSecretAccessRequests":       reasonSchemaNotYetWritten, // get /api/v1/secret-access-requests
 	"listSecretShares":               reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}/shares
 	"listSecrets":                    reasonSchemaNotYetWritten, // get /api/v1/secrets
 	"listSessions":                   reasonSchemaNotYetWritten, // get /api/v1/auth/sessions
@@ -127,6 +130,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"resendProjectInvitation":        reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/invitations/{invitationId}/resend
 	"resendSetupLink":                reasonSchemaNotYetWritten, // post /api/v1/users/{id}/resend-setup-link
 	"resolveAccessRequest":           reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/access-requests/{requestId}
+	"resolveSecretAccessRequest":     reasonSchemaNotYetWritten, // put /api/v1/secret-access-requests/{requestId}
 	"restoreEnvironment":             reasonSchemaNotYetWritten, // post /api/v1/projects/{projectId}/environments/{id}/restore
 	"restoreProject":                 reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/restore
 	"restoreUser":                    reasonSchemaNotYetWritten, // post /api/v1/users/{id}/restore
@@ -157,6 +161,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"verifyAuditChain":               reasonSchemaNotYetWritten, // get /api/v1/audit/verify
 	"verifyComplianceEvidence":       reasonSchemaNotYetWritten, // post /api/v1/compliance/evidence/verify
 	"withdrawAccessRequest":          reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-requests/{requestId}/withdraw
+	"withdrawSecretAccessRequest":    reasonSchemaNotYetWritten, // post /api/v1/secret-access-requests/{requestId}/withdraw
 	"writeAuditCheckpoint":           reasonSchemaNotYetWritten, // post /api/v1/audit/checkpoint
 }
 

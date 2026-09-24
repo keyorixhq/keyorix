@@ -516,6 +516,23 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// Require roles.assign (same gate as the per-request ResolveAccessRequest).
 		r.With(customMiddleware.RequirePermission(permRolesAssign)).Post("/access-requests/bulk-approve", catalogHandler.BulkApproveAccessRequests)
 		r.With(customMiddleware.RequirePermission(permRolesAssign)).Post("/access-requests/bulk-reject", catalogHandler.BulkRejectAccessRequests)
+		// Secret-scoped access requests (classification_gate.go): approval to
+		// read ONE restricted secret's value, distinct from the project/role
+		// family above. None of the underlying core functions take a project ID
+		// (RequestSecretAccess/ApproveSecretAccessRequest infer it from the
+		// secret or the request row itself), so this family is NOT nested under
+		// /projects/{id} — see secret_access_requests.go's package doc. Create,
+		// list, get-one, and withdraw are self-service (visibility/ownership is
+		// enforced inside the core layer, not by a route-level permission gate);
+		// approve/reject enforce admin authority at the request's own project
+		// inside ApproveSecretAccessRequest/RejectSecretAccessRequest — roles.assign
+		// is not the bar the classification gate sets, so there is no coarser
+		// HTTP-layer permission check to duplicate it here.
+		r.Post("/secret-access-requests", catalogHandler.CreateSecretAccessRequest)
+		r.Get("/secret-access-requests", catalogHandler.ListSecretAccessRequests)
+		r.Get("/secret-access-requests/{requestId}", catalogHandler.GetSecretAccessRequest)
+		r.Put("/secret-access-requests/{requestId}", catalogHandler.ResolveSecretAccessRequest)
+		r.Post("/secret-access-requests/{requestId}/withdraw", catalogHandler.WithdrawSecretAccessRequest)
 		// Rejection reason templates: pre-defined reasons for rejecting access requests.
 		// Creating/deleting requires roles.assign; listing is accessible to all admins.
 		r.With(customMiddleware.RequirePermission(permRolesAssign)).Post("/rejection-reason-templates", catalogHandler.CreateRejectionReasonTemplate)
