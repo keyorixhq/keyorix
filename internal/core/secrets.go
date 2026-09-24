@@ -331,20 +331,24 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 	}
 	secret.UpdatedAt = time.Now()
 
-	if len(req.Value) > 0 {
-		// #121 follow-up: two concurrent UpdateSecret calls on the same secret (or one
-		// racing a RotateSecret) can both compute the same "next" version number from a
-		// stale GetLatestSecretVersion read; the uniq_secret_versions_node_version index
-		// (storage.ensureSecretVersionIndex) makes the loser's insert fail rather than
-		// silently duplicate, but a plain storeSecretVersion call surfaced that as a hard
-		// error to a caller doing nothing wrong. storeNextSecretVersion retries against a
-		// freshly re-read version number instead, same as RotateSecret already does.
-		if err := c.storeNextSecretVersion(ctx, secret, req.Value); err != nil {
+	if len(req.Value) == 0 {
+		updatedSecret, err := c.storage.UpdateSecret(ctx, secret)
+		if err != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
+		return updatedSecret, nil
 	}
 
-	updatedSecret, err := c.storage.UpdateSecret(ctx, secret)
+	// #121 follow-up: two concurrent UpdateSecret calls on the same secret (or one
+	// racing a RotateSecret) can both compute the same "next" version number from a
+	// stale GetLatestSecretVersion read; the uniq_secret_versions_node_version index
+	// (storage.ensureSecretVersionIndex) makes the loser's insert fail rather than
+	// silently duplicate, but a plain storeSecretVersion call surfaced that as a hard
+	// error to a caller doing nothing wrong. updateSecretWithNewVersion retries against
+	// a freshly re-read version number instead, same as RotateSecret, and shares one
+	// transaction between the version write and this row update — see that function's
+	// doc comment for why.
+	updatedSecret, err := c.updateSecretWithNewVersion(ctx, secret, req.Value)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -461,6 +465,18 @@ func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte
 		}
 	}
 
+	// Deliberately NOT wrapped in updateSecretWithNewVersion's shared transaction (unlike
+	// UpdateSecret): by this point the upstream backend executor (RunAutoRotation /
+	// RotateSecretOnDemand's caller) may already have rotated the REAL credential outside
+	// Keyorix's control. If storeNextSecretVersion's write below succeeds but the row
+	// update after it fails, keeping that version is correct — it is Keyorix's only record
+	// of the value the live upstream credential now actually has. Rolling it back to "make
+	// the two writes atomic" would silently make Keyorix's stored value diverge from
+	// reality with no trace of what happened. TestRunAutoRotation_BackendSucceedsStoreFails_
+	// AuditsDrift pins this: the caller audits this exact split (backend rotated, store
+	// failed) as DRIFT rather than a plain failure. See updateSecretWithNewVersion's own
+	// doc comment for why UpdateSecret's identical-shaped write does not have this
+	// consideration and is made atomic.
 	if err := c.storeNextSecretVersion(ctx, secret, newValue); err != nil {
 		return nil, fmt.Errorf("failed to store rotated secret: %w", err)
 	}

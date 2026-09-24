@@ -47,10 +47,11 @@ func (c *KeyorixCore) storeSecretVersion(ctx context.Context, db storage.Storage
 	return err
 }
 
-// maxRotateVersionAttempts bounds storeNextSecretVersion's retry loop — a safety valve,
-// not an expected outcome. Even under the empirically-reproduced #121 contention (15
-// concurrent rotations of one secret), a handful of retries always suffices; if this bound
-// is ever hit it indicates something is wrong beyond ordinary concurrent rotation traffic.
+// maxRotateVersionAttempts bounds updateSecretWithNewVersion's retry loop — a safety
+// valve, not an expected outcome. Even under the empirically-reproduced #121 contention
+// (15 concurrent rotations of one secret), a handful of retries always suffices; if this
+// bound is ever hit it indicates something is wrong beyond ordinary concurrent rotation
+// traffic.
 const maxRotateVersionAttempts = 20
 
 // isVersionConflict reports whether err is the sentinel storage.ErrDuplicateSecretVersion
@@ -78,9 +79,13 @@ func isVersionConflict(err error) bool {
 // secret safe — this retry loop is what lets a rotation that lost the race succeed anyway
 // instead of surfacing a spurious "rotation failed" to an ordinary concurrent caller (an
 // operational timing coincidence, not a conflict either caller did anything wrong to
-// cause). Used by RotateSecret; CreateSecret/UpdateSecret call storeSecretVersion
-// directly since they aren't racing an unbounded number of other version writers for the
-// same secret_id the way concurrent rotations are.
+// cause).
+//
+// Used ONLY by RotateSecret, deliberately NOT wrapped in a transaction with the
+// row-update write that follows it — see RotateSecret's call site comment for why a
+// partial commit here (version stored, row update fails) must be preserved rather than
+// rolled back. UpdateSecret has the same-shaped write but no such consideration and
+// uses updateSecretWithNewVersion below instead, which makes the two writes atomic.
 func (c *KeyorixCore) storeNextSecretVersion(ctx context.Context, secret *models.SecretNode, value []byte) error {
 	var lastErr error
 	for attempt := 0; attempt < maxRotateVersionAttempts; attempt++ {
@@ -106,4 +111,68 @@ func (c *KeyorixCore) storeNextSecretVersion(ctx context.Context, secret *models
 		// now-current latest version and retry.
 	}
 	return fmt.Errorf("exceeded %d attempts resolving the next secret version number: %w", maxRotateVersionAttempts, lastErr)
+}
+
+// updateSecretWithNewVersion resolves the next version number, then stores that
+// version and persists secret's own row (already mutated in place by the caller) as
+// one atomic unit via storage.WithTransaction — the same fix/create-ops-atomicity
+// pattern CreateSecret uses above, applied to UpdateSecret's identical two-write
+// shape. Used ONLY by UpdateSecret: RotateSecret's write has the same shape but a
+// different correctness requirement (see storeNextSecretVersion's doc comment and
+// RotateSecret's call site) and deliberately stays non-transactional. The
+// version-number READ stays outside the transaction here too (mirroring CreateSecret's
+// duplicate-name pre-check, which reads via c.storage before its own WithTransaction)
+// so a lost race (#121) can be retried by re-reading and reattempting the whole
+// transaction; only the two WRITES need to commit or roll back together.
+//
+// A fault-fuzz run (2026-09-24) found the gap this closes: storing the version and
+// then persisting the row as two independent c.storage calls left a real
+// partial-commit window open — if the version write succeeded and the row update
+// then failed, the caller was told the whole operation failed while a new version
+// it was never told exists was already live and would be served by any
+// GetLatestSecretVersion read. Unlike CreateSecret's documented ambiguous-commit gap
+// (multiStepAmbiguousCommitExceptions, fuzz_storage_fault_operations_test.go), this
+// was not ambiguous: the version write's success was certain, not a network-blip
+// guess, so there was a concrete row to roll back — and unlike RotateSecret, there is
+// no external upstream credential whose already-applied change that version would be
+// the only record of, so rolling it back loses nothing. RemoteStorage.WithTransaction
+// remains a no-op passthrough, same documented limitation as every other
+// WithTransaction call site in this package.
+func (c *KeyorixCore) updateSecretWithNewVersion(ctx context.Context, secret *models.SecretNode, value []byte) (*models.SecretNode, error) {
+	var updated *models.SecretNode
+	var lastErr error
+	for attempt := 0; attempt < maxRotateVersionAttempts; attempt++ {
+		latestVersion, err := c.storage.GetLatestSecretVersion(ctx, secret.ID)
+		nextVersionNumber := 1
+		switch {
+		case err == nil:
+			nextVersionNumber = latestVersion.VersionNumber + 1
+		case storage.IsSecretVersionNotFound(err):
+			// No versions yet - version 1 is correct.
+		default:
+			// A real read failure, not "no versions yet" - don't guess.
+			return nil, err
+		}
+		txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+			if err := c.storeSecretVersion(ctx, tx, secret, value, nextVersionNumber); err != nil {
+				return err
+			}
+			u, err := tx.UpdateSecret(ctx, secret)
+			if err != nil {
+				return err
+			}
+			updated = u
+			return nil
+		})
+		if txErr == nil {
+			return updated, nil
+		}
+		lastErr = txErr
+		if !isVersionConflict(txErr) {
+			return nil, txErr
+		}
+		// Lost the race to another concurrent rotation of the same secret — re-read the
+		// now-current latest version and retry.
+	}
+	return nil, fmt.Errorf("exceeded %d attempts resolving the next secret version number: %w", maxRotateVersionAttempts, lastErr)
 }

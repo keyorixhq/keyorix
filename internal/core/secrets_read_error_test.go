@@ -1,13 +1,13 @@
 // secrets_read_error_test.go — deterministic unit tests for
 // docs/findings/2026-09-23-FINDING-update-secret-read-error-swallowed.md:
-// storeNextSecretVersion and CreateSecret's duplicate-name pre-check each read
-// storage before deciding "not found", and previously could not distinguish
-// that from a real read failure. FuzzStorageFaultOperations found this for
-// storeNextSecretVersion (testdata/fuzz/FuzzStorageFaultOperations/
-// 1fefa95ddd2b26bb, replayed by server/faultops); this file covers the same
-// class deterministically, including the CreateSecret sibling the fuzzer
-// never reached (GetSecretByName is not itself covered by that harness's
-// fault-injection surface for this operation).
+// updateSecretWithNewVersion (formerly storeNextSecretVersion) and CreateSecret's
+// duplicate-name pre-check each read storage before deciding "not found", and
+// previously could not distinguish that from a real read failure.
+// FuzzStorageFaultOperations found this for the version-number read
+// (testdata/fuzz/FuzzStorageFaultOperations/1fefa95ddd2b26bb, replayed by
+// server/faultops); this file covers the same class deterministically, including
+// the CreateSecret sibling the fuzzer never reached (GetSecretByName is not itself
+// covered by that harness's fault-injection surface for this operation).
 package core
 
 import (
@@ -48,7 +48,7 @@ func (s *secretReadErrStub) GetSecretByName(ctx context.Context, name string, pr
 }
 
 // TestUpdateSecret_LatestVersionReadErrorPropagates: a real (non-not-found)
-// GetLatestSecretVersion failure inside storeNextSecretVersion must abort the
+// GetLatestSecretVersion failure inside updateSecretWithNewVersion must abort the
 // update, not silently default to version 1 and overwrite whatever version
 // happens to already occupy that slot.
 func TestUpdateSecret_LatestVersionReadErrorPropagates(t *testing.T) {

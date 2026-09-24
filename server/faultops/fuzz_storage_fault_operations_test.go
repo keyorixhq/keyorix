@@ -159,11 +159,31 @@ var multiStepAmbiguousCommitExceptions = []nonLoadBearingException{}
 // the reference run (fail-closed, under-privileged), never more, so this is
 // the same class of accepted tradeoff as bestEffortTables' other entries,
 // just narrower in scope.
+//
+// REST POST /api/v1/users/, GetRoleByName: an incomplete-enumeration sibling
+// of the entry directly above, found live triaging the
+// fix/breakglass-revoke-atomicity PR's own out-of-scope fuzz observation
+// (2026-09-23). CreateUser's non-fatal system_viewer grant
+// (internal/core/users.go, inside the savepoint at the WithTransaction call
+// around line 201) makes TWO storage calls before either can fail —
+// GetRoleByName THEN AssignRole — and the entry above only named the second
+// one. Faulting GetRoleByName produces the byte-for-byte identical
+// UserRole-only divergence (role lookup fails, so AssignRole is never even
+// reached, but the user is still created and the failure is still logged) —
+// same code path, same accepted tradeoff, just a different one of its two
+// calls. Confirmed this scoping is still safe, not a blanket suppression:
+// GetRoleByName is called exactly once during CreateUser (the only
+// opCatalog["CreateUser"] entry point for this op), and this codebase's
+// OTHER two GetRoleByName call sites (CreateUserWithAssignments,
+// resolveProjectRoleGrant) are unreachable from plain CreateUser, so this
+// entry cannot mask a fault on a load-bearing GetRoleByName call the way a
+// method-only bestEffortTables entry would risk.
 var opScopedBestEffortTables = []struct {
 	op, method string
 	tables     []string
 }{
 	{op: "REST POST /api/v1/users/", method: "AssignRole", tables: []string{"UserRole"}},
+	{op: "REST POST /api/v1/users/", method: "GetRoleByName", tables: []string{"UserRole"}},
 }
 
 func opScopedAcceptableByDesign(op, method string, diff []string) bool {
