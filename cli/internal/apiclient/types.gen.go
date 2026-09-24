@@ -13,12 +13,69 @@ const (
 	BearerAuthScopes = "bearerAuth.Scopes"
 )
 
+// Defines values for BreakGlassActivationState.
+const (
+	BreakGlassActivationStateActive  BreakGlassActivationState = "active"
+	BreakGlassActivationStateExpired BreakGlassActivationState = "expired"
+	BreakGlassActivationStateRevoked BreakGlassActivationState = "revoked"
+)
+
+// Defines values for DynamicSecretConfigBackendType.
+const (
+	AwsSts     DynamicSecretConfigBackendType = "aws-sts"
+	Azure      DynamicSecretConfigBackendType = "azure"
+	Gcp        DynamicSecretConfigBackendType = "gcp"
+	Kubernetes DynamicSecretConfigBackendType = "kubernetes"
+	Mongodb    DynamicSecretConfigBackendType = "mongodb"
+	Mysql      DynamicSecretConfigBackendType = "mysql"
+	Postgres   DynamicSecretConfigBackendType = "postgres"
+	Redis      DynamicSecretConfigBackendType = "redis"
+)
+
+// Defines values for DynamicSecretLeaseStatus.
+const (
+	DynamicSecretLeaseStatusActive       DynamicSecretLeaseStatus = "active"
+	DynamicSecretLeaseStatusExpired      DynamicSecretLeaseStatus = "expired"
+	DynamicSecretLeaseStatusRevokeFailed DynamicSecretLeaseStatus = "revoke_failed"
+	DynamicSecretLeaseStatusRevoked      DynamicSecretLeaseStatus = "revoked"
+)
+
 // Defines values for MachineIdentityState.
 const (
 	Active    MachineIdentityState = "active"
 	Pending   MachineIdentityState = "pending"
 	Revoked   MachineIdentityState = "revoked"
 	Suspended MachineIdentityState = "suspended"
+)
+
+// Defines values for RotationPlanSecretStatus.
+const (
+	DueSoon RotationPlanSecretStatus = "due_soon"
+	Overdue RotationPlanSecretStatus = "overdue"
+)
+
+// Defines values for RotationPolicyScope.
+const (
+	RotationPolicyScopeEnvironment RotationPolicyScope = "environment"
+	RotationPolicyScopeProject     RotationPolicyScope = "project"
+)
+
+// Defines values for CreateDynamicSecretConfigJSONBodyClassification.
+const (
+	CreateDynamicSecretConfigJSONBodyClassificationConfidential CreateDynamicSecretConfigJSONBodyClassification = "confidential"
+	CreateDynamicSecretConfigJSONBodyClassificationEmpty        CreateDynamicSecretConfigJSONBodyClassification = ""
+	CreateDynamicSecretConfigJSONBodyClassificationInternal     CreateDynamicSecretConfigJSONBodyClassification = "internal"
+	CreateDynamicSecretConfigJSONBodyClassificationPublic       CreateDynamicSecretConfigJSONBodyClassification = "public"
+	CreateDynamicSecretConfigJSONBodyClassificationRestricted   CreateDynamicSecretConfigJSONBodyClassification = "restricted"
+)
+
+// Defines values for ClassifyDynamicSecretConfigJSONBodyClassification.
+const (
+	ClassifyDynamicSecretConfigJSONBodyClassificationConfidential ClassifyDynamicSecretConfigJSONBodyClassification = "confidential"
+	ClassifyDynamicSecretConfigJSONBodyClassificationEmpty        ClassifyDynamicSecretConfigJSONBodyClassification = ""
+	ClassifyDynamicSecretConfigJSONBodyClassificationInternal     ClassifyDynamicSecretConfigJSONBodyClassification = "internal"
+	ClassifyDynamicSecretConfigJSONBodyClassificationPublic       ClassifyDynamicSecretConfigJSONBodyClassification = "public"
+	ClassifyDynamicSecretConfigJSONBodyClassificationRestricted   ClassifyDynamicSecretConfigJSONBodyClassification = "restricted"
 )
 
 // Defines values for ListProjectsParamsIncludeDeleted.
@@ -33,6 +90,72 @@ const (
 	Revoke   TransitionMachineIdentityJSONBodyAction = "revoke"
 	Suspend  TransitionMachineIdentityJSONBodyAction = "suspend"
 )
+
+// Defines values for CreateRotationPolicyJSONBodyScope.
+const (
+	CreateRotationPolicyJSONBodyScopeEnvironment CreateRotationPolicyJSONBodyScope = "environment"
+	CreateRotationPolicyJSONBodyScopeProject     CreateRotationPolicyJSONBodyScope = "project"
+)
+
+// BreakGlassActivation One emergency-access self-grant (ADR-108 PR 1 addition).
+type BreakGlassActivation struct {
+	CreatedAt     *string                    `json:"created_at,omitempty"`
+	ExpiresAt     *string                    `json:"expires_at,omitempty"`
+	Id            *uint32                    `json:"id,omitempty"`
+	Justification *string                    `json:"justification,omitempty"`
+	RoleName      *string                    `json:"role_name,omitempty"`
+	State         *BreakGlassActivationState `json:"state,omitempty"`
+	UserId        *uint32                    `json:"user_id,omitempty"`
+}
+
+// BreakGlassActivationState defines model for BreakGlassActivation.State.
+type BreakGlassActivationState string
+
+// DeploymentRotationPlan The install-wide roll-up of every project's rotation plan (ADR-108 PR 1 addition, ADR-053) -- a roll-up of per-project plans, most pressing first.
+type DeploymentRotationPlan struct {
+	DueSoonCount     *int            `json:"due_soon_count,omitempty"`
+	OverdueCount     *int            `json:"overdue_count,omitempty"`
+	Projects         *[]RotationPlan `json:"projects,omitempty"`
+	ProjectsScanned  *int            `json:"projects_scanned,omitempty"`
+	ProjectsWithWork *int            `json:"projects_with_work,omitempty"`
+	TotalSecrets     *int            `json:"total_secrets,omitempty"`
+}
+
+// DynamicSecretConfig A registered dynamic-secret target config (ADR-108 PR 1 addition).
+type DynamicSecretConfig struct {
+	BackendType       *DynamicSecretConfigBackendType `json:"backend_type,omitempty"`
+	Classification    *string                         `json:"classification,omitempty"`
+	DefaultTtlSeconds *int                            `json:"default_ttl_seconds,omitempty"`
+	EnvironmentId     *uint32                         `json:"environment_id,omitempty"`
+	Id                *uint32                         `json:"id,omitempty"`
+	MaxTtlSeconds     *int                            `json:"max_ttl_seconds,omitempty"`
+	Name              *string                         `json:"name,omitempty"`
+	ProjectId         *uint32                         `json:"project_id,omitempty"`
+}
+
+// DynamicSecretConfigBackendType defines model for DynamicSecretConfig.BackendType.
+type DynamicSecretConfigBackendType string
+
+// DynamicSecretIssuedLease A freshly-issued dynamic-secret credential, shown once (ADR-108 PR 1 addition). username/password are populated for DB/cache backends; fields carries arbitrary key/value pairs for cloud-IAM backends (AWS STS, GCP, Azure, Kubernetes) instead.
+type DynamicSecretIssuedLease struct {
+	ExpiresAt *string            `json:"expires_at,omitempty"`
+	Fields    *map[string]string `json:"fields,omitempty"`
+	LeaseId   *string            `json:"lease_id,omitempty"`
+	Password  *string            `json:"password,omitempty"`
+	Username  *string            `json:"username,omitempty"`
+}
+
+// DynamicSecretLease A dynamic-secret lease summary (ADR-108 PR 1 addition).
+type DynamicSecretLease struct {
+	ExpiresAt *string                   `json:"expires_at,omitempty"`
+	IssuedAt  *string                   `json:"issued_at,omitempty"`
+	LeaseId   *string                   `json:"lease_id,omitempty"`
+	RoleName  *string                   `json:"role_name,omitempty"`
+	Status    *DynamicSecretLeaseStatus `json:"status,omitempty"`
+}
+
+// DynamicSecretLeaseStatus defines model for DynamicSecretLease.Status.
+type DynamicSecretLeaseStatus string
 
 // MachineAuditReport Deployment-wide machine identity audit report (GET /machine-identities/audit).
 type MachineAuditReport struct {
@@ -131,6 +254,76 @@ type PATToken struct {
 	TokenPrefix      *string    `json:"token_prefix,omitempty"`
 }
 
+// RotationOrder A safe rotation sequence for a project's secret dependency graph (ADR-108 PR 1 addition, ADR-052): each secret is listed before anything that depends on it.
+type RotationOrder struct {
+	Order     *[]RotationOrderStep `json:"order,omitempty"`
+	ProjectId *uint32              `json:"project_id,omitempty"`
+}
+
+// RotationOrderStep One secret in a project's safe rotation sequence (ADR-052).
+type RotationOrderStep struct {
+	SecretId   *uint32 `json:"secret_id,omitempty"`
+	SecretName *string `json:"secret_name,omitempty"`
+}
+
+// RotationPlan A project's automated rotation plan (ADR-108 PR 1 addition, ADR-053).
+type RotationPlan struct {
+	DueSoonCount *int                `json:"due_soon_count,omitempty"`
+	OverdueCount *int                `json:"overdue_count,omitempty"`
+	ProjectId    *uint32             `json:"project_id,omitempty"`
+	TotalSecrets *int                `json:"total_secrets,omitempty"`
+	Waves        *[]RotationPlanWave `json:"waves,omitempty"`
+}
+
+// RotationPlanSecret One secret entry in a rotation-plan wave (ADR-108 PR 1 addition, ADR-053).
+type RotationPlanSecret struct {
+	AutoRotate  *bool                     `json:"auto_rotate,omitempty"`
+	DaysOverdue *int                      `json:"days_overdue,omitempty"`
+	Reasons     *[]string                 `json:"reasons,omitempty"`
+	RiskBand    *string                   `json:"risk_band,omitempty"`
+	SecretId    *uint32                   `json:"secret_id,omitempty"`
+	SecretName  *string                   `json:"secret_name,omitempty"`
+	Status      *RotationPlanSecretStatus `json:"status,omitempty"`
+}
+
+// RotationPlanSecretStatus defines model for RotationPlanSecret.Status.
+type RotationPlanSecretStatus string
+
+// RotationPlanWave A dependency-safe batch of secrets to rotate together (ADR-053).
+type RotationPlanWave struct {
+	Index   *int                  `json:"index,omitempty"`
+	Secrets *[]RotationPlanSecret `json:"secrets,omitempty"`
+}
+
+// RotationPolicy A secret-rotation policy (ADR-108 PR 1 addition). Property names are PascalCase, NOT this spec's usual snake_case convention: models.RotationPolicy (internal/storage/models/models.go) is a GORM model with no `json:` tags on these fields at all, so encoding/json's default marshaling emits the bare Go field names verbatim (ID, Name, ProjectID, IntervalDays, ...) -- confirmed against the real handler, not assumed. A snake_case schema here would look more consistent but would silently decode every multi-word field (ProjectID, IntervalDays, AlertDaysBefore, NotifyOnBreach, IsActive, CreatedBy) as its zero value: Go's encoding/json case-insensitive fallback matches "ID"~"id" (same letters, different case) but does NOT match "ProjectID"~"project_id" (an extra underscore is not a case difference) -- exactly the latent bug this schema fixes for the generated CLI client (see cli/cmd/rotation.go's policyView-decoding doc comment for the full writeup). The OLD CLI's internal/cli/rotation/rotation.go carries this exact bug today, unfixed -- out of scope for this PR to touch there. rotation_state/last_rotation_error/last_state_at are the 3 exceptions: those fields DO carry explicit snake_case `json:` tags in the model already.
+type RotationPolicy struct {
+	AlertDaysBefore *int                 `json:"AlertDaysBefore,omitempty"`
+	CreatedBy       *string              `json:"CreatedBy,omitempty"`
+	Description     *string              `json:"Description,omitempty"`
+	EnvironmentID   *uint32              `json:"EnvironmentID"`
+	ID              *uint32              `json:"ID,omitempty"`
+	IntervalDays    *int                 `json:"IntervalDays,omitempty"`
+	IsActive        *bool                `json:"IsActive,omitempty"`
+	Name            *string              `json:"Name,omitempty"`
+	NotifyOnBreach  *bool                `json:"NotifyOnBreach,omitempty"`
+	ProjectID       *uint32              `json:"ProjectID"`
+	Scope           *RotationPolicyScope `json:"Scope,omitempty"`
+}
+
+// RotationPolicyScope defines model for RotationPolicy.Scope.
+type RotationPolicyScope string
+
+// RotationPolicyEvaluation One policy-covered secret's rotation posture, as returned by GET /api/v1/rotation-policies/evaluate (ADR-108 PR 1 addition).
+type RotationPolicyEvaluation struct {
+	DaysOverdue   *int    `json:"days_overdue,omitempty"`
+	IsApproaching *bool   `json:"is_approaching,omitempty"`
+	IsOverdue     *bool   `json:"is_overdue,omitempty"`
+	PolicyName    *string `json:"policy_name,omitempty"`
+	ProjectId     *uint32 `json:"project_id,omitempty"`
+	SecretId      *uint32 `json:"secret_id,omitempty"`
+	SecretName    *string `json:"secret_name,omitempty"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	Code    *int                    `json:"code,omitempty"`
@@ -173,6 +366,48 @@ type CreatePATJSONBody struct {
 	Scopes *[]string `json:"scopes,omitempty"`
 }
 
+// ListDynamicSecretConfigsParams defines parameters for ListDynamicSecretConfigs.
+type ListDynamicSecretConfigsParams struct {
+	ProjectId     *int `form:"project_id,omitempty" json:"project_id,omitempty"`
+	EnvironmentId *int `form:"environment_id,omitempty" json:"environment_id,omitempty"`
+}
+
+// CreateDynamicSecretConfigJSONBody defines parameters for CreateDynamicSecretConfig.
+type CreateDynamicSecretConfigJSONBody struct {
+	// AdminDsn Plaintext admin DSN; encrypted at rest, never echoed back
+	AdminDsn          string                                           `json:"admin_dsn"`
+	BackendType       string                                           `json:"backend_type"`
+	Classification    *CreateDynamicSecretConfigJSONBodyClassification `json:"classification,omitempty"`
+	CreationTemplate  string                                           `json:"creation_template"`
+	DefaultTtlSeconds *int                                             `json:"default_ttl_seconds,omitempty"`
+	EnvironmentId     int                                              `json:"environment_id"`
+	MaxActiveLeases   *int                                             `json:"max_active_leases,omitempty"`
+	MaxTtlSeconds     *int                                             `json:"max_ttl_seconds,omitempty"`
+	Name              string                                           `json:"name"`
+	ProjectId         int                                              `json:"project_id"`
+}
+
+// CreateDynamicSecretConfigJSONBodyClassification defines parameters for CreateDynamicSecretConfig.
+type CreateDynamicSecretConfigJSONBodyClassification string
+
+// ClassifyDynamicSecretConfigJSONBody defines parameters for ClassifyDynamicSecretConfig.
+type ClassifyDynamicSecretConfigJSONBody struct {
+	Classification *ClassifyDynamicSecretConfigJSONBodyClassification `json:"classification,omitempty"`
+}
+
+// ClassifyDynamicSecretConfigJSONBodyClassification defines parameters for ClassifyDynamicSecretConfig.
+type ClassifyDynamicSecretConfigJSONBodyClassification string
+
+// IssueDynamicSecretLeaseJSONBody defines parameters for IssueDynamicSecretLease.
+type IssueDynamicSecretLeaseJSONBody struct {
+	TtlSeconds *int `json:"ttl_seconds,omitempty"`
+}
+
+// RenewDynamicSecretLeaseJSONBody defines parameters for RenewDynamicSecretLease.
+type RenewDynamicSecretLeaseJSONBody struct {
+	TtlSeconds *int `json:"ttl_seconds,omitempty"`
+}
+
 // MachineTokenHygieneParams defines parameters for MachineTokenHygiene.
 type MachineTokenHygieneParams struct {
 	// Days Staleness window in days (default server-side: 90, cap 3650).
@@ -198,6 +433,15 @@ type ListProjectsParamsIncludeDeleted string
 type CreateProjectJSONBody struct {
 	Description *string `json:"description,omitempty"`
 	Name        string  `json:"name"`
+}
+
+// ActivateBreakGlassJSONBody defines parameters for ActivateBreakGlass.
+type ActivateBreakGlassJSONBody struct {
+	// Justification Written reason (required)
+	Justification string `json:"justification"`
+
+	// Ttl Optional grant-lifetime override, a Go duration (e.g. 2h); capped at the server max
+	Ttl *string `json:"ttl,omitempty"`
 }
 
 // CreateMachineIdentityJSONBody defines parameters for CreateMachineIdentity.
@@ -236,6 +480,42 @@ type IssueMachineTokenJSONBody struct {
 	Name          string `json:"name"`
 }
 
+// ListRotationPoliciesParams defines parameters for ListRotationPolicies.
+type ListRotationPoliciesParams struct {
+	ProjectId     *int `form:"project_id,omitempty" json:"project_id,omitempty"`
+	EnvironmentId *int `form:"environment_id,omitempty" json:"environment_id,omitempty"`
+}
+
+// CreateRotationPolicyJSONBody defines parameters for CreateRotationPolicy.
+type CreateRotationPolicyJSONBody struct {
+	AlertDaysBefore *int                              `json:"alert_days_before,omitempty"`
+	Description     *string                           `json:"description,omitempty"`
+	EnvironmentId   *int                              `json:"environment_id"`
+	IntervalDays    int                               `json:"interval_days"`
+	Name            string                            `json:"name"`
+	NotifyOnBreach  *bool                             `json:"notify_on_breach,omitempty"`
+	ProjectId       *int                              `json:"project_id"`
+	Scope           CreateRotationPolicyJSONBodyScope `json:"scope"`
+}
+
+// CreateRotationPolicyJSONBodyScope defines parameters for CreateRotationPolicy.
+type CreateRotationPolicyJSONBodyScope string
+
+// EvaluateRotationPoliciesParams defines parameters for EvaluateRotationPolicies.
+type EvaluateRotationPoliciesParams struct {
+	ProjectId *int `form:"project_id,omitempty" json:"project_id,omitempty"`
+}
+
+// UpdateRotationPolicyJSONBody defines parameters for UpdateRotationPolicy.
+type UpdateRotationPolicyJSONBody struct {
+	AlertDaysBefore *int    `json:"alert_days_before,omitempty"`
+	Description     *string `json:"description,omitempty"`
+	IntervalDays    int     `json:"interval_days"`
+	IsActive        *bool   `json:"is_active,omitempty"`
+	Name            string  `json:"name"`
+	NotifyOnBreach  *bool   `json:"notify_on_breach,omitempty"`
+}
+
 // AuthLoginJSONBody defines parameters for AuthLogin.
 type AuthLoginJSONBody struct {
 	Password string `json:"password"`
@@ -251,8 +531,23 @@ type UpdateAuthProfileJSONRequestBody UpdateAuthProfileJSONBody
 // CreatePATJSONRequestBody defines body for CreatePAT for application/json ContentType.
 type CreatePATJSONRequestBody CreatePATJSONBody
 
+// CreateDynamicSecretConfigJSONRequestBody defines body for CreateDynamicSecretConfig for application/json ContentType.
+type CreateDynamicSecretConfigJSONRequestBody CreateDynamicSecretConfigJSONBody
+
+// ClassifyDynamicSecretConfigJSONRequestBody defines body for ClassifyDynamicSecretConfig for application/json ContentType.
+type ClassifyDynamicSecretConfigJSONRequestBody ClassifyDynamicSecretConfigJSONBody
+
+// IssueDynamicSecretLeaseJSONRequestBody defines body for IssueDynamicSecretLease for application/json ContentType.
+type IssueDynamicSecretLeaseJSONRequestBody IssueDynamicSecretLeaseJSONBody
+
+// RenewDynamicSecretLeaseJSONRequestBody defines body for RenewDynamicSecretLease for application/json ContentType.
+type RenewDynamicSecretLeaseJSONRequestBody RenewDynamicSecretLeaseJSONBody
+
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody CreateProjectJSONBody
+
+// ActivateBreakGlassJSONRequestBody defines body for ActivateBreakGlass for application/json ContentType.
+type ActivateBreakGlassJSONRequestBody ActivateBreakGlassJSONBody
 
 // CreateMachineIdentityJSONRequestBody defines body for CreateMachineIdentity for application/json ContentType.
 type CreateMachineIdentityJSONRequestBody CreateMachineIdentityJSONBody
@@ -265,6 +560,12 @@ type CreateOIDCBindingJSONRequestBody CreateOIDCBindingJSONBody
 
 // IssueMachineTokenJSONRequestBody defines body for IssueMachineToken for application/json ContentType.
 type IssueMachineTokenJSONRequestBody IssueMachineTokenJSONBody
+
+// CreateRotationPolicyJSONRequestBody defines body for CreateRotationPolicy for application/json ContentType.
+type CreateRotationPolicyJSONRequestBody CreateRotationPolicyJSONBody
+
+// UpdateRotationPolicyJSONRequestBody defines body for UpdateRotationPolicy for application/json ContentType.
+type UpdateRotationPolicyJSONRequestBody UpdateRotationPolicyJSONBody
 
 // AuthLoginJSONRequestBody defines body for AuthLogin for application/json ContentType.
 type AuthLoginJSONRequestBody AuthLoginJSONBody
