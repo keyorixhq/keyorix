@@ -26,10 +26,10 @@ review and end activations.`,
 const bgFlagProjectID = "project-id"
 
 var (
-	bgProject    int
+	bgProject    uint32
 	bgJustify    string
 	bgTTL        string
-	bgActivation int
+	bgActivation uint32
 )
 
 var bgActivateCmd = &cobra.Command{
@@ -54,14 +54,14 @@ var bgRevokeCmd = &cobra.Command{
 }
 
 func init() {
-	bgActivateCmd.Flags().IntVar(&bgProject, bgFlagProjectID, 0, "Project to activate emergency access for (required)")
+	bgActivateCmd.Flags().Uint32Var(&bgProject, bgFlagProjectID, 0, "Project to activate emergency access for (required)")
 	bgActivateCmd.Flags().StringVar(&bgJustify, "justification", "", "Written reason for emergency access (required)")
 	bgActivateCmd.Flags().StringVar(&bgTTL, "ttl", "", "Grant lifetime override, e.g. 2h (default + capped by server config)")
 
-	bgListCmd.Flags().IntVar(&bgProject, bgFlagProjectID, 0, "Project (required)")
+	bgListCmd.Flags().Uint32Var(&bgProject, bgFlagProjectID, 0, "Project (required)")
 
-	bgRevokeCmd.Flags().IntVar(&bgProject, bgFlagProjectID, 0, "Project (required)")
-	bgRevokeCmd.Flags().IntVar(&bgActivation, "activation-id", 0, "Activation to revoke (required)")
+	bgRevokeCmd.Flags().Uint32Var(&bgProject, bgFlagProjectID, 0, "Project (required)")
+	bgRevokeCmd.Flags().Uint32Var(&bgActivation, "activation-id", 0, "Activation to revoke (required)")
 
 	breakGlassCmd.AddCommand(bgActivateCmd, bgListCmd, bgRevokeCmd)
 	rootCmd.AddCommand(breakGlassCmd)
@@ -82,7 +82,7 @@ func breakGlassAPIClient() (*apiclient.ClientWithResponses, error) {
 }
 
 func runBGActivate(_ *cobra.Command, _ []string) error {
-	if bgProject <= 0 {
+	if bgProject == 0 {
 		return fmt.Errorf("--project-id is required")
 	}
 	if bgJustify == "" {
@@ -96,7 +96,7 @@ func runBGActivate(_ *cobra.Command, _ []string) error {
 	if bgTTL != "" {
 		body.Ttl = &bgTTL
 	}
-	resp, err := client.ActivateBreakGlassWithResponse(context.Background(), uint32(bgProject), body)
+	resp, err := client.ActivateBreakGlassWithResponse(context.Background(), bgProject, body)
 	if err != nil {
 		return err
 	}
@@ -110,14 +110,14 @@ func runBGActivate(_ *cobra.Command, _ []string) error {
 }
 
 func runBGList(_ *cobra.Command, _ []string) error {
-	if bgProject <= 0 {
+	if bgProject == 0 {
 		return fmt.Errorf("--project-id is required")
 	}
 	client, err := breakGlassAPIClient()
 	if err != nil {
 		return err
 	}
-	resp, err := client.ListBreakGlassActivationsWithResponse(context.Background(), uint32(bgProject))
+	resp, err := client.ListBreakGlassActivationsWithResponse(context.Background(), bgProject)
 	if err != nil {
 		return err
 	}
@@ -139,14 +139,14 @@ func runBGList(_ *cobra.Command, _ []string) error {
 }
 
 func runBGRevoke(_ *cobra.Command, _ []string) error {
-	if bgProject <= 0 || bgActivation <= 0 {
+	if bgProject == 0 || bgActivation == 0 {
 		return fmt.Errorf("--project-id and --activation-id are required")
 	}
 	client, err := breakGlassAPIClient()
 	if err != nil {
 		return err
 	}
-	resp, err := client.RevokeBreakGlassWithResponse(context.Background(), uint32(bgProject), uint32(bgActivation))
+	resp, err := client.RevokeBreakGlassWithResponse(context.Background(), bgProject, bgActivation)
 	if err != nil {
 		return err
 	}
