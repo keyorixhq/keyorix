@@ -24,25 +24,34 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"authConsumeSetup":               reasonSchemaNotYetWritten, // post /auth/setup/consume
 	"authLogout":                     reasonSchemaNotYetWritten, // post /auth/logout
 	"authPasswordReset":              reasonSchemaNotYetWritten, // post /auth/password-reset
+	"bulkApproveAccessRequests":      reasonSchemaNotYetWritten, // post /api/v1/access-requests/bulk-approve
+	"bulkRejectAccessRequests":       reasonSchemaNotYetWritten, // post /api/v1/access-requests/bulk-reject
 	"changePassword":                 reasonSchemaNotYetWritten, // post /api/v1/auth/change-password
 	"closeAccessReviewCampaign":      reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close
 	"createAccessRequest":            reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-requests
+	"createAlertEscalationPolicy":    reasonSchemaNotYetWritten, // post /api/v1/alert-escalation-policies
 	"createGlobalInvitation":         reasonSchemaNotYetWritten, // post /api/v1/invitations
+	"createNotificationChannel":      reasonSchemaNotYetWritten, // post /api/v1/notification-channels
 	"createProject":                  reasonSchemaNotYetWritten, // post /api/v1/projects
 	"createProjectEnvironment":       reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/environments
+	"createRejectionReasonTemplate":  reasonSchemaNotYetWritten, // post /api/v1/rejection-reason-templates
 	"createRiskException":            reasonSchemaNotYetWritten, // post /api/v1/risk-exceptions
 	"createRole":                     reasonSchemaNotYetWritten, // post /api/v1/roles
 	"createSecretAccessRequest":      reasonSchemaNotYetWritten, // post /api/v1/secret-access-requests
 	"createSoDPolicy":                reasonSchemaNotYetWritten, // post /api/v1/sod/policies
 	"createUser":                     reasonSchemaNotYetWritten, // post /api/v1/users
 	"decideAccessReviewCampaignItem": reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide
+	"deleteAlertEscalationPolicy":    reasonSchemaNotYetWritten, // delete /api/v1/alert-escalation-policies/{id}
 	"deleteEnvironment":              reasonSchemaNotYetWritten, // delete /api/v1/environments/{id}
+	"deleteNotificationChannel":      reasonSchemaNotYetWritten, // delete /api/v1/notification-channels/{id}
 	"deleteOIDCBinding":              reasonSchemaNotYetWritten, // delete /api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings/{bindingId}
 	"deleteProject":                  reasonSchemaNotYetWritten, // delete /api/v1/projects/{id}
+	"deleteRejectionReasonTemplate":  reasonSchemaNotYetWritten, // delete /api/v1/rejection-reason-templates/{id}
 	"deleteSoDPolicy":                reasonSchemaNotYetWritten, // delete /api/v1/sod/policies/{id}
 	"endImpersonation":               reasonSchemaNotYetWritten, // post /api/v1/auth/end-impersonation
 	"exportAuditLogs":                reasonSchemaNotYetWritten, // get /api/v1/audit/export
 	"getAccessReviewCampaign":        reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-review/campaigns/{campaignId}
+	"getAnomalyConfig":               reasonSchemaNotYetWritten, // get /api/v1/admin/anomaly-config
 	"getAuditRetention":              reasonSchemaNotYetWritten, // get /api/v1/audit/retention
 	"getAuthConfig":                  reasonSchemaNotYetWritten, // get /api/v1/system/auth-config
 	"getAuthProfile":                 reasonSchemaNotYetWritten, // get /api/v1/auth/profile
@@ -54,6 +63,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getEncryptionConfig":            reasonSchemaNotYetWritten, // get /api/v1/system/encryption-config
 	"getLegalHold":                   reasonSchemaNotYetWritten, // get /api/v1/legal-hold
 	"getMostAccessedSecrets":         reasonSchemaNotYetWritten, // get /api/v1/secrets/usage/most-accessed
+	"getNotificationChannel":         reasonSchemaNotYetWritten, // get /api/v1/notification-channels/{id}
 	"getPermission":                  reasonSchemaNotYetWritten, // get /api/v1/permissions/{id}
 	"getProject":                     reasonSchemaNotYetWritten, // get /api/v1/projects/{id}
 	"getProjectAccessReview":         reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-review
@@ -61,6 +71,9 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getRole":                        reasonSchemaNotYetWritten, // get /api/v1/roles/{id}
 	"getRotationStatus":              reasonSchemaNotYetWritten, // get /api/v1/rotation-policies/status
 	"getSecretAccessRequest":         reasonSchemaNotYetWritten, // get /api/v1/secret-access-requests/{requestId}
+	"getSecretByName":                reasonSchemaNotYetWritten, // get /api/v1/secrets/by-name
+	"getSecretRisk":                  reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}/risk
+	"getSecretVersions":              reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}/versions
 	"getSystemInfo":                  reasonSchemaNotYetWritten, // get /api/v1/system/info
 	"getSystemMetrics":               reasonSchemaNotYetWritten, // get /api/v1/system/metrics
 	"getUnusedSecrets":               reasonSchemaNotYetWritten, // get /api/v1/secrets/usage/unused
@@ -72,13 +85,16 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"liftLegalHold":                  reasonSchemaNotYetWritten, // delete /api/v1/legal-hold
 	"listAccessRequests":             reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-requests
 	"listAccessReviewCampaigns":      reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-review/campaigns
+	"listAlertEscalationPolicies":    reasonSchemaNotYetWritten, // get /api/v1/alert-escalation-policies
 	"listAnomalyAlerts":              reasonSchemaNotYetWritten, // get /api/v1/audit/anomalies
 	"listAuditLogs":                  reasonSchemaNotYetWritten, // get /api/v1/audit/logs
 	"listEnvironments":               reasonSchemaNotYetWritten, // get /api/v1/environments
+	"listNotificationChannels":       reasonSchemaNotYetWritten, // get /api/v1/notification-channels
 	"listNotifications":              reasonSchemaNotYetWritten, // get /api/v1/notifications
 	"listPermissions":                reasonSchemaNotYetWritten, // get /api/v1/permissions
 	"listProjectMembers":             reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/members
 	"listProjectMemberships":         reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/memberships
+	"listRejectionReasonTemplates":   reasonSchemaNotYetWritten, // get /api/v1/rejection-reason-templates
 	"listRiskExceptions":             reasonSchemaNotYetWritten, // get /api/v1/risk-exceptions
 	"listSecretAccessRequests":       reasonSchemaNotYetWritten, // get /api/v1/secret-access-requests
 	"listSecretShares":               reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}/shares
@@ -92,6 +108,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"markAllNotificationsRead":       reasonSchemaNotYetWritten, // post /api/v1/notifications/read-all
 	"markNotificationRead":           reasonSchemaNotYetWritten, // post /api/v1/notifications/{id}/read
 	"mfaStepUp":                      reasonSchemaNotYetWritten, // post /api/v1/auth/mfa/stepup
+	"migrateAuditChainEncoding":      reasonSchemaNotYetWritten, // post /api/v1/audit/migrate-chain-encoding
 	"openAccessReviewCampaign":       reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/campaigns
 	"placeLegalHold":                 reasonSchemaNotYetWritten, // post /api/v1/legal-hold
 	"reactivateUser":                 reasonSchemaNotYetWritten, // post /api/v1/users/{id}/reactivate
@@ -108,6 +125,9 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"revokeMachineToken":             reasonSchemaNotYetWritten, // delete /api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}
 	"revokeProjectAccessReview":      reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/revoke
 	"revokeRiskException":            reasonSchemaNotYetWritten, // delete /api/v1/risk-exceptions/{id}
+	"revokeSecretACL":                reasonSchemaNotYetWritten, // delete /api/v1/secrets/{id}/acl/{aclId}
+	"rotateSecret":                   reasonSchemaNotYetWritten, // post /api/v1/secrets/{id}/rotate
+	"runAlertEscalation":             reasonSchemaNotYetWritten, // post /api/v1/admin/jobs/run-alert-escalation
 	"searchAuditLogs":                reasonSchemaNotYetWritten, // get /api/v1/audit/search
 	"searchUsers":                    reasonSchemaNotYetWritten, // get /api/v1/users/search
 	"shareSecret":                    reasonSchemaNotYetWritten, // post /api/v1/secrets/{id}/share
@@ -115,7 +135,9 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"suspendUser":                    reasonSchemaNotYetWritten, // post /api/v1/users/{id}/suspend
 	"transitionMachineIdentity":      reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/machine-identities/{machineId}
 	"transitionMembership":           reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/memberships/{membershipId}
+	"updateAnomalyConfig":            reasonSchemaNotYetWritten, // put /api/v1/admin/anomaly-config
 	"updateAuthProfile":              reasonSchemaNotYetWritten, // put /api/v1/auth/profile
+	"updateNotificationChannel":      reasonSchemaNotYetWritten, // put /api/v1/notification-channels/{id}
 	"updateProject":                  reasonSchemaNotYetWritten, // put /api/v1/projects/{id}
 	"updateProjectMember":            reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/members/{userId}
 	"updateRole":                     reasonSchemaNotYetWritten, // put /api/v1/roles/{id}

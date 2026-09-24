@@ -348,6 +348,8 @@ named) behavior.
 
 ### 2.5 `audit`, `anomalies`, `notification`, `accessreview`, `request` — 37 leaf subcommands
 
+**Moved to `cli/cmd/{audit,anomalies,notification,accessreview,request}.go` (PR 7, #2056).**
+
 **`audit` (6 leaf) — REST-only, `audit.read`-gated (except checkpoint/migrate which need
 `system.write`):**
 
@@ -1213,6 +1215,13 @@ rewiring to check `NewRemoteClient()` like their siblings, otherwise they silent
 local mode is removed. GAP-1 (`request secret-access`/secret-scoped `review approve`/`reject`) is
 now closed — both commands are REST-backed in remote mode, so this PR's scope no longer depends on
 that decision. Size: medium.
+
+**Status: open (#2056).** GAP-F-BULK confirmed already fixed independently (PR #2014, before this
+track started) — this entry was stale, not a live gap; `internal/cli/request/bulk.go` checks
+`NewRemoteClient()` correctly in all three previously-flagged commands. Also closed 18 live-but-
+undocumented OpenAPI routes this port needed, and corrected one live behavior gap while porting:
+`anomalies escalation run` now calls the real human `/api/v1/admin/jobs/run-alert-escalation`
+route instead of the old CLI's doomed `/system` proxy equivalent.
 
 **PR 8 — `risk`, `sod`, `legalhold`, `compliance`, `hygiene`, `trust` (24 commands).** **Needs a
 product/engineering decision**: the `compliance export`/`verify` round-trip bug (§6 GAP-4) — fix
