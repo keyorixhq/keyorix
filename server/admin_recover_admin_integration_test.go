@@ -16,6 +16,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 	"time"
 )
 
@@ -147,6 +152,80 @@ func TestAdminRecoverAdmin_FullFlow_SQLite(t *testing.T) {
 	}
 	if !strings.Contains(string(out2), "recovery key does not match") {
 		t.Errorf("expected the specific key-mismatch message, got:\n%s", out2)
+	}
+}
+
+// TestAdminRecoverAdmin_KeylessMode_SQLite exercises design §5's labs/demo
+// escape hatch end to end: with security.recover_admin.keyless_mode: true
+// in the config, recover-admin succeeds on host access alone with NO
+// --recovery-key/stdin at all, and the audit event it writes says so
+// explicitly.
+func TestAdminRecoverAdmin_KeylessMode_SQLite(t *testing.T) {
+	bin := buildServerBinary(t)
+	dir := t.TempDir()
+	env := append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD=test-passphrase-recover-admin-keyless")
+
+	if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin init failed: %v\n%s", err, out)
+	}
+	// Enable keyless mode by editing the generated config's existing
+	// security: block (see internal/config/keyless_mode_reachability_test.go
+	// for why this is the ONLY legitimate way to set this field).
+	cfgPath := filepath.Join(dir, "keyorix.yaml")
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read generated config: %v", err)
+	}
+	edited := strings.Replace(string(raw), "require_transport_tls: false\n",
+		"require_transport_tls: false\n  recover_admin:\n    keyless_mode: true\n", 1)
+	if edited == string(raw) {
+		t.Fatalf("failed to inject keyless_mode into the generated config (anchor line not found)")
+	}
+	if err := os.WriteFile(cfgPath, []byte(edited), 0600); err != nil {
+		t.Fatalf("write edited config: %v", err)
+	}
+
+	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin diagnose failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "migrate", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin migrate failed: %v\n%s", err, out)
+	}
+
+	bootstrapAdminViaHTTP(t, bin, dir, env, "8080", "keylessadmin", "keyless-e2e@example.com", "InitialPassw0rd!")
+
+	// The startup audit event (design §5) must have been written during
+	// that boot -- verified directly against the SQLite file, independent
+	// of any CLI reporting.
+	verifyDB, err := gorm.Open(sqlite.Open(filepath.Join(dir, "keyorix.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatalf("open db for verification: %v", err)
+	}
+	var startupEvents []models.AuditEvent
+	if err := verifyDB.Where("event_type = ?", "admin.keyless_mode_enabled_at_startup").Find(&startupEvents).Error; err != nil {
+		t.Fatalf("query startup audit events: %v", err)
+	}
+	if len(startupEvents) != 1 {
+		t.Fatalf("expected exactly 1 admin.keyless_mode_enabled_at_startup audit event after one boot, got %d", len(startupEvents))
+	}
+	if sqlDB, derr := verifyDB.DB(); derr == nil {
+		_ = sqlDB.Close()
+	}
+
+	// No recovery key has EVER been generated on this install -- keyless
+	// mode must still succeed, with an empty stdin and no --recovery-key.
+	cmd := exec.Command(bin, "admin", "recover-admin", "--user", "keyless-e2e@example.com", "--config", "./keyorix.yaml")
+	cmd.Dir = dir
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("keyless recover-admin failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "Recovered admin account: keylessadmin") {
+		t.Errorf("expected recover-admin success message, got:\n%s", out)
+	}
+	if !strings.Contains(string(out), "WARNING: keyless mode is enabled") {
+		t.Errorf("expected the keyless-mode stderr warning, got:\n%s", out)
 	}
 }
 

@@ -19,18 +19,22 @@ type recoverAdminSummary struct {
 	webAuthnCredentialsCleared int
 	sessionsRevoked            int
 	recoveryKeyVersion         int
+	keyless                    bool
 	auditChainBroken           bool
 	auditChainFirstBrokenID    uint
 }
 
 // performRecoverAdmin is the whole recovery act (design §3): verify the
-// target exists and holds a global-admin role, verify the recovery key,
+// target exists and holds a global-admin role, verify the recovery key
+// (skipped entirely when keyless is true -- design §5's labs/demo escape
+// hatch, gated by security.recover_admin.keyless_mode and never reachable
+// from anywhere but a host-side config-file read, see recover_admin.go),
 // then reset account state / password / MFA / WebAuthn / lockout / sessions
 // on that ONE account, and record it. Every failure path returns before any
 // storage write happens except the final audit event, which is written
 // regardless of whether the audit chain was already broken (design §4: a
 // broken chain does not block recovery, it's recorded alongside it).
-func performRecoverAdmin(ctx context.Context, store corestorage.Storage, userIdentifier, rawRecoveryKey string) (*recoverAdminSummary, error) {
+func performRecoverAdmin(ctx context.Context, store corestorage.Storage, userIdentifier, rawRecoveryKey string, keyless bool) (*recoverAdminSummary, error) {
 	user, err := resolveTargetUser(ctx, store, userIdentifier)
 	if err != nil {
 		return nil, err
@@ -45,24 +49,28 @@ func performRecoverAdmin(ctx context.Context, store corestorage.Storage, userIde
 			"recover-admin is specifically for restoring ADMIN accounts, not general password reset", user.Username, user.ID)
 	}
 
-	record, found, err := store.GetRecoveryKeyRecord(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read recovery-key record: %w", err)
+	summary := &recoverAdminSummary{
+		userID:   user.ID,
+		username: user.Username,
+		keyless:  keyless,
 	}
-	if !found {
-		return nil, fmt.Errorf("no recovery key has been generated on this install yet -- " +
-			"run `keyorix-server admin recovery-key rotate` first, then retry recover-admin with the key it prints")
-	}
-	if !recoverykey.Verify(rawRecoveryKey, record.KeyHash) {
-		return nil, fmt.Errorf("recovery key does not match")
+	if !keyless {
+		record, found, err := store.GetRecoveryKeyRecord(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("read recovery-key record: %w", err)
+		}
+		if !found {
+			return nil, fmt.Errorf("no recovery key has been generated on this install yet -- " +
+				"run `keyorix-server admin recovery-key rotate` first, then retry recover-admin with the key it prints " +
+				"(or enable security.recover_admin.keyless_mode, not recommended outside labs/demo use)")
+		}
+		if !recoverykey.Verify(rawRecoveryKey, record.KeyHash) {
+			return nil, fmt.Errorf("recovery key does not match")
+		}
+		summary.recoveryKeyVersion = record.KeyVersion
 	}
 
 	now := time.Now()
-	summary := &recoverAdminSummary{
-		userID:             user.ID,
-		username:           user.Username,
-		recoveryKeyVersion: record.KeyVersion,
-	}
 
 	err = store.WithTransaction(ctx, func(tx corestorage.Storage) error {
 		if err := tx.SetAccountState(ctx, user.ID, core.AccountPasswordResetRequired, now); err != nil {
@@ -138,10 +146,14 @@ func performRecoverAdmin(ctx context.Context, store corestorage.Storage, userIde
 // as an open item, not silently narrowed -- see the PR description.
 func recordRecoveryAuditEvent(ctx context.Context, store corestorage.Storage, summary *recoverAdminSummary) {
 	verification, err := store.VerifyAuditChain(ctx, nil)
+	keyDetail := fmt.Sprintf("recovery key generation %d", summary.recoveryKeyVersion)
+	if summary.keyless {
+		keyDetail = "KEYLESS MODE -- no recovery key was checked (security.recover_admin.keyless_mode)"
+	}
 	description := fmt.Sprintf(
 		"keyorix-server admin recover-admin restored account %q (user id %d): reactivated, password reset required, "+
-			"MFA cleared, %d WebAuthn credential(s) cleared, login-lockout cleared, %d session(s) revoked (recovery key generation %d)",
-		summary.username, summary.userID, summary.webAuthnCredentialsCleared, summary.sessionsRevoked, summary.recoveryKeyVersion)
+			"MFA cleared, %d WebAuthn credential(s) cleared, login-lockout cleared, %d session(s) revoked (%s)",
+		summary.username, summary.userID, summary.webAuthnCredentialsCleared, summary.sessionsRevoked, keyDetail)
 
 	if err == nil && !verification.Valid {
 		summary.auditChainBroken = true

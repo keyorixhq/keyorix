@@ -817,6 +817,25 @@ type SecurityConfig struct {
 	// common, supported deployment), but when off the server logs a prominent warning if
 	// it serves cleartext, so the exposure is never silent.
 	RequireTransportTLS bool `yaml:"require_transport_tls"`
+	// RecoverAdmin configures `keyorix-server admin recover-admin`
+	// (docs/design-b2-recover-admin.md §5).
+	RecoverAdmin RecoverAdminConfig `yaml:"recover_admin"`
+}
+
+// RecoverAdminConfig configures `keyorix-server admin recover-admin`
+// (docs/design-b2-recover-admin.md §5).
+type RecoverAdminConfig struct {
+	// KeylessMode, when true, lets `recover-admin` proceed on host access
+	// ALONE, without a valid recovery key — the labs/demo escape hatch
+	// design §1's threat-model table calls out explicitly: it collapses
+	// "host access" and "admin access" into one trust boundary, which is
+	// exactly what the default (keyed) mode exists to avoid. Read ONLY at
+	// server startup, from THIS config file — never settable over the
+	// network (no HTTP handler, no gRPC RPC ever writes this field; see
+	// internal/config/keyless_mode_reachability_test.go). Changing it
+	// requires host-side config-file access and a server restart, the same
+	// bar as any other config field, by design.
+	KeylessMode bool `yaml:"keyless_mode"`
 }
 
 // parseDurationDefault parses a Go duration string, returning def when empty or
