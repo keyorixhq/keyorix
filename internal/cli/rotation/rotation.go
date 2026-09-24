@@ -70,9 +70,14 @@ func client() (*common.RemoteClient, error) {
 	return c, nil
 }
 
-// policyView mirrors a RotationPolicy. The model has no JSON tags so the server
-// emits PascalCase keys; encoding/json decodes case-insensitively, so these tags
-// match.
+// policyView mirrors a RotationPolicy. models.RotationPolicy previously had no
+// JSON tags, so the server emitted PascalCase keys that these snake_case tags
+// could not actually match (encoding/json's case-insensitive decode fallback
+// matches "ID"~"id" but not "ProjectID"~"project_id") -- every multi-word field
+// below silently decoded as its zero value. Fixed at the source (ADR-108 PR 1,
+// docs/cli-split-inventory.md §7): the model now carries these exact tags, so
+// this struct's own tags -- unchanged here -- now correctly match the real wire
+// format. See rotation_policy_wire_regression_test.go for the proof.
 type policyView struct {
 	ID              uint   `json:"id"`
 	Name            string `json:"name"`

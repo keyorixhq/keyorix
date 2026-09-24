@@ -295,19 +295,19 @@ type RotationPlanWave struct {
 	Secrets *[]RotationPlanSecret `json:"secrets,omitempty"`
 }
 
-// RotationPolicy A secret-rotation policy (ADR-108 PR 1 addition). Property names are PascalCase, NOT this spec's usual snake_case convention: models.RotationPolicy (internal/storage/models/models.go) is a GORM model with no `json:` tags on these fields at all, so encoding/json's default marshaling emits the bare Go field names verbatim (ID, Name, ProjectID, IntervalDays, ...) -- confirmed against the real handler, not assumed. A snake_case schema here would look more consistent but would silently decode every multi-word field (ProjectID, IntervalDays, AlertDaysBefore, NotifyOnBreach, IsActive, CreatedBy) as its zero value: Go's encoding/json case-insensitive fallback matches "ID"~"id" (same letters, different case) but does NOT match "ProjectID"~"project_id" (an extra underscore is not a case difference) -- exactly the latent bug this schema fixes for the generated CLI client (see cli/cmd/rotation.go's policyView-decoding doc comment for the full writeup). The OLD CLI's internal/cli/rotation/rotation.go carries this exact bug today, unfixed -- out of scope for this PR to touch there. rotation_state/last_rotation_error/last_state_at are the 3 exceptions: those fields DO carry explicit snake_case `json:` tags in the model already.
+// RotationPolicy A secret-rotation policy (ADR-108 PR 1 addition). Snake_case, matching this spec's usual convention and the model's real wire format: models.RotationPolicy (internal/storage/models/models.go) previously had no `json:` tags on most fields, so encoding/json's default marshaling emitted the bare Go field names verbatim (ID, Name, ProjectID, IntervalDays, ...) instead -- a PascalCase wire format silently decoded by any snake_case-tagged consumer (Go's case-insensitive JSON fallback matches "ID"~"id" but not "ProjectID"~"project_id", an extra underscore is not a case difference) as the zero value for every multi-word field. Fixed at the source (the model itself now carries these exact tags) rather than documented here as a PascalCase exception -- see the model's own doc comment for the full writeup, and docs/cli-split-inventory.md §7 PR 1's closure note for how this was found.
 type RotationPolicy struct {
-	AlertDaysBefore *int                 `json:"AlertDaysBefore,omitempty"`
-	CreatedBy       *string              `json:"CreatedBy,omitempty"`
-	Description     *string              `json:"Description,omitempty"`
-	EnvironmentID   *uint32              `json:"EnvironmentID"`
-	ID              *uint32              `json:"ID,omitempty"`
-	IntervalDays    *int                 `json:"IntervalDays,omitempty"`
-	IsActive        *bool                `json:"IsActive,omitempty"`
-	Name            *string              `json:"Name,omitempty"`
-	NotifyOnBreach  *bool                `json:"NotifyOnBreach,omitempty"`
-	ProjectID       *uint32              `json:"ProjectID"`
-	Scope           *RotationPolicyScope `json:"Scope,omitempty"`
+	AlertDaysBefore *int                 `json:"alert_days_before,omitempty"`
+	CreatedBy       *string              `json:"created_by,omitempty"`
+	Description     *string              `json:"description,omitempty"`
+	EnvironmentId   *uint32              `json:"environment_id"`
+	Id              *uint32              `json:"id,omitempty"`
+	IntervalDays    *int                 `json:"interval_days,omitempty"`
+	IsActive        *bool                `json:"is_active,omitempty"`
+	Name            *string              `json:"name,omitempty"`
+	NotifyOnBreach  *bool                `json:"notify_on_breach,omitempty"`
+	ProjectId       *uint32              `json:"project_id"`
+	Scope           *RotationPolicyScope `json:"scope,omitempty"`
 }
 
 // RotationPolicyScope defines model for RotationPolicy.Scope.

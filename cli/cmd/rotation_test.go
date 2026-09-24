@@ -23,7 +23,7 @@ func TestRunRotList_MatchesOldCLIOutputShape(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"data":[{"ID":1,"Name":"db-rotate","Scope":"project","ProjectID":1,"IntervalDays":30,"AlertDaysBefore":7,"IsActive":true}]}`)
+		_, _ = fmt.Fprint(w, `{"data":[{"id":1,"name":"db-rotate","scope":"project","project_id":1,"interval_days":30,"alert_days_before":7,"is_active":true}]}`)
 	}))
 	defer srv.Close()
 	setRotCreds(t, srv)
@@ -33,8 +33,10 @@ func TestRunRotList_MatchesOldCLIOutputShape(t *testing.T) {
 			t.Fatalf("runRotList: %v", err)
 		}
 	})
-	if !containsAll(out, "ID", "NAME", "TARGET", "INTERVAL", "ACTIVE", "ALERT", "db-rotate", "project=1", "30d") {
-		t.Fatalf("output missing expected fields: %q", out)
+	want := fmt.Sprintf("%-5s %-24s %-14s %-9s %-7s %s\n", "ID", "NAME", "TARGET", "INTERVAL", "ACTIVE", "ALERT") +
+		fmt.Sprintf("%-5d %-24s %-14s %-9s %-7t %dd\n", 1, "db-rotate", "project=1", "30d", true, 7)
+	if out != want {
+		t.Fatalf("output = %q, want %q (byte-for-byte: this command matches the old CLI's own fixed-width Printf format, not cliout's tabwriter)", out, want)
 	}
 }
 
@@ -72,7 +74,7 @@ func TestRunRotCreate_MatchesOldCLIOutputShape(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = fmt.Fprint(w, `{"data":{"ID":5,"Name":"db-rotate","Scope":"project","ProjectID":1,"IntervalDays":30,"AlertDaysBefore":7}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"id":5,"name":"db-rotate","scope":"project","project_id":1,"interval_days":30,"alert_days_before":7}}`)
 	}))
 	defer srv.Close()
 	setRotCreds(t, srv)
@@ -97,7 +99,7 @@ func TestRunRotShow_MatchesOldCLIOutputShape(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"data":{"ID":1,"Name":"db-rotate","Description":"desc","Scope":"project","ProjectID":1,"IntervalDays":30,"AlertDaysBefore":7,"NotifyOnBreach":true,"IsActive":true,"CreatedBy":"alice"}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"id":1,"name":"db-rotate","description":"desc","scope":"project","project_id":1,"interval_days":30,"alert_days_before":7,"notify_on_breach":true,"is_active":true,"created_by":"alice"}}`)
 	}))
 	defer srv.Close()
 	setRotCreds(t, srv)

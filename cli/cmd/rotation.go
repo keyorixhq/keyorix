@@ -13,7 +13,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/keyorixhq/keyorix/cli/internal/apiclient"
-	"github.com/keyorixhq/keyorix/cli/internal/cliout"
 )
 
 var rotationCmd = &cobra.Command{
@@ -135,26 +134,13 @@ func rotationAPIClient() (*apiclient.ClientWithResponses, error) {
 	return newAPIClient(serverURL, token)
 }
 
-// apiclient.RotationPolicy's fields are PascalCase (ID, ProjectID, IntervalDays, ...),
-// unlike every other generated type in this package -- this matches the real wire
-// format, not a naming-convention slip: models.RotationPolicy has no `json:` tags on
-// these fields, so the server's default encoding/json marshal emits the bare Go field
-// names verbatim. A snake_case schema would have looked more consistent but would
-// silently decode every multi-word field to its zero value (Go's json case-insensitive
-// fallback matches "ID"~"id" but not "ProjectID"~"project_id" -- an extra underscore is
-// not a case difference). See server/http/handlers/openapi.yaml's RotationPolicy schema
-// doc for the full writeup, and TestRunRotList_MatchesOldCLIOutputShape /
-// TestRunRotShow_MatchesOldCLIOutputShape (rotation_test.go) for the regression guard.
-// The OLD CLI's internal/cli/rotation/rotation.go policyView carries this exact bug
-// today (snake_case tags against the same PascalCase wire format) -- out of scope for
-// this PR to fix there; this port fixes it going forward instead of reproducing it.
 func rotScopeTarget(p apiclient.RotationPolicy) string {
 	scope := derefStr((*string)(p.Scope))
-	if scope == "project" && p.ProjectID != nil {
-		return fmt.Sprintf("project=%d", *p.ProjectID)
+	if scope == "project" && p.ProjectId != nil {
+		return fmt.Sprintf("project=%d", *p.ProjectId)
 	}
-	if scope == "environment" && p.EnvironmentID != nil {
-		return fmt.Sprintf("env=%d", *p.EnvironmentID)
+	if scope == "environment" && p.EnvironmentId != nil {
+		return fmt.Sprintf("env=%d", *p.EnvironmentId)
 	}
 	return scope
 }
@@ -179,12 +165,19 @@ func runRotList(_ *cobra.Command, _ []string) error {
 		fmt.Println("No rotation policies.")
 		return nil
 	}
-	t := cliout.NewStdoutTable("ID", "NAME", "TARGET", "INTERVAL", "ACTIVE", "ALERT")
+	// Fixed-width fmt.Printf, not cliout.NewStdoutTable: the old CLI's listCmd
+	// rolls its own fixed-width columns here rather than using a shared
+	// tabwriter helper (unlike pat/machine list, which do use one and so
+	// happen to already match cliout's tabwriter output) -- matching it
+	// exactly is what makes this command's output byte-for-byte parity-
+	// checkable in scripts/cli-parity-check.sh, per this port's own mandate.
+	fmt.Printf("%-5s %-24s %-14s %-9s %-7s %s\n", "ID", "NAME", "TARGET", "INTERVAL", "ACTIVE", "ALERT")
 	for _, p := range *resp.JSON200.Data {
-		t.Row(derefUint32(p.ID), derefStr(p.Name), rotScopeTarget(p),
-			fmt.Sprintf("%dd", derefInt(p.IntervalDays)), derefBool(p.IsActive), fmt.Sprintf("%dd", derefInt(p.AlertDaysBefore)))
+		fmt.Printf("%-5d %-24s %-14s %-9s %-7t %dd\n",
+			derefUint32(p.Id), derefStr(p.Name), rotScopeTarget(p),
+			fmt.Sprintf("%dd", derefInt(p.IntervalDays)), derefBool(p.IsActive), derefInt(p.AlertDaysBefore))
 	}
-	return t.Flush()
+	return nil
 }
 
 func runRotCreate(_ *cobra.Command, _ []string) error {
@@ -234,7 +227,7 @@ func runRotCreate(_ *cobra.Command, _ []string) error {
 	}
 	p := *resp.JSON201.Data
 	fmt.Printf("Created rotation policy #%d %q (%s, every %dd, alert %dd before).\n",
-		derefUint32(p.ID), derefStr(p.Name), rotScopeTarget(p), derefInt(p.IntervalDays), derefInt(p.AlertDaysBefore))
+		derefUint32(p.Id), derefStr(p.Name), rotScopeTarget(p), derefInt(p.IntervalDays), derefInt(p.AlertDaysBefore))
 	return nil
 }
 
@@ -255,7 +248,7 @@ func runRotShow(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("get rotation policy failed: HTTP %d", resp.StatusCode())
 	}
 	p := *resp.JSON200.Data
-	fmt.Printf("id:               %d\n", derefUint32(p.ID))
+	fmt.Printf("id:               %d\n", derefUint32(p.Id))
 	fmt.Printf("name:             %s\n", derefStr(p.Name))
 	if d := derefStr(p.Description); d != "" {
 		fmt.Printf("description:      %s\n", d)

@@ -861,22 +861,37 @@ the recorder doesn't enforce net/http's real header-ordering semantics):
    `grep -rn "w.WriteHeader(http.StatusCreated)"` across `server/http/handlers/`, ~25 other call
    sites match the same shape): every other 201 path in the handler package should be audited for
    the identical bug in a dedicated follow-up, since the pattern is clearly not unique to these two.
-2. `models.RotationPolicy` (the GORM model, `internal/storage/models/models.go`) carries no `json:`
-   tags on most fields, so its real wire format is PascalCase (`ID`, `ProjectID`, `IntervalDays`, ...)
+2. `models.RotationPolicy` (the GORM model, `internal/storage/models/models.go`) carried no `json:`
+   tags on most fields, so its real wire format was PascalCase (`ID`, `ProjectID`, `IntervalDays`, ...)
    — Go's `encoding/json` case-insensitive decode fallback matches `"ID"`~`"id"` but does **not**
    match `"ProjectID"`~`"project_id"` (an extra underscore isn't a case difference). The OLD CLI's
-   `policyView` struct uses snake_case tags against this exact model and has therefore always
+   `policyView` struct uses snake_case tags against this exact model and had therefore always
    decoded every multi-word field (interval, alert threshold, active flag, created-by, the
    project/environment number in `target`) as its zero value — `rotation show`/`list`/`create`
-   have been silently displaying `0`/`false`/empty for these fields in production. Confirmed live via
+   had been silently displaying `0`/`false`/empty for these fields in production. Confirmed live via
    `scripts/cli-parity-check.sh` against a real server (a synthetic `httptest` fixture with
-   hand-chosen field casing would never have exposed this). The new CLI's `RotationPolicy` OpenAPI
-   schema uses the model's real (PascalCase) property names instead of the spec's usual snake_case
-   convention specifically to decode correctly — see the schema's own doc comment and
-   `cli/cmd/rotation.go`'s `rotScopeTarget` doc comment for the full writeup, and
-   `TestRunRotList_MatchesOldCLIOutputShape`/`TestRunRotShow_MatchesOldCLIOutputShape`
-   (`cli/cmd/rotation_test.go`) for the regression guard. **The old CLI's identical bug is left
-   unfixed** — out of scope for a CLI-porting PR, and the old CLI is removed in a later phase anyway.
+   hand-chosen field casing would never have exposed this).
+
+   **Follow-up (same PR, separate commit): fixed at the source instead of documented as a
+   PascalCase exception.** `models.RotationPolicy` now carries the correct, explicit snake_case
+   `json:` tags directly (GORM's own column-naming strategy is derived from the Go field name, not
+   from `json:` tags, so this changes only the wire format, not the schema); `openapi.yaml`'s
+   `RotationPolicy` schema reverted to this spec's normal snake_case convention; the generated CLI
+   client regenerated to match. This fixes the bug for every consumer of the model's JSON form, not
+   only the new CLI — including the OLD CLI, whose `policyView` struct now decodes correctly too,
+   confirmed by `internal/cli/rotation/rotation_policy_wire_regression_test.go`'s
+   `TestOldCLIPolicyView_DecodesRealCreateResponse`/`DecodesRealGetResponse` (a real handler response
+   decoded by the OLD CLI's own struct, red/green-verified: reverting the model's tags makes both
+   tests fail on exactly the previously-zeroed fields). `scripts/cli-parity-check.sh`'s `rotation
+   create`/`list`/`show` checks, previously carved out as "not literal parity" because the two CLIs
+   necessarily disagreed, are now genuine byte-for-byte comparisons again like every other resource
+   in that script — the divergence is gone, not just documented. `cli/cmd/rotation.go`'s `runRotList`
+   was also switched from `cliout`'s tabwriter to the old CLI's exact fixed-width `Printf` format
+   (a separate, pre-existing formatting divergence the byte-comparison surfaced, unrelated to
+   casing), for full parity on that command too. The web frontend
+   (`web/src/features/secrets/useRotationPolicies.ts`) already normalized both casings defensively
+   before this fix and needed no change; `keyorix-sdks` (all four language SDKs) has no
+   rotation-policy bindings at all yet, so nothing there was affected either.
 
 Tests: unit tests per command (flag/argument validation + golden-output-shape assertions against a
 fake `httptest.Server`, `cli/cmd/{dynamicsecret,rotation,breakglass}_test.go`); OpenAPI contract

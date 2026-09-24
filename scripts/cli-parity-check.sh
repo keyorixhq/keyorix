@@ -36,19 +36,22 @@
 #     session-token/single-credential-file model; the auth mechanism itself
 #     changed, so the commands are expected to differ. Verified instead: the
 #     new commands do what THEIR OWN spec says (see cli/cmd/*_test.go).
-#   - rotation list/show/create: NOT compared for literal parity -- the OLD
-#     CLI's policyView struct decodes the server's RotationPolicy response with
-#     snake_case json tags against a model that actually marshals PascalCase
-#     (models.RotationPolicy has no json tags at all), so every multi-word
-#     field (interval, alert, active, created-by, target's project/env number)
-#     silently decodes as its zero value in the OLD CLI today. The NEW CLI's
-#     generated apiclient.RotationPolicy type was fixed (see cli/cmd/rotation.go's
-#     rotScopeTarget doc comment, and openapi.yaml's RotationPolicy schema doc)
-#     to actually match the real wire format, so these three commands now show
-#     the CORRECT values in the new CLI while the old CLI keeps showing zeros --
-#     a deliberate, verified bug fix, not a divergence to chase into parity.
-#     Verified instead: TestRunRotList_MatchesOldCLIOutputShape and siblings in
-#     cli/cmd/rotation_test.go assert the new CLI's OWN correct output.
+#   - rotation list/show/create: WAS not compared for literal parity, in an
+#     earlier version of this script -- models.RotationPolicy had no json
+#     tags, so it marshaled as PascalCase, which the OLD CLI's snake_case-
+#     tagged policyView struct could not match (every multi-word field --
+#     interval, alert, active, created-by, target's project/env number --
+#     silently decoded as its zero value in the OLD CLI, while the NEW CLI's
+#     schema-driven client was made to match the real wire format instead).
+#     FIXED AT THE SOURCE since (ADR-108 PR 1, docs/cli-split-inventory.md §7):
+#     models.RotationPolicy itself now carries the correct snake_case json
+#     tags, so BOTH CLIs decode this response identically -- these three
+#     commands are genuine, literal (normalized) byte-for-byte parity checks
+#     again below, like every other resource in this script. The regression
+#     that would have needed this carve-out is covered instead by
+#     internal/cli/rotation/rotation_policy_wire_regression_test.go (asserts
+#     the OLD CLI's own struct decodes a real handler response correctly) and
+#     cli/cmd/rotation_test.go (asserts the NEW CLI's own output).
 #   - machine audit --format json: NOT byte-compared -- the new CLI's
 #     generated-client struct fields serialize in alphabetical order,
 #     the old CLI's hand-written struct in declaration order. Semantically
@@ -413,35 +416,30 @@ run_old rotation create --name old-rot-1 --scope project --project-id "$PROJECT_
 run_new rotation create --name new-rot-1 --scope project --project-id "$PROJECT_ID" \
   --interval-days 30 > "$RESULTS/new_rot_create.raw" 2>&1
 set -e
-# Not literal-parity-checked: see this script's header ("rotation list/show/create").
-if grep -q "Created rotation policy #" "$RESULTS/old_rot_create.raw" && grep -q "Created rotation policy #" "$RESULTS/new_rot_create.raw"; then
-  pass_count=$((pass_count + 1)); log "PASS  rotation create (both succeeded; NOT byte-compared, see header)"
-else
-  fail_count=$((fail_count + 1)); log "FAIL  rotation create: old=$(cat "$RESULTS/old_rot_create.raw") new=$(cat "$RESULTS/new_rot_create.raw")"
-fi
+# Literal, normalized parity -- see this script's header ("rotation list/show/create
+# is now genuinely byte-for-byte parity-checked, like every other resource"): the
+# source-level fix (models.RotationPolicy's json tags) benefits BOTH CLIs equally,
+# since both hit the same real server. Before that fix, the old CLI showed
+# "project" (no id) here where the new CLI showed "project=1"; #N normalizes the
+# minted policy id, matching the pattern every other create check already uses.
+normalize "$RESULTS/old_rot_create.raw" | sed -E 's/(old|new)-rot-1/R/' > "$RESULTS/old_rot_create.norm"
+normalize "$RESULTS/new_rot_create.raw" | sed -E 's/(old|new)-rot-1/R/' > "$RESULTS/new_rot_create.norm"
+check "rotation create (normalized)" "$RESULTS/old_rot_create.norm" "$RESULTS/new_rot_create.norm"
 
 run_old rotation list --project-id "$PROJECT_ID" > "$RESULTS/old_rot_list.raw" 2>&1
 run_new rotation list --project-id "$PROJECT_ID" > "$RESULTS/new_rot_list.raw" 2>&1
-# Not literal-parity-checked: see this script's header ("rotation list/show/create").
-if grep -q "old-rot-1" "$RESULTS/old_rot_list.raw" && grep -q "new-rot-1" "$RESULTS/new_rot_list.raw"; then
-  pass_count=$((pass_count + 1)); log "PASS  rotation list (both list their policy; NOT byte-compared, see header)"
-else
-  fail_count=$((fail_count + 1)); log "FAIL  rotation list: old=$(cat "$RESULTS/old_rot_list.raw") new=$(cat "$RESULTS/new_rot_list.raw")"
-fi
+normalize "$RESULTS/old_rot_list.raw" | sed -E 's/(old|new)-rot-1/R/' > "$RESULTS/old_rot_list.norm"
+normalize "$RESULTS/new_rot_list.raw" | sed -E 's/(old|new)-rot-1/R/' > "$RESULTS/new_rot_list.norm"
+check "rotation list (normalized)" "$RESULTS/old_rot_list.norm" "$RESULTS/new_rot_list.norm"
 
 old_rot_id=$(run_old rotation list --project-id "$PROJECT_ID" | awk '$2=="old-rot-1"{print $1}')
 new_rot_id=$(run_new rotation list --project-id "$PROJECT_ID" | awk '$2=="new-rot-1"{print $1}')
 
 run_old rotation show "$old_rot_id" > "$RESULTS/old_rot_show.raw" 2>&1
 run_new rotation show "$new_rot_id" > "$RESULTS/new_rot_show.raw" 2>&1
-# Not literal-parity-checked: see this script's header ("rotation list/show/create").
-# The new CLI must show the CORRECT interval (30 days); the old CLI is expected
-# to still show its pre-existing "0 days" decoding bug.
-if grep -q "interval:         30 days" "$RESULTS/new_rot_show.raw"; then
-  pass_count=$((pass_count + 1)); log "PASS  rotation show (new CLI decodes interval_days correctly; NOT byte-compared with old, see header)"
-else
-  fail_count=$((fail_count + 1)); log "FAIL  rotation show: new CLI did not show the correct interval: $(cat "$RESULTS/new_rot_show.raw")"
-fi
+sed -E 's/^id:.*$/id: N/; s/(old|new)-rot-1/R/' "$RESULTS/old_rot_show.raw" > "$RESULTS/old_rot_show.norm"
+sed -E 's/^id:.*$/id: N/; s/(old|new)-rot-1/R/' "$RESULTS/new_rot_show.raw" > "$RESULTS/new_rot_show.norm"
+check "rotation show (normalized)" "$RESULTS/old_rot_show.norm" "$RESULTS/new_rot_show.norm"
 
 run_old rotation status --project-id "$PROJECT_ID" > "$RESULTS/old_rot_status.raw" 2>&1
 run_new rotation status --project-id "$PROJECT_ID" > "$RESULTS/new_rot_status.raw" 2>&1
