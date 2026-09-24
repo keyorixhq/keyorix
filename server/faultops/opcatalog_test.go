@@ -892,6 +892,106 @@ var opCatalog = []operation{
 			return httpResult(st, body), nil
 		},
 	},
+	{
+		// Coverage batch 8 (2026-09-24, fuzz/new-surfaces): CreateSecretAccessRequest
+		// — self-service creation of a secret-scoped access request
+		// (internal/core/classification_gate.go's RequestSecretAccess, introduced
+		// by #2032), previously entirely absent from this catalog.
+		Key: "REST POST /api/v1/secret-access-requests",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			return secretID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			secretID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/secret-access-requests", map[string]any{
+				"secret_id": secretID, "reason": "fuzz access request",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// Coverage batch 8: WithdrawSecretAccessRequest — self-service withdraw of
+		// the caller's own pending secret-scoped request (invitations.go's generic
+		// WithdrawAccessRequest, unchanged for this SecretID-scoped shape). State
+		// is seeded directly through the unfaulted storage wrapper (same shortcut
+		// break-glass batch 7 uses) as the world's own bootstrap admin
+		// ("faultadmin"), since Execute authenticates as that same admin token and
+		// withdraw requires requester == caller.
+		Key: "REST POST /api/v1/secret-access-requests/{requestId}/withdraw",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			admin, err := w.faulty.GetUserByUsername(ctx, "faultadmin")
+			if err != nil {
+				return nil, fmt.Errorf("setup GetUserByUsername(faultadmin): %w", err)
+			}
+			expires := time.Now().Add(24 * time.Hour)
+			created, err := w.faulty.CreateAccessRequest(ctx, &models.AccessRequest{
+				ProjectID: 1, UserID: admin.ID, SecretID: &secretID,
+				State: core.AccessRequestPending, Reason: "fuzz withdraw setup", ExpiresAt: &expires,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("setup CreateAccessRequest: %w", err)
+			}
+			return created.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			reqID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secret-access-requests/%d/withdraw", reqID), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// Coverage batch 8: ResolveSecretAccessRequest (approve) — the
+		// requester-cannot-approve-their-own, admin-authority-ceiling-gated state
+		// transition (ApproveSecretAccessRequest), the most state-machine-shaped
+		// operation in this family. Requester is a freshly created ordinary user
+		// (never the world's own admin), so the real Execute call — as the
+		// bootstrap admin, who never made the request — exercises the actual
+		// authority/self-approval guards rather than short-circuiting them.
+		Key: "REST PUT /api/v1/secret-access-requests/{requestId}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			requesterID, err := createUserForFuzz(ctx, w, "fuzz-sar-requester")
+			if err != nil {
+				return nil, err
+			}
+			expires := time.Now().Add(24 * time.Hour)
+			created, err := w.faulty.CreateAccessRequest(ctx, &models.AccessRequest{
+				ProjectID: 1, UserID: requesterID, SecretID: &secretID,
+				State: core.AccessRequestPending, Reason: "fuzz approve setup", ExpiresAt: &expires,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("setup CreateAccessRequest: %w", err)
+			}
+			return created.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			reqID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/secret-access-requests/%d", reqID), map[string]any{
+				"action": "approve",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
 }
 
 // runOp runs op.Setup (if any) then op.Execute against w, with no fault

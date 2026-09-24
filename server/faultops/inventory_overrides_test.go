@@ -87,6 +87,15 @@ var operationOverrides = map[string]overrideEntry{
 	// (non-/system) break-glass revoke path — sibling of the /system proxy
 	// entry above, same core.RevokeBreakGlass function, other caller.
 	"REST POST /api/v1/projects/{id}/break-glass/{activationId}/revoke": {StatusFuzzed, "opCatalog[\"RevokeBreakGlass\"] — batch 7"},
+	// Coverage batch 8 (2026-09-24, fuzz/new-surfaces): the secret-scoped access
+	// request family (server/http/handlers/secret_access_requests.go,
+	// internal/core/classification_gate.go) — introduced by #2032, previously
+	// entirely absent from this catalog. Create, self-service withdraw, and the
+	// admin approve/reject decision (the requester-cannot-approve-their-own,
+	// admin-authority-ceiling-gated state transition).
+	"REST POST /api/v1/secret-access-requests":                         {StatusFuzzed, "opCatalog[\"CreateSecretAccessRequest\"] — batch 8"},
+	"REST POST /api/v1/secret-access-requests/{requestId}/withdraw":    {StatusFuzzed, "opCatalog[\"WithdrawSecretAccessRequest\"] — batch 8"},
+	"REST PUT /api/v1/secret-access-requests/{requestId}":              {StatusFuzzed, "opCatalog[\"ResolveSecretAccessRequest\"] — batch 8"},
 }
 
 func statusOf(key string) overrideEntry {
