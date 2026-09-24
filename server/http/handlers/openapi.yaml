@@ -6770,38 +6770,6 @@ components:
         ExpiresAt: {type: string, format: date-time, nullable: true}
         CreatedAt: {type: string, format: date-time}
         UpdatedAt: {type: string, format: date-time}
-    # Secret mirrors the identical schema PR 4/PR 5 each independently author for
-    # their own operations (sibling, independent PRs -- none of them have merged
-    # yet, so none can $ref a shared definition another PR's branch introduces).
-    # PascalCase field names because models.SecretNode has no json struct tags.
-    Secret:
-      type: object
-      properties:
-        ID: {type: integer}
-        ParentID: {type: integer, nullable: true}
-        ProjectID: {type: integer}
-        EnvironmentID: {type: integer}
-        Name: {type: string}
-        IsSecret: {type: boolean}
-        Type: {type: string}
-        Description: {type: string}
-        MaxReads: {type: integer, nullable: true}
-        ReadCount: {type: integer}
-        Expiration: {type: string, format: date-time, nullable: true}
-        Classification: {type: string}
-        Status: {type: string}
-        CreatedBy: {type: string}
-        OwnerID: {type: integer}
-        OwnerMachineIdentityID: {type: integer}
-        IsShared: {type: boolean}
-        CreatedAt: {type: string, format: date-time}
-        UpdatedAt: {type: string, format: date-time}
-        LastRotatedAt: {type: string, format: date-time, nullable: true}
-        AutoRotate: {type: boolean}
-        RotationLength: {type: integer}
-        RotationCharset: {type: string}
-        RotationBackend: {type: string}
-        RotationRef: {type: string}
     # docs/cli-split-inventory.md §7 PR 5 -- secret bulk/rotation/export/import/scan/hygiene.
     # models.SecretNode carries no `json:` tags, so it serializes with bare (capitalized)
     # Go field names -- see the identical note on PR 3/PR 4's schemas for this same model.

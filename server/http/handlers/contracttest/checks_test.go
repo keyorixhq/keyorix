@@ -155,11 +155,11 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		"listSharedSecrets":             true,
 		"listSharedSecretsForUser":      true,
 		"listGroupShares":               true,
-// The 18 secret bulk/rotation/hygiene operations below were added by ADR-108
-// PR 5 (docs/cli-split-inventory.md §7): 2 (rotateSecret, getSecretRisk)
-// backfilled schemas for previously-schema-less existing routes; the other 16
-// are brand-new routes added in the same PR. Each is exercised via
-// openapi_contract_pr5_test.go.
+		// The 18 secret bulk/rotation/hygiene operations below were added by ADR-108
+		// PR 5 (docs/cli-split-inventory.md §7): 2 (rotateSecret, getSecretRisk)
+		// backfilled schemas for previously-schema-less existing routes; the other 16
+		// are brand-new routes added in the same PR. Each is exercised via
+		// openapi_contract_pr5_test.go.
 		"addSecretDependency":             true,
 		"addSecretVersionComment":         true,
 		"classifySecret":                  true,
