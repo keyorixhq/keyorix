@@ -287,3 +287,40 @@ design is accepted as-is:
 | Keyless mode: config, startup warning, `/system/info`, reachability guard | 2–3 days |
 | Tests, fuzz targets, adversarial review pass | 3–5 days |
 | **Total** | **~3–4 weeks** |
+
+## 9. Review addenda (2026-09-24)
+
+Folded in from the independent parallel draft's review (PR #2026 comment). These amend the sections
+above; where they conflict, this section wins.
+
+1. **Air-gapped installs.** Nothing in the design needs the network except the SMTP leg of
+   notifications, which is already best-effort. The in-app `Notification` row is a DB write and works
+   fully offline. No external anchor or service is required to run `recover-admin`.
+2. **Threat row: DB copy only, no host access.** Offline brute force of the recovery key from a
+   stolen DB copy is infeasible: the key carries 256 bits of entropy, so the stored SHA-256 verifier
+   gives nothing to grind. A slow KDF would add nothing here (§2's choice stands).
+3. **Existing installs with no recovery key.** On an install that predates this feature,
+   `recover-admin` first detects the missing key and offers to generate one on the spot: shown once,
+   audited as a key-generation event, same rules as install time. Only then does it proceed to any
+   recovery action. A host operator can also run a separate `admin recovery-key rotate` (same rules).
+4. **Lockout policy is a covered case.** An account locked by `internal/core/login_lockout.go`
+   (failed-attempt lockout) is in scope alongside deactivated / lost password / lost MFA; recovery
+   clears the lockout state explicitly rather than relying on the password reset to do it.
+5. **MFA/WebAuthn clearing needs new host-authority functions.** `DisableMFA`,
+   `RegenerateMFARecoveryCodes` and `DeleteWebAuthnCredential` all require proof of a working factor,
+   which is backwards for lockout recovery. The implementation adds recovery-only variants (e.g.
+   `ForceClearMFAForRecovery`) reachable only from this code path, after host access, the admin lock
+   and the recovery key are verified. This is new scoped work and is counted in §8.
+6. **The admin scaffolding already exists.** `server/admin` and `internal/serverguard`
+   (`AcquireExclusive`, held for the whole run) are on main since #2016. Drop the scaffolding work
+   and its 3-5 day line from §8; `recover-admin` is a new subcommand on that framework.
+7. **Notification when the server is down: simpler option first.** Instead of a new outbox table
+   plus a startup drain, `recover-admin` (a) writes the in-app `Notification` rows for every admin
+   directly (seen at next login whether or not the server is up) and (b) makes one best-effort
+   synchronous SMTP send with the configured email channel. Per-user webhook/Slack sinks don't exist
+   today (broadcast only), so an outbox buys nothing yet. Revisit the outbox if per-recipient chat
+   sinks are added. **Recommendation: the simple path.** (Open question for Andrei; see §7.)
+
+Net effect on §8: remove the scaffolding estimate (item 6), add the recovery-only MFA/WebAuthn
+functions and the key-retrofit flow (items 3 and 5), and remove the outbox if item 7's simple path is
+accepted. Expect roughly the same total, shifted from framework to recovery logic.
