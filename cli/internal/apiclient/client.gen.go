@@ -125,6 +125,41 @@ type ClientInterface interface {
 	// RevokePAT request
 	RevokePAT(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListDynamicSecretConfigs request
+	ListDynamicSecretConfigs(ctx context.Context, params *ListDynamicSecretConfigsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateDynamicSecretConfigWithBody request with any body
+	CreateDynamicSecretConfigWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateDynamicSecretConfig(ctx context.Context, body CreateDynamicSecretConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetDynamicSecretConfig request
+	GetDynamicSecretConfig(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClassifyDynamicSecretConfigWithBody request with any body
+	ClassifyDynamicSecretConfigWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ClassifyDynamicSecretConfig(ctx context.Context, id int, body ClassifyDynamicSecretConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IssueDynamicSecretLeaseWithBody request with any body
+	IssueDynamicSecretLeaseWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	IssueDynamicSecretLease(ctx context.Context, id int, body IssueDynamicSecretLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListDynamicSecretLeases request
+	ListDynamicSecretLeases(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeAllDynamicSecretLeases request
+	RevokeAllDynamicSecretLeases(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenewDynamicSecretLeaseWithBody request with any body
+	RenewDynamicSecretLeaseWithBody(ctx context.Context, leaseID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	RenewDynamicSecretLease(ctx context.Context, leaseID string, body RenewDynamicSecretLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeDynamicSecretLease request
+	RevokeDynamicSecretLease(ctx context.Context, leaseID string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DeleteEnvironment request
 	DeleteEnvironment(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -144,6 +179,17 @@ type ClientInterface interface {
 	CreateProjectWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	CreateProject(ctx context.Context, body CreateProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListBreakGlassActivations request
+	ListBreakGlassActivations(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ActivateBreakGlassWithBody request with any body
+	ActivateBreakGlassWithBody(ctx context.Context, id uint32, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ActivateBreakGlass(ctx context.Context, id uint32, body ActivateBreakGlassJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeBreakGlass request
+	RevokeBreakGlass(ctx context.Context, id uint32, activationId uint32, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListProjectEnvironments request
 	ListProjectEnvironments(ctx context.Context, id uint32, params *ListProjectEnvironmentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -199,8 +245,39 @@ type ClientInterface interface {
 	// RevokeMachineToken request
 	RevokeMachineToken(ctx context.Context, id int, machineId int, tokenId int, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetProjectRotationOrder request
+	GetProjectRotationOrder(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetProjectRotationPlan request
+	GetProjectRotationPlan(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetProjectStats request
 	GetProjectStats(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetDeploymentRotationPlan request
+	GetDeploymentRotationPlan(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListRotationPolicies request
+	ListRotationPolicies(ctx context.Context, params *ListRotationPoliciesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateRotationPolicyWithBody request with any body
+	CreateRotationPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateRotationPolicy(ctx context.Context, body CreateRotationPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// EvaluateRotationPolicies request
+	EvaluateRotationPolicies(ctx context.Context, params *EvaluateRotationPoliciesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteRotationPolicy request
+	DeleteRotationPolicy(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetRotationPolicy request
+	GetRotationPolicy(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateRotationPolicyWithBody request with any body
+	UpdateRotationPolicyWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	UpdateRotationPolicy(ctx context.Context, id int, body UpdateRotationPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListUsers request
 	ListUsers(ctx context.Context, params *ListUsersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -410,6 +487,162 @@ func (c *Client) RevokePAT(ctx context.Context, id int, reqEditors ...RequestEdi
 	return c.Client.Do(req)
 }
 
+func (c *Client) ListDynamicSecretConfigs(ctx context.Context, params *ListDynamicSecretConfigsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListDynamicSecretConfigsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateDynamicSecretConfigWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDynamicSecretConfigRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateDynamicSecretConfig(ctx context.Context, body CreateDynamicSecretConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDynamicSecretConfigRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetDynamicSecretConfig(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetDynamicSecretConfigRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ClassifyDynamicSecretConfigWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClassifyDynamicSecretConfigRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ClassifyDynamicSecretConfig(ctx context.Context, id int, body ClassifyDynamicSecretConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClassifyDynamicSecretConfigRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) IssueDynamicSecretLeaseWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIssueDynamicSecretLeaseRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) IssueDynamicSecretLease(ctx context.Context, id int, body IssueDynamicSecretLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIssueDynamicSecretLeaseRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListDynamicSecretLeases(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListDynamicSecretLeasesRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RevokeAllDynamicSecretLeases(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeAllDynamicSecretLeasesRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RenewDynamicSecretLeaseWithBody(ctx context.Context, leaseID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewDynamicSecretLeaseRequestWithBody(c.Server, leaseID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RenewDynamicSecretLease(ctx context.Context, leaseID string, body RenewDynamicSecretLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewDynamicSecretLeaseRequest(c.Server, leaseID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RevokeDynamicSecretLease(ctx context.Context, leaseID string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeDynamicSecretLeaseRequest(c.Server, leaseID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) DeleteEnvironment(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteEnvironmentRequest(c.Server, id)
 	if err != nil {
@@ -484,6 +717,54 @@ func (c *Client) CreateProjectWithBody(ctx context.Context, contentType string, 
 
 func (c *Client) CreateProject(ctx context.Context, body CreateProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateProjectRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListBreakGlassActivations(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListBreakGlassActivationsRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ActivateBreakGlassWithBody(ctx context.Context, id uint32, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewActivateBreakGlassRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ActivateBreakGlass(ctx context.Context, id uint32, body ActivateBreakGlassJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewActivateBreakGlassRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RevokeBreakGlass(ctx context.Context, id uint32, activationId uint32, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeBreakGlassRequest(c.Server, id, activationId)
 	if err != nil {
 		return nil, err
 	}
@@ -734,8 +1015,140 @@ func (c *Client) RevokeMachineToken(ctx context.Context, id int, machineId int, 
 	return c.Client.Do(req)
 }
 
+func (c *Client) GetProjectRotationOrder(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetProjectRotationOrderRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetProjectRotationPlan(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetProjectRotationPlanRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) GetProjectStats(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetProjectStatsRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetDeploymentRotationPlan(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetDeploymentRotationPlanRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListRotationPolicies(ctx context.Context, params *ListRotationPoliciesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListRotationPoliciesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateRotationPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateRotationPolicyRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateRotationPolicy(ctx context.Context, body CreateRotationPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateRotationPolicyRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) EvaluateRotationPolicies(ctx context.Context, params *EvaluateRotationPoliciesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewEvaluateRotationPoliciesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteRotationPolicy(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteRotationPolicyRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetRotationPolicy(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetRotationPolicyRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateRotationPolicyWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateRotationPolicyRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateRotationPolicy(ctx context.Context, id int, body UpdateRotationPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateRotationPolicyRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1264,6 +1677,388 @@ func NewRevokePATRequest(server string, id int) (*http.Request, error) {
 	return req, nil
 }
 
+// NewListDynamicSecretConfigsRequest generates requests for ListDynamicSecretConfigs
+func NewListDynamicSecretConfigsRequest(server string, params *ListDynamicSecretConfigsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/dynamic-secrets/configs")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.ProjectId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "project_id", runtime.ParamLocationQuery, *params.ProjectId); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.EnvironmentId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "environment_id", runtime.ParamLocationQuery, *params.EnvironmentId); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateDynamicSecretConfigRequest calls the generic CreateDynamicSecretConfig builder with application/json body
+func NewCreateDynamicSecretConfigRequest(server string, body CreateDynamicSecretConfigJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateDynamicSecretConfigRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateDynamicSecretConfigRequestWithBody generates requests for CreateDynamicSecretConfig with any type of body
+func NewCreateDynamicSecretConfigRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/dynamic-secrets/configs")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetDynamicSecretConfigRequest generates requests for GetDynamicSecretConfig
+func NewGetDynamicSecretConfigRequest(server string, id int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/dynamic-secrets/configs/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewClassifyDynamicSecretConfigRequest calls the generic ClassifyDynamicSecretConfig builder with application/json body
+func NewClassifyDynamicSecretConfigRequest(server string, id int, body ClassifyDynamicSecretConfigJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewClassifyDynamicSecretConfigRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewClassifyDynamicSecretConfigRequestWithBody generates requests for ClassifyDynamicSecretConfig with any type of body
+func NewClassifyDynamicSecretConfigRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/dynamic-secrets/configs/%s/classification", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewIssueDynamicSecretLeaseRequest calls the generic IssueDynamicSecretLease builder with application/json body
+func NewIssueDynamicSecretLeaseRequest(server string, id int, body IssueDynamicSecretLeaseJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIssueDynamicSecretLeaseRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewIssueDynamicSecretLeaseRequestWithBody generates requests for IssueDynamicSecretLease with any type of body
+func NewIssueDynamicSecretLeaseRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/dynamic-secrets/configs/%s/issue", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListDynamicSecretLeasesRequest generates requests for ListDynamicSecretLeases
+func NewListDynamicSecretLeasesRequest(server string, id int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/dynamic-secrets/configs/%s/leases", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRevokeAllDynamicSecretLeasesRequest generates requests for RevokeAllDynamicSecretLeases
+func NewRevokeAllDynamicSecretLeasesRequest(server string, id int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/dynamic-secrets/configs/%s/revoke-all", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRenewDynamicSecretLeaseRequest calls the generic RenewDynamicSecretLease builder with application/json body
+func NewRenewDynamicSecretLeaseRequest(server string, leaseID string, body RenewDynamicSecretLeaseJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRenewDynamicSecretLeaseRequestWithBody(server, leaseID, "application/json", bodyReader)
+}
+
+// NewRenewDynamicSecretLeaseRequestWithBody generates requests for RenewDynamicSecretLease with any type of body
+func NewRenewDynamicSecretLeaseRequestWithBody(server string, leaseID string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "leaseID", runtime.ParamLocationPath, leaseID)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/dynamic-secrets/leases/%s/renew", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokeDynamicSecretLeaseRequest generates requests for RevokeDynamicSecretLease
+func NewRevokeDynamicSecretLeaseRequest(server string, leaseID string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "leaseID", runtime.ParamLocationPath, leaseID)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/dynamic-secrets/leases/%s/revoke", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewDeleteEnvironmentRequest generates requests for DeleteEnvironment
 func NewDeleteEnvironmentRequest(server string, id uint32) (*http.Request, error) {
 	var err error
@@ -1508,6 +2303,128 @@ func NewCreateProjectRequestWithBody(server string, contentType string, body io.
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListBreakGlassActivationsRequest generates requests for ListBreakGlassActivations
+func NewListBreakGlassActivationsRequest(server string, id uint32) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/break-glass", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewActivateBreakGlassRequest calls the generic ActivateBreakGlass builder with application/json body
+func NewActivateBreakGlassRequest(server string, id uint32, body ActivateBreakGlassJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewActivateBreakGlassRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewActivateBreakGlassRequestWithBody generates requests for ActivateBreakGlass with any type of body
+func NewActivateBreakGlassRequestWithBody(server string, id uint32, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/break-glass", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokeBreakGlassRequest generates requests for RevokeBreakGlass
+func NewRevokeBreakGlassRequest(server string, id uint32, activationId uint32) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "activationId", runtime.ParamLocationPath, activationId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/break-glass/%s/revoke", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -2180,6 +3097,74 @@ func NewRevokeMachineTokenRequest(server string, id int, machineId int, tokenId 
 	return req, nil
 }
 
+// NewGetProjectRotationOrderRequest generates requests for GetProjectRotationOrder
+func NewGetProjectRotationOrderRequest(server string, id uint32) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/rotation-order", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetProjectRotationPlanRequest generates requests for GetProjectRotationPlan
+func NewGetProjectRotationPlanRequest(server string, id uint32) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/rotation-plan", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetProjectStatsRequest generates requests for GetProjectStats
 func NewGetProjectStatsRequest(server string, id uint32) (*http.Request, error) {
 	var err error
@@ -2210,6 +3195,302 @@ func NewGetProjectStatsRequest(server string, id uint32) (*http.Request, error) 
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewGetDeploymentRotationPlanRequest generates requests for GetDeploymentRotationPlan
+func NewGetDeploymentRotationPlanRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/rotation-plan")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListRotationPoliciesRequest generates requests for ListRotationPolicies
+func NewListRotationPoliciesRequest(server string, params *ListRotationPoliciesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/rotation-policies")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.ProjectId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "project_id", runtime.ParamLocationQuery, *params.ProjectId); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.EnvironmentId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "environment_id", runtime.ParamLocationQuery, *params.EnvironmentId); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateRotationPolicyRequest calls the generic CreateRotationPolicy builder with application/json body
+func NewCreateRotationPolicyRequest(server string, body CreateRotationPolicyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateRotationPolicyRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateRotationPolicyRequestWithBody generates requests for CreateRotationPolicy with any type of body
+func NewCreateRotationPolicyRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/rotation-policies")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewEvaluateRotationPoliciesRequest generates requests for EvaluateRotationPolicies
+func NewEvaluateRotationPoliciesRequest(server string, params *EvaluateRotationPoliciesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/rotation-policies/evaluate")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.ProjectId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "project_id", runtime.ParamLocationQuery, *params.ProjectId); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDeleteRotationPolicyRequest generates requests for DeleteRotationPolicy
+func NewDeleteRotationPolicyRequest(server string, id int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/rotation-policies/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetRotationPolicyRequest generates requests for GetRotationPolicy
+func NewGetRotationPolicyRequest(server string, id int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/rotation-policies/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateRotationPolicyRequest calls the generic UpdateRotationPolicy builder with application/json body
+func NewUpdateRotationPolicyRequest(server string, id int, body UpdateRotationPolicyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateRotationPolicyRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewUpdateRotationPolicyRequestWithBody generates requests for UpdateRotationPolicy with any type of body
+func NewUpdateRotationPolicyRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/rotation-policies/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -2944,6 +4225,41 @@ type ClientWithResponsesInterface interface {
 	// RevokePATWithResponse request
 	RevokePATWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*RevokePATResponse, error)
 
+	// ListDynamicSecretConfigsWithResponse request
+	ListDynamicSecretConfigsWithResponse(ctx context.Context, params *ListDynamicSecretConfigsParams, reqEditors ...RequestEditorFn) (*ListDynamicSecretConfigsResponse, error)
+
+	// CreateDynamicSecretConfigWithBodyWithResponse request with any body
+	CreateDynamicSecretConfigWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDynamicSecretConfigResponse, error)
+
+	CreateDynamicSecretConfigWithResponse(ctx context.Context, body CreateDynamicSecretConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDynamicSecretConfigResponse, error)
+
+	// GetDynamicSecretConfigWithResponse request
+	GetDynamicSecretConfigWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*GetDynamicSecretConfigResponse, error)
+
+	// ClassifyDynamicSecretConfigWithBodyWithResponse request with any body
+	ClassifyDynamicSecretConfigWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClassifyDynamicSecretConfigResponse, error)
+
+	ClassifyDynamicSecretConfigWithResponse(ctx context.Context, id int, body ClassifyDynamicSecretConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*ClassifyDynamicSecretConfigResponse, error)
+
+	// IssueDynamicSecretLeaseWithBodyWithResponse request with any body
+	IssueDynamicSecretLeaseWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueDynamicSecretLeaseResponse, error)
+
+	IssueDynamicSecretLeaseWithResponse(ctx context.Context, id int, body IssueDynamicSecretLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueDynamicSecretLeaseResponse, error)
+
+	// ListDynamicSecretLeasesWithResponse request
+	ListDynamicSecretLeasesWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ListDynamicSecretLeasesResponse, error)
+
+	// RevokeAllDynamicSecretLeasesWithResponse request
+	RevokeAllDynamicSecretLeasesWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*RevokeAllDynamicSecretLeasesResponse, error)
+
+	// RenewDynamicSecretLeaseWithBodyWithResponse request with any body
+	RenewDynamicSecretLeaseWithBodyWithResponse(ctx context.Context, leaseID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewDynamicSecretLeaseResponse, error)
+
+	RenewDynamicSecretLeaseWithResponse(ctx context.Context, leaseID string, body RenewDynamicSecretLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewDynamicSecretLeaseResponse, error)
+
+	// RevokeDynamicSecretLeaseWithResponse request
+	RevokeDynamicSecretLeaseWithResponse(ctx context.Context, leaseID string, reqEditors ...RequestEditorFn) (*RevokeDynamicSecretLeaseResponse, error)
+
 	// DeleteEnvironmentWithResponse request
 	DeleteEnvironmentWithResponse(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*DeleteEnvironmentResponse, error)
 
@@ -2963,6 +4279,17 @@ type ClientWithResponsesInterface interface {
 	CreateProjectWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateProjectResponse, error)
 
 	CreateProjectWithResponse(ctx context.Context, body CreateProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateProjectResponse, error)
+
+	// ListBreakGlassActivationsWithResponse request
+	ListBreakGlassActivationsWithResponse(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*ListBreakGlassActivationsResponse, error)
+
+	// ActivateBreakGlassWithBodyWithResponse request with any body
+	ActivateBreakGlassWithBodyWithResponse(ctx context.Context, id uint32, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ActivateBreakGlassResponse, error)
+
+	ActivateBreakGlassWithResponse(ctx context.Context, id uint32, body ActivateBreakGlassJSONRequestBody, reqEditors ...RequestEditorFn) (*ActivateBreakGlassResponse, error)
+
+	// RevokeBreakGlassWithResponse request
+	RevokeBreakGlassWithResponse(ctx context.Context, id uint32, activationId uint32, reqEditors ...RequestEditorFn) (*RevokeBreakGlassResponse, error)
 
 	// ListProjectEnvironmentsWithResponse request
 	ListProjectEnvironmentsWithResponse(ctx context.Context, id uint32, params *ListProjectEnvironmentsParams, reqEditors ...RequestEditorFn) (*ListProjectEnvironmentsResponse, error)
@@ -3018,8 +4345,39 @@ type ClientWithResponsesInterface interface {
 	// RevokeMachineTokenWithResponse request
 	RevokeMachineTokenWithResponse(ctx context.Context, id int, machineId int, tokenId int, reqEditors ...RequestEditorFn) (*RevokeMachineTokenResponse, error)
 
+	// GetProjectRotationOrderWithResponse request
+	GetProjectRotationOrderWithResponse(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*GetProjectRotationOrderResponse, error)
+
+	// GetProjectRotationPlanWithResponse request
+	GetProjectRotationPlanWithResponse(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*GetProjectRotationPlanResponse, error)
+
 	// GetProjectStatsWithResponse request
 	GetProjectStatsWithResponse(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*GetProjectStatsResponse, error)
+
+	// GetDeploymentRotationPlanWithResponse request
+	GetDeploymentRotationPlanWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetDeploymentRotationPlanResponse, error)
+
+	// ListRotationPoliciesWithResponse request
+	ListRotationPoliciesWithResponse(ctx context.Context, params *ListRotationPoliciesParams, reqEditors ...RequestEditorFn) (*ListRotationPoliciesResponse, error)
+
+	// CreateRotationPolicyWithBodyWithResponse request with any body
+	CreateRotationPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateRotationPolicyResponse, error)
+
+	CreateRotationPolicyWithResponse(ctx context.Context, body CreateRotationPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRotationPolicyResponse, error)
+
+	// EvaluateRotationPoliciesWithResponse request
+	EvaluateRotationPoliciesWithResponse(ctx context.Context, params *EvaluateRotationPoliciesParams, reqEditors ...RequestEditorFn) (*EvaluateRotationPoliciesResponse, error)
+
+	// DeleteRotationPolicyWithResponse request
+	DeleteRotationPolicyWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*DeleteRotationPolicyResponse, error)
+
+	// GetRotationPolicyWithResponse request
+	GetRotationPolicyWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*GetRotationPolicyResponse, error)
+
+	// UpdateRotationPolicyWithBodyWithResponse request with any body
+	UpdateRotationPolicyWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateRotationPolicyResponse, error)
+
+	UpdateRotationPolicyWithResponse(ctx context.Context, id int, body UpdateRotationPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateRotationPolicyResponse, error)
 
 	// ListUsersWithResponse request
 	ListUsersWithResponse(ctx context.Context, params *ListUsersParams, reqEditors ...RequestEditorFn) (*ListUsersResponse, error)
@@ -3286,6 +4644,278 @@ func (r RevokePATResponse) StatusCode() int {
 	return 0
 }
 
+type ListDynamicSecretConfigsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data    *[]DynamicSecretConfig `json:"data,omitempty"`
+		Message *string                `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListDynamicSecretConfigsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListDynamicSecretConfigsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreateDynamicSecretConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		// Data A registered dynamic-secret target config (ADR-108 PR 1 addition).
+		Data    *DynamicSecretConfig `json:"data,omitempty"`
+		Message *string              `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateDynamicSecretConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateDynamicSecretConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetDynamicSecretConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		// Data A registered dynamic-secret target config (ADR-108 PR 1 addition).
+		Data    *DynamicSecretConfig `json:"data,omitempty"`
+		Message *string              `json:"message,omitempty"`
+	}
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetDynamicSecretConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetDynamicSecretConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ClassifyDynamicSecretConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		// Data A registered dynamic-secret target config (ADR-108 PR 1 addition).
+		Data    *DynamicSecretConfig `json:"data,omitempty"`
+		Message *string              `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ClassifyDynamicSecretConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ClassifyDynamicSecretConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type IssueDynamicSecretLeaseResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		// Data A freshly-issued dynamic-secret credential, shown once (ADR-108 PR 1 addition). username/password are populated for DB/cache backends; fields carries arbitrary key/value pairs for cloud-IAM backends (AWS STS, GCP, Azure, Kubernetes) instead.
+		Data    *DynamicSecretIssuedLease `json:"data,omitempty"`
+		Message *string                   `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
+	JSON502 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r IssueDynamicSecretLeaseResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IssueDynamicSecretLeaseResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListDynamicSecretLeasesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data    *[]DynamicSecretLease `json:"data,omitempty"`
+		Message *string               `json:"message,omitempty"`
+	}
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListDynamicSecretLeasesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListDynamicSecretLeasesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RevokeAllDynamicSecretLeasesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			ConfigId *uint32 `json:"config_id,omitempty"`
+			Failed   *int    `json:"failed,omitempty"`
+			Revoked  *int    `json:"revoked,omitempty"`
+		} `json:"data,omitempty"`
+		Message *string `json:"message,omitempty"`
+	}
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
+	JSON502 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeAllDynamicSecretLeasesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeAllDynamicSecretLeasesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RenewDynamicSecretLeaseResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			ExpiresAt *string `json:"expires_at,omitempty"`
+			LeaseId   *string `json:"lease_id,omitempty"`
+		} `json:"data,omitempty"`
+		Message *string `json:"message,omitempty"`
+	}
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
+	JSON502 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r RenewDynamicSecretLeaseResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RenewDynamicSecretLeaseResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RevokeDynamicSecretLeaseResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			LeaseId *string `json:"lease_id,omitempty"`
+			Status  *string `json:"status,omitempty"`
+		} `json:"data,omitempty"`
+		Message *string `json:"message,omitempty"`
+	}
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
+	JSON502 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeDynamicSecretLeaseResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeDynamicSecretLeaseResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type DeleteEnvironmentResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -3439,6 +5069,91 @@ func (r CreateProjectResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r CreateProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListBreakGlassActivationsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			Activations *[]BreakGlassActivation `json:"activations,omitempty"`
+			Count       *int                    `json:"count,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListBreakGlassActivationsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListBreakGlassActivationsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ActivateBreakGlassResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *struct {
+		Data *struct {
+			// Activation One emergency-access self-grant (ADR-108 PR 1 addition).
+			Activation *BreakGlassActivation `json:"activation,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ActivateBreakGlassResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ActivateBreakGlassResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RevokeBreakGlassResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON401      *Error
+	JSON403      *Error
+	JSON404      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeBreakGlassResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeBreakGlassResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -3823,6 +5538,64 @@ func (r RevokeMachineTokenResponse) StatusCode() int {
 	return 0
 }
 
+type GetProjectRotationOrderResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		// Data A safe rotation sequence for a project's secret dependency graph (ADR-108 PR 1 addition, ADR-052): each secret is listed before anything that depends on it.
+		Data    *RotationOrder `json:"data,omitempty"`
+		Message *string        `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetProjectRotationOrderResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetProjectRotationOrderResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetProjectRotationPlanResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		// Data A project's automated rotation plan (ADR-108 PR 1 addition, ADR-053).
+		Data    *RotationPlan `json:"data,omitempty"`
+		Message *string       `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetProjectRotationPlanResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetProjectRotationPlanResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetProjectStatsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -3841,6 +5614,195 @@ func (r GetProjectStatsResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetProjectStatsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetDeploymentRotationPlanResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		// Data The install-wide roll-up of every project's rotation plan (ADR-108 PR 1 addition, ADR-053) -- a roll-up of per-project plans, most pressing first.
+		Data    *DeploymentRotationPlan `json:"data,omitempty"`
+		Message *string                 `json:"message,omitempty"`
+	}
+	JSON401 *Error
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetDeploymentRotationPlanResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetDeploymentRotationPlanResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListRotationPoliciesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data    *[]RotationPolicy `json:"data,omitempty"`
+		Message *string           `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListRotationPoliciesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListRotationPoliciesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreateRotationPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *struct {
+		// Data A secret-rotation policy (ADR-108 PR 1 addition). Snake_case, matching this spec's usual convention and the model's real wire format: models.RotationPolicy (internal/storage/models/models.go) previously had no `json:` tags on most fields, so encoding/json's default marshaling emitted the bare Go field names verbatim (ID, Name, ProjectID, IntervalDays, ...) instead -- a PascalCase wire format silently decoded by any snake_case-tagged consumer (Go's case-insensitive JSON fallback matches "ID"~"id" but not "ProjectID"~"project_id", an extra underscore is not a case difference) as the zero value for every multi-word field. Fixed at the source (the model itself now carries these exact tags) rather than documented here as a PascalCase exception -- see the model's own doc comment for the full writeup, and docs/cli-split-inventory.md §7 PR 1's closure note for how this was found.
+		Data    *RotationPolicy `json:"data,omitempty"`
+		Message *string         `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateRotationPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateRotationPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type EvaluateRotationPoliciesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		// Data null (not []) when EvaluateRotationPolicies' `var evaluations []*RotationPolicyEvaluation` never gets appended to -- e.g. no active policy covers anything currently overdue or approaching. Verified against the real handler, not asserted: this is exactly the shape TestContractPR1_EvaluateRotationPolicies (openapi_contract_pr1_test.go) exercises.
+		Data    *[]RotationPolicyEvaluation `json:"data"`
+		Message *string                     `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r EvaluateRotationPoliciesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r EvaluateRotationPoliciesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteRotationPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON401      *Error
+	JSON404      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteRotationPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteRotationPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetRotationPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		// Data A secret-rotation policy (ADR-108 PR 1 addition). Snake_case, matching this spec's usual convention and the model's real wire format: models.RotationPolicy (internal/storage/models/models.go) previously had no `json:` tags on most fields, so encoding/json's default marshaling emitted the bare Go field names verbatim (ID, Name, ProjectID, IntervalDays, ...) instead -- a PascalCase wire format silently decoded by any snake_case-tagged consumer (Go's case-insensitive JSON fallback matches "ID"~"id" but not "ProjectID"~"project_id", an extra underscore is not a case difference) as the zero value for every multi-word field. Fixed at the source (the model itself now carries these exact tags) rather than documented here as a PascalCase exception -- see the model's own doc comment for the full writeup, and docs/cli-split-inventory.md §7 PR 1's closure note for how this was found.
+		Data    *RotationPolicy `json:"data,omitempty"`
+		Message *string         `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON404 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetRotationPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetRotationPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UpdateRotationPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON401      *Error
+	JSON404      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateRotationPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateRotationPolicyResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -4339,6 +6301,119 @@ func (c *ClientWithResponses) RevokePATWithResponse(ctx context.Context, id int,
 	return ParseRevokePATResponse(rsp)
 }
 
+// ListDynamicSecretConfigsWithResponse request returning *ListDynamicSecretConfigsResponse
+func (c *ClientWithResponses) ListDynamicSecretConfigsWithResponse(ctx context.Context, params *ListDynamicSecretConfigsParams, reqEditors ...RequestEditorFn) (*ListDynamicSecretConfigsResponse, error) {
+	rsp, err := c.ListDynamicSecretConfigs(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListDynamicSecretConfigsResponse(rsp)
+}
+
+// CreateDynamicSecretConfigWithBodyWithResponse request with arbitrary body returning *CreateDynamicSecretConfigResponse
+func (c *ClientWithResponses) CreateDynamicSecretConfigWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDynamicSecretConfigResponse, error) {
+	rsp, err := c.CreateDynamicSecretConfigWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateDynamicSecretConfigResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateDynamicSecretConfigWithResponse(ctx context.Context, body CreateDynamicSecretConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDynamicSecretConfigResponse, error) {
+	rsp, err := c.CreateDynamicSecretConfig(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateDynamicSecretConfigResponse(rsp)
+}
+
+// GetDynamicSecretConfigWithResponse request returning *GetDynamicSecretConfigResponse
+func (c *ClientWithResponses) GetDynamicSecretConfigWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*GetDynamicSecretConfigResponse, error) {
+	rsp, err := c.GetDynamicSecretConfig(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetDynamicSecretConfigResponse(rsp)
+}
+
+// ClassifyDynamicSecretConfigWithBodyWithResponse request with arbitrary body returning *ClassifyDynamicSecretConfigResponse
+func (c *ClientWithResponses) ClassifyDynamicSecretConfigWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClassifyDynamicSecretConfigResponse, error) {
+	rsp, err := c.ClassifyDynamicSecretConfigWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClassifyDynamicSecretConfigResponse(rsp)
+}
+
+func (c *ClientWithResponses) ClassifyDynamicSecretConfigWithResponse(ctx context.Context, id int, body ClassifyDynamicSecretConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*ClassifyDynamicSecretConfigResponse, error) {
+	rsp, err := c.ClassifyDynamicSecretConfig(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClassifyDynamicSecretConfigResponse(rsp)
+}
+
+// IssueDynamicSecretLeaseWithBodyWithResponse request with arbitrary body returning *IssueDynamicSecretLeaseResponse
+func (c *ClientWithResponses) IssueDynamicSecretLeaseWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueDynamicSecretLeaseResponse, error) {
+	rsp, err := c.IssueDynamicSecretLeaseWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIssueDynamicSecretLeaseResponse(rsp)
+}
+
+func (c *ClientWithResponses) IssueDynamicSecretLeaseWithResponse(ctx context.Context, id int, body IssueDynamicSecretLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueDynamicSecretLeaseResponse, error) {
+	rsp, err := c.IssueDynamicSecretLease(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIssueDynamicSecretLeaseResponse(rsp)
+}
+
+// ListDynamicSecretLeasesWithResponse request returning *ListDynamicSecretLeasesResponse
+func (c *ClientWithResponses) ListDynamicSecretLeasesWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ListDynamicSecretLeasesResponse, error) {
+	rsp, err := c.ListDynamicSecretLeases(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListDynamicSecretLeasesResponse(rsp)
+}
+
+// RevokeAllDynamicSecretLeasesWithResponse request returning *RevokeAllDynamicSecretLeasesResponse
+func (c *ClientWithResponses) RevokeAllDynamicSecretLeasesWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*RevokeAllDynamicSecretLeasesResponse, error) {
+	rsp, err := c.RevokeAllDynamicSecretLeases(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeAllDynamicSecretLeasesResponse(rsp)
+}
+
+// RenewDynamicSecretLeaseWithBodyWithResponse request with arbitrary body returning *RenewDynamicSecretLeaseResponse
+func (c *ClientWithResponses) RenewDynamicSecretLeaseWithBodyWithResponse(ctx context.Context, leaseID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewDynamicSecretLeaseResponse, error) {
+	rsp, err := c.RenewDynamicSecretLeaseWithBody(ctx, leaseID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewDynamicSecretLeaseResponse(rsp)
+}
+
+func (c *ClientWithResponses) RenewDynamicSecretLeaseWithResponse(ctx context.Context, leaseID string, body RenewDynamicSecretLeaseJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewDynamicSecretLeaseResponse, error) {
+	rsp, err := c.RenewDynamicSecretLease(ctx, leaseID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewDynamicSecretLeaseResponse(rsp)
+}
+
+// RevokeDynamicSecretLeaseWithResponse request returning *RevokeDynamicSecretLeaseResponse
+func (c *ClientWithResponses) RevokeDynamicSecretLeaseWithResponse(ctx context.Context, leaseID string, reqEditors ...RequestEditorFn) (*RevokeDynamicSecretLeaseResponse, error) {
+	rsp, err := c.RevokeDynamicSecretLease(ctx, leaseID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeDynamicSecretLeaseResponse(rsp)
+}
+
 // DeleteEnvironmentWithResponse request returning *DeleteEnvironmentResponse
 func (c *ClientWithResponses) DeleteEnvironmentWithResponse(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*DeleteEnvironmentResponse, error) {
 	rsp, err := c.DeleteEnvironment(ctx, id, reqEditors...)
@@ -4399,6 +6474,41 @@ func (c *ClientWithResponses) CreateProjectWithResponse(ctx context.Context, bod
 		return nil, err
 	}
 	return ParseCreateProjectResponse(rsp)
+}
+
+// ListBreakGlassActivationsWithResponse request returning *ListBreakGlassActivationsResponse
+func (c *ClientWithResponses) ListBreakGlassActivationsWithResponse(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*ListBreakGlassActivationsResponse, error) {
+	rsp, err := c.ListBreakGlassActivations(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListBreakGlassActivationsResponse(rsp)
+}
+
+// ActivateBreakGlassWithBodyWithResponse request with arbitrary body returning *ActivateBreakGlassResponse
+func (c *ClientWithResponses) ActivateBreakGlassWithBodyWithResponse(ctx context.Context, id uint32, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ActivateBreakGlassResponse, error) {
+	rsp, err := c.ActivateBreakGlassWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseActivateBreakGlassResponse(rsp)
+}
+
+func (c *ClientWithResponses) ActivateBreakGlassWithResponse(ctx context.Context, id uint32, body ActivateBreakGlassJSONRequestBody, reqEditors ...RequestEditorFn) (*ActivateBreakGlassResponse, error) {
+	rsp, err := c.ActivateBreakGlass(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseActivateBreakGlassResponse(rsp)
+}
+
+// RevokeBreakGlassWithResponse request returning *RevokeBreakGlassResponse
+func (c *ClientWithResponses) RevokeBreakGlassWithResponse(ctx context.Context, id uint32, activationId uint32, reqEditors ...RequestEditorFn) (*RevokeBreakGlassResponse, error) {
+	rsp, err := c.RevokeBreakGlass(ctx, id, activationId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeBreakGlassResponse(rsp)
 }
 
 // ListProjectEnvironmentsWithResponse request returning *ListProjectEnvironmentsResponse
@@ -4575,6 +6685,24 @@ func (c *ClientWithResponses) RevokeMachineTokenWithResponse(ctx context.Context
 	return ParseRevokeMachineTokenResponse(rsp)
 }
 
+// GetProjectRotationOrderWithResponse request returning *GetProjectRotationOrderResponse
+func (c *ClientWithResponses) GetProjectRotationOrderWithResponse(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*GetProjectRotationOrderResponse, error) {
+	rsp, err := c.GetProjectRotationOrder(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetProjectRotationOrderResponse(rsp)
+}
+
+// GetProjectRotationPlanWithResponse request returning *GetProjectRotationPlanResponse
+func (c *ClientWithResponses) GetProjectRotationPlanWithResponse(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*GetProjectRotationPlanResponse, error) {
+	rsp, err := c.GetProjectRotationPlan(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetProjectRotationPlanResponse(rsp)
+}
+
 // GetProjectStatsWithResponse request returning *GetProjectStatsResponse
 func (c *ClientWithResponses) GetProjectStatsWithResponse(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*GetProjectStatsResponse, error) {
 	rsp, err := c.GetProjectStats(ctx, id, reqEditors...)
@@ -4582,6 +6710,85 @@ func (c *ClientWithResponses) GetProjectStatsWithResponse(ctx context.Context, i
 		return nil, err
 	}
 	return ParseGetProjectStatsResponse(rsp)
+}
+
+// GetDeploymentRotationPlanWithResponse request returning *GetDeploymentRotationPlanResponse
+func (c *ClientWithResponses) GetDeploymentRotationPlanWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetDeploymentRotationPlanResponse, error) {
+	rsp, err := c.GetDeploymentRotationPlan(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetDeploymentRotationPlanResponse(rsp)
+}
+
+// ListRotationPoliciesWithResponse request returning *ListRotationPoliciesResponse
+func (c *ClientWithResponses) ListRotationPoliciesWithResponse(ctx context.Context, params *ListRotationPoliciesParams, reqEditors ...RequestEditorFn) (*ListRotationPoliciesResponse, error) {
+	rsp, err := c.ListRotationPolicies(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListRotationPoliciesResponse(rsp)
+}
+
+// CreateRotationPolicyWithBodyWithResponse request with arbitrary body returning *CreateRotationPolicyResponse
+func (c *ClientWithResponses) CreateRotationPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateRotationPolicyResponse, error) {
+	rsp, err := c.CreateRotationPolicyWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateRotationPolicyResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateRotationPolicyWithResponse(ctx context.Context, body CreateRotationPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRotationPolicyResponse, error) {
+	rsp, err := c.CreateRotationPolicy(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateRotationPolicyResponse(rsp)
+}
+
+// EvaluateRotationPoliciesWithResponse request returning *EvaluateRotationPoliciesResponse
+func (c *ClientWithResponses) EvaluateRotationPoliciesWithResponse(ctx context.Context, params *EvaluateRotationPoliciesParams, reqEditors ...RequestEditorFn) (*EvaluateRotationPoliciesResponse, error) {
+	rsp, err := c.EvaluateRotationPolicies(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseEvaluateRotationPoliciesResponse(rsp)
+}
+
+// DeleteRotationPolicyWithResponse request returning *DeleteRotationPolicyResponse
+func (c *ClientWithResponses) DeleteRotationPolicyWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*DeleteRotationPolicyResponse, error) {
+	rsp, err := c.DeleteRotationPolicy(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteRotationPolicyResponse(rsp)
+}
+
+// GetRotationPolicyWithResponse request returning *GetRotationPolicyResponse
+func (c *ClientWithResponses) GetRotationPolicyWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*GetRotationPolicyResponse, error) {
+	rsp, err := c.GetRotationPolicy(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetRotationPolicyResponse(rsp)
+}
+
+// UpdateRotationPolicyWithBodyWithResponse request with arbitrary body returning *UpdateRotationPolicyResponse
+func (c *ClientWithResponses) UpdateRotationPolicyWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateRotationPolicyResponse, error) {
+	rsp, err := c.UpdateRotationPolicyWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateRotationPolicyResponse(rsp)
+}
+
+func (c *ClientWithResponses) UpdateRotationPolicyWithResponse(ctx context.Context, id int, body UpdateRotationPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateRotationPolicyResponse, error) {
+	rsp, err := c.UpdateRotationPolicy(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateRotationPolicyResponse(rsp)
 }
 
 // ListUsersWithResponse request returning *ListUsersResponse
@@ -5007,6 +7214,512 @@ func ParseRevokePATResponse(rsp *http.Response) (*RevokePATResponse, error) {
 	return response, nil
 }
 
+// ParseListDynamicSecretConfigsResponse parses an HTTP response from a ListDynamicSecretConfigsWithResponse call
+func ParseListDynamicSecretConfigsResponse(rsp *http.Response) (*ListDynamicSecretConfigsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListDynamicSecretConfigsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data    *[]DynamicSecretConfig `json:"data,omitempty"`
+			Message *string                `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateDynamicSecretConfigResponse parses an HTTP response from a CreateDynamicSecretConfigWithResponse call
+func ParseCreateDynamicSecretConfigResponse(rsp *http.Response) (*CreateDynamicSecretConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateDynamicSecretConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			// Data A registered dynamic-secret target config (ADR-108 PR 1 addition).
+			Data    *DynamicSecretConfig `json:"data,omitempty"`
+			Message *string              `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetDynamicSecretConfigResponse parses an HTTP response from a GetDynamicSecretConfigWithResponse call
+func ParseGetDynamicSecretConfigResponse(rsp *http.Response) (*GetDynamicSecretConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetDynamicSecretConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			// Data A registered dynamic-secret target config (ADR-108 PR 1 addition).
+			Data    *DynamicSecretConfig `json:"data,omitempty"`
+			Message *string              `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseClassifyDynamicSecretConfigResponse parses an HTTP response from a ClassifyDynamicSecretConfigWithResponse call
+func ParseClassifyDynamicSecretConfigResponse(rsp *http.Response) (*ClassifyDynamicSecretConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ClassifyDynamicSecretConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			// Data A registered dynamic-secret target config (ADR-108 PR 1 addition).
+			Data    *DynamicSecretConfig `json:"data,omitempty"`
+			Message *string              `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseIssueDynamicSecretLeaseResponse parses an HTTP response from a IssueDynamicSecretLeaseWithResponse call
+func ParseIssueDynamicSecretLeaseResponse(rsp *http.Response) (*IssueDynamicSecretLeaseResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IssueDynamicSecretLeaseResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			// Data A freshly-issued dynamic-secret credential, shown once (ADR-108 PR 1 addition). username/password are populated for DB/cache backends; fields carries arbitrary key/value pairs for cloud-IAM backends (AWS STS, GCP, Azure, Kubernetes) instead.
+			Data    *DynamicSecretIssuedLease `json:"data,omitempty"`
+			Message *string                   `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON502 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListDynamicSecretLeasesResponse parses an HTTP response from a ListDynamicSecretLeasesWithResponse call
+func ParseListDynamicSecretLeasesResponse(rsp *http.Response) (*ListDynamicSecretLeasesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListDynamicSecretLeasesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data    *[]DynamicSecretLease `json:"data,omitempty"`
+			Message *string               `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeAllDynamicSecretLeasesResponse parses an HTTP response from a RevokeAllDynamicSecretLeasesWithResponse call
+func ParseRevokeAllDynamicSecretLeasesResponse(rsp *http.Response) (*RevokeAllDynamicSecretLeasesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeAllDynamicSecretLeasesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				ConfigId *uint32 `json:"config_id,omitempty"`
+				Failed   *int    `json:"failed,omitempty"`
+				Revoked  *int    `json:"revoked,omitempty"`
+			} `json:"data,omitempty"`
+			Message *string `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON502 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRenewDynamicSecretLeaseResponse parses an HTTP response from a RenewDynamicSecretLeaseWithResponse call
+func ParseRenewDynamicSecretLeaseResponse(rsp *http.Response) (*RenewDynamicSecretLeaseResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RenewDynamicSecretLeaseResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				ExpiresAt *string `json:"expires_at,omitempty"`
+				LeaseId   *string `json:"lease_id,omitempty"`
+			} `json:"data,omitempty"`
+			Message *string `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON502 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeDynamicSecretLeaseResponse parses an HTTP response from a RevokeDynamicSecretLeaseWithResponse call
+func ParseRevokeDynamicSecretLeaseResponse(rsp *http.Response) (*RevokeDynamicSecretLeaseResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeDynamicSecretLeaseResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				LeaseId *string `json:"lease_id,omitempty"`
+				Status  *string `json:"status,omitempty"`
+			} `json:"data,omitempty"`
+			Message *string `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON502 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseDeleteEnvironmentResponse parses an HTTP response from a DeleteEnvironmentWithResponse call
 func ParseDeleteEnvironmentResponse(rsp *http.Response) (*DeleteEnvironmentResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -5232,6 +7945,157 @@ func ParseCreateProjectResponse(rsp *http.Response) (*CreateProjectResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListBreakGlassActivationsResponse parses an HTTP response from a ListBreakGlassActivationsWithResponse call
+func ParseListBreakGlassActivationsResponse(rsp *http.Response) (*ListBreakGlassActivationsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListBreakGlassActivationsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				Activations *[]BreakGlassActivation `json:"activations,omitempty"`
+				Count       *int                    `json:"count,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseActivateBreakGlassResponse parses an HTTP response from a ActivateBreakGlassWithResponse call
+func ParseActivateBreakGlassResponse(rsp *http.Response) (*ActivateBreakGlassResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ActivateBreakGlassResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			Data *struct {
+				// Activation One emergency-access self-grant (ADR-108 PR 1 addition).
+				Activation *BreakGlassActivation `json:"activation,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeBreakGlassResponse parses an HTTP response from a RevokeBreakGlassWithResponse call
+func ParseRevokeBreakGlassResponse(rsp *http.Response) (*RevokeBreakGlassResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeBreakGlassResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	}
 
@@ -5918,6 +8782,108 @@ func ParseRevokeMachineTokenResponse(rsp *http.Response) (*RevokeMachineTokenRes
 	return response, nil
 }
 
+// ParseGetProjectRotationOrderResponse parses an HTTP response from a GetProjectRotationOrderWithResponse call
+func ParseGetProjectRotationOrderResponse(rsp *http.Response) (*GetProjectRotationOrderResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetProjectRotationOrderResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			// Data A safe rotation sequence for a project's secret dependency graph (ADR-108 PR 1 addition, ADR-052): each secret is listed before anything that depends on it.
+			Data    *RotationOrder `json:"data,omitempty"`
+			Message *string        `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetProjectRotationPlanResponse parses an HTTP response from a GetProjectRotationPlanWithResponse call
+func ParseGetProjectRotationPlanResponse(rsp *http.Response) (*GetProjectRotationPlanResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetProjectRotationPlanResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			// Data A project's automated rotation plan (ADR-108 PR 1 addition, ADR-053).
+			Data    *RotationPlan `json:"data,omitempty"`
+			Message *string       `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetProjectStatsResponse parses an HTTP response from a GetProjectStatsWithResponse call
 func ParseGetProjectStatsResponse(rsp *http.Response) (*GetProjectStatsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -5952,6 +8918,319 @@ func ParseGetProjectStatsResponse(rsp *http.Response) (*GetProjectStatsResponse,
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetDeploymentRotationPlanResponse parses an HTTP response from a GetDeploymentRotationPlanWithResponse call
+func ParseGetDeploymentRotationPlanResponse(rsp *http.Response) (*GetDeploymentRotationPlanResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetDeploymentRotationPlanResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			// Data The install-wide roll-up of every project's rotation plan (ADR-108 PR 1 addition, ADR-053) -- a roll-up of per-project plans, most pressing first.
+			Data    *DeploymentRotationPlan `json:"data,omitempty"`
+			Message *string                 `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListRotationPoliciesResponse parses an HTTP response from a ListRotationPoliciesWithResponse call
+func ParseListRotationPoliciesResponse(rsp *http.Response) (*ListRotationPoliciesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListRotationPoliciesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data    *[]RotationPolicy `json:"data,omitempty"`
+			Message *string           `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateRotationPolicyResponse parses an HTTP response from a CreateRotationPolicyWithResponse call
+func ParseCreateRotationPolicyResponse(rsp *http.Response) (*CreateRotationPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateRotationPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			// Data A secret-rotation policy (ADR-108 PR 1 addition). Snake_case, matching this spec's usual convention and the model's real wire format: models.RotationPolicy (internal/storage/models/models.go) previously had no `json:` tags on most fields, so encoding/json's default marshaling emitted the bare Go field names verbatim (ID, Name, ProjectID, IntervalDays, ...) instead -- a PascalCase wire format silently decoded by any snake_case-tagged consumer (Go's case-insensitive JSON fallback matches "ID"~"id" but not "ProjectID"~"project_id", an extra underscore is not a case difference) as the zero value for every multi-word field. Fixed at the source (the model itself now carries these exact tags) rather than documented here as a PascalCase exception -- see the model's own doc comment for the full writeup, and docs/cli-split-inventory.md §7 PR 1's closure note for how this was found.
+			Data    *RotationPolicy `json:"data,omitempty"`
+			Message *string         `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseEvaluateRotationPoliciesResponse parses an HTTP response from a EvaluateRotationPoliciesWithResponse call
+func ParseEvaluateRotationPoliciesResponse(rsp *http.Response) (*EvaluateRotationPoliciesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &EvaluateRotationPoliciesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			// Data null (not []) when EvaluateRotationPolicies' `var evaluations []*RotationPolicyEvaluation` never gets appended to -- e.g. no active policy covers anything currently overdue or approaching. Verified against the real handler, not asserted: this is exactly the shape TestContractPR1_EvaluateRotationPolicies (openapi_contract_pr1_test.go) exercises.
+			Data    *[]RotationPolicyEvaluation `json:"data"`
+			Message *string                     `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteRotationPolicyResponse parses an HTTP response from a DeleteRotationPolicyWithResponse call
+func ParseDeleteRotationPolicyResponse(rsp *http.Response) (*DeleteRotationPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteRotationPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetRotationPolicyResponse parses an HTTP response from a GetRotationPolicyWithResponse call
+func ParseGetRotationPolicyResponse(rsp *http.Response) (*GetRotationPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetRotationPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			// Data A secret-rotation policy (ADR-108 PR 1 addition). Snake_case, matching this spec's usual convention and the model's real wire format: models.RotationPolicy (internal/storage/models/models.go) previously had no `json:` tags on most fields, so encoding/json's default marshaling emitted the bare Go field names verbatim (ID, Name, ProjectID, IntervalDays, ...) instead -- a PascalCase wire format silently decoded by any snake_case-tagged consumer (Go's case-insensitive JSON fallback matches "ID"~"id" but not "ProjectID"~"project_id", an extra underscore is not a case difference) as the zero value for every multi-word field. Fixed at the source (the model itself now carries these exact tags) rather than documented here as a PascalCase exception -- see the model's own doc comment for the full writeup, and docs/cli-split-inventory.md §7 PR 1's closure note for how this was found.
+			Data    *RotationPolicy `json:"data,omitempty"`
+			Message *string         `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateRotationPolicyResponse parses an HTTP response from a UpdateRotationPolicyWithResponse call
+func ParseUpdateRotationPolicyResponse(rsp *http.Response) (*UpdateRotationPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateRotationPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	}
 

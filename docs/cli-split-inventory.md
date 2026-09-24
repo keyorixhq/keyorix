@@ -308,7 +308,8 @@ this is exactly ADR-108 §B.3's "full KEK re-encryption sweep" family.
 | `encryption auth-encryption status/enable/migrate/validate` | auth_encryption.go, auth_encryption_migrate.go, auth_encryption_validate.go | shared lock, direct `*gorm.DB` | No | ADMIN-B3 |
 | `encryption auth-encryption rotate` | auth_encryption.go:173-198 | **no lock call at all**, unlike its 4 siblings in the same file | Unverified — §8 Finding S13 | ADMIN-B3 |
 
-**`breakglass` (3 leaf) — already fully conforms, zero migration work:**
+**`breakglass` (3 leaf) — already fully conforms, zero migration work. Moved to `cli/cmd/breakglass.go`
+in PR 1 (split/pr1-cli-dynamic-rotation-breakglass, §7).**
 
 | Command | File:line | REST route | Permission | Class |
 |---|---|---|---|---|
@@ -325,16 +326,25 @@ already-authenticated session; B2 is specifically for when no admin session exis
 |---|---|---|---|
 | `migrate user-to-machine <username>` | user_to_machine.go:48-100 | `POST /projects/{id}/machine-identities/migrate-from-user` (route exists, matching both permissions the local path hand-derives: `roles.assign`@project + `users.write`@global) | Currently local-DB-only by deliberate design (refuses if remote is configured) — **should collapse to API**, not a genuine ADMIN item; nothing is lost by dropping the local path and adding a remote-calling branch instead |
 
-**`dynamic-secret` (9 leaf) — fully conforms, zero migration work.** All 9 commands (`get-config`,
+**`dynamic-secret` (9 leaf) — fully conforms, zero migration work. Moved to `cli/cmd/dynamicsecret.go`
+in PR 1 (split/pr1-cli-dynamic-rotation-breakglass, §7).** All 9 commands (`get-config`,
 `classify`, `list`, `issue`, `leases`, `renew`, `revoke`, `revoke-all`, `create`) are pure REST, no
 fallback: `POST/GET/PATCH` under `/dynamic-secrets/{configs,leases}*`, `secrets.read`/`secrets.write`
-scoped to the config/lease's project+environment.
+scoped to the config/lease's project+environment. These routes were real and already called by the
+old CLI's remote mode, but entirely undocumented in `openapi.yaml` until PR 1 — see §7's PR 1
+closure note.
 
-**`rotation` (7 leaf) — fully conforms, zero migration work.** `list`/`create`/`show`/`delete`/
-`status` under `/rotation-policies*`, `plan [project-id | --all-projects]` under
-`/projects/{id}/rotation-plan` or global `/rotation-plan`, `order <project-id>` under
-`/projects/{id}/rotation-order` — all `secrets.read`/`secrets.write` scoped as expected;
-`--all-projects` deliberately steps up to a GLOBAL `secrets.read` grant (documented, not a gap).
+**`rotation` (7 leaf) — fully conforms, zero migration work. Moved to `cli/cmd/rotation.go` in PR 1
+(split/pr1-cli-dynamic-rotation-breakglass, §7).** `list`/`create`/`show`/`delete` under
+`/rotation-policies*`, `plan [project-id | --all-projects]` under `/projects/{id}/rotation-plan` or
+global `/rotation-plan`, `order <project-id>` under `/projects/{id}/rotation-order` — all
+`secrets.read`/`secrets.write` scoped as expected; `--all-projects` deliberately steps up to a
+GLOBAL `secrets.read` grant (documented, not a gap). **Correction (verified against the old CLI's
+actual source, not asserted): `status` does NOT call `/rotation-policies/status` as this line
+previously said — it calls `GET /rotation-policies/evaluate`** (`internal/cli/rotation/rotation.go`'s
+real `statusCmd`), listing only overdue/approaching secrets, never "ok" ones. See §7's PR 1 closure
+note for the full writeup; `cli/cmd/rotation.go`'s new port preserves this exact (if misleadingly
+named) behavior.
 
 ### 2.5 `audit`, `anomalies`, `notification`, `accessreview`, `request` — 37 leaf subcommands
 
@@ -806,6 +816,95 @@ security findings, already 100% REST with no fallback anywhere — the lowest-ri
 new module's plumbing end-to-end before anything harder. Size: small. Tests: golden-output
 comparison against the current CLI's remote-mode output for every subcommand (should be byte-for-byte
 identical, since the new module calls the same routes the same way).
+
+**Closed by PR split/pr1-cli-dynamic-rotation-breakglass (2026-09-24, stacked on split/pr0-cli-module
+and split/pr2-cli-pat-auth-machine).** All 19 commands ported into `cli/cmd/` (`dynamicsecret.go`,
+`rotation.go`, `breakglass.go`) against the generated `apiclient`, REST-only, no new local mode.
+
+**OpenAPI spec gap found and closed:** the `dynamic-secrets/*` routes (8 operations backing all 9
+`dynamic-secret` commands) were entirely undocumented in `openapi.yaml` — not just schema-less, the
+paths didn't exist in the spec at all — despite being real, working, `Zero-GAPs` routes already
+called by the old CLI's remote mode. `getProjectRotationOrder`/`getProjectRotationPlan`/
+`getDeploymentRotationPlan` (backing `rotation order`/`plan`) were the same. Authored full
+operations (request + response schemas, new `components/schemas` entries: `DynamicSecretConfig`,
+`DynamicSecretLease`, `RotationPolicy`, `RotationPolicyEvaluation`, `RotationOrder`, `RotationPlan`,
+`DeploymentRotationPlan`) rather than terse description-only stubs, per CLAUDE.md's "generate it"
+preference. This mechanically converted 18 operations from "pending" to "enforced" in
+`contracttest`'s ADR-074 registry (`registry.go`'s `pendingRegistry` → `exercisingTests`,
+`checks_test.go`'s `TestEnforcedSetMatchesADR074` pinned baseline) — closed with new, self-contained
+happy-path tests in `server/http/handlers/openapi_contract_pr1_test.go`.
+
+**This table's own route mapping for `rotation status` was wrong, and the code is the source of
+truth, not this doc:** the entry above (and §2.4 below, before this update) said `status` maps to
+`GET /rotation-policies/status` (`getRotationStatus`). It doesn't — `internal/cli/rotation/
+rotation.go`'s real `statusCmd` calls `GET /rotation-policies/evaluate` (`evaluateRotationPolicies`)
+and only lists overdue/approaching secrets, never "ok" ones. Confirmed directly against the old
+CLI's source before porting, per this ADR's own "verify it yourself" instruction; `getRotationStatus`
+stays in `pendingRegistry`, unused by any of the 19 commands. `cli/cmd/rotation.go`'s `runRotStatus`
+doc comment and `cli/cmd/rotation_test.go`'s `TestRunRotStatus_CallsEvaluateNotStatus` pin this down
+as a regression guard.
+
+**Two real, pre-existing server bugs found by this port, not by unit tests — by running both CLIs
+against the same real, live `keyorix-server` process** (`scripts/cli-parity-check.sh`, extended for
+this PR's 19 commands; a unit test using `httptest.ResponseRecorder` cannot catch either one, because
+the recorder doesn't enforce net/http's real header-ordering semantics):
+1. `RotationPolicyHandler.Create` and `CatalogHandler.ActivateBreakGlass` both called
+   `w.WriteHeader(http.StatusCreated)` *before* `sendSuccess`'s `Header().Set("Content-Type", ...)` —
+   net/http silently drops any header set after the first `WriteHeader`/`Write` call, so both 201
+   responses left the server with **no Content-Type header at all**. The generated CLI client
+   gates JSON decoding on Content-Type, so `CreateRotationPolicyWithResponse`/
+   `ActivateBreakGlassWithResponse` got a nil typed response despite a genuinely successful,
+   JSON-bodied 201 — invisible to any consumer that doesn't check Content-Type, which is most of
+   them, but a real defect regardless. Fixed by routing both through the already-existing,
+   correctly-ordered `sendCreated` helper (`helpers.go`) instead of the manual
+   `WriteHeader`+`sendSuccess` sequence. **Not fixed as part of this PR** (out of scope — found by
+   `grep -rn "w.WriteHeader(http.StatusCreated)"` across `server/http/handlers/`, ~25 other call
+   sites match the same shape): every other 201 path in the handler package should be audited for
+   the identical bug in a dedicated follow-up, since the pattern is clearly not unique to these two.
+2. `models.RotationPolicy` (the GORM model, `internal/storage/models/models.go`) carried no `json:`
+   tags on most fields, so its real wire format was PascalCase (`ID`, `ProjectID`, `IntervalDays`, ...)
+   — Go's `encoding/json` case-insensitive decode fallback matches `"ID"`~`"id"` but does **not**
+   match `"ProjectID"`~`"project_id"` (an extra underscore isn't a case difference). The OLD CLI's
+   `policyView` struct uses snake_case tags against this exact model and had therefore always
+   decoded every multi-word field (interval, alert threshold, active flag, created-by, the
+   project/environment number in `target`) as its zero value — `rotation show`/`list`/`create`
+   had been silently displaying `0`/`false`/empty for these fields in production. Confirmed live via
+   `scripts/cli-parity-check.sh` against a real server (a synthetic `httptest` fixture with
+   hand-chosen field casing would never have exposed this).
+
+   **Follow-up (same PR, separate commit): fixed at the source instead of documented as a
+   PascalCase exception.** `models.RotationPolicy` now carries the correct, explicit snake_case
+   `json:` tags directly (GORM's own column-naming strategy is derived from the Go field name, not
+   from `json:` tags, so this changes only the wire format, not the schema); `openapi.yaml`'s
+   `RotationPolicy` schema reverted to this spec's normal snake_case convention; the generated CLI
+   client regenerated to match. This fixes the bug for every consumer of the model's JSON form, not
+   only the new CLI — including the OLD CLI, whose `policyView` struct now decodes correctly too,
+   confirmed by `internal/cli/rotation/rotation_policy_wire_regression_test.go`'s
+   `TestOldCLIPolicyView_DecodesRealCreateResponse`/`DecodesRealGetResponse` (a real handler response
+   decoded by the OLD CLI's own struct, red/green-verified: reverting the model's tags makes both
+   tests fail on exactly the previously-zeroed fields). `scripts/cli-parity-check.sh`'s `rotation
+   create`/`list`/`show` checks, previously carved out as "not literal parity" because the two CLIs
+   necessarily disagreed, are now genuine byte-for-byte comparisons again like every other resource
+   in that script — the divergence is gone, not just documented. `cli/cmd/rotation.go`'s `runRotList`
+   was also switched from `cliout`'s tabwriter to the old CLI's exact fixed-width `Printf` format
+   (a separate, pre-existing formatting divergence the byte-comparison surfaced, unrelated to
+   casing), for full parity on that command too. The web frontend
+   (`web/src/features/secrets/useRotationPolicies.ts`) already normalized both casings defensively
+   before this fix and needed no change; `keyorix-sdks` (all four language SDKs) has no
+   rotation-policy bindings at all yet, so nothing there was affected either.
+
+Tests: unit tests per command (flag/argument validation + golden-output-shape assertions against a
+fake `httptest.Server`, `cli/cmd/{dynamicsecret,rotation,breakglass}_test.go`); OpenAPI contract
+tests (`server/http/handlers/openapi_contract_pr1_test.go`); and a full live-server run of
+`scripts/cli-parity-check.sh` (old CLI vs. new CLI vs. a real `keyorix-server` process, SQLite-backed,
+real HTTP) — 42/42 passing, run twice to confirm no flakiness, after fixing the two bugs above and
+several script-only environment gaps (the SSRF guard needing `dynamic_secrets.allow_private_network_targets:
+true` for the loopback DSN this script deliberately uses; `break_glass.enabled`/`emergency_role` needing
+explicit config since it's opt-in and off by default; the admin bootstrap user needing an explicit
+project-scoped role grant since `ActivateBreakGlass` requires real project membership, not just a
+global role; and the admin's session token going stale immediately after that role grant, worked
+around with a re-login immediately before each call that needs it — plausibly a "permissions
+changed, invalidate this principal's other sessions" security measure, not root-caused further).
 
 **PR 2 — `pat`, `auth` (mfa/login/logout/status), `machine` identities (6+4+14 = 24 commands).**
 Zero GAPs. `auth login/logout/status`/`connect`/`config` need the credential-storage consolidation

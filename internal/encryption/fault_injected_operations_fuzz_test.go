@@ -160,6 +160,70 @@ package encryption
 // deadline-miss retry-once-in-isolation check) lands — tracked informally as
 // "speed-fix-2," not yet a filed issue.
 //
+// ── B3 encryption-family extension (STEP 3, 2026-09-24) ─────────────────────
+//
+// Four more operations, covering the remaining B3 (`keyorix-server admin
+// encryption ...`) commands that have real production durability seams and no
+// existing environment-fault coverage:
+//
+//   - opInit: KeyManager.Initialize's FIRST-RUN DEK generation
+//     (ensureWrappedDEKExists) — a plain SecureWriteFileSync straight to the
+//     final path, no pending/rename indirection (unlike rewrap/KEK-rotation).
+//     ensureSaltExists's own first-run write is NOT covered: it only runs on
+//     deriveKEK's legacy (km.keyProvider == nil) branch, and Service.NewService
+//     — the only production constructor of a KeyManager — always calls
+//     SetKeyProvider before Initialize, so that branch is unreachable from any
+//     live caller (confirmed empirically, not assumed — see opInit's seam-table
+//     comment). This op is also `auth-encryption enable`'s entire state-changing
+//     effect (AuthEncryption.Initialize thin-wraps Service.Initialize, byte-for-byte
+//     the same call), so one op covers both commands.
+//   - opUpgradeAAD: Service.UpgradeAuthAAD's per-row Updates() sweep over
+//     mfa_secrets/dynamic_secret_configs/dynamic_secret_leases — the same SQL-seam
+//     mechanism as opCreate/Update/Delete, extended to GORM's Update callback
+//     (armSQLUpdateFault) since UpgradeAuthAAD uses Model().Where().Updates(map),
+//     not Create/Delete.
+//   - opAuthMigrate: `auth-encryption migrate`'s MigratePasswordResetTokens sweep —
+//     the same Update-seam mechanism, one table (password_resets), with its
+//     encrypt-then-NULL-the-plaintext-column update.
+//   - opMigrateProviderBackup: `migrate-provider`'s OWN unique durability step — the
+//     pre-rewrap backup copy (CopyFile) and the restore-on-verification-failure
+//     copy (RestoreBackup→CopyFile). The rewrap step in between reuses
+//     Service.RewrapDEKWithProvider → KeyManager.RewrapDEK, the IDENTICAL function
+//     opRewrap above already exhaustively fault-tests at the write/rename/sync
+//     seam level — re-faulting it here would duplicate, not extend, coverage, so
+//     this op runs that step for real and targets only the two copy calls unique
+//     to migrate-provider.
+//
+// Oracles for all four (per the STEP 3 approval, deliberately more general than
+// the six-op catalog's precise via-path tracking above): after a fault at ANY
+// seam, (1) the data is recoverable under the OLD key/provider or the NEW one,
+// never neither; (2) re-running the same operation after the fault converges to
+// the same end state a clean run would reach; (3) a status/validate-equivalent
+// read never reports success on a state that is actually broken; (4) no key
+// material or passphrase appears in an error or log line.
+//
+// Deliberately NOT extended here, with reasons (matching this file's own
+// "PAT deferred" precedent rather than a silent gap):
+//
+//   - `encryption fix-perms`: FixKeyFilePermissions is a per-file os.Chmod loop —
+//     no write/rename/sync durability seam exists to fault (a failed chmod leaves
+//     the file's CONTENT untouched, only its mode), and a chmod failure is
+//     trivially idempotent-safe to retry. No meaningful fault-injection surface.
+//   - `migrate-provider cleanup`: securefiles.SecureDeleteFile's shred-then-unlink
+//     has no existing test hook, and it is a widely-shared primitive (used well
+//     beyond this command) — adding one here for a worst case of "a redundant,
+//     already-superseded backup file survives on disk" (not a data-loss or
+//     plaintext-exposure risk: the backup is still wrapped, just under the OLD
+//     provider) is a disproportionate blast radius for the value. v2 candidate.
+//   - `auth-encryption rotate`: AuthEncryption.RotateAuthEncryption delegates to
+//     the SAME Service.RotateDEKWithSweep `encryption rotate` uses — already
+//     covered by the pre-existing FuzzDEKSweepCrashConsistency (the
+//     crash-consistency class, a deliberate different fault model from this
+//     file's environment-failure class per the package doc comment above).
+//     Extending THIS fuzzer to RotateDEKWithSweep's own multi-table sweep +
+//     redo-marker mechanism is real, distinct scope, not a small addition. v2
+//     candidate, not silently dropped.
+//
 // ── v2 candidates (not implemented here) ─────────────────────────────────────
 //
 //   - Fault during RECOVERY itself: every case above injects one fault into the
@@ -198,6 +262,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/testutil/fuzzworld"
@@ -219,11 +284,12 @@ var errInjectedFault = fmt.Errorf("fault-injected-operations: simulated environm
 type seamKind int
 
 const (
-	seamWrite    seamKind = iota // file write seam: faultCleanError or faultShortWrite
-	seamRename                   // file rename seam: faultCleanError or faultRealEffectThenError
-	seamSync                     // file sync seam: faultCleanError only (always post-commit)
-	seamSQL                      // GORM callback seam: faultCleanError only
-	seamCombined                 // two seams faulted simultaneously — see runKEKRotateFaultCase
+	seamWrite     seamKind = iota // file write seam: faultCleanError or faultShortWrite
+	seamRename                    // file rename seam: faultCleanError or faultRealEffectThenError
+	seamSync                      // file sync seam: faultCleanError only (always post-commit)
+	seamSQL                       // GORM callback seam: faultCleanError only
+	seamCombined                  // two seams faulted simultaneously — see runKEKRotateFaultCase
+	seamSQLUpdate                 // GORM Update-callback seam (armSQLUpdateFault): faultCleanError only
 )
 
 type seamSpec struct {
@@ -240,6 +306,10 @@ const (
 	opRewrap
 	opKEKRotate
 	opBackup
+	opInit
+	opUpgradeAAD
+	opAuthMigrate
+	opMigrateProviderBackup
 	numOps
 )
 
@@ -250,6 +320,24 @@ var opSeams = map[opID][]seamSpec{
 	opRewrap:    {{"rewrap:write-dek-pending", seamWrite}, {"rewrap:rename-dek", seamRename}, {"rewrap:syncdir", seamSync}},
 	opKEKRotate: {{"kek:write-salt-pending", seamWrite}, {"kek:write-dek-pending", seamWrite}, {"kek:rename-dek", seamRename}, {"kek:rename-salt", seamRename}, {"kek:syncdir-dek", seamSync}, {"kek:syncdir-salt", seamSync}, {"kek:rename-dek-verify-unknown", seamCombined}},
 	opBackup:    {{"backup:write", seamWrite}},
+
+	// B3 extension — see the package doc comment's "B3 encryption-family
+	// extension" section for what each op models and why.
+	// init:write-salt is NOT included: ensureSaltExists's legacy branch only runs
+	// when km.keyProvider is nil, but Service.NewService — the ONLY production
+	// caller of NewKeyManager — always calls SetKeyProvider before Initialize
+	// (buildKeyProvider constructs a real provider for every configured type,
+	// including "password"). That branch is unreachable from any live caller, so
+	// there is no real seam to fault here — confirmed empirically (the fault
+	// never fired) before being removed, not assumed.
+	opInit: {{"init:write-dek", seamWrite}},
+	opUpgradeAAD: {
+		{"aad:mfa-secrets", seamSQLUpdate},
+		{"aad:dynamic-secret-configs", seamSQLUpdate},
+		{"aad:dynamic-secret-leases", seamSQLUpdate},
+	},
+	opAuthMigrate:           {{"authmigrate:password-resets", seamSQLUpdate}},
+	opMigrateProviderBackup: {{"migrate:backup-write", seamWrite}, {"migrate:restore-write", seamWrite}},
 }
 
 // decodeFault picks the operation, seam, and fault kind from the fuzz-chosen
@@ -261,7 +349,7 @@ func decodeFault(opSel, seamSel, kindSel, shortWriteK byte) (op opID, seam strin
 	s := seams[int(seamSel)%len(seams)]
 
 	switch s.kind {
-	case seamSQL:
+	case seamSQL, seamSQLUpdate:
 		return op, s.label, s.kind, nil
 	case seamWrite:
 		// faultRealEffectThenError is deliberately excluded here — see the
@@ -365,6 +453,40 @@ func armSQLFault(db *gorm.DB, seam string) (restore func()) {
 		return func() { _ = db.Callback().Delete().Remove(name) }
 	}
 	return func() {}
+}
+
+// armSQLUpdateFault registers a GORM before_update hook on db that fails the
+// FIRST matching statement for seam, then never runs the real UPDATE. Unlike
+// armSQLFault's Create/Delete hooks (matched via d.Statement.Dest, which GORM
+// sets to the model pointer for those callbacks), a Model(&T{}).Where(...).
+// Updates(map) call sets d.Statement.Dest to the update PAYLOAD map, not a *T —
+// so this matches on d.Statement.Model instead, which Model() always sets to the
+// pointer passed to it, regardless of what Updates() is called with.
+func armSQLUpdateFault(db *gorm.DB, seam string) (restore func()) {
+	name := "fault:" + seam
+	match := func(model any, want string) bool {
+		switch want {
+		case "aad:mfa-secrets":
+			_, ok := model.(*models.MFASecret)
+			return ok
+		case "aad:dynamic-secret-configs":
+			_, ok := model.(*models.DynamicSecretConfig)
+			return ok
+		case "aad:dynamic-secret-leases":
+			_, ok := model.(*models.DynamicSecretLease)
+			return ok
+		case "authmigrate:password-resets":
+			_, ok := model.(*models.PasswordReset)
+			return ok
+		}
+		return false
+	}
+	_ = db.Callback().Update().Before("gorm:before_update").Register(name, func(d *gorm.DB) {
+		if match(d.Statement.Model, seam) {
+			_ = d.AddError(errInjectedFault)
+		}
+	})
+	return func() { _ = db.Callback().Update().Remove(name) }
 }
 
 // ── secret-CRUD world (create/update/delete/backup) ─────────────────────────
@@ -533,6 +655,18 @@ func runFaultInjectedCase(t *testing.T, dbWorlds []*fuzzworld.World, opSel, seam
 		runRewrapFaultCase(t, seam, ff, oldPass, newPass)
 	case opKEKRotate:
 		runKEKRotateFaultCase(t, seam, ff, oldPass, newPass)
+	case opInit:
+		runInitFaultCase(t, seam, ff, oldPass)
+	case opUpgradeAAD:
+		for _, dbw := range dbWorlds {
+			runUpgradeAADFaultCase(t, dbw, seam, canary)
+		}
+	case opAuthMigrate:
+		for _, dbw := range dbWorlds {
+			runAuthMigrateFaultCase(t, dbw, seam, canary)
+		}
+	case opMigrateProviderBackup:
+		runMigrateProviderBackupFaultCase(t, seam, ff, oldPass)
 	}
 }
 
@@ -959,4 +1093,421 @@ func expectedKEKVia(seam string, ff *fileFault) (want []string, skip bool) {
 		return []string{"new-passphrase", "old-passphrase"}, false
 	}
 	return nil, true
+}
+
+// ── B3: init (`encryption init` / `auth-encryption enable`) ─────────────────
+
+func runInitFaultCase(t *testing.T, seam string, ff *fileFault, oldPass string) {
+	dir := t.TempDir()
+	cfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
+
+	restore := armFileFault(seam, ff)
+	svc := NewService(cfg, dir)
+	err := svc.Initialize(oldPass)
+	restore()
+
+	if err == nil {
+		t.Fatalf("HARNESS/oracle-c: op=init seam=%q fault did not fire — Initialize returned nil error", seam)
+	}
+	if strings.Contains(err.Error(), oldPass) {
+		t.Fatalf("ERROR HYGIENE: op=init seam=%q error leaks the passphrase: %v", seam, err)
+	}
+
+	// oracle 2 (idempotent convergence): a clean retry on the SAME dir — the real
+	// operator's actual next step — must reach a working state. A fresh install
+	// has no prior key material to lose, so "converge to the clean-run end state"
+	// here means "the retry succeeds," not "recovers a specific prior key."
+	svc2 := NewService(cfg, dir)
+	err2 := svc2.Initialize(oldPass)
+	if err2 != nil {
+		t.Fatalf("CONVERGENCE: op=init seam=%q a clean retry after the fault still fails: %v — a fresh install must self-heal from a single injected environment failure, not stay permanently bricked", seam, err2)
+	}
+
+	// oracle 1 (availability): the retried service must actually work.
+	probe := []byte("INIT-PROBE-" + oldPass)
+	ct, _, eerr := svc2.EncryptSecret(probe)
+	if eerr != nil {
+		t.Fatalf("AVAILABILITY: op=init seam=%q post-retry service cannot encrypt: %v", seam, eerr)
+	}
+	pt, derr := svc2.DecryptSecret(ct)
+	if derr != nil || !bytes.Equal(pt, probe) {
+		t.Fatalf("AVAILABILITY: op=init seam=%q post-retry service round-trip failed: err=%v", seam, derr)
+	}
+
+	// oracle 3 (status honesty): a service that DID initialize and round-trips
+	// must also validate successfully — `encryption validate` must never
+	// contradict a working `encryption status`.
+	if verr := svc2.ValidateKeyFiles(); verr != nil {
+		t.Fatalf("STATUS HONESTY: op=init seam=%q retried service initialized and round-trips, but ValidateKeyFiles reports it invalid: %v", seam, verr)
+	}
+
+	if hits := scanForPlaintext(dir, probe); len(hits) > 0 {
+		t.Fatalf("PLAINTEXT SPILL: op=init seam=%q probe found on disk outside key files: %v", seam, hits)
+	}
+}
+
+// ── B3: upgrade-aad / auth-encryption migrate world ──────────────────────────
+
+// authWorldDBTables mirrors secretWorldDBTables's own reasoning (see
+// fuzzworld.World.Reset's doc comment) for the four auth-encryption tables
+// opUpgradeAAD and opAuthMigrate sweep.
+var authWorldDBTables = []string{"mfa_secrets", "dynamic_secret_configs", "dynamic_secret_leases", "password_resets"}
+
+type authWorld struct {
+	dir    string
+	db     *gorm.DB
+	svc    *Service
+	canary string
+}
+
+// newAuthWorld seeds one LEGACY (no-AAD) row in each of the three AAD-swept
+// tables opUpgradeAAD sweeps, plus one plaintext-token password_resets row for
+// opAuthMigrate — MigratePasswordResetTokens' own legacy shape is plaintext-in-
+// the-token-column, a genuinely different legacy format from the other three
+// (see encryptionops.MigrateAuthDataWithConfig's own doc comment on why sessions/
+// API clients/tokens are excluded: only password_resets ever held real plaintext
+// here). Both ops always have real, unswept work to do.
+func newAuthWorld(t *testing.T, dbw *fuzzworld.World, canary string) *authWorld {
+	t.Helper()
+	if err := dbw.Reset(authWorldDBTables); err != nil {
+		t.Fatalf("[%s] reset: %v", dbw.Backend, err)
+	}
+	db := dbw.DB
+	dir := t.TempDir()
+
+	cfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
+	svc := NewService(cfg, dir)
+	svc.keyManager.SetKeyProvider(staticKEKProvider{})
+	if e := svc.Initialize("seed-passphrase"); e != nil {
+		t.Fatalf("seed Initialize: %v", e)
+	}
+
+	encLegacy := func(v string) ([]byte, []byte) {
+		enc, meta, e := svc.EncryptSecret([]byte(v))
+		if e != nil {
+			t.Fatalf("[%s] seed encrypt: %v", dbw.Backend, e)
+		}
+		return enc, meta
+	}
+
+	mfaEnc, mfaMeta := encLegacy("TOTP-" + canary)
+	if e := db.Create(&models.MFASecret{UserID: 1, SecretEnc: mfaEnc, SecretMeta: mfaMeta}).Error; e != nil {
+		t.Fatalf("[%s] seed mfa_secret: %v", dbw.Backend, e)
+	}
+	dsnEnc, dsnMeta := encLegacy("postgres://admin:pw@db/DSN-" + canary)
+	if e := db.Create(&models.DynamicSecretConfig{Name: "seed-cfg", ProjectID: 1, EnvironmentID: 2, AdminDSNEnc: dsnEnc, AdminDSNMeta: dsnMeta}).Error; e != nil {
+		t.Fatalf("[%s] seed dynamic_secret_config: %v", dbw.Backend, e)
+	}
+	credEnc, credMeta := encLegacy(`{"user":"x","pass":"CRED-` + canary + `"}`)
+	if e := db.Create(&models.DynamicSecretLease{LeaseID: "seed-lease-" + canary, ConfigID: 9, CredentialEnc: credEnc, CredentialMeta: credMeta}).Error; e != nil {
+		t.Fatalf("[%s] seed dynamic_secret_lease: %v", dbw.Backend, e)
+	}
+	if e := db.Create(&models.PasswordReset{UserID: 1, Token: "RESET-" + canary}).Error; e != nil {
+		t.Fatalf("[%s] seed password_reset: %v", dbw.Backend, e)
+	}
+
+	return &authWorld{dir: dir, db: db, svc: svc, canary: canary}
+}
+
+func runUpgradeAADFaultCase(t *testing.T, dbw *fuzzworld.World, seam, canary string) {
+	w := newAuthWorld(t, dbw, canary)
+
+	restore := armSQLUpdateFault(w.db, seam)
+	result, err := w.svc.UpgradeAuthAAD(w.db)
+	restore()
+
+	// oracle (c): a faulted operation must report failure, never silent success.
+	if err == nil {
+		t.Fatalf("[%s] HARNESS/oracle-c: op=upgrade-aad seam=%q fault did not fire — UpgradeAuthAAD returned nil error (result=%+v)", dbw.Backend, seam, result)
+	}
+	// oracle 4 (no leak).
+	if strings.Contains(err.Error(), canary) {
+		t.Fatalf("[%s] ERROR HYGIENE: op=upgrade-aad seam=%q error leaks plaintext canary: %v", dbw.Backend, seam, err)
+	}
+
+	// oracle 1 (availability): the whole sweep transaction rolled back on the
+	// fault (ADR-010-style, matching RotateWithConfig's own sweep), so every row
+	// is still in its LEGACY form — DecryptSecretWithAAD's documented fallback
+	// (auth_encryption.go's own top comment) must still open it.
+	checkAuthWorldAADRowsDecryptable(t, w, dbw.Backend, seam)
+
+	// oracle 2 (idempotent convergence): a clean re-run reaches the SAME
+	// fully-upgraded end state a fault-free run would (matching
+	// TestUpgradeAuthAAD_BindsLegacyRowsWithoutRotatingDEK's own clean-run
+	// assertion: all 3 rows swept).
+	result2, err2 := w.svc.UpgradeAuthAAD(w.db)
+	if err2 != nil {
+		t.Fatalf("[%s] CONVERGENCE: op=upgrade-aad seam=%q re-run after the fault failed: %v", dbw.Backend, seam, err2)
+	}
+	if result2.MFASecretsSwept != 1 || result2.DynamicSecretConfigsSwept != 1 || result2.DynamicSecretLeasesSwept != 1 {
+		t.Fatalf("[%s] CONVERGENCE: op=upgrade-aad seam=%q re-run swept counts %+v, want all 3 seeded rows swept", dbw.Backend, seam, result2)
+	}
+	checkAuthWorldAADRowsDecryptable(t, w, dbw.Backend, seam)
+
+	if hits := scanForPlaintext(w.dir, []byte(canary)); len(hits) > 0 {
+		t.Fatalf("[%s] PLAINTEXT SPILL: op=upgrade-aad seam=%q canary found in: %v", dbw.Backend, seam, hits)
+	}
+}
+
+// checkAuthWorldAADRowsDecryptable re-reads all three AAD-swept seed rows and
+// confirms each still decrypts to its known plaintext — DecryptSecretWithAAD
+// transparently falls back to the legacy (no-AAD) path, so this is correct
+// whether or not the sweep actually upgraded that particular row (oracle 1:
+// old-or-new, never neither).
+func checkAuthWorldAADRowsDecryptable(t *testing.T, w *authWorld, backend, seam string) {
+	var mfa models.MFASecret
+	if e := w.db.First(&mfa, "user_id = ?", 1).Error; e != nil {
+		t.Fatalf("[%s] DATA LOSS: op=upgrade-aad seam=%q mfa_secrets row missing: %v", backend, seam, e)
+	}
+	got, derr := w.svc.DecryptSecretWithAAD(mfa.SecretEnc, MFASecretAAD(1))
+	if derr != nil || !bytes.Equal(got, []byte("TOTP-"+w.canary)) {
+		t.Fatalf("[%s] AVAILABILITY: op=upgrade-aad seam=%q mfa_secrets row no longer decrypts: err=%v", backend, seam, derr)
+	}
+
+	var cfgRow models.DynamicSecretConfig
+	if e := w.db.First(&cfgRow, "name = ?", "seed-cfg").Error; e != nil {
+		t.Fatalf("[%s] DATA LOSS: op=upgrade-aad seam=%q dynamic_secret_configs row missing: %v", backend, seam, e)
+	}
+	got, derr = w.svc.DecryptSecretWithAAD(cfgRow.AdminDSNEnc, DynamicSecretConfigAAD(cfgRow.ID, 1, 2))
+	if derr != nil || !bytes.Equal(got, []byte("postgres://admin:pw@db/DSN-"+w.canary)) {
+		t.Fatalf("[%s] AVAILABILITY: op=upgrade-aad seam=%q dynamic_secret_configs row no longer decrypts: err=%v", backend, seam, derr)
+	}
+
+	var lease models.DynamicSecretLease
+	if e := w.db.First(&lease, "lease_id = ?", "seed-lease-"+w.canary).Error; e != nil {
+		t.Fatalf("[%s] DATA LOSS: op=upgrade-aad seam=%q dynamic_secret_leases row missing: %v", backend, seam, e)
+	}
+	got, derr = w.svc.DecryptSecretWithAAD(lease.CredentialEnc, DynamicSecretLeaseAAD("seed-lease-"+w.canary, 9))
+	if derr != nil || !bytes.Equal(got, []byte(`{"user":"x","pass":"CRED-`+w.canary+`"}`)) {
+		t.Fatalf("[%s] AVAILABILITY: op=upgrade-aad seam=%q dynamic_secret_leases row no longer decrypts: err=%v", backend, seam, derr)
+	}
+}
+
+// ── B3: auth-encryption migrate ──────────────────────────────────────────────
+
+// migratePasswordResetTokensForTest mirrors encryptionops.MigratePasswordResetTokens
+// exactly (same query, same per-row EncryptPasswordResetToken-then-null-out
+// Updates call) — the real function lives in internal/encryptionops, which
+// imports this package, so this test file cannot import it back (the same cycle
+// constraint the package doc comment's "secret-CRUD world" section explains for
+// core.CreateSecret).
+func migratePasswordResetTokensForTest(db *gorm.DB, svc *Service) error {
+	var resets []models.PasswordReset
+	if err := db.Where("token != '' AND encrypted_token IS NULL").Find(&resets).Error; err != nil {
+		return err
+	}
+	for _, reset := range resets {
+		enc, meta, err := svc.EncryptSecretWithAAD([]byte(reset.Token), PasswordResetTokenAAD(reset.UserID))
+		if err != nil {
+			return fmt.Errorf("failed to encrypt password reset token %d: %w", reset.ID, err)
+		}
+		if err := db.Model(&reset).Updates(map[string]interface{}{
+			"encrypted_token": enc,
+			"token_metadata":  meta,
+			"token":           nil,
+		}).Error; err != nil {
+			return fmt.Errorf("failed to update password reset token %d: %w", reset.ID, err)
+		}
+	}
+	return nil
+}
+
+func runAuthMigrateFaultCase(t *testing.T, dbw *fuzzworld.World, seam, canary string) {
+	w := newAuthWorld(t, dbw, canary)
+
+	restore := armSQLUpdateFault(w.db, seam)
+	err := migratePasswordResetTokensForTest(w.db, w.svc)
+	restore()
+
+	if err == nil {
+		t.Fatalf("[%s] HARNESS/oracle-c: op=auth-migrate seam=%q fault did not fire — the migration returned nil error", dbw.Backend, seam)
+	}
+	if strings.Contains(err.Error(), canary) {
+		t.Fatalf("[%s] ERROR HYGIENE: op=auth-migrate seam=%q error leaks plaintext canary: %v", dbw.Backend, seam, err)
+	}
+
+	// oracle 1 (availability): every SQL seam in this file's catalog is a
+	// "clean" fault (the before_update hook stops the statement before it ever
+	// runs — see the package doc comment's ambiguity classification for
+	// armSQLFault's Create/Delete siblings; armSQLUpdateFault uses the identical
+	// mechanism), so the row must still hold its ORIGINAL plaintext token,
+	// untouched — never a row with neither a plaintext nor an encrypted value.
+	var reset models.PasswordReset
+	if e := w.db.First(&reset, "user_id = ?", 1).Error; e != nil {
+		t.Fatalf("[%s] DATA LOSS: op=auth-migrate seam=%q password_resets row missing: %v", dbw.Backend, seam, e)
+	}
+	if reset.Token == "" && len(reset.EncryptedToken) == 0 {
+		t.Fatalf("[%s] DATA LOSS: op=auth-migrate seam=%q password_resets row has NEITHER a plaintext token NOR an encrypted one — the value is gone", dbw.Backend, seam)
+	}
+	if reset.Token != "" && reset.Token != "RESET-"+canary {
+		t.Fatalf("[%s] DATA CORRUPTION: op=auth-migrate seam=%q surviving plaintext token changed: got %q", dbw.Backend, seam, reset.Token)
+	}
+
+	// oracle 2 (idempotent convergence): a clean re-run finishes the migration.
+	if err2 := migratePasswordResetTokensForTest(w.db, w.svc); err2 != nil {
+		t.Fatalf("[%s] CONVERGENCE: op=auth-migrate seam=%q re-run after the fault failed: %v", dbw.Backend, seam, err2)
+	}
+	var reset2 models.PasswordReset
+	if e := w.db.First(&reset2, "user_id = ?", 1).Error; e != nil {
+		t.Fatalf("[%s] DATA LOSS: op=auth-migrate seam=%q post-convergence row missing: %v", dbw.Backend, seam, e)
+	}
+	if reset2.Token != "" || len(reset2.EncryptedToken) == 0 {
+		t.Fatalf("[%s] CONVERGENCE: op=auth-migrate seam=%q re-run did not reach the fully-migrated end state (token=%q encrypted_len=%d)", dbw.Backend, seam, reset2.Token, len(reset2.EncryptedToken))
+	}
+	got, derr := w.svc.DecryptSecretWithAAD(reset2.EncryptedToken, PasswordResetTokenAAD(reset2.UserID))
+	if derr != nil || string(got) != "RESET-"+canary {
+		t.Fatalf("[%s] CONVERGENCE: op=auth-migrate seam=%q post-convergence encrypted token does not decrypt correctly: err=%v", dbw.Backend, seam, derr)
+	}
+
+	if hits := scanForPlaintext(w.dir, []byte(canary)); len(hits) > 0 {
+		t.Fatalf("[%s] PLAINTEXT SPILL: op=auth-migrate seam=%q canary found in: %v", dbw.Backend, seam, hits)
+	}
+}
+
+// ── B3: migrate-provider (backup + restore-on-verification-failure) ─────────
+
+// migrateCopyFile mirrors encryptionops.CopyFile's content-write step for
+// fault-injection purposes — the real function lives in internal/encryptionops,
+// which this package cannot import back (same cycle constraint as
+// migratePasswordResetTokensForTest above). Reads srcRel for real (SafeReadFile
+// is not itself the durability risk under test) and writes dstRel via
+// durableWriteSync at seam, matching CopyFile's own O_TRUNC-then-fsync content
+// write; CopyFile's own trailing directory fsync is not separately modeled here,
+// mirroring opBackup's existing choice (above) to cover only the content-write
+// seam for its own single-write primitive.
+func migrateCopyFile(baseDir, srcRel, dstRel, seam string) error {
+	data, err := securefiles.SafeReadFile(baseDir, srcRel)
+	if err != nil {
+		return err
+	}
+	return durableWriteSync(baseDir, dstRel, data, 0600, seam)
+}
+
+// runMigrateProviderBackupFaultCase targets the two durability steps unique to
+// `migrate-provider` (the backup copy before re-wrapping, and the restore copy
+// on verification failure). The re-wrap itself (Service.RewrapDEKWithProvider →
+// KeyManager.RewrapDEK) is the IDENTICAL function runRewrapFaultCase above
+// already exhaustively fault-tests — re-faulting it here would duplicate, not
+// extend, coverage (see the package doc comment's "B3 encryption-family
+// extension" section), so it always runs for real in this case.
+func runMigrateProviderBackupFaultCase(t *testing.T, seam string, ff *fileFault, oldPass string) {
+	dir := t.TempDir()
+	cfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
+	svc := NewService(cfg, dir)
+	if err := svc.Initialize(oldPass); err != nil {
+		t.Fatalf("seed Initialize(old=%q): %v", oldPass, err)
+	}
+	dek0 := append([]byte(nil), svc.keyManager.GetDEK()...)
+
+	probe := []byte("MIGRATE-PROBE-" + oldPass)
+	probeCT, _, perr := svc.EncryptSecret(probe)
+	if perr != nil {
+		t.Fatalf("seed probe encrypt: %v", perr)
+	}
+
+	backupRel := "dek.key.migrate-backup.test"
+
+	if seam == "migrate:backup-write" {
+		restore := armFileFault(seam, ff)
+		backupErr := migrateCopyFile(dir, "dek.key", backupRel, seam)
+		restore()
+
+		// oracle (c): a faulted backup must report failure, never silent success.
+		if backupErr == nil {
+			t.Fatalf("HARNESS/oracle-c: op=migrate-provider seam=%q fault did not fire — backup copy returned nil error", seam)
+		}
+		if strings.Contains(backupErr.Error(), oldPass) {
+			t.Fatalf("ERROR HYGIENE: op=migrate-provider seam=%q error leaks the passphrase: %v", seam, backupErr)
+		}
+		// Production behavior (MigrateProviderWithConfig): a backup-write failure
+		// aborts BEFORE any rewrap is attempted — the real code path never reaches
+		// the rewrap call on this error, so the DEK must be completely untouched
+		// (deterministic, not merely "old or new").
+		svc2 := NewService(cfg, dir)
+		if err := svc2.Initialize(oldPass); err != nil {
+			t.Fatalf("AVAILABILITY: op=migrate-provider seam=%q old provider can no longer open the DEK after an aborted backup: %v", seam, err)
+		}
+		if !bytes.Equal(svc2.keyManager.GetDEK(), dek0) {
+			t.Fatalf("DEK CORRUPTION: op=migrate-provider seam=%q DEK changed despite an aborted (pre-rewrap) backup failure", seam)
+		}
+		got, derr := svc2.DecryptSecret(probeCT)
+		if derr != nil || !bytes.Equal(got, probe) {
+			t.Fatalf("AVAILABILITY: op=migrate-provider seam=%q probe no longer decrypts under the old provider after an aborted backup: err=%v", seam, derr)
+		}
+		if hits := scanForPlaintext(dir, probe); len(hits) > 0 {
+			t.Fatalf("PLAINTEXT SPILL: op=migrate-provider seam=%q probe found on disk: %v", seam, hits)
+		}
+		return
+	}
+
+	// seam == "migrate:restore-write": run the backup for real (unfaulted).
+	if err := migrateCopyFile(dir, "dek.key", backupRel, "migrate:backup-write"); err != nil {
+		t.Fatalf("harness: unfaulted backup copy failed: %v", err)
+	}
+
+	// A TARGET "file" provider with REAL key material, so the rewrap itself
+	// succeeds (RewrapDEK's own KEK() call needs to read real bytes) — matching
+	// production, where rewrap and verification are the same provider reading
+	// the same file, so verification cannot fail independently of rewrap unless
+	// something changes the key material in between. Removing the file AFTER a
+	// successful rewrap but BEFORE verification models exactly that: real-world
+	// causes include an exec/KMS-backed provider flaking transiently, or (for a
+	// file provider specifically) the file being on removable/network storage
+	// that drops between the two calls.
+	tgtFilePath := filepath.Join(dir, "target-key-material")
+	if err := os.WriteFile(tgtFilePath, bytes.Repeat([]byte{0x42}, 32), 0600); err != nil { // #nosec G306 -- test-only harness temp file
+		t.Fatalf("harness: writing target key material: %v", err)
+	}
+	tgtCfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt",
+		KeyProvider: config.KeyProviderConfig{Type: "file", FilePath: tgtFilePath}}
+	newProvider, nperr := NewKeyProviderFromConfig(tgtCfg, dir, "")
+	if nperr != nil {
+		t.Fatalf("harness: building target provider: %v", nperr)
+	}
+
+	// The real re-wrap — unfaulted, see the function doc comment above.
+	if err := svc.RewrapDEKWithProvider(newProvider); err != nil {
+		t.Fatalf("harness: real rewrap failed unexpectedly: %v", err)
+	}
+
+	// Sabotage: the target key material disappears between rewrap and
+	// verification, forcing MigrateProviderWithConfig's real
+	// verification-failure → restore path.
+	if err := os.Remove(tgtFilePath); err != nil {
+		t.Fatalf("harness: removing target key material: %v", err)
+	}
+	verifySvc := NewService(tgtCfg, dir)
+	if err := verifySvc.Initialize(""); err == nil {
+		t.Fatalf("harness: expected verification to fail (target key material removed), got nil")
+	}
+
+	restore := armFileFault(seam, ff)
+	restoreErr := migrateCopyFile(dir, backupRel, "dek.key", seam)
+	restore()
+
+	if restoreErr == nil {
+		t.Fatalf("HARNESS/oracle-c: op=migrate-provider seam=%q fault did not fire — restore copy returned nil error", seam)
+	}
+	if strings.Contains(restoreErr.Error(), oldPass) {
+		t.Fatalf("ERROR HYGIENE: op=migrate-provider seam=%q error leaks the passphrase: %v", seam, restoreErr)
+	}
+
+	// oracle 1 (availability): the doc comment's own crash-safety claim is that
+	// "at worst an operator must manually restore backupRel ... using the
+	// printed filename" — so the one thing that must be true regardless of the
+	// restore fault's outcome is that the BACKUP FILE ITSELF survives, intact
+	// and independently recoverable under the OLD passphrase, for that manual
+	// recovery to actually be possible.
+	recoverKM := NewKeyManager(dir, backupRel, "kek.salt")
+	recoverKM.SetKeyProvider(crypto.NewPasswordKeyProvider(oldPass, dir, "kek.salt"))
+	if err := recoverKM.Initialize(oldPass); err != nil {
+		t.Fatalf("DATA LOSS: op=migrate-provider seam=%q backup file at %s does not unwrap under the original passphrase after a faulted restore: %v", seam, backupRel, err)
+	}
+	if !bytes.Equal(recoverKM.GetDEK(), dek0) {
+		t.Fatalf("DEK CORRUPTION: op=migrate-provider seam=%q backup file's DEK != original", seam)
+	}
+
+	if hits := scanForPlaintext(dir, probe); len(hits) > 0 {
+		t.Fatalf("PLAINTEXT SPILL: op=migrate-provider seam=%q probe found on disk: %v", seam, hits)
+	}
 }

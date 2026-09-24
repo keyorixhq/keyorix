@@ -57,8 +57,14 @@ func (h *CatalogHandler) ActivateBreakGlass(w http.ResponseWriter, r *http.Reque
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"activation": activation}, "Emergency access activated")
+	// sendCreated, not w.WriteHeader(201)+sendSuccess: the latter sequence sets
+	// Content-Type AFTER the first WriteHeader call, which net/http silently
+	// drops -- confirmed live via scripts/cli-parity-check.sh against a real
+	// server, the same defect class as rotation_policies_handler.go's Create
+	// (see its sendCreated doc comment for the full writeup). Without a
+	// Content-Type header, ADR-108 PR 1's generated CLI client can't tell this
+	// 201 response apart from a non-JSON one and never populates JSON201.
+	sendCreated(w, map[string]interface{}{"activation": activation}, "Emergency access activated")
 }
 
 // ListBreakGlassActivations handles GET /api/v1/projects/{id}/break-glass.
