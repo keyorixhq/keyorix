@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/digitorus/pkcs7"
 	"github.com/digitorus/timestamp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -112,6 +113,57 @@ func TestRFC3161_AnchorAndVerifyRoundTrip(t *testing.T) {
 	_, err = VerifyReceipt(nil, msg, rec.Token)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "trust anchor")
+}
+
+// TestVerifyReceipt_RejectsWrongContentType pins the fix for the content-type
+// signed-attribute gap left by digitorus/pkcs7 (a literal
+// `// TODO(fullsailor): First check the content type match` remains in both
+// verifySignature and verifySignatureAtTime as of the version this repo pins —
+// the library binds the message-digest attribute to the real content, but never
+// the content-type attribute to the real content type). RFC 5652 §11.1 requires
+// the content-type attribute be present whenever signed attributes are present,
+// and requires its value equal the real eContentType — for a TimeStampToken that
+// is always id-ct-TSTInfo. Without VerifyReceipt's own check, a SignedData the
+// same TSA key produced over the identical TSTInfo bytes but declaring some other
+// content type would verify identically.
+//
+// The token is built by re-signing a REAL token's own (unmodified) TSTInfo
+// content — pulled out via pkcs7.Parse — through the low-level pkcs7.SignedData
+// API with SetContentType pointed at a non-TSTInfo OID, so every other property
+// (real cert, real key, real signature, real message-digest binding) stays
+// genuinely valid; only the declared content type is wrong.
+func TestVerifyReceipt_RejectsWrongContentType(t *testing.T) {
+	fixedTime := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	srv, key, cert := newTestTSA(t, fixedTime)
+	roots := x509.NewCertPool()
+	roots.AddCert(cert)
+
+	msg := []byte("wrong-content-type fixture message")
+	tsa, err := NewRFC3161(srv.URL, 5*time.Second)
+	require.NoError(t, err)
+	rec, err := tsa.Anchor(context.Background(), msg)
+	require.NoError(t, err)
+
+	// Sanity: the real token verifies before we start tampering.
+	_, err = VerifyReceipt(roots, msg, rec.Token)
+	require.NoError(t, err)
+
+	realP7, err := pkcs7.Parse(rec.Token)
+	require.NoError(t, err)
+	require.NotEmpty(t, realP7.Content, "real token's TSTInfo content")
+
+	sd, err := pkcs7.NewSignedData(realP7.Content)
+	require.NoError(t, err)
+	sd.SetDigestAlgorithm(pkcs7.OIDDigestAlgorithmSHA256)
+	// Anything other than id-ct-TSTInfo (1.2.840.113549.1.9.16.1.4).
+	sd.SetContentType(asn1.ObjectIdentifier{1, 2, 3, 4, 5})
+	require.NoError(t, sd.AddSignerChain(cert, key, nil, pkcs7.SignerInfoConfig{}))
+	wrongContentTypeToken, err := sd.Finish()
+	require.NoError(t, err)
+
+	_, err = VerifyReceipt(roots, msg, wrongContentTypeToken)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "content-type")
 }
 
 func TestVerifyReceipt_Errors(t *testing.T) {

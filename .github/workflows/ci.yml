@@ -475,6 +475,12 @@ jobs:
           # re-discovering that the hard way on every future ci.yml/go.mod
           # change.
           timeout=480s
+          # internal/storage/store alone runs longer than 480s even with -short (test-suite
+          # gives it two 1800s legs), so any PR whose affected set includes it timed out
+          # (#2054). Give the quick tier the 1800s clock whenever that package is selected.
+          if echo "$pkgs" | grep -qx 'github.com/keyorixhq/keyorix/internal/storage/store'; then
+            timeout=1800s
+          fi
           if [ "$pkgs" = "FULL" ]; then
             echo "Fallback trigger fired (go.mod/go.sum/.github/ or internal/testutil/ changed) -- running the full root-module package list."
             pkgs=$(go list ./... | grep -vE '^github\.com/keyorixhq/keyorix/(cli|operator)(/|$)')
@@ -514,7 +520,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           changed=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
-          pkgs=$(echo "$changed" | python3 ../scripts/ci-test-quick.py cli)
+          # ci-test-quick.py resolves <moddir> relative to the repo root (it runs `go list` with
+          # cwd=<moddir>), but this job's working-directory is already cli/, so run it from the root.
+          pkgs=$(echo "$changed" | (cd .. && python3 scripts/ci-test-quick.py cli))
           # See test-quick-root's own comment on this same pattern: FULL
           # fallback runs the whole module, which deserves the same
           # generous-timeout treatment even though cli/ itself is small
