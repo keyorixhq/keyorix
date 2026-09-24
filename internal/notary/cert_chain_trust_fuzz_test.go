@@ -444,6 +444,58 @@ func referenceAccepts(token []byte, onlyR *x509.CertPool) bool {
 	return err == nil
 }
 
+// oidTSTInfoContentType mirrors notary.go's own oidTSTInfoContentType constant.
+// Duplicated rather than exported from notary.go: this is test-only fixture
+// code building a token from raw parts, not consuming one.
+var certChainOIDTSTInfoContentType = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 1, 4}
+
+// signerKeyPair is one (cert, key) pair to sign with in buildMultiSignerToken.
+type signerKeyPair struct {
+	cert *x509.Certificate
+	key  crypto.Signer
+}
+
+// buildMultiSignerToken builds a single TimeStampToken whose SignedData carries
+// len(signers) independent SignerInfos — each one a genuinely valid signature
+// by its own (cert, key) pair, all covering the SAME TSTInfo content. Nothing
+// in pkcs7.SignedData.AddSignerChain caps how many times it can be called on
+// the same SignedData (confirmed by reading sign.go: it appends to
+// sd.sd.SignerInfos on every call) even though RFC 3161 defines exactly one
+// signer per TimeStampToken.
+//
+// The TSTInfo content itself is pulled from a real single-signer token built
+// via buildToken (with signers[0]), so the content is byte-for-byte what a real
+// TSA would produce for certChainMessage/claimedTime — only the SignedData
+// envelope around it is rebuilt from scratch with multiple signers.
+func buildMultiSignerToken(tb testing.TB, signers []signerKeyPair, claimedTime time.Time) []byte {
+	tb.Helper()
+	if len(signers) == 0 {
+		tb.Fatalf("buildMultiSignerToken: need at least one signer")
+	}
+	base := buildToken(tb, signers[0].cert, signers[0].key, nil, claimedTime, true)
+	baseP7, err := pkcs7.Parse(base)
+	if err != nil {
+		tb.Fatalf("parsing base single-signer token: %v", err)
+	}
+
+	sd, err := pkcs7.NewSignedData(baseP7.Content)
+	if err != nil {
+		tb.Fatalf("pkcs7.NewSignedData: %v", err)
+	}
+	sd.SetDigestAlgorithm(pkcs7.OIDDigestAlgorithmSHA256)
+	sd.SetContentType(certChainOIDTSTInfoContentType)
+	for i, s := range signers {
+		if err := sd.AddSignerChain(s.cert, s.key, nil, pkcs7.SignerInfoConfig{}); err != nil {
+			tb.Fatalf("AddSignerChain signer %d: %v", i, err)
+		}
+	}
+	token, err := sd.Finish()
+	if err != nil {
+		tb.Fatalf("Finish: %v", err)
+	}
+	return token
+}
+
 // certChainScenario names one chain-composition shape and builds its token.
 type certChainScenario struct {
 	name  string
@@ -478,6 +530,16 @@ func buildScenarios(tb testing.TB, pki *certPKI) []certChainScenario {
 		// scenario in this file leaves completely unexercised (all ECDSA via
 		// mustGenKey) — see mustMintCertSigner.
 		{"rsa-leaf-legit-chain", buildToken(tb, pki.rsaLeafUnderR, pki.rsaLeafUnderRKey, nil, now, true)},
+		// Two DISTINCT signers, both individually valid and trusted under R — RFC
+		// 3161 defines exactly one signer per token, so this must be REJECTED
+		// despite every individual signature being genuine. referenceAccepts
+		// already treats this as reject (p7.GetOnlySigner returns nil for
+		// len(Signers) != 1), so this scenario's own presence in this harness is
+		// itself a red/green check on VerifyReceipt's SignerInfo-count cap.
+		{"two-distinct-valid-signers", buildMultiSignerToken(tb, []signerKeyPair{
+			{pki.leafUnderR, pki.leafUnderRKey},
+			{pki.rsaLeafUnderR, pki.rsaLeafUnderRKey},
+		}, now)},
 	}
 }
 

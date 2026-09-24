@@ -117,6 +117,18 @@ func VerifyReceipt(roots *x509.CertPool, message, token []byte) (_ time.Time, er
 	if err != nil {
 		return time.Time{}, fmt.Errorf("notary: parse token for chain verification: %w", err)
 	}
+	// RFC 3161 defines exactly one signer per TimeStampToken, but digitorus/pkcs7's
+	// VerifyWithOpts imposes no such cap — it loops over every SignerInfo present,
+	// requiring all to independently verify (AND-of-all: adding a signer can only
+	// make verification MORE likely to fail, never less, so this is not a bypass).
+	// It IS a spec non-conformance and an attacker-controlled linear cost multiplier
+	// — N signers means N full chain verifications inside this call. Reject before
+	// paying that cost: pkcs7.Parse's own work is already bounded independently
+	// (internal/libconformance.FuzzDigitorusPKCS7BoundedWork), so this keeps a
+	// many-signer token's rejection cost at O(1) regardless of N.
+	if len(p7.Signers) != 1 {
+		return time.Time{}, fmt.Errorf("notary: token has %d signers, want exactly 1", len(p7.Signers))
+	}
 	// Every signer that carries authenticated attributes MUST carry a content-type
 	// attribute (RFC 5652 §11.1), and it MUST name id-ct-TSTInfo — this is a
 	// TimeStampToken, never anything else. Without this check, a SignedData the TSA's
