@@ -1,12 +1,13 @@
 package recoverykey
 
 import (
+	"math"
 	"regexp"
 	"strings"
 	"testing"
 )
 
-var groupedForm = regexp.MustCompile(`^[A-HJ-NP-Z2-9]{5}(-[A-HJ-NP-Z2-9]{5}){9}-[A-HJ-NP-Z2-9]$`)
+var groupedForm = regexp.MustCompile(`^[A-HJ-NP-Z2-9]{5}(-[A-HJ-NP-Z2-9]{5}){9}-[A-HJ-NP-Z2-9]{2}$`)
 
 func TestGenerate_CanonicalForm(t *testing.T) {
 	key, err := Generate()
@@ -127,5 +128,30 @@ func TestHash_Deterministic(t *testing.T) {
 	}
 	if len(first) != 64 {
 		t.Fatalf("Hash returned %d hex chars, want 64 (SHA-256)", len(first))
+	}
+}
+
+// TestKeyEntropyAtLeast256Bits pins the design's >=256-bit target: the alphabet size and
+// keyLength must together give at least 256 bits, and the generated key must carry exactly
+// keyLength alphabet symbols (#2054 review: 51 symbols of a 32-symbol alphabet was 255 bits).
+func TestKeyEntropyAtLeast256Bits(t *testing.T) {
+	if len(alphabet) != 32 {
+		t.Fatalf("alphabet has %d symbols, want 32 (update keyLength's entropy comment and this test if it changes)", len(alphabet))
+	}
+	if bits := float64(keyLength) * math.Log2(float64(len(alphabet))); bits < 256 {
+		t.Fatalf("keyLength %d x log2(%d) = %.1f bits, want >= 256", keyLength, len(alphabet), bits)
+	}
+	k, err := Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, c := range k {
+		if c != '-' {
+			n++
+		}
+	}
+	if n != keyLength {
+		t.Fatalf("generated key has %d symbols, want %d", n, keyLength)
 	}
 }
