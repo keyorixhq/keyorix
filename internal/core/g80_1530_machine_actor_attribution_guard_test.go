@@ -68,6 +68,14 @@ var auditAttributionAllowlist = map[string]string{
 		"nil) -- a host-side `keyorix-server admin` CLI action with no HTTP/gRPC request context to derive a " +
 		"machine identity from in the first place (ADR-108 §B: no admin command starts a network listener), " +
 		"same never-machine-identity-typed shape as the anomaly.go and server/main.go entries above.",
+	"server/admin/recover_admin_logic.go:recordRecoveryAuditEvent": "hardcodes ActorType: adminActorType " +
+		"(\"admin_cli\"), same never-machine-identity-typed, no-network-listener shape as the recordAdminAction " +
+		"entry above (ADR-108 §B). UNLIKE recordAdminAction, this one DOES set UserID -- to the RECOVERED " +
+		"account's id (docs/design-b2-recover-admin.md §4: \"target user\" is part of the required audit " +
+		"content), not the acting identity emitAudit's UserID-clearing rule protects against, since the actor " +
+		"here is the host OS user (no Keyorix identity to attribute to, by definition -- design §4) and is never " +
+		"conflated with the target. ActorType never being \"machine_identity\" is what makes emitAudit's " +
+		"corrections inapplicable here, independent of what UserID holds.",
 }
 
 var logAuditEventFuncRe = regexp.MustCompile(`^func\s+(?:\([^)]*\)\s*)?([A-Za-z0-9_]+)\(`)

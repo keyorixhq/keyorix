@@ -14,6 +14,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/serverguard"
 	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -90,6 +91,16 @@ func loadConfig() (*config.Config, error) {
 	}
 	if cfg.Storage.Type == "" {
 		cfg.Storage.Type = "local"
+	}
+	// server/main.go's boot path always calls this before touching storage;
+	// admin commands never went through that path, so any storage call that
+	// happens to localize an error message (e.g. GetUserByEmail's not-found
+	// path) panics with "i18n not initialized" -- found via recover-admin's
+	// own manual testing, the first admin command to reach such a call.
+	// i18n.Initialize is sync.Once-guarded, so calling it here on every
+	// admin command is a safe, idempotent no-op once it has succeeded.
+	if err := i18n.Initialize(cfg); err != nil {
+		return nil, fmt.Errorf("failed to initialize i18n: %w", err)
 	}
 	return cfg, nil
 }

@@ -10,6 +10,7 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
@@ -179,4 +180,34 @@ func TestPatchSCIMGroup_AllowsRemovingMemberWhenAnotherAdminExists(t *testing.T)
 	members, mErr := c.storage.ListGroupMembers(ctx, 5)
 	require.NoError(t, mErr)
 	assert.Empty(t, members)
+}
+
+// TestSetAccountState_ReactivationBypassesLastAdminGuardByConstruction
+// documents docs/design-b2-recover-admin.md §3/§6's own adversarial-review
+// item: "recover-admin interaction with GuardLastAdminDeactivation: confirm
+// recovery re-activation is unaffected by (does not need to bypass) that
+// guard." `keyorix-server admin recover-admin` (server/admin package —
+// cannot be imported from here; it depends on internal/core, not the
+// reverse) deliberately calls storage.Storage.SetAccountState DIRECTLY, the
+// exact same primitive setAccountState (account_state.go) wraps with
+// guardLastAdminDeactivation — never through core.ReactivateUser or any
+// other core.KeyorixCore method. This test pins the structural fact that
+// makes the guard's non-involvement true BY CONSTRUCTION, not by re-tracing
+// every call site by hand whenever this file changes: the raw storage
+// primitive has no guard logic of its own, so reactivating even the
+// install's LAST (and only) admin via SetAccountState directly always
+// succeeds — there is no check to route around, because storage.Storage
+// never had one. guardLastAdminDeactivation exists specifically to protect
+// DEACTIVATION paths (see this file's own header comment); recovery only
+// ever calls the REACTIVATION direction of this exact primitive.
+func TestSetAccountState_ReactivationBypassesLastAdminGuardByConstruction(t *testing.T) {
+	t.Parallel()
+	c, db := newSCIMGuardCore(t)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountSuspended}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin", BypassesPermissionChecks: true}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 10}).Error) // the ONLY global admin, currently suspended
+
+	err := c.storage.SetAccountState(ctx, 1, AccountPasswordResetRequired, time.Now())
+	require.NoError(t, err, "reactivating the install's only admin via the raw storage primitive must never be refused")
 }
