@@ -1439,6 +1439,131 @@ paths:
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
+
+  /api/v1/access-requests/bulk-approve:
+    post:
+      tags: [AccessRequests]
+      summary: Approve multiple pending access requests at once (ADR-108 PR 7 addition)
+      description: >-
+        Requires a global roles.assign; the handler additionally enforces per-item
+        project-scoped roles.assign for the caller before approving each request.
+        Added for ADR-108 PR 7 (thin CLI `request bulk-approve`) -- was already a live
+        route (catalogHandler.BulkApproveAccessRequests, router.go), just undocumented
+        in this spec until now.
+      operationId: bulkApproveAccessRequests
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request_ids]
+              properties:
+                request_ids: {type: array, items: {type: integer}}
+      responses:
+        '200':
+          description: >-
+            Envelope {data, message}. data.result: {approved: [<request ids>],
+            failed: [{request_id, error}]}.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/access-requests/bulk-reject:
+    post:
+      tags: [AccessRequests]
+      summary: Reject multiple pending access requests at once (ADR-108 PR 7 addition)
+      description: >-
+        Requires a global roles.assign; the handler additionally enforces per-item
+        project-scoped roles.assign for the caller before rejecting each request.
+        Added for ADR-108 PR 7 (thin CLI `request bulk-reject`) -- was already a live
+        route (catalogHandler.BulkRejectAccessRequests, router.go), just undocumented
+        in this spec until now.
+      operationId: bulkRejectAccessRequests
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request_ids, reason]
+              properties:
+                request_ids: {type: array, items: {type: integer}}
+                reason: {type: string}
+      responses:
+        '200':
+          description: >-
+            Envelope {data, message}. data.result: {rejected: [<request ids>],
+            failed: [{request_id, error}]}.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/rejection-reason-templates:
+    get:
+      tags: [AccessRequests]
+      summary: List rejection-reason templates (ADR-108 PR 7 addition)
+      description: >-
+        Templates are not project-scoped -- requires a global roles.assign. Added for
+        ADR-108 PR 7 (thin CLI `request rejection-templates list`) -- was already a
+        live route (catalogHandler.ListRejectionReasonTemplates, router.go), just
+        undocumented in this spec until now.
+      operationId: listRejectionReasonTemplates
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope {data, message}. data.templates[]: {id, name, reason}."
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [AccessRequests]
+      summary: Add a rejection-reason template (ADR-108 PR 7 addition)
+      description: >-
+        Requires a global roles.assign. Added for ADR-108 PR 7 (thin CLI `request
+        rejection-templates add`) -- was already a live route
+        (catalogHandler.CreateRejectionReasonTemplate, router.go), just undocumented
+        in this spec until now.
+      operationId: createRejectionReasonTemplate
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, reason]
+              properties:
+                name: {type: string}
+                reason: {type: string}
+      responses:
+        '201':
+          description: "Envelope {data, message}. data.template: {id, name, reason}."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/rejection-reason-templates/{id}:
+    delete:
+      tags: [AccessRequests]
+      summary: Delete a rejection-reason template (ADR-108 PR 7 addition)
+      description: >-
+        Requires a global roles.assign. Added for ADR-108 PR 7 (thin CLI `request
+        rejection-templates delete`) -- was already a live route
+        (catalogHandler.DeleteRejectionReasonTemplate, router.go), just undocumented
+        in this spec until now.
+      operationId: deleteRejectionReasonTemplate
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: "Envelope {data=null, message='deleted'}."
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
   /api/v1/secret-access-requests:
     get:
       tags: [AccessRequests]
@@ -1886,6 +2011,31 @@ paths:
                 properties:
                   data: {$ref: '#/components/schemas/MachineAuditReport'}
         '403': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/by-name:
+    get:
+      tags: [Secrets]
+      summary: Resolve a secret by project/environment/name (ADR-108 PR 7 addition)
+      description: >-
+        Metadata-only lookup (no value), used to resolve a "project/environment/name"
+        reference to a numeric secret ID without reading the secret's value or
+        auditing an access. Requires secrets.read scoped to project_id/environment_id.
+        Added for ADR-108 PR 7 (thin CLI `request secret-access --ref`) -- was already
+        a live route (secretHandler.GetSecretByName, router.go), just undocumented in
+        this spec until now.
+      operationId: getSecretByName
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: name, in: query, required: true, schema: {type: string}}
+        - {name: project_id, in: query, required: true, schema: {type: integer}}
+        - {name: environment_id, in: query, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: "Envelope {data, message}. data is the secret's metadata (no value)."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
   /api/v1/secrets:
     get:
       tags: [Secrets]
@@ -3371,6 +3521,35 @@ paths:
           description: The chain does not verify (broken, or a signed checkpoint proves a truncation); refused.
         '412':
           description: Signed checkpoints require encryption to be enabled.
+
+  /api/v1/audit/migrate-chain-encoding:
+    post:
+      tags: [Audit]
+      summary: One-time re-derivation of the audit hash chain under the current encoding (ADR-108 PR 7 addition)
+      description: >-
+        Re-derives entry_hash/prev_hash for every chained audit_events row under the
+        server's current hash encoding, so a breaking hash-format change doesn't make
+        `audit verify` report the chain broken starting at the first pre-upgrade row.
+        dry_run=true (default) only previews; dry_run=false applies. Same privilege bar
+        as /audit/checkpoint (system.write) -- it rewrites the tamper-evidence dataset
+        itself. Added for ADR-108 PR 7 (thin CLI `audit migrate-chain-encoding`) -- was
+        already a live route (auditHandler.MigrateAuditChainEncoding, router.go), just
+        undocumented in this spec until now.
+      operationId: migrateAuditChainEncoding
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: dry_run
+          in: query
+          description: "false applies the migration for real; true (default) only previews."
+          schema: {type: string, enum: ['true', 'false']}
+      responses:
+        '200':
+          description: >-
+            Envelope {data, message}. data: {dry_run, rows_migrated, unchained_rows_skipped,
+            head_id, head_hash, anchor_row_id, anchor_new_entry_hash}.
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
   /api/v1/audit/anomalies:
     get:
       tags: [Audit]
@@ -3404,6 +3583,262 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/admin/anomaly-config:
+    get:
+      tags: [Audit]
+      summary: Get the runtime anomaly-detection configuration (ADR-108 PR 7 addition)
+      description: >-
+        Read the DB-persisted anomaly-detection thresholds (lookback window, quarantine
+        period, off-hours band, ML Isolation Forest settings). Requires system.read.
+        Added for ADR-108 PR 7 (thin CLI `anomalies config get`) -- was already a live
+        route (handlers.GetAnomalyConfig, router.go), just undocumented in this spec
+        until now.
+      operationId: getAnomalyConfig
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: >-
+            Envelope {data, message}. data.config: {lookback_days, quarantine_hours,
+            off_hours_enabled, off_hours_timezone, off_hours_start, off_hours_end,
+            ml_enabled, ml_threshold, ml_num_trees, ml_sample_size, updated_at, updated_by}.
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+    put:
+      tags: [Audit]
+      summary: Update the runtime anomaly-detection configuration (ADR-108 PR 7 addition)
+      description: >-
+        Full-row replace of the anomaly-detection configuration (no version/ETag column
+        -- see internal/core/anomaly_config.go). Requires system.write. Added for
+        ADR-108 PR 7 (thin CLI `anomalies config set`) -- was already a live route
+        (handlers.UpdateAnomalyConfig, router.go), just undocumented in this spec until
+        now.
+      operationId: updateAnomalyConfig
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                lookback_days: {type: integer}
+                quarantine_hours: {type: integer}
+                off_hours_enabled: {type: boolean}
+                off_hours_timezone: {type: string}
+                off_hours_start: {type: integer}
+                off_hours_end: {type: integer}
+                ml_enabled: {type: boolean}
+                ml_threshold: {type: number}
+                ml_num_trees: {type: integer}
+                ml_sample_size: {type: integer}
+      responses:
+        '200':
+          description: "Envelope {data, message}. data.config: same shape as GET."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/alert-escalation-policies:
+    get:
+      tags: [Audit]
+      summary: List alert escalation policies (ADR-108 PR 7 addition)
+      description: >-
+        Requires system.write (a router design choice applying to both GETs and
+        mutations in this family, not a CLI/REST mismatch). Added for ADR-108 PR 7
+        (thin CLI `anomalies escalation list`) -- was already a live route
+        (alertEscalationHandler.List, router.go), just undocumented in this spec
+        until now.
+      operationId: listAlertEscalationPolicies
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: >-
+            Envelope {data, message}. data.policies[]: {id, name, min_severity,
+            escalate_after_minutes, channel_ids, enabled}.
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Audit]
+      summary: Create an alert escalation policy (ADR-108 PR 7 addition)
+      description: >-
+        Requires system.write. Added for ADR-108 PR 7 (thin CLI `anomalies escalation
+        create`) -- was already a live route (alertEscalationHandler.Create,
+        router.go), just undocumented in this spec until now.
+      operationId: createAlertEscalationPolicy
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+                min_severity: {type: string, description: "low | medium | high | critical"}
+                escalate_after_minutes: {type: integer}
+                channel_ids: {type: string, description: "Comma-separated NotificationChannel IDs."}
+                enabled: {type: boolean}
+      responses:
+        '201':
+          description: >-
+            Envelope {data, message}. data: {id, name, min_severity,
+            escalate_after_minutes, channel_ids, enabled}.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/alert-escalation-policies/{id}:
+    delete:
+      tags: [Audit]
+      summary: Delete an alert escalation policy (ADR-108 PR 7 addition)
+      description: >-
+        Requires system.write. Added for ADR-108 PR 7 (thin CLI `anomalies escalation
+        delete`) -- was already a live route (alertEscalationHandler.Delete,
+        router.go), just undocumented in this spec until now.
+      operationId: deleteAlertEscalationPolicy
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: "Envelope {data=null, message='deleted'}."
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/admin/jobs/run-alert-escalation:
+    post:
+      tags: [Audit]
+      summary: Trigger the alert-escalation job immediately (ADR-108 PR 7 addition)
+      description: >-
+        Evaluates unacknowledged anomaly alerts against every enabled escalation
+        policy and escalates the ones past their after-minutes threshold. Requires
+        system.write. Added for ADR-108 PR 7 (thin CLI `anomalies escalation run`) --
+        was already a live route (alertEscalationHandler.RunEscalation, router.go),
+        just undocumented in this spec until now. The old CLI's remote branch called
+        the doomed `/system` proxy equivalent instead
+        (`/api/v1/system/admin/jobs/run-alert-escalation`) -- the thin CLI uses this
+        real, permission-gated, audited human route directly.
+      operationId: runAlertEscalation
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope {data, message}. data: {evaluated, escalated, skipped}."
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/notification-channels:
+    get:
+      tags: [Notifications]
+      summary: List notification channel destinations (ADR-108 PR 7 addition)
+      description: >-
+        Requires system.write. Added for ADR-108 PR 7 (thin CLI `notification channel
+        list`) -- was already a live route (notificationChannelHandler.List,
+        router.go), just undocumented in this spec until now.
+      operationId: listNotificationChannels
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: >-
+            Envelope {data, message}. data.channels[]: {id, name, type, enabled, url,
+            email, events, created_by}.
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Notifications]
+      summary: Add a notification channel (ADR-108 PR 7 addition)
+      description: >-
+        Requires system.write. Added for ADR-108 PR 7 (thin CLI `notification channel
+        add`) -- was already a live route (notificationChannelHandler.Create,
+        router.go), just undocumented in this spec until now.
+      operationId: createNotificationChannel
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, type]
+              properties:
+                name: {type: string}
+                type: {type: string, description: "webhook | slack | teams | email"}
+                enabled: {type: boolean}
+                url: {type: string}
+                email: {type: string}
+                events: {type: string, description: "Comma-separated event types; empty = all."}
+      responses:
+        '201':
+          description: "Envelope {data, message}. data: same shape as list's channels[] entry."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/notification-channels/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Notifications]
+      summary: Get a notification channel by ID (ADR-108 PR 7 addition)
+      description: >-
+        Requires system.write. Added for ADR-108 PR 7 (thin CLI `notification channel
+        get`, which resolves a name via list then calls this) -- was already a live
+        route (notificationChannelHandler.Get, router.go), just undocumented in this
+        spec until now.
+      operationId: getNotificationChannel
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope {data, message}. data: same shape as list's channels[] entry."
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    put:
+      tags: [Notifications]
+      summary: Update a notification channel (ADR-108 PR 7 addition)
+      description: >-
+        Partial update -- only fields present in the body change. Requires
+        system.write. Added for ADR-108 PR 7 (thin CLI `notification channel update`)
+        -- was already a live route (notificationChannelHandler.Update, router.go),
+        just undocumented in this spec until now.
+      operationId: updateNotificationChannel
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url: {type: string}
+                email: {type: string}
+                events: {type: string}
+                enabled: {type: boolean}
+      responses:
+        '200':
+          description: "Envelope {data, message}. data: same shape as list's channels[] entry."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [Notifications]
+      summary: Delete a notification channel (ADR-108 PR 7 addition)
+      description: >-
+        Requires system.write. Added for ADR-108 PR 7 (thin CLI `notification channel
+        delete`) -- was already a live route (notificationChannelHandler.Delete,
+        router.go), just undocumented in this spec until now.
+      operationId: deleteNotificationChannel
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope {data=null, message='deleted'}."
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
   /api/v1/notifications:
     get:
       tags: [Notifications]
