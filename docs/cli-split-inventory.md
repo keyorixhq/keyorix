@@ -31,6 +31,7 @@ wherever a claim rests on a router/handler comment rather than a direct read of 
 6. [Top 5 GAPs by user impact](#6-top-5-gaps-by-user-impact)
 7. [Phase 3 PR breakdown](#7-phase-3-pr-breakdown)
 8. [Candidate security findings — consolidated](#8-candidate-security-findings--consolidated)
+9. [Command census (FINISH-SPLIT step 3)](#9-command-census-finish-split-step-3)
 
 ---
 
@@ -1578,6 +1579,51 @@ check exists and fails closed for actor `0` (the safer minority shape, e.g.
 (the majority of "no behavior difference beyond the general pattern" rows in §2) becomes moot,
 structurally, the moment ADR-108 Decision A removes local mode from the CLI — that removal is this
 report's single strongest piece of evidence *for* the program, not against it.
+
+---
+
+## 9. Command census (FINISH-SPLIT step 3)
+
+Machine-checked, not asserted: `internal/cli/command_census_test.go`'s `TestCLICommandCensus` walks
+the old CLI's live cobra tree (`internal/cli`'s `rootCmd`, reusing the existing
+`walkLeafCommands`/`leafCommand` helper from `cli_remote_mode_behavior_test.go` rather than
+duplicating it) and checks every leaf command against a hand-maintained classification map in the
+same file. A leaf command with no entry fails CI immediately — this is the mechanism (not this
+document) that stays correct as the old CLI keeps changing underneath it. Run it directly with
+`scripts/cli-command-census.sh`, or regenerate the table below with
+`scripts/cli-command-census.sh --regen`.
+
+**259 leaf commands** as of 2026-09-24 (256 counted by a naive "no-children" walk, plus 3 the real
+walker's `cmd.Runnable()` check correctly caught that a naive walk misses: `access-review`,
+`connect`, and `encryption migrate-provider` are all runnable in their own right *and* have
+subcommands — a real gap the machine check found on its first run, not a hypothetical).
+
+Full table: [`docs/cli-split-inventory-census.md`](cli-split-inventory-census.md) (generated;
+do not hand-edit — edit `commandCensus` in `internal/cli/command_census_test.go` instead).
+
+**8 open gaps** at this writing — commands with no assigned home yet. These block PR 14 (delete
+`/system` + `RemoteStorage`) and Phase 5 (delete the old CLI); `TestNoGapsRemain`
+(`KEYORIX_CENSUS_CHECK_GAPS=1`) is the gate that gets re-run before either starts:
+
+- `billing report`, `usage show` — dual-mode REST routes exist (`GET /admin/billing/report`,
+  `GET /admin/usage`) and are genuinely `audit.read`-gated on the server side, but neither was in
+  any split PR's scope (§8 Finding S17: the embedded-mode path has no `userID` parameter to
+  authorize against at all). Needs a small PR, unassigned.
+- `migrate user-to-machine` — should collapse to a REST-backed thin-CLI command (the route already
+  exists: `POST /projects/{id}/machine-identities/migrate-from-user`); not related to the separate
+  `keyorix-migrate` tool (Vault/cloud import) despite the name collision. Needs a small PR,
+  unassigned.
+- `system init`'s `--server` half — the local-host half (create config/keys/DB) moved to
+  `keyorix-server admin init` (B1, #2016); the network-bootstrap half (`POST /system/init`,
+  unauthenticated, bootstrap-token-gated) has no thin-CLI home yet. Tracked as a note on the
+  `system init` row (same cobra leaf, can't be split in the census map), not a separate gap key.
+- `bundle import`, `bundle verify`, `license install`, `license status`, `run` — in progress this
+  same track (FINISH-SPLIT step 2, opened alongside or immediately after this PR); flip to
+  `censusMoved` once that PR lands.
+
+`bundle build`, `license issue`, and everything under the old `config`/`connect` groups are
+`censusDropped` (maintainer-only tooling and ADR-108 Decision A's config-mechanism consolidation,
+respectively) — not gaps, a closed decision each with its own reason in the table.
 
 
 
