@@ -35,6 +35,13 @@ keyorix-server admin verify-audit --config /etc/keyorix/keyorix.yaml
 # and genesis re-seed (see "What each input adds" below):
 keyorix-server admin verify-audit --db keyorix.db --checkpoint-key-file ./checkpoint.key
 
+# Closing the "host admin holds everything" gap: an externally-held anchor
+# and/or a third-party TSA root bundle constrain even an admin who holds
+# the checkpoint key (see the trust-model table below):
+keyorix-server admin verify-audit --db keyorix.db \
+  --anchor /secure/path/checkpoint-2026-09-01.json \
+  --tsa-roots /etc/ssl/tsa-roots.pem
+
 # Machine-readable output, for a compliance evidence pack or a CI gate:
 keyorix-server admin verify-audit --db keyorix.db --json
 ```

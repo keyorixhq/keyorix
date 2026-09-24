@@ -18,10 +18,16 @@ package main
 // authenticated traffic to generate audit events.
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -352,4 +358,70 @@ func TestVerifyAudit_LiveDBPath_TakesLock_CopyPathDoesNot(t *testing.T) {
 			t.Fatalf("expected exit 0: an explicit --db copy must never be blocked by the live-DB lock, got %d:\n%s", code, out)
 		}
 	})
+}
+
+// writeSelfSignedPEM writes a throwaway self-signed certificate to path, in
+// PEM form — good enough for --tsa-roots' own parsing test (x509.CertPool.
+// AppendCertsFromPEM only needs a structurally valid certificate; it is
+// never asked to chain-verify anything in these two tests, since neither
+// fixture carries an RFC 3161 anchor token to check it against).
+func writeSelfSignedPEM(t *testing.T, path string) {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "verify-audit test TSA root"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		IsCA:         true,
+		KeyUsage:     x509.KeyUsageCertSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create %s: %v", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	if err := pem.Encode(f, &pem.Block{Type: "CERTIFICATE", Bytes: der}); err != nil {
+		t.Fatalf("encode PEM: %v", err)
+	}
+}
+
+func TestVerifyAudit_TSARoots_ValidBundleAccepted(t *testing.T) {
+	bin := buildServerBinary(t)
+	dir, dbPath, env := setupVerifyAuditDB(t, bin)
+	seedAuditChain(t, dbPath, 5)
+
+	rootsFile := filepath.Join(dir, "tsa-roots.pem")
+	writeSelfSignedPEM(t, rootsFile)
+
+	out, code := verifyAuditExitCode(t, bin, dir, env, "--config", "./keyorix.yaml", "--tsa-roots", rootsFile)
+	if code != 0 {
+		t.Fatalf("expected exit 0: a valid --tsa-roots bundle over an otherwise-clean chain must be accepted, got %d:\n%s", code, out)
+	}
+}
+
+func TestVerifyAudit_TSARoots_NoPEMCertsExitsThree(t *testing.T) {
+	bin := buildServerBinary(t)
+	dir, dbPath, env := setupVerifyAuditDB(t, bin)
+	seedAuditChain(t, dbPath, 5)
+
+	rootsFile := filepath.Join(dir, "tsa-roots-empty.pem")
+	if err := os.WriteFile(rootsFile, []byte("this is not a PEM certificate\n"), 0o600); err != nil {
+		t.Fatalf("write %s: %v", rootsFile, err)
+	}
+
+	out, code := verifyAuditExitCode(t, bin, dir, env, "--config", "./keyorix.yaml", "--tsa-roots", rootsFile)
+	if code != 3 {
+		t.Fatalf("expected exit 3 (usage error) for a --tsa-roots file with no valid PEM certificates, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "--tsa-roots") || !strings.Contains(out, "no valid PEM certificates") {
+		t.Errorf("expected the specific --tsa-roots parse-failure message, got:\n%s", out)
+	}
 }

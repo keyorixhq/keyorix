@@ -12,6 +12,7 @@ package admin
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -27,11 +28,12 @@ import (
 )
 
 var (
-	verifyAuditDBPath     string
-	verifyAuditPGDSN      string
-	verifyAuditKeyFile    string
-	verifyAuditAnchorFile string
-	verifyAuditJSON       bool
+	verifyAuditDBPath      string
+	verifyAuditPGDSN       string
+	verifyAuditKeyFile     string
+	verifyAuditAnchorFile  string
+	verifyAuditTSARootFile string
+	verifyAuditJSON        bool
 )
 
 var verifyAuditCmd = &cobra.Command{
@@ -51,7 +53,11 @@ additionally detects tail-truncation and genesis re-seed against the
 certified high-water mark. With --anchor, it cross-checks the live chain
 against a signed checkpoint snapshot held OUTSIDE this host -- catching a
 truncation or re-seed even if the local checkpoint/high-water rows were
-themselves deleted, which is the strongest guarantee this tool can offer.
+themselves deleted. With --tsa-roots (a PEM bundle of trusted RFC 3161 TSA
+root certs), it independently re-verifies a checkpoint's or --anchor's
+timestamp token against a third-party time-stamping authority -- the one
+check that needs NO shared secret at all (no --checkpoint-key-file, no trust
+in this host), and the strongest guarantee this tool can offer.
 
 WHAT THIS DOES NOT PROVE: a host admin who holds BOTH this database and its
 checkpoint signing key can fabricate a fully self-consistent, validly-
@@ -89,6 +95,8 @@ func init() {
 		"Path to the derived audit-checkpoint signing key (hex or base64) -- enables checkpoint/high-water/truncation checks")
 	verifyAuditCmd.Flags().StringVar(&verifyAuditAnchorFile, "anchor", "",
 		"Path to a JSON checkpoint snapshot held externally -- cross-checks the live chain against a copy this host does not control")
+	verifyAuditCmd.Flags().StringVar(&verifyAuditTSARootFile, "tsa-roots", "",
+		"Path to a PEM bundle of trusted RFC 3161 TSA root certs -- independently re-verifies a checkpoint's or --anchor's timestamp token against them, without needing --checkpoint-key-file or any other shared secret")
 	verifyAuditCmd.Flags().BoolVar(&verifyAuditJSON, "json", false,
 		"Emit the verification result as JSON instead of a human report")
 	rootCmd.AddCommand(verifyAuditCmd)
@@ -141,9 +149,9 @@ func runVerifyAudit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// buildVerifyAuditOptions resolves --checkpoint-key-file/--anchor into an
-// auditverify.Options. All interpretation of the anchor bundle's JSON lives
-// in auditverify.ParseExternalAnchorBundle, not here.
+// buildVerifyAuditOptions resolves --checkpoint-key-file/--anchor/--tsa-roots
+// into an auditverify.Options. All interpretation of the anchor bundle's
+// JSON lives in auditverify.ParseExternalAnchorBundle, not here.
 func buildVerifyAuditOptions() (auditverify.Options, error) {
 	var opts auditverify.Options
 	if verifyAuditKeyFile != "" {
@@ -163,6 +171,13 @@ func buildVerifyAuditOptions() (auditverify.Options, error) {
 			return opts, fmt.Errorf("--anchor: %w", err)
 		}
 		opts.ExternalAnchor = bundle
+	}
+	if verifyAuditTSARootFile != "" {
+		roots, err := readTSARootsFile(verifyAuditTSARootFile)
+		if err != nil {
+			return opts, fmt.Errorf("--tsa-roots: %w", err)
+		}
+		opts.TSARoots = roots
 	}
 	return opts, nil
 }
@@ -186,6 +201,22 @@ func readCheckpointKeyFile(path string) ([]byte, error) {
 		return key, nil
 	}
 	return nil, fmt.Errorf("%q is neither valid hex nor valid base64 (the derived checkpoint key must be one of those two encodings)", path)
+}
+
+// readTSARootsFile parses the PEM bundle of trusted RFC 3161 TSA root certs
+// design §3's `--tsa-roots` flag takes -- the one check this design calls
+// out as needing no shared secret at all (a public-key proof-of-existence),
+// so it is deliberately independent of --checkpoint-key-file.
+func readTSARootsFile(path string) (*x509.CertPool, error) {
+	raw, err := os.ReadFile(path) // #nosec G304 -- operator-supplied path, the whole point of this flag
+	if err != nil {
+		return nil, fmt.Errorf("read %q: %w", path, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(raw) {
+		return nil, fmt.Errorf("%q contains no valid PEM certificates", path)
+	}
+	return pool, nil
 }
 
 // openVerifyAuditTarget resolves --db/--pg-dsn/config precedence into an
