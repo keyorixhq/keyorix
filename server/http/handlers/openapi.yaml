@@ -2404,30 +2404,6 @@ paths:
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
-  /api/v1/secrets/by-name:
-    get:
-      tags: [Secrets]
-      summary: Resolve a secret by project/environment/name (ADR-108 PR 7 addition)
-      description: >-
-        Metadata-only lookup (no value), used to resolve a "project/environment/name"
-        reference to a numeric secret ID without reading the secret's value or
-        auditing an access. Requires secrets.read scoped to project_id/environment_id.
-        Added for ADR-108 PR 7 (thin CLI `request secret-access --ref`) -- was already
-        a live route (secretHandler.GetSecretByName, router.go), just undocumented in
-        this spec until now.
-      operationId: getSecretByName
-      security: [{bearerAuth: []}]
-      parameters:
-        - {name: name, in: query, required: true, schema: {type: string}}
-        - {name: project_id, in: query, required: true, schema: {type: integer}}
-        - {name: environment_id, in: query, required: true, schema: {type: integer}}
-      responses:
-        '200':
-          description: "Envelope {data, message}. data is the secret's metadata (no value)."
-        '400': {$ref: '#/components/responses/Error'}
-        '401': {$ref: '#/components/responses/Error'}
-        '403': {$ref: '#/components/responses/Error'}
-        '404': {$ref: '#/components/responses/Error'}
 
   /api/v1/secrets:
     get:
