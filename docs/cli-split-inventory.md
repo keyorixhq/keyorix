@@ -399,6 +399,12 @@ removes local mode.
 
 ### 2.6 `risk`, `sod`, `legalhold`, `compliance`, `hygiene`, `trust` — 24 leaf subcommands
 
+**Moved to `cli/cmd/{risk,sod,legalhold,hygiene,trust,compliance}.go` (PR 8, #2060).** The
+`compliance export`/`verify` round-trip bug (§6 GAP-4, GAP-2 below) was explicitly deferred, not
+fixed, in that PR: ported as-is (conservative default) since it is a transport-only porting PR and
+the existing behavior is degraded-but-safe (an unsigned pack is labeled `signed: false`, never
+silently claimed authentic). Fixing the signing-path bug itself is a separate, non-transport change.
+
 **None of these 23 non-`trust` commands has a local-mode or `/system`-proxy fallback at all** — every
 one is `common.NewRemoteClient()`-only, confirmed by grep (zero matches for
 `InitializeCoreService|core.KeyorixCore|RemoteStorage` anywhere in these 5 packages). This means
@@ -921,12 +927,14 @@ local mode is removed. GAP-1 (`request secret-access`/secret-scoped `review appr
 now closed — both commands are REST-backed in remote mode, so this PR's scope no longer depends on
 that decision. Size: medium.
 
-**PR 8 — `risk`, `sod`, `legalhold`, `compliance`, `hygiene`, `trust` (24 commands).** **Needs a
-product/engineering decision**: the `compliance export`/`verify` round-trip bug (§6 GAP-4) — fix
-independently first (recommended, since it's a live compliance-workflow bug, not split-specific),
-or explicitly defer with a documented known-broken state. Every other command in this group is a
-trivial move (already REST-only, no fallback anywhere). Size: small once GAP-4 is resolved
-elsewhere.
+**PR 8 — `risk`, `sod`, `legalhold`, `compliance`, `hygiene`, `trust` (24 commands). DONE (#2060).**
+The product/engineering decision this entry originally flagged — the `compliance export`/`verify`
+round-trip bug (§6 GAP-4) — was resolved by deferring: PR 8 ported `export`/`verify` as-is
+(conservative default, documented known-broken behavior) rather than fixing the signing-path bug
+in a transport-only porting PR. Every other command in this group was a trivial move (already
+REST-only, no fallback anywhere). 11 previously-undocumented-but-live OpenAPI routes were added,
+plus a real pre-existing doc defect fixed: `DELETE /api/v1/legal-hold` genuinely requires a
+`{"reason"}` JSON body that the spec never declared.
 
 **PR 9 — `share` (7 commands).** `shared-secrets --user-id`'s missing arbitrary-target REST route
 (§6, secondary gap) is now closed — `GET /api/v1/users/{id}/shared-secrets`, admin-rank-ceiling-
