@@ -28,7 +28,7 @@ func captureStdout(t *testing.T, fn func()) string {
 	os.Stdout = w
 	fn()
 	os.Stdout = orig
-	w.Close()
+	_ = w.Close()
 	buf := make([]byte, 64*1024)
 	n, _ := r.Read(buf)
 	return string(buf[:n])
@@ -45,7 +45,7 @@ func TestRunPATList_MatchesOldCLIOutputShape(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":[{"id":7,"name":"ci-token","token_prefix":"kx_pat_ab","revoked":false,"created_at":"2026-01-02T00:00:00Z","expires_at":null,"last_used_at":null,"scopes":[],"project_scope":0,"environment_scope":0,"allowed_cidrs":[]}]}`)
+		_, _ = fmt.Fprint(w, `{"data":[{"id":7,"name":"ci-token","token_prefix":"kx_pat_ab","revoked":false,"created_at":"2026-01-02T00:00:00Z","expires_at":null,"last_used_at":null,"scopes":[],"project_scope":0,"environment_scope":0,"allowed_cidrs":[]}]}`)
 	}))
 	defer srv.Close()
 	setPATCreds(t, srv)
@@ -67,7 +67,7 @@ func TestRunPATList_MatchesOldCLIOutputShape(t *testing.T) {
 func TestRunPATList_EmptyPrintsNoTokensMessage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":[]}`)
+		_, _ = fmt.Fprint(w, `{"data":[]}`)
 	}))
 	defer srv.Close()
 	setPATCreds(t, srv)
@@ -89,7 +89,7 @@ func TestRunPATCreate_PrintsRawTokenOnceToStdoutOnly(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		fmt.Fprint(w, `{"data":{"token":"kx_pat_the_raw_secret","pat":{"id":9,"name":"new-token"}}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"token":"kx_pat_the_raw_secret","pat":{"id":9,"name":"new-token"}}}`)
 	}))
 	defer srv.Close()
 	setPATCreds(t, srv)

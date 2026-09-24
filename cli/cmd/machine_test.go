@@ -21,9 +21,9 @@ func TestRunMachineList_MatchesOldCLIOutputShape(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/projects":
-			fmt.Fprint(w, `{"data":{"projects":[{"id":3,"name":"infra"}]}}`)
+			_, _ = fmt.Fprint(w, `{"data":{"projects":[{"id":3,"name":"infra"}]}}`)
 		case "/api/v1/projects/3/machine-identities":
-			fmt.Fprint(w, `{"data":{"machine_identities":[{"id":11,"name":"ci-runner","identity_type":"ci","state":"active","description":"builds the release pipeline"}]}}`)
+			_, _ = fmt.Fprint(w, `{"data":{"machine_identities":[{"id":11,"name":"ci-runner","identity_type":"ci","state":"active","description":"builds the release pipeline"}]}}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -50,9 +50,9 @@ func TestRunMachineList_EmptyPrintsNoIdentitiesMessage(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/projects":
-			fmt.Fprint(w, `{"data":{"projects":[{"id":3,"name":"infra"}]}}`)
+			_, _ = fmt.Fprint(w, `{"data":{"projects":[{"id":3,"name":"infra"}]}}`)
 		case "/api/v1/projects/3/machine-identities":
-			fmt.Fprint(w, `{"data":{"machine_identities":[]}}`)
+			_, _ = fmt.Fprint(w, `{"data":{"machine_identities":[]}}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -80,12 +80,12 @@ func TestRunMachineTokenIssue_PrintsRawTokenOnceToStdoutOnly(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/projects":
-			fmt.Fprint(w, `{"data":{"projects":[{"id":3,"name":"infra"}]}}`)
+			_, _ = fmt.Fprint(w, `{"data":{"projects":[{"id":3,"name":"infra"}]}}`)
 		case "/api/v1/projects/3/machine-identities":
-			fmt.Fprint(w, `{"data":{"machine_identities":[{"id":11,"name":"ci-runner","identity_type":"ci","state":"active"}]}}`)
+			_, _ = fmt.Fprint(w, `{"data":{"machine_identities":[{"id":11,"name":"ci-runner","identity_type":"ci","state":"active"}]}}`)
 		case "/api/v1/projects/3/machine-identities/11/tokens":
 			w.WriteHeader(http.StatusCreated)
-			fmt.Fprint(w, `{"data":{"token":"kx_machine_the_raw_secret","id":42,"prefix":"kx_machine_ab"}}`)
+			_, _ = fmt.Fprint(w, `{"data":{"token":"kx_machine_the_raw_secret","id":42,"prefix":"kx_machine_ab"}}`)
 		default:
 			http.NotFound(w, r)
 		}
