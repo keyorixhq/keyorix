@@ -41,6 +41,21 @@ type Environment struct {
 	UpdatedAt *time.Time `json:"UpdatedAt,omitempty"`
 }
 
+// PATToken A personal access token (ADR-027/ADR-042). The raw secret is never returned except once, in the create response.
+type PATToken struct {
+	AllowedCidrs     *[]string  `json:"allowed_cidrs"`
+	CreatedAt        *time.Time `json:"created_at,omitempty"`
+	EnvironmentScope *int       `json:"environment_scope,omitempty"`
+	ExpiresAt        *time.Time `json:"expires_at"`
+	Id               *int       `json:"id,omitempty"`
+	LastUsedAt       *time.Time `json:"last_used_at"`
+	Name             *string    `json:"name,omitempty"`
+	ProjectScope     *int       `json:"project_scope,omitempty"`
+	Revoked          *bool      `json:"revoked,omitempty"`
+	Scopes           *[]string  `json:"scopes"`
+	TokenPrefix      *string    `json:"token_prefix,omitempty"`
+}
+
 // Secret A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
 type Secret struct {
 	AutoRotate     *bool      `json:"AutoRotate,omitempty"`
@@ -142,6 +157,25 @@ type Error struct {
 	Success *bool   `json:"success,omitempty"`
 }
 
+// CreatePATJSONBody defines parameters for CreatePAT.
+type CreatePATJSONBody struct {
+	// AllowedCidrs Restrict the token to source IPs in these CIDRs. Omit/empty = no network restriction.
+	AllowedCidrs *[]string `json:"allowed_cidrs,omitempty"`
+
+	// EnvironmentScope ADR-042: confine the token to a single environment id; 0/omit = any environment. Env ids are globally unique, so this also pins the project.
+	EnvironmentScope *int `json:"environment_scope,omitempty"`
+
+	// ExpiresAt RFC3339; omit/null for non-expiring
+	ExpiresAt *time.Time `json:"expires_at"`
+	Name      string     `json:"name"`
+
+	// ProjectScope ADR-042: confine the token to a single project id; 0/omit = any project the owner can reach.
+	ProjectScope *int `json:"project_scope,omitempty"`
+
+	// Scopes ADR-042 least-privilege allowlist (e.g. ["secrets.read"], supports "*" and "secrets.*"). Omit/empty = inherit the owner's full permissions. Only ever narrows below the owner.
+	Scopes *[]string `json:"scopes,omitempty"`
+}
+
 // ListProjectsParams defines parameters for ListProjects.
 type ListProjectsParams struct {
 	// IncludeDeleted When 'true', also returns soft-deleted projects (each flagged via deleted/deleted_at) for the restore UI.
@@ -235,6 +269,9 @@ type UpdateSecretJSONBody struct {
 	MaxReads        *int       `json:"max_reads"`
 	Value           *string    `json:"value,omitempty"`
 }
+
+// CreatePATJSONRequestBody defines body for CreatePAT for application/json ContentType.
+type CreatePATJSONRequestBody CreatePATJSONBody
 
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody CreateProjectJSONBody

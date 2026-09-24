@@ -88,7 +88,7 @@ func TestIntegration_KVv2_RecursiveWalk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	entries, err := c.Walk(context.Background(), "", false)
+	entries, skipped, err := c.Walk(context.Background(), "", false)
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
@@ -118,6 +118,18 @@ func TestIntegration_KVv2_RecursiveWalk(t *testing.T) {
 	if len(entries) != len(want) {
 		t.Errorf("Walk returned %d entries, want %d: %v", len(entries), len(want), entries)
 	}
+
+	// Andrei's 2026-09-25 decision: a soft-deleted/destroyed latest version must be reported
+	// as skipped with a reason, not silently dropped.
+	if len(skipped) != 1 {
+		t.Fatalf("got %d skipped entries, want 1: %+v", len(skipped), skipped)
+	}
+	if skipped[0].Path != "team-a/deleted-me" {
+		t.Errorf("skipped[0].Path = %q, want team-a/deleted-me", skipped[0].Path)
+	}
+	if !strings.Contains(skipped[0].Reason, "soft-deleted") {
+		t.Errorf("skipped[0].Reason = %q, want it to mention soft-deleted", skipped[0].Reason)
+	}
 }
 
 // TestIntegration_KVv1_Read asserts a KV v1 mount (no /data/ or /metadata/ URL layout) is read
@@ -135,12 +147,15 @@ func TestIntegration_KVv1_Read(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	entries, err := c.Walk(context.Background(), "", false)
+	entries, skipped, err := c.Walk(context.Background(), "", false)
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
 	if len(entries) != 1 || entries[0].Path != "legacy/token" || entries[0].Value != "canary-legacy-QW1" {
 		t.Fatalf("KV v1 Walk = %+v, want one entry legacy/token=canary-legacy-QW1", entries)
+	}
+	if len(skipped) != 0 {
+		t.Errorf("got %d skipped entries, want 0: %+v", len(skipped), skipped)
 	}
 }
 
@@ -160,7 +175,7 @@ func TestIntegration_CustomMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	entries, err := c.Walk(context.Background(), "", false)
+	entries, skipped, err := c.Walk(context.Background(), "", false)
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
@@ -169,6 +184,15 @@ func TestIntegration_CustomMetadata(t *testing.T) {
 	}
 	if entries[0].Metadata["owner"] != "team-a" || entries[0].Metadata["env"] != "prod" {
 		t.Errorf("custom_metadata = %v, want owner=team-a env=prod", entries[0].Metadata)
+	}
+	if len(skipped) != 0 {
+		t.Errorf("got %d skipped entries, want 0: %+v", len(skipped), skipped)
+	}
+	if entries[0].Version == 0 {
+		t.Errorf("entries[0].Version = 0, want a KV v2 version number")
+	}
+	if entries[0].CreatedAt == "" {
+		t.Errorf("entries[0].CreatedAt is empty, want the KV v2 created_time")
 	}
 }
 
@@ -244,12 +268,15 @@ func TestIntegration_AppRoleAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New (AppRole): %v", err)
 	}
-	entries, err := c.Walk(context.Background(), "", false)
+	entries, skipped, err := c.Walk(context.Background(), "", false)
 	if err != nil {
 		t.Fatalf("Walk (AppRole): %v", err)
 	}
 	if len(entries) != 1 || entries[0].Value != "canary-approle-NM3" {
 		t.Fatalf("AppRole Walk = %+v, want one entry value=canary-approle-NM3", entries)
+	}
+	if len(skipped) != 0 {
+		t.Errorf("got %d skipped entries, want 0: %+v", len(skipped), skipped)
 	}
 }
 
@@ -262,7 +289,7 @@ func TestIntegration_AllVersionsNotSupported(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if _, err := c.Walk(context.Background(), "", true); err == nil {
+	if _, _, err := c.Walk(context.Background(), "", true); err == nil {
 		t.Fatal("Walk with allVersions=true returned no error, want an explicit unsupported error")
 	}
 }

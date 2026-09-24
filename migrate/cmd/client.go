@@ -9,26 +9,17 @@ import (
 	"github.com/keyorixhq/keyorix/migrate/internal/apiclient"
 )
 
-// resolveServerAndToken applies the precedence flag > env var, matching cli/cmd/client.go's
-// resolveServerAndToken -- except this tool has no login flow or credential store (see
-// docs/design-keyorix-migrate.md's "PAT provisioning UX" open question): the operator always
-// supplies a PAT explicitly.
-func resolveServerAndToken(flagServer, flagToken string) (serverURL, token string, err error) {
-	serverURL = flagServer
+// resolveServer applies the precedence flag > env var. Not a credential (a URL, not a
+// secret) so it has no --*-file counterpart, unlike the token (resolveCredential).
+func resolveServer(flagServer string) (string, error) {
+	serverURL := flagServer
 	if serverURL == "" {
 		serverURL = os.Getenv("KEYORIX_SERVER")
 	}
-	token = flagToken
-	if token == "" {
-		token = os.Getenv("KEYORIX_TOKEN")
-	}
 	if serverURL == "" {
-		return "", "", fmt.Errorf("no server configured: use --server or $KEYORIX_SERVER")
+		return "", fmt.Errorf("no server configured: use --server or $KEYORIX_SERVER")
 	}
-	if token == "" {
-		return "", "", fmt.Errorf("no token configured: use --token or $KEYORIX_TOKEN (a Keyorix Personal Access Token)")
-	}
-	return serverURL, token, nil
+	return serverURL, nil
 }
 
 // newAPIClient builds a generated client against serverURL, attaching an Authorization header

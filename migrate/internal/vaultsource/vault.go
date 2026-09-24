@@ -11,11 +11,15 @@ package vaultsource
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +46,16 @@ type Config struct {
 
 	RoleID   string // AppRole auth (used when Token == "").
 	SecretID string
+
+	// CACertPath / CACertDir configure the TLS trust root for an on-prem or air-gapped Vault
+	// signed by an internal CA (PR #2077 review item 1) -- matching Vault's own $VAULT_CACERT/
+	// $VAULT_CAPATH convention. When either is set, RootCAs is built ONLY from the given
+	// cert(s), replacing (not appending to) the system trust store -- pinning to a specific CA
+	// is the point, the same reason validateConnectorURL-adjacent code in this repo never adds
+	// a skip-verify escape hatch. Deliberately NO InsecureSkipVerify option exists anywhere in
+	// this package.
+	CACertPath string
+	CACertDir  string
 }
 
 // Client talks to a Vault KV engine over HTTP.
@@ -71,20 +85,29 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("vault auth is required: --vault-token/$VAULT_TOKEN, or both --vault-role-id and --vault-secret-id")
 	}
 
+	tlsConfig, err := buildTLSConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	hc := &http.Client{
+		Timeout: clientTimeout,
+		// No redirect is legitimate for a fixed, operator-supplied Vault address — see
+		// source_vault.go's refuseVaultRedirect / internal/connect/vault.go's
+		// refuseRedirect for the shared rationale (a compromised/misconfigured Vault
+		// must never receive the live token via a followed 3xx to another host).
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	if tlsConfig != nil {
+		hc.Transport = &http.Transport{TLSClientConfig: tlsConfig}
+	}
+
 	c := &Client{
 		addr:      strings.TrimRight(cfg.Addr, "/"),
 		namespace: cfg.Namespace,
 		mount:     strings.Trim(cfg.Mount, "/"),
-		hc: &http.Client{
-			Timeout: clientTimeout,
-			// No redirect is legitimate for a fixed, operator-supplied Vault address — see
-			// source_vault.go's refuseVaultRedirect / internal/connect/vault.go's
-			// refuseRedirect for the shared rationale (a compromised/misconfigured Vault
-			// must never receive the live token via a followed 3xx to another host).
-			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
+		hc:        hc,
 	}
 
 	if cfg.Token != "" {
@@ -97,6 +120,50 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	}
 	c.token = token
 	return c, nil
+}
+
+// buildTLSConfig returns nil (use Go's default system trust store) when neither CACertPath nor
+// CACertDir is set, or a *tls.Config whose RootCAs is built EXCLUSIVELY from the given
+// cert(s) otherwise — matching Vault's own $VAULT_CACERT/$VAULT_CAPATH semantics (pin to a
+// specific CA, don't merge with the system store). See Config's doc comment for why this
+// package has no skip-verify escape hatch.
+func buildTLSConfig(cfg Config) (*tls.Config, error) {
+	if cfg.CACertPath == "" && cfg.CACertDir == "" {
+		return nil, nil
+	}
+	pool := x509.NewCertPool()
+	if cfg.CACertPath != "" {
+		pem, err := os.ReadFile(cfg.CACertPath) // #nosec G304 -- operator-supplied CA cert path, a CLI flag, not user/network input
+		if err != nil {
+			return nil, fmt.Errorf("read --vault-cacert %q: %w", cfg.CACertPath, err)
+		}
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("--vault-cacert %q contains no usable PEM certificates", cfg.CACertPath)
+		}
+	}
+	if cfg.CACertDir != "" {
+		entries, err := os.ReadDir(cfg.CACertDir)
+		if err != nil {
+			return nil, fmt.Errorf("read --vault-capath %q: %w", cfg.CACertDir, err)
+		}
+		loaded := 0
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			pem, err := os.ReadFile(filepath.Join(cfg.CACertDir, e.Name())) // #nosec G304 -- operator-supplied CA directory, a CLI flag, not user/network input
+			if err != nil {
+				return nil, fmt.Errorf("read %q in --vault-capath: %w", e.Name(), err)
+			}
+			if pool.AppendCertsFromPEM(pem) {
+				loaded++
+			}
+		}
+		if loaded == 0 {
+			return nil, fmt.Errorf("--vault-capath %q contains no usable PEM certificates", cfg.CACertDir)
+		}
+	}
+	return &tls.Config{RootCAs: pool}, nil
 }
 
 // appRoleLogin exchanges an AppRole role-id/secret-id pair for a client token via
@@ -158,12 +225,26 @@ func (c *Client) setCommonHeaders(req *http.Request, token string) {
 // Entry is one Vault KV field, ready to become a Keyorix secret. Path is the KV path (without
 // mount) the value was read from; Field is the KV field name ("value" for a single-field
 // leaf's own sentinel field, mirroring source_vault.go's readLeaf convention). Metadata carries
-// Vault's own custom_metadata (KV v2 only) for mapping into Keyorix's metadata.
+// Vault's own custom_metadata (KV v2 only) for mapping into Keyorix's metadata. Version and
+// CreatedAt are KV v2's own version number and its created_time (RFC3339) -- zero/empty for
+// KV v1, which has no version history. Andrei's 2026-09-25 decision (docs/design-keyorix-migrate.md
+// "All-versions import (deferred)"): every imported secret records which source version it
+// came from, even though only the latest version is ever imported.
 type Entry struct {
-	Path     string
-	Field    string
-	Value    string
-	Metadata map[string]string
+	Path      string
+	Field     string
+	Value     string
+	Metadata  map[string]string
+	Version   int
+	CreatedAt string
+}
+
+// Skipped is one KV leaf Walk found but did not import, with a human-readable reason. Currently
+// only produced for a KV v2 leaf whose latest version is soft-deleted or destroyed (Andrei's
+// 2026-09-25 decision: these must be reported, not silently dropped).
+type Skipped struct {
+	Path   string
+	Reason string
 }
 
 // SourceID is a stable identifier for this entry within this Vault, used as
@@ -178,29 +259,30 @@ func (e Entry) SourceID(addr, mount string, kvVersion int) string {
 	return fmt.Sprintf("%s|%s|kv%d|%s|%s", strings.TrimRight(addr, "/"), strings.Trim(mount, "/"), kvVersion, e.Path, field)
 }
 
-// Walk recursively lists the KV tree under root and returns every field as an Entry.
-// allVersions=false (the default) reads only the current version of each leaf; allVersions=true
-// is not yet supported (see docs/design-keyorix-migrate.md's "Open questions" — Keyorix's
-// secret-versioning API isn't in this tool's scope yet) and returns an error rather than
-// silently behaving like allVersions=false.
-func (c *Client) Walk(ctx context.Context, root string, allVersions bool) ([]Entry, error) {
+// Walk recursively lists the KV tree under root and returns every field as an Entry, plus every
+// leaf that was found but not imported (skipped, with a reason). allVersions=false (the
+// default) reads only the current version of each leaf; allVersions=true is not yet supported
+// (see docs/design-keyorix-migrate.md's "All-versions import (deferred)") and returns an error
+// rather than silently behaving like allVersions=false.
+func (c *Client) Walk(ctx context.Context, root string, allVersions bool) ([]Entry, []Skipped, error) {
 	if allVersions {
-		return nil, fmt.Errorf("--all-versions is not yet supported (see docs/design-keyorix-migrate.md's Open questions — Keyorix's secret-version-create API isn't wired into this tool yet); omit the flag to import the latest version of each secret")
+		return nil, nil, fmt.Errorf("--all-versions is not yet supported (see docs/design-keyorix-migrate.md's \"All-versions import (deferred)\" — Keyorix's secret-version-create API isn't wired into this tool yet); omit the flag to import the latest version of each secret")
 	}
 	var entries []Entry
-	if err := c.walk(ctx, strings.Trim(root, "/"), &entries); err != nil {
-		return nil, err
+	var skipped []Skipped
+	if err := c.walk(ctx, strings.Trim(root, "/"), &entries, &skipped); err != nil {
+		return nil, nil, err
 	}
-	return entries, nil
+	return entries, skipped, nil
 }
 
-func (c *Client) walk(ctx context.Context, prefix string, out *[]Entry) error {
+func (c *Client) walk(ctx context.Context, prefix string, out *[]Entry, skipped *[]Skipped) error {
 	keys, err := c.list(ctx, prefix)
 	if err != nil {
 		return err
 	}
 	if len(keys) == 0 {
-		return c.readLeaf(ctx, prefix, out)
+		return c.readLeaf(ctx, prefix, out, skipped)
 	}
 	for _, k := range keys {
 		var child string
@@ -210,40 +292,44 @@ func (c *Client) walk(ctx context.Context, prefix string, out *[]Entry) error {
 			child = strings.TrimSuffix(k, "/")
 		}
 		if strings.HasSuffix(k, "/") {
-			if err := c.walk(ctx, child, out); err != nil {
+			if err := c.walk(ctx, child, out, skipped); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := c.readLeaf(ctx, child, out); err != nil {
+		if err := c.readLeaf(ctx, child, out, skipped); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *Client) readLeaf(ctx context.Context, path string, out *[]Entry) error {
-	fields, meta, err := c.read(ctx, path)
+func (c *Client) readLeaf(ctx context.Context, path string, out *[]Entry, skipped *[]Skipped) error {
+	r, err := c.read(ctx, path)
 	if err != nil {
 		return err
 	}
-	if len(fields) == 0 {
+	if r.skipReason != "" {
+		*skipped = append(*skipped, Skipped{Path: path, Reason: r.skipReason})
 		return nil
 	}
-	if len(fields) == 1 {
-		if v, ok := fields["value"]; ok {
+	if len(r.fields) == 0 {
+		return nil // never existed / 404 — nothing to report, not a skip.
+	}
+	if len(r.fields) == 1 {
+		if v, ok := r.fields["value"]; ok {
 			if val := fmt.Sprintf("%v", v); val != "" {
-				*out = append(*out, Entry{Path: path, Field: "", Value: val, Metadata: meta})
+				*out = append(*out, Entry{Path: path, Field: "", Value: val, Metadata: r.metadata, Version: r.version, CreatedAt: r.createdAt})
 			}
 			return nil
 		}
 	}
-	for k, v := range fields {
+	for k, v := range r.fields {
 		val := fmt.Sprintf("%v", v)
 		if k == "" || val == "" {
 			continue
 		}
-		*out = append(*out, Entry{Path: path, Field: k, Value: val, Metadata: meta})
+		*out = append(*out, Entry{Path: path, Field: k, Value: val, Metadata: r.metadata, Version: r.version, CreatedAt: r.createdAt})
 	}
 	return nil
 }
@@ -271,55 +357,128 @@ func (c *Client) list(ctx context.Context, path string) ([]string, error) {
 	return body.Data.Keys, nil
 }
 
-// read returns the field map and custom_metadata (KV v2 only) at a KV leaf path. A 404 yields
-// (nil, nil, nil).
-func (c *Client) read(ctx context.Context, path string) (map[string]interface{}, map[string]string, error) {
+// readResult is what read() found at one KV leaf path.
+type readResult struct {
+	fields    map[string]interface{}
+	metadata  map[string]string
+	version   int
+	createdAt string
+	// skipReason is non-empty when the leaf's latest version is soft-deleted or destroyed
+	// (KV v2 only) -- fields/metadata/version/createdAt are meaningless in that case.
+	skipReason string
+}
+
+// read returns what's at a KV leaf path. A 404 (the path never held a secret) yields a zero
+// readResult with no error and no skipReason -- there is nothing to report. A KV v2 leaf whose
+// latest version is soft-deleted or destroyed is a 200 OK with null data (see the comment
+// below); read reports it via skipReason rather than silently treating it as absent, per
+// Andrei's 2026-09-25 decision.
+func (c *Client) read(ctx context.Context, path string) (readResult, error) {
 	kvVersion, err := c.resolveKVMountVersion(ctx, path)
 	if err != nil {
-		return nil, nil, err
+		return readResult{}, err
 	}
-	var raw json.RawMessage
-	status, err := c.do(ctx, http.MethodGet, c.dataURL(path, kvVersion), &raw)
+	// A soft-deleted or destroyed KV v2 version's data read is HTTP 404, not 200 -- verified
+	// directly against a real Vault 1.15 server (the body carries the same {"data": null,
+	// "metadata": {...}} envelope a 200 read would, just under a 404 status). The existing
+	// comments in internal/connect/vault.go's GetSecret and cli/cmd/secret/source_vault.go
+	// claiming "200 OK, not 404" for this case do not match observed behavior -- this package
+	// does not inherit that assumption; it reads the body on both 200 and 404 and lets the
+	// decoded metadata (not the status code) decide what happened. A genuinely nonexistent
+	// path is also a 404, but with an {"errors":[]} body carrying no "data" key at all.
+	status, raw, err := c.doRawRead(ctx, c.dataURL(path, kvVersion))
 	if err != nil {
-		return nil, nil, err
-	}
-	if status == http.StatusNotFound {
-		return nil, nil, nil
+		return readResult{}, err
 	}
 
 	if kvVersion == 1 {
+		if status == http.StatusNotFound {
+			return readResult{}, nil // KV v1 has no version history; 404 always means absent.
+		}
 		var v1 struct {
 			Data map[string]interface{} `json:"data"`
 		}
 		if err := json.Unmarshal(raw, &v1); err != nil {
-			return nil, nil, fmt.Errorf("decode vault read %q: %w", path, err)
+			return readResult{}, fmt.Errorf("decode vault read %q: %w", path, err)
 		}
-		return v1.Data, nil, nil
+		return readResult{fields: v1.Data}, nil
 	}
 
-	// KV v2: the secret lives at data.data; data.metadata.custom_metadata carries operator
-	// tags. A soft-deleted version reads back as `{"data": null, "metadata": {...}}` -- a
-	// 200 OK, not a 404 -- so it must be treated as absent explicitly, matching
-	// internal/connect/vault.go's GetSecret doc comment on this exact footgun.
+	// KV v2: the secret lives at data.data; data.metadata carries the version number,
+	// created_time, custom_metadata, and (when the latest version has no live data)
+	// deletion_time/destroyed. Unmarshaling a genuinely-absent path's {"errors":[]} body into
+	// this struct leaves every field at its zero value (no "data" key to match), which is
+	// exactly how "never existed" is told apart from "soft-deleted"/"destroyed" below: the
+	// former has an all-zero metadata, the latter always has at least Version set (Vault
+	// version numbers start at 1).
 	var v2 struct {
 		Data struct {
 			Data     json.RawMessage `json:"data"`
 			Metadata struct {
 				CustomMetadata map[string]string `json:"custom_metadata"`
+				Version        int               `json:"version"`
+				CreatedTime    string            `json:"created_time"`
+				DeletionTime   string            `json:"deletion_time"`
+				Destroyed      bool              `json:"destroyed"`
 			} `json:"metadata"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &v2); err != nil {
-		return nil, nil, fmt.Errorf("decode vault read %q: %w", path, err)
+		return readResult{}, fmt.Errorf("decode vault read %q: %w", path, err)
 	}
+	meta := v2.Data.Metadata
 	if len(v2.Data.Data) == 0 || string(v2.Data.Data) == "null" {
-		return nil, nil, nil // soft-deleted or destroyed version: absent, not an empty secret.
+		if meta.Version == 0 && meta.DeletionTime == "" && !meta.Destroyed {
+			return readResult{}, nil // genuinely absent -- no metadata at all.
+		}
+		reason := fmt.Sprintf("version %d has no live data", meta.Version)
+		switch {
+		case meta.Destroyed:
+			reason = fmt.Sprintf("version %d was destroyed", meta.Version)
+		case meta.DeletionTime != "":
+			reason = fmt.Sprintf("version %d was soft-deleted at %s", meta.Version, meta.DeletionTime)
+		}
+		return readResult{skipReason: reason}, nil
 	}
 	var fields map[string]interface{}
 	if err := json.Unmarshal(v2.Data.Data, &fields); err != nil {
-		return nil, nil, fmt.Errorf("decode vault KV v2 fields %q: %w", path, err)
+		return readResult{}, fmt.Errorf("decode vault KV v2 fields %q: %w", path, err)
 	}
-	return fields, v2.Data.Metadata.CustomMetadata, nil
+	return readResult{
+		fields:    fields,
+		metadata:  meta.CustomMetadata,
+		version:   meta.Version,
+		createdAt: meta.CreatedTime,
+	}, nil
+}
+
+// doRawRead issues an authenticated GET and returns the raw response body alongside the HTTP
+// status, for both 200 and 404 (read's own logic needs the 404 body — see read's doc comment).
+// Any other status is still treated as an error, matching do()'s convention.
+func (c *Client) doRawRead(ctx context.Context, url string) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, nil, fmt.Errorf("build request: %w", err)
+	}
+	c.setCommonHeaders(req, c.token)
+
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("vault request failed: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode == http.StatusForbidden {
+		return resp.StatusCode, nil, fmt.Errorf("vault denied access (HTTP 403) for %s — check token/AppRole permissions", url)
+	}
+	if resp.StatusCode >= 400 && resp.StatusCode != http.StatusNotFound {
+		return resp.StatusCode, nil, fmt.Errorf("vault returned HTTP %d for %s", resp.StatusCode, url)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	if err != nil {
+		return resp.StatusCode, nil, fmt.Errorf("read response: %w", err)
+	}
+	return resp.StatusCode, body, nil
 }
 
 // resolveKVMountVersion determines whether the mount serving path is KV v1 or v2 by querying

@@ -1281,16 +1281,32 @@ jobs:
   # keyorix-migrate (docs/design-keyorix-migrate.md): a third sibling module alongside cli/ and
   # operator/, same "own module, own CI job" shape as cli above -- except this one DOES carry
   # cloud SDKs in its SBOM (that's the entire reason it's not part of cli/, see ADR-108's
-  # "moved out, not dropped" decision in docs/cli-split-inventory.md). The Vault service
-  # container makes internal/vaultsource's and internal/e2e's VAULT_ADDR-gated tests
+  # "moved out, not dropped" decision in docs/cli-split-inventory.md). The service container
+  # makes internal/vaultsource's and internal/e2e's VAULT_ADDR-gated tests
   # (docs/design-keyorix-migrate.md's "Testing" section) actually run here as `default-ci`
   # (docs/security-closures.tsv's verification tiers) rather than silently skip forever --
   # the same failure mode CLAUDE.md's Postgres-container comment above documents for
   # KEYORIX_TEST_PG_DSN, avoided here by wiring the container from this job's first commit
   # instead of adding it later.
+  #
+  # Matrix runs the full suite against both a real Vault AND OpenBao (PR #2077 review item 4:
+  # "OpenBao compatibility is part of our pitch") -- not a one-off manual check, a standing leg
+  # every CI run exercises. Both service images are pinned by digest (review item 4's other
+  # half); both env blocks set BOTH images' dev-mode variable names (VAULT_DEV_*/BAO_DEV_*)
+  # unconditionally -- GitHub Actions `services.<id>.env` keys cannot themselves be templated
+  # from the matrix (only values can), and each image ignores the other's variable names, so
+  # setting both is harmless and is the only way one `services:` block covers both legs.
   migrate:
     needs: [changes]
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - leg: vault
+            image: hashicorp/vault@sha256:0450896c43b13879b19442b204ce29dd19b5a10fce43d5cf38af17da20f56f4d # 1.15
+          - leg: openbao
+            image: openbao/openbao@sha256:05d777d6b47d0d0985b87317914632de31d98994b58e490ebabde3c389b09f8f # 2.0
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1303,10 +1319,12 @@ jobs:
       VAULT_TOKEN: root-token
     services:
       vault:
-        image: hashicorp/vault:1.15
+        image: ${{ matrix.image }}
         env:
           VAULT_DEV_ROOT_TOKEN_ID: root-token
           VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+          BAO_DEV_ROOT_TOKEN_ID: root-token
+          BAO_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
         ports:
           - 8200:8200
         options: >-
@@ -1324,7 +1342,7 @@ jobs:
           go vet ./...
           go build ./...
 
-      - name: go test (includes internal/depguard, and the Vault-gated internal/vaultsource + internal/e2e suites)
+      - name: go test (${{ matrix.leg }}) (includes internal/depguard, and the *-gated internal/vaultsource + internal/e2e suites)
         run: go test -race -timeout 600s -count=1 ./...
 
       - name: gofmt

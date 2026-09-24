@@ -186,6 +186,42 @@ func TestApply_CreateWritesSourceIDAndSourceKindMetadata(t *testing.T) {
 	}
 }
 
+// TestApply_CreateWritesSourceVersionAndCreatedAt is Andrei's 2026-09-25 decision on
+// all-versions import: every imported secret records which source version it came from, even
+// though only the latest version is ever imported.
+func TestApply_CreateWritesSourceVersionAndCreatedAt(t *testing.T) {
+	api := newFakeAPI()
+	items := []Item{{Entry: Entry{SourceKind: "vault", Name: "foo", Value: "v1", SourceID: "sid-1", SourceVersion: "3", SourceCreatedAt: "2026-09-25T00:00:00Z"}, Outcome: Create}}
+
+	results := Apply(context.Background(), api, items, false)
+	if len(results) != 1 || results[0].Error != "" {
+		t.Fatalf("results = %+v, want one successful Create", results)
+	}
+	id := api.byName["foo"]
+	if api.meta[id]["migrate.source-version"] != "3" {
+		t.Errorf("stored metadata = %v, want migrate.source-version=3", api.meta[id])
+	}
+	if api.meta[id]["migrate.source-created-at"] != "2026-09-25T00:00:00Z" {
+		t.Errorf("stored metadata = %v, want migrate.source-created-at=2026-09-25T00:00:00Z", api.meta[id])
+	}
+}
+
+// TestApply_CreateOmitsEmptySourceVersion covers a source with no version concept (Vault KV
+// v1): the metadata key must not appear at all, not appear with an empty value.
+func TestApply_CreateOmitsEmptySourceVersion(t *testing.T) {
+	api := newFakeAPI()
+	items := []Item{{Entry: Entry{SourceKind: "vault", Name: "foo", Value: "v1", SourceID: "sid-1"}, Outcome: Create}}
+
+	Apply(context.Background(), api, items, false)
+	id := api.byName["foo"]
+	if _, ok := api.meta[id]["migrate.source-version"]; ok {
+		t.Errorf("stored metadata = %v, want no migrate.source-version key for a versionless source", api.meta[id])
+	}
+	if _, ok := api.meta[id]["migrate.source-created-at"]; ok {
+		t.Errorf("stored metadata = %v, want no migrate.source-created-at key for a versionless source", api.meta[id])
+	}
+}
+
 func TestApply_SkipDoesNotCallAPI(t *testing.T) {
 	api := newFakeAPI()
 	items := []Item{{Entry: Entry{Name: "foo"}, Outcome: Skip, ExistingID: 1}}

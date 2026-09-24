@@ -1,6 +1,8 @@
 # Design: `keyorix-migrate`
 
-**Status:** Draft (2026-09-25). Implements the decision recorded in
+**Status:** Draft (2026-09-25, updated 2026-09-25 with Andrei's decisions on all-versions
+scope and PAT UX, and PR #2077's review items — private CA, credential file/stdin, pinned CI
+images + OpenBao leg). Implements the decision recorded in
 `docs/cli-split-inventory.md` §PR5 ("`secret import --source {vault,aws,azure,gcp}`
 is moved out, not dropped") and ADR-108. The old thin-CLI's `secret import` now
 supports file mode only (`cli/cmd/secret_import.go`); the live-credential import
@@ -64,6 +66,7 @@ Initial `keptPaths` for `migrate`:
 /api/v1/secrets
 /api/v1/secrets/{id}
 /api/v1/secrets/by-name
+/api/v1/auth/tokens                          # pre-flight (see "PAT provisioning UX")
 ```
 
 `CreateSecretJSONBody` already carries a `Metadata map[string]string` field
@@ -203,52 +206,150 @@ carries forward the parts worth keeping without copy-pasting blindly:
   — an X-Vault-Token-carrying redirect must never be followed to an
   attacker-controlled host) and response-size caps are carried forward
   unchanged; there is no reason to weaken either for this tool.
-- "All versions or latest only" (a new requirement neither existing client
-  has): KV v2's `/metadata/<path>` response lists all version numbers: with
-  `--all-versions`, `migrate` reads each numbered version
-  (`/data/<path>?version=N`) and imports it as a distinct Keyorix secret
-  version via `POST /secrets/{id}/versions`... **open question**, see below.
+- **"All versions" (deferred — Andrei, 2026-09-25).** Keyorix secrets are
+  versioned already (`SecretVersion`), so importing "all versions" most
+  naturally maps to creating the Keyorix secret at its oldest Vault version
+  and then adding a new Keyorix version per subsequent Vault version, in
+  order — but the `by-name`/create/update API surface `migrate` is scoped to
+  (see `keptPaths` above) does not include a "create version" route yet.
+  **Decision: defer.** `--all-versions` is accepted as a flag but returns a
+  clear, explicit "not yet supported" error (`vaultsource.Client.Walk`, tested
+  in both `vault_test.go` — no live Vault needed, the check is `Walk`'s first
+  line — and `vault_integration_test.go` against a real server) rather than
+  silently behaving like latest-only. "Latest only" (the default) covers the
+  primary migration case (get off Vault); versioned import can be scoped
+  properly once there's a real customer ask for it, at which point it needs
+  its own design pass for the `POST /secrets/{id}/versions` route above.
+  **What ships now instead:** every imported secret records which source
+  version it came from, even though only the latest is ever imported —
+  `metadata["migrate.source-version"]` (Vault KV v2's `version` number) and
+  `metadata["migrate.source-created-at"]` (KV v2's `created_time`), written
+  by `plan.Apply`'s `Create` branch alongside `migrate.source-id`/
+  `migrate.source`. Both are empty for a source with no version concept (Vault
+  KV v1) — the metadata keys are omitted entirely rather than written empty.
+  This means a future all-versions implementation can tell, for every secret
+  already imported under "latest only," exactly which version it captured,
+  without re-deriving it from Vault (which may have moved on by then).
+- **Skipped items are reported, not silently dropped (Andrei, 2026-09-25).** A
+  KV v2 leaf whose latest version is soft-deleted or destroyed is real data
+  `keyorix-migrate` chose not to import, not an absence — it must show up in
+  the plan/report as `skip` with a reason (`"version N was soft-deleted at
+  <time>"` / `"version N was destroyed"`), never silently vanish the way the
+  original implementation did. `vaultsource.Client.Walk` returns a second
+  slice, `[]Skipped{Path, Reason}`, alongside the imported entries; `cmd/vault.go`
+  turns each into a `plan.Item{Outcome: Skip}` that flows through the same
+  report as every other item.
+  **A correction found while building this, not merely designed:** the
+  original implementation (and this repo's existing `internal/connect/vault.go`
+  `GetSecret` doc comment and `cli/cmd/secret/source_vault.go`, neither of
+  which this module depends on) assumed a soft-deleted/destroyed KV v2 read is
+  "a 200 OK, not a 404." Verified directly against a real Vault 1.15 server
+  (`TestIntegration_KVv2_RecursiveWalk`), **that assumption is wrong**: it is
+  a 404, carrying the same `{"data": null, "metadata": {...}}` envelope a 200
+  read would. The fix (`vaultsource.read`, via a new `doRawRead` that returns
+  the body on both 200 and 404) reads the body regardless of status and lets
+  the decoded metadata — not the HTTP status — decide whether the path is
+  soft-deleted/destroyed (metadata present, e.g. `version` ≥ 1) or genuinely
+  never existed (`{"errors":[]}`, no `data` key, metadata all zero-valued).
+  This module's own doc comments have been corrected; the two pre-existing
+  files above were not touched (out of scope — see CLAUDE.md's reachability
+  discipline: this finding is specific to the data-read-on-delete path, not a
+  claim about either file's own call paths, which this migration didn't
+  trace).
 
-## Open questions for follow-up (flagging, not deciding unilaterally)
+## PAT provisioning UX (confirmed — Andrei, 2026-09-25)
 
-1. **"All versions" target shape.** Keyorix secrets are versioned already
-   (`SecretVersion`), so importing "all versions" most naturally maps to
-   creating the Keyorix secret at its oldest Vault version and then adding a
-   new Keyorix version per subsequent Vault version, in order — but the
-   `by-name`/create/update API surface `migrate` is scoped to (see `keptPaths`
-   above) does not include a "create version" route yet. Needs either scope
-   creep into that route for Step 2, or `--all-versions` deferred to a
-   follow-up once versioned-import is designed. Recommend deferring —
-   "latest only" (the default) covers the primary migration case (get off
-   Vault), and versioned import can be scoped properly once there's a real
-   customer ask for it.
-2. **PAT provisioning UX.** `cli/` already has `pat.go` (`keyorix pat create`)
-   for minting a token; `keyorix-migrate` assumes the operator already has one
-   in hand (`--token`/`$KEYORIX_TOKEN`), matching `cli/`'s own precedent of not
-   auto-provisioning credentials. No new decision needed here, just confirming
-   the assumption explicitly.
+`cli/` already has `pat.go` (`keyorix pat create`) for minting a token;
+`keyorix-migrate` assumes the operator already has one in hand
+(`--token`/`--token-file`/`$KEYORIX_TOKEN`), matching `cli/`'s own precedent of
+not auto-provisioning credentials. Confirmed, with three additions:
+
+1. **Pre-flight check.** Before printing the dry-run plan, and again
+   immediately before `--apply` executes (the plan may have been shown
+   minutes earlier), `target.Client.Preflight` calls `GET /api/v1/auth/tokens`
+   (added to `keptPaths`) and identifies the caller's own token among the
+   list by matching `TokenPrefix` — `raw[:len("kx_pat_")+6]`, mirroring
+   `internal/core/pat.go`'s own construction of that field (duplicated as a
+   constant rather than imported; `migrate` cannot depend on `internal/core` —
+   see "Module boundaries"). When identified, it fails fast on: revoked;
+   expires within the next hour (or already expired); `project_scope`/
+   `environment_scope` set and not matching the target; or `scopes` non-empty
+   and containing none of `"*"`, `"secrets.*"`, `"secrets.write"` (ADR-042's
+   scope allowlist — empty scopes means "inherits the owner's full
+   permissions," per `openapi.yaml`'s `createPAT` doc, so that case passes).
+   A token this tool **cannot identify** (a machine token, or a future prefix
+   scheme) skips the scope/expiry checks without failing — `ListPATs`
+   succeeding already proves the token authenticates at all, so an
+   identification miss is not evidence of invalidity, only of "can't say
+   anything more specific." This is a real (if best-effort) write-authorization
+   check, not merely a read check: it inspects the PAT's own server-enforced
+   scope declaration rather than attempting a mutating call to find out.
+2. **Credential file/stdin.** `--token`, `--vault-token`, and
+   `--vault-secret-id` each have a sibling `--*-file` flag (a path, or `"-"`
+   for stdin) — `resolveCredential` (`cmd/credentials.go`) applies the
+   precedence plain-flag (warns) → file/stdin → env var. Passing a credential
+   directly on the command line warns to stderr, naming the flag and never
+   the value (`warnInsecureFlag`, ported from `cli/cmd/secret.go`'s function
+   of the same name) — visible via `ps`/`/proc` and saved to shell history.
+   **Env vars remain the documented default** (`$KEYORIX_TOKEN`,
+   `$VAULT_TOKEN`, `$VAULT_SECRET_ID`, …) — no warning for that path.
+3. **Least-privilege recipe.** `docs/migrate-from-vault.md` (step 4)
+   documents minting a project/environment-scoped PAT
+   (`keyorix pat create --project-id --environment-id --scope secrets.write
+   --expires <~24h>`) for a migration run, and revoking it afterward.
+
+## Private CA (`--vault-cacert`/`--vault-capath`) — PR #2077 review item 1
+
+Most on-prem and air-gapped Vaults — this tool's target customers — use an
+internal CA. `vaultsource.Config.CACertPath`/`CACertDir` (flags
+`--vault-cacert`/`--vault-capath`, env `$VAULT_CACERT`/`$VAULT_CAPATH`,
+matching Vault's own CLI convention) build the HTTP client's `tls.Config.RootCAs`
+**exclusively** from the given cert(s) — replacing, not appending to, the
+system trust store, since pinning to a specific CA is the point. **There is no
+skip-TLS-verify option anywhere in this package** — `vault_test.go`'s
+`TestNoSkipVerifyEscapeHatch` greps the package source for an
+`InsecureSkipVerify:` field assignment and fails the build if one appears, so
+this stays true by construction, not by review discipline alone.
+`TestClient_PrivateCA` proves both directions against an `httptest.NewTLSServer`:
+reachable with the matching CA cert configured, unreachable (TLS verification
+genuinely failing, not merely "an option exists") without it.
 
 ## Testing (Step 2, Vault)
 
-- **CI integration test**: `docker run hashicorp/vault:<pinned> server -dev` (or
-  OpenBao's dev-mode equivalent) alongside a real `keyorix-server` backed by
-  SQLite (matching this repo's existing `pg-gated`/`default-ci` split in
-  `docs/security-closures.tsv` — this test is `default-ci`, no external DSN
-  needed, both dependencies are containers CI already knows how to run).
-  Seeds Vault with a small KV v1 and a KV v2 tree (nested paths, multi-field
-  leaves, one soft-deleted version to confirm it's skipped not mistaken for
-  live data — the same `{"data": null}` shape `connect/vault.go`'s doc comment
-  already documents as a footgun), runs `keyorix-migrate --source vault --apply`,
-  and asserts the resulting Keyorix secrets and their `migrate.source-id`
-  metadata.
-- **Canary-value test**: plant one Vault secret with a distinctive, greppable
-  value; assert it appears nowhere in this tool's stdout, stderr, or JSON
-  report (only in the actual Keyorix secret value, fetched back via the API
-  to confirm the import worked) — see "Never log, print, or report a secret
-  value" above.
-- **Resume test**: run `--apply` against a multi-item source, kill the process
-  partway (a context-cancellation point injected for the test, not a real
-  `SIGKILL` race — deterministic, not timing-dependent), re-run `--apply`
-  to completion, and assert the final Keyorix secret count matches the source
-  item count exactly (no duplicates from the interrupted first pass, per the
-  idempotency design above).
+- **CI integration test**: a service container running Vault (pinned by
+  digest: `hashicorp/vault@sha256:0450896c…`) alongside an `httptest` fake
+  Keyorix implementing exactly the four endpoints `internal/target.Client`
+  calls, under the same `{"data": ...}` envelope every real handler uses
+  (`internal/e2e`) — the "an httptest Keyorix" option this design originally
+  named as an alternative to a full `keyorix-server` binary, since it
+  exercises the real generated `apiclient`'s HTTP wire encoding without the
+  overhead of bootstrapping a real server. `vaultsource`'s own integration
+  suite (`vault_integration_test.go`) separately covers KV v1/v2 read/walk,
+  AppRole, namespaces, custom-metadata, and version/created-time extraction
+  directly against Vault. Both suites are `VAULT_ADDR`-gated
+  (`default-ci` per `docs/security-closures.tsv`'s verification tiers — a skip
+  is only expected when `VAULT_ADDR` is unset, which CI's service container
+  ensures it never is). **PR #2077 review item 4:** the whole suite also runs
+  once per CI invocation against OpenBao (`openbao/openbao@sha256:05d777d6…`,
+  a matrix leg, not a one-off manual check) — verified to need zero client
+  code changes (OpenBao's KV/AppRole HTTP API is wire-compatible; only its
+  dev-mode bootstrap env vars differ, `BAO_DEV_*` vs `VAULT_DEV_*`, handled by
+  setting both unconditionally in the CI service block).
+- **Canary-value test** (`internal/e2e/TestEndToEnd_CanaryValueNeverLogged`):
+  plant one Vault secret with a distinctive, greppable value; assert it
+  appears nowhere in this tool's JSON or human-readable report (only in the
+  actual Keyorix secret value, fetched back via the fake server to confirm
+  the import worked) — see "Never log, print, or report a secret value"
+  above.
+- **Resume test** (`internal/e2e/TestEndToEnd_ResumeAfterPartialApply`): apply
+  only the first item of a multi-item plan (simulating a kill mid-run),
+  rebuild the plan fresh from scratch — the actual resume mechanism, see
+  "Resume" above — and apply the rest; assert the already-applied item
+  resolves to `skip` on the second pass and the final Keyorix secret count
+  matches the source item count exactly (no duplicates).
+- **Soft-deleted/destroyed skip test**
+  (`vault_integration_test.go/TestIntegration_KVv2_RecursiveWalk`): seed a KV
+  v2 leaf, soft-delete it, and assert `Walk` reports it in the `skipped`
+  slice with a reason mentioning "soft-deleted" — not in `entries`, and not
+  silently absent from both (the bug this test caught while being written;
+  see "Skipped items are reported, not silently dropped" above).

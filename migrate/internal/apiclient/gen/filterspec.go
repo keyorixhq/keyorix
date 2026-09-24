@@ -28,6 +28,10 @@ var keptPaths = []string{
 	"/api/v1/secrets",
 	"/api/v1/secrets/{id}",
 	"/api/v1/secrets/by-name",
+	// Preflight (docs/design-keyorix-migrate.md's "Pre-flight check"): confirm the PAT is
+	// valid, not near expiry, and scoped to write in the target project/environment, before
+	// any Vault traffic or Keyorix write happens.
+	"/api/v1/auth/tokens",
 }
 
 func main() {

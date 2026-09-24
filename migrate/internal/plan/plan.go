@@ -23,6 +23,14 @@ const sourceIDKey = "migrate.source-id"
 // reporting — not used by the idempotency check itself (SourceID alone is the key).
 const sourceKindKey = "migrate.source"
 
+// sourceVersionKey / sourceCreatedAtKey record which version of the source item was imported
+// and when it was created there (Andrei's 2026-09-25 decision, docs/design-keyorix-migrate.md's
+// "All-versions import (deferred)": only the latest version is ever imported, but every
+// imported secret records which version that was). Empty for a source with no version concept
+// (KV v1) — Apply omits the key entirely rather than writing an empty string.
+const sourceVersionKey = "migrate.source-version"
+const sourceCreatedAtKey = "migrate.source-created-at"
+
 // Entry is one item a source produced, ready to be planned against Keyorix. Path is a
 // human-readable source locator (e.g. a Vault path) used only for reporting — never for
 // identity (SourceID is the stable identity, see Outcome).
@@ -36,6 +44,11 @@ type Entry struct {
 	// vaultsource.Entry.SourceID) — the idempotency key. Two runs against the same source
 	// item must always produce the same SourceID.
 	SourceID string
+	// SourceVersion / SourceCreatedAt are the source's own version identifier and creation
+	// timestamp for this item (e.g. vaultsource.Entry.Version/CreatedAt), when the source has a
+	// version concept. Empty when it doesn't (e.g. Vault KV v1).
+	SourceVersion   string
+	SourceCreatedAt string
 }
 
 // Outcome classifies what BuildPlan decided for one Entry.
@@ -148,6 +161,12 @@ func applyOne(ctx context.Context, api target.API, item Item, force bool) Result
 		metadata := map[string]string{
 			sourceKindKey: item.Entry.SourceKind,
 			sourceIDKey:   item.Entry.SourceID,
+		}
+		if item.Entry.SourceVersion != "" {
+			metadata[sourceVersionKey] = item.Entry.SourceVersion
+		}
+		if item.Entry.SourceCreatedAt != "" {
+			metadata[sourceCreatedAtKey] = item.Entry.SourceCreatedAt
 		}
 		for k, v := range item.Entry.Metadata {
 			metadata[item.Entry.SourceKind+"."+k] = v

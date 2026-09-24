@@ -199,7 +199,7 @@ func buildPlanEntries(t *testing.T, addr, token, mount string) []plan.Entry {
 	if err != nil {
 		t.Fatalf("vaultsource.New: %v", err)
 	}
-	entries, err := vc.Walk(context.Background(), "", false)
+	entries, _, err := vc.Walk(context.Background(), "", false)
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
