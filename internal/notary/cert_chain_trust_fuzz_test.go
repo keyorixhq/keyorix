@@ -81,6 +81,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -137,6 +138,14 @@ type certSpec struct {
 
 func mustMintCert(tb testing.TB, spec certSpec, key *ecdsa.PrivateKey) *x509.Certificate {
 	tb.Helper()
+	return mustMintCertSigner(tb, spec, key)
+}
+
+// mustMintCertSigner is mustMintCert generalized to any crypto.Signer subject key
+// (RSA included) — the chain-trust decision under test does not depend on the
+// signer's key algorithm, so the fixture-building side shouldn't be locked to one.
+func mustMintCertSigner(tb testing.TB, spec certSpec, key crypto.Signer) *x509.Certificate {
+	tb.Helper()
 	keyUsage := x509.KeyUsageDigitalSignature
 	if spec.isCA {
 		keyUsage |= x509.KeyUsageCertSign
@@ -153,12 +162,12 @@ func mustMintCert(tb testing.TB, spec certSpec, key *ecdsa.PrivateKey) *x509.Cer
 		SubjectKeyId:          spec.subjectKeyID,
 	}
 	parent := tmpl
-	parentKey := crypto.Signer(key)
+	parentKey := key
 	if spec.parent != nil {
 		parent = spec.parent
 		parentKey = spec.parentKey
 	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, &key.PublicKey, parentKey)
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, key.Public(), parentKey)
 	if err != nil {
 		tb.Fatalf("minting test cert %q: %v", spec.subject.CommonName, err)
 	}
@@ -221,6 +230,13 @@ type certPKI struct {
 	intermediateUnderRKey *ecdsa.PrivateKey
 	leafUnderIntermediate *x509.Certificate
 	leafUnderIntermKey    *ecdsa.PrivateKey
+
+	// rsaLeafUnderR chains to the real root R like leafUnderR, but with an RSA
+	// signer key — every other fixture here is ECDSA-only (mustGenKey), so without
+	// this the RSA branches of pkcs7.getSignatureAlgorithm (SHA256WithRSA etc.) are
+	// never exercised by this harness at all.
+	rsaLeafUnderR    *x509.Certificate
+	rsaLeafUnderRKey *rsa.PrivateKey
 }
 
 func buildCertPKI(tb testing.TB) *certPKI {
@@ -337,6 +353,19 @@ func buildCertPKI(tb testing.TB) *certPKI {
 		parent: pki.intermediateUnderR, parentKey: pki.intermediateUnderRKey,
 	}, pki.leafUnderIntermKey)
 
+	// RSA-keyed leaf under the real root R.
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		tb.Fatalf("generating RSA test key: %v", err)
+	}
+	pki.rsaLeafUnderRKey = rsaKey
+	pki.rsaLeafUnderR = mustMintCertSigner(tb, certSpec{
+		subject:   pkix.Name{CommonName: "Keyorix Test TSA RSA Leaf"},
+		ekus:      []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
+		notBefore: nb, notAfter: na,
+		parent: pki.rootR, parentKey: pki.rootRKey,
+	}, rsaKey)
+
 	return pki
 }
 
@@ -443,6 +472,12 @@ func buildScenarios(tb testing.TB, pki *certPKI) []certChainScenario {
 		{"legit-2tier-chain-with-redundant-root", buildToken(tb, pki.leafUnderIntermediate, pki.leafUnderIntermKey, []*x509.Certificate{pki.intermediateUnderR, pki.rootR}, now, true)},
 		{"duplicate-attacker-intermediates", buildToken(tb, pki.leafUnderRPrime, pki.leafUnderRPrimeKey, []*x509.Certificate{pki.rootRPrime, pki.rootRPrime, pki.rootRPrime}, now, true)},
 		{"100-cert-chain", buildToken(tb, pki.leafUnderRPrime, pki.leafUnderRPrimeKey, hundredCopies(pki.rootRPrime), now, true)},
+		// Appended, never inserted: scenarioSel is a stored-corpus index into this
+		// slice (fuzz-seeds-are-position-encoded), so an existing entry's meaning must
+		// never shift. RSA closes the only signature-algorithm family every other
+		// scenario in this file leaves completely unexercised (all ECDSA via
+		// mustGenKey) — see mustMintCertSigner.
+		{"rsa-leaf-legit-chain", buildToken(tb, pki.rsaLeafUnderR, pki.rsaLeafUnderRKey, nil, now, true)},
 	}
 }
 
