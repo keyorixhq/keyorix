@@ -29,7 +29,18 @@ func (h *CatalogHandler) ListMachineIdentities(w http.ResponseWriter, r *http.Re
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
-	sendSuccess(w, map[string]interface{}{"machine_identities": identities}, "")
+	// machineIdentityProxyWire (machine_identities_proxy.go), not identities directly:
+	// models.MachineIdentity carries no json tags, so a raw marshal sends Go-cased keys
+	// ("IdentityType", "ProjectID", ...) instead of this API's snake_case convention --
+	// confirmed live against this exact route (docs/cli-split-inventory.md PR 2's
+	// live-verification step: `machine create`/`machine list` silently rendered an
+	// empty type/project fields). The proxy path already solved this; reuse its wire
+	// type rather than duplicating it.
+	wire := make([]machineIdentityProxyWire, 0, len(identities))
+	for _, m := range identities {
+		wire = append(wire, newMachineIdentityProxyWire(m))
+	}
+	sendSuccess(w, map[string]interface{}{"machine_identities": wire}, "")
 }
 
 // ListStaleMachineIdentities handles GET /api/v1/projects/{id}/machine-identities/stale?days=N
@@ -93,8 +104,11 @@ func (h *CatalogHandler) CreateMachineIdentity(w http.ResponseWriter, r *http.Re
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"machine_identity": m}, "Machine identity created")
+	// sendCreated, not WriteHeader+sendSuccess -- see CreatePAT's comment
+	// (pat_handler.go) for why the latter silently sends the wrong Content-Type.
+	// machineIdentityProxyWire, not m directly -- see ListMachineIdentities' comment
+	// above for why a raw models.MachineIdentity marshal is wrong here.
+	sendCreated(w, map[string]interface{}{"machine_identity": newMachineIdentityProxyWire(m)}, "Machine identity created")
 }
 
 // MigrateUserToMachine handles POST /api/v1/projects/{id}/machine-identities/migrate-from-user
@@ -265,8 +279,9 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 	if result.ReplacedTokenHash != "" {
 		msg = "Machine token rotated — old credential revoked; copy the new token now, it will not be shown again"
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{
+	// sendCreated, not WriteHeader+sendSuccess -- see CreatePAT's comment
+	// (pat_handler.go) for why the latter silently sends the wrong Content-Type.
+	sendCreated(w, map[string]interface{}{
 		"token":          result.PlainToken, // shown once
 		"id":             result.Credential.ID,
 		"prefix":         result.Credential.TokenPrefix,
@@ -542,8 +557,9 @@ func (h *CatalogHandler) CreateOIDCBinding(w http.ResponseWriter, r *http.Reques
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"id": b.ID, "issuer": b.Issuer, "subject": b.Subject}, "OIDC binding created")
+	// sendCreated, not WriteHeader+sendSuccess -- see CreatePAT's comment
+	// (pat_handler.go) for why the latter silently sends the wrong Content-Type.
+	sendCreated(w, map[string]interface{}{"id": b.ID, "issuer": b.Issuer, "subject": b.Subject}, "OIDC binding created")
 }
 
 // ListOIDCBindings handles GET /api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings.

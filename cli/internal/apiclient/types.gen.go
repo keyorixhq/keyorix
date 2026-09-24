@@ -50,7 +50,7 @@ type MachineAuditRow struct {
 	Description     *string    `json:"description,omitempty"`
 	IsRevoked       *bool      `json:"is_revoked,omitempty"`
 	IsStale         *bool      `json:"is_stale,omitempty"`
-	LastUsedAt      *time.Time `json:"last_used_at"`
+	LastUsedAt      *time.Time `json:"last_used_at,omitempty"`
 	MachineId       *int       `json:"machine_id,omitempty"`
 	Name            *string    `json:"name,omitempty"`
 }
@@ -133,11 +133,13 @@ type PATToken struct {
 
 // Error defines model for Error.
 type Error struct {
-	Error *struct {
-		Code    *int    `json:"code,omitempty"`
-		Message *string `json:"message,omitempty"`
-		Type    *string `json:"type,omitempty"`
-	} `json:"error,omitempty"`
+	Code    *int                    `json:"code,omitempty"`
+	Details *map[string]interface{} `json:"details"`
+
+	// Error Short error-type label, e.g. "NotFound", "BadRequest".
+	Error   *string `json:"error,omitempty"`
+	Message *string `json:"message,omitempty"`
+	Success *bool   `json:"success,omitempty"`
 }
 
 // MfaStepUpJSONBody defines parameters for MfaStepUp.

@@ -3627,18 +3627,26 @@ components:
         Session token, personal access token (kx_pat_…), or machine token (kx_machine_…).
   responses:
     Error:
-      description: Error response
+      description: >-
+        Error response, matching server/http/handlers/helpers.go's sendError verbatim.
+        `code` and `message` are top-level, and `error` is a short string label (e.g.
+        "NotFound"), NOT a nested object -- confirmed 2026-09-24 against a live server
+        (docs/cli-split-inventory.md PR 2's live-verification step) after this schema's
+        previous shape (a nested `error: {code, message, type}` object with no `code`/
+        `message` at the top level) was found to have never matched any real response
+        this server has ever sent -- it broke the first oapi-codegen-generated client to
+        actually parse an error path (the thin CLI), which fails loudly on a schema
+        mismatch rather than silently misreading a field, unlike a raw-JSON caller.
       content:
         application/json:
           schema:
             type: object
             properties:
-              error:
-                type: object
-                properties:
-                  code: {type: integer}
-                  message: {type: string}
-                  type: {type: string}
+              success: {type: boolean}
+              code: {type: integer}
+              error: {type: string, description: 'Short error-type label, e.g. "NotFound", "BadRequest".'}
+              message: {type: string}
+              details: {type: object, additionalProperties: true, nullable: true}
   schemas:
     AccessReviewDecision:
       type: object
@@ -3773,7 +3781,13 @@ components:
         name: {type: string}
         description: {type: string}
         credential_count: {type: integer}
-        last_used_at: {type: string, format: date-time, nullable: true}
+        # Not nullable: internal/core.MachineAuditRow tags this `,omitempty` and OMITS
+        # the key entirely when nil (never sends an explicit null) -- `nullable: true`
+        # here would make the generated Go field lose its own omitempty, so re-encoding
+        # it (as `machine audit`'s JSON output does) would print `"last_used_at": null`
+        # where the old CLI's hand-written struct prints nothing. Found live
+        # (docs/cli-split-inventory.md PR 2's verification step).
+        last_used_at: {type: string, format: date-time}
         is_stale: {type: boolean}
         is_revoked: {type: boolean}
         created_at: {type: string, format: date-time}

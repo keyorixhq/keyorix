@@ -18,11 +18,56 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
 )
+
+// machineIdentityWire mirrors server/http/handlers/machine_identities_proxy.go's
+// machineIdentityProxyWire: models.MachineIdentity carries no json tags of its own,
+// so decoding the server's snake_case JSON directly into it would silently leave
+// every underscored field (identity_type, project_id, created_by, ...) zero-valued
+// -- Go's fallback field-name matching for an untagged struct is case-insensitive
+// only, it does not bridge "identity_type" to IdentityType. Found live
+// (docs/cli-split-inventory.md PR 2's verification step: `machine list`/`machine
+// create` silently rendered an empty type/project column) after the server's
+// CreateMachineIdentity/ListMachineIdentities handlers were fixed to actually send
+// this API's documented snake_case shape instead of Go-cased field names.
+type machineIdentityWire struct {
+	ID                         uint       `json:"id"`
+	ProjectID                  uint       `json:"project_id"`
+	Name                       string     `json:"name"`
+	IdentityType               string     `json:"identity_type"`
+	State                      string     `json:"state"`
+	Description                string     `json:"description"`
+	CreatedBy                  uint       `json:"created_by"`
+	CreatedAt                  time.Time  `json:"created_at"`
+	UpdatedAt                  time.Time  `json:"updated_at"`
+	LastSeenAt                 *time.Time `json:"last_seen_at"`
+	RevokedAt                  *time.Time `json:"revoked_at"`
+	Classification             string     `json:"classification"`
+	CreatedByMachineIdentityID uint       `json:"created_by_machine_identity_id"`
+}
+
+func (w machineIdentityWire) toModel() *models.MachineIdentity {
+	return &models.MachineIdentity{
+		ID:                         w.ID,
+		ProjectID:                  w.ProjectID,
+		Name:                       w.Name,
+		IdentityType:               w.IdentityType,
+		State:                      w.State,
+		Description:                w.Description,
+		CreatedBy:                  w.CreatedBy,
+		CreatedAt:                  w.CreatedAt,
+		UpdatedAt:                  w.UpdatedAt,
+		LastSeenAt:                 w.LastSeenAt,
+		RevokedAt:                  w.RevokedAt,
+		Classification:             w.Classification,
+		CreatedByMachineIdentityID: w.CreatedByMachineIdentityID,
+	}
+}
 
 // MachineCmd is the root command for machine identity management.
 var MachineCmd = &cobra.Command{
@@ -87,13 +132,17 @@ func fetchMachineIdentities(ctx context.Context, projectID uint) ([]*models.Mach
 	if rc, ok := common.NewRemoteClient(); ok {
 		// rc.Get already strips the {"data":…} envelope — decode the inner payload directly.
 		var resp struct {
-			MachineIdentities []*models.MachineIdentity `json:"machine_identities"`
+			MachineIdentities []machineIdentityWire `json:"machine_identities"`
 		}
 		path := fmt.Sprintf("/api/v1/projects/%d/machine-identities", projectID)
 		if err := rc.Get(ctx, path, &resp); err != nil {
 			return nil, err
 		}
-		return resp.MachineIdentities, nil
+		out := make([]*models.MachineIdentity, len(resp.MachineIdentities))
+		for i, w := range resp.MachineIdentities {
+			out[i] = w.toModel()
+		}
+		return out, nil
 	}
 	svc, err := common.InitializeCoreService()
 	if err != nil {
