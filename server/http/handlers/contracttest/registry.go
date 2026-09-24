@@ -150,6 +150,24 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"withdrawAccessRequest":          reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-requests/{requestId}/withdraw
 	"withdrawSecretAccessRequest":    reasonSchemaNotYetWritten, // post /api/v1/secret-access-requests/{requestId}/withdraw
 	"writeAuditCheckpoint":           reasonSchemaNotYetWritten, // post /api/v1/audit/checkpoint
+	"approveRiskException":               reasonSchemaNotYetWritten, // post /api/v1/risk-exceptions/{id}/approve
+	"classifySecret":                     reasonSchemaNotYetWritten, // patch /api/v1/secrets/{id}/classification
+	"createSecret":                       reasonSchemaNotYetWritten, // post /api/v1/secrets
+	"exportComplianceControlsCSV":        reasonSchemaNotYetWritten, // get /api/v1/compliance/controls.csv
+	"getComplianceCredentialTrends":      reasonSchemaNotYetWritten, // get /api/v1/compliance/credential-trends
+	"getComplianceDigest":                reasonSchemaNotYetWritten, // get /api/v1/compliance/digest
+	"getCompliancePermissionBaseline":    reasonSchemaNotYetWritten, // get /api/v1/compliance/permission-baseline
+	"getCompliancePermissionBaselineCSV": reasonSchemaNotYetWritten, // get /api/v1/compliance/permission-baseline.csv
+	"getCompliancePermissionChanges":     reasonSchemaNotYetWritten, // get /api/v1/compliance/permission-changes
+	"getComplianceRotationByBackend":     reasonSchemaNotYetWritten, // get /api/v1/compliance/rotation-by-backend
+	"getDeploymentHygiene":               reasonSchemaNotYetWritten, // get /api/v1/hygiene
+	"getProjectSecretsInventoryCSV":      reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/secrets/inventory.csv
+	"getSecret":                          reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}
+	"getSecretsInventoryCSV":             reasonSchemaNotYetWritten, // get /api/v1/secrets/inventory.csv
+	"grantSecretACL":                     reasonSchemaNotYetWritten, // post /api/v1/secrets/{id}/acl
+	"listSecrets":                        reasonSchemaNotYetWritten, // get /api/v1/secrets
+	"sendComplianceDigest":               reasonSchemaNotYetWritten, // post /api/v1/compliance/digest/send
+	"updateSecret":                       reasonSchemaNotYetWritten, // put /api/v1/secrets/{id}
 }
 
 // outOfScopeRegistry lists every operationId that will never be enforced,

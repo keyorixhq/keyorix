@@ -13,19 +13,6 @@ const (
 	BearerAuthScopes = "bearerAuth.Scopes"
 )
 
-// Defines values for AccessReviewDecisionPrincipalType.
-const (
-	AccessReviewDecisionPrincipalTypeGroup AccessReviewDecisionPrincipalType = "group"
-	AccessReviewDecisionPrincipalTypeUser  AccessReviewDecisionPrincipalType = "user"
-)
-
-// Defines values for AccessReviewDecisionSource.
-const (
-	DirectShare AccessReviewDecisionSource = "direct_share"
-	GroupShare  AccessReviewDecisionSource = "group_share"
-	Role        AccessReviewDecisionSource = "role"
-)
-
 // Defines values for BreakGlassActivationState.
 const (
 	BreakGlassActivationStateActive  BreakGlassActivationState = "active"
@@ -95,23 +82,11 @@ const (
 	RotationPolicyScopeProject     RotationPolicyScope = "project"
 )
 
-// Defines values for ListAuditLogsParamsActorType.
+// Defines values for GetComplianceCredentialTrendsParamsDays.
 const (
-	ListAuditLogsParamsActorTypeMachineIdentity ListAuditLogsParamsActorType = "machine_identity"
-	ListAuditLogsParamsActorTypeSystem          ListAuditLogsParamsActorType = "system"
-	ListAuditLogsParamsActorTypeUser            ListAuditLogsParamsActorType = "user"
-)
-
-// Defines values for MigrateAuditChainEncodingParamsDryRun.
-const (
-	MigrateAuditChainEncodingParamsDryRunFalse MigrateAuditChainEncodingParamsDryRun = "false"
-	MigrateAuditChainEncodingParamsDryRunTrue  MigrateAuditChainEncodingParamsDryRun = "true"
-)
-
-// Defines values for SearchAuditLogsParamsSuccess.
-const (
-	SearchAuditLogsParamsSuccessFalse SearchAuditLogsParamsSuccess = "false"
-	SearchAuditLogsParamsSuccessTrue  SearchAuditLogsParamsSuccess = "true"
+	N30 GetComplianceCredentialTrendsParamsDays = 30
+	N60 GetComplianceCredentialTrendsParamsDays = 60
+	N90 GetComplianceCredentialTrendsParamsDays = 90
 )
 
 // Defines values for CreateDynamicSecretConfigJSONBodyClassification.
@@ -138,18 +113,6 @@ const (
 	ListProjectsParamsIncludeDeletedTrue  ListProjectsParamsIncludeDeleted = "true"
 )
 
-// Defines values for ResolveAccessRequestJSONBodyAction.
-const (
-	ResolveAccessRequestJSONBodyActionApprove ResolveAccessRequestJSONBodyAction = "approve"
-	ResolveAccessRequestJSONBodyActionReject  ResolveAccessRequestJSONBodyAction = "reject"
-)
-
-// Defines values for DecideAccessReviewCampaignItemJSONBodyAction.
-const (
-	DecideAccessReviewCampaignItemJSONBodyActionAttest DecideAccessReviewCampaignItemJSONBodyAction = "attest"
-	DecideAccessReviewCampaignItemJSONBodyActionRevoke DecideAccessReviewCampaignItemJSONBodyAction = "revoke"
-)
-
 // Defines values for ListProjectEnvironmentsParamsIncludeDeleted.
 const (
 	ListProjectEnvironmentsParamsIncludeDeletedFalse ListProjectEnvironmentsParamsIncludeDeleted = "false"
@@ -158,14 +121,24 @@ const (
 
 // Defines values for TransitionMachineIdentityJSONBodyAction.
 const (
-	TransitionMachineIdentityJSONBodyActionActivate TransitionMachineIdentityJSONBodyAction = "activate"
-	TransitionMachineIdentityJSONBodyActionRevoke   TransitionMachineIdentityJSONBodyAction = "revoke"
-	TransitionMachineIdentityJSONBodyActionSuspend  TransitionMachineIdentityJSONBodyAction = "suspend"
+	Activate TransitionMachineIdentityJSONBodyAction = "activate"
+	Revoke   TransitionMachineIdentityJSONBodyAction = "revoke"
+	Suspend  TransitionMachineIdentityJSONBodyAction = "suspend"
 )
 
 // Defines values for GetPermissionMatrixParamsFormat.
 const (
 	Csv GetPermissionMatrixParamsFormat = "csv"
+)
+
+// Defines values for CreateRiskExceptionJSONBodyCategory.
+const (
+	Classification CreateRiskExceptionJSONBodyCategory = "classification"
+	DormantAccess  CreateRiskExceptionJSONBodyCategory = "dormant_access"
+	Mfa            CreateRiskExceptionJSONBodyCategory = "mfa"
+	Other          CreateRiskExceptionJSONBodyCategory = "other"
+	Rotation       CreateRiskExceptionJSONBodyCategory = "rotation"
+	Sod            CreateRiskExceptionJSONBodyCategory = "sod"
 )
 
 // Defines values for CreateRotationPolicyJSONBodyScope.
@@ -174,43 +147,10 @@ const (
 	CreateRotationPolicyJSONBodyScopeProject     CreateRotationPolicyJSONBodyScope = "project"
 )
 
-// Defines values for ResolveSecretAccessRequestJSONBodyAction.
-const (
-	ResolveSecretAccessRequestJSONBodyActionApprove ResolveSecretAccessRequestJSONBodyAction = "approve"
-	ResolveSecretAccessRequestJSONBodyActionReject  ResolveSecretAccessRequestJSONBodyAction = "reject"
-)
-
 // Defines values for ListUsersParamsFilter.
 const (
 	Inactive ListUsersParamsFilter = "inactive"
 )
-
-// AccessReviewDecision Identifies one access-review entry for a recertification decision (attest or revoke). Mirrors an entry from GET .../access-review.
-type AccessReviewDecision struct {
-	// EnvironmentId Environment scope of a role grant (0 = whole project).
-	EnvironmentId *uint32 `json:"environment_id,omitempty"`
-
-	// PrincipalId The user or group ID the grant is for.
-	PrincipalId *uint32 `json:"principal_id,omitempty"`
-
-	// PrincipalType For a role grant, whether the principal is a user or a group.
-	PrincipalType *AccessReviewDecisionPrincipalType `json:"principal_type,omitempty"`
-
-	// RoleId Required when source=role.
-	RoleId *uint32 `json:"role_id,omitempty"`
-
-	// SecretId Required when source=direct_share or group_share.
-	SecretId *uint32 `json:"secret_id,omitempty"`
-
-	// Source Which mechanism conferred the grant.
-	Source AccessReviewDecisionSource `json:"source"`
-}
-
-// AccessReviewDecisionPrincipalType For a role grant, whether the principal is a user or a group.
-type AccessReviewDecisionPrincipalType string
-
-// AccessReviewDecisionSource Which mechanism conferred the grant.
-type AccessReviewDecisionSource string
 
 // BreakGlassActivation One emergency-access self-grant (ADR-108 PR 1 addition).
 type BreakGlassActivation struct {
@@ -583,144 +523,11 @@ type Error struct {
 	Success *bool   `json:"success,omitempty"`
 }
 
-// BulkApproveAccessRequestsJSONBody defines parameters for BulkApproveAccessRequests.
-type BulkApproveAccessRequestsJSONBody struct {
-	RequestIds []int `json:"request_ids"`
-}
-
-// BulkRejectAccessRequestsJSONBody defines parameters for BulkRejectAccessRequests.
-type BulkRejectAccessRequestsJSONBody struct {
-	Reason     string `json:"reason"`
-	RequestIds []int  `json:"request_ids"`
-}
-
-// UpdateAnomalyConfigJSONBody defines parameters for UpdateAnomalyConfig.
-type UpdateAnomalyConfigJSONBody struct {
-	LookbackDays     *int     `json:"lookback_days,omitempty"`
-	MlEnabled        *bool    `json:"ml_enabled,omitempty"`
-	MlNumTrees       *int     `json:"ml_num_trees,omitempty"`
-	MlSampleSize     *int     `json:"ml_sample_size,omitempty"`
-	MlThreshold      *float32 `json:"ml_threshold,omitempty"`
-	OffHoursEnabled  *bool    `json:"off_hours_enabled,omitempty"`
-	OffHoursEnd      *int     `json:"off_hours_end,omitempty"`
-	OffHoursStart    *int     `json:"off_hours_start,omitempty"`
-	OffHoursTimezone *string  `json:"off_hours_timezone,omitempty"`
-	QuarantineHours  *int     `json:"quarantine_hours,omitempty"`
-}
-
-// CreateAlertEscalationPolicyJSONBody defines parameters for CreateAlertEscalationPolicy.
-type CreateAlertEscalationPolicyJSONBody struct {
-	// ChannelIds Comma-separated NotificationChannel IDs.
-	ChannelIds           *string `json:"channel_ids,omitempty"`
-	Enabled              *bool   `json:"enabled,omitempty"`
-	EscalateAfterMinutes *int    `json:"escalate_after_minutes,omitempty"`
-
-	// MinSeverity low | medium | high | critical
-	MinSeverity *string `json:"min_severity,omitempty"`
-	Name        string  `json:"name"`
-}
-
-// ListAnomalyAlertsParams defines parameters for ListAnomalyAlerts.
-type ListAnomalyAlertsParams struct {
-	// Acknowledged Filter by acknowledged state; omit to return all.
-	Acknowledged *bool `form:"acknowledged,omitempty" json:"acknowledged,omitempty"`
-
-	// Unacknowledged Legacy alias (CLI) — true returns only unacknowledged alerts.
-	Unacknowledged *bool `form:"unacknowledged,omitempty" json:"unacknowledged,omitempty"`
-}
-
-// ExportAuditLogsParams defines parameters for ExportAuditLogs.
-type ExportAuditLogsParams struct {
-	// AfterId Cursor — pass the last returned event id to fetch the next page.
-	AfterId *int `form:"after_id,omitempty" json:"after_id,omitempty"`
-
-	// Since RFC3339 lower bound on event time.
-	Since *time.Time `form:"since,omitempty" json:"since,omitempty"`
-	Limit *int       `form:"limit,omitempty" json:"limit,omitempty"`
-}
-
-// ListAuditLogsParams defines parameters for ListAuditLogs.
-type ListAuditLogsParams struct {
-	// Action Filter by event type/action.
-	Action *string `form:"action,omitempty" json:"action,omitempty"`
-
-	// UserId Filter by acting user ID.
-	UserId *int `form:"user_id,omitempty" json:"user_id,omitempty"`
-
-	// ProjectId Filter by project ID.
-	ProjectId *int `form:"project_id,omitempty" json:"project_id,omitempty"`
-
-	// ActorType Segment human vs machine activity (ADR-023).
-	ActorType *ListAuditLogsParamsActorType `form:"actor_type,omitempty" json:"actor_type,omitempty"`
-
-	// StartTime RFC3339 lower bound (inclusive).
-	StartTime *time.Time `form:"start_time,omitempty" json:"start_time,omitempty"`
-
-	// EndTime RFC3339 upper bound (inclusive).
-	EndTime  *time.Time `form:"end_time,omitempty" json:"end_time,omitempty"`
-	Page     *int       `form:"page,omitempty" json:"page,omitempty"`
-	PageSize *int       `form:"page_size,omitempty" json:"page_size,omitempty"`
-}
-
-// ListAuditLogsParamsActorType defines parameters for ListAuditLogs.
-type ListAuditLogsParamsActorType string
-
-// MigrateAuditChainEncodingParams defines parameters for MigrateAuditChainEncoding.
-type MigrateAuditChainEncodingParams struct {
-	// DryRun false applies the migration for real; true (default) only previews.
-	DryRun *MigrateAuditChainEncodingParamsDryRun `form:"dry_run,omitempty" json:"dry_run,omitempty"`
-}
-
-// MigrateAuditChainEncodingParamsDryRun defines parameters for MigrateAuditChainEncoding.
-type MigrateAuditChainEncodingParamsDryRun string
-
 // ListRBACAuditLogsParams defines parameters for ListRBACAuditLogs.
 type ListRBACAuditLogsParams struct {
 	Page     *int `form:"page,omitempty" json:"page,omitempty"`
 	PageSize *int `form:"page_size,omitempty" json:"page_size,omitempty"`
 }
-
-// SearchAuditLogsParams defines parameters for SearchAuditLogs.
-type SearchAuditLogsParams struct {
-	// Actor Partial username match on the acting principal.
-	Actor *string `form:"actor,omitempty" json:"actor,omitempty"`
-
-	// UserId Exact numeric user ID.
-	UserId *int `form:"user_id,omitempty" json:"user_id,omitempty"`
-
-	// ProjectId Exact project ID.
-	ProjectId *int `form:"project_id,omitempty" json:"project_id,omitempty"`
-
-	// Action Exact event_type (e.g. secret.read).
-	Action *string `form:"action,omitempty" json:"action,omitempty"`
-
-	// ResourceType Resource kind prefix (e.g. secret).
-	ResourceType *string `form:"resource_type,omitempty" json:"resource_type,omitempty"`
-
-	// ResourceId Exact secret_node_id.
-	ResourceId *int `form:"resource_id,omitempty" json:"resource_id,omitempty"`
-
-	// Ip Exact originating IP address.
-	Ip *string `form:"ip,omitempty" json:"ip,omitempty"`
-
-	// Success Filter by operation success/failure.
-	Success *SearchAuditLogsParamsSuccess `form:"success,omitempty" json:"success,omitempty"`
-
-	// Since RFC3339 start of time range (inclusive).
-	Since *time.Time `form:"since,omitempty" json:"since,omitempty"`
-
-	// Until RFC3339 end of time range (inclusive).
-	Until *time.Time `form:"until,omitempty" json:"until,omitempty"`
-
-	// Limit Maximum results.
-	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
-
-	// Offset Pagination offset.
-	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
-}
-
-// SearchAuditLogsParamsSuccess defines parameters for SearchAuditLogs.
-type SearchAuditLogsParamsSuccess string
 
 // MfaStepUpJSONBody defines parameters for MfaStepUp.
 type MfaStepUpJSONBody struct {
@@ -751,6 +558,35 @@ type CreatePATJSONBody struct {
 
 	// Scopes ADR-042 least-privilege allowlist (e.g. ["secrets.read"], supports "*" and "secrets.*"). Omit/empty = inherit the owner's full permissions. Only ever narrows below the owner.
 	Scopes *[]string `json:"scopes,omitempty"`
+}
+
+// GetComplianceCredentialTrendsParams defines parameters for GetComplianceCredentialTrends.
+type GetComplianceCredentialTrendsParams struct {
+	Days *GetComplianceCredentialTrendsParamsDays `form:"days,omitempty" json:"days,omitempty"`
+}
+
+// GetComplianceCredentialTrendsParamsDays defines parameters for GetComplianceCredentialTrends.
+type GetComplianceCredentialTrendsParamsDays int
+
+// VerifyComplianceEvidenceJSONBody defines parameters for VerifyComplianceEvidence.
+type VerifyComplianceEvidenceJSONBody struct {
+	// DataB64 Base64 of the evidence-pack bytes.
+	DataB64 string `json:"data_b64"`
+
+	// Signature The detached signature ('<keyVersion>:<hmac-hex>').
+	Signature string `json:"signature"`
+}
+
+// GetCompliancePermissionChangesParams defines parameters for GetCompliancePermissionChanges.
+type GetCompliancePermissionChangesParams struct {
+	// Since RFC3339 lower bound; defaults to 30 days ago.
+	Since *time.Time `form:"since,omitempty" json:"since,omitempty"`
+
+	// Until RFC3339 upper bound; defaults to now.
+	Until *time.Time `form:"until,omitempty" json:"until,omitempty"`
+
+	// Limit Max events (default 100, max 1000).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ListDynamicSecretConfigsParams defines parameters for ListDynamicSecretConfigs.
@@ -842,32 +678,34 @@ type RemoveRoleFromGroupParams struct {
 	EnvironmentId *int `form:"environment_id,omitempty" json:"environment_id,omitempty"`
 }
 
+// GetDeploymentHygieneParams defines parameters for GetDeploymentHygiene.
+type GetDeploymentHygieneParams struct {
+	// UnusedDays Unused-secret window in days (server default: 90).
+	UnusedDays *int `form:"unused_days,omitempty" json:"unused_days,omitempty"`
+
+	// ExpiringDays Expiring-secret window in days (server default: 30).
+	ExpiringDays *int `form:"expiring_days,omitempty" json:"expiring_days,omitempty"`
+
+	// StaleDays Stale-machine-identity window in days (server default: 90).
+	StaleDays *int `form:"stale_days,omitempty" json:"stale_days,omitempty"`
+}
+
+// LiftLegalHoldJSONBody defines parameters for LiftLegalHold.
+type LiftLegalHoldJSONBody struct {
+	// Reason Why the hold is lifted (recorded for audit).
+	Reason string `json:"reason"`
+}
+
+// PlaceLegalHoldJSONBody defines parameters for PlaceLegalHold.
+type PlaceLegalHoldJSONBody struct {
+	// Reason Why the hold is placed (recorded for audit)
+	Reason string `json:"reason"`
+}
+
 // MachineTokenHygieneParams defines parameters for MachineTokenHygiene.
 type MachineTokenHygieneParams struct {
 	// Days Staleness window in days (default server-side: 90, cap 3650).
 	Days *int `form:"days,omitempty" json:"days,omitempty"`
-}
-
-// CreateNotificationChannelJSONBody defines parameters for CreateNotificationChannel.
-type CreateNotificationChannelJSONBody struct {
-	Email   *string `json:"email,omitempty"`
-	Enabled *bool   `json:"enabled,omitempty"`
-
-	// Events Comma-separated event types; empty = all.
-	Events *string `json:"events,omitempty"`
-	Name   string  `json:"name"`
-
-	// Type webhook | slack | teams | email
-	Type string  `json:"type"`
-	Url  *string `json:"url,omitempty"`
-}
-
-// UpdateNotificationChannelJSONBody defines parameters for UpdateNotificationChannel.
-type UpdateNotificationChannelJSONBody struct {
-	Email   *string `json:"email,omitempty"`
-	Enabled *bool   `json:"enabled,omitempty"`
-	Events  *string `json:"events,omitempty"`
-	Url     *string `json:"url,omitempty"`
 }
 
 // PatHygieneParams defines parameters for PatHygiene.
@@ -890,54 +728,6 @@ type CreateProjectJSONBody struct {
 	Description *string `json:"description,omitempty"`
 	Name        string  `json:"name"`
 }
-
-// CreateAccessRequestJSONBody defines parameters for CreateAccessRequest.
-type CreateAccessRequestJSONBody struct {
-	Reason *string `json:"reason,omitempty"`
-
-	// SuggestedRole Project role the requester would like
-	SuggestedRole *string `json:"suggested_role,omitempty"`
-}
-
-// ResolveAccessRequestJSONBody defines parameters for ResolveAccessRequest.
-type ResolveAccessRequestJSONBody struct {
-	Action ResolveAccessRequestJSONBodyAction `json:"action"`
-
-	// GrantTtl Optional on approve — time-bound (just-in-time) the granted role; a Go duration (e.g. 4h, 30m). Empty/absent = permanent. The grant stops authorizing once the TTL elapses and is swept by the JIT expiry scheduler.
-	GrantTtl *string `json:"grant_ttl,omitempty"`
-
-	// GrantedRole Role to grant on approve
-	GrantedRole *string `json:"granted_role,omitempty"`
-
-	// Reason Reason on reject
-	Reason *string `json:"reason,omitempty"`
-}
-
-// ResolveAccessRequestJSONBodyAction defines parameters for ResolveAccessRequest.
-type ResolveAccessRequestJSONBodyAction string
-
-// OpenAccessReviewCampaignJSONBody defines parameters for OpenAccessReviewCampaign.
-type OpenAccessReviewCampaignJSONBody struct {
-	// Name Campaign label, e.g. "Q4 2026 access recertification"
-	Name *string `json:"name,omitempty"`
-}
-
-// CloseAccessReviewCampaignJSONBody defines parameters for CloseAccessReviewCampaign.
-type CloseAccessReviewCampaignJSONBody struct {
-	// Force Close even if items remain pending
-	Force *bool `json:"force,omitempty"`
-}
-
-// DecideAccessReviewCampaignItemJSONBody defines parameters for DecideAccessReviewCampaignItem.
-type DecideAccessReviewCampaignItemJSONBody struct {
-	Action DecideAccessReviewCampaignItemJSONBodyAction `json:"action"`
-
-	// Reason Optional reviewer note
-	Reason *string `json:"reason,omitempty"`
-}
-
-// DecideAccessReviewCampaignItemJSONBodyAction defines parameters for DecideAccessReviewCampaignItem.
-type DecideAccessReviewCampaignItemJSONBodyAction string
 
 // ActivateBreakGlassJSONBody defines parameters for ActivateBreakGlass.
 type ActivateBreakGlassJSONBody struct {
@@ -1018,11 +808,27 @@ type GetPermissionMatrixParams struct {
 // GetPermissionMatrixParamsFormat defines parameters for GetPermissionMatrix.
 type GetPermissionMatrixParamsFormat string
 
-// CreateRejectionReasonTemplateJSONBody defines parameters for CreateRejectionReasonTemplate.
-type CreateRejectionReasonTemplateJSONBody struct {
-	Name   string `json:"name"`
-	Reason string `json:"reason"`
+// ListRiskExceptionsParams defines parameters for ListRiskExceptions.
+type ListRiskExceptionsParams struct {
+	// All Include expired exceptions.
+	All *bool `form:"all,omitempty" json:"all,omitempty"`
 }
+
+// CreateRiskExceptionJSONBody defines parameters for CreateRiskException.
+type CreateRiskExceptionJSONBody struct {
+	Category *CreateRiskExceptionJSONBodyCategory `json:"category,omitempty"`
+
+	// ExpiresAt RFC3339; must be in the future.
+	ExpiresAt     time.Time `json:"expires_at"`
+	Justification string    `json:"justification"`
+
+	// Reference What it applies to (a user, an SoD pair, a secret).
+	Reference *string `json:"reference,omitempty"`
+	Title     string  `json:"title"`
+}
+
+// CreateRiskExceptionJSONBodyCategory defines parameters for CreateRiskException.
+type CreateRiskExceptionJSONBodyCategory string
 
 // CreateRoleJSONBody defines parameters for CreateRole.
 type CreateRoleJSONBody struct {
@@ -1074,28 +880,16 @@ type UpdateRotationPolicyJSONBody struct {
 	NotifyOnBreach  *bool   `json:"notify_on_breach,omitempty"`
 }
 
-// CreateSecretAccessRequestJSONBody defines parameters for CreateSecretAccessRequest.
-type CreateSecretAccessRequestJSONBody struct {
-	Reason   string `json:"reason"`
-	SecretId int    `json:"secret_id"`
-}
+// CreateSoDPolicyJSONBody defines parameters for CreateSoDPolicy.
+type CreateSoDPolicyJSONBody struct {
+	Description *string `json:"description,omitempty"`
+	Name        string  `json:"name"`
 
-// ResolveSecretAccessRequestJSONBody defines parameters for ResolveSecretAccessRequest.
-type ResolveSecretAccessRequestJSONBody struct {
-	Action ResolveSecretAccessRequestJSONBodyAction `json:"action"`
+	// PermissionA e.g. roles.assign
+	PermissionA string `json:"permission_a"`
 
-	// Reason Reason on reject
-	Reason *string `json:"reason,omitempty"`
-}
-
-// ResolveSecretAccessRequestJSONBodyAction defines parameters for ResolveSecretAccessRequest.
-type ResolveSecretAccessRequestJSONBodyAction string
-
-// GetSecretByNameParams defines parameters for GetSecretByName.
-type GetSecretByNameParams struct {
-	Name          string `form:"name" json:"name"`
-	ProjectId     int    `form:"project_id" json:"project_id"`
-	EnvironmentId int    `form:"environment_id" json:"environment_id"`
+	// PermissionB e.g. secrets.delete (must differ from permission_a)
+	PermissionB string `json:"permission_b"`
 }
 
 // RemoveUserRoleJSONBody defines parameters for RemoveUserRole.
@@ -1165,14 +959,6 @@ type CreateUserJSONBody struct {
 	Username string  `json:"username"`
 }
 
-// UpdateUserJSONBody defines parameters for UpdateUser.
-type UpdateUserJSONBody struct {
-	Active      *bool                `json:"active,omitempty"`
-	DisplayName *string              `json:"display_name,omitempty"`
-	Email       *openapi_types.Email `json:"email,omitempty"`
-	Username    *string              `json:"username,omitempty"`
-}
-
 // UpdateUserRolesJSONBody defines parameters for UpdateUserRoles.
 type UpdateUserRolesJSONBody struct {
 	// EnvironmentId Scope (0 = global).
@@ -1189,18 +975,6 @@ type AuthLoginJSONBody struct {
 	Username string `json:"username"`
 }
 
-// BulkApproveAccessRequestsJSONRequestBody defines body for BulkApproveAccessRequests for application/json ContentType.
-type BulkApproveAccessRequestsJSONRequestBody BulkApproveAccessRequestsJSONBody
-
-// BulkRejectAccessRequestsJSONRequestBody defines body for BulkRejectAccessRequests for application/json ContentType.
-type BulkRejectAccessRequestsJSONRequestBody BulkRejectAccessRequestsJSONBody
-
-// UpdateAnomalyConfigJSONRequestBody defines body for UpdateAnomalyConfig for application/json ContentType.
-type UpdateAnomalyConfigJSONRequestBody UpdateAnomalyConfigJSONBody
-
-// CreateAlertEscalationPolicyJSONRequestBody defines body for CreateAlertEscalationPolicy for application/json ContentType.
-type CreateAlertEscalationPolicyJSONRequestBody CreateAlertEscalationPolicyJSONBody
-
 // MfaStepUpJSONRequestBody defines body for MfaStepUp for application/json ContentType.
 type MfaStepUpJSONRequestBody MfaStepUpJSONBody
 
@@ -1209,6 +983,9 @@ type UpdateAuthProfileJSONRequestBody UpdateAuthProfileJSONBody
 
 // CreatePATJSONRequestBody defines body for CreatePAT for application/json ContentType.
 type CreatePATJSONRequestBody CreatePATJSONBody
+
+// VerifyComplianceEvidenceJSONRequestBody defines body for VerifyComplianceEvidence for application/json ContentType.
+type VerifyComplianceEvidenceJSONRequestBody VerifyComplianceEvidenceJSONBody
 
 // CreateDynamicSecretConfigJSONRequestBody defines body for CreateDynamicSecretConfig for application/json ContentType.
 type CreateDynamicSecretConfigJSONRequestBody CreateDynamicSecretConfigJSONBody
@@ -1234,35 +1011,14 @@ type AddGroupMemberJSONRequestBody AddGroupMemberJSONBody
 // AssignRoleToGroupJSONRequestBody defines body for AssignRoleToGroup for application/json ContentType.
 type AssignRoleToGroupJSONRequestBody AssignRoleToGroupJSONBody
 
-// CreateNotificationChannelJSONRequestBody defines body for CreateNotificationChannel for application/json ContentType.
-type CreateNotificationChannelJSONRequestBody CreateNotificationChannelJSONBody
+// LiftLegalHoldJSONRequestBody defines body for LiftLegalHold for application/json ContentType.
+type LiftLegalHoldJSONRequestBody LiftLegalHoldJSONBody
 
-// UpdateNotificationChannelJSONRequestBody defines body for UpdateNotificationChannel for application/json ContentType.
-type UpdateNotificationChannelJSONRequestBody UpdateNotificationChannelJSONBody
+// PlaceLegalHoldJSONRequestBody defines body for PlaceLegalHold for application/json ContentType.
+type PlaceLegalHoldJSONRequestBody PlaceLegalHoldJSONBody
 
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody CreateProjectJSONBody
-
-// CreateAccessRequestJSONRequestBody defines body for CreateAccessRequest for application/json ContentType.
-type CreateAccessRequestJSONRequestBody CreateAccessRequestJSONBody
-
-// ResolveAccessRequestJSONRequestBody defines body for ResolveAccessRequest for application/json ContentType.
-type ResolveAccessRequestJSONRequestBody ResolveAccessRequestJSONBody
-
-// AttestProjectAccessReviewJSONRequestBody defines body for AttestProjectAccessReview for application/json ContentType.
-type AttestProjectAccessReviewJSONRequestBody = AccessReviewDecision
-
-// OpenAccessReviewCampaignJSONRequestBody defines body for OpenAccessReviewCampaign for application/json ContentType.
-type OpenAccessReviewCampaignJSONRequestBody OpenAccessReviewCampaignJSONBody
-
-// CloseAccessReviewCampaignJSONRequestBody defines body for CloseAccessReviewCampaign for application/json ContentType.
-type CloseAccessReviewCampaignJSONRequestBody CloseAccessReviewCampaignJSONBody
-
-// DecideAccessReviewCampaignItemJSONRequestBody defines body for DecideAccessReviewCampaignItem for application/json ContentType.
-type DecideAccessReviewCampaignItemJSONRequestBody DecideAccessReviewCampaignItemJSONBody
-
-// RevokeProjectAccessReviewJSONRequestBody defines body for RevokeProjectAccessReview for application/json ContentType.
-type RevokeProjectAccessReviewJSONRequestBody = AccessReviewDecision
 
 // ActivateBreakGlassJSONRequestBody defines body for ActivateBreakGlass for application/json ContentType.
 type ActivateBreakGlassJSONRequestBody ActivateBreakGlassJSONBody
@@ -1285,8 +1041,8 @@ type CreateOIDCBindingJSONRequestBody CreateOIDCBindingJSONBody
 // IssueMachineTokenJSONRequestBody defines body for IssueMachineToken for application/json ContentType.
 type IssueMachineTokenJSONRequestBody IssueMachineTokenJSONBody
 
-// CreateRejectionReasonTemplateJSONRequestBody defines body for CreateRejectionReasonTemplate for application/json ContentType.
-type CreateRejectionReasonTemplateJSONRequestBody CreateRejectionReasonTemplateJSONBody
+// CreateRiskExceptionJSONRequestBody defines body for CreateRiskException for application/json ContentType.
+type CreateRiskExceptionJSONRequestBody CreateRiskExceptionJSONBody
 
 // CreateRoleJSONRequestBody defines body for CreateRole for application/json ContentType.
 type CreateRoleJSONRequestBody CreateRoleJSONBody
@@ -1300,11 +1056,8 @@ type CreateRotationPolicyJSONRequestBody CreateRotationPolicyJSONBody
 // UpdateRotationPolicyJSONRequestBody defines body for UpdateRotationPolicy for application/json ContentType.
 type UpdateRotationPolicyJSONRequestBody UpdateRotationPolicyJSONBody
 
-// CreateSecretAccessRequestJSONRequestBody defines body for CreateSecretAccessRequest for application/json ContentType.
-type CreateSecretAccessRequestJSONRequestBody CreateSecretAccessRequestJSONBody
-
-// ResolveSecretAccessRequestJSONRequestBody defines body for ResolveSecretAccessRequest for application/json ContentType.
-type ResolveSecretAccessRequestJSONRequestBody ResolveSecretAccessRequestJSONBody
+// CreateSoDPolicyJSONRequestBody defines body for CreateSoDPolicy for application/json ContentType.
+type CreateSoDPolicyJSONRequestBody CreateSoDPolicyJSONBody
 
 // RemoveUserRoleJSONRequestBody defines body for RemoveUserRole for application/json ContentType.
 type RemoveUserRoleJSONRequestBody RemoveUserRoleJSONBody
@@ -1314,9 +1067,6 @@ type AssignUserRoleJSONRequestBody AssignUserRoleJSONBody
 
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody CreateUserJSONBody
-
-// UpdateUserJSONRequestBody defines body for UpdateUser for application/json ContentType.
-type UpdateUserJSONRequestBody UpdateUserJSONBody
 
 // UpdateUserRolesJSONRequestBody defines body for UpdateUserRoles for application/json ContentType.
 type UpdateUserRolesJSONRequestBody UpdateUserRolesJSONBody
