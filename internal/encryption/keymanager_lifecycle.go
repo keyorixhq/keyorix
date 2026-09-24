@@ -355,6 +355,19 @@ func (km *KeyManager) Initialize(passphrase string) error {
 }
 
 // ensureSaltExists returns the existing salt or generates a new one.
+//
+// Generation writes to a .pending file, then atomically renames it into place
+// (mirroring commitNewKEKFiles' own write-pending/rename/syncdir shape,
+// keymanager_kek_rotation.go) rather than writing directly to the final path.
+// Found 2026-09-24 via FuzzFaultInjectedOperations' opInit case: writing
+// directly to saltFullPath meant a short write / crash mid-write left a
+// CORRUPTED (non-32-byte) file AT the real, active path — os.Stat then finds
+// it "exists" on every subsequent Initialize, so the read-and-validate branch
+// below runs instead of regenerating, and permanently fails with "invalid
+// salt size" until an operator manually deletes the corrupted file. A fault
+// on the .pending file now leaves the active path untouched (either absent —
+// regenerates cleanly next run — or the prior valid salt, if this was ever a
+// re-run), matching every other durability-critical write in this package.
 func (km *KeyManager) ensureSaltExists() ([]byte, error) {
 	saltFullPath := filepath.Join(km.baseDir, km.saltPath)
 
@@ -363,8 +376,16 @@ func (km *KeyManager) ensureSaltExists() ([]byte, error) {
 		if _, err := io.ReadFull(rand.Reader, salt); err != nil {
 			return nil, fmt.Errorf("failed to generate salt: %w", err)
 		}
-		if err := securefiles.SecureWriteFileSync(km.baseDir, km.saltPath, salt, 0600); err != nil {
+		pendingPath := km.saltPath + ".pending"
+		if err := durableWriteSync(km.baseDir, pendingPath, salt, 0600, "init:write-salt-pending"); err != nil {
 			return nil, fmt.Errorf("failed to write salt: %w", err)
+		}
+		pendingFull := filepath.Join(km.baseDir, pendingPath)
+		if err := durableRename(pendingFull, saltFullPath, "init:rename-salt"); err != nil {
+			return nil, fmt.Errorf("failed to promote salt into place: %w", err)
+		}
+		if err := durableSyncDir(filepath.Dir(saltFullPath), "init:syncdir-salt"); err != nil {
+			return nil, fmt.Errorf("failed to fsync key directory after writing salt (the salt itself was written successfully — its durability is unconfirmed; retry init to confirm): %w", err)
 		}
 		fmt.Printf("✅ Generated new KEK salt at %s\n", saltFullPath)
 		return salt, nil
@@ -380,7 +401,9 @@ func (km *KeyManager) ensureSaltExists() ([]byte, error) {
 	return salt, nil
 }
 
-// ensureWrappedDEKExists generates and wraps a new DEK if none exists on disk.
+// ensureWrappedDEKExists generates and wraps a new DEK if none exists on
+// disk. Same write-pending/rename/syncdir fix as ensureSaltExists above, and
+// for the identical reason — see that function's doc comment.
 func (km *KeyManager) ensureWrappedDEKExists(kek []byte) error {
 	dekFullPath := filepath.Join(km.baseDir, km.dekPath)
 
@@ -395,8 +418,16 @@ func (km *KeyManager) ensureWrappedDEKExists(kek []byte) error {
 		if err != nil {
 			return fmt.Errorf("failed to wrap DEK: %w", err)
 		}
-		if err := securefiles.SecureWriteFileSync(km.baseDir, km.dekPath, wrapped, 0600); err != nil {
+		pendingPath := km.dekPath + ".pending"
+		if err := durableWriteSync(km.baseDir, pendingPath, wrapped, 0600, "init:write-dek-pending"); err != nil {
 			return fmt.Errorf("failed to write wrapped DEK: %w", err)
+		}
+		pendingFull := filepath.Join(km.baseDir, pendingPath)
+		if err := durableRename(pendingFull, dekFullPath, "init:rename-dek"); err != nil {
+			return fmt.Errorf("failed to promote wrapped DEK into place: %w", err)
+		}
+		if err := durableSyncDir(filepath.Dir(dekFullPath), "init:syncdir-dek"); err != nil {
+			return fmt.Errorf("failed to fsync key directory after writing wrapped DEK (the DEK itself was written successfully — its durability is unconfirmed; retry init to confirm): %w", err)
 		}
 		fmt.Printf("✅ Generated and wrapped new DEK at %s\n", dekFullPath)
 	}
