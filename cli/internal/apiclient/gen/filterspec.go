@@ -63,6 +63,32 @@ var keptPaths = []string{
 	"/api/v1/projects/{id}/rotation-order",
 	"/api/v1/projects/{id}/break-glass",
 	"/api/v1/projects/{id}/break-glass/{activationId}/revoke",
+	// PR 5 (docs/cli-split-inventory.md §7) -- secret bulk/rotation/export/import/scan/hygiene.
+	// /api/v1/secrets and /api/v1/secrets/{id} are kept without a response schema here on
+	// purpose -- authoring Secret/SecretGetResult/SecretListEntry is PR 4's job (a sibling,
+	// independent PR on its own branch); export/import/bulk-rotate/bulk-rename decode their
+	// own local DTOs off the raw (non-...WithResponse) generated methods instead of waiting
+	// on that schema to land here.
+	"/api/v1/secrets",
+	"/api/v1/secrets/{id}",
+	"/api/v1/secrets/{id}/rotate",
+	"/api/v1/secrets/{id}/rotation/simulate",
+	"/api/v1/secrets/{id}/auto-rotate",
+	"/api/v1/secrets/{id}/audit",
+	"/api/v1/secrets/{id}/ownership-history",
+	"/api/v1/secrets/{id}/certificate",
+	"/api/v1/secrets/{id}/blast-radius",
+	"/api/v1/secrets/{id}/risk",
+	"/api/v1/secrets/quota-report",
+	"/api/v1/secrets/name-conformance",
+	"/api/v1/projects/{id}/secrets/expiring",
+	"/api/v1/projects/{id}/secrets/orphaned",
+	"/api/v1/projects/{id}/secrets/name-conformance",
+	"/api/v1/projects/{id}/secrets/reassign-owner",
+	"/api/v1/projects/{id}/secrets/bulk-rotate",
+	"/api/v1/projects/{id}/secrets/bulk-rename",
+	"/api/v1/projects/{id}/secrets/bulk-delete",
+	"/api/v1/projects/{id}/secrets/render",
 }
 
 func main() {

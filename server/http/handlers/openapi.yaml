@@ -1964,6 +1964,248 @@ paths:
                 properties:
                   data: {$ref: '#/components/schemas/MachineAuditReport'}
         '403': {$ref: '#/components/responses/Error'}
+  # docs/cli-split-inventory.md §7 PR 5 -- secret bulk/rotation/export/import/scan/hygiene.
+  /api/v1/projects/{id}/secrets/expiring:
+    get:
+      tags: [Secrets]
+      summary: List a project's secrets expiring (or already expired) within a window
+      description: >-
+        Returns the project's secrets expiring soon (or already expired), soonest-first.
+        `days` defaults to 30, capped at 3650.
+      operationId: listExpiringSecrets
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: days, in: query, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the expiring-secrets report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/ExpiringSecretsReport'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/secrets/orphaned:
+    get:
+      tags: [Secrets]
+      summary: List a project's secrets whose owner is no longer a live user
+      description: Offboarding hygiene report — secrets left without an accountable owner.
+      operationId: listOrphanedSecrets
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the orphaned-secrets report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/OrphanedSecretsReport'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/secrets/name-conformance:
+    get:
+      tags: [Secrets]
+      summary: List a project's secrets whose names violate the current naming policy
+      description: >-
+        The naming policy is enforced only at create time, so a name can fall out of
+        conformance after the policy is added or tightened — this surfaces those stragglers.
+      operationId: secretNameConformance
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the conformance report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/SecretNameConformanceReport'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/secrets/reassign-owner:
+    post:
+      tags: [Secrets]
+      summary: Re-home all of a departed user's secrets to a new owner
+      description: >-
+        Transfers every secret in the project owned by from_owner_id to to_owner_id in one
+        call. Requires roles.assign at the project scope (the same blast radius as a role
+        grant, not secrets.write).
+      operationId: reassignSecretOwner
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from_owner_id, to_owner_id]
+              properties:
+                from_owner_id: {type: integer}
+                to_owner_id: {type: integer}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data.reassigned` is the count transferred.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      reassigned: {type: integer}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/secrets/bulk-rotate:
+    post:
+      tags: [Secrets]
+      summary: Trigger rotation for multiple secrets at once
+      description: >-
+        Rotates every matching secret in the project (or an explicit secret_ids list, or
+        env/classification filters). Secrets without auto-rotate configured are reported as
+        failures, not treated as aborting errors — always best-effort.
+      operationId: bulkRotateSecrets
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                secret_ids: {type: array, items: {type: integer}}
+                environment_id: {type: integer}
+                classification: {type: string}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the bulk-rotate result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/BulkRotateResult'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/secrets/bulk-rename:
+    post:
+      tags: [Secrets]
+      summary: Rename secrets toward naming-policy conformance
+      description: >-
+        Each new name must itself satisfy the policy and not collide with a sibling; an
+        entry failing a check is skipped with a reason while the rest proceed. dry_run
+        validates and reports without changing anything.
+      operationId: bulkRenameSecrets
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [renames]
+              properties:
+                renames:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id: {type: integer}
+                      new_name: {type: string}
+                dry_run: {type: boolean}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the bulk-rename report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/BulkRenameReport'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/secrets/bulk-delete:
+    post:
+      tags: [Secrets]
+      summary: Delete multiple secrets in one operation
+      description: >-
+        Deletes every secret in secret_ids via the normal single-secret delete path;
+        partial success is allowed — failures are collected rather than aborting the batch.
+      operationId: bulkDeleteSecrets
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [secret_ids]
+              properties:
+                secret_ids: {type: array, items: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the bulk-delete result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/BulkDeleteResult'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/secrets/render:
+    post:
+      tags: [Secrets]
+      summary: Render a template, expanding ${secret:<environment>/<name>} references
+      description: >-
+        Resolves every ${secret:<environment>/<name>} reference within the project under
+        the caller's own read permissions. A missing or forbidden reference fails the
+        render without returning partial output.
+      operationId: renderSecretTemplate
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [template]
+              properties:
+                template: {type: string}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data.rendered` is the expanded template.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      rendered: {type: string}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
   /api/v1/secrets:
     get:
       tags: [Secrets]
@@ -2211,9 +2453,177 @@ paths:
       responses:
         '200':
           description: Envelope `{data, message}`. `data` is the rotated secret node.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/Secret'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/rotation/simulate:
+    post:
+      tags: [Secrets]
+      summary: Simulate a rotation dry-run for a secret
+      description: >-
+        Validates the secret's rotation configuration (policy, backend, ref) without
+        executing any live rotation. Read-only — requires only secrets.read.
+      operationId: simulateSecretRotation
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the dry-run result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/RotationDryRunResult'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/auto-rotate:
+    patch:
+      tags: [Secrets]
+      summary: Enable/disable automated rotation for a secret
+      description: >-
+        Opts a secret into automated rotation on schedule, optionally rotating an
+        upstream credential too when backend/ref are set. Enable only for secrets whose
+        value Keyorix owns.
+      operationId: setSecretAutoRotate
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled: {type: boolean}
+                length: {type: integer}
+                charset: {type: string}
+                backend: {type: string}
+                ref: {type: string}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` echoes the applied configuration.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: {type: integer}
+                      auto_rotate: {type: boolean}
+                      length: {type: integer}
+                      charset: {type: string}
+                      backend: {type: string}
+                      ref: {type: string}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/audit:
+    get:
+      tags: [Secrets]
+      summary: Show a secret's lifecycle events
+      description: >-
+        Lists the audit trail for a secret (created/rotated/rolled-back/suspended/
+        resumed/shared/owner-transferred/reclassified, …), newest first. Never
+        includes a plaintext value. `limit` defaults to 50, capped at 500.
+      operationId: getSecretAuditTrail
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: limit, in: query, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data.audit` is the event list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      audit: {type: array, items: {$ref: '#/components/schemas/SecretAuditEntry'}}
+                      total: {type: integer}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/ownership-history:
+    get:
+      tags: [Secrets]
+      summary: Show a secret's ownership-transfer chain
+      description: Ordered list of ownership transfers for a secret (oldest first).
+      operationId: getSecretOwnershipHistory
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data.ownership_history` is the transfer list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      ownership_history: {type: array, items: {$ref: '#/components/schemas/OwnershipRecord'}}
+                      total: {type: integer}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/certificate:
+    get:
+      tags: [Secrets]
+      summary: Show a certificate secret's public X.509 metadata
+      description: >-
+        Subject, issuer, validity window, SANs, and algorithms of a certificate-valued
+        secret. Never returns the value or any private key.
+      operationId: getSecretCertificate
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the certificate metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/CertificateInfo'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/blast-radius:
+    get:
+      tags: [Secrets]
+      summary: Show the enriched blast radius of rotating or deleting a secret
+      description: >-
+        All downstream dependents of a secret (recursive), each annotated with owner,
+        project, hop depth, and risk level.
+      operationId: getSecretBlastRadius
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the blast-radius report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/BlastRadiusReport'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
   /api/v1/secrets/{id}/versions:
     get:
       tags: [Secrets]
@@ -2244,9 +2654,59 @@ paths:
           description: >-
             Envelope `{data, message}`. `data` is the composite risk score
             (expiry / rotation / usage / exposure factors).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/SecretRiskScore'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/quota-report:
+    get:
+      tags: [Secrets]
+      summary: Show secrets approaching or at their MaxReads quota
+      description: >-
+        Lists every live secret with a MaxReads cap configured: current read count,
+        quota percentage, and status. Requires audit.read (a usage-report endpoint,
+        not secret-value access) -- NOT secrets.read.
+      operationId: getQuotaReport
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data.secrets` is the quota report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      secrets: {type: array, items: {$ref: '#/components/schemas/QuotaReportRow'}}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/name-conformance:
+    get:
+      tags: [Secrets]
+      summary: List every project's secrets whose names violate the naming policy (org-wide)
+      description: >-
+        Deployment-wide naming-policy conformance report, each violation tagged with its
+        project. Requires audit.read (global) -- NOT the baseline system.read.
+      operationId: deploymentSecretNameConformance
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the org-wide conformance report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/DeploymentSecretNameConformanceReport'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
   /api/v1/secrets/usage/most-accessed:
     get:
       tags: [Secrets]
@@ -4214,6 +4674,244 @@ components:
               message: {type: string}
               details: {type: object, additionalProperties: true, nullable: true}
   schemas:
+    # docs/cli-split-inventory.md §7 PR 5 -- secret bulk/rotation/export/import/scan/hygiene.
+    # models.SecretNode carries no `json:` tags, so it serializes with bare (capitalized)
+    # Go field names -- see the identical note on PR 3/PR 4's schemas for this same model.
+    Secret:
+      type: object
+      description: >-
+        A secret node (metadata only -- never a value). PascalCase field names because
+        models.SecretNode has no json struct tags.
+      properties:
+        ID: {type: integer}
+        ParentID: {type: integer, nullable: true}
+        ProjectID: {type: integer}
+        EnvironmentID: {type: integer}
+        Name: {type: string}
+        IsSecret: {type: boolean}
+        Type: {type: string}
+        Description: {type: string}
+        MaxReads: {type: integer, nullable: true}
+        ReadCount: {type: integer}
+        Expiration: {type: string, format: date-time, nullable: true}
+        Classification: {type: string}
+        Status: {type: string}
+        CreatedBy: {type: string}
+        OwnerID: {type: integer}
+        OwnerMachineIdentityID: {type: integer}
+        IsShared: {type: boolean}
+        CreatedAt: {type: string, format: date-time}
+        UpdatedAt: {type: string, format: date-time}
+        LastRotatedAt: {type: string, format: date-time, nullable: true}
+        AutoRotate: {type: boolean}
+        RotationLength: {type: integer}
+        RotationCharset: {type: string}
+        RotationBackend: {type: string}
+        RotationRef: {type: string}
+    RotationDryRunCheck:
+      type: object
+      properties:
+        name: {type: string}
+        passed: {type: boolean}
+        message: {type: string}
+    RotationDryRunResult:
+      type: object
+      properties:
+        secret_id: {type: integer}
+        secret_name: {type: string}
+        backend: {type: string}
+        ref: {type: string}
+        valid: {type: boolean}
+        checks: {type: array, items: {$ref: '#/components/schemas/RotationDryRunCheck'}}
+        simulated_at: {type: string, format: date-time}
+    SecretAuditEntry:
+      type: object
+      description: One lifecycle event of a secret. Never carries a plaintext value.
+      properties:
+        id: {type: integer}
+        event_type: {type: string}
+        timestamp: {type: string}
+        user_id: {type: integer, nullable: true}
+        actor_type: {type: string}
+        description: {type: string}
+        success: {type: boolean}
+        diff: {type: object, nullable: true}
+        impersonation: {type: boolean}
+    OwnershipRecord:
+      type: object
+      properties:
+        event_id: {type: integer}
+        from_id: {type: integer}
+        to_id: {type: integer}
+        changed_by: {type: integer}
+        changed_at: {type: string, format: date-time}
+        description: {type: string}
+    CertificateInfo:
+      type: object
+      description: Public X.509 metadata of a certificate-valued secret. Never the value or key.
+      properties:
+        secret_id: {type: integer}
+        secret_name: {type: string}
+        subject: {type: string}
+        issuer: {type: string}
+        serial_number: {type: string}
+        not_before: {type: string, format: date-time}
+        not_after: {type: string, format: date-time}
+        days_until_expiry: {type: integer}
+        is_expired: {type: boolean}
+        is_ca: {type: boolean}
+        self_signed: {type: boolean}
+        dns_names: {type: array, items: {type: string}}
+        signature_algorithm: {type: string}
+        public_key_algorithm: {type: string}
+    BlastRadiusNode:
+      type: object
+      properties:
+        secret_id: {type: integer}
+        secret_name: {type: string}
+        project_id: {type: integer}
+        owner_id: {type: integer}
+        depth: {type: integer}
+        risk_level: {type: string, enum: [critical, high, medium, low]}
+    BlastRadiusReport:
+      type: object
+      properties:
+        source_secret_id: {type: integer}
+        source_secret_name: {type: string}
+        dependents: {type: array, items: {$ref: '#/components/schemas/BlastRadiusNode'}}
+        total_impact: {type: integer}
+        max_depth: {type: integer}
+        truncated: {type: boolean}
+    ExpiringSecretEntry:
+      type: object
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        type: {type: string}
+        classification: {type: string}
+        environment_id: {type: integer}
+        expiration: {type: string, format: date-time}
+        expired: {type: boolean}
+    ExpiringSecretsReport:
+      type: object
+      properties:
+        expiring: {type: array, items: {$ref: '#/components/schemas/ExpiringSecretEntry'}}
+        total: {type: integer}
+        truncated: {type: boolean}
+    OrphanedSecretEntry:
+      type: object
+      description: A secret whose owner is no longer a live user. Metadata only.
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        type: {type: string}
+        classification: {type: string}
+        environment_id: {type: integer}
+        owner_id: {type: integer}
+    OrphanedSecretsReport:
+      type: object
+      properties:
+        orphaned: {type: array, items: {$ref: '#/components/schemas/OrphanedSecretEntry'}}
+        total: {type: integer}
+    SecretNameViolation:
+      type: object
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        type: {type: string}
+        classification: {type: string}
+        environment_id: {type: integer}
+        reason: {type: string}
+    SecretNameConformanceReport:
+      type: object
+      properties:
+        policy_enabled: {type: boolean}
+        pattern: {type: string}
+        max_length: {type: integer}
+        total_secrets: {type: integer}
+        violations: {type: array, items: {$ref: '#/components/schemas/SecretNameViolation'}}
+        truncated: {type: boolean}
+    DeploymentSecretNameViolation:
+      type: object
+      description: A SecretNameViolation tagged with its project (org-wide report).
+      properties:
+        project_id: {type: integer}
+        project_name: {type: string}
+        id: {type: integer}
+        name: {type: string}
+        type: {type: string}
+        classification: {type: string}
+        environment_id: {type: integer}
+        reason: {type: string}
+    DeploymentSecretNameConformanceReport:
+      type: object
+      properties:
+        policy_enabled: {type: boolean}
+        pattern: {type: string}
+        max_length: {type: integer}
+        total_secrets: {type: integer}
+        truncated: {type: boolean}
+        violations: {type: array, items: {$ref: '#/components/schemas/DeploymentSecretNameViolation'}}
+    QuotaReportRow:
+      type: object
+      properties:
+        secret_id: {type: integer}
+        secret_name: {type: string}
+        read_count: {type: integer}
+        max_reads: {type: integer}
+        usage_pct: {type: integer}
+        status: {type: string, enum: [ok, warning, critical, exhausted]}
+    BulkOpError:
+      type: object
+      properties:
+        secret_id: {type: integer}
+        name: {type: string}
+        error: {type: string}
+    BulkDeleteResult:
+      type: object
+      properties:
+        deleted: {type: array, items: {type: integer}}
+        failed: {type: array, items: {$ref: '#/components/schemas/BulkOpError'}}
+        total: {type: integer}
+    BulkRotateResult:
+      type: object
+      properties:
+        triggered: {type: array, items: {type: integer}}
+        failed: {type: array, items: {$ref: '#/components/schemas/BulkOpError'}}
+        total: {type: integer}
+    SecretRenameOutcome:
+      type: object
+      properties:
+        id: {type: integer}
+        old_name: {type: string}
+        new_name: {type: string}
+        status: {type: string}
+        reason: {type: string}
+    BulkRenameReport:
+      type: object
+      properties:
+        dry_run: {type: boolean}
+        renamed: {type: integer}
+        skipped: {type: integer}
+        outcomes: {type: array, items: {$ref: '#/components/schemas/SecretRenameOutcome'}}
+    SecretRiskFactor:
+      type: object
+      properties:
+        key: {type: string}
+        label: {type: string}
+        score: {type: integer}
+        weight: {type: number}
+        detail: {type: string}
+    SecretRiskScore:
+      type: object
+      description: Composite risk score (0-100, higher = riskier) for one secret.
+      properties:
+        secret_id: {type: integer}
+        secret_name: {type: string}
+        score: {type: integer}
+        band: {type: string, enum: [low, medium, high]}
+        factors: {type: array, items: {$ref: '#/components/schemas/SecretRiskFactor'}}
+        degraded: {type: boolean}
     AccessReviewDecision:
       type: object
       description: >-

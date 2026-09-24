@@ -73,7 +73,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getRotationStatus":              reasonSchemaNotYetWritten, // get /api/v1/rotation-policies/status
 	"getSecret":                      reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}
 	"getSecretAccessRequest":         reasonSchemaNotYetWritten, // get /api/v1/secret-access-requests/{requestId}
-	"getSecretRisk":                  reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}/risk
 	"getSecretVersions":              reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}/versions
 	"getSystemInfo":                  reasonSchemaNotYetWritten, // get /api/v1/system/info
 	"getSystemMetrics":               reasonSchemaNotYetWritten, // get /api/v1/system/metrics
@@ -134,7 +133,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"revokeProjectInvitation":        reasonSchemaNotYetWritten, // delete /api/v1/projects/{id}/invitations/{invitationId}
 	"revokeRiskException":            reasonSchemaNotYetWritten, // delete /api/v1/risk-exceptions/{id}
 	"revokeSecretACL":                reasonSchemaNotYetWritten, // delete /api/v1/secrets/{id}/acl/{aclId}
-	"rotateSecret":                   reasonSchemaNotYetWritten, // post /api/v1/secrets/{id}/rotate
 	"searchAuditLogs":                reasonSchemaNotYetWritten, // get /api/v1/audit/search
 	"searchUsers":                    reasonSchemaNotYetWritten, // get /api/v1/users/search
 	"shareSecret":                    reasonSchemaNotYetWritten, // post /api/v1/secrets/{id}/share
@@ -261,4 +259,24 @@ var exercisingTests = map[string][]string{
 	"getProjectRotationOrder":      {"TestContractPR1_GetProjectRotationOrder"},
 	"getProjectRotationPlan":       {"TestContractPR1_GetProjectRotationPlan"},
 	"getDeploymentRotationPlan":    {"TestContractPR1_GetDeploymentRotationPlan"},
+	// docs/cli-split-inventory.md §7 PR 5 (secret bulk/rotation/export/import/scan/
+	// hygiene) -- openapi_contract_pr5_test.go.
+	"listExpiringSecrets":             {"TestContractPR5_ListExpiringSecrets"},
+	"listOrphanedSecrets":             {"TestContractPR5_ListOrphanedSecrets"},
+	"secretNameConformance":           {"TestContractPR5_SecretNameConformance"},
+	"deploymentSecretNameConformance": {"TestContractPR5_DeploymentSecretNameConformance"},
+	"reassignSecretOwner":             {"TestContractPR5_ReassignSecretOwner"},
+	"bulkRotateSecrets":               {"TestContractPR5_BulkRotateSecrets"},
+	"bulkRenameSecrets":               {"TestContractPR5_BulkRenameSecrets"},
+	"bulkDeleteSecrets":               {"TestContractPR5_BulkDeleteSecrets"},
+	"renderSecretTemplate":            {"TestContractPR5_RenderTemplate"},
+	"rotateSecret":                    {"TestContractPR5_RotateSecret"},
+	"simulateSecretRotation":          {"TestContractPR5_SimulateRotation"},
+	"setSecretAutoRotate":             {"TestContractPR5_SetAutoRotate"},
+	"getSecretAuditTrail":             {"TestContractPR5_AuditTrail"},
+	"getSecretOwnershipHistory":       {"TestContractPR5_OwnershipHistory"},
+	"getSecretCertificate":            {"TestContractPR5_GetSecretCertificate"},
+	"getSecretBlastRadius":            {"TestContractPR5_GetBlastRadius"},
+	"getSecretRisk":                   {"TestContractPR5_GetSecretRisk"},
+	"getQuotaReport":                  {"TestContractPR5_GetQuotaReport"},
 }
