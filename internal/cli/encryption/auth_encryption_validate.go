@@ -1,17 +1,16 @@
-// auth_encryption_validate.go — runValidateAuthEncryption and per-table validate helpers.
+// auth_encryption_validate.go — runValidateAuthEncryption.
 //
-// Decrypts every encrypted auth row to confirm keys are working, and separately
-// flags any row that still holds a plaintext value with no corresponding
-// Encrypted* value (i.e. one 'auth-encryption migrate' hasn't reached yet).
-// For migration see auth_encryption_migrate.go.
+// The actual logic lives in internal/encryptionops.ValidateAuthEncryptionWithConfig
+// (docs/cli-split-inventory.md §7 PR 12).
 package encryption
 
 import (
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/encryption"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/encryptionops"
 	"github.com/spf13/cobra"
 	"gorm.io/gorm"
 )
@@ -25,99 +24,16 @@ func runValidateAuthEncryption(cmd *cobra.Command, args []string) error {
 	return validateAuthEncryptionWithConfig(cfg, verbose)
 }
 
-// validateAuthEncryptionWithConfig is the testable core of runValidateAuthEncryption:
-// no flag parsing, no config.Load — callers pass an explicit cfg and verbose bool.
+// validateAuthEncryptionWithConfig is a thin re-export of
+// encryptionops.ValidateAuthEncryptionWithConfig — kept as a package-local
+// name because this package's tests call it directly.
 func validateAuthEncryptionWithConfig(cfg *config.Config, verbose bool) error {
-	db, err := openDatabase(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
-	}
-	authEnc := encryption.NewAuthEncryption(&cfg.Storage.Encryption, ".", db)
-	passphrase, _ := masterPassphrase(cfg)
-	if err := authEnc.Initialize(passphrase); err != nil {
-		return fmt.Errorf("failed to initialize auth encryption: %w", err)
-	}
-	// #292/G62: take the same cross-process shared DEK lock the sibling DEK
-	// commands (status/validate/fix-perms/upgrade-aad) already require, so this
-	// fails fast instead of racing a concurrent migrate-provider/rotate.
-	if err := authEnc.AcquireSharedKeyLock(); err != nil {
-		authEnc.Shutdown()
-		return fmt.Errorf("%w — a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry", err)
-	}
-	defer authEnc.Shutdown()
-
-	fmt.Println("🔍 Validating authentication encryption...")
-
-	var unmigrated int
-
-	// Sessions are deliberately not validated here — see the comment in
-	// auth_encryption_migrate.go's runMigrateAuthData for why: session_token
-	// stores a SHA-256 hash, never plaintext, so there is no "unmigrated
-	// plaintext" state for a session row to be in. A prior validateSessions
-	// queried "session_token != ''" (true for every live session) and reported
-	// every one of them as needing migration — a permanent false positive that
-	// would fail this command on any deployment with active sessions.
-	//
-	// API clients and API tokens are ALSO deliberately not validated here, for
-	// the identical reason — this was missed when the sessions fix above landed.
-	// Per models.APIClient.ClientSecret and models.APIToken.Token (see
-	// internal/storage/models/models.go), both columns hold a SHA-256 HASH of
-	// the credential, never plaintext. A prior validateAPIClients/
-	// validateAPITokens queried "client_secret != ''"/"token != ''" (true for
-	// every row, since the column always holds a hash) and reported every one
-	// as needing migration — the same permanent false positive validateSessions
-	// had, funneling operators toward running the destructive
-	// 'auth-encryption migrate' command (see auth_encryption_migrate.go's
-	// removed migrateAPIClients/migrateAPITokens for why that's destructive:
-	// it nulls the row's only stored credential-verification data). See git
-	// history for the removed validateAPIClients/validateAPITokens if this ever
-	// needs revisiting.
-
-	n, err := validatePasswordResetTokens(db, authEnc, verbose)
-	if err != nil {
-		return fmt.Errorf("password reset token validation failed: %w", err)
-	}
-	unmigrated += n
-
-	// #292: previously this printed the all-clear message unconditionally,
-	// regardless of how many rows had a plaintext value with no Encrypted*
-	// counterpart at all (invisible to the decrypt-only checks above, since those
-	// only ever query "Encrypted* IS NOT NULL") — the same false-clean shape as
-	// the posture-fails-open family (#136/#145/#149). Fail loud instead: a
-	// non-zero unmigrated count is reported per-row above and turns this into a
-	// non-zero exit rather than a silent pass.
-	if unmigrated > 0 {
-		fmt.Printf("❌ %d authentication row(s) still hold a plaintext value with no encrypted counterpart — run 'keyorix encryption auth-encryption migrate'\n", unmigrated)
-		return fmt.Errorf("%d authentication row(s) need migration to encrypted storage", unmigrated)
-	}
-
-	fmt.Println("✅ All authentication encryption validation checks passed")
-	return nil
+	return encryptionops.ValidateAuthEncryptionWithConfig(cfg, verbose, common.PassphraseSource)
 }
 
+// validatePasswordResetTokens is a thin re-export of
+// encryptionops.ValidatePasswordResetTokens — kept as a package-local name
+// because this package's tests call it directly.
 func validatePasswordResetTokens(db *gorm.DB, authEnc *encryption.AuthEncryption, verbose bool) (int, error) {
-	var resets []models.PasswordReset
-	if err := db.Where("encrypted_token IS NOT NULL").Find(&resets).Error; err != nil {
-		return 0, err
-	}
-	if verbose {
-		fmt.Printf("🔄 Validating %d encrypted password reset tokens...\n", len(resets))
-	}
-	for _, reset := range resets {
-		if _, err := authEnc.DecryptPasswordResetToken(reset.EncryptedToken, []byte(reset.TokenMetadata), reset.UserID); err != nil {
-			return 0, fmt.Errorf("failed to decrypt password reset token %d: %w", reset.ID, err)
-		}
-		if verbose {
-			fmt.Printf("  ✅ Reset Token %d: OK\n", reset.ID)
-		}
-	}
-
-	var unmigrated []models.PasswordReset
-	if err := db.Where("token != '' AND token IS NOT NULL AND encrypted_token IS NULL").Find(&unmigrated).Error; err != nil {
-		return 0, err
-	}
-	for _, reset := range unmigrated {
-		fmt.Printf("  ⚠️  Reset Token %d: plaintext token with no encrypted counterpart — needs migration\n", reset.ID)
-	}
-	return len(unmigrated), nil
+	return encryptionops.ValidatePasswordResetTokens(db, authEnc, verbose)
 }

@@ -56,6 +56,25 @@ func (ae *AuthEncryption) AcquireSharedKeyLock() error {
 	return ae.service.AcquireSharedKeyLock()
 }
 
+// AcquireExclusiveKeyLock takes the same cross-process exclusive DEK lock
+// (Service.AcquireExclusiveKeyLock) that RotateAuthEncryption's underlying
+// RotateDEKWithSweep already takes internally. Calling it explicitly here,
+// before RotateAuthEncryption, makes `auth-encryption rotate`'s locking
+// behavior symmetric with the DEK-focused `encryption rotate` (which also
+// acquires it explicitly ahead of RotateDEKWithSweep's own internal,
+// idempotent call) instead of relying solely on that internal call --
+// Finding S13 (docs/cli-split-inventory.md §8): the original CLI command
+// took no lock at all at this layer, unlike its 4 siblings
+// (status/enable/migrate/validate), which all call AcquireSharedKeyLock
+// explicitly before doing their own work. A no-op when encryption is
+// disabled, matching AcquireSharedKeyLock's own no-op in that case.
+func (ae *AuthEncryption) AcquireExclusiveKeyLock() error {
+	if !ae.service.IsEnabled() {
+		return nil
+	}
+	return ae.service.AcquireExclusiveKeyLock()
+}
+
 // Shutdown releases resources held by the underlying encryption Service —
 // wiping the DEK from memory and releasing the key lock if AcquireSharedKeyLock
 // (or Initialize's own exclusive-lock paths, e.g. via RotateAuthEncryption) took
