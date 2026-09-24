@@ -7,10 +7,18 @@ package credstore
 
 // Credentials is everything the CLI needs to reach a server: the base URL and a bearer
 // token (a long-lived API key/PAT, not a short-lived session -- there is no refresh flow,
-// matching today's CLI per docs/cli-split-inventory.md §4).
+// matching today's CLI per docs/cli-split-inventory.md §4). ActiveProject is the one piece
+// of non-credential CLI state that survives the PR 0 collapse to a single file (docs/
+// cli-split-inventory.md §4/§7 PR 6): the old CLI's separate `~/.keyorix/cli.yaml` carried
+// it alongside Mode/Client/Connections, all of which PR 0 already dropped as dead or
+// superseded; ActiveProject is the one field of that old file with a live caller (`project
+// use`/`current`, and every project-scoped command's `--project` default) that PR 0's
+// initial cut had no command needing yet. It lives here, in the ONE storage mechanism, not
+// a second file -- the same "one storage mechanism only" decision PR 0 made for credentials.
 type Credentials struct {
-	ServerURL string `yaml:"server_url"`
-	Token     string `yaml:"token"`
+	ServerURL     string `yaml:"server_url"`
+	Token         string `yaml:"token"`
+	ActiveProject string `yaml:"active_project,omitempty"`
 }
 
 // Store loads and saves Credentials. FileStore is the only implementation today; a future

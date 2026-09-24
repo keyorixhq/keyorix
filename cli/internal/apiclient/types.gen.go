@@ -42,10 +42,32 @@ const (
 
 // Defines values for MachineIdentityState.
 const (
-	Active    MachineIdentityState = "active"
-	Pending   MachineIdentityState = "pending"
-	Revoked   MachineIdentityState = "revoked"
-	Suspended MachineIdentityState = "suspended"
+	MachineIdentityStateActive    MachineIdentityState = "active"
+	MachineIdentityStatePending   MachineIdentityState = "pending"
+	MachineIdentityStateRevoked   MachineIdentityState = "revoked"
+	MachineIdentityStateSuspended MachineIdentityState = "suspended"
+)
+
+// Defines values for PermissionMatrixRowScope.
+const (
+	PermissionMatrixRowScopeEnvironment PermissionMatrixRowScope = "environment"
+	PermissionMatrixRowScopeGlobal      PermissionMatrixRowScope = "global"
+	PermissionMatrixRowScopeProject     PermissionMatrixRowScope = "project"
+)
+
+// Defines values for ProjectInvitationState.
+const (
+	ProjectInvitationStateAccepted ProjectInvitationState = "accepted"
+	ProjectInvitationStateExpired  ProjectInvitationState = "expired"
+	ProjectInvitationStatePending  ProjectInvitationState = "pending"
+	ProjectInvitationStateRevoked  ProjectInvitationState = "revoked"
+)
+
+// Defines values for ProvisionSetupResultChannel.
+const (
+	Log       ProvisionSetupResultChannel = "log"
+	OutOfBand ProvisionSetupResultChannel = "out_of_band"
+	Smtp      ProvisionSetupResultChannel = "smtp"
 )
 
 // Defines values for RotationPlanSecretStatus.
@@ -80,8 +102,14 @@ const (
 
 // Defines values for ListProjectsParamsIncludeDeleted.
 const (
-	False ListProjectsParamsIncludeDeleted = "false"
-	True  ListProjectsParamsIncludeDeleted = "true"
+	ListProjectsParamsIncludeDeletedFalse ListProjectsParamsIncludeDeleted = "false"
+	ListProjectsParamsIncludeDeletedTrue  ListProjectsParamsIncludeDeleted = "true"
+)
+
+// Defines values for ListProjectEnvironmentsParamsIncludeDeleted.
+const (
+	ListProjectEnvironmentsParamsIncludeDeletedFalse ListProjectEnvironmentsParamsIncludeDeleted = "false"
+	ListProjectEnvironmentsParamsIncludeDeletedTrue  ListProjectEnvironmentsParamsIncludeDeleted = "true"
 )
 
 // Defines values for TransitionMachineIdentityJSONBodyAction.
@@ -91,10 +119,20 @@ const (
 	Suspend  TransitionMachineIdentityJSONBodyAction = "suspend"
 )
 
+// Defines values for GetPermissionMatrixParamsFormat.
+const (
+	Csv GetPermissionMatrixParamsFormat = "csv"
+)
+
 // Defines values for CreateRotationPolicyJSONBodyScope.
 const (
 	CreateRotationPolicyJSONBodyScopeEnvironment CreateRotationPolicyJSONBodyScope = "environment"
 	CreateRotationPolicyJSONBodyScopeProject     CreateRotationPolicyJSONBodyScope = "project"
+)
+
+// Defines values for ListUsersParamsFilter.
+const (
+	Inactive ListUsersParamsFilter = "inactive"
 )
 
 // BreakGlassActivation One emergency-access self-grant (ADR-108 PR 1 addition).
@@ -156,6 +194,30 @@ type DynamicSecretLease struct {
 
 // DynamicSecretLeaseStatus defines model for DynamicSecretLease.Status.
 type DynamicSecretLeaseStatus string
+
+// Environment A project environment (internal/storage/models.Environment). No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, Name, CreatedAt, UpdatedAt), not snake_case. Unlike Permission/RoleWithPermissions above, ProjectID/CreatedAt/UpdatedAt do NOT case-insensitively match a snake_case tag (the underscore makes "project_id" a different string from "projectid"), so a generated client MUST use these exact capitalized property names to decode correctly.
+type Environment struct {
+	CreatedAt *time.Time `json:"CreatedAt,omitempty"`
+	ID        *int       `json:"ID,omitempty"`
+	Name      *string    `json:"Name,omitempty"`
+	ProjectID *int       `json:"ProjectID,omitempty"`
+	UpdatedAt *time.Time `json:"UpdatedAt,omitempty"`
+}
+
+// Group A group (server/http/handlers/groups_handler.go's groupToAPIResponse).
+type Group struct {
+	Description *string `json:"description,omitempty"`
+	Id          *int    `json:"id,omitempty"`
+	Name        *string `json:"name,omitempty"`
+}
+
+// GroupRoleGrant One role a group holds, with its time-bound expiry if any (internal/core/storage.GroupRoleGrant).
+type GroupRoleGrant struct {
+	Description *string    `json:"description,omitempty"`
+	ExpiresAt   *time.Time `json:"expires_at"`
+	Id          *int       `json:"id,omitempty"`
+	Name        *string    `json:"name,omitempty"`
+}
 
 // MachineAuditReport Deployment-wide machine identity audit report (GET /machine-identities/audit).
 type MachineAuditReport struct {
@@ -254,6 +316,98 @@ type PATToken struct {
 	TokenPrefix      *string    `json:"token_prefix,omitempty"`
 }
 
+// Permission A permission. internal/storage/models.Permission carries no `json:` tags, so the wire keys are the bare (capitalized) Go field names, not the snake_case this file uses elsewhere -- documented as such rather than as an idealized snake_case shape it does not actually have. Single-word field names still decode correctly into a snake_case-tagged Go client: encoding/json's Unmarshal falls back to a case-insensitive match ("ID" ~ "id") when no exact tag match exists.
+type Permission struct {
+	Action      *string `json:"Action,omitempty"`
+	Description *string `json:"Description,omitempty"`
+	ID          *int    `json:"ID,omitempty"`
+	Name        *string `json:"Name,omitempty"`
+	Resource    *string `json:"Resource,omitempty"`
+}
+
+// PermissionMatrixRow One (user, role, permission, scope) tuple (internal/core.PermissionMatrixRow), GET /api/v1/rbac/permission-matrix.
+type PermissionMatrixRow struct {
+	Action          *string                   `json:"action,omitempty"`
+	Email           *string                   `json:"email,omitempty"`
+	EnvironmentId   *int                      `json:"environment_id,omitempty"`
+	EnvironmentName *string                   `json:"environment_name,omitempty"`
+	ExpiresAt       *time.Time                `json:"expires_at"`
+	PermissionName  *string                   `json:"permission_name,omitempty"`
+	ProjectId       *int                      `json:"project_id,omitempty"`
+	ProjectName     *string                   `json:"project_name,omitempty"`
+	Resource        *string                   `json:"resource,omitempty"`
+	RoleId          *int                      `json:"role_id,omitempty"`
+	RoleName        *string                   `json:"role_name,omitempty"`
+	Scope           *PermissionMatrixRowScope `json:"scope,omitempty"`
+	UserId          *int                      `json:"user_id,omitempty"`
+	Username        *string                   `json:"username,omitempty"`
+}
+
+// PermissionMatrixRowScope defines model for PermissionMatrixRow.Scope.
+type PermissionMatrixRowScope string
+
+// ProjectInvitation A project invitation (ADR-024, internal/storage/models.ProjectInvitation). No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, Email, ...), not snake_case. As with Environment above, the multi-word field names here do not case-insensitively match a snake_case tag, so a generated client must use these exact property names.
+type ProjectInvitation struct {
+	AcceptedAt                 *time.Time              `json:"AcceptedAt"`
+	CreatedAt                  *time.Time              `json:"CreatedAt,omitempty"`
+	Email                      *string                 `json:"Email,omitempty"`
+	ExpiresAt                  *time.Time              `json:"ExpiresAt"`
+	ID                         *int                    `json:"ID,omitempty"`
+	InvitedBy                  *int                    `json:"InvitedBy,omitempty"`
+	InvitedByMachineIdentityID *int                    `json:"InvitedByMachineIdentityID,omitempty"`
+	ProjectID                  *int                    `json:"ProjectID,omitempty"`
+	RevokedAt                  *time.Time              `json:"RevokedAt"`
+	Role                       *string                 `json:"Role,omitempty"`
+	State                      *ProjectInvitationState `json:"State,omitempty"`
+	SystemRole                 *string                 `json:"SystemRole,omitempty"`
+}
+
+// ProjectInvitationState defines model for ProjectInvitation.State.
+type ProjectInvitationState string
+
+// ProvisionSetupResult Outcome of provisioning and delivering a setup/accept link (ADR-028, internal/core.ProvisionSetupResult).
+type ProvisionSetupResult struct {
+	Channel   *ProvisionSetupResultChannel `json:"channel,omitempty"`
+	Delivered *bool                        `json:"delivered,omitempty"`
+	Email     *string                      `json:"email,omitempty"`
+
+	// LinkForAdmin Set only in out-of-band mode.
+	LinkForAdmin *string `json:"link_for_admin,omitempty"`
+}
+
+// ProvisionSetupResultChannel defines model for ProvisionSetupResult.Channel.
+type ProvisionSetupResultChannel string
+
+// RBACAuditLogEntry One RBAC audit trail entry (GET /api/v1/audit/rbac-logs).
+type RBACAuditLogEntry struct {
+	Action        *string    `json:"action,omitempty"`
+	ActorUserId   *int       `json:"actor_user_id"`
+	CreatedAt     *time.Time `json:"created_at,omitempty"`
+	Details       *string    `json:"details,omitempty"`
+	EnvironmentId *int       `json:"environment_id"`
+	GroupId       *int       `json:"group_id"`
+	Id            *int       `json:"id,omitempty"`
+	PermissionId  *int       `json:"permission_id"`
+	ProjectId     *int       `json:"project_id"`
+	RoleId        *int       `json:"role_id"`
+	TargetUserId  *int       `json:"target_user_id"`
+}
+
+// RoleRef A minimal role reference (id, name only) -- GET /api/v1/users/{id}/roles's shape.
+type RoleRef struct {
+	Id   *int    `json:"id,omitempty"`
+	Name *string `json:"name,omitempty"`
+}
+
+// RoleWithPermissions A role with its assigned permissions (internal/core.RoleWithPermissions, embeds models.Role). Same untagged-model caveat as Permission above: wire keys are the bare Go field names (ID, Name, Description, BypassesPermissionChecks, Permissions), not snake_case.
+type RoleWithPermissions struct {
+	BypassesPermissionChecks *bool         `json:"BypassesPermissionChecks,omitempty"`
+	Description              *string       `json:"Description,omitempty"`
+	ID                       *int          `json:"ID,omitempty"`
+	Name                     *string       `json:"Name,omitempty"`
+	Permissions              *[]Permission `json:"Permissions,omitempty"`
+}
+
 // RotationOrder A safe rotation sequence for a project's secret dependency graph (ADR-108 PR 1 addition, ADR-052): each secret is listed before anything that depends on it.
 type RotationOrder struct {
 	Order     *[]RotationOrderStep `json:"order,omitempty"`
@@ -324,6 +478,23 @@ type RotationPolicyEvaluation struct {
 	SecretName    *string `json:"secret_name,omitempty"`
 }
 
+// UserSummary A user as returned in list/membership contexts (userToAPIResponse, server/http/handlers/users_handler.go). project_count/active_project_count are attached only by GET /api/v1/users (listUsers), not by GET /api/v1/groups/{id}/members.
+type UserSummary struct {
+	AccountState       *string    `json:"account_state,omitempty"`
+	Active             *bool      `json:"active,omitempty"`
+	ActiveProjectCount *int       `json:"active_project_count,omitempty"`
+	CreatedAt          *time.Time `json:"created_at,omitempty"`
+	DeletedAt          *time.Time `json:"deleted_at"`
+	DisplayName        *string    `json:"display_name,omitempty"`
+	Email              *string    `json:"email,omitempty"`
+	ExternalId         *string    `json:"external_id,omitempty"`
+	Id                 *int       `json:"id,omitempty"`
+	LastLoginAt        *time.Time `json:"last_login_at"`
+	ProjectCount       *int       `json:"project_count,omitempty"`
+	UpdatedAt          *time.Time `json:"updated_at,omitempty"`
+	Username           *string    `json:"username,omitempty"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	Code    *int                    `json:"code,omitempty"`
@@ -333,6 +504,21 @@ type Error struct {
 	Error   *string `json:"error,omitempty"`
 	Message *string `json:"message,omitempty"`
 	Success *bool   `json:"success,omitempty"`
+}
+
+// SuspendInactiveUsersJSONBody defines parameters for SuspendInactiveUsers.
+type SuspendInactiveUsersJSONBody struct {
+	// DryRun Preview which users would be suspended without making changes.
+	DryRun *bool `json:"dry_run,omitempty"`
+
+	// InactiveDays Inactivity threshold in days (must be > 0).
+	InactiveDays int `json:"inactive_days"`
+}
+
+// ListRBACAuditLogsParams defines parameters for ListRBACAuditLogs.
+type ListRBACAuditLogsParams struct {
+	Page     *int `form:"page,omitempty" json:"page,omitempty"`
+	PageSize *int `form:"page_size,omitempty" json:"page_size,omitempty"`
 }
 
 // MfaStepUpJSONBody defines parameters for MfaStepUp.
@@ -408,6 +594,53 @@ type RenewDynamicSecretLeaseJSONBody struct {
 	TtlSeconds *int `json:"ttl_seconds,omitempty"`
 }
 
+// CreateGroupJSONBody defines parameters for CreateGroup.
+type CreateGroupJSONBody struct {
+	Description *string `json:"description,omitempty"`
+	Name        string  `json:"name"`
+}
+
+// UpdateGroupJSONBody defines parameters for UpdateGroup.
+type UpdateGroupJSONBody struct {
+	Description *string `json:"description,omitempty"`
+	Name        *string `json:"name,omitempty"`
+}
+
+// AddGroupMemberJSONBody defines parameters for AddGroupMember.
+type AddGroupMemberJSONBody struct {
+	// ProjectId 0 = global membership (default); non-zero = scoped to that project only.
+	ProjectId *int `json:"project_id,omitempty"`
+	UserId    int  `json:"user_id"`
+}
+
+// RemoveGroupMemberParams defines parameters for RemoveGroupMember.
+type RemoveGroupMemberParams struct {
+	// ProjectId Scope to the same project the membership was added with (0/omit = global membership). Fixed missing from this spec (ADR-108 PR 3) -- the real handler (groups_members.go's RemoveGroupMember) has always read this query param; every other caller sent it, this spec just never documented it.
+	ProjectId *int `form:"project_id,omitempty" json:"project_id,omitempty"`
+}
+
+// AssignRoleToGroupJSONBody defines parameters for AssignRoleToGroup.
+type AssignRoleToGroupJSONBody struct {
+	// EnvironmentId Scope (0 = global).
+	EnvironmentId *int `json:"environment_id,omitempty"`
+
+	// ExpiresAt RFC3339; omit or null for a non-expiring grant. JIT access — the assignment is automatically revoked when the timestamp is reached.
+	ExpiresAt *time.Time `json:"expires_at"`
+
+	// ProjectId Scope (0 = global).
+	ProjectId *int `json:"project_id,omitempty"`
+	RoleId    int  `json:"role_id"`
+}
+
+// RemoveRoleFromGroupParams defines parameters for RemoveRoleFromGroup.
+type RemoveRoleFromGroupParams struct {
+	// ProjectId Scope (0 = global).
+	ProjectId *int `form:"project_id,omitempty" json:"project_id,omitempty"`
+
+	// EnvironmentId Scope (0 = global).
+	EnvironmentId *int `form:"environment_id,omitempty" json:"environment_id,omitempty"`
+}
+
 // MachineTokenHygieneParams defines parameters for MachineTokenHygiene.
 type MachineTokenHygieneParams struct {
 	// Days Staleness window in days (default server-side: 90, cap 3650).
@@ -432,7 +665,10 @@ type ListProjectsParamsIncludeDeleted string
 // CreateProjectJSONBody defines parameters for CreateProject.
 type CreateProjectJSONBody struct {
 	Description *string `json:"description,omitempty"`
-	Name        string  `json:"name"`
+
+	// Environments Environment names to seed (default, if omitted: development, staging, production).
+	Environments *[]string `json:"environments,omitempty"`
+	Name         string    `json:"name"`
 }
 
 // ActivateBreakGlassJSONBody defines parameters for ActivateBreakGlass.
@@ -442,6 +678,39 @@ type ActivateBreakGlassJSONBody struct {
 
 	// Ttl Optional grant-lifetime override, a Go duration (e.g. 2h); capped at the server max
 	Ttl *string `json:"ttl,omitempty"`
+}
+
+// ListProjectEnvironmentsParams defines parameters for ListProjectEnvironments.
+type ListProjectEnvironmentsParams struct {
+	// IncludeDeleted When 'true', also returns soft-deleted environments.
+	IncludeDeleted *ListProjectEnvironmentsParamsIncludeDeleted `form:"include_deleted,omitempty" json:"include_deleted,omitempty"`
+}
+
+// ListProjectEnvironmentsParamsIncludeDeleted defines parameters for ListProjectEnvironments.
+type ListProjectEnvironmentsParamsIncludeDeleted string
+
+// CreateProjectEnvironmentJSONBody defines parameters for CreateProjectEnvironment.
+type CreateProjectEnvironmentJSONBody struct {
+	Name string `json:"name"`
+}
+
+// CloneEnvironmentJSONBody defines parameters for CloneEnvironment.
+type CloneEnvironmentJSONBody struct {
+	DestinationEnvironmentId uint32 `json:"destination_environment_id"`
+}
+
+// GetProjectHealthParams defines parameters for GetProjectHealth.
+type GetProjectHealthParams struct {
+	// Limit Maximum number of secrets to display (1-100, default 20).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// CreateProjectInvitationJSONBody defines parameters for CreateProjectInvitation.
+type CreateProjectInvitationJSONBody struct {
+	Email openapi_types.Email `json:"email"`
+
+	// Role Project role to assign on accept
+	Role string `json:"role"`
 }
 
 // CreateMachineIdentityJSONBody defines parameters for CreateMachineIdentity.
@@ -480,6 +749,32 @@ type IssueMachineTokenJSONBody struct {
 	Name          string `json:"name"`
 }
 
+// GetPermissionMatrixParams defines parameters for GetPermissionMatrix.
+type GetPermissionMatrixParams struct {
+	// ProjectId Filter to one project (0/omit = every project, including global grants).
+	ProjectId *int `form:"project_id,omitempty" json:"project_id,omitempty"`
+
+	// Format When 'csv', return text/csv instead of the JSON envelope.
+	Format *GetPermissionMatrixParamsFormat `form:"format,omitempty" json:"format,omitempty"`
+}
+
+// GetPermissionMatrixParamsFormat defines parameters for GetPermissionMatrix.
+type GetPermissionMatrixParamsFormat string
+
+// CreateRoleJSONBody defines parameters for CreateRole.
+type CreateRoleJSONBody struct {
+	Description string `json:"description"`
+	Name        string `json:"name"`
+
+	// Permissions Permission names.
+	Permissions []string `json:"permissions"`
+}
+
+// AssignPermissionToRoleJSONBody defines parameters for AssignPermissionToRole.
+type AssignPermissionToRoleJSONBody struct {
+	PermissionId int `json:"permission_id"`
+}
+
 // ListRotationPoliciesParams defines parameters for ListRotationPolicies.
 type ListRotationPoliciesParams struct {
 	ProjectId     *int `form:"project_id,omitempty" json:"project_id,omitempty"`
@@ -516,11 +811,104 @@ type UpdateRotationPolicyJSONBody struct {
 	NotifyOnBreach  *bool   `json:"notify_on_breach,omitempty"`
 }
 
+// RemoveUserRoleJSONBody defines parameters for RemoveUserRole.
+type RemoveUserRoleJSONBody struct {
+	// EnvironmentId Scope (0 = global).
+	EnvironmentId *int `json:"environment_id,omitempty"`
+
+	// ProjectId Scope (0 = global).
+	ProjectId *int `json:"project_id,omitempty"`
+	RoleId    int  `json:"role_id"`
+	UserId    int  `json:"user_id"`
+}
+
+// AssignUserRoleJSONBody defines parameters for AssignUserRole.
+type AssignUserRoleJSONBody struct {
+	// EnvironmentId Scope (0 = global).
+	EnvironmentId *int `json:"environment_id,omitempty"`
+
+	// ExpiresAt RFC3339; omit or null for a non-expiring grant. JIT access — the assignment is automatically revoked when the timestamp is reached.
+	ExpiresAt *time.Time `json:"expires_at"`
+
+	// ProjectId Scope (0 = global).
+	ProjectId *int `json:"project_id,omitempty"`
+	RoleId    int  `json:"role_id"`
+	UserId    int  `json:"user_id"`
+}
+
+// ListUsersParams defines parameters for ListUsers.
+type ListUsersParams struct {
+	Page           *int    `form:"page,omitempty" json:"page,omitempty"`
+	PageSize       *int    `form:"page_size,omitempty" json:"page_size,omitempty"`
+	Search         *string `form:"search,omitempty" json:"search,omitempty"`
+	Username       *string `form:"username,omitempty" json:"username,omitempty"`
+	Email          *string `form:"email,omitempty" json:"email,omitempty"`
+	IsActive       *bool   `form:"is_active,omitempty" json:"is_active,omitempty"`
+	IncludeDeleted *bool   `form:"include_deleted,omitempty" json:"include_deleted,omitempty"`
+
+	// Filter Set to `inactive` for users with no login in the last 30 days.
+	Filter *ListUsersParamsFilter `form:"filter,omitempty" json:"filter,omitempty"`
+}
+
+// ListUsersParamsFilter defines parameters for ListUsers.
+type ListUsersParamsFilter string
+
+// CreateUserJSONBody defines parameters for CreateUser.
+type CreateUserJSONBody struct {
+	// DeliverSetupLink Provision via account-setup link instead of an admin-set password.
+	DeliverSetupLink *bool               `json:"deliver_setup_link,omitempty"`
+	DisplayName      string              `json:"display_name"`
+	Email            openapi_types.Email `json:"email"`
+
+	// GenerateOneTimePassword Server-generated one-time password, returned once. Mutually exclusive with deliver_setup_link.
+	GenerateOneTimePassword *bool `json:"generate_one_time_password,omitempty"`
+	IsActive                *bool `json:"is_active,omitempty"`
+
+	// Password Required unless deliver_setup_link or generate_one_time_password is set.
+	Password *string `json:"password,omitempty"`
+
+	// ProjectAssignments Project-scoped role assignments applied atomically (admin-set-password path only).
+	ProjectAssignments *[]struct {
+		ProjectId *int    `json:"project_id,omitempty"`
+		Role      *string `json:"role,omitempty"`
+	} `json:"project_assignments,omitempty"`
+
+	// Role Optional system role override (admin-set-password path only).
+	Role     *string `json:"role,omitempty"`
+	Username string  `json:"username"`
+}
+
+// GetUserByEmailParams defines parameters for GetUserByEmail.
+type GetUserByEmailParams struct {
+	Email string `form:"email" json:"email"`
+}
+
+// UpdateUserJSONBody defines parameters for UpdateUser.
+type UpdateUserJSONBody struct {
+	Active      *bool                `json:"active,omitempty"`
+	DisplayName *string              `json:"display_name,omitempty"`
+	Email       *openapi_types.Email `json:"email,omitempty"`
+	Username    *string              `json:"username,omitempty"`
+}
+
+// UpdateUserRolesJSONBody defines parameters for UpdateUserRoles.
+type UpdateUserRolesJSONBody struct {
+	// EnvironmentId Scope (0 = global).
+	EnvironmentId *int `json:"environment_id,omitempty"`
+
+	// ProjectId Scope (0 = global).
+	ProjectId *int   `json:"project_id,omitempty"`
+	RoleIds   *[]int `json:"role_ids,omitempty"`
+}
+
 // AuthLoginJSONBody defines parameters for AuthLogin.
 type AuthLoginJSONBody struct {
 	Password string `json:"password"`
 	Username string `json:"username"`
 }
+
+// SuspendInactiveUsersJSONRequestBody defines body for SuspendInactiveUsers for application/json ContentType.
+type SuspendInactiveUsersJSONRequestBody SuspendInactiveUsersJSONBody
 
 // MfaStepUpJSONRequestBody defines body for MfaStepUp for application/json ContentType.
 type MfaStepUpJSONRequestBody MfaStepUpJSONBody
@@ -543,11 +931,32 @@ type IssueDynamicSecretLeaseJSONRequestBody IssueDynamicSecretLeaseJSONBody
 // RenewDynamicSecretLeaseJSONRequestBody defines body for RenewDynamicSecretLease for application/json ContentType.
 type RenewDynamicSecretLeaseJSONRequestBody RenewDynamicSecretLeaseJSONBody
 
+// CreateGroupJSONRequestBody defines body for CreateGroup for application/json ContentType.
+type CreateGroupJSONRequestBody CreateGroupJSONBody
+
+// UpdateGroupJSONRequestBody defines body for UpdateGroup for application/json ContentType.
+type UpdateGroupJSONRequestBody UpdateGroupJSONBody
+
+// AddGroupMemberJSONRequestBody defines body for AddGroupMember for application/json ContentType.
+type AddGroupMemberJSONRequestBody AddGroupMemberJSONBody
+
+// AssignRoleToGroupJSONRequestBody defines body for AssignRoleToGroup for application/json ContentType.
+type AssignRoleToGroupJSONRequestBody AssignRoleToGroupJSONBody
+
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody CreateProjectJSONBody
 
 // ActivateBreakGlassJSONRequestBody defines body for ActivateBreakGlass for application/json ContentType.
 type ActivateBreakGlassJSONRequestBody ActivateBreakGlassJSONBody
+
+// CreateProjectEnvironmentJSONRequestBody defines body for CreateProjectEnvironment for application/json ContentType.
+type CreateProjectEnvironmentJSONRequestBody CreateProjectEnvironmentJSONBody
+
+// CloneEnvironmentJSONRequestBody defines body for CloneEnvironment for application/json ContentType.
+type CloneEnvironmentJSONRequestBody CloneEnvironmentJSONBody
+
+// CreateProjectInvitationJSONRequestBody defines body for CreateProjectInvitation for application/json ContentType.
+type CreateProjectInvitationJSONRequestBody CreateProjectInvitationJSONBody
 
 // CreateMachineIdentityJSONRequestBody defines body for CreateMachineIdentity for application/json ContentType.
 type CreateMachineIdentityJSONRequestBody CreateMachineIdentityJSONBody
@@ -561,11 +970,32 @@ type CreateOIDCBindingJSONRequestBody CreateOIDCBindingJSONBody
 // IssueMachineTokenJSONRequestBody defines body for IssueMachineToken for application/json ContentType.
 type IssueMachineTokenJSONRequestBody IssueMachineTokenJSONBody
 
+// CreateRoleJSONRequestBody defines body for CreateRole for application/json ContentType.
+type CreateRoleJSONRequestBody CreateRoleJSONBody
+
+// AssignPermissionToRoleJSONRequestBody defines body for AssignPermissionToRole for application/json ContentType.
+type AssignPermissionToRoleJSONRequestBody AssignPermissionToRoleJSONBody
+
 // CreateRotationPolicyJSONRequestBody defines body for CreateRotationPolicy for application/json ContentType.
 type CreateRotationPolicyJSONRequestBody CreateRotationPolicyJSONBody
 
 // UpdateRotationPolicyJSONRequestBody defines body for UpdateRotationPolicy for application/json ContentType.
 type UpdateRotationPolicyJSONRequestBody UpdateRotationPolicyJSONBody
+
+// RemoveUserRoleJSONRequestBody defines body for RemoveUserRole for application/json ContentType.
+type RemoveUserRoleJSONRequestBody RemoveUserRoleJSONBody
+
+// AssignUserRoleJSONRequestBody defines body for AssignUserRole for application/json ContentType.
+type AssignUserRoleJSONRequestBody AssignUserRoleJSONBody
+
+// CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
+type CreateUserJSONRequestBody CreateUserJSONBody
+
+// UpdateUserJSONRequestBody defines body for UpdateUser for application/json ContentType.
+type UpdateUserJSONRequestBody UpdateUserJSONBody
+
+// UpdateUserRolesJSONRequestBody defines body for UpdateUserRoles for application/json ContentType.
+type UpdateUserRolesJSONRequestBody UpdateUserRolesJSONBody
 
 // AuthLoginJSONRequestBody defines body for AuthLogin for application/json ContentType.
 type AuthLoginJSONRequestBody AuthLoginJSONBody

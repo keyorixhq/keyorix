@@ -777,6 +777,17 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 		case errors.Is(err, core.ErrUserAlreadyExists):
 			sendError(w, "ConflictError", errUserAlreadyExists, http.StatusConflict, nil)
+		case strings.Contains(err.Error(), "last install administrator"):
+			// Sibling of DeleteUser's identical case below: core.UpdateUser's
+			// deactivating branch (IsActive=false) shares the SAME
+			// guardLastAdminDeactivation core.DeleteUser calls, but until now
+			// only DeleteUser's handler actually surfaced it -- this route fell
+			// through to the generic 500 below, discarding the real reason.
+			// Found during the ADR-108 PR 6 port (docs/cli-split-inventory.md
+			// §7): the thin CLI's `user update --active=false` on the last
+			// admin got a useless "Failed to update user" (HTTP 500) instead of
+			// the readable refusal `user delete` on the same target already got.
+			sendError(w, "Conflict", err.Error(), http.StatusConflict, nil)
 		default:
 			sendError(w, "InternalError", "Failed to update user", http.StatusInternalServerError, nil)
 		}
