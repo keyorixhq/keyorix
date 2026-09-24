@@ -83,6 +83,10 @@ var operationOverrides = map[string]overrideEntry{
 	// revoke) and an invariant-checked write (secret-dependency exclusive create).
 	"REST POST /api/v1/system/break-glass/{id}/revoke":       {StatusFuzzed, "opCatalog[\"RevokeBreakGlassActivationProxy\"] — batch 6"},
 	"REST POST /api/v1/system/secret-dependencies/exclusive": {StatusFuzzed, "opCatalog[\"CreateSecretDependencyExclusiveProxy\"] — batch 6"},
+	// Coverage batch 7 (2026-09-24, fuzz/new-surfaces): the ordinary
+	// (non-/system) break-glass revoke path — sibling of the /system proxy
+	// entry above, same core.RevokeBreakGlass function, other caller.
+	"REST POST /api/v1/projects/{id}/break-glass/{activationId}/revoke": {StatusFuzzed, "opCatalog[\"RevokeBreakGlass\"] — batch 7"},
 }
 
 func statusOf(key string) overrideEntry {
