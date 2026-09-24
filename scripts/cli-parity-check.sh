@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # cli-parity-check.sh — live-server golden-output parity check for ADR-108
-# PR 2 and PR 1 (docs/cli-split-inventory.md §7): builds the old thick
+# PR 1, PR 2, and PR 6 (docs/cli-split-inventory.md §7): builds the old thick
 # `keyorix` CLI, the new thin `keyorix-next` CLI, and `keyorix-server`, boots
 # a real local SQLite server, bootstraps an admin, and runs the pat/auth/
-# machine commands (PR 2) plus the dynamic-secret/rotation/break-glass
-# commands (PR 1) through both CLIs against the SAME live server -- comparing
-# stdout and exit codes, not mocked responses.
+# machine commands (PR 2), the dynamic-secret/rotation/break-glass commands
+# (PR 1), and the project/user commands (PR 6) through both CLIs against the
+# SAME live server -- comparing stdout and exit codes, not mocked responses.
 #
 # This is a manual verification tool (like PR 0's own "exercised against a
 # real running server ... not just unit tests"), not a CI gate: it needs to
@@ -316,6 +316,82 @@ sed -E 's/(old|new)-machine-1/M/' "$RESULTS/old_m_revoke.raw" > "$RESULTS/old_m_
 sed -E 's/(old|new)-machine-1/M/' "$RESULTS/new_m_revoke.raw" > "$RESULTS/new_m_revoke.norm"
 check "machine revoke (normalized)" "$RESULTS/old_m_revoke.norm" "$RESULTS/new_m_revoke.norm"
 
+# ── project (ADR-108 PR 6) ───────────────────────────────────────────────────
+run_old project create --name old-proj-1 > "$RESULTS/old_p_create.raw" 2>&1
+run_new project create --name new-proj-1 > "$RESULTS/new_p_create.raw" 2>&1
+sed -E 's/(old|new)-proj-1/P/; s/id=[0-9]+/id=N/' "$RESULTS/old_p_create.raw" > "$RESULTS/old_p_create.norm"
+sed -E 's/(old|new)-proj-1/P/; s/id=[0-9]+/id=N/' "$RESULTS/new_p_create.raw" > "$RESULTS/new_p_create.norm"
+check "project create (normalized format)" "$RESULTS/old_p_create.norm" "$RESULTS/new_p_create.norm"
+
+run_old project list > "$RESULTS/old_p_list.raw" 2>&1
+run_new project list > "$RESULTS/new_p_list.raw" 2>&1
+check "project list (same underlying projects)" "$RESULTS/old_p_list.raw" "$RESULTS/new_p_list.raw"
+
+run_old project describe old-proj-1 > "$RESULTS/old_p_desc.raw" 2>&1
+run_new project describe new-proj-1 > "$RESULTS/new_p_desc.raw" 2>&1
+sed -E 's/(old|new)-proj-1/P/; s/id=[0-9]+/id=N/' "$RESULTS/old_p_desc.raw" > "$RESULTS/old_p_desc.norm"
+sed -E 's/(old|new)-proj-1/P/; s/id=[0-9]+/id=N/' "$RESULTS/new_p_desc.raw" > "$RESULTS/new_p_desc.norm"
+check "project describe (normalized)" "$RESULTS/old_p_desc.norm" "$RESULTS/new_p_desc.norm"
+
+run_old project hygiene 1 > "$RESULTS/old_p_hyg.raw" 2>&1
+run_new project hygiene 1 > "$RESULTS/new_p_hyg.raw" 2>&1
+check "project hygiene" "$RESULTS/old_p_hyg.raw" "$RESULTS/new_p_hyg.raw"
+
+run_old project env list --project old-proj-1 > "$RESULTS/old_p_envlist.raw" 2>&1
+run_new project env list --project new-proj-1 > "$RESULTS/new_p_envlist.raw" 2>&1
+sed -E 's/(old|new)-proj-1/P/' "$RESULTS/old_p_envlist.raw" > "$RESULTS/old_p_envlist.norm"
+sed -E 's/(old|new)-proj-1/P/' "$RESULTS/new_p_envlist.raw" > "$RESULTS/new_p_envlist.norm"
+check "project env list (normalized)" "$RESULTS/old_p_envlist.norm" "$RESULTS/new_p_envlist.norm"
+
+run_old project env create --project old-proj-1 --name old-env-1 > "$RESULTS/old_p_envcreate.raw" 2>&1
+run_new project env create --project new-proj-1 --name new-env-1 > "$RESULTS/new_p_envcreate.raw" 2>&1
+sed -E 's/(old|new)-env-1/E/; s/id=[0-9]+/id=N/' "$RESULTS/old_p_envcreate.raw" > "$RESULTS/old_p_envcreate.norm"
+sed -E 's/(old|new)-env-1/E/; s/id=[0-9]+/id=N/' "$RESULTS/new_p_envcreate.raw" > "$RESULTS/new_p_envcreate.norm"
+check "project env create (normalized)" "$RESULTS/old_p_envcreate.norm" "$RESULTS/new_p_envcreate.norm"
+
+# ── user (ADR-108 PR 6) ──────────────────────────────────────────────────────
+run_old user create --username old-user-1 --email old-user-1@parity-check.test --password 'ParityCheck-Us3r-Pass!' > "$RESULTS/old_u_create.raw" 2>&1
+run_new user create --username new-user-1 --email new-user-1@parity-check.test --password 'ParityCheck-Us3r-Pass!' > "$RESULTS/new_u_create.raw" 2>&1
+sed -E 's/(old|new)-user-1/U/; s/id=[0-9]+/id=N/' "$RESULTS/old_u_create.raw" > "$RESULTS/old_u_create.norm"
+sed -E 's/(old|new)-user-1/U/; s/id=[0-9]+/id=N/' "$RESULTS/new_u_create.raw" > "$RESULTS/new_u_create.norm"
+check "user create (normalized format)" "$RESULTS/old_u_create.norm" "$RESULTS/new_u_create.norm"
+
+run_old user list > "$RESULTS/old_u_list.raw" 2>&1
+run_new user list > "$RESULTS/new_u_list.raw" 2>&1
+check "user list (same underlying users)" "$RESULTS/old_u_list.raw" "$RESULTS/new_u_list.raw"
+
+old_user_id=$(run_old user list | awk '/old-user-1/{print $1}')
+new_user_id=$(run_new user list | awk '/new-user-1/{print $1}')
+
+run_old user get --id "$old_user_id" > "$RESULTS/old_u_get.raw" 2>&1
+run_new user get --id "$new_user_id" > "$RESULTS/new_u_get.raw" 2>&1
+sed -E "s/$old_user_id/N/; s/(old|new)-user-1/U/; s/[0-9]{4}-[0-9]{2}-[0-9]{2}[^ ]*/TIMESTAMP/g" "$RESULTS/old_u_get.raw" > "$RESULTS/old_u_get.norm"
+sed -E "s/$new_user_id/N/; s/(old|new)-user-1/U/; s/[0-9]{4}-[0-9]{2}-[0-9]{2}[^ ]*/TIMESTAMP/g" "$RESULTS/new_u_get.raw" > "$RESULTS/new_u_get.norm"
+check "user get --id (normalized)" "$RESULTS/old_u_get.norm" "$RESULTS/new_u_get.norm"
+
+run_old user suspend --id "$old_user_id" --by admin@parity-check.test > "$RESULTS/old_u_suspend.raw" 2>&1
+run_new user suspend --id "$new_user_id" --by admin@parity-check.test > "$RESULTS/new_u_suspend.raw" 2>&1
+sed -E "s/$old_user_id/N/g; s/(old|new)-user-1/U/g" "$RESULTS/old_u_suspend.raw" > "$RESULTS/old_u_suspend.norm"
+sed -E "s/$new_user_id/N/g; s/(old|new)-user-1/U/g" "$RESULTS/new_u_suspend.raw" > "$RESULTS/new_u_suspend.norm"
+check "user suspend (normalized)" "$RESULTS/old_u_suspend.norm" "$RESULTS/new_u_suspend.norm"
+
+run_old user reactivate --id "$old_user_id" --by admin@parity-check.test > "$RESULTS/old_u_react.raw" 2>&1
+run_new user reactivate --id "$new_user_id" --by admin@parity-check.test > "$RESULTS/new_u_react.raw" 2>&1
+sed -E "s/$old_user_id/N/g; s/(old|new)-user-1/U/g" "$RESULTS/old_u_react.raw" > "$RESULTS/old_u_react.norm"
+sed -E "s/$new_user_id/N/g; s/(old|new)-user-1/U/g" "$RESULTS/new_u_react.raw" > "$RESULTS/new_u_react.norm"
+check "user reactivate (normalized)" "$RESULTS/old_u_react.norm" "$RESULTS/new_u_react.norm"
+
+run_old user revoke-sessions --id "$old_user_id" --by admin@parity-check.test > "$RESULTS/old_u_revoke.raw" 2>&1
+run_new user revoke-sessions --id "$new_user_id" --by admin@parity-check.test > "$RESULTS/new_u_revoke.raw" 2>&1
+sed -E "s/$old_user_id/N/g; s/(old|new)-user-1/U/g" "$RESULTS/old_u_revoke.raw" > "$RESULTS/old_u_revoke.norm"
+sed -E "s/$new_user_id/N/g; s/(old|new)-user-1/U/g" "$RESULTS/new_u_revoke.raw" > "$RESULTS/new_u_revoke.norm"
+check "user revoke-sessions (normalized)" "$RESULTS/old_u_revoke.norm" "$RESULTS/new_u_revoke.norm"
+
+run_old user delete --id "$old_user_id" --by admin@parity-check.test --force > "$RESULTS/old_u_delete.raw" 2>&1
+run_new user delete --id "$new_user_id" --by admin@parity-check.test --force > "$RESULTS/new_u_delete.raw" 2>&1
+sed -E "s/$old_user_id/N/g; s/(old|new)-user-1/U/g" "$RESULTS/old_u_delete.raw" > "$RESULTS/old_u_delete.norm"
+sed -E "s/$new_user_id/N/g; s/(old|new)-user-1/U/g" "$RESULTS/new_u_delete.raw" > "$RESULTS/new_u_delete.norm"
+check "user delete (normalized)" "$RESULTS/old_u_delete.norm" "$RESULTS/new_u_delete.norm"
 # ── dynamic-secret, rotation, break-glass (ADR-108 PR 1) ──────────────────────
 # These need a numeric project id (unlike machine's --project <name>).
 PROJECT_ID=$(run_old project list | awk '$2=="default"{print $1; exit}')

@@ -159,6 +159,13 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getProjectSecretsInventoryCSV":      reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/secrets/inventory.csv
 	"getSecretsInventoryCSV":             reasonSchemaNotYetWritten, // get /api/v1/secrets/inventory.csv
 	"sendComplianceDigest":               reasonSchemaNotYetWritten, // post /api/v1/compliance/digest/send
+	"cloneEnvironment":                   reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/environments/{envId}/clone
+	"getProjectHealth":                   reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/health
+	"getProjectHygiene":                  reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/hygiene
+	"getProjectStats":                    reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/stats
+	"getUserByEmail":                     reasonSchemaNotYetWritten, // get /api/v1/users/by-email
+	"revokeUserSessions":                 reasonSchemaNotYetWritten, // post /api/v1/users/{id}/revoke-sessions
+	"suspendInactiveUsers":               reasonSchemaNotYetWritten, // post /api/v1/admin/jobs/suspend-inactive-users
 }
 
 // outOfScopeRegistry lists every operationId that will never be enforced,

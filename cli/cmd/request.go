@@ -129,7 +129,7 @@ func fetchAccessRequest(ctx context.Context, client *apiclient.ClientWithRespons
 	return requestAccessRequest{}, fmt.Errorf("access request %d not found in project (id=%d)", reqID, projectID)
 }
 
-func remoteUserLabel(ctx context.Context, client *apiclient.ClientWithResponses, userID uint) string {
+func requestUserLabel(ctx context.Context, client *apiclient.ClientWithResponses, userID uint) string {
 	resp, err := client.GetUserWithResponse(ctx, int(userID))
 	if err != nil || resp.StatusCode() != 200 {
 		return fmt.Sprintf("#%d", userID)
@@ -261,7 +261,7 @@ func runRequestList(_ *cobra.Command, _ []string) error {
 			secretCol = fmt.Sprintf("#%d", *req.SecretID)
 		}
 		fmt.Printf("%-6d %-24s %-14s %-14s %-11s %-10s %s\n",
-			req.ID, remoteUserLabel(ctx, client, req.UserID), dashIfEmpty(req.SuggestedRole),
+			req.ID, requestUserLabel(ctx, client, req.UserID), dashIfEmpty(req.SuggestedRole),
 			dashIfEmpty(req.GrantedRole), req.State, secretCol, dashIfEmpty(req.Reason))
 	}
 	return nil
@@ -373,7 +373,7 @@ func runRequestReview(_ *cobra.Command, _ []string) error { // NOSONAR -- cognit
 	if err != nil {
 		return err
 	}
-	requesterLabel := remoteUserLabel(ctx, client, existing.UserID)
+	requesterLabel := requestUserLabel(ctx, client, existing.UserID)
 	fmt.Printf("Resolved access request %d in project %q: requester %s, state=%s.\n",
 		requestReviewID, requestReviewProject, requesterLabel, existing.State)
 

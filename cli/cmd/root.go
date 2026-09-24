@@ -29,4 +29,6 @@ func init() {
 	rootCmd.AddCommand(notificationCmd)
 	rootCmd.AddCommand(accessReviewCmd)
 	rootCmd.AddCommand(requestCmd)
+	rootCmd.AddCommand(projectCmd)
+	rootCmd.AddCommand(userCmd)
 }

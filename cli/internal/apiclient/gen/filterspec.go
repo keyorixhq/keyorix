@@ -143,6 +143,20 @@ var keptPaths = []string{
 	"/api/v1/admin/jobs/token-expiry-check",
 	// PR 3 (docs/cli-split-inventory.md §7) -- rbac, group, invite.
 	"/api/v1/users",
+	// PR 6 (docs/cli-split-inventory.md §7) -- project, user.
+	"/api/v1/projects/{id}/stats",
+	"/api/v1/projects/{id}/hygiene",
+	"/api/v1/projects/{id}/health",
+	"/api/v1/projects/{id}/environments/{envId}/clone",
+	"/api/v1/environments/{id}",
+	"/api/v1/users/by-email",
+	"/api/v1/users/{id}/suspend",
+	"/api/v1/users/{id}/reactivate",
+	"/api/v1/users/{id}/require-password-reset",
+	"/api/v1/users/{id}/revoke-sessions",
+	"/api/v1/users/{id}/resend-setup-link",
+	"/api/v1/admin/jobs/suspend-inactive-users",
+	// PR 3 (docs/cli-split-inventory.md §7) -- rbac, group, invite.
 	"/api/v1/users/{id}/roles",
 	"/api/v1/roles",
 	"/api/v1/roles/{id}/permissions",

@@ -1112,6 +1112,15 @@ type UpdateAnomalyConfigJSONBody struct {
 	QuarantineHours  *int     `json:"quarantine_hours,omitempty"`
 }
 
+// SuspendInactiveUsersJSONBody defines parameters for SuspendInactiveUsers.
+type SuspendInactiveUsersJSONBody struct {
+	// DryRun Preview which users would be suspended without making changes.
+	DryRun *bool `json:"dry_run,omitempty"`
+
+	// InactiveDays Inactivity threshold in days (must be > 0).
+	InactiveDays int `json:"inactive_days"`
+}
+
 // CreateAlertEscalationPolicyJSONBody defines parameters for CreateAlertEscalationPolicy.
 type CreateAlertEscalationPolicyJSONBody struct {
 	// ChannelIds Comma-separated NotificationChannel IDs.
@@ -1464,7 +1473,10 @@ type ListProjectsParamsIncludeDeleted string
 // CreateProjectJSONBody defines parameters for CreateProject.
 type CreateProjectJSONBody struct {
 	Description *string `json:"description,omitempty"`
-	Name        string  `json:"name"`
+
+	// Environments Environment names to seed (default, if omitted: development, staging, production).
+	Environments *[]string `json:"environments,omitempty"`
+	Name         string    `json:"name"`
 }
 
 // CreateAccessRequestJSONBody defines parameters for CreateAccessRequest.
@@ -1538,9 +1550,20 @@ type CreateProjectEnvironmentJSONBody struct {
 	Name string `json:"name"`
 }
 
+// CloneEnvironmentJSONBody defines parameters for CloneEnvironment.
+type CloneEnvironmentJSONBody struct {
+	DestinationEnvironmentId uint32 `json:"destination_environment_id"`
+}
+
 // CopyEnvironmentSecretsJSONBody defines parameters for CopyEnvironmentSecrets.
 type CopyEnvironmentSecretsJSONBody struct {
 	TargetEnvironmentId int `json:"target_environment_id"`
+}
+
+// GetProjectHealthParams defines parameters for GetProjectHealth.
+type GetProjectHealthParams struct {
+	// Limit Maximum number of secrets to display (1-100, default 20).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // CreateProjectInvitationJSONBody defines parameters for CreateProjectInvitation.
@@ -1994,6 +2017,11 @@ type CreateUserJSONBody struct {
 	Username string  `json:"username"`
 }
 
+// GetUserByEmailParams defines parameters for GetUserByEmail.
+type GetUserByEmailParams struct {
+	Email string `form:"email" json:"email"`
+}
+
 // UpdateUserJSONBody defines parameters for UpdateUser.
 type UpdateUserJSONBody struct {
 	Active      *bool                `json:"active,omitempty"`
@@ -2026,6 +2054,9 @@ type BulkRejectAccessRequestsJSONRequestBody BulkRejectAccessRequestsJSONBody
 
 // UpdateAnomalyConfigJSONRequestBody defines body for UpdateAnomalyConfig for application/json ContentType.
 type UpdateAnomalyConfigJSONRequestBody UpdateAnomalyConfigJSONBody
+
+// SuspendInactiveUsersJSONRequestBody defines body for SuspendInactiveUsers for application/json ContentType.
+type SuspendInactiveUsersJSONRequestBody SuspendInactiveUsersJSONBody
 
 // CreateAlertEscalationPolicyJSONRequestBody defines body for CreateAlertEscalationPolicy for application/json ContentType.
 type CreateAlertEscalationPolicyJSONRequestBody CreateAlertEscalationPolicyJSONBody
@@ -2110,6 +2141,9 @@ type ActivateBreakGlassJSONRequestBody ActivateBreakGlassJSONBody
 
 // CreateProjectEnvironmentJSONRequestBody defines body for CreateProjectEnvironment for application/json ContentType.
 type CreateProjectEnvironmentJSONRequestBody CreateProjectEnvironmentJSONBody
+
+// CloneEnvironmentJSONRequestBody defines body for CloneEnvironment for application/json ContentType.
+type CloneEnvironmentJSONRequestBody CloneEnvironmentJSONBody
 
 // CopyEnvironmentSecretsJSONRequestBody defines body for CopyEnvironmentSecrets for application/json ContentType.
 type CopyEnvironmentSecretsJSONRequestBody CopyEnvironmentSecretsJSONBody
