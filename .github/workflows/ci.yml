@@ -475,6 +475,12 @@ jobs:
           # re-discovering that the hard way on every future ci.yml/go.mod
           # change.
           timeout=480s
+          # internal/storage/store alone runs longer than 480s even with -short (test-suite
+          # gives it two 1800s legs), so any PR whose affected set includes it timed out
+          # (#2054). Give the quick tier the 1800s clock whenever that package is selected.
+          if echo "$pkgs" | grep -qx 'github.com/keyorixhq/keyorix/internal/storage/store'; then
+            timeout=1800s
+          fi
           if [ "$pkgs" = "FULL" ]; then
             echo "Fallback trigger fired (go.mod/go.sum/.github/ or internal/testutil/ changed) -- running the full root-module package list."
             pkgs=$(go list ./... | grep -vE '^github\.com/keyorixhq/keyorix/(cli|operator)(/|$)')
