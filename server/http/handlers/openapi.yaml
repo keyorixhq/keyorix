@@ -42,6 +42,7 @@ tags:
   - {name: Secrets, description: "Secret lifecycle, versions, usage, risk"}
   - {name: Shares, description: Secret sharing}
   - {name: RotationPolicies, description: Rotation policies & status}
+  - {name: DynamicSecrets, description: On-demand database/cloud credentials (ADR-035)}
   - {name: Users, description: User management & impersonation}
   - {name: Groups, description: Groups}
   - {name: Roles, description: Roles & permissions}
@@ -675,6 +676,60 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
 
+  /api/v1/projects/{id}/rotation-order:
+    get:
+      tags: [RotationPolicies]
+      summary: Print a safe rotation sequence for a project's dependency graph (ADR-052)
+      description: >-
+        A topological sort of the project's secret dependency graph: each secret
+        is listed before anything that depends on it. Added for ADR-108 PR 1
+        (thin CLI `rotation order`) — this route existed and was already called
+        by the old CLI's remote mode; it was simply undocumented in this spec
+        until now.
+      operationId: getProjectRotationOrder
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+      responses:
+        '200':
+          description: Envelope `{success, data, message}`. `data` is a RotationOrder.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data: {$ref: '#/components/schemas/RotationOrder'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}/rotation-plan:
+    get:
+      tags: [RotationPolicies]
+      summary: Print an automated rotation plan (dependency-safe waves, by urgency, ADR-053)
+      description: >-
+        A project's overdue/due-soon secrets batched into dependency-safe waves,
+        prioritised by urgency and annotated with why. Added for ADR-108 PR 1
+        (thin CLI `rotation plan`) — see getProjectRotationOrder above.
+      operationId: getProjectRotationPlan
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+      responses:
+        '200':
+          description: Envelope `{success, data, message}`. `data` is a RotationPlan.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data: {$ref: '#/components/schemas/RotationPlan'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
   /api/v1/projects/{id}/access-review:
     get:
       tags: [Projects]
@@ -914,7 +969,17 @@ paths:
                 justification: {type: string, description: "Written reason (required)"}
                 ttl: {type: string, description: "Optional grant-lifetime override, a Go duration (e.g. 2h); capped at the server max"}
       responses:
-        '201': {description: "Envelope {data}. data: {activation}."}
+        '201':
+          description: "Envelope {data}. data: {activation}."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      activation: {$ref: '#/components/schemas/BreakGlassActivation'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -929,7 +994,20 @@ paths:
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
       responses:
-        '200': {description: "Envelope {data}. data: {activations[] of {id, user_id, role_name, justification, state, expires_at, created_at}, count}."}
+        '200':
+          description: "Envelope {data}. data: {activations[] of {id, user_id, role_name, justification, state, expires_at, created_at}, count}."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      activations:
+                        type: array
+                        items: {$ref: '#/components/schemas/BreakGlassActivation'}
+                      count: {type: integer}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -1167,6 +1245,15 @@ paths:
       responses:
         '200':
           description: "Envelope {data, message}. data.environments is an array of environment objects."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      environments: {type: array, items: {$ref: '#/components/schemas/Environment'}}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
     post:
@@ -1250,6 +1337,15 @@ paths:
       responses:
         '200':
           description: Envelope with `data.invitations` (array of invitation objects).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      invitations: {type: array, items: {$ref: '#/components/schemas/ProjectInvitation'}}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -1276,6 +1372,17 @@ paths:
           description: >-
             Envelope with `data.invitation` plus `data.setup_link`
             (or `data.delivery_error` when the link could not be delivered).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      invitation: {$ref: '#/components/schemas/ProjectInvitation'}
+                      setup_link: {$ref: '#/components/schemas/ProvisionSetupResult'}
+                      delivery_error: {type: string, description: "Set instead of setup_link when the invitation was created but the link could not be delivered."}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -1292,6 +1399,13 @@ paths:
       responses:
         '200':
           description: Envelope with null `data` and a confirmation message.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {nullable: true}
+                  message: {type: string}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
@@ -1309,6 +1423,15 @@ paths:
       responses:
         '200':
           description: Envelope with `data.setup_link` (the reissued accept link).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      setup_link: {$ref: '#/components/schemas/ProvisionSetupResult'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
@@ -2278,6 +2401,293 @@ paths:
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
 
+  /api/v1/dynamic-secrets/configs:
+    get:
+      tags: [DynamicSecrets]
+      summary: List dynamic-secret configs
+      description: >-
+        List dynamic-secret configs, optionally filtered by project/environment.
+        Never includes the encrypted admin DSN. Added for ADR-108 PR 1 (thin CLI
+        `dynamic-secret list`) — this route existed and was already called by the
+        old CLI's remote mode; it was simply undocumented in this spec until now.
+      operationId: listDynamicSecretConfigs
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: project_id, in: query, schema: {type: integer}}
+        - {name: environment_id, in: query, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{success, data, message}`. `data` is the array of sanitized configs (never the admin DSN).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: array
+                    items: {$ref: '#/components/schemas/DynamicSecretConfig'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [DynamicSecrets]
+      summary: Create a dynamic-secret config
+      description: >-
+        Register a target backend (database DSN, cloud IAM, etc.) that this
+        config can mint short-lived credentials against. Added for ADR-108 PR 1
+        (thin CLI `dynamic-secret create`) — see listDynamicSecretConfigs above.
+      operationId: createDynamicSecretConfig
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, project_id, environment_id, backend_type, admin_dsn, creation_template]
+              properties:
+                name: {type: string}
+                project_id: {type: integer}
+                environment_id: {type: integer}
+                backend_type: {type: string}
+                admin_dsn: {type: string, description: "Plaintext admin DSN; encrypted at rest, never echoed back"}
+                creation_template: {type: string}
+                default_ttl_seconds: {type: integer}
+                max_ttl_seconds: {type: integer}
+                max_active_leases: {type: integer}
+                classification: {type: string, enum: ['', public, internal, confidential, restricted]}
+      responses:
+        '200':
+          description: Envelope `{success, data, message}`. `data` is the sanitized created config.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data: {$ref: '#/components/schemas/DynamicSecretConfig'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/dynamic-secrets/configs/{id}:
+    get:
+      tags: [DynamicSecrets]
+      summary: Get a dynamic-secret config
+      description: >-
+        Return a single sanitized config by ID. Added for ADR-108 PR 1 (thin CLI
+        `dynamic-secret get-config`) — see listDynamicSecretConfigs above.
+      operationId: getDynamicSecretConfig
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{success, data, message}`. `data` is the sanitized config.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data: {$ref: '#/components/schemas/DynamicSecretConfig'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/dynamic-secrets/configs/{id}/classification:
+    patch:
+      tags: [DynamicSecrets]
+      summary: Set a dynamic-secret config's data-classification label
+      description: >-
+        Added for ADR-108 PR 1 (thin CLI `dynamic-secret classify`) — see
+        listDynamicSecretConfigs above.
+      operationId: classifyDynamicSecretConfig
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                classification: {type: string, enum: ['', public, internal, confidential, restricted]}
+      responses:
+        '200':
+          description: Envelope `{success, data, message}`. `data` is the updated sanitized config.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data: {$ref: '#/components/schemas/DynamicSecretConfig'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/dynamic-secrets/configs/{id}/issue:
+    post:
+      tags: [DynamicSecrets]
+      summary: Issue a short-lived credential (lease) from a config
+      description: >-
+        Mints a new credential against the config's backend and returns it once
+        (it is never retrievable again). Added for ADR-108 PR 1 (thin CLI
+        `dynamic-secret issue`) — see listDynamicSecretConfigs above.
+      operationId: issueDynamicSecretLease
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ttl_seconds: {type: integer}
+      responses:
+        '200':
+          description: >-
+            Envelope `{success, data, message}`. `data`: `{lease_id, username?,
+            password?, fields?, expires_at}` — the one-time credential.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data: {$ref: '#/components/schemas/DynamicSecretIssuedLease'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '502': {$ref: '#/components/responses/Error'}
+  /api/v1/dynamic-secrets/configs/{id}/leases:
+    get:
+      tags: [DynamicSecrets]
+      summary: List a config's leases
+      description: >-
+        Added for ADR-108 PR 1 (thin CLI `dynamic-secret leases`) — see
+        listDynamicSecretConfigs above. Never includes the issued credential
+        itself (that is shown once, at issue time, and never again).
+      operationId: listDynamicSecretLeases
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{success, data, message}`. `data` is the array of sanitized leases.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: array
+                    items: {$ref: '#/components/schemas/DynamicSecretLease'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/dynamic-secrets/configs/{id}/revoke-all:
+    post:
+      tags: [DynamicSecrets]
+      summary: Revoke every active lease issued from a config
+      description: >-
+        The incident kill switch. Added for ADR-108 PR 1 (thin CLI
+        `dynamic-secret revoke-all`) — see listDynamicSecretConfigs above.
+      operationId: revokeAllDynamicSecretLeases
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: "Envelope `{success, data, message}`. `data`: `{config_id, revoked, failed}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: object
+                    properties:
+                      config_id: {type: integer, format: uint32}
+                      revoked: {type: integer}
+                      failed: {type: integer}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '502': {$ref: '#/components/responses/Error'}
+  /api/v1/dynamic-secrets/leases/{leaseID}/renew:
+    post:
+      tags: [DynamicSecrets]
+      summary: Extend a lease's expiry
+      description: >-
+        Added for ADR-108 PR 1 (thin CLI `dynamic-secret renew`) — see
+        listDynamicSecretConfigs above.
+      operationId: renewDynamicSecretLease
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: leaseID, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ttl_seconds: {type: integer}
+      responses:
+        '200':
+          description: "Envelope `{success, data, message}`. `data`: `{lease_id, expires_at}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: object
+                    properties:
+                      lease_id: {type: string}
+                      expires_at: {type: string}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '502': {$ref: '#/components/responses/Error'}
+  /api/v1/dynamic-secrets/leases/{leaseID}/revoke:
+    post:
+      tags: [DynamicSecrets]
+      summary: Revoke a single lease
+      description: >-
+        Added for ADR-108 PR 1 (thin CLI `dynamic-secret revoke`) — see
+        listDynamicSecretConfigs above.
+      operationId: revokeDynamicSecretLease
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: leaseID, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: "Envelope `{success, data, message}`. `data`: `{lease_id, status}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: object
+                    properties:
+                      lease_id: {type: string}
+                      status: {type: string}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '502': {$ref: '#/components/responses/Error'}
+
   /api/v1/shares:
     get:
       tags: [Shares]
@@ -2352,6 +2762,15 @@ paths:
       responses:
         '200':
           description: Envelope `{data, message}`. `data` is the rotation policies array.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: array
+                    items: {$ref: '#/components/schemas/RotationPolicy'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
     post:
@@ -2379,6 +2798,13 @@ paths:
       responses:
         '201':
           description: Envelope `{data, message}`. `data` is the created rotation policy.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data: {$ref: '#/components/schemas/RotationPolicy'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -2396,6 +2822,24 @@ paths:
           description: >-
             Envelope `{data, message}`. `data` lists secrets that are overdue or
             approaching their rotation deadline.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: array
+                    nullable: true
+                    description: >-
+                      null (not []) when EvaluateRotationPolicies' `var
+                      evaluations []*RotationPolicyEvaluation` never gets
+                      appended to -- e.g. no active policy covers anything
+                      currently overdue or approaching. Verified against the
+                      real handler, not asserted: this is exactly the shape
+                      TestContractPR1_EvaluateRotationPolicies
+                      (openapi_contract_pr1_test.go) exercises.
+                    items: {$ref: '#/components/schemas/RotationPolicyEvaluation'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
   /api/v1/rotation-policies/status:
@@ -2426,6 +2870,13 @@ paths:
       responses:
         '200':
           description: Envelope `{data, message}`. `data` is the rotation policy.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data: {$ref: '#/components/schemas/RotationPolicy'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
@@ -2470,6 +2921,35 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/rotation-plan:
+    get:
+      tags: [RotationPolicies]
+      summary: Get the install-wide rotation plan (ADR-053)
+      description: >-
+        Every project's overdue/due-soon secrets aggregated into a roll-up,
+        most-pressing project first. Gated by GLOBAL secrets.read (the same
+        access level as listing all projects) — deliberately a step up from
+        the per-project route above, documented, not a gap (docs/cli-split-
+        inventory.md §2.4). Added for ADR-108 PR 1 (thin CLI `rotation plan
+        --all-projects`) — see getProjectRotationOrder above.
+      operationId: getDeploymentRotationPlan
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: >-
+            Envelope `{success, data, message}`. `data` is a
+            DeploymentRotationPlan.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data: {$ref: '#/components/schemas/DeploymentRotationPlan'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
   /api/v1/users:
     get:
       tags: [Users]
@@ -2489,6 +2969,19 @@ paths:
       responses:
         '200':
           description: "Envelope `data` has `users[]` (each with id, username, email, display_name, project_count, active_project_count), `page`, `page_size`, `total`, `total_pages`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      users: {type: array, items: {$ref: '#/components/schemas/UserSummary'}}
+                      page: {type: integer}
+                      page_size: {type: integer}
+                      total: {type: integer}
+                      total_pages: {type: integer}
         '401': {$ref: '#/components/responses/Error'}
     post:
       tags: [Users]
@@ -2693,6 +3186,15 @@ paths:
       responses:
         '200':
           description: "Envelope `data.roles[]` with id, name."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      roles: {type: array, items: {$ref: '#/components/schemas/RoleRef'}}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
     put:
@@ -2789,6 +3291,16 @@ paths:
       responses:
         '200':
           description: "Envelope `data` has `groups[]` (id, name, description) and `total`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      groups: {type: array, items: {$ref: '#/components/schemas/Group'}}
+                      total: {type: integer}
         '401': {$ref: '#/components/responses/Error'}
     post:
       tags: [Groups]
@@ -2809,6 +3321,12 @@ paths:
       responses:
         '201':
           description: "Envelope `data` is the created group (id, name, description)."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/Group'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
@@ -2825,6 +3343,12 @@ paths:
       responses:
         '200':
           description: "Envelope `data` is the group (id, name, description)."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/Group'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
     put:
@@ -2844,6 +3368,12 @@ paths:
       responses:
         '200':
           description: "Envelope `data` is the updated group."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/Group'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
@@ -2870,6 +3400,16 @@ paths:
       responses:
         '200':
           description: "Envelope `data` has `members[]` (user objects) and `total`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      members: {type: array, items: {$ref: '#/components/schemas/UserSummary'}}
+                      total: {type: integer}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
     post:
@@ -2894,6 +3434,17 @@ paths:
       responses:
         '200':
           description: "Envelope `data` is `{group_id, user_id, project_id}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      group_id: {type: integer}
+                      user_id: {type: integer}
+                      project_id: {type: integer}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
@@ -2902,6 +3453,7 @@ paths:
     parameters:
       - {name: id, in: path, required: true, schema: {type: integer}}
       - {name: userId, in: path, required: true, schema: {type: integer}}
+      - {name: project_id, in: query, schema: {type: integer}, description: "Scope to the same project the membership was added with (0/omit = global membership). Fixed missing from this spec (ADR-108 PR 3) -- the real handler (groups_members.go's RemoveGroupMember) has always read this query param; every other caller sent it, this spec just never documented it."}
     delete:
       tags: [Groups]
       summary: Remove group member
@@ -2924,6 +3476,16 @@ paths:
       responses:
         '200':
           description: "Envelope `data` is `{group_id, roles}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      group_id: {type: integer}
+                      roles: {type: array, nullable: true, items: {$ref: '#/components/schemas/GroupRoleGrant'}, description: "nil (JSON null), not [], when the group has no role grants."}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
     post:
@@ -2947,6 +3509,17 @@ paths:
       responses:
         '201':
           description: "Envelope `data` is `{group_id, role_id}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      group_id: {type: integer}
+                      role_id: {type: integer}
+                      expires_at: {type: string, format: date-time, nullable: true}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
@@ -2979,6 +3552,16 @@ paths:
       responses:
         '200':
           description: "Envelope `data` has `roles[]` (with permissions) and `total`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      roles: {type: array, items: {$ref: '#/components/schemas/RoleWithPermissions'}}
+                      total: {type: integer}
         '401': {$ref: '#/components/responses/Error'}
     post:
       tags: [Roles]
@@ -3062,6 +3645,17 @@ paths:
       responses:
         '200':
           description: "Envelope `data` is `{role_id, role_name, permissions}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      role_id: {type: integer}
+                      role_name: {type: string}
+                      permissions: {type: array, items: {$ref: '#/components/schemas/Permission'}}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
     post:
@@ -3153,6 +3747,17 @@ paths:
       responses:
         '201':
           description: "Envelope `data` is `{user_id, role_id}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      user_id: {type: integer}
+                      role_id: {type: integer}
+                      expires_at: {type: string, format: date-time, nullable: true}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
@@ -3317,6 +3922,48 @@ paths:
             Envelope {data, message}. data has logs[] (each: id, action, actor_user_id,
             target_user_id, group_id, role_id, permission_id, project_id, details,
             created_at), plus page, page_size, total, total_pages.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      logs: {type: array, items: {$ref: '#/components/schemas/RBACAuditLogEntry'}}
+                      total: {type: integer}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/rbac/permission-matrix:
+    get:
+      tags: [Roles]
+      summary: Export the deployment-wide RBAC permission matrix
+      description: >-
+        Return every (user, role, permission, scope) tuple in the deployment, for
+        SOC2/ISO27001-style access reviews (`keyorix rbac export-matrix`). Relocated
+        out of the /system proxy tier to /api/v1/rbac/permission-matrix (#G79);
+        added to this spec for ADR-108 Phase 3 PR 3 -- it had no OpenAPI entry at all
+        before, despite being a real, routed, roles.read-gated endpoint.
+      operationId: getPermissionMatrix
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: project_id, in: query, schema: {type: integer}, description: "Filter to one project (0/omit = every project, including global grants)."}
+        - {name: format, in: query, schema: {type: string, enum: [csv]}, description: "When 'csv', return text/csv instead of the JSON envelope."}
+      responses:
+        '200':
+          description: "Envelope `data` is `{rows, total}` (JSON mode) or a CSV attachment (format=csv)."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      rows: {type: array, nullable: true, items: {$ref: '#/components/schemas/PermissionMatrixRow'}, description: "nil (JSON null), not [], when there are no grants to report."}
+                      total: {type: integer}
+            text/csv:
+              schema: {type: string, format: binary}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
   /api/v1/audit/retention:
@@ -4183,3 +4830,310 @@ components:
         machines:
           type: array
           items: {$ref: '#/components/schemas/MachineAuditRow'}
+    Group:
+      type: object
+      description: A group (server/http/handlers/groups_handler.go's groupToAPIResponse).
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        description: {type: string}
+    UserSummary:
+      type: object
+      description: >-
+        A user as returned in list/membership contexts (userToAPIResponse,
+        server/http/handlers/users_handler.go). project_count/active_project_count
+        are attached only by GET /api/v1/users (listUsers), not by
+        GET /api/v1/groups/{id}/members.
+      properties:
+        id: {type: integer}
+        username: {type: string}
+        email: {type: string}
+        display_name: {type: string}
+        active: {type: boolean}
+        account_state: {type: string}
+        external_id: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        last_login_at: {type: string, format: date-time, nullable: true}
+        deleted_at: {type: string, format: date-time, nullable: true}
+        project_count: {type: integer}
+        active_project_count: {type: integer}
+    GroupRoleGrant:
+      type: object
+      description: One role a group holds, with its time-bound expiry if any (internal/core/storage.GroupRoleGrant).
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        description: {type: string}
+        expires_at: {type: string, format: date-time, nullable: true}
+    RoleRef:
+      type: object
+      description: A minimal role reference (id, name only) -- GET /api/v1/users/{id}/roles's shape.
+      properties:
+        id: {type: integer}
+        name: {type: string}
+    Permission:
+      type: object
+      description: >-
+        A permission. internal/storage/models.Permission carries no `json:` tags,
+        so the wire keys are the bare (capitalized) Go field names, not the
+        snake_case this file uses elsewhere -- documented as such rather than as
+        an idealized snake_case shape it does not actually have. Single-word
+        field names still decode correctly into a snake_case-tagged Go client:
+        encoding/json's Unmarshal falls back to a case-insensitive match
+        ("ID" ~ "id") when no exact tag match exists.
+      properties:
+        ID: {type: integer}
+        Name: {type: string}
+        Description: {type: string}
+        Resource: {type: string}
+        Action: {type: string}
+    RoleWithPermissions:
+      type: object
+      description: >-
+        A role with its assigned permissions (internal/core.RoleWithPermissions,
+        embeds models.Role). Same untagged-model caveat as Permission above: wire
+        keys are the bare Go field names (ID, Name, Description,
+        BypassesPermissionChecks, Permissions), not snake_case.
+      properties:
+        ID: {type: integer}
+        Name: {type: string}
+        Description: {type: string}
+        BypassesPermissionChecks: {type: boolean}
+        Permissions: {type: array, items: {$ref: '#/components/schemas/Permission'}}
+    Environment:
+      type: object
+      description: >-
+        A project environment (internal/storage/models.Environment). No `json:`
+        tags on the model -- wire keys are the bare Go field names (ID,
+        ProjectID, Name, CreatedAt, UpdatedAt), not snake_case. Unlike
+        Permission/RoleWithPermissions above, ProjectID/CreatedAt/UpdatedAt do
+        NOT case-insensitively match a snake_case tag (the underscore makes
+        "project_id" a different string from "projectid"), so a generated
+        client MUST use these exact capitalized property names to decode
+        correctly.
+      properties:
+        ID: {type: integer}
+        ProjectID: {type: integer}
+        Name: {type: string}
+        CreatedAt: {type: string, format: date-time}
+        UpdatedAt: {type: string, format: date-time}
+    ProjectInvitation:
+      type: object
+      description: >-
+        A project invitation (ADR-024, internal/storage/models.ProjectInvitation).
+        No `json:` tags on the model -- wire keys are the bare Go field names
+        (ID, ProjectID, Email, ...), not snake_case. As with Environment above,
+        the multi-word field names here do not case-insensitively match a
+        snake_case tag, so a generated client must use these exact property
+        names.
+      properties:
+        ID: {type: integer}
+        ProjectID: {type: integer}
+        Email: {type: string}
+        Role: {type: string}
+        State: {type: string, enum: [pending, accepted, revoked, expired]}
+        InvitedBy: {type: integer}
+        InvitedByMachineIdentityID: {type: integer}
+        SystemRole: {type: string}
+        ExpiresAt: {type: string, format: date-time, nullable: true}
+        CreatedAt: {type: string, format: date-time}
+        AcceptedAt: {type: string, format: date-time, nullable: true}
+        RevokedAt: {type: string, format: date-time, nullable: true}
+    ProvisionSetupResult:
+      type: object
+      description: Outcome of provisioning and delivering a setup/accept link (ADR-028, internal/core.ProvisionSetupResult).
+      properties:
+        email: {type: string}
+        channel: {type: string, enum: [smtp, out_of_band, log]}
+        delivered: {type: boolean}
+        link_for_admin: {type: string, description: "Set only in out-of-band mode."}
+    RBACAuditLogEntry:
+      type: object
+      description: One RBAC audit trail entry (GET /api/v1/audit/rbac-logs).
+      properties:
+        id: {type: integer}
+        action: {type: string}
+        actor_user_id: {type: integer, nullable: true}
+        target_user_id: {type: integer, nullable: true}
+        group_id: {type: integer, nullable: true}
+        role_id: {type: integer, nullable: true}
+        permission_id: {type: integer, nullable: true}
+        project_id: {type: integer, nullable: true}
+        environment_id: {type: integer, nullable: true}
+        details: {type: string}
+        created_at: {type: string, format: date-time}
+    PermissionMatrixRow:
+      type: object
+      description: >-
+        One (user, role, permission, scope) tuple (internal/core.PermissionMatrixRow),
+        GET /api/v1/rbac/permission-matrix.
+      properties:
+        user_id: {type: integer}
+        username: {type: string}
+        email: {type: string}
+        role_id: {type: integer}
+        role_name: {type: string}
+        permission_name: {type: string}
+        resource: {type: string}
+        action: {type: string}
+        scope: {type: string, enum: [global, project, environment]}
+        project_id: {type: integer}
+        project_name: {type: string}
+        environment_id: {type: integer}
+        environment_name: {type: string}
+        expires_at: {type: string, format: date-time, nullable: true}
+    BreakGlassActivation:
+      type: object
+      description: One emergency-access self-grant (ADR-108 PR 1 addition).
+      properties:
+        id: {type: integer, format: uint32}
+        user_id: {type: integer, format: uint32}
+        role_name: {type: string}
+        justification: {type: string}
+        state: {type: string, enum: [active, expired, revoked]}
+        # Deliberately plain `string`, not `format: date-time`: the CLI passes
+        # these straight through to the terminal, and a date-time format would
+        # make oapi-codegen generate a time.Time field whose default String()
+        # rendering would not byte-match the server's original RFC3339 text.
+        expires_at: {type: string}
+        created_at: {type: string}
+    RotationPolicy:
+      type: object
+      description: >-
+        A secret-rotation policy (ADR-108 PR 1 addition). Snake_case, matching this
+        spec's usual convention and the model's real wire format: models.RotationPolicy
+        (internal/storage/models/models.go) previously had no `json:` tags on most
+        fields, so encoding/json's default marshaling emitted the bare Go field names
+        verbatim (ID, Name, ProjectID, IntervalDays, ...) instead -- a PascalCase wire
+        format silently decoded by any snake_case-tagged consumer (Go's
+        case-insensitive JSON fallback matches "ID"~"id" but not
+        "ProjectID"~"project_id", an extra underscore is not a case difference) as the
+        zero value for every multi-word field. Fixed at the source (the model itself
+        now carries these exact tags) rather than documented here as a PascalCase
+        exception -- see the model's own doc comment for the full writeup, and
+        docs/cli-split-inventory.md §7 PR 1's closure note for how this was found.
+      properties:
+        id: {type: integer, format: uint32}
+        name: {type: string}
+        description: {type: string}
+        scope: {type: string, enum: [project, environment]}
+        project_id: {type: integer, format: uint32, nullable: true}
+        environment_id: {type: integer, format: uint32, nullable: true}
+        interval_days: {type: integer}
+        alert_days_before: {type: integer}
+        notify_on_breach: {type: boolean}
+        is_active: {type: boolean}
+        created_by: {type: string}
+    RotationPolicyEvaluation:
+      type: object
+      description: >-
+        One policy-covered secret's rotation posture, as returned by
+        GET /api/v1/rotation-policies/evaluate (ADR-108 PR 1 addition).
+      properties:
+        policy_name: {type: string}
+        secret_id: {type: integer, format: uint32}
+        secret_name: {type: string}
+        project_id: {type: integer, format: uint32}
+        days_overdue: {type: integer}
+        is_overdue: {type: boolean}
+        is_approaching: {type: boolean}
+    DynamicSecretConfig:
+      type: object
+      description: A registered dynamic-secret target config (ADR-108 PR 1 addition).
+      properties:
+        id: {type: integer, format: uint32}
+        name: {type: string}
+        project_id: {type: integer, format: uint32}
+        environment_id: {type: integer, format: uint32}
+        backend_type: {type: string, enum: [postgres, mysql, mongodb, redis, aws-sts, gcp, azure, kubernetes]}
+        default_ttl_seconds: {type: integer}
+        max_ttl_seconds: {type: integer}
+        classification: {type: string}
+    DynamicSecretIssuedLease:
+      type: object
+      description: >-
+        A freshly-issued dynamic-secret credential, shown once (ADR-108 PR 1 addition).
+        username/password are populated for DB/cache backends; fields carries
+        arbitrary key/value pairs for cloud-IAM backends (AWS STS, GCP, Azure,
+        Kubernetes) instead.
+      properties:
+        lease_id: {type: string}
+        username: {type: string}
+        password: {type: string}
+        fields:
+          type: object
+          additionalProperties: {type: string}
+        expires_at: {type: string}
+    DynamicSecretLease:
+      type: object
+      description: A dynamic-secret lease summary (ADR-108 PR 1 addition).
+      properties:
+        lease_id: {type: string}
+        role_name: {type: string}
+        status: {type: string, enum: [active, revoked, expired, revoke_failed]}
+        issued_at: {type: string}
+        expires_at: {type: string}
+    RotationPlanSecret:
+      type: object
+      description: One secret entry in a rotation-plan wave (ADR-108 PR 1 addition, ADR-053).
+      properties:
+        secret_id: {type: integer, format: uint32}
+        secret_name: {type: string}
+        status: {type: string, enum: [overdue, due_soon]}
+        days_overdue: {type: integer}
+        risk_band: {type: string}
+        auto_rotate: {type: boolean}
+        reasons:
+          type: array
+          items: {type: string}
+    RotationPlanWave:
+      type: object
+      description: A dependency-safe batch of secrets to rotate together (ADR-053).
+      properties:
+        index: {type: integer}
+        secrets:
+          type: array
+          items: {$ref: '#/components/schemas/RotationPlanSecret'}
+    RotationPlan:
+      type: object
+      description: A project's automated rotation plan (ADR-108 PR 1 addition, ADR-053).
+      properties:
+        project_id: {type: integer, format: uint32}
+        total_secrets: {type: integer}
+        overdue_count: {type: integer}
+        due_soon_count: {type: integer}
+        waves:
+          type: array
+          items: {$ref: '#/components/schemas/RotationPlanWave'}
+    DeploymentRotationPlan:
+      type: object
+      description: >-
+        The install-wide roll-up of every project's rotation plan (ADR-108 PR 1
+        addition, ADR-053) -- a roll-up of per-project plans, most pressing first.
+      properties:
+        projects_scanned: {type: integer}
+        projects_with_work: {type: integer}
+        total_secrets: {type: integer}
+        overdue_count: {type: integer}
+        due_soon_count: {type: integer}
+        projects:
+          type: array
+          items: {$ref: '#/components/schemas/RotationPlan'}
+    RotationOrderStep:
+      type: object
+      description: One secret in a project's safe rotation sequence (ADR-052).
+      properties:
+        secret_id: {type: integer, format: uint32}
+        secret_name: {type: string}
+    RotationOrder:
+      type: object
+      description: >-
+        A safe rotation sequence for a project's secret dependency graph
+        (ADR-108 PR 1 addition, ADR-052): each secret is listed before anything
+        that depends on it.
+      properties:
+        project_id: {type: integer, format: uint32}
+        order:
+          type: array
+          items: {$ref: '#/components/schemas/RotationOrderStep'}
