@@ -52,6 +52,25 @@ func TestSpecLoadsAndValidates(t *testing.T) {
 // real response schema to produce typed accessors, so this batch backfilled
 // schemas for these previously-schema-less (or brand new, e.g. the OIDC
 // binding trio) operations and exercises each via openapi_contract_pr2_test.go.
+//
+// The 20 rbac/group/invite operations below (plus the brand-new
+// getPermissionMatrix, which had no openapi.yaml entry at all before) were
+// added by ADR-108 PR 3 (docs/cli-split-inventory.md §7), exercised via
+// openapi_contract_pr3_test.go.
+//
+// The 18 dynamic-secret/rotation-policy/break-glass operations below were
+// added by ADR-108 PR 1 (docs/cli-split-inventory.md §7, "dynamic-secret,
+// rotation, breakglass -- 9+7+3 = 19 commands"): the thin CLI's generated
+// client needs real response schemas to produce typed accessors for these
+// routes, most of which existed and were already called by the old CLI's
+// remote mode but were entirely undocumented in this spec until now
+// (dynamic-secrets, rotation-plan/order) or had only a narrative,
+// schema-less description (rotation-policies, break-glass).
+// getRotationStatus/deleteRotationPolicy/revokeBreakGlass are deliberately
+// NOT in this batch: deleteRotationPolicy is 204 No Content (nothing to
+// schema); getRotationStatus and revokeBreakGlass stay in pendingRegistry
+// since none of PR 1's 19 commands needed a typed accessor for them beyond
+// what the envelope's bare success/message already gives the CLI.
 func TestEnforcedSetMatchesADR074(t *testing.T) {
 	want := map[string]bool{
 		"authGetSetupToken":             true,
@@ -77,6 +96,44 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		"listProjects":                  true,
 		"machineTokenHygiene":           true,
 		"patHygiene":                    true,
+		"addGroupMember":                true,
+		"assignRoleToGroup":             true,
+		"assignUserRole":                true,
+		"createGroup":                   true,
+		"createProjectInvitation":       true,
+		"getGroup":                      true,
+		"getGroupMembers":               true,
+		"getGroupRoles":                 true,
+		"getPermissionMatrix":           true,
+		"getRolePermissions":            true,
+		"getUserRolesForUser":           true,
+		"listGroups":                    true,
+		"listProjectEnvironments":       true,
+		"listProjectInvitations":        true,
+		"listRBACAuditLogs":             true,
+		"listRoles":                     true,
+		"listUsers":                     true,
+		"resendProjectInvitation":       true,
+		"revokeProjectInvitation":       true,
+		"updateGroup":                   true,
+		"activateBreakGlass":            true,
+		"listBreakGlassActivations":     true,
+		"createDynamicSecretConfig":     true,
+		"classifyDynamicSecretConfig":   true,
+		"getDynamicSecretConfig":        true,
+		"issueDynamicSecretLease":       true,
+		"listDynamicSecretConfigs":      true,
+		"listDynamicSecretLeases":       true,
+		"renewDynamicSecretLease":       true,
+		"revokeAllDynamicSecretLeases":  true,
+		"revokeDynamicSecretLease":      true,
+		"createRotationPolicy":          true,
+		"evaluateRotationPolicies":      true,
+		"getRotationPolicy":             true,
+		"listRotationPolicies":          true,
+		"getProjectRotationOrder":       true,
+		"getProjectRotationPlan":        true,
+		"getDeploymentRotationPlan":     true,
 	}
 
 	loadSpec()

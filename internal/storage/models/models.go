@@ -1747,21 +1747,35 @@ type ExternalIdentity struct {
 	LinkedAt   time.Time
 }
 
+// RotationPolicy previously had no `json:` tags on most fields, which meant its wire
+// format was whatever encoding/json's default (bare Go field name, PascalCase) produced
+// -- ID, Name, ProjectID, IntervalDays, etc. -- rather than this API's usual snake_case
+// convention every other model uses. That silently broke every consumer that assumed
+// snake_case (the old CLI's own policyView struct decodes this exact model with
+// snake_case tags; Go's case-insensitive JSON fallback matches "ID"~"id" but not
+// "ProjectID"~"project_id", so every multi-word field always decoded as its zero value
+// -- see docs/cli-split-inventory.md §7 PR 1's closure note for the full writeup, and
+// internal/cli/rotation/rotation_policy_wire_regression_test.go's
+// TestOldCLIPolicyView_DecodesRealCreateResponse/DecodesRealGetResponse for the
+// regression coverage (a real handler response decoded by the OLD CLI's own struct).
+// Adding explicit json tags here only changes the WIRE format (what
+// json.Marshal/Unmarshal produce); it does not touch GORM's column names, which come
+// from its own naming-strategy conversion of the Go field name, not from these tags.
 type RotationPolicy struct {
-	ID              uint   `gorm:"primaryKey"`
-	Name            string `gorm:"not null"`
-	Description     string
-	Scope           string `gorm:"not null;default:'environment'"` // "project" or "environment"
-	ProjectID       *uint  `gorm:"index"`
-	EnvironmentID   *uint  `gorm:"index"`
-	IntervalDays    int    `gorm:"not null"`
-	AlertDaysBefore int    `gorm:"not null;default:7"`
-	NotifyOnBreach  bool   `gorm:"not null;default:true"`
-	IsActive        bool   `gorm:"not null;default:true"`
-	CreatedBy       string `gorm:"not null"`
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	DeletedAt       gorm.DeletedAt `gorm:"index"`
+	ID              uint           `gorm:"primaryKey" json:"id"`
+	Name            string         `gorm:"not null" json:"name"`
+	Description     string         `json:"description"`
+	Scope           string         `gorm:"not null;default:'environment'" json:"scope"` // "project" or "environment"
+	ProjectID       *uint          `gorm:"index" json:"project_id"`
+	EnvironmentID   *uint          `gorm:"index" json:"environment_id"`
+	IntervalDays    int            `gorm:"not null" json:"interval_days"`
+	AlertDaysBefore int            `gorm:"not null;default:7" json:"alert_days_before"`
+	NotifyOnBreach  bool           `gorm:"not null;default:true" json:"notify_on_breach"`
+	IsActive        bool           `gorm:"not null;default:true" json:"is_active"`
+	CreatedBy       string         `gorm:"not null" json:"created_by"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+	DeletedAt       gorm.DeletedAt `gorm:"index" json:"deleted_at"`
 	// Rotation execution state — stamped by the rotation job.
 	RotationState     string     `gorm:"default:'idle'" json:"rotation_state"` // idle | pending | rotating | succeeded | failed
 	LastRotationError string     `gorm:"default:''" json:"last_rotation_error,omitempty"`
