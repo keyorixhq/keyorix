@@ -115,7 +115,7 @@ row states the expectation and the Keyorix capability that addresses it.
 | 8 | Records can be forwarded to monitoring/SIEM | Splunk HEC / Datadog / webhook push connectors | ✅ (operator-configured) |
 | 9 | Records are retained for the required period | Operator-owned PostgreSQL, no cap; coverage is demonstrable via `GET /api/v1/audit/retention` (oldest event + `meets_nis2_12_month`) | ✅ (operator-controlled) |
 | 10 | Records support incident detection | Built-in anomaly alerts + filterable/streamable audit query | ✅ |
-| 11 | Tamper resistance of records | **SHA-256 hash chain** over every audit event (ADR-029); any modification/deletion/insertion is detectable via `GET /api/v1/audit/verify`. Physical WORM/immutable storage remains operator-owned. | ✅ tamper-*evident* (physical immutability operator-owned) |
+| 11 | Tamper resistance of records | **SHA-256 hash chain** over every audit event (ADR-029); any modification/deletion/insertion is detectable via `GET /api/v1/audit/verify`, or independently — without trusting the running server — via [`keyorix-server admin verify-audit`](./OFFLINE-AUDIT-VERIFICATION.md). Physical WORM/immutable storage remains operator-owned. | ✅ tamper-*evident* (physical immutability operator-owned) |
 
 > **Scope note (tamper-evidence vs. tamper-proofing):** Keyorix hash-chains the
 > audit table (each event binds the previous event's hash — ADR-029), so any

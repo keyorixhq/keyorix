@@ -193,3 +193,35 @@ func TestResult_Escalate_NeverDowngrades(t *testing.T) {
 	assert.Equal(t, VerdictBroken, r.Verdict)
 	assert.Equal(t, "tamper", r.Reason)
 }
+
+// TestResult_ExitCode locks the exit-code contract design §6 specifies: 0
+// VALID, 1 BROKEN, 2 INDETERMINATE. server/admin/audit_verify.go relies on
+// this mapping directly; a regression here is a silent exit-code regression
+// for every caller of the cobra command.
+func TestResult_ExitCode(t *testing.T) {
+	assert.Equal(t, 0, (&Result{Verdict: VerdictValid}).ExitCode())
+	assert.Equal(t, 1, (&Result{Verdict: VerdictBroken}).ExitCode())
+	assert.Equal(t, 2, (&Result{Verdict: VerdictIndeterminate}).ExitCode())
+}
+
+func TestParseExternalAnchorBundle(t *testing.T) {
+	valid := `{"chained_events":10,"head_id":10,"head_hash":"abc123","key_version":"v1","signature":"deadbeef"}`
+	b, err := ParseExternalAnchorBundle([]byte(valid))
+	require.NoError(t, err)
+	assert.Equal(t, int64(10), b.ChainedEvents)
+	assert.Equal(t, uint64(10), b.HeadID)
+	assert.Equal(t, "abc123", b.HeadHash)
+	assert.Equal(t, "v1", b.KeyVersion)
+	assert.Equal(t, "deadbeef", b.Signature)
+
+	for _, bad := range []string{
+		"",
+		"not json",
+		`{"chained_events":10}`,              // missing head_hash/signature
+		`{"head_hash":"abc","signature":""}`, // empty signature
+		`{"head_hash":"","signature":"deadbeef"}`, // empty head_hash
+	} {
+		_, err := ParseExternalAnchorBundle([]byte(bad))
+		assert.Error(t, err, "expected %q to be rejected", bad)
+	}
+}

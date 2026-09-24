@@ -22,6 +22,7 @@ ships so you can map them onto your own compliance programme.
 |---|---|
 | [`NIS2-DORA-ISO-CONTROLS.md`](./NIS2-DORA-ISO-CONTROLS.md) | Controls statement — Keyorix technical controls mapped to NIS2, DORA, and ISO/IEC 27001:2022 Annex A control themes. |
 | [`AUDIT-LOG-PROVISIONS.md`](./AUDIT-LOG-PROVISIONS.md) | Audit-log & record-keeping provisions mapping — what Keyorix logs, how, and how it satisfies logging/record-keeping requirements (incl. a DORA-oriented checklist). |
+| [`OFFLINE-AUDIT-VERIFICATION.md`](./OFFLINE-AUDIT-VERIFICATION.md) | `keyorix-server admin verify-audit` — independently re-verifying the audit tamper-evidence chain against a database artifact, without trusting the running server. Includes the read-only PostgreSQL `GRANT` snippet auditors ask for. |
 | [`SECURITY-FAQ.md`](./SECURITY-FAQ.md) | Buyer/security-team FAQ — the questions that come up in a vendor security review. |
 | [`SECURITY-VERIFICATION.md`](./SECURITY-VERIFICATION.md) | Verification & hardening evidence — the security audits performed, issues found and fixed, surfaces verified clean, and the standing CI gates. The evidence behind the controls statement. |
 | [`ENS-CONTROLS.md`](./ENS-CONTROLS.md) | Controls mapping for Spain's Esquema Nacional de Seguridad (ENS, RD 311/2022) — the same shipped capabilities mapped to ENS measure families and security dimensions. |
