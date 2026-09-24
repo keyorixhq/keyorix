@@ -53,7 +53,7 @@ func parseSecretArg(s string) (int, error) {
 // and process listings, naming the FLAG only — it must never print the flag's value.
 func warnInsecureFlag(cmd *cobra.Command, flagName, advice string) {
 	if cmd.Flags().Changed(flagName) {
-		fmt.Fprintf(cmdErrWriter(cmd), "WARNING: --%s is insecure (visible in shell history and process listings); %s\n", flagName, advice)
+		_, _ = fmt.Fprintf(cmdErrWriter(cmd), "WARNING: --%s is insecure (visible in shell history and process listings); %s\n", flagName, advice)
 	}
 }
 
