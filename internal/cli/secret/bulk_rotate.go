@@ -46,9 +46,12 @@ Without --names the command rotates every matching secret in the project; use
 --confirm is required (or pass --names to rotate a named subset): this is a bulk
 destructive operation and an accidental wide rotation cannot be undone.
 
+--names requires --env: a secret name is only unique within one project's
+environment, not across the whole project.
+
   keyorix secret bulk-rotate --project 7 --classification confidential --confirm
   keyorix secret bulk-rotate --project 7 --env 3 --confirm
-  keyorix secret bulk-rotate --project 7 --names db-password,api-key --confirm`,
+  keyorix secret bulk-rotate --project 7 --env 3 --names db-password,api-key --confirm`,
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if bulkRotateProject == 0 {
@@ -66,6 +69,9 @@ destructive operation and an accidental wide rotation cannot be undone.
 		// Resolve --names to a list of secret IDs if provided.
 		var secretIDs []uint
 		if bulkRotateNames != "" {
+			if bulkRotateEnv == 0 {
+				return fmt.Errorf("--env is required when using --names (a secret name is only unique within one project's environment, not across the whole project)")
+			}
 			ids, err := resolveSecretNamesToIDs(context.Background(), c, bulkRotateProject, bulkRotateEnv, splitNames(bulkRotateNames))
 			if err != nil {
 				return fmt.Errorf("resolve secret names: %w", err)
@@ -105,14 +111,18 @@ func splitNames(s string) []string {
 	return out
 }
 
-// resolveSecretNamesToIDs resolves a list of secret names to IDs by listing secrets
-// in the given project (and optionally environment). Names not found are skipped
-// with a warning.
+// resolveSecretNamesToIDs resolves a list of secret names to IDs by listing
+// secrets scoped to BOTH the given project and environment — envID must be
+// non-zero (enforced by the caller): a project-only scope would let a name
+// that exists in two different environments of the same project silently
+// resolve to whichever one a name->ID map happened to insert last (inventory
+// #2012 S2 sweep finding). A name with no match in that scope is skipped with
+// a warning (existing best-effort semantics — bulk-rotate is inherently
+// best-effort about secrets that aren't there). A name matching MORE than one
+// secret is never silently guessed: it aborts the whole resolution with every
+// ambiguous name and its matching IDs listed.
 func resolveSecretNamesToIDs(ctx context.Context, c *common.RemoteClient, projectID, envID uint, names []string) ([]uint, error) {
-	path := fmt.Sprintf("/api/v1/secrets?project_id=%d", projectID)
-	if envID != 0 {
-		path += fmt.Sprintf("&environment_id=%d", envID)
-	}
+	path := fmt.Sprintf("/api/v1/secrets?project_id=%d&environment_id=%d", projectID, envID)
 
 	var resp struct {
 		Secrets []struct {
@@ -124,19 +134,25 @@ func resolveSecretNamesToIDs(ctx context.Context, c *common.RemoteClient, projec
 		return nil, err
 	}
 
-	nameToID := make(map[string]uint, len(resp.Secrets))
+	nameToIDs := make(map[string][]uint, len(resp.Secrets))
 	for _, s := range resp.Secrets {
-		nameToID[s.Name] = s.ID
+		nameToIDs[s.Name] = append(nameToIDs[s.Name], s.ID)
 	}
 
 	ids := make([]uint, 0, len(names))
+	var ambiguous []string
 	for _, n := range names {
-		id, ok := nameToID[n]
-		if !ok {
+		switch matches := nameToIDs[n]; len(matches) {
+		case 0:
 			fmt.Printf("warning: secret %q not found — skipping\n", n)
-			continue
+		case 1:
+			ids = append(ids, matches[0])
+		default:
+			ambiguous = append(ambiguous, fmt.Sprintf("%q (IDs %v)", n, matches))
 		}
-		ids = append(ids, id)
+	}
+	if len(ambiguous) > 0 {
+		return nil, fmt.Errorf("secret name(s) ambiguous in project %d, environment %d: %s — refusing to guess", projectID, envID, strings.Join(ambiguous, "; "))
 	}
 	return ids, nil
 }

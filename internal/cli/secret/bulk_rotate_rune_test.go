@@ -153,6 +153,7 @@ func TestBulkRotateCmd_Success_WithNames(t *testing.T) {
 	defer done()
 
 	bulkRotateProject = 7
+	bulkRotateEnv = 1
 	bulkRotateConfirm = true
 	bulkRotateNames = "alpha,beta"
 
@@ -173,6 +174,7 @@ func TestBulkRotateCmd_ResolveNamesError(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "tok")
 
 	bulkRotateProject = 7
+	bulkRotateEnv = 1
 	bulkRotateConfirm = true
 	bulkRotateNames = "alpha"
 
