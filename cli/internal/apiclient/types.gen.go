@@ -118,6 +118,12 @@ const (
 	Medium SecretRiskScoreBand = "medium"
 )
 
+// Defines values for SharePermission.
+const (
+	SharePermissionRead  SharePermission = "read"
+	SharePermissionWrite SharePermission = "write"
+)
+
 // Defines values for ListAuditLogsParamsActorType.
 const (
 	ListAuditLogsParamsActorTypeMachineIdentity ListAuditLogsParamsActorType = "machine_identity"
@@ -227,6 +233,18 @@ const (
 	Public       ListSecretsParamsClassification = "public"
 	Restricted   ListSecretsParamsClassification = "restricted"
 	Unclassified ListSecretsParamsClassification = "unclassified"
+)
+
+// Defines values for ShareSecretJSONBodyPermission.
+const (
+	ShareSecretJSONBodyPermissionRead  ShareSecretJSONBodyPermission = "read"
+	ShareSecretJSONBodyPermissionWrite ShareSecretJSONBodyPermission = "write"
+)
+
+// Defines values for UpdateSharePermissionJSONBodyPermission.
+const (
+	Read  UpdateSharePermissionJSONBodyPermission = "read"
+	Write UpdateSharePermissionJSONBodyPermission = "write"
 )
 
 // Defines values for ListUsersParamsFilter.
@@ -1058,6 +1076,22 @@ type SecretVersionDiffResult struct {
 	SecretName  *string `json:"secret_name,omitempty"`
 	ToVersion   *int    `json:"to_version,omitempty"`
 }
+
+// Share A secret-share grant. PascalCase field names because models.ShareRecord has no json struct tags.
+type Share struct {
+	CreatedAt   *time.Time       `json:"CreatedAt,omitempty"`
+	ExpiresAt   *time.Time       `json:"ExpiresAt"`
+	ID          *int             `json:"ID,omitempty"`
+	IsGroup     *bool            `json:"IsGroup,omitempty"`
+	OwnerID     *int             `json:"OwnerID,omitempty"`
+	Permission  *SharePermission `json:"Permission,omitempty"`
+	RecipientID *int             `json:"RecipientID,omitempty"`
+	SecretID    *int             `json:"SecretID,omitempty"`
+	UpdatedAt   *time.Time       `json:"UpdatedAt,omitempty"`
+}
+
+// SharePermission defines model for Share.Permission.
+type SharePermission string
 
 // UserSummary A user as returned in list/membership contexts (userToAPIResponse, server/http/handlers/users_handler.go). project_count/active_project_count are attached only by GET /api/v1/users (listUsers), not by GET /api/v1/groups/{id}/members.
 type UserSummary struct {
@@ -1922,6 +1956,20 @@ type SetSecretScheduleJSONBody struct {
 	Timezone *string `json:"timezone,omitempty"`
 }
 
+// ShareSecretJSONBody defines parameters for ShareSecret.
+type ShareSecretJSONBody struct {
+	// ExpiresAt Optional time-bound (JIT) share expiry. Omitted = permanent.
+	ExpiresAt  *time.Time                    `json:"expires_at,omitempty"`
+	IsGroup    *bool                         `json:"is_group,omitempty"`
+	Permission ShareSecretJSONBodyPermission `json:"permission"`
+
+	// RecipientId User ID, or group ID when `is_group` is true.
+	RecipientId int `json:"recipient_id"`
+}
+
+// ShareSecretJSONBodyPermission defines parameters for ShareSecret.
+type ShareSecretJSONBodyPermission string
+
 // SuspendSecretJSONBody defines parameters for SuspendSecret.
 type SuspendSecretJSONBody struct {
 	// Reason Optional reason recorded in the audit event.
@@ -1937,6 +1985,19 @@ type SetSecretTagsJSONBody struct {
 type AddSecretVersionCommentJSONBody struct {
 	Comment string `json:"comment"`
 }
+
+// UpdateSharePermissionJSONBody defines parameters for UpdateSharePermission.
+type UpdateSharePermissionJSONBody struct {
+	// ClearExpiry Make the share permanent (remove its expiry). Mutually exclusive with expires_at.
+	ClearExpiry *bool `json:"clear_expiry,omitempty"`
+
+	// ExpiresAt Set/extend/shorten the time-bound expiry. Mutually exclusive with clear_expiry.
+	ExpiresAt  *time.Time                              `json:"expires_at,omitempty"`
+	Permission UpdateSharePermissionJSONBodyPermission `json:"permission"`
+}
+
+// UpdateSharePermissionJSONBodyPermission defines parameters for UpdateSharePermission.
+type UpdateSharePermissionJSONBodyPermission string
 
 // CreateSoDPolicyJSONBody defines parameters for CreateSoDPolicy.
 type CreateSoDPolicyJSONBody struct {
@@ -2241,6 +2302,9 @@ type RotateSecretJSONRequestBody RotateSecretJSONBody
 // SetSecretScheduleJSONRequestBody defines body for SetSecretSchedule for application/json ContentType.
 type SetSecretScheduleJSONRequestBody SetSecretScheduleJSONBody
 
+// ShareSecretJSONRequestBody defines body for ShareSecret for application/json ContentType.
+type ShareSecretJSONRequestBody ShareSecretJSONBody
+
 // SuspendSecretJSONRequestBody defines body for SuspendSecret for application/json ContentType.
 type SuspendSecretJSONRequestBody SuspendSecretJSONBody
 
@@ -2249,6 +2313,9 @@ type SetSecretTagsJSONRequestBody SetSecretTagsJSONBody
 
 // AddSecretVersionCommentJSONRequestBody defines body for AddSecretVersionComment for application/json ContentType.
 type AddSecretVersionCommentJSONRequestBody AddSecretVersionCommentJSONBody
+
+// UpdateSharePermissionJSONRequestBody defines body for UpdateSharePermission for application/json ContentType.
+type UpdateSharePermissionJSONRequestBody UpdateSharePermissionJSONBody
 
 // CreateSoDPolicyJSONRequestBody defines body for CreateSoDPolicy for application/json ContentType.
 type CreateSoDPolicyJSONRequestBody CreateSoDPolicyJSONBody

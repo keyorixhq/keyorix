@@ -318,6 +318,9 @@ type ClientInterface interface {
 	// RemoveRoleFromGroup request
 	RemoveRoleFromGroup(ctx context.Context, id int, roleId int, params *RemoveRoleFromGroupParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListGroupShares request
+	ListGroupShares(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetDeploymentHygiene request
 	GetDeploymentHygiene(ctx context.Context, params *GetDeploymentHygieneParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -784,6 +787,17 @@ type ClientInterface interface {
 
 	SetSecretSchedule(ctx context.Context, id int, body SetSecretScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RemoveSelfFromShare request
+	RemoveSelfFromShare(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ShareSecretWithBody request with any body
+	ShareSecretWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ShareSecret(ctx context.Context, id int, body ShareSecretJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSecretShares request
+	ListSecretShares(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// SuspendSecretWithBody request with any body
 	SuspendSecretWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -813,6 +827,17 @@ type ClientInterface interface {
 
 	// DeleteSecretVersionComment request
 	DeleteSecretVersionComment(ctx context.Context, id int, versionId int, commentId int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSharedSecrets request
+	ListSharedSecrets(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeShare request
+	RevokeShare(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateSharePermissionWithBody request with any body
+	UpdateSharePermissionWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	UpdateSharePermission(ctx context.Context, id int, body UpdateSharePermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSoDPolicies request
 	ListSoDPolicies(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -882,6 +907,9 @@ type ClientInterface interface {
 	UpdateUserRolesWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	UpdateUserRoles(ctx context.Context, id int, body UpdateUserRolesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSharedSecretsForUser request
+	ListSharedSecretsForUser(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SuspendUser request
 	SuspendUser(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1875,6 +1903,18 @@ func (c *Client) AssignRoleToGroup(ctx context.Context, id int, body AssignRoleT
 
 func (c *Client) RemoveRoleFromGroup(ctx context.Context, id int, roleId int, params *RemoveRoleFromGroupParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRemoveRoleFromGroupRequest(c.Server, id, roleId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListGroupShares(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListGroupSharesRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -3937,6 +3977,54 @@ func (c *Client) SetSecretSchedule(ctx context.Context, id int, body SetSecretSc
 	return c.Client.Do(req)
 }
 
+func (c *Client) RemoveSelfFromShare(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveSelfFromShareRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ShareSecretWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewShareSecretRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ShareSecret(ctx context.Context, id int, body ShareSecretJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewShareSecretRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListSecretShares(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSecretSharesRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) SuspendSecretWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSuspendSecretRequestWithBody(c.Server, id, contentType, body)
 	if err != nil {
@@ -4059,6 +4147,54 @@ func (c *Client) AddSecretVersionComment(ctx context.Context, id int, versionId 
 
 func (c *Client) DeleteSecretVersionComment(ctx context.Context, id int, versionId int, commentId int, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteSecretVersionCommentRequest(c.Server, id, versionId, commentId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListSharedSecrets(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSharedSecretsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RevokeShare(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeShareRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateSharePermissionWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateSharePermissionRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateSharePermission(ctx context.Context, id int, body UpdateSharePermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateSharePermissionRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4359,6 +4495,18 @@ func (c *Client) UpdateUserRolesWithBody(ctx context.Context, id int, contentTyp
 
 func (c *Client) UpdateUserRoles(ctx context.Context, id int, body UpdateUserRolesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateUserRolesRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListSharedSecretsForUser(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSharedSecretsForUserRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -7269,6 +7417,40 @@ func NewRemoveRoleFromGroupRequest(server string, id int, roleId int, params *Re
 	}
 
 	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListGroupSharesRequest generates requests for ListGroupShares
+func NewListGroupSharesRequest(server string, id int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/groups/%s/shares", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -12646,6 +12828,121 @@ func NewSetSecretScheduleRequestWithBody(server string, id int, contentType stri
 	return req, nil
 }
 
+// NewRemoveSelfFromShareRequest generates requests for RemoveSelfFromShare
+func NewRemoveSelfFromShareRequest(server string, id int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/secrets/%s/self-share", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewShareSecretRequest calls the generic ShareSecret builder with application/json body
+func NewShareSecretRequest(server string, id int, body ShareSecretJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewShareSecretRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewShareSecretRequestWithBody generates requests for ShareSecret with any type of body
+func NewShareSecretRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/secrets/%s/share", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListSecretSharesRequest generates requests for ListSecretShares
+func NewListSecretSharesRequest(server string, id int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/secrets/%s/shares", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewSuspendSecretRequest calls the generic SuspendSecret builder with application/json body
 func NewSuspendSecretRequest(server string, id int, body SuspendSecretJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -12995,6 +13292,114 @@ func NewDeleteSecretVersionCommentRequest(server string, id int, versionId int, 
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewListSharedSecretsRequest generates requests for ListSharedSecrets
+func NewListSharedSecretsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/shared-secrets")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRevokeShareRequest generates requests for RevokeShare
+func NewRevokeShareRequest(server string, id int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/shares/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateSharePermissionRequest calls the generic UpdateSharePermission builder with application/json body
+func NewUpdateSharePermissionRequest(server string, id int, body UpdateSharePermissionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateSharePermissionRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewUpdateSharePermissionRequestWithBody generates requests for UpdateSharePermission with any type of body
+func NewUpdateSharePermissionRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/shares/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -13812,6 +14217,40 @@ func NewUpdateUserRolesRequestWithBody(server string, id int, contentType string
 	return req, nil
 }
 
+// NewListSharedSecretsForUserRequest generates requests for ListSharedSecretsForUser
+func NewListSharedSecretsForUserRequest(server string, id int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/users/%s/shared-secrets", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewSuspendUserRequest generates requests for SuspendUser
 func NewSuspendUserRequest(server string, id int) (*http.Request, error) {
 	var err error
@@ -14237,6 +14676,9 @@ type ClientWithResponsesInterface interface {
 
 	// RemoveRoleFromGroupWithResponse request
 	RemoveRoleFromGroupWithResponse(ctx context.Context, id int, roleId int, params *RemoveRoleFromGroupParams, reqEditors ...RequestEditorFn) (*RemoveRoleFromGroupResponse, error)
+
+	// ListGroupSharesWithResponse request
+	ListGroupSharesWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ListGroupSharesResponse, error)
 
 	// GetDeploymentHygieneWithResponse request
 	GetDeploymentHygieneWithResponse(ctx context.Context, params *GetDeploymentHygieneParams, reqEditors ...RequestEditorFn) (*GetDeploymentHygieneResponse, error)
@@ -14704,6 +15146,17 @@ type ClientWithResponsesInterface interface {
 
 	SetSecretScheduleWithResponse(ctx context.Context, id int, body SetSecretScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSecretScheduleResponse, error)
 
+	// RemoveSelfFromShareWithResponse request
+	RemoveSelfFromShareWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*RemoveSelfFromShareResponse, error)
+
+	// ShareSecretWithBodyWithResponse request with any body
+	ShareSecretWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ShareSecretResponse, error)
+
+	ShareSecretWithResponse(ctx context.Context, id int, body ShareSecretJSONRequestBody, reqEditors ...RequestEditorFn) (*ShareSecretResponse, error)
+
+	// ListSecretSharesWithResponse request
+	ListSecretSharesWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ListSecretSharesResponse, error)
+
 	// SuspendSecretWithBodyWithResponse request with any body
 	SuspendSecretWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SuspendSecretResponse, error)
 
@@ -14733,6 +15186,17 @@ type ClientWithResponsesInterface interface {
 
 	// DeleteSecretVersionCommentWithResponse request
 	DeleteSecretVersionCommentWithResponse(ctx context.Context, id int, versionId int, commentId int, reqEditors ...RequestEditorFn) (*DeleteSecretVersionCommentResponse, error)
+
+	// ListSharedSecretsWithResponse request
+	ListSharedSecretsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSharedSecretsResponse, error)
+
+	// RevokeShareWithResponse request
+	RevokeShareWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*RevokeShareResponse, error)
+
+	// UpdateSharePermissionWithBodyWithResponse request with any body
+	UpdateSharePermissionWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSharePermissionResponse, error)
+
+	UpdateSharePermissionWithResponse(ctx context.Context, id int, body UpdateSharePermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSharePermissionResponse, error)
 
 	// ListSoDPoliciesWithResponse request
 	ListSoDPoliciesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSoDPoliciesResponse, error)
@@ -14802,6 +15266,9 @@ type ClientWithResponsesInterface interface {
 	UpdateUserRolesWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateUserRolesResponse, error)
 
 	UpdateUserRolesWithResponse(ctx context.Context, id int, body UpdateUserRolesJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateUserRolesResponse, error)
+
+	// ListSharedSecretsForUserWithResponse request
+	ListSharedSecretsForUserWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ListSharedSecretsForUserResponse, error)
 
 	// SuspendUserWithResponse request
 	SuspendUserWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*SuspendUserResponse, error)
@@ -16435,6 +16902,35 @@ func (r RemoveRoleFromGroupResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r RemoveRoleFromGroupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListGroupSharesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			Shares *[]Share `json:"shares,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListGroupSharesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListGroupSharesResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -19767,6 +20263,88 @@ func (r SetSecretScheduleResponse) StatusCode() int {
 	return 0
 }
 
+type RemoveSelfFromShareResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON401      *Error
+	JSON404      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r RemoveSelfFromShareResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemoveSelfFromShareResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ShareSecretResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *struct {
+		// Data A secret-share grant. PascalCase field names because models.ShareRecord has no json struct tags.
+		Data *Share `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ShareSecretResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ShareSecretResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListSecretSharesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			Shares *[]Share `json:"shares,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSecretSharesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSecretSharesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type SuspendSecretResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -19988,6 +20566,87 @@ func (r DeleteSecretVersionCommentResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r DeleteSecretVersionCommentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListSharedSecretsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			Secrets *[]Secret `json:"secrets,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON401 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSharedSecretsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSharedSecretsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RevokeShareResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON401      *Error
+	JSON403      *Error
+	JSON404      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeShareResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeShareResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UpdateSharePermissionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		// Data A secret-share grant. PascalCase field names because models.ShareRecord has no json struct tags.
+		Data *Share `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateSharePermissionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateSharePermissionResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -20457,6 +21116,34 @@ func (r UpdateUserRolesResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r UpdateUserRolesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListSharedSecretsForUserResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			Secrets *[]Secret `json:"secrets,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON401 *Error
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSharedSecretsForUserResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSharedSecretsForUserResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -21323,6 +22010,15 @@ func (c *ClientWithResponses) RemoveRoleFromGroupWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseRemoveRoleFromGroupResponse(rsp)
+}
+
+// ListGroupSharesWithResponse request returning *ListGroupSharesResponse
+func (c *ClientWithResponses) ListGroupSharesWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ListGroupSharesResponse, error) {
+	rsp, err := c.ListGroupShares(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListGroupSharesResponse(rsp)
 }
 
 // GetDeploymentHygieneWithResponse request returning *GetDeploymentHygieneResponse
@@ -22817,6 +23513,41 @@ func (c *ClientWithResponses) SetSecretScheduleWithResponse(ctx context.Context,
 	return ParseSetSecretScheduleResponse(rsp)
 }
 
+// RemoveSelfFromShareWithResponse request returning *RemoveSelfFromShareResponse
+func (c *ClientWithResponses) RemoveSelfFromShareWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*RemoveSelfFromShareResponse, error) {
+	rsp, err := c.RemoveSelfFromShare(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveSelfFromShareResponse(rsp)
+}
+
+// ShareSecretWithBodyWithResponse request with arbitrary body returning *ShareSecretResponse
+func (c *ClientWithResponses) ShareSecretWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ShareSecretResponse, error) {
+	rsp, err := c.ShareSecretWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseShareSecretResponse(rsp)
+}
+
+func (c *ClientWithResponses) ShareSecretWithResponse(ctx context.Context, id int, body ShareSecretJSONRequestBody, reqEditors ...RequestEditorFn) (*ShareSecretResponse, error) {
+	rsp, err := c.ShareSecret(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseShareSecretResponse(rsp)
+}
+
+// ListSecretSharesWithResponse request returning *ListSecretSharesResponse
+func (c *ClientWithResponses) ListSecretSharesWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ListSecretSharesResponse, error) {
+	rsp, err := c.ListSecretShares(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSecretSharesResponse(rsp)
+}
+
 // SuspendSecretWithBodyWithResponse request with arbitrary body returning *SuspendSecretResponse
 func (c *ClientWithResponses) SuspendSecretWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SuspendSecretResponse, error) {
 	rsp, err := c.SuspendSecretWithBody(ctx, id, contentType, body, reqEditors...)
@@ -22911,6 +23642,41 @@ func (c *ClientWithResponses) DeleteSecretVersionCommentWithResponse(ctx context
 		return nil, err
 	}
 	return ParseDeleteSecretVersionCommentResponse(rsp)
+}
+
+// ListSharedSecretsWithResponse request returning *ListSharedSecretsResponse
+func (c *ClientWithResponses) ListSharedSecretsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSharedSecretsResponse, error) {
+	rsp, err := c.ListSharedSecrets(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSharedSecretsResponse(rsp)
+}
+
+// RevokeShareWithResponse request returning *RevokeShareResponse
+func (c *ClientWithResponses) RevokeShareWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*RevokeShareResponse, error) {
+	rsp, err := c.RevokeShare(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeShareResponse(rsp)
+}
+
+// UpdateSharePermissionWithBodyWithResponse request with arbitrary body returning *UpdateSharePermissionResponse
+func (c *ClientWithResponses) UpdateSharePermissionWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSharePermissionResponse, error) {
+	rsp, err := c.UpdateSharePermissionWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateSharePermissionResponse(rsp)
+}
+
+func (c *ClientWithResponses) UpdateSharePermissionWithResponse(ctx context.Context, id int, body UpdateSharePermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSharePermissionResponse, error) {
+	rsp, err := c.UpdateSharePermission(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateSharePermissionResponse(rsp)
 }
 
 // ListSoDPoliciesWithResponse request returning *ListSoDPoliciesResponse
@@ -23130,6 +23896,15 @@ func (c *ClientWithResponses) UpdateUserRolesWithResponse(ctx context.Context, i
 		return nil, err
 	}
 	return ParseUpdateUserRolesResponse(rsp)
+}
+
+// ListSharedSecretsForUserWithResponse request returning *ListSharedSecretsForUserResponse
+func (c *ClientWithResponses) ListSharedSecretsForUserWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ListSharedSecretsForUserResponse, error) {
+	rsp, err := c.ListSharedSecretsForUser(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSharedSecretsForUserResponse(rsp)
 }
 
 // SuspendUserWithResponse request returning *SuspendUserResponse
@@ -25711,6 +26486,57 @@ func ParseRemoveRoleFromGroupResponse(rsp *http.Response) (*RemoveRoleFromGroupR
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListGroupSharesResponse parses an HTTP response from a ListGroupSharesWithResponse call
+func ParseListGroupSharesResponse(rsp *http.Response) (*ListGroupSharesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListGroupSharesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				Shares *[]Share `json:"shares,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
@@ -31451,6 +32277,154 @@ func ParseSetSecretScheduleResponse(rsp *http.Response) (*SetSecretScheduleRespo
 	return response, nil
 }
 
+// ParseRemoveSelfFromShareResponse parses an HTTP response from a RemoveSelfFromShareWithResponse call
+func ParseRemoveSelfFromShareResponse(rsp *http.Response) (*RemoveSelfFromShareResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemoveSelfFromShareResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseShareSecretResponse parses an HTTP response from a ShareSecretWithResponse call
+func ParseShareSecretResponse(rsp *http.Response) (*ShareSecretResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ShareSecretResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			// Data A secret-share grant. PascalCase field names because models.ShareRecord has no json struct tags.
+			Data *Share `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListSecretSharesResponse parses an HTTP response from a ListSecretSharesWithResponse call
+func ParseListSecretSharesResponse(rsp *http.Response) (*ListSecretSharesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSecretSharesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				Shares *[]Share `json:"shares,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseSuspendSecretResponse parses an HTTP response from a SuspendSecretWithResponse call
 func ParseSuspendSecretResponse(rsp *http.Response) (*SuspendSecretResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -31852,6 +32826,147 @@ func ParseDeleteSecretVersionCommentResponse(rsp *http.Response) (*DeleteSecretV
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListSharedSecretsResponse parses an HTTP response from a ListSharedSecretsWithResponse call
+func ParseListSharedSecretsResponse(rsp *http.Response) (*ListSharedSecretsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSharedSecretsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				Secrets *[]Secret `json:"secrets,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeShareResponse parses an HTTP response from a RevokeShareWithResponse call
+func ParseRevokeShareResponse(rsp *http.Response) (*RevokeShareResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeShareResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateSharePermissionResponse parses an HTTP response from a UpdateSharePermissionWithResponse call
+func ParseUpdateSharePermissionResponse(rsp *http.Response) (*UpdateSharePermissionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateSharePermissionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			// Data A secret-share grant. PascalCase field names because models.ShareRecord has no json struct tags.
+			Data *Share `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -32615,6 +33730,50 @@ func ParseUpdateUserRolesResponse(rsp *http.Response) (*UpdateUserRolesResponse,
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListSharedSecretsForUserResponse parses an HTTP response from a ListSharedSecretsForUserWithResponse call
+func ParseListSharedSecretsForUserResponse(rsp *http.Response) (*ListSharedSecretsForUserResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSharedSecretsForUserResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				Secrets *[]Secret `json:"secrets,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	}
 
