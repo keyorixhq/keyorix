@@ -53,6 +53,11 @@ func TestSpecLoadsAndValidates(t *testing.T) {
 // schemas for these previously-schema-less (or brand new, e.g. the OIDC
 // binding trio) operations and exercises each via openapi_contract_pr2_test.go.
 //
+// The 20 rbac/group/invite operations below (plus the brand-new
+// getPermissionMatrix, which had no openapi.yaml entry at all before) were
+// added by ADR-108 PR 3 (docs/cli-split-inventory.md §7), exercised via
+// openapi_contract_pr3_test.go.
+//
 // The 18 dynamic-secret/rotation-policy/break-glass operations below were
 // added by ADR-108 PR 1 (docs/cli-split-inventory.md §7, "dynamic-secret,
 // rotation, breakglass -- 9+7+3 = 19 commands"): the thin CLI's generated
@@ -91,6 +96,26 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		"listProjects":                  true,
 		"machineTokenHygiene":           true,
 		"patHygiene":                    true,
+		"addGroupMember":                true,
+		"assignRoleToGroup":             true,
+		"assignUserRole":                true,
+		"createGroup":                   true,
+		"createProjectInvitation":       true,
+		"getGroup":                      true,
+		"getGroupMembers":               true,
+		"getGroupRoles":                 true,
+		"getPermissionMatrix":           true,
+		"getRolePermissions":            true,
+		"getUserRolesForUser":           true,
+		"listGroups":                    true,
+		"listProjectEnvironments":       true,
+		"listProjectInvitations":        true,
+		"listRBACAuditLogs":             true,
+		"listRoles":                     true,
+		"listUsers":                     true,
+		"resendProjectInvitation":       true,
+		"revokeProjectInvitation":       true,
+		"updateGroup":                   true,
 		"activateBreakGlass":            true,
 		"listBreakGlassActivations":     true,
 		"createDynamicSecretConfig":     true,

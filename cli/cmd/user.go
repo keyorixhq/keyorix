@@ -10,7 +10,6 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -434,14 +433,6 @@ func runUserDelete(_ *cobra.Command, _ []string) error {
 	}
 	fmt.Printf("%s deleted.\n", label)
 	return nil
-}
-
-func confirmYesNo(prompt string) bool {
-	reader := bufio.NewReader(os.Stdin)
-	fmt.Printf("%s (yes/no): ", prompt)
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(strings.ToLower(input))
-	return input == "yes" || input == "y"
 }
 
 // ── user list ────────────────────────────────────────────────────────────────
