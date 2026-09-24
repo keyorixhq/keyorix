@@ -13,7 +13,6 @@ package storage
 import (
 	"fmt"
 	"os"
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -21,6 +20,8 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 )
 
 var pkRebuildDBCounter int64
@@ -53,26 +54,7 @@ func pgIsolatedDatabaseDSN(t *testing.T, base string) string {
 		_ = cleaner.Exec("DROP DATABASE IF EXISTS " + dbName + " WITH (FORCE)").Error
 	})
 
-	return replaceDBName(base, dbName)
-}
-
-// replaceDBName swaps the dbname= field in a libpq-style "key=value ..." DSN.
-func replaceDBName(dsn, newName string) string {
-	fields := strings.Fields(dsn)
-	out := make([]string, 0, len(fields)+1)
-	found := false
-	for _, f := range fields {
-		if strings.HasPrefix(f, "dbname=") {
-			out = append(out, "dbname="+newName)
-			found = true
-			continue
-		}
-		out = append(out, f)
-	}
-	if !found {
-		out = append(out, "dbname="+newName)
-	}
-	return strings.Join(out, " ")
+	return pgdsn.PGReplaceDBName(base, dbName)
 }
 
 // pgRawOpen opens a *gorm.DB against dsn, closing it on test cleanup.
