@@ -124,7 +124,7 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 			"the grant here also invalidates it, so it cannot go on to authorize a second, different " +
 			"sensitive action within the same window.",
 	},
-	"internal/core/classification_gate.go:177": {
+	"internal/core/classification_gate.go:178": {
 		expectedPurpose: "MFAStepUpPurposeRestrictedSecretRead",
 		reason: "checkRestrictedMFAGate, the classification_restricted_requires_mfa_stepup gate for " +
 			"reading a ClassificationRestricted secret's value. Must reject a MFAStepUpPurposeReauth grant " +
@@ -145,7 +145,7 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 			"body's Purpose field verbatim -- it makes no policy decision itself (see this file's own doc " +
 			"comment: \"no policy decisions made here\"). The actual authorization decision, and the " +
 			"literal purpose constant used to make it, lives entirely on the calling core.KeyorixCore side " +
-			"(mfa.go:504 / classification_gate.go:177 above), which is unaffected by which storage backend " +
+			"(mfa.go:504 / classification_gate.go:178 above), which is unaffected by which storage backend " +
 			"(Local or Remote) it happens to be wired to.",
 	},
 }
