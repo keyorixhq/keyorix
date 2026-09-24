@@ -1,0 +1,356 @@
+// audit_verify.go implements `keyorix-server admin verify-audit` (ADR-108
+// §B4, docs/design-b4-offline-audit-verify.md): offline verification of the
+// ADR-029 audit tamper-evidence hash chain directly against a database
+// artifact, without trusting or needing a running Keyorix server.
+//
+// This file is deliberately thin: it resolves flags to an
+// internal/auditverify.DB and internal/auditverify.Options and calls
+// auditverify.Verify — no chain-walk, hash, or checkpoint logic lives here
+// (design's own task requirement; see internal/auditverify's own doc.go for
+// why that independence matters).
+package admin
+
+import (
+	"context"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/keyorixhq/keyorix/internal/auditverify"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/serverguard"
+	"github.com/spf13/cobra"
+)
+
+var (
+	verifyAuditDBPath      string
+	verifyAuditPGDSN       string
+	verifyAuditKeyFile     string
+	verifyAuditAnchorFile  string
+	verifyAuditTSARootFile string
+	verifyAuditJSON        bool
+)
+
+var verifyAuditCmd = &cobra.Command{
+	Use:   "verify-audit",
+	Short: "Offline-verify the audit tamper-evidence hash chain against a database artifact",
+	Long: `verify-audit re-walks the ADR-029 audit hash chain directly from a database
+artifact -- a detached copy (--db/--pg-dsn) or, by default, this host's own
+configured database -- WITHOUT trusting or needing a running Keyorix server
+process to be honest, or even running. Read-only: never writes to the
+database it verifies.
+
+WHAT THIS PROVES: a bare re-walk detects any modification, deletion,
+insertion, or reordering of a row still present in the table. With
+--checkpoint-key-file (the KEK-derived checkpoint signing key, extracted by
+the operator out of band -- never the KEK or passphrase itself), it
+additionally detects tail-truncation and genesis re-seed against the
+certified high-water mark. With --anchor, it cross-checks the live chain
+against a signed checkpoint snapshot held OUTSIDE this host -- catching a
+truncation or re-seed even if the local checkpoint/high-water rows were
+themselves deleted. With --tsa-roots (a PEM bundle of trusted RFC 3161 TSA
+root certs), it independently re-verifies a checkpoint's or --anchor's
+timestamp token against a third-party time-stamping authority -- the one
+check that needs NO shared secret at all (no --checkpoint-key-file, no trust
+in this host), and the strongest guarantee this tool can offer.
+
+WHAT THIS DOES NOT PROVE: a host admin who holds BOTH this database and its
+checkpoint signing key can fabricate a fully self-consistent, validly-
+checkpointed history -- this tool proves only that a DB-only actor (without
+that key) could not have tampered undetectably. Without
+--checkpoint-key-file, tail-truncation and genesis re-seed are not detected
+at all -- a shorter, self-consistent chain still verifies, by design (ADR-029
+documents this as the bare re-walk's known limit). A retention gap left by a
+sanctioned purge that cannot be authenticated is reported INDETERMINATE,
+never silently VALID (which would hide a real gap) and never BROKEN (which
+would false-alarm on every purged deployment). Every run's report includes a
+"what this does not prove" section stating these limits given the inputs it
+was actually handed -- read it, not just the top-line verdict.
+
+Lock: with --db or --pg-dsn, this command never touches the database a
+running server might be attached to, so it takes no lock. Without either
+flag, it verifies the CONFIGURED live database and acquires the same
+exclusive lock every other admin command does (internal/serverguard) for its
+entire run, refusing (unless --force) if a server or another admin command
+already holds it.
+
+Exit codes: 0 VALID, 1 BROKEN (tamper detected), 2 INDETERMINATE (could not
+fully verify -- e.g. an unauthenticated retention gap, or no key to check a
+real truncation), 3 usage/input error (bad DSN, unreadable file, malformed
+key or anchor). Never 0 when something was silently left unverified.`,
+	RunE: runVerifyAudit,
+}
+
+func init() {
+	verifyAuditCmd.Flags().StringVar(&verifyAuditDBPath, "db", "",
+		"Verify this SQLite file directly (opened read-only), instead of the configured database")
+	verifyAuditCmd.Flags().StringVar(&verifyAuditPGDSN, "pg-dsn", "",
+		"Verify this Postgres DSN directly, instead of the configured database")
+	verifyAuditCmd.Flags().StringVar(&verifyAuditKeyFile, "checkpoint-key-file", "",
+		"Path to the derived audit-checkpoint signing key (hex or base64) -- enables checkpoint/high-water/truncation checks")
+	verifyAuditCmd.Flags().StringVar(&verifyAuditAnchorFile, "anchor", "",
+		"Path to a JSON checkpoint snapshot held externally -- cross-checks the live chain against a copy this host does not control")
+	verifyAuditCmd.Flags().StringVar(&verifyAuditTSARootFile, "tsa-roots", "",
+		"Path to a PEM bundle of trusted RFC 3161 TSA root certs -- independently re-verifies a checkpoint's or --anchor's timestamp token against them, without needing --checkpoint-key-file or any other shared secret")
+	verifyAuditCmd.Flags().BoolVar(&verifyAuditJSON, "json", false,
+		"Emit the verification result as JSON instead of a human report")
+	rootCmd.AddCommand(verifyAuditCmd)
+}
+
+// exitCodeError carries a specific process exit code, read by Execute (see
+// admin.go) instead of its default "any error is exit 1" mapping.
+// verify-audit's exit code is part of its documented contract (0/1/2/3,
+// design §6) — a verdict, not merely success/failure — so it cannot use
+// Execute's default.
+type exitCodeError struct {
+	code int
+	err  error
+}
+
+func (e *exitCodeError) Error() string { return e.err.Error() }
+func (e *exitCodeError) Unwrap() error { return e.err }
+
+func newExitCodeError(code int, err error) error {
+	return &exitCodeError{code: code, err: err}
+}
+
+func runVerifyAudit(cmd *cobra.Command, args []string) error {
+	opts, err := buildVerifyAuditOptions()
+	if err != nil {
+		return newExitCodeError(3, err)
+	}
+
+	db, lock, err := openVerifyAuditTarget()
+	if err != nil {
+		return newExitCodeError(3, err)
+	}
+	defer func() {
+		_ = db.Close()
+		if lock != nil {
+			_ = lock.Release()
+		}
+	}()
+
+	result, err := auditverify.Verify(context.Background(), db, opts)
+	if err != nil {
+		return newExitCodeError(3, fmt.Errorf("verification failed to run: %w", err))
+	}
+
+	printVerifyAuditReport(result)
+
+	if result.Verdict != auditverify.VerdictValid {
+		return newExitCodeError(result.ExitCode(), fmt.Errorf("audit chain verification: %s", result.Verdict))
+	}
+	return nil
+}
+
+// buildVerifyAuditOptions resolves --checkpoint-key-file/--anchor/--tsa-roots
+// into an auditverify.Options. All interpretation of the anchor bundle's
+// JSON lives in auditverify.ParseExternalAnchorBundle, not here.
+func buildVerifyAuditOptions() (auditverify.Options, error) {
+	var opts auditverify.Options
+	if verifyAuditKeyFile != "" {
+		key, err := readCheckpointKeyFile(verifyAuditKeyFile)
+		if err != nil {
+			return opts, fmt.Errorf("--checkpoint-key-file: %w", err)
+		}
+		opts.CheckpointKey = key
+	}
+	if verifyAuditAnchorFile != "" {
+		data, err := os.ReadFile(verifyAuditAnchorFile) // #nosec G304 -- operator-supplied path, the whole point of this flag
+		if err != nil {
+			return opts, fmt.Errorf("--anchor: read %q: %w", verifyAuditAnchorFile, err)
+		}
+		bundle, err := auditverify.ParseExternalAnchorBundle(data)
+		if err != nil {
+			return opts, fmt.Errorf("--anchor: %w", err)
+		}
+		opts.ExternalAnchor = bundle
+	}
+	if verifyAuditTSARootFile != "" {
+		roots, err := readTSARootsFile(verifyAuditTSARootFile)
+		if err != nil {
+			return opts, fmt.Errorf("--tsa-roots: %w", err)
+		}
+		opts.TSARoots = roots
+	}
+	return opts, nil
+}
+
+// readCheckpointKeyFile reads the derived audit-checkpoint signing key
+// (design Q1: the derived key itself, never the KEK or passphrase), accepted
+// as hex or base64 per the design's own documented flag contract.
+func readCheckpointKeyFile(path string) ([]byte, error) {
+	raw, err := os.ReadFile(path) // #nosec G304 -- operator-supplied path, the whole point of this flag
+	if err != nil {
+		return nil, fmt.Errorf("read %q: %w", path, err)
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" {
+		return nil, fmt.Errorf("%q is empty", path)
+	}
+	if key, err := hex.DecodeString(trimmed); err == nil && len(key) > 0 {
+		return key, nil
+	}
+	if key, err := base64.StdEncoding.DecodeString(trimmed); err == nil && len(key) > 0 {
+		return key, nil
+	}
+	return nil, fmt.Errorf("%q is neither valid hex nor valid base64 (the derived checkpoint key must be one of those two encodings)", path)
+}
+
+// readTSARootsFile parses the PEM bundle of trusted RFC 3161 TSA root certs
+// design §3's `--tsa-roots` flag takes -- the one check this design calls
+// out as needing no shared secret at all (a public-key proof-of-existence),
+// so it is deliberately independent of --checkpoint-key-file.
+func readTSARootsFile(path string) (*x509.CertPool, error) {
+	raw, err := os.ReadFile(path) // #nosec G304 -- operator-supplied path, the whole point of this flag
+	if err != nil {
+		return nil, fmt.Errorf("read %q: %w", path, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(raw) {
+		return nil, fmt.Errorf("%q contains no valid PEM certificates", path)
+	}
+	return pool, nil
+}
+
+// openVerifyAuditTarget resolves --db/--pg-dsn/config precedence into an
+// auditverify.DB. The returned lock is non-nil ONLY when this run fell back
+// to the config's own live database (design Q2) — an explicit --db/--pg-dsn
+// copy never touches that path, so it is never guarded.
+func openVerifyAuditTarget() (*auditverify.DB, *serverguard.Exclusive, error) {
+	if verifyAuditDBPath != "" {
+		db, err := auditverify.OpenSQLiteReadOnly(verifyAuditDBPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("open --db %q: %w", verifyAuditDBPath, err)
+		}
+		return db, nil, nil
+	}
+	if verifyAuditPGDSN != "" {
+		db, err := auditverify.OpenPostgres(verifyAuditPGDSN)
+		if err != nil {
+			return nil, nil, fmt.Errorf("open --pg-dsn: %w", err)
+		}
+		return db, nil, nil
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		return nil, nil, err
+	}
+	lock, err := acquireDatabaseLock(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	switch cfg.Storage.Type {
+	case "postgres", "postgresql":
+		dsn := config.BuildPostgresDSN(&cfg.Storage.Database)
+		if dsn == "" {
+			_ = lock.Release()
+			return nil, nil, fmt.Errorf("postgres storage requires a DSN or host/name/user fields")
+		}
+		db, err := auditverify.OpenPostgres(dsn)
+		if err != nil {
+			_ = lock.Release()
+			return nil, nil, fmt.Errorf("open configured postgres database: %w", err)
+		}
+		return db, lock, nil
+	case "remote":
+		_ = lock.Release()
+		return nil, nil, fmt.Errorf("storage.type is \"remote\" -- this host has no local database to verify; " +
+			"run verify-audit against the hub's own database, or point --db/--pg-dsn at a copy of it")
+	default: // "local", "sqlite", ""
+		dbPath := cfg.Storage.Database.Path
+		if dbPath == "" {
+			dbPath = "./secrets.db"
+		}
+		db, err := auditverify.OpenSQLiteReadOnly(dbPath)
+		if err != nil {
+			_ = lock.Release()
+			return nil, nil, fmt.Errorf("open configured database %q: %w", dbPath, err)
+		}
+		return db, lock, nil
+	}
+}
+
+// printVerifyAuditReport prints the human report (design §6) or, with
+// --json, the raw Result as JSON. Both forms carry the "what this does not
+// prove" section — a compliance tool that only states its limits in --help
+// and drops them from the actual report output overstates what it proves.
+func printVerifyAuditReport(r *auditverify.Result) {
+	if verifyAuditJSON {
+		b, err := json.MarshalIndent(r, "", "  ")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "failed to marshal result:", err)
+			return
+		}
+		fmt.Println(string(b))
+		return
+	}
+
+	fmt.Println("Offline audit-chain verification")
+	fmt.Println("=================================")
+	fmt.Printf("Verdict: %s\n", r.Verdict)
+	if r.Reason != "" {
+		fmt.Printf("  reason:           %s\n", r.Reason)
+	}
+	if r.FirstBrokenID != nil {
+		fmt.Printf("  first broken id:  %d\n", *r.FirstBrokenID)
+	}
+	fmt.Printf("  range:            id %d..%d\n", r.Range.FromID, r.Range.ToID)
+	fmt.Printf("  chained events:   %d\n", r.ChainedEvents)
+	fmt.Printf("  unchained legacy: %d\n", r.UnchainedLegacyEvents)
+
+	fmt.Println("\nCheckpoint:")
+	switch {
+	case !r.Checkpoint.Present:
+		fmt.Println("  none found -- no checkpoint has ever been written for this trail")
+	case r.Checkpoint.Authenticated:
+		fmt.Printf("  authenticated, key version %q, certifies %d chained events\n",
+			r.Checkpoint.KeyVersion, r.Checkpoint.ChainedEventsCertified)
+	default:
+		fmt.Println("  present but UNAUTHENTICATED -- no --checkpoint-key-file was supplied, or it did not verify")
+	}
+
+	fmt.Println("\nRetention gap:")
+	switch {
+	case !r.RetentionGap.Present:
+		fmt.Println("  none -- the chain reaches genesis")
+	case r.RetentionGap.Sanctioned:
+		fmt.Printf("  present before event #%d, SANCTIONED by an authenticated retention anchor\n", r.RetentionGap.RowID)
+	default:
+		fmt.Printf("  present before event #%d, UNAUTHENTICATED\n", r.RetentionGap.RowID)
+	}
+
+	if r.Anchor.Present {
+		fmt.Println("\nCheckpoint external anchor (RFC 3161):")
+		if r.Anchor.Verified {
+			fmt.Printf("  verified against the configured trust root, provider %q, anchored at %s\n",
+				r.Anchor.Provider, r.Anchor.AnchoredAt.Format(time.RFC3339))
+		} else {
+			fmt.Println("  present but not independently re-verified against a TSA trust root")
+		}
+	}
+
+	if r.ExternalAnchor.Supplied {
+		fmt.Println("\nExternal anchor bundle (--anchor):")
+		if r.ExternalAnchor.Authenticated {
+			fmt.Println("  authenticated and cross-checked against the live chain")
+		} else {
+			fmt.Println("  present but UNAUTHENTICATED -- its claims were not cross-checked against this database")
+		}
+	}
+
+	fmt.Println("\nWhat this run does NOT prove:")
+	for _, np := range r.NotProven {
+		fmt.Printf("  - %s\n", np)
+	}
+
+	fmt.Printf("\nGenerated at %s by %s.\n", r.GeneratedAt.Format(time.RFC3339), r.VerifierVersion)
+}

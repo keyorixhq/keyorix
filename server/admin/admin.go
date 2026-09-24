@@ -7,6 +7,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -54,10 +55,19 @@ func init() {
 
 // Execute runs the admin command tree against args (os.Args[2:] -- the
 // portion after "admin") and returns a process exit code.
+//
+// An error implementing exitCodeError (see audit_verify.go) carries its own
+// specific code instead of the default 1 -- verify-audit's exit code is a
+// documented, three-way verdict (0/1/2/3, design §6), not merely a
+// success/failure bit.
 func Execute(args []string) int {
 	rootCmd.SetArgs(args)
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
+		var ece *exitCodeError
+		if errors.As(err, &ece) {
+			return ece.code
+		}
 		return 1
 	}
 	return 0

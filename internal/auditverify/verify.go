@@ -54,38 +54,49 @@ var verdictRank = map[Verdict]int{
 
 // Range bounds the audit_events rows this run actually walked.
 type Range struct {
-	FromID   uint64
-	ToID     uint64
-	FromTime time.Time
-	ToTime   time.Time
+	FromID   uint64    `json:"from_id"`
+	ToID     uint64    `json:"to_id"`
+	FromTime time.Time `json:"from_time"`
+	ToTime   time.Time `json:"to_time"`
 }
 
 // CheckpointStatus reports what this run found for the latest
 // audit_checkpoints row.
 type CheckpointStatus struct {
-	Present                bool
-	Authenticated          bool // signature checked and valid under a supplied key
-	KeyVersion             string
-	ChainedEventsCertified int64
+	Present                bool   `json:"present"`
+	Authenticated          bool   `json:"authenticated"` // signature checked and valid under a supplied key
+	KeyVersion             string `json:"key_version,omitempty"`
+	ChainedEventsCertified int64  `json:"chained_events_certified,omitempty"`
 }
 
 // RetentionGapStatus reports whether the chained region's earliest
 // surviving row carries a non-genesis prev_hash (i.e. rows before it were
 // removed, sanctioned or not).
 type RetentionGapStatus struct {
-	Present       bool
-	RowID         uint64
-	Authenticated bool // an authenticated retention anchor confirmed this gap
-	Sanctioned    bool // Present && Authenticated
+	Present       bool   `json:"present"`
+	RowID         uint64 `json:"row_id,omitempty"`
+	Authenticated bool   `json:"authenticated"` // an authenticated retention anchor confirmed this gap
+	Sanctioned    bool   `json:"sanctioned"`    // Present && Authenticated
 }
 
 // AnchorStatus reports the external-notary (RFC 3161) receipt on the latest
 // checkpoint, if any.
 type AnchorStatus struct {
-	Present    bool
-	Verified   bool
-	Provider   string
-	AnchoredAt time.Time
+	Present    bool      `json:"present"`
+	Verified   bool      `json:"verified"`
+	Provider   string    `json:"provider,omitempty"`
+	AnchoredAt time.Time `json:"anchored_at,omitempty"`
+}
+
+// ExternalAnchorStatus reports what this run did with an Options.
+// ExternalAnchor bundle, if one was supplied. This is a DISTINCT anchor from
+// AnchorStatus above (which only ever reflects the in-DB checkpoint's own
+// RFC 3161 receipt) — a bundle supplied via `--anchor` is a copy held
+// outside this host's blast radius (design §2/§3), and its authentication
+// outcome must never be conflated with the in-DB checkpoint's.
+type ExternalAnchorStatus struct {
+	Supplied      bool `json:"supplied"`
+	Authenticated bool `json:"authenticated"`
 }
 
 // Result is the verdict of one offline verification run. Its JSON shape
@@ -93,27 +104,28 @@ type AnchorStatus struct {
 // so a compliance pack or dashboard can render either source with one
 // renderer.
 type Result struct {
-	Verdict Verdict
-	Reason  string
+	Verdict Verdict `json:"verdict"`
+	Reason  string  `json:"reason,omitempty"`
 
-	Range                 Range
-	ChainedEvents         int64
-	UnchainedLegacyEvents int64
-	FirstBrokenID         *uint64
+	Range                 Range   `json:"range"`
+	ChainedEvents         int64   `json:"chained_events"`
+	UnchainedLegacyEvents int64   `json:"unchained_legacy_events"`
+	FirstBrokenID         *uint64 `json:"first_broken_id,omitempty"`
 
-	Checkpoint   CheckpointStatus
-	RetentionGap RetentionGapStatus
-	Anchor       AnchorStatus
+	Checkpoint     CheckpointStatus     `json:"checkpoint"`
+	RetentionGap   RetentionGapStatus   `json:"retention_gap"`
+	Anchor         AnchorStatus         `json:"anchor"`
+	ExternalAnchor ExternalAnchorStatus `json:"external_anchor"`
 
 	// NotProven states, in plain language, what this specific run — given
 	// the inputs it was handed — does NOT establish. Always non-empty: even
 	// a fully-authenticated VALID run cannot rule out a host admin who holds
 	// both the database and the checkpoint signing key (design §2). A
 	// compliance tool that omits this is overstating what it proves.
-	NotProven []string
+	NotProven []string `json:"not_proven"`
 
-	GeneratedAt     time.Time
-	VerifierVersion string
+	GeneratedAt     time.Time `json:"generated_at"`
+	VerifierVersion string    `json:"verifier_version"`
 }
 
 // escalate raises r's verdict to v (with reason) only if v outranks the
@@ -123,6 +135,29 @@ func (r *Result) escalate(v Verdict, reason string) {
 	if verdictRank[v] > verdictRank[r.Verdict] {
 		r.Verdict = v
 		r.Reason = reason
+	}
+}
+
+// ExitCode maps this run's verdict to the process exit code
+// docs/design-b4-offline-audit-verify.md §6 specifies: 0 VALID, 1 BROKEN
+// (tamper detected), 2 INDETERMINATE (could not fully verify — e.g. an
+// unauthenticated retention gap, or no key to check a real truncation).
+// Never 0 when something was silently unverified — that distinction is the
+// single most important behavior of the whole command (design §6). Exit
+// code 3 (usage/input error) is NOT represented here: that is a condition
+// this package signals by returning a non-nil error from Verify/Open before
+// any Result exists, not a verdict on a Result — the caller (the cobra
+// command) maps that error case to 3 itself.
+func (r *Result) ExitCode() int {
+	switch r.Verdict {
+	case VerdictValid:
+		return 0
+	case VerdictBroken:
+		return 1
+	case VerdictIndeterminate:
+		return 2
+	default:
+		return 1
 	}
 }
 
@@ -137,6 +172,11 @@ type Options struct {
 	// external-notary anchor on the latest checkpoint — the one check that
 	// needs no shared secret at all (design §3).
 	TSARoots *x509.CertPool
+	// ExternalAnchor, if set, is a signed checkpoint snapshot held outside
+	// this host's blast radius (design §3's `--anchor`) — cross-checked
+	// against the live chain once authenticated by CheckpointKey and/or
+	// TSARoots. See crossCheckExternalAnchor.
+	ExternalAnchor *ExternalAnchorBundle
 	// BatchSize overrides DefaultBatchSize for the keyset-paginated walk.
 	BatchSize int
 	// Now overrides time.Now for Result.GeneratedAt (tests only).
@@ -201,6 +241,12 @@ func Verify(ctx context.Context, db *DB, opts Options) (*Result, error) {
 			result.Checkpoint.Present = true
 			result.Checkpoint.KeyVersion = cp.KeyVersion
 			result.Checkpoint.ChainedEventsCertified = cp.ChainedEvents
+		}
+	}
+
+	if opts.ExternalAnchor != nil && result.Verdict != VerdictBroken {
+		if err := crossCheckExternalAnchor(ctx, db, opts, result); err != nil {
+			return nil, err
 		}
 	}
 
@@ -479,6 +525,11 @@ func buildNotProven(opts Options, result *Result) []string {
 		}
 		notProven = append(notProven, fmt.Sprintf(
 			"a checkpoint anchor token is present but was not independently re-verified against a TSA trust root (%s)", reason))
+	}
+	if result.ExternalAnchor.Supplied && !result.ExternalAnchor.Authenticated {
+		notProven = append(notProven,
+			"an --anchor bundle was supplied but could not be authenticated by either the checkpoint key or an "+
+				"RFC 3161 trust root; its claims were not cross-checked against this database and are advisory only")
 	}
 	return notProven
 }
