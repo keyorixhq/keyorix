@@ -988,6 +988,56 @@ decision on Finding S11 (D1: `rbac assign-role`/`remove-role`'s embedded-mode ac
 moot once local mode is gone, but decide explicitly rather than silently drop) and Finding S9
 (`invite list`'s stricter-than-REST local check — also moot, same reasoning). Size: medium.
 
+**Closed by PR split/pr3-cli-rbac-group-invite (2026-09-24).** All 23 commands ported into
+`cli/cmd/` against the generated `apiclient`, REST-only. Findings S11(D1) and S9 decided
+explicitly, per this entry's own instruction, rather than silently dropped: both existed only on
+the embedded (direct-DB) code path, and this module has no embedded mode at all (ADR-108 Decision
+A) — there is no local authority check left to diverge from the real HTTP session's.
+
+**OpenAPI spec gap found and closed, not just filtered**, mirroring PR 2's own precedent: 20
+operations this PR wires either had no 2xx response schema in `server/http/handlers/openapi.yaml`
+(`listGroups`, `createGroup`, `getGroup`, `updateGroup`, `getGroupMembers`, `addGroupMember`,
+`getGroupRoles`, `assignRoleToGroup`, `listProjectInvitations`, `createProjectInvitation`,
+`resendProjectInvitation`, `revokeProjectInvitation`, `listProjectEnvironments`, `listUsers`,
+`getUserRolesForUser`, `listRoles`, `getRolePermissions`, `assignUserRole`, `listRBACAuditLogs`)
+or did not exist in the spec at ALL (`getPermissionMatrix` — `GET /api/v1/rbac/permission-matrix`
+was a real, routed, `roles.read`-gated endpoint with zero OpenAPI documentation, despite having
+been deliberately relocated out of `/system` specifically to be reachable, #G79). Authored full
+request/response schemas (12 new `components/schemas` entries: `Group`, `UserSummary`,
+`GroupRoleGrant`, `RoleRef`, `Permission`, `RoleWithPermissions`, `Environment`,
+`ProjectInvitation`, `ProvisionSetupResult`, `RBACAuditLogEntry`, `PermissionMatrixRow`) rather
+than terse description-only stubs. Two of these (`Environment`, `ProjectInvitation`) document a
+genuinely surprising real wire format: `internal/storage/models.Environment` and
+`.ProjectInvitation` carry no `json:` tags at all, unlike every other model in that file, so the
+server actually serializes them with bare capitalized Go field names (`ID`, `ProjectID`,
+`CreatedAt`, ...) — not the snake_case this spec uses everywhere else. Verified by regenerating the
+CLI client from the authored schema and confirming the emitted struct tags match what
+`encoding/json` on the server side actually produces (not by hand-inspection). This mechanically
+converted these 20 operations from "pending" to "enforced" in `contracttest`'s ADR-074 registry
+(`registry.go`'s `pendingRegistry` → `exercisingTests`, `checks_test.go`'s
+`TestEnforcedSetMatchesADR074` pinned baseline) — closed with new, self-contained happy-path tests
+in `server/http/handlers/openapi_contract_pr3_test.go`, one per operation, not by grafting onto an
+existing test whose fixture/path might not actually reach the intended status code.
+
+One real, pre-existing spec bug the schema-authoring step caught (`server/http/handlers/
+openapi.yaml`, not CLI-side, independent of the split): `DELETE /api/v1/groups/{id}/members/
+{userId}` has always read an optional `project_id` query parameter in its real handler
+(`groups_members.go`'s `RemoveGroupMember`) — the old CLI's `group remove-member --project` has
+sent it since that command existed — but this spec never documented the parameter, so no client
+generated from it could ever construct a request carrying it. Added the missing parameter, ported
+`group remove-member`'s `--project` support unchanged, and added
+`TestRunGroupRemoveMember_SendsProjectIDQueryParam` asserting the actual query string that reaches
+the server (not just that the command returns success), so a future regression that silently drops
+the parameter again fails loud.
+
+Credential/config, shared output: no new work needed — this PR is a pure command-group port using
+PR 0's `credstore` and `cliout` exactly as PR 2 already established; no new "active project"
+concept (still deferred to the `project` command group, per this table).
+
+Verified: `go build`/`go vet`/`go test ./...` clean for both `cli` (`depguard` green) and the main
+module's `server/http/handlers` + `.../contracttest` packages; `gosec -severity medium` and
+`golangci-lint` both clean on `cli/`.
+
 **PR 4 — `secret` core CRUD + metadata (create/get/update/delete/list/versions/diff/folder +
 the ~30 already-CLIENT-ONLY commands, ~40 commands).** **Hard prerequisite**: fix Finding S1 (the
 `PUT /api/v1/users/{id}` admin-rank ceiling gap) is a `user` package concern but should land
