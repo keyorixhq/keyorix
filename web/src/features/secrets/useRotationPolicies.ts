@@ -9,7 +9,14 @@ import {
 
 const BASE = '/api/v1/rotation-policies';
 
-// The RotationPolicy model has no json tags, so Go serializes it as PascalCase.
+// models.RotationPolicy previously had no json tags, so Go serialized it as
+// PascalCase; it now carries explicit snake_case tags (ADR-108 PR 1, see the
+// model's own doc comment in internal/storage/models/models.go) and the real
+// wire format is snake_case going forward. The PascalCase fallback below is
+// kept -- harmless once the server only ever emits snake_case, and a cheap
+// defense against a future regression of the same class -- rather than
+// removed, since this file was already correctly defensive against the
+// ambiguity before the source-level fix landed.
 function normalizePolicy(p: Record<string, unknown>): RotationPolicy {
     return {
         id: (p.ID ?? p.id) as number,
