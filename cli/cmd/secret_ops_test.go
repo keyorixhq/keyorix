@@ -13,7 +13,7 @@ type secretOpsRoute struct {
 	respond      func(w http.ResponseWriter, r *http.Request)
 }
 
-func jsonRoute(method, path, body string) secretOpsRoute {
+func secretJSONRoute(method, path, body string) secretOpsRoute {
 	return secretOpsRoute{method, path, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(w, body)
@@ -48,8 +48,8 @@ func TestRunSecretVersions_RequiresID(t *testing.T) {
 
 func TestRunSecretVersions_MatchesOldCLIOutputShape(t *testing.T) {
 	srv := secretOpsServer(t,
-		jsonRoute(http.MethodGet, "/api/v1/secrets/1", `{"data":{"ID":1,"Name":"db-pass","Type":"generic"}}`),
-		jsonRoute(http.MethodGet, "/api/v1/secrets/1/versions", `{"data":{"versions":[{"ID":9,"VersionNumber":2,"ReadCount":3,"CreatedAt":"2026-01-02T00:00:00Z"}]}}`),
+		secretJSONRoute(http.MethodGet, "/api/v1/secrets/1", `{"data":{"ID":1,"Name":"db-pass","Type":"generic"}}`),
+		secretJSONRoute(http.MethodGet, "/api/v1/secrets/1/versions", `{"data":{"versions":[{"ID":9,"VersionNumber":2,"ReadCount":3,"CreatedAt":"2026-01-02T00:00:00Z"}]}}`),
 	)
 	setPATCreds(t, srv)
 	secretVersionsID, secretVersionsFormat = 1, "table"
@@ -74,7 +74,7 @@ func TestRunSecretDiff_RequiresProjectAndEnvironmentWithoutID(t *testing.T) {
 
 func TestRunSecretDiff_MatchesOldCLIOutputShape(t *testing.T) {
 	srv := secretOpsServer(t,
-		jsonRoute(http.MethodGet, "/api/v1/secrets/1/versions/1/diff/2",
+		secretJSONRoute(http.MethodGet, "/api/v1/secrets/1/versions/1/diff/2",
 			`{"data":{"secret_name":"db-pass","from_version":1,"to_version":2,"changes":[{"field":"classification","old_value":"","new_value":"confidential"}],"acl_user_ids":[7],"degraded":false}}`),
 	)
 	setPATCreds(t, srv)
@@ -100,7 +100,7 @@ func TestRunSecretRollback_RequiresIDAndVersion(t *testing.T) {
 
 func TestVersionCommentAdd_MatchesOldCLIOutputShape(t *testing.T) {
 	srv := secretOpsServer(t,
-		jsonRoute(http.MethodPost, "/api/v1/secrets/1/versions/2/comments", `{"data":{"id":5,"comment":"rotated","username":"alice","created_at":"2026-01-02T00:00:00Z"}}`),
+		secretJSONRoute(http.MethodPost, "/api/v1/secrets/1/versions/2/comments", `{"data":{"id":5,"comment":"rotated","username":"alice","created_at":"2026-01-02T00:00:00Z"}}`),
 	)
 	setPATCreds(t, srv)
 
@@ -117,7 +117,7 @@ func TestVersionCommentAdd_MatchesOldCLIOutputShape(t *testing.T) {
 // ── acl ─────────────────────────────────────────────────────────────────────────
 
 func TestSecretACLList_EmptyPrintsNoGrantsMessage(t *testing.T) {
-	srv := secretOpsServer(t, jsonRoute(http.MethodGet, "/api/v1/secrets/1/acl", `{"data":[]}`))
+	srv := secretOpsServer(t, secretJSONRoute(http.MethodGet, "/api/v1/secrets/1/acl", `{"data":[]}`))
 	setPATCreds(t, srv)
 
 	out := captureStdout(t, func() {
@@ -147,7 +147,7 @@ func TestSecretFolderCreate_RequiresName(t *testing.T) {
 }
 
 func TestSecretFolderList_MatchesOldCLIOutputShape(t *testing.T) {
-	srv := secretOpsServer(t, jsonRoute(http.MethodGet, "/api/v1/folders", `{"data":[{"ID":3,"Name":"db-creds","ProjectID":1,"EnvironmentID":1}]}`))
+	srv := secretOpsServer(t, secretJSONRoute(http.MethodGet, "/api/v1/folders", `{"data":[{"ID":3,"Name":"db-creds","ProjectID":1,"EnvironmentID":1}]}`))
 	setPATCreds(t, srv)
 
 	out := captureStdout(t, func() {
@@ -187,7 +187,7 @@ func TestSecretCopyEnvironment_FromAndToMustDiffer(t *testing.T) {
 // ── deps ────────────────────────────────────────────────────────────────────────
 
 func TestSecretDepsList_MatchesOldCLIOutputShape(t *testing.T) {
-	srv := secretOpsServer(t, jsonRoute(http.MethodGet, "/api/v1/secrets/1/dependencies",
+	srv := secretOpsServer(t, secretJSONRoute(http.MethodGet, "/api/v1/secrets/1/dependencies",
 		`{"data":{"secret_id":1,"depends_on":[{"id":2,"secret_id":5,"secret_name":"db-root","note":"rotation source"}],"dependents":[]}}`))
 	setPATCreds(t, srv)
 
@@ -202,7 +202,7 @@ func TestSecretDepsList_MatchesOldCLIOutputShape(t *testing.T) {
 }
 
 func TestSecretDepsImpact_MatchesOldCLIOutputShape(t *testing.T) {
-	srv := secretOpsServer(t, jsonRoute(http.MethodGet, "/api/v1/secrets/1/impact",
+	srv := secretOpsServer(t, secretJSONRoute(http.MethodGet, "/api/v1/secrets/1/impact",
 		`{"data":{"secret_id":1,"secret_name":"db-root","affected":[{"secret_id":9,"secret_name":"app-conn","depth":1}]}}`))
 	setPATCreds(t, srv)
 
@@ -226,7 +226,7 @@ func TestSecretAccess_RequiresID(t *testing.T) {
 }
 
 func TestSecretAccess_MatchesOldCLIOutputShape(t *testing.T) {
-	srv := secretOpsServer(t, jsonRoute(http.MethodGet, "/api/v1/secrets/1/access",
+	srv := secretOpsServer(t, secretJSONRoute(http.MethodGet, "/api/v1/secrets/1/access",
 		`{"data":{"accessors":[{"username":"alice","permission":"read","source":"owner"}]}}`))
 	setPATCreds(t, srv)
 	secretAccessID = 1
@@ -251,7 +251,7 @@ func TestSecretSetSchedule_RejectsInvalidDay(t *testing.T) {
 }
 
 func TestSecretSetSchedule_MatchesOldCLIOutputShape(t *testing.T) {
-	srv := secretOpsServer(t, jsonRoute(http.MethodPut, "/api/v1/secrets/1/schedule",
+	srv := secretOpsServer(t, secretJSONRoute(http.MethodPut, "/api/v1/secrets/1/schedule",
 		`{"data":{"allowed_days":"1,2,3,4,5","start_hour":9,"end_hour":17,"timezone":"UTC"}}`))
 	setPATCreds(t, srv)
 	secretSchedDays, secretSchedStartHour, secretSchedEndHour, secretSchedTimezone = "mon,tue,wed,thu,fri", 9, 17, "UTC"
@@ -284,7 +284,7 @@ func TestSecretTrash_RequiresProject(t *testing.T) {
 }
 
 func TestSecretTrash_MatchesOldCLIOutputShape(t *testing.T) {
-	srv := secretOpsServer(t, jsonRoute(http.MethodGet, "/api/v1/projects/1/secrets/deleted",
+	srv := secretOpsServer(t, secretJSONRoute(http.MethodGet, "/api/v1/projects/1/secrets/deleted",
 		`{"data":{"deleted":[{"id":4,"name":"old-key","type":"generic","classification":"","deleted_at":"2026-01-02T00:00:00Z"}]}}`))
 	setPATCreds(t, srv)
 	secretTrashProject = 1
@@ -310,7 +310,7 @@ func TestSecretTemplateCreate_RequiresName(t *testing.T) {
 }
 
 func TestSecretTemplateList_MatchesOldCLIOutputShape(t *testing.T) {
-	srv := secretOpsServer(t, jsonRoute(http.MethodGet, "/api/v1/secret-templates",
+	srv := secretOpsServer(t, secretJSONRoute(http.MethodGet, "/api/v1/secret-templates",
 		`{"data":{"templates":[{"id":2,"name":"db-cred","description":"Standard DB credential"}]}}`))
 	setPATCreds(t, srv)
 
@@ -334,7 +334,7 @@ func TestSecretTags_RequiresID(t *testing.T) {
 }
 
 func TestSecretTags_ListEmptyPrintsNoTags(t *testing.T) {
-	srv := secretOpsServer(t, jsonRoute(http.MethodGet, "/api/v1/secrets/1/tags", `{"data":{"tags":[]}}`))
+	srv := secretOpsServer(t, secretJSONRoute(http.MethodGet, "/api/v1/secrets/1/tags", `{"data":{"tags":[]}}`))
 	setPATCreds(t, srv)
 	secretTagsID = 1
 	defer func() { secretTagsID = 0 }()
@@ -366,8 +366,8 @@ func TestSecretInfo_RequiresID(t *testing.T) {
 
 func TestSecretInfo_MatchesOldCLIOutputShape(t *testing.T) {
 	srv := secretOpsServer(t,
-		jsonRoute(http.MethodGet, "/api/v1/secrets/1", `{"data":{"ID":1,"Name":"db-pass","Type":"generic","Status":"active","Classification":"confidential","OwnerID":9,"CreatedBy":"alice"}}`),
-		jsonRoute(http.MethodGet, "/api/v1/secrets/1/tags", `{"data":{"tags":["prod","db"]}}`),
+		secretJSONRoute(http.MethodGet, "/api/v1/secrets/1", `{"data":{"ID":1,"Name":"db-pass","Type":"generic","Status":"active","Classification":"confidential","OwnerID":9,"CreatedBy":"alice"}}`),
+		secretJSONRoute(http.MethodGet, "/api/v1/secrets/1/tags", `{"data":{"tags":["prod","db"]}}`),
 	)
 	setPATCreds(t, srv)
 	secretInfoID = 1

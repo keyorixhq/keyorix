@@ -6,18 +6,32 @@
 //	CreateRotationPolicy, UpdateRotationPolicy (internal/storage/store/
 //	remote_rotation_policies.go): tranche 4's own dynamic_rotation file
 //	SKIPPED both, documenting a confirmed, currently-shipping wire bug --
-//	models.RotationPolicy carries no json tags, so posting it directly
+//	models.RotationPolicy carried no json tags, so posting it directly
 //	marshaled every multi-word field (IntervalDays, ProjectID, EnvironmentID,
 //	AlertDaysBefore, NotifyOnBreach, IsActive, CreatedBy) as PascalCase, which
 //	never case-insensitively matches the server's snake_case-tagged reqBody,
 //	silently zeroing all of them and tripping the server's own
 //	`interval_days must be at least 1` validation on every single call. THAT
-//	BUG IS NOW FIXED (PR #1832): remote_rotation_policies.go now builds
-//	explicit rotationPolicyCreateWire/rotationPolicyUpdateWire request types
-//	with correct snake_case json tags. Real, passing conformance tests for
-//	both methods are written below, with assertions strong enough to have
-//	caught the original bug (asserting exact non-default, non-zero values for
-//	every previously-zeroed multi-word field, not just "no error").
+//	BUG WAS FIXED IN TWO STAGES: first (PR #1832) at the request-wire layer --
+//	remote_rotation_policies.go builds explicit rotationPolicyCreateWire/
+//	rotationPolicyUpdateWire request types with correct snake_case json tags,
+//	independent of the model. Then (ADR-108 PR 1, docs/cli-split-inventory.md
+//	§7) at the model itself -- models.RotationPolicy now carries explicit
+//	snake_case json tags directly (see its own doc comment), fixing the same
+//	class of defect for every OTHER consumer of this model's JSON form (the
+//	human-facing GET/POST/PUT responses this file's own assertions below
+//	decode via RemoteStorage.CreateRotationPolicy/UpdateRotationPolicy's
+//	`json.Unmarshal(resp.Data, &result)` into models.RotationPolicy directly --
+//	that path was already correct before the model-level fix, by construction:
+//	server and client both used the SAME untagged Go type, so encoding/json's
+//	exact-match rule bridged PascalCase-to-PascalCase consistently even though
+//	it disagreed with this API's own snake_case convention everywhere else).
+//	Real, passing conformance tests for both methods are written below, with
+//	assertions strong enough to have caught the original request-wire bug
+//	(asserting exact non-default, non-zero values for every previously-zeroed
+//	multi-word field, not just "no error") -- unaffected by the later
+//	model-level fix, since they compare decoded Go struct values, not JSON
+//	text.
 //
 //	TransitionProjectMembershipState (internal/storage/store/
 //	remote_memberships.go): tranche 4's own memberships_auth file SKIPPED
@@ -102,11 +116,12 @@ func TestConformance_CreateRotationPolicy(t *testing.T) {
 	// IntervalDays/AlertDaysBefore/ProjectID are deliberately given distinct,
 	// non-zero, non-default values (45, 3) -- this is the exact defect class
 	// tranche 4's own SKIPPED writeup found: every one of these previously
-	// decoded to its Go zero value server-side (models.RotationPolicy has no
-	// json tags, and encoding/json's case-insensitive fallback match cannot
-	// bridge "IntervalDays" to "interval_days" -- the strings differ by more
-	// than case), which tripped the server's own `interval_days` validation
-	// and made both methods fail unconditionally. NotifyOnBreach is
+	// decoded to its Go zero value server-side (models.RotationPolicy had no
+	// json tags at the time, and encoding/json's case-insensitive fallback
+	// match cannot bridge "IntervalDays" to "interval_days" -- the strings
+	// differ by more than case), which tripped the server's own
+	// `interval_days` validation and made both methods fail unconditionally.
+	// NotifyOnBreach is
 	// deliberately NOT used to prove this on the CREATE path: GORM's own
 	// `gorm:"default:true"` on RotationPolicy.NotifyOnBreach means a
 	// zero-valued (false) field is silently coerced to true by Create
