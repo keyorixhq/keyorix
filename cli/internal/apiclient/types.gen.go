@@ -21,6 +21,13 @@ const (
 	Suspended MachineIdentityState = "suspended"
 )
 
+// Defines values for GetComplianceCredentialTrendsParamsDays.
+const (
+	N30 GetComplianceCredentialTrendsParamsDays = 30
+	N60 GetComplianceCredentialTrendsParamsDays = 60
+	N90 GetComplianceCredentialTrendsParamsDays = 90
+)
+
 // Defines values for ListProjectsParamsIncludeDeleted.
 const (
 	False ListProjectsParamsIncludeDeleted = "false"
@@ -32,6 +39,16 @@ const (
 	Activate TransitionMachineIdentityJSONBodyAction = "activate"
 	Revoke   TransitionMachineIdentityJSONBodyAction = "revoke"
 	Suspend  TransitionMachineIdentityJSONBodyAction = "suspend"
+)
+
+// Defines values for CreateRiskExceptionJSONBodyCategory.
+const (
+	Classification CreateRiskExceptionJSONBodyCategory = "classification"
+	DormantAccess  CreateRiskExceptionJSONBodyCategory = "dormant_access"
+	Mfa            CreateRiskExceptionJSONBodyCategory = "mfa"
+	Other          CreateRiskExceptionJSONBodyCategory = "other"
+	Rotation       CreateRiskExceptionJSONBodyCategory = "rotation"
+	Sod            CreateRiskExceptionJSONBodyCategory = "sod"
 )
 
 // MachineAuditReport Deployment-wide machine identity audit report (GET /machine-identities/audit).
@@ -173,6 +190,59 @@ type CreatePATJSONBody struct {
 	Scopes *[]string `json:"scopes,omitempty"`
 }
 
+// GetComplianceCredentialTrendsParams defines parameters for GetComplianceCredentialTrends.
+type GetComplianceCredentialTrendsParams struct {
+	Days *GetComplianceCredentialTrendsParamsDays `form:"days,omitempty" json:"days,omitempty"`
+}
+
+// GetComplianceCredentialTrendsParamsDays defines parameters for GetComplianceCredentialTrends.
+type GetComplianceCredentialTrendsParamsDays int
+
+// VerifyComplianceEvidenceJSONBody defines parameters for VerifyComplianceEvidence.
+type VerifyComplianceEvidenceJSONBody struct {
+	// DataB64 Base64 of the evidence-pack bytes.
+	DataB64 string `json:"data_b64"`
+
+	// Signature The detached signature ('<keyVersion>:<hmac-hex>').
+	Signature string `json:"signature"`
+}
+
+// GetCompliancePermissionChangesParams defines parameters for GetCompliancePermissionChanges.
+type GetCompliancePermissionChangesParams struct {
+	// Since RFC3339 lower bound; defaults to 30 days ago.
+	Since *time.Time `form:"since,omitempty" json:"since,omitempty"`
+
+	// Until RFC3339 upper bound; defaults to now.
+	Until *time.Time `form:"until,omitempty" json:"until,omitempty"`
+
+	// Limit Max events (default 100, max 1000).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetDeploymentHygieneParams defines parameters for GetDeploymentHygiene.
+type GetDeploymentHygieneParams struct {
+	// UnusedDays Unused-secret window in days (server default: 90).
+	UnusedDays *int `form:"unused_days,omitempty" json:"unused_days,omitempty"`
+
+	// ExpiringDays Expiring-secret window in days (server default: 30).
+	ExpiringDays *int `form:"expiring_days,omitempty" json:"expiring_days,omitempty"`
+
+	// StaleDays Stale-machine-identity window in days (server default: 90).
+	StaleDays *int `form:"stale_days,omitempty" json:"stale_days,omitempty"`
+}
+
+// LiftLegalHoldJSONBody defines parameters for LiftLegalHold.
+type LiftLegalHoldJSONBody struct {
+	// Reason Why the hold is lifted (recorded for audit).
+	Reason string `json:"reason"`
+}
+
+// PlaceLegalHoldJSONBody defines parameters for PlaceLegalHold.
+type PlaceLegalHoldJSONBody struct {
+	// Reason Why the hold is placed (recorded for audit)
+	Reason string `json:"reason"`
+}
+
 // MachineTokenHygieneParams defines parameters for MachineTokenHygiene.
 type MachineTokenHygieneParams struct {
 	// Days Staleness window in days (default server-side: 90, cap 3650).
@@ -236,6 +306,40 @@ type IssueMachineTokenJSONBody struct {
 	Name          string `json:"name"`
 }
 
+// ListRiskExceptionsParams defines parameters for ListRiskExceptions.
+type ListRiskExceptionsParams struct {
+	// All Include expired exceptions.
+	All *bool `form:"all,omitempty" json:"all,omitempty"`
+}
+
+// CreateRiskExceptionJSONBody defines parameters for CreateRiskException.
+type CreateRiskExceptionJSONBody struct {
+	Category *CreateRiskExceptionJSONBodyCategory `json:"category,omitempty"`
+
+	// ExpiresAt RFC3339; must be in the future.
+	ExpiresAt     time.Time `json:"expires_at"`
+	Justification string    `json:"justification"`
+
+	// Reference What it applies to (a user, an SoD pair, a secret).
+	Reference *string `json:"reference,omitempty"`
+	Title     string  `json:"title"`
+}
+
+// CreateRiskExceptionJSONBodyCategory defines parameters for CreateRiskException.
+type CreateRiskExceptionJSONBodyCategory string
+
+// CreateSoDPolicyJSONBody defines parameters for CreateSoDPolicy.
+type CreateSoDPolicyJSONBody struct {
+	Description *string `json:"description,omitempty"`
+	Name        string  `json:"name"`
+
+	// PermissionA e.g. roles.assign
+	PermissionA string `json:"permission_a"`
+
+	// PermissionB e.g. secrets.delete (must differ from permission_a)
+	PermissionB string `json:"permission_b"`
+}
+
 // AuthLoginJSONBody defines parameters for AuthLogin.
 type AuthLoginJSONBody struct {
 	Password string `json:"password"`
@@ -251,6 +355,15 @@ type UpdateAuthProfileJSONRequestBody UpdateAuthProfileJSONBody
 // CreatePATJSONRequestBody defines body for CreatePAT for application/json ContentType.
 type CreatePATJSONRequestBody CreatePATJSONBody
 
+// VerifyComplianceEvidenceJSONRequestBody defines body for VerifyComplianceEvidence for application/json ContentType.
+type VerifyComplianceEvidenceJSONRequestBody VerifyComplianceEvidenceJSONBody
+
+// LiftLegalHoldJSONRequestBody defines body for LiftLegalHold for application/json ContentType.
+type LiftLegalHoldJSONRequestBody LiftLegalHoldJSONBody
+
+// PlaceLegalHoldJSONRequestBody defines body for PlaceLegalHold for application/json ContentType.
+type PlaceLegalHoldJSONRequestBody PlaceLegalHoldJSONBody
+
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody CreateProjectJSONBody
 
@@ -265,6 +378,12 @@ type CreateOIDCBindingJSONRequestBody CreateOIDCBindingJSONBody
 
 // IssueMachineTokenJSONRequestBody defines body for IssueMachineToken for application/json ContentType.
 type IssueMachineTokenJSONRequestBody IssueMachineTokenJSONBody
+
+// CreateRiskExceptionJSONRequestBody defines body for CreateRiskException for application/json ContentType.
+type CreateRiskExceptionJSONRequestBody CreateRiskExceptionJSONBody
+
+// CreateSoDPolicyJSONRequestBody defines body for CreateSoDPolicy for application/json ContentType.
+type CreateSoDPolicyJSONRequestBody CreateSoDPolicyJSONBody
 
 // AuthLoginJSONRequestBody defines body for AuthLogin for application/json ContentType.
 type AuthLoginJSONRequestBody AuthLoginJSONBody
