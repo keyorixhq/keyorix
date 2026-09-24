@@ -3,13 +3,18 @@
 // For migration see auth_encryption_migrate.go.
 // For validation see auth_encryption_validate.go.
 // For DB open and stats see auth_encryption_stats.go.
+//
+// The actual logic lives in internal/encryptionops (docs/cli-split-inventory.md
+// §7 PR 12), shared with the `keyorix-server admin encryption
+// auth-encryption` subcommand tree.
 package encryption
 
 import (
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
-	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/encryptionops"
 	"github.com/spf13/cobra"
 )
 
@@ -82,49 +87,10 @@ func runAuthEncryptionStatus(cmd *cobra.Command, args []string) error {
 	return authStatusWithConfig(cfg)
 }
 
-// authStatusWithConfig is the testable core of runAuthEncryptionStatus: no flag
-// parsing, no config.Load — callers pass an explicit cfg, matching the
-// *WithConfig convention the DEK-focused commands in encryption.go already use
-// (rotateWithConfig, validateWithConfig, ...).
+// authStatusWithConfig is a thin re-export of encryptionops.AuthStatusWithConfig
+// — kept as a package-local name because this package's tests call it directly.
 func authStatusWithConfig(cfg *config.Config) error {
-	db, err := openDatabase(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
-	}
-	authEnc := encryption.NewAuthEncryption(&cfg.Storage.Encryption, ".", db)
-	passphrase, _ := masterPassphrase(cfg)
-	if err := authEnc.Initialize(passphrase); err != nil {
-		return fmt.Errorf("failed to initialize auth encryption: %w", err)
-	}
-	// #292/G62: take the same cross-process shared DEK lock the sibling DEK
-	// commands (status/validate/fix-perms/upgrade-aad) already require, so this
-	// fails fast instead of racing a concurrent migrate-provider/rotate.
-	if err := authEnc.AcquireSharedKeyLock(); err != nil {
-		authEnc.Shutdown()
-		return fmt.Errorf("%w — a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry", err)
-	}
-	defer authEnc.Shutdown()
-	status := authEnc.GetAuthEncryptionStatus()
-
-	fmt.Println("🔐 Authentication Encryption Status")
-	fmt.Println("=" + string(make([]rune, 35)))
-	if status["enabled"].(bool) {
-		fmt.Println("✅ Status: ENABLED")
-	} else {
-		fmt.Println("❌ Status: DISABLED")
-	}
-	if status["initialized"].(bool) {
-		fmt.Println("✅ Initialized: YES")
-		if keyVersion, ok := status["key_version"]; ok {
-			fmt.Printf("🔑 Key Version: %s\n", keyVersion)
-		}
-	} else {
-		fmt.Println("❌ Initialized: NO")
-	}
-	if err := showAuthEncryptionStats(db, status["enabled"].(bool)); err != nil {
-		fmt.Printf("⚠️  Warning: Could not retrieve statistics: %v\n", err)
-	}
-	return nil
+	return encryptionops.AuthStatusWithConfig(cfg, common.PassphraseSource)
 }
 
 func runEnableAuthEncryption(cmd *cobra.Command, args []string) error {
@@ -136,42 +102,21 @@ func runEnableAuthEncryption(cmd *cobra.Command, args []string) error {
 	return enableAuthEncryptionWithConfig(cfg, force)
 }
 
-// enableAuthEncryptionWithConfig is the testable core of runEnableAuthEncryption:
-// no flag parsing, no config.Load — callers pass an explicit cfg and force bool.
+// enableAuthEncryptionWithConfig is a thin re-export of
+// encryptionops.EnableAuthEncryptionWithConfig — kept as a package-local name
+// because this package's tests call it directly.
 func enableAuthEncryptionWithConfig(cfg *config.Config, force bool) error {
-	if !cfg.Storage.Encryption.Enabled && !force {
-		return fmt.Errorf("encryption is disabled in configuration. Enable it in config or use --force flag")
-	}
-	db, err := openDatabase(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
-	}
-	authEnc := encryption.NewAuthEncryption(&cfg.Storage.Encryption, ".", db)
-	status := authEnc.GetAuthEncryptionStatus()
-	if status["enabled"].(bool) && status["initialized"].(bool) && !force {
-		fmt.Println("✅ Authentication encryption is already enabled")
-		return nil
-	}
-	passphrase, _ := masterPassphrase(cfg)
-	if err := authEnc.Initialize(passphrase); err != nil {
-		return fmt.Errorf("failed to initialize auth encryption: %w", err)
-	}
-	// #292/G62: take the same cross-process shared DEK lock the sibling DEK
-	// commands (status/validate/fix-perms/upgrade-aad) already require, so this
-	// fails fast instead of racing a concurrent migrate-provider/rotate.
-	if err := authEnc.AcquireSharedKeyLock(); err != nil {
-		authEnc.Shutdown()
-		return fmt.Errorf("%w — a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry", err)
-	}
-	defer authEnc.Shutdown()
-	fmt.Println("✅ Authentication encryption enabled successfully")
-	fmt.Println("🔑 New authentication tokens will be encrypted")
-	fmt.Println("💡 Use 'migrate' command to encrypt existing plaintext data")
-	return nil
+	return encryptionops.EnableAuthEncryptionWithConfig(cfg, force, common.PassphraseSource)
 }
 
 func runRotateAuthEncryption(cmd *cobra.Command, args []string) error {
 	confirm, _ := cmd.Flags().GetBool("confirm")
+	// The --confirm gate is checked here, BEFORE config.Load, matching this
+	// command's original control flow: an operator who forgot --confirm gets
+	// that error immediately, not a possibly-unrelated config-load failure.
+	// encryptionops.RotateAuthEncryptionWithConfig re-checks confirm too
+	// (harmless — every caller must pass it a value either way), but relying
+	// on that alone would reorder the two failure modes for this command.
 	if !confirm {
 		return fmt.Errorf("key rotation requires --confirm flag. This operation will re-encrypt all authentication data")
 	}
@@ -179,20 +124,5 @@ func runRotateAuthEncryption(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
-	db, err := openDatabase(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
-	}
-	authEnc := encryption.NewAuthEncryption(&cfg.Storage.Encryption, ".", db)
-	passphrase, _ := masterPassphrase(cfg)
-	if err := authEnc.Initialize(passphrase); err != nil {
-		return fmt.Errorf("failed to initialize auth encryption: %w", err)
-	}
-	fmt.Println("🔄 Starting authentication encryption key rotation...")
-	if err := authEnc.RotateAuthEncryption(passphrase); err != nil {
-		return fmt.Errorf("failed to rotate auth encryption keys: %w", err)
-	}
-	fmt.Println("✅ Authentication encryption key rotation completed successfully")
-	fmt.Println("🔑 All authentication data has been re-encrypted with new keys")
-	return nil
+	return encryptionops.RotateAuthEncryptionWithConfig(cfg, confirm, common.PassphraseSource)
 }
