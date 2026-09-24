@@ -462,9 +462,23 @@ jobs:
         run: |
           changed=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
           pkgs=$(echo "$changed" | python3 scripts/ci-test-quick.py .)
+          # 480s (8min) is right for the common case -- a handful of affected
+          # packages. The FULL fallback runs the entire root-module package
+          # list, which includes packages the full test-suite matrix gives
+          # their own 1800s-timeout leg specifically because they're slow
+          # (internal/storage/store measured 867s-1363s alone; server/http
+          # measured 1904s alone -- see test-suite's own leg comments below).
+          # 480s killed a real, still-running test package on this exact PR
+          # (#2052's own first CI run: `panic: test timed out after 8m0s`
+          # mid server/http, not a real failure, just too short a clock) --
+          # match test-suite's own generous-timeout precedent instead of
+          # re-discovering that the hard way on every future ci.yml/go.mod
+          # change.
+          timeout=480s
           if [ "$pkgs" = "FULL" ]; then
             echo "Fallback trigger fired (go.mod/go.sum/.github/ or internal/testutil/ changed) -- running the full root-module package list."
             pkgs=$(go list ./... | grep -vE '^github\.com/keyorixhq/keyorix/(cli|operator)(/|$)')
+            timeout=1800s
           fi
           if [ -z "$pkgs" ]; then
             echo "No root-module package is affected by this PR's diff -- nothing to run."
@@ -473,7 +487,7 @@ jobs:
           echo "Affected packages:"
           echo "$pkgs"
           # shellcheck disable=SC2086
-          go test -short -timeout 480s $pkgs
+          go test -short -timeout "$timeout" $pkgs
 
   test-quick-cli:
     needs: [preflight, changes]
@@ -501,9 +515,16 @@ jobs:
         run: |
           changed=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
           pkgs=$(echo "$changed" | python3 ../scripts/ci-test-quick.py cli)
+          # See test-quick-root's own comment on this same pattern: FULL
+          # fallback runs the whole module, which deserves the same
+          # generous-timeout treatment even though cli/ itself is small
+          # today -- consistent behavior beats a timeout that's only
+          # actually been sized for the common (small-subset) case.
+          timeout=480s
           if [ "$pkgs" = "FULL" ]; then
             echo "Fallback trigger fired (go.mod/go.sum/.github/ or internal/testutil/ changed) -- running the full cli-module package list."
             pkgs=$(go list ./...)
+            timeout=1800s
           fi
           if [ -z "$pkgs" ]; then
             echo "No cli-module package is affected by this PR's diff -- nothing to run."
@@ -512,7 +533,7 @@ jobs:
           echo "Affected packages:"
           echo "$pkgs"
           # shellcheck disable=SC2086
-          go test -short -timeout 480s -count=1 $pkgs
+          go test -short -timeout "$timeout" -count=1 $pkgs
 
   # Runs the two `go test` legs (root minus known-excluded/handlers packages,
   # and server/http/handlers on its own longer timeout, see the step comment
