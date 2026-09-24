@@ -132,11 +132,19 @@ func runUpdateRemote(rc *common.RemoteClient, shareID uint, permission string, e
 	return nil
 }
 
-func runSharedSecretsRemote(rc *common.RemoteClient) error {
+func runSharedSecretsRemote(rc *common.RemoteClient, userID uint) error {
 	var resp struct {
 		Secrets []models.SecretNode `json:"secrets"`
 	}
-	if err := rc.Get(context.Background(), "/api/v1/shared-secrets", &resp); err != nil {
+	// userID 0 (the default, "yourself") uses the caller-scoped route; a
+	// non-zero target uses the admin-scoped route added alongside this change,
+	// which additionally enforces the S1 admin-rank ceiling for a target other
+	// than the caller.
+	path := "/api/v1/shared-secrets"
+	if userID != 0 {
+		path = fmt.Sprintf("/api/v1/users/%d/shared-secrets", userID)
+	}
+	if err := rc.Get(context.Background(), path, &resp); err != nil {
 		return fmt.Errorf("failed to list shared secrets: %w", err)
 	}
 	if len(resp.Secrets) == 0 {

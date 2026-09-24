@@ -29,6 +29,13 @@ const (
 
 	// ShareAuditEventSelfRemoved represents a user removing themselves from a share
 	ShareAuditEventSelfRemoved ShareAuditEvent = "share_self_removed"
+
+	// ShareAuditEventSharedSecretsAdminViewed represents an admin (a caller
+	// other than the target) viewing the secrets shared with another user —
+	// see ListSharedSecretsForUser (sharing_query.go). A self-view is not
+	// audited here, matching GET /api/v1/shared-secrets (the caller's own
+	// list), which never has been.
+	ShareAuditEventSharedSecretsAdminViewed ShareAuditEvent = "shared_secrets_admin_viewed"
 )
 
 // ShareAuditContext contains context information for audit logging

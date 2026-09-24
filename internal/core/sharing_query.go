@@ -29,6 +29,75 @@ func (c *KeyorixCore) ListSharedSecrets(ctx context.Context, userID uint) ([]*mo
 	return secrets, nil
 }
 
+// ListSharedSecretsForUser lists the secrets shared with targetUserID, on
+// behalf of actorID. A self-view (actorID == targetUserID) needs nothing
+// beyond the route's own secrets.read gate, matching ListSharedSecrets.
+//
+// A cross-user (admin) view requires TWO independent things, both checked
+// here (not just at the router), because neither alone is sufficient:
+//
+//  1. roles.read, globally. secrets.read (the route's own permission gate)
+//     is routinely bundled with users.read into ordinary, non-admin roles
+//     (project_viewer, project_developer, project_auditor all hold both —
+//     see auth_bootstrap.go's defaultRoles) — a router-level gate on either
+//     or both is not an admin check, just the baseline every project member
+//     already clears. roles.read is the existing permission this codebase
+//     already uses to distinguish "can view another user's account" from
+//     "can view another user's SENSITIVE, admin-tier data" — GetUserRolesForUser
+//     (server/http/router.go) gates the identical class of problem
+//     (enumerating another user's attack surface) on roles.read instead of
+//     the blanket users.read for exactly this reason. Matched here rather
+//     than inventing a new permission.
+//  2. The S1 admin-rank ceiling (requireAdminRankCeilingForTarget, CLI-split
+//     inventory #2012/#2017): actorID must hold, at every scope, every
+//     permission targetUserID already holds. roles.read alone is not
+//     sufficient either — it only proves the actor is SOME kind of admin,
+//     not that they outrank THIS target specifically.
+//
+// A target that does not exist, and an actor lacking roles.read, both
+// resolve through the IDENTICAL refusal path as a genuine ceiling refusal —
+// same wrapped error, same audit event, same (generic, clientSafe-collapsed)
+// HTTP response. Without this, a caller could distinguish "this numeric ID
+// belongs to no one" / "I'm not admin enough to even try" from "this ID
+// belongs to someone I'm not allowed to see" — an existence oracle for admin
+// accounts, exactly what ADR-096's 403-for-both convention exists to close
+// for scoped resources. This extends the same discipline to a USER target.
+func (c *KeyorixCore) ListSharedSecretsForUser(ctx context.Context, actorID, targetUserID uint) ([]*models.SecretNode, error) {
+	if targetUserID == 0 {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+	}
+	if actorID != targetUserID {
+		if allowed, aerr := c.Authorize(ctx, actorID, permRolesRead, Scope{}); aerr != nil || !allowed {
+			aid := actorID
+			c.writeAuditEventFailed(ctx, EventAdminRankCeilingRefused, &aid, nil, "",
+				fmt.Sprintf("actor %d refused: lacks %s required to view another user's shared secrets (target %d)", actorID, permRolesRead, targetUserID))
+			return nil, fmt.Errorf("%w: missing admin permission to view another user's shared secrets", ErrInsufficientAdminAuthority)
+		}
+		if _, err := c.storage.GetUser(ctx, targetUserID); err != nil {
+			aid := actorID
+			c.writeAuditEventFailed(ctx, EventAdminRankCeilingRefused, &aid, nil, "",
+				fmt.Sprintf("actor %d refused: target user %d does not exist", actorID, targetUserID))
+			return nil, fmt.Errorf("%w: target user not found", ErrInsufficientAdminAuthority)
+		}
+		if err := c.requireAdminRankCeilingForTarget(ctx, actorID, targetUserID, "view shared secrets for"); err != nil {
+			return nil, err
+		}
+	}
+	secrets, err := c.storage.ListSharedSecrets(ctx, targetUserID, c.shareEffectiveNow())
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	if secrets == nil {
+		secrets = []*models.SecretNode{}
+	}
+	if actorID != targetUserID {
+		aid := actorID
+		c.writeAuditEvent(ctx, string(ShareAuditEventSharedSecretsAdminViewed), &aid, nil,
+			fmt.Sprintf("admin viewed shared secrets for user %d (%d result(s))", targetUserID, len(secrets)))
+	}
+	return secrets, nil
+}
+
 // ListSecretShares lists all shares for a specific secret.
 func (c *KeyorixCore) ListSecretShares(ctx context.Context, secretID uint) ([]*models.ShareRecord, error) {
 	if secretID == 0 {

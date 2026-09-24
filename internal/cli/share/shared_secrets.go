@@ -17,21 +17,23 @@ var (
 
 var sharedSecretsCmd = &cobra.Command{
 	Use:   "shared-secrets",
-	Short: "List secrets shared with a user",
+	Short: "List secrets shared with a user (defaults to yourself)",
 	RunE:  runSharedSecrets,
 }
 
 func init() {
-	sharedSecretsCmd.Flags().UintVar(&sharedSecretsUserID, "user-id", 0, "User ID (required)")
-	_ = sharedSecretsCmd.MarkFlagRequired("user-id") // #nosec G104
+	sharedSecretsCmd.Flags().UintVar(&sharedSecretsUserID, "user-id", 0,
+		"User ID (defaults to yourself; viewing another user's shared secrets requires an admin permission and rank over that user in remote mode)")
 }
 
 func runSharedSecrets(cmd *cobra.Command, args []string) error {
 	if rc, ok := common.NewRemoteClient(); ok {
-		// The server scopes this to the authenticated caller, so --user-id is
-		// ignored in remote mode (an embedded admin can query any user; over the
-		// API you see your own shared secrets).
-		return runSharedSecretsRemote(rc)
+		// GET /api/v1/shared-secrets (--user-id 0, i.e. omitted) for the
+		// caller's own shares, or GET /api/v1/users/{id}/shared-secrets for an
+		// arbitrary target — the admin-scoped route added alongside this
+		// change (CLI-split inventory §6 secondary gap; previously --user-id
+		// was silently ignored here).
+		return runSharedSecretsRemote(rc, sharedSecretsUserID)
 	}
 
 	// Obtain storage via the factory so the backend honors cfg.Storage.Type (ADR-049).
@@ -41,19 +43,22 @@ func runSharedSecrets(cmd *cobra.Command, args []string) error {
 	}
 	service := core.NewKeyorixCore(st)
 
-	// cli-connect-007 (info, deliberate — not a bug): same as the remote branch
-	// above, --user-id is not checked against the invoking operator here either
-	// — ListSharedSecrets (internal/core/sharing_query.go) takes a bare userID
-	// with no caller/actor parameter at all. Intentional: embedded/local mode
-	// has no authenticated-user concept (share/remote.go:7-9), so an embedded
-	// admin can query any user's shared secrets. The residual risk is if
-	// embedded mode is ever pointed at a genuinely shared/multi-tenant backend
-	// (the scenario common.go's InitializeCoreService warning already
-	// contemplates for the cli-connect-004/#G67 ResolveActorID fix) — then this
-	// becomes an unrestricted enumeration surface. If that deployment shape ever
-	// becomes real, route this through common.ResolveActorID() and an
-	// actor-aware, permission-checked core variant, consistent with how
-	// group_shares.go's ListGroupShares call was hardened in #G10.
+	// cli-connect-007 (info, deliberate — not a bug): unlike the remote branch
+	// above (now admin-rank-ceiling-checked via ListSharedSecretsForUser),
+	// --user-id is not checked against the invoking operator here at all —
+	// ListSharedSecrets (internal/core/sharing_query.go) takes a bare userID
+	// with no caller/actor parameter at all, and --user-id 0 (the new default)
+	// fails its own validation ("user ID is required") rather than resolving
+	// to "myself", since embedded/local mode has no authenticated-user concept
+	// (share/remote.go:7-9) to default to. An embedded admin can query any
+	// user's shared secrets by ID. The residual risk is if embedded mode is
+	// ever pointed at a genuinely shared/multi-tenant backend (the scenario
+	// common.go's InitializeCoreService warning already contemplates for the
+	// cli-connect-004/#G67 ResolveActorID fix) — then this becomes an
+	// unrestricted enumeration surface. If that deployment shape ever becomes
+	// real, route this through common.ResolveActorID() and an actor-aware,
+	// permission-checked core variant, consistent with how group_shares.go's
+	// ListGroupShares call was hardened in #G10.
 	//
 	// Call service
 	ctx := context.Background()

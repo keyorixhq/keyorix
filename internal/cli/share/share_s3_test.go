@@ -549,7 +549,7 @@ func TestRunSharedSecretsRemote_ServerError(t *testing.T) {
 
 	rc, ok := common.NewRemoteClient()
 	require.True(t, ok)
-	err := runSharedSecretsRemote(rc)
+	err := runSharedSecretsRemote(rc, 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to list shared secrets")
 }
@@ -567,7 +567,7 @@ func TestRunSharedSecretsRemote_WithData(t *testing.T) {
 
 	rc, ok := common.NewRemoteClient()
 	require.True(t, ok)
-	require.NoError(t, runSharedSecretsRemote(rc))
+	require.NoError(t, runSharedSecretsRemote(rc, 0))
 }
 
 // TestRunUpdate_BadExpires covers the --expires validation path in runUpdate.
