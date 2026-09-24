@@ -128,6 +128,8 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"revokeSecretACL":                reasonSchemaNotYetWritten, // delete /api/v1/secrets/{id}/acl/{aclId}
 	"rotateSecret":                   reasonSchemaNotYetWritten, // post /api/v1/secrets/{id}/rotate
 	"runAlertEscalation":             reasonSchemaNotYetWritten, // post /api/v1/admin/jobs/run-alert-escalation
+	"runRoleExpiryCheck":             reasonSchemaNotYetWritten, // post /api/v1/admin/jobs/role-expiry-check
+	"runTokenExpiryCheck":            reasonSchemaNotYetWritten, // post /api/v1/admin/jobs/token-expiry-check
 	"searchAuditLogs":                reasonSchemaNotYetWritten, // get /api/v1/audit/search
 	"searchUsers":                    reasonSchemaNotYetWritten, // get /api/v1/users/search
 	"shareSecret":                    reasonSchemaNotYetWritten, // post /api/v1/secrets/{id}/share

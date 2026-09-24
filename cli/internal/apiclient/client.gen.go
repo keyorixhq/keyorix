@@ -90,6 +90,12 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
+	// RunRoleExpiryCheck request
+	RunRoleExpiryCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RunTokenExpiryCheck request
+	RunTokenExpiryCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListRBACAuditLogs request
 	ListRBACAuditLogs(ctx context.Context, params *ListRBACAuditLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -122,44 +128,6 @@ type ClientInterface interface {
 
 	// RevokePAT request
 	RevokePAT(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetComplianceControls request
-	GetComplianceControls(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ExportComplianceControlsCSV request
-	ExportComplianceControlsCSV(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetComplianceCredentialTrends request
-	GetComplianceCredentialTrends(ctx context.Context, params *GetComplianceCredentialTrendsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetComplianceDigest request
-	GetComplianceDigest(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SendComplianceDigest request
-	SendComplianceDigest(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetComplianceEvidence request
-	GetComplianceEvidence(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// VerifyComplianceEvidenceWithBody request with any body
-	VerifyComplianceEvidenceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	VerifyComplianceEvidence(ctx context.Context, body VerifyComplianceEvidenceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetCompliancePermissionBaseline request
-	GetCompliancePermissionBaseline(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetCompliancePermissionBaselineCSV request
-	GetCompliancePermissionBaselineCSV(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetCompliancePermissionChanges request
-	GetCompliancePermissionChanges(ctx context.Context, params *GetCompliancePermissionChangesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetCompliancePosture request
-	GetCompliancePosture(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetComplianceRotationByBackend request
-	GetComplianceRotationByBackend(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListDynamicSecretConfigs request
 	ListDynamicSecretConfigs(ctx context.Context, params *ListDynamicSecretConfigsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -236,22 +204,6 @@ type ClientInterface interface {
 
 	// RemoveRoleFromGroup request
 	RemoveRoleFromGroup(ctx context.Context, id int, roleId int, params *RemoveRoleFromGroupParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetDeploymentHygiene request
-	GetDeploymentHygiene(ctx context.Context, params *GetDeploymentHygieneParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// LiftLegalHoldWithBody request with any body
-	LiftLegalHoldWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	LiftLegalHold(ctx context.Context, body LiftLegalHoldJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetLegalHold request
-	GetLegalHold(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PlaceLegalHoldWithBody request with any body
-	PlaceLegalHoldWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	PlaceLegalHold(ctx context.Context, body PlaceLegalHoldJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetMachineAuditReport request
 	GetMachineAuditReport(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -344,25 +296,8 @@ type ClientInterface interface {
 	// GetProjectRotationPlan request
 	GetProjectRotationPlan(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetProjectSecretsInventoryCSV request
-	GetProjectSecretsInventoryCSV(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// GetPermissionMatrix request
 	GetPermissionMatrix(ctx context.Context, params *GetPermissionMatrixParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListRiskExceptions request
-	ListRiskExceptions(ctx context.Context, params *ListRiskExceptionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateRiskExceptionWithBody request with any body
-	CreateRiskExceptionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	CreateRiskException(ctx context.Context, body CreateRiskExceptionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RevokeRiskException request
-	RevokeRiskException(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ApproveRiskException request
-	ApproveRiskException(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListRoles request
 	ListRoles(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -405,22 +340,8 @@ type ClientInterface interface {
 
 	UpdateRotationPolicy(ctx context.Context, id int, body UpdateRotationPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetSecretsInventoryCSV request
-	GetSecretsInventoryCSV(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListSoDPolicies request
-	ListSoDPolicies(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateSoDPolicyWithBody request with any body
-	CreateSoDPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	CreateSoDPolicy(ctx context.Context, body CreateSoDPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DeleteSoDPolicy request
-	DeleteSoDPolicy(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListSoDViolations request
-	ListSoDViolations(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// GetSystemInfo request
+	GetSystemInfo(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RemoveUserRoleWithBody request with any body
 	RemoveUserRoleWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -461,6 +382,30 @@ type ClientInterface interface {
 
 	// HealthCheck request
 	HealthCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+func (c *Client) RunRoleExpiryCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRunRoleExpiryCheckRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RunTokenExpiryCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRunTokenExpiryCheckRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 func (c *Client) ListRBACAuditLogs(ctx context.Context, params *ListRBACAuditLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -597,162 +542,6 @@ func (c *Client) ListExpiredPATs(ctx context.Context, reqEditors ...RequestEdito
 
 func (c *Client) RevokePAT(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokePATRequest(c.Server, id)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetComplianceControls(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetComplianceControlsRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ExportComplianceControlsCSV(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewExportComplianceControlsCSVRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetComplianceCredentialTrends(ctx context.Context, params *GetComplianceCredentialTrendsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetComplianceCredentialTrendsRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetComplianceDigest(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetComplianceDigestRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) SendComplianceDigest(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSendComplianceDigestRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetComplianceEvidence(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetComplianceEvidenceRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) VerifyComplianceEvidenceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewVerifyComplianceEvidenceRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) VerifyComplianceEvidence(ctx context.Context, body VerifyComplianceEvidenceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewVerifyComplianceEvidenceRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetCompliancePermissionBaseline(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetCompliancePermissionBaselineRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetCompliancePermissionBaselineCSV(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetCompliancePermissionBaselineCSVRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetCompliancePermissionChanges(ctx context.Context, params *GetCompliancePermissionChangesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetCompliancePermissionChangesRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetCompliancePosture(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetCompliancePostureRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetComplianceRotationByBackend(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetComplianceRotationByBackendRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -1089,78 +878,6 @@ func (c *Client) AssignRoleToGroup(ctx context.Context, id int, body AssignRoleT
 
 func (c *Client) RemoveRoleFromGroup(ctx context.Context, id int, roleId int, params *RemoveRoleFromGroupParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRemoveRoleFromGroupRequest(c.Server, id, roleId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetDeploymentHygiene(ctx context.Context, params *GetDeploymentHygieneParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetDeploymentHygieneRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) LiftLegalHoldWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewLiftLegalHoldRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) LiftLegalHold(ctx context.Context, body LiftLegalHoldJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewLiftLegalHoldRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetLegalHold(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetLegalHoldRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PlaceLegalHoldWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPlaceLegalHoldRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PlaceLegalHold(ctx context.Context, body PlaceLegalHoldJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPlaceLegalHoldRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1567,80 +1284,8 @@ func (c *Client) GetProjectRotationPlan(ctx context.Context, id uint32, reqEdito
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetProjectSecretsInventoryCSV(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetProjectSecretsInventoryCSVRequest(c.Server, id)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 func (c *Client) GetPermissionMatrix(ctx context.Context, params *GetPermissionMatrixParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetPermissionMatrixRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListRiskExceptions(ctx context.Context, params *ListRiskExceptionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListRiskExceptionsRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) CreateRiskExceptionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateRiskExceptionRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) CreateRiskException(ctx context.Context, body CreateRiskExceptionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateRiskExceptionRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) RevokeRiskException(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRevokeRiskExceptionRequest(c.Server, id)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ApproveRiskException(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewApproveRiskExceptionRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1831,68 +1476,8 @@ func (c *Client) UpdateRotationPolicy(ctx context.Context, id int, body UpdateRo
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetSecretsInventoryCSV(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetSecretsInventoryCSVRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListSoDPolicies(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListSoDPoliciesRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) CreateSoDPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateSoDPolicyRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) CreateSoDPolicy(ctx context.Context, body CreateSoDPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateSoDPolicyRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) DeleteSoDPolicy(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteSoDPolicyRequest(c.Server, id)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListSoDViolations(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListSoDViolationsRequest(c.Server)
+func (c *Client) GetSystemInfo(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSystemInfoRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -2081,6 +1666,60 @@ func (c *Client) HealthCheck(ctx context.Context, reqEditors ...RequestEditorFn)
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewRunRoleExpiryCheckRequest generates requests for RunRoleExpiryCheck
+func NewRunRoleExpiryCheckRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/admin/jobs/role-expiry-check")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRunTokenExpiryCheckRequest generates requests for RunTokenExpiryCheck
+func NewRunTokenExpiryCheckRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/admin/jobs/token-expiry-check")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
 }
 
 // NewListRBACAuditLogsRequest generates requests for ListRBACAuditLogs
@@ -2403,419 +2042,6 @@ func NewRevokePATRequest(server string, id int) (*http.Request, error) {
 	}
 
 	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetComplianceControlsRequest generates requests for GetComplianceControls
-func NewGetComplianceControlsRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/compliance/controls")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewExportComplianceControlsCSVRequest generates requests for ExportComplianceControlsCSV
-func NewExportComplianceControlsCSVRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/compliance/controls.csv")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetComplianceCredentialTrendsRequest generates requests for GetComplianceCredentialTrends
-func NewGetComplianceCredentialTrendsRequest(server string, params *GetComplianceCredentialTrendsParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/compliance/credential-trends")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		queryValues := queryURL.Query()
-
-		if params.Days != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "days", runtime.ParamLocationQuery, *params.Days); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		queryURL.RawQuery = queryValues.Encode()
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetComplianceDigestRequest generates requests for GetComplianceDigest
-func NewGetComplianceDigestRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/compliance/digest")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewSendComplianceDigestRequest generates requests for SendComplianceDigest
-func NewSendComplianceDigestRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/compliance/digest/send")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetComplianceEvidenceRequest generates requests for GetComplianceEvidence
-func NewGetComplianceEvidenceRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/compliance/evidence")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewVerifyComplianceEvidenceRequest calls the generic VerifyComplianceEvidence builder with application/json body
-func NewVerifyComplianceEvidenceRequest(server string, body VerifyComplianceEvidenceJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewVerifyComplianceEvidenceRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewVerifyComplianceEvidenceRequestWithBody generates requests for VerifyComplianceEvidence with any type of body
-func NewVerifyComplianceEvidenceRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/compliance/evidence/verify")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetCompliancePermissionBaselineRequest generates requests for GetCompliancePermissionBaseline
-func NewGetCompliancePermissionBaselineRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/compliance/permission-baseline")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetCompliancePermissionBaselineCSVRequest generates requests for GetCompliancePermissionBaselineCSV
-func NewGetCompliancePermissionBaselineCSVRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/compliance/permission-baseline.csv")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetCompliancePermissionChangesRequest generates requests for GetCompliancePermissionChanges
-func NewGetCompliancePermissionChangesRequest(server string, params *GetCompliancePermissionChangesParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/compliance/permission-changes")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		queryValues := queryURL.Query()
-
-		if params.Since != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "since", runtime.ParamLocationQuery, *params.Since); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.Until != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "until", runtime.ParamLocationQuery, *params.Until); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.Limit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		queryURL.RawQuery = queryValues.Encode()
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetCompliancePostureRequest generates requests for GetCompliancePosture
-func NewGetCompliancePostureRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/compliance/posture")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetComplianceRotationByBackendRequest generates requests for GetComplianceRotationByBackend
-func NewGetComplianceRotationByBackendRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/compliance/rotation-by-backend")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3687,194 +2913,6 @@ func NewRemoveRoleFromGroupRequest(server string, id int, roleId int, params *Re
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewGetDeploymentHygieneRequest generates requests for GetDeploymentHygiene
-func NewGetDeploymentHygieneRequest(server string, params *GetDeploymentHygieneParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/hygiene")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		queryValues := queryURL.Query()
-
-		if params.UnusedDays != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "unused_days", runtime.ParamLocationQuery, *params.UnusedDays); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.ExpiringDays != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "expiring_days", runtime.ParamLocationQuery, *params.ExpiringDays); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.StaleDays != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "stale_days", runtime.ParamLocationQuery, *params.StaleDays); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		queryURL.RawQuery = queryValues.Encode()
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewLiftLegalHoldRequest calls the generic LiftLegalHold builder with application/json body
-func NewLiftLegalHoldRequest(server string, body LiftLegalHoldJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewLiftLegalHoldRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewLiftLegalHoldRequestWithBody generates requests for LiftLegalHold with any type of body
-func NewLiftLegalHoldRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/legal-hold")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("DELETE", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetLegalHoldRequest generates requests for GetLegalHold
-func NewGetLegalHoldRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/legal-hold")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewPlaceLegalHoldRequest calls the generic PlaceLegalHold builder with application/json body
-func NewPlaceLegalHoldRequest(server string, body PlaceLegalHoldJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewPlaceLegalHoldRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewPlaceLegalHoldRequestWithBody generates requests for PlaceLegalHold with any type of body
-func NewPlaceLegalHoldRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/legal-hold")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -4970,40 +4008,6 @@ func NewGetProjectRotationPlanRequest(server string, id uint32) (*http.Request, 
 	return req, nil
 }
 
-// NewGetProjectSecretsInventoryCSVRequest generates requests for GetProjectSecretsInventoryCSV
-func NewGetProjectSecretsInventoryCSVRequest(server string, id uint32) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/projects/%s/secrets/inventory.csv", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewGetPermissionMatrixRequest generates requests for GetPermissionMatrix
 func NewGetPermissionMatrixRequest(server string, params *GetPermissionMatrixParams) (*http.Request, error) {
 	var err error
@@ -5062,163 +4066,6 @@ func NewGetPermissionMatrixRequest(server string, params *GetPermissionMatrixPar
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewListRiskExceptionsRequest generates requests for ListRiskExceptions
-func NewListRiskExceptionsRequest(server string, params *ListRiskExceptionsParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/risk-exceptions")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		queryValues := queryURL.Query()
-
-		if params.All != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "all", runtime.ParamLocationQuery, *params.All); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		queryURL.RawQuery = queryValues.Encode()
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCreateRiskExceptionRequest calls the generic CreateRiskException builder with application/json body
-func NewCreateRiskExceptionRequest(server string, body CreateRiskExceptionJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateRiskExceptionRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewCreateRiskExceptionRequestWithBody generates requests for CreateRiskException with any type of body
-func NewCreateRiskExceptionRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/risk-exceptions")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewRevokeRiskExceptionRequest generates requests for RevokeRiskException
-func NewRevokeRiskExceptionRequest(server string, id int) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/risk-exceptions/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewApproveRiskExceptionRequest generates requests for ApproveRiskException
-func NewApproveRiskExceptionRequest(server string, id int) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/risk-exceptions/%s/approve", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -5670,8 +4517,8 @@ func NewUpdateRotationPolicyRequestWithBody(server string, id int, contentType s
 	return req, nil
 }
 
-// NewGetSecretsInventoryCSVRequest generates requests for GetSecretsInventoryCSV
-func NewGetSecretsInventoryCSVRequest(server string) (*http.Request, error) {
+// NewGetSystemInfoRequest generates requests for GetSystemInfo
+func NewGetSystemInfoRequest(server string) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -5679,135 +4526,7 @@ func NewGetSecretsInventoryCSVRequest(server string) (*http.Request, error) {
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/api/v1/secrets/inventory.csv")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewListSoDPoliciesRequest generates requests for ListSoDPolicies
-func NewListSoDPoliciesRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/sod/policies")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCreateSoDPolicyRequest calls the generic CreateSoDPolicy builder with application/json body
-func NewCreateSoDPolicyRequest(server string, body CreateSoDPolicyJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateSoDPolicyRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewCreateSoDPolicyRequestWithBody generates requests for CreateSoDPolicy with any type of body
-func NewCreateSoDPolicyRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/sod/policies")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewDeleteSoDPolicyRequest generates requests for DeleteSoDPolicy
-func NewDeleteSoDPolicyRequest(server string, id uint32) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/sod/policies/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewListSoDViolationsRequest generates requests for ListSoDViolations
-func NewListSoDViolationsRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/sod/violations")
+	operationPath := fmt.Sprintf("/api/v1/system/info")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -6351,6 +5070,12 @@ func WithBaseURL(baseURL string) ClientOption {
 
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
+	// RunRoleExpiryCheckWithResponse request
+	RunRoleExpiryCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RunRoleExpiryCheckResponse, error)
+
+	// RunTokenExpiryCheckWithResponse request
+	RunTokenExpiryCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RunTokenExpiryCheckResponse, error)
+
 	// ListRBACAuditLogsWithResponse request
 	ListRBACAuditLogsWithResponse(ctx context.Context, params *ListRBACAuditLogsParams, reqEditors ...RequestEditorFn) (*ListRBACAuditLogsResponse, error)
 
@@ -6383,44 +5108,6 @@ type ClientWithResponsesInterface interface {
 
 	// RevokePATWithResponse request
 	RevokePATWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*RevokePATResponse, error)
-
-	// GetComplianceControlsWithResponse request
-	GetComplianceControlsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetComplianceControlsResponse, error)
-
-	// ExportComplianceControlsCSVWithResponse request
-	ExportComplianceControlsCSVWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ExportComplianceControlsCSVResponse, error)
-
-	// GetComplianceCredentialTrendsWithResponse request
-	GetComplianceCredentialTrendsWithResponse(ctx context.Context, params *GetComplianceCredentialTrendsParams, reqEditors ...RequestEditorFn) (*GetComplianceCredentialTrendsResponse, error)
-
-	// GetComplianceDigestWithResponse request
-	GetComplianceDigestWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetComplianceDigestResponse, error)
-
-	// SendComplianceDigestWithResponse request
-	SendComplianceDigestWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*SendComplianceDigestResponse, error)
-
-	// GetComplianceEvidenceWithResponse request
-	GetComplianceEvidenceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetComplianceEvidenceResponse, error)
-
-	// VerifyComplianceEvidenceWithBodyWithResponse request with any body
-	VerifyComplianceEvidenceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyComplianceEvidenceResponse, error)
-
-	VerifyComplianceEvidenceWithResponse(ctx context.Context, body VerifyComplianceEvidenceJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyComplianceEvidenceResponse, error)
-
-	// GetCompliancePermissionBaselineWithResponse request
-	GetCompliancePermissionBaselineWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCompliancePermissionBaselineResponse, error)
-
-	// GetCompliancePermissionBaselineCSVWithResponse request
-	GetCompliancePermissionBaselineCSVWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCompliancePermissionBaselineCSVResponse, error)
-
-	// GetCompliancePermissionChangesWithResponse request
-	GetCompliancePermissionChangesWithResponse(ctx context.Context, params *GetCompliancePermissionChangesParams, reqEditors ...RequestEditorFn) (*GetCompliancePermissionChangesResponse, error)
-
-	// GetCompliancePostureWithResponse request
-	GetCompliancePostureWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCompliancePostureResponse, error)
-
-	// GetComplianceRotationByBackendWithResponse request
-	GetComplianceRotationByBackendWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetComplianceRotationByBackendResponse, error)
 
 	// ListDynamicSecretConfigsWithResponse request
 	ListDynamicSecretConfigsWithResponse(ctx context.Context, params *ListDynamicSecretConfigsParams, reqEditors ...RequestEditorFn) (*ListDynamicSecretConfigsResponse, error)
@@ -6497,22 +5184,6 @@ type ClientWithResponsesInterface interface {
 
 	// RemoveRoleFromGroupWithResponse request
 	RemoveRoleFromGroupWithResponse(ctx context.Context, id int, roleId int, params *RemoveRoleFromGroupParams, reqEditors ...RequestEditorFn) (*RemoveRoleFromGroupResponse, error)
-
-	// GetDeploymentHygieneWithResponse request
-	GetDeploymentHygieneWithResponse(ctx context.Context, params *GetDeploymentHygieneParams, reqEditors ...RequestEditorFn) (*GetDeploymentHygieneResponse, error)
-
-	// LiftLegalHoldWithBodyWithResponse request with any body
-	LiftLegalHoldWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LiftLegalHoldResponse, error)
-
-	LiftLegalHoldWithResponse(ctx context.Context, body LiftLegalHoldJSONRequestBody, reqEditors ...RequestEditorFn) (*LiftLegalHoldResponse, error)
-
-	// GetLegalHoldWithResponse request
-	GetLegalHoldWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetLegalHoldResponse, error)
-
-	// PlaceLegalHoldWithBodyWithResponse request with any body
-	PlaceLegalHoldWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PlaceLegalHoldResponse, error)
-
-	PlaceLegalHoldWithResponse(ctx context.Context, body PlaceLegalHoldJSONRequestBody, reqEditors ...RequestEditorFn) (*PlaceLegalHoldResponse, error)
 
 	// GetMachineAuditReportWithResponse request
 	GetMachineAuditReportWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMachineAuditReportResponse, error)
@@ -6605,25 +5276,8 @@ type ClientWithResponsesInterface interface {
 	// GetProjectRotationPlanWithResponse request
 	GetProjectRotationPlanWithResponse(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*GetProjectRotationPlanResponse, error)
 
-	// GetProjectSecretsInventoryCSVWithResponse request
-	GetProjectSecretsInventoryCSVWithResponse(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*GetProjectSecretsInventoryCSVResponse, error)
-
 	// GetPermissionMatrixWithResponse request
 	GetPermissionMatrixWithResponse(ctx context.Context, params *GetPermissionMatrixParams, reqEditors ...RequestEditorFn) (*GetPermissionMatrixResponse, error)
-
-	// ListRiskExceptionsWithResponse request
-	ListRiskExceptionsWithResponse(ctx context.Context, params *ListRiskExceptionsParams, reqEditors ...RequestEditorFn) (*ListRiskExceptionsResponse, error)
-
-	// CreateRiskExceptionWithBodyWithResponse request with any body
-	CreateRiskExceptionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateRiskExceptionResponse, error)
-
-	CreateRiskExceptionWithResponse(ctx context.Context, body CreateRiskExceptionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRiskExceptionResponse, error)
-
-	// RevokeRiskExceptionWithResponse request
-	RevokeRiskExceptionWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*RevokeRiskExceptionResponse, error)
-
-	// ApproveRiskExceptionWithResponse request
-	ApproveRiskExceptionWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ApproveRiskExceptionResponse, error)
 
 	// ListRolesWithResponse request
 	ListRolesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListRolesResponse, error)
@@ -6666,22 +5320,8 @@ type ClientWithResponsesInterface interface {
 
 	UpdateRotationPolicyWithResponse(ctx context.Context, id int, body UpdateRotationPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateRotationPolicyResponse, error)
 
-	// GetSecretsInventoryCSVWithResponse request
-	GetSecretsInventoryCSVWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetSecretsInventoryCSVResponse, error)
-
-	// ListSoDPoliciesWithResponse request
-	ListSoDPoliciesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSoDPoliciesResponse, error)
-
-	// CreateSoDPolicyWithBodyWithResponse request with any body
-	CreateSoDPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSoDPolicyResponse, error)
-
-	CreateSoDPolicyWithResponse(ctx context.Context, body CreateSoDPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSoDPolicyResponse, error)
-
-	// DeleteSoDPolicyWithResponse request
-	DeleteSoDPolicyWithResponse(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*DeleteSoDPolicyResponse, error)
-
-	// ListSoDViolationsWithResponse request
-	ListSoDViolationsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSoDViolationsResponse, error)
+	// GetSystemInfoWithResponse request
+	GetSystemInfoWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetSystemInfoResponse, error)
 
 	// RemoveUserRoleWithBodyWithResponse request with any body
 	RemoveUserRoleWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RemoveUserRoleResponse, error)
@@ -6722,6 +5362,52 @@ type ClientWithResponsesInterface interface {
 
 	// HealthCheckWithResponse request
 	HealthCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*HealthCheckResponse, error)
+}
+
+type RunRoleExpiryCheckResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON401      *Error
+	JSON403      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r RunRoleExpiryCheckResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RunRoleExpiryCheckResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RunTokenExpiryCheckResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON401      *Error
+	JSON403      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r RunTokenExpiryCheckResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RunTokenExpiryCheckResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
 }
 
 type ListRBACAuditLogsResponse struct {
@@ -6936,284 +5622,6 @@ func (r RevokePATResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r RevokePATResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetComplianceControlsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r GetComplianceControlsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetComplianceControlsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type ExportComplianceControlsCSVResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r ExportComplianceControlsCSVResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ExportComplianceControlsCSVResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetComplianceCredentialTrendsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r GetComplianceCredentialTrendsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetComplianceCredentialTrendsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetComplianceDigestResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r GetComplianceDigestResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetComplianceDigestResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type SendComplianceDigestResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r SendComplianceDigestResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r SendComplianceDigestResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetComplianceEvidenceResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r GetComplianceEvidenceResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetComplianceEvidenceResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type VerifyComplianceEvidenceResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r VerifyComplianceEvidenceResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r VerifyComplianceEvidenceResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetCompliancePermissionBaselineResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r GetCompliancePermissionBaselineResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetCompliancePermissionBaselineResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetCompliancePermissionBaselineCSVResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r GetCompliancePermissionBaselineCSVResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetCompliancePermissionBaselineCSVResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetCompliancePermissionChangesResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r GetCompliancePermissionChangesResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetCompliancePermissionChangesResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetCompliancePostureResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r GetCompliancePostureResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetCompliancePostureResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetComplianceRotationByBackendResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r GetComplianceRotationByBackendResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetComplianceRotationByBackendResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -7788,100 +6196,6 @@ func (r RemoveRoleFromGroupResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r RemoveRoleFromGroupResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetDeploymentHygieneResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r GetDeploymentHygieneResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetDeploymentHygieneResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type LiftLegalHoldResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r LiftLegalHoldResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r LiftLegalHoldResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetLegalHoldResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r GetLegalHoldResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetLegalHoldResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type PlaceLegalHoldResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r PlaceLegalHoldResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r PlaceLegalHoldResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -8599,29 +6913,6 @@ func (r GetProjectRotationPlanResponse) StatusCode() int {
 	return 0
 }
 
-type GetProjectSecretsInventoryCSVResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r GetProjectSecretsInventoryCSVResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetProjectSecretsInventoryCSVResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
 type GetPermissionMatrixResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -8646,103 +6937,6 @@ func (r GetPermissionMatrixResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetPermissionMatrixResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type ListRiskExceptionsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r ListRiskExceptionsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListRiskExceptionsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type CreateRiskExceptionResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateRiskExceptionResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateRiskExceptionResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type RevokeRiskExceptionResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON401      *Error
-	JSON403      *Error
-	JSON404      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r RevokeRiskExceptionResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RevokeRiskExceptionResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type ApproveRiskExceptionResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON401      *Error
-	JSON403      *Error
-	JSON404      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r ApproveRiskExceptionResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ApproveRiskExceptionResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -9044,15 +7238,14 @@ func (r UpdateRotationPolicyResponse) StatusCode() int {
 	return 0
 }
 
-type GetSecretsInventoryCSVResponse struct {
+type GetSystemInfoResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON401      *Error
 	JSON403      *Error
 }
 
 // Status returns HTTPResponse.Status
-func (r GetSecretsInventoryCSVResponse) Status() string {
+func (r GetSystemInfoResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -9060,101 +7253,7 @@ func (r GetSecretsInventoryCSVResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r GetSecretsInventoryCSVResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type ListSoDPoliciesResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r ListSoDPoliciesResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListSoDPoliciesResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type CreateSoDPolicyResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateSoDPolicyResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateSoDPolicyResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type DeleteSoDPolicyResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Error
-	JSON403      *Error
-	JSON404      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r DeleteSoDPolicyResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r DeleteSoDPolicyResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type ListSoDViolationsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Error
-	JSON403      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r ListSoDViolationsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListSoDViolationsResponse) StatusCode() int {
+func (r GetSystemInfoResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -9441,6 +7540,24 @@ func (r HealthCheckResponse) StatusCode() int {
 	return 0
 }
 
+// RunRoleExpiryCheckWithResponse request returning *RunRoleExpiryCheckResponse
+func (c *ClientWithResponses) RunRoleExpiryCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RunRoleExpiryCheckResponse, error) {
+	rsp, err := c.RunRoleExpiryCheck(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRunRoleExpiryCheckResponse(rsp)
+}
+
+// RunTokenExpiryCheckWithResponse request returning *RunTokenExpiryCheckResponse
+func (c *ClientWithResponses) RunTokenExpiryCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RunTokenExpiryCheckResponse, error) {
+	rsp, err := c.RunTokenExpiryCheck(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRunTokenExpiryCheckResponse(rsp)
+}
+
 // ListRBACAuditLogsWithResponse request returning *ListRBACAuditLogsResponse
 func (c *ClientWithResponses) ListRBACAuditLogsWithResponse(ctx context.Context, params *ListRBACAuditLogsParams, reqEditors ...RequestEditorFn) (*ListRBACAuditLogsResponse, error) {
 	rsp, err := c.ListRBACAuditLogs(ctx, params, reqEditors...)
@@ -9544,122 +7661,6 @@ func (c *ClientWithResponses) RevokePATWithResponse(ctx context.Context, id int,
 		return nil, err
 	}
 	return ParseRevokePATResponse(rsp)
-}
-
-// GetComplianceControlsWithResponse request returning *GetComplianceControlsResponse
-func (c *ClientWithResponses) GetComplianceControlsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetComplianceControlsResponse, error) {
-	rsp, err := c.GetComplianceControls(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetComplianceControlsResponse(rsp)
-}
-
-// ExportComplianceControlsCSVWithResponse request returning *ExportComplianceControlsCSVResponse
-func (c *ClientWithResponses) ExportComplianceControlsCSVWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ExportComplianceControlsCSVResponse, error) {
-	rsp, err := c.ExportComplianceControlsCSV(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseExportComplianceControlsCSVResponse(rsp)
-}
-
-// GetComplianceCredentialTrendsWithResponse request returning *GetComplianceCredentialTrendsResponse
-func (c *ClientWithResponses) GetComplianceCredentialTrendsWithResponse(ctx context.Context, params *GetComplianceCredentialTrendsParams, reqEditors ...RequestEditorFn) (*GetComplianceCredentialTrendsResponse, error) {
-	rsp, err := c.GetComplianceCredentialTrends(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetComplianceCredentialTrendsResponse(rsp)
-}
-
-// GetComplianceDigestWithResponse request returning *GetComplianceDigestResponse
-func (c *ClientWithResponses) GetComplianceDigestWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetComplianceDigestResponse, error) {
-	rsp, err := c.GetComplianceDigest(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetComplianceDigestResponse(rsp)
-}
-
-// SendComplianceDigestWithResponse request returning *SendComplianceDigestResponse
-func (c *ClientWithResponses) SendComplianceDigestWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*SendComplianceDigestResponse, error) {
-	rsp, err := c.SendComplianceDigest(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSendComplianceDigestResponse(rsp)
-}
-
-// GetComplianceEvidenceWithResponse request returning *GetComplianceEvidenceResponse
-func (c *ClientWithResponses) GetComplianceEvidenceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetComplianceEvidenceResponse, error) {
-	rsp, err := c.GetComplianceEvidence(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetComplianceEvidenceResponse(rsp)
-}
-
-// VerifyComplianceEvidenceWithBodyWithResponse request with arbitrary body returning *VerifyComplianceEvidenceResponse
-func (c *ClientWithResponses) VerifyComplianceEvidenceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyComplianceEvidenceResponse, error) {
-	rsp, err := c.VerifyComplianceEvidenceWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseVerifyComplianceEvidenceResponse(rsp)
-}
-
-func (c *ClientWithResponses) VerifyComplianceEvidenceWithResponse(ctx context.Context, body VerifyComplianceEvidenceJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyComplianceEvidenceResponse, error) {
-	rsp, err := c.VerifyComplianceEvidence(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseVerifyComplianceEvidenceResponse(rsp)
-}
-
-// GetCompliancePermissionBaselineWithResponse request returning *GetCompliancePermissionBaselineResponse
-func (c *ClientWithResponses) GetCompliancePermissionBaselineWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCompliancePermissionBaselineResponse, error) {
-	rsp, err := c.GetCompliancePermissionBaseline(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetCompliancePermissionBaselineResponse(rsp)
-}
-
-// GetCompliancePermissionBaselineCSVWithResponse request returning *GetCompliancePermissionBaselineCSVResponse
-func (c *ClientWithResponses) GetCompliancePermissionBaselineCSVWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCompliancePermissionBaselineCSVResponse, error) {
-	rsp, err := c.GetCompliancePermissionBaselineCSV(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetCompliancePermissionBaselineCSVResponse(rsp)
-}
-
-// GetCompliancePermissionChangesWithResponse request returning *GetCompliancePermissionChangesResponse
-func (c *ClientWithResponses) GetCompliancePermissionChangesWithResponse(ctx context.Context, params *GetCompliancePermissionChangesParams, reqEditors ...RequestEditorFn) (*GetCompliancePermissionChangesResponse, error) {
-	rsp, err := c.GetCompliancePermissionChanges(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetCompliancePermissionChangesResponse(rsp)
-}
-
-// GetCompliancePostureWithResponse request returning *GetCompliancePostureResponse
-func (c *ClientWithResponses) GetCompliancePostureWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCompliancePostureResponse, error) {
-	rsp, err := c.GetCompliancePosture(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetCompliancePostureResponse(rsp)
-}
-
-// GetComplianceRotationByBackendWithResponse request returning *GetComplianceRotationByBackendResponse
-func (c *ClientWithResponses) GetComplianceRotationByBackendWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetComplianceRotationByBackendResponse, error) {
-	rsp, err := c.GetComplianceRotationByBackend(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetComplianceRotationByBackendResponse(rsp)
 }
 
 // ListDynamicSecretConfigsWithResponse request returning *ListDynamicSecretConfigsResponse
@@ -9904,58 +7905,6 @@ func (c *ClientWithResponses) RemoveRoleFromGroupWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseRemoveRoleFromGroupResponse(rsp)
-}
-
-// GetDeploymentHygieneWithResponse request returning *GetDeploymentHygieneResponse
-func (c *ClientWithResponses) GetDeploymentHygieneWithResponse(ctx context.Context, params *GetDeploymentHygieneParams, reqEditors ...RequestEditorFn) (*GetDeploymentHygieneResponse, error) {
-	rsp, err := c.GetDeploymentHygiene(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetDeploymentHygieneResponse(rsp)
-}
-
-// LiftLegalHoldWithBodyWithResponse request with arbitrary body returning *LiftLegalHoldResponse
-func (c *ClientWithResponses) LiftLegalHoldWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LiftLegalHoldResponse, error) {
-	rsp, err := c.LiftLegalHoldWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseLiftLegalHoldResponse(rsp)
-}
-
-func (c *ClientWithResponses) LiftLegalHoldWithResponse(ctx context.Context, body LiftLegalHoldJSONRequestBody, reqEditors ...RequestEditorFn) (*LiftLegalHoldResponse, error) {
-	rsp, err := c.LiftLegalHold(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseLiftLegalHoldResponse(rsp)
-}
-
-// GetLegalHoldWithResponse request returning *GetLegalHoldResponse
-func (c *ClientWithResponses) GetLegalHoldWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetLegalHoldResponse, error) {
-	rsp, err := c.GetLegalHold(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetLegalHoldResponse(rsp)
-}
-
-// PlaceLegalHoldWithBodyWithResponse request with arbitrary body returning *PlaceLegalHoldResponse
-func (c *ClientWithResponses) PlaceLegalHoldWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PlaceLegalHoldResponse, error) {
-	rsp, err := c.PlaceLegalHoldWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePlaceLegalHoldResponse(rsp)
-}
-
-func (c *ClientWithResponses) PlaceLegalHoldWithResponse(ctx context.Context, body PlaceLegalHoldJSONRequestBody, reqEditors ...RequestEditorFn) (*PlaceLegalHoldResponse, error) {
-	rsp, err := c.PlaceLegalHold(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePlaceLegalHoldResponse(rsp)
 }
 
 // GetMachineAuditReportWithResponse request returning *GetMachineAuditReportResponse
@@ -10247,15 +8196,6 @@ func (c *ClientWithResponses) GetProjectRotationPlanWithResponse(ctx context.Con
 	return ParseGetProjectRotationPlanResponse(rsp)
 }
 
-// GetProjectSecretsInventoryCSVWithResponse request returning *GetProjectSecretsInventoryCSVResponse
-func (c *ClientWithResponses) GetProjectSecretsInventoryCSVWithResponse(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*GetProjectSecretsInventoryCSVResponse, error) {
-	rsp, err := c.GetProjectSecretsInventoryCSV(ctx, id, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetProjectSecretsInventoryCSVResponse(rsp)
-}
-
 // GetPermissionMatrixWithResponse request returning *GetPermissionMatrixResponse
 func (c *ClientWithResponses) GetPermissionMatrixWithResponse(ctx context.Context, params *GetPermissionMatrixParams, reqEditors ...RequestEditorFn) (*GetPermissionMatrixResponse, error) {
 	rsp, err := c.GetPermissionMatrix(ctx, params, reqEditors...)
@@ -10263,50 +8203,6 @@ func (c *ClientWithResponses) GetPermissionMatrixWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseGetPermissionMatrixResponse(rsp)
-}
-
-// ListRiskExceptionsWithResponse request returning *ListRiskExceptionsResponse
-func (c *ClientWithResponses) ListRiskExceptionsWithResponse(ctx context.Context, params *ListRiskExceptionsParams, reqEditors ...RequestEditorFn) (*ListRiskExceptionsResponse, error) {
-	rsp, err := c.ListRiskExceptions(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListRiskExceptionsResponse(rsp)
-}
-
-// CreateRiskExceptionWithBodyWithResponse request with arbitrary body returning *CreateRiskExceptionResponse
-func (c *ClientWithResponses) CreateRiskExceptionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateRiskExceptionResponse, error) {
-	rsp, err := c.CreateRiskExceptionWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateRiskExceptionResponse(rsp)
-}
-
-func (c *ClientWithResponses) CreateRiskExceptionWithResponse(ctx context.Context, body CreateRiskExceptionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRiskExceptionResponse, error) {
-	rsp, err := c.CreateRiskException(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateRiskExceptionResponse(rsp)
-}
-
-// RevokeRiskExceptionWithResponse request returning *RevokeRiskExceptionResponse
-func (c *ClientWithResponses) RevokeRiskExceptionWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*RevokeRiskExceptionResponse, error) {
-	rsp, err := c.RevokeRiskException(ctx, id, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRevokeRiskExceptionResponse(rsp)
-}
-
-// ApproveRiskExceptionWithResponse request returning *ApproveRiskExceptionResponse
-func (c *ClientWithResponses) ApproveRiskExceptionWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ApproveRiskExceptionResponse, error) {
-	rsp, err := c.ApproveRiskException(ctx, id, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseApproveRiskExceptionResponse(rsp)
 }
 
 // ListRolesWithResponse request returning *ListRolesResponse
@@ -10440,57 +8336,13 @@ func (c *ClientWithResponses) UpdateRotationPolicyWithResponse(ctx context.Conte
 	return ParseUpdateRotationPolicyResponse(rsp)
 }
 
-// GetSecretsInventoryCSVWithResponse request returning *GetSecretsInventoryCSVResponse
-func (c *ClientWithResponses) GetSecretsInventoryCSVWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetSecretsInventoryCSVResponse, error) {
-	rsp, err := c.GetSecretsInventoryCSV(ctx, reqEditors...)
+// GetSystemInfoWithResponse request returning *GetSystemInfoResponse
+func (c *ClientWithResponses) GetSystemInfoWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetSystemInfoResponse, error) {
+	rsp, err := c.GetSystemInfo(ctx, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseGetSecretsInventoryCSVResponse(rsp)
-}
-
-// ListSoDPoliciesWithResponse request returning *ListSoDPoliciesResponse
-func (c *ClientWithResponses) ListSoDPoliciesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSoDPoliciesResponse, error) {
-	rsp, err := c.ListSoDPolicies(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListSoDPoliciesResponse(rsp)
-}
-
-// CreateSoDPolicyWithBodyWithResponse request with arbitrary body returning *CreateSoDPolicyResponse
-func (c *ClientWithResponses) CreateSoDPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSoDPolicyResponse, error) {
-	rsp, err := c.CreateSoDPolicyWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateSoDPolicyResponse(rsp)
-}
-
-func (c *ClientWithResponses) CreateSoDPolicyWithResponse(ctx context.Context, body CreateSoDPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSoDPolicyResponse, error) {
-	rsp, err := c.CreateSoDPolicy(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateSoDPolicyResponse(rsp)
-}
-
-// DeleteSoDPolicyWithResponse request returning *DeleteSoDPolicyResponse
-func (c *ClientWithResponses) DeleteSoDPolicyWithResponse(ctx context.Context, id uint32, reqEditors ...RequestEditorFn) (*DeleteSoDPolicyResponse, error) {
-	rsp, err := c.DeleteSoDPolicy(ctx, id, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeleteSoDPolicyResponse(rsp)
-}
-
-// ListSoDViolationsWithResponse request returning *ListSoDViolationsResponse
-func (c *ClientWithResponses) ListSoDViolationsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSoDViolationsResponse, error) {
-	rsp, err := c.ListSoDViolations(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListSoDViolationsResponse(rsp)
+	return ParseGetSystemInfoResponse(rsp)
 }
 
 // RemoveUserRoleWithBodyWithResponse request with arbitrary body returning *RemoveUserRoleResponse
@@ -10621,6 +8473,72 @@ func (c *ClientWithResponses) HealthCheckWithResponse(ctx context.Context, reqEd
 		return nil, err
 	}
 	return ParseHealthCheckResponse(rsp)
+}
+
+// ParseRunRoleExpiryCheckResponse parses an HTTP response from a RunRoleExpiryCheckWithResponse call
+func ParseRunRoleExpiryCheckResponse(rsp *http.Response) (*RunRoleExpiryCheckResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RunRoleExpiryCheckResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRunTokenExpiryCheckResponse parses an HTTP response from a RunTokenExpiryCheckWithResponse call
+func ParseRunTokenExpiryCheckResponse(rsp *http.Response) (*RunTokenExpiryCheckResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RunTokenExpiryCheckResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseListRBACAuditLogsResponse parses an HTTP response from a ListRBACAuditLogsWithResponse call
@@ -10886,416 +8804,6 @@ func ParseRevokePATResponse(rsp *http.Response) (*RevokePATResponse, error) {
 			return nil, err
 		}
 		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetComplianceControlsResponse parses an HTTP response from a GetComplianceControlsWithResponse call
-func ParseGetComplianceControlsResponse(rsp *http.Response) (*GetComplianceControlsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetComplianceControlsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseExportComplianceControlsCSVResponse parses an HTTP response from a ExportComplianceControlsCSVWithResponse call
-func ParseExportComplianceControlsCSVResponse(rsp *http.Response) (*ExportComplianceControlsCSVResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ExportComplianceControlsCSVResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetComplianceCredentialTrendsResponse parses an HTTP response from a GetComplianceCredentialTrendsWithResponse call
-func ParseGetComplianceCredentialTrendsResponse(rsp *http.Response) (*GetComplianceCredentialTrendsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetComplianceCredentialTrendsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetComplianceDigestResponse parses an HTTP response from a GetComplianceDigestWithResponse call
-func ParseGetComplianceDigestResponse(rsp *http.Response) (*GetComplianceDigestResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetComplianceDigestResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseSendComplianceDigestResponse parses an HTTP response from a SendComplianceDigestWithResponse call
-func ParseSendComplianceDigestResponse(rsp *http.Response) (*SendComplianceDigestResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &SendComplianceDigestResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetComplianceEvidenceResponse parses an HTTP response from a GetComplianceEvidenceWithResponse call
-func ParseGetComplianceEvidenceResponse(rsp *http.Response) (*GetComplianceEvidenceResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetComplianceEvidenceResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseVerifyComplianceEvidenceResponse parses an HTTP response from a VerifyComplianceEvidenceWithResponse call
-func ParseVerifyComplianceEvidenceResponse(rsp *http.Response) (*VerifyComplianceEvidenceResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &VerifyComplianceEvidenceResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetCompliancePermissionBaselineResponse parses an HTTP response from a GetCompliancePermissionBaselineWithResponse call
-func ParseGetCompliancePermissionBaselineResponse(rsp *http.Response) (*GetCompliancePermissionBaselineResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetCompliancePermissionBaselineResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetCompliancePermissionBaselineCSVResponse parses an HTTP response from a GetCompliancePermissionBaselineCSVWithResponse call
-func ParseGetCompliancePermissionBaselineCSVResponse(rsp *http.Response) (*GetCompliancePermissionBaselineCSVResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetCompliancePermissionBaselineCSVResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetCompliancePermissionChangesResponse parses an HTTP response from a GetCompliancePermissionChangesWithResponse call
-func ParseGetCompliancePermissionChangesResponse(rsp *http.Response) (*GetCompliancePermissionChangesResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetCompliancePermissionChangesResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetCompliancePostureResponse parses an HTTP response from a GetCompliancePostureWithResponse call
-func ParseGetCompliancePostureResponse(rsp *http.Response) (*GetCompliancePostureResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetCompliancePostureResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetComplianceRotationByBackendResponse parses an HTTP response from a GetComplianceRotationByBackendWithResponse call
-func ParseGetComplianceRotationByBackendResponse(rsp *http.Response) (*GetComplianceRotationByBackendResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetComplianceRotationByBackendResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
 
 	}
 
@@ -12280,152 +9788,6 @@ func ParseRemoveRoleFromGroupResponse(rsp *http.Response) (*RemoveRoleFromGroupR
 			return nil, err
 		}
 		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetDeploymentHygieneResponse parses an HTTP response from a GetDeploymentHygieneWithResponse call
-func ParseGetDeploymentHygieneResponse(rsp *http.Response) (*GetDeploymentHygieneResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetDeploymentHygieneResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseLiftLegalHoldResponse parses an HTTP response from a LiftLegalHoldWithResponse call
-func ParseLiftLegalHoldResponse(rsp *http.Response) (*LiftLegalHoldResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &LiftLegalHoldResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetLegalHoldResponse parses an HTTP response from a GetLegalHoldWithResponse call
-func ParseGetLegalHoldResponse(rsp *http.Response) (*GetLegalHoldResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetLegalHoldResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParsePlaceLegalHoldResponse parses an HTTP response from a PlaceLegalHoldWithResponse call
-func ParsePlaceLegalHoldResponse(rsp *http.Response) (*PlaceLegalHoldResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &PlaceLegalHoldResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
 
 	}
 
@@ -13657,39 +11019,6 @@ func ParseGetProjectRotationPlanResponse(rsp *http.Response) (*GetProjectRotatio
 	return response, nil
 }
 
-// ParseGetProjectSecretsInventoryCSVResponse parses an HTTP response from a GetProjectSecretsInventoryCSVWithResponse call
-func ParseGetProjectSecretsInventoryCSVResponse(rsp *http.Response) (*GetProjectSecretsInventoryCSVResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetProjectSecretsInventoryCSVResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseGetPermissionMatrixResponse parses an HTTP response from a GetPermissionMatrixWithResponse call
 func ParseGetPermissionMatrixResponse(rsp *http.Response) (*GetPermissionMatrixResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -13733,173 +11062,6 @@ func ParseGetPermissionMatrixResponse(rsp *http.Response) (*GetPermissionMatrixR
 
 	case rsp.StatusCode == 200:
 		// Content-type (text/csv) unsupported
-
-	}
-
-	return response, nil
-}
-
-// ParseListRiskExceptionsResponse parses an HTTP response from a ListRiskExceptionsWithResponse call
-func ParseListRiskExceptionsResponse(rsp *http.Response) (*ListRiskExceptionsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListRiskExceptionsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateRiskExceptionResponse parses an HTTP response from a CreateRiskExceptionWithResponse call
-func ParseCreateRiskExceptionResponse(rsp *http.Response) (*CreateRiskExceptionResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateRiskExceptionResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRevokeRiskExceptionResponse parses an HTTP response from a RevokeRiskExceptionWithResponse call
-func ParseRevokeRiskExceptionResponse(rsp *http.Response) (*RevokeRiskExceptionResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RevokeRiskExceptionResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseApproveRiskExceptionResponse parses an HTTP response from a ApproveRiskExceptionWithResponse call
-func ParseApproveRiskExceptionResponse(rsp *http.Response) (*ApproveRiskExceptionResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ApproveRiskExceptionResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
 
 	}
 
@@ -14383,173 +11545,20 @@ func ParseUpdateRotationPolicyResponse(rsp *http.Response) (*UpdateRotationPolic
 	return response, nil
 }
 
-// ParseGetSecretsInventoryCSVResponse parses an HTTP response from a GetSecretsInventoryCSVWithResponse call
-func ParseGetSecretsInventoryCSVResponse(rsp *http.Response) (*GetSecretsInventoryCSVResponse, error) {
+// ParseGetSystemInfoResponse parses an HTTP response from a GetSystemInfoWithResponse call
+func ParseGetSystemInfoResponse(rsp *http.Response) (*GetSystemInfoResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &GetSecretsInventoryCSVResponse{
+	response := &GetSystemInfoResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListSoDPoliciesResponse parses an HTTP response from a ListSoDPoliciesWithResponse call
-func ParseListSoDPoliciesResponse(rsp *http.Response) (*ListSoDPoliciesResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListSoDPoliciesResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateSoDPolicyResponse parses an HTTP response from a CreateSoDPolicyWithResponse call
-func ParseCreateSoDPolicyResponse(rsp *http.Response) (*CreateSoDPolicyResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateSoDPolicyResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseDeleteSoDPolicyResponse parses an HTTP response from a DeleteSoDPolicyWithResponse call
-func ParseDeleteSoDPolicyResponse(rsp *http.Response) (*DeleteSoDPolicyResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &DeleteSoDPolicyResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListSoDViolationsResponse parses an HTTP response from a ListSoDViolationsWithResponse call
-func ParseListSoDViolationsResponse(rsp *http.Response) (*ListSoDViolationsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListSoDViolationsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

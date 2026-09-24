@@ -521,6 +521,34 @@ paths:
       responses:
         '200': {description: 'Encryption configuration summary'}
         '403': {$ref: '#/components/responses/Error'}
+  /api/v1/admin/jobs/role-expiry-check:
+    post:
+      tags: [System]
+      summary: Trigger a role-expiry notification scan (requires system.write)
+      description: >-
+        Send immediate role-expiry notifications for time-bound role grants approaching their
+        deadline (warning within 7 days, critical within 1 day). On-demand trigger for the job
+        that otherwise runs only on its background scheduler.
+      operationId: runRoleExpiryCheck
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: 'Scan complete: {warnings, criticals}'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/admin/jobs/token-expiry-check:
+    post:
+      tags: [System]
+      summary: Trigger a PAT/machine-credential expiry notification scan (requires system.write)
+      description: >-
+        Send immediate expiry notifications for personal access tokens and machine-identity
+        credentials approaching their deadline (warning within 7 days, critical within 1 day).
+        On-demand trigger for the job that otherwise runs only on its background scheduler.
+      operationId: runTokenExpiryCheck
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: 'Scan complete: {pat_warnings, pat_criticals, machine_warnings, machine_criticals}'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
   /api/v1/projects:
     get:
       tags: [Projects]

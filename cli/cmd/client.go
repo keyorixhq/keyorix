@@ -93,7 +93,7 @@ func checkVersionSkew(ctx context.Context, client *apiclient.ClientWithResponses
 
 // apiClientWithSkewCheck resolves credentials, builds a client, and checks version skew
 // against the server (docs/cli-split-inventory.md §7, PR 6's "skew check on every request"
-// method, carried forward into PR 7/8) before returning -- unlike PR 1/2's per-command
+// method, carried forward into PR 7/8/10) before returning -- unlike PR 1/2's per-command
 // clients, which only checked skew from `login`/`status`. A Refuse result blocks the
 // command outright; a Warning is printed to stderr (so it never pollutes stdout output a
 // script might parse) and the command proceeds.
@@ -133,8 +133,8 @@ type apiEnvelope[T any] struct {
 // decodeData unmarshals a 2xx response body's "data" field into T. Used for the routes
 // this package calls whose generated response type has no typed JSON2xx field (no response
 // schema was added to openapi.yaml for them -- see server/http/handlers/openapi.yaml's PR
-// 6/7/8 additions and their doc comments for why a full typed schema wasn't worth it for a
-// one-PR-only caller): the generated client always exposes the raw Body, decoding it here
+// 6/7/8/10 additions and their doc comments for why a full typed schema wasn't worth it for
+// a one-PR-only caller): the generated client always exposes the raw Body, decoding it here
 // is the documented fallback (docs/cli-split-inventory.md §7).
 func decodeData[T any](body []byte) (T, error) {
 	var env apiEnvelope[T]
@@ -148,7 +148,7 @@ func decodeData[T any](body []byte) (T, error) {
 // apiErrorBody mirrors the `{"error", "message"}` fields sendError
 // (server/http/handlers/helpers.go) writes on a non-2xx response -- enough to surface a
 // readable reason instead of a bare status code. Task requirement (PR 6 method, carried
-// forward into PR 7/8, docs/cli-split-inventory.md §7): "surface ... refusals readably."
+// forward into PR 7/8/10, docs/cli-split-inventory.md §7): "surface ... refusals readably."
 type apiErrorBody struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`

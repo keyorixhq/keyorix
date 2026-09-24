@@ -136,6 +136,11 @@ var keptPaths = []string{
 	"/api/v1/compliance/rotation-by-backend",
 	"/api/v1/secrets/inventory.csv",
 	"/api/v1/projects/{id}/secrets/inventory.csv",
+	// PR 10 (docs/cli-split-inventory.md §7) -- status, system info/role-expiry-check/
+	// token-expiry-check.
+	"/api/v1/system/info",
+	"/api/v1/admin/jobs/role-expiry-check",
+	"/api/v1/admin/jobs/token-expiry-check",
 	// PR 3 (docs/cli-split-inventory.md §7) -- rbac, group, invite.
 	"/api/v1/users",
 	"/api/v1/users/{id}/roles",
