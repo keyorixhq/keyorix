@@ -46,6 +46,24 @@ var keptPaths = []string{
 	"/api/v1/machine-token-hygiene",
 	"/api/v1/machine-identities/audit",
 	"/api/v1/projects",
+	// PR 3 (docs/cli-split-inventory.md §7) -- rbac, group, invite.
+	"/api/v1/users",
+	"/api/v1/users/{id}/roles",
+	"/api/v1/projects/{id}/environments",
+	"/api/v1/roles",
+	"/api/v1/roles/{id}/permissions",
+	"/api/v1/user-roles",
+	"/api/v1/groups",
+	"/api/v1/groups/{id}",
+	"/api/v1/groups/{id}/members",
+	"/api/v1/groups/{id}/members/{userId}",
+	"/api/v1/groups/{id}/roles",
+	"/api/v1/groups/{id}/roles/{roleId}",
+	"/api/v1/audit/rbac-logs",
+	"/api/v1/rbac/permission-matrix",
+	"/api/v1/projects/{id}/invitations",
+	"/api/v1/projects/{id}/invitations/{invitationId}",
+	"/api/v1/projects/{id}/invitations/{invitationId}/resend",
 }
 
 func main() {

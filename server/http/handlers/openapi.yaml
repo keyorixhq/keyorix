@@ -1167,6 +1167,15 @@ paths:
       responses:
         '200':
           description: "Envelope {data, message}. data.environments is an array of environment objects."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      environments: {type: array, items: {$ref: '#/components/schemas/Environment'}}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
     post:
@@ -1250,6 +1259,15 @@ paths:
       responses:
         '200':
           description: Envelope with `data.invitations` (array of invitation objects).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      invitations: {type: array, items: {$ref: '#/components/schemas/ProjectInvitation'}}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -1276,6 +1294,17 @@ paths:
           description: >-
             Envelope with `data.invitation` plus `data.setup_link`
             (or `data.delivery_error` when the link could not be delivered).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      invitation: {$ref: '#/components/schemas/ProjectInvitation'}
+                      setup_link: {$ref: '#/components/schemas/ProvisionSetupResult'}
+                      delivery_error: {type: string, description: "Set instead of setup_link when the invitation was created but the link could not be delivered."}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -1292,6 +1321,13 @@ paths:
       responses:
         '200':
           description: Envelope with null `data` and a confirmation message.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {nullable: true}
+                  message: {type: string}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
@@ -1309,6 +1345,15 @@ paths:
       responses:
         '200':
           description: Envelope with `data.setup_link` (the reissued accept link).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      setup_link: {$ref: '#/components/schemas/ProvisionSetupResult'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
@@ -2489,6 +2534,19 @@ paths:
       responses:
         '200':
           description: "Envelope `data` has `users[]` (each with id, username, email, display_name, project_count, active_project_count), `page`, `page_size`, `total`, `total_pages`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      users: {type: array, items: {$ref: '#/components/schemas/UserSummary'}}
+                      page: {type: integer}
+                      page_size: {type: integer}
+                      total: {type: integer}
+                      total_pages: {type: integer}
         '401': {$ref: '#/components/responses/Error'}
     post:
       tags: [Users]
@@ -2693,6 +2751,15 @@ paths:
       responses:
         '200':
           description: "Envelope `data.roles[]` with id, name."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      roles: {type: array, items: {$ref: '#/components/schemas/RoleRef'}}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
     put:
@@ -2789,6 +2856,16 @@ paths:
       responses:
         '200':
           description: "Envelope `data` has `groups[]` (id, name, description) and `total`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      groups: {type: array, items: {$ref: '#/components/schemas/Group'}}
+                      total: {type: integer}
         '401': {$ref: '#/components/responses/Error'}
     post:
       tags: [Groups]
@@ -2809,6 +2886,12 @@ paths:
       responses:
         '201':
           description: "Envelope `data` is the created group (id, name, description)."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/Group'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
@@ -2825,6 +2908,12 @@ paths:
       responses:
         '200':
           description: "Envelope `data` is the group (id, name, description)."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/Group'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
     put:
@@ -2844,6 +2933,12 @@ paths:
       responses:
         '200':
           description: "Envelope `data` is the updated group."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/Group'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
@@ -2870,6 +2965,16 @@ paths:
       responses:
         '200':
           description: "Envelope `data` has `members[]` (user objects) and `total`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      members: {type: array, items: {$ref: '#/components/schemas/UserSummary'}}
+                      total: {type: integer}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
     post:
@@ -2894,6 +2999,17 @@ paths:
       responses:
         '200':
           description: "Envelope `data` is `{group_id, user_id, project_id}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      group_id: {type: integer}
+                      user_id: {type: integer}
+                      project_id: {type: integer}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
@@ -2902,6 +3018,7 @@ paths:
     parameters:
       - {name: id, in: path, required: true, schema: {type: integer}}
       - {name: userId, in: path, required: true, schema: {type: integer}}
+      - {name: project_id, in: query, schema: {type: integer}, description: "Scope to the same project the membership was added with (0/omit = global membership). Fixed missing from this spec (ADR-108 PR 3) -- the real handler (groups_members.go's RemoveGroupMember) has always read this query param; every other caller sent it, this spec just never documented it."}
     delete:
       tags: [Groups]
       summary: Remove group member
@@ -2924,6 +3041,16 @@ paths:
       responses:
         '200':
           description: "Envelope `data` is `{group_id, roles}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      group_id: {type: integer}
+                      roles: {type: array, nullable: true, items: {$ref: '#/components/schemas/GroupRoleGrant'}, description: "nil (JSON null), not [], when the group has no role grants."}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
     post:
@@ -2947,6 +3074,17 @@ paths:
       responses:
         '201':
           description: "Envelope `data` is `{group_id, role_id}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      group_id: {type: integer}
+                      role_id: {type: integer}
+                      expires_at: {type: string, format: date-time, nullable: true}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
@@ -2979,6 +3117,16 @@ paths:
       responses:
         '200':
           description: "Envelope `data` has `roles[]` (with permissions) and `total`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      roles: {type: array, items: {$ref: '#/components/schemas/RoleWithPermissions'}}
+                      total: {type: integer}
         '401': {$ref: '#/components/responses/Error'}
     post:
       tags: [Roles]
@@ -3062,6 +3210,17 @@ paths:
       responses:
         '200':
           description: "Envelope `data` is `{role_id, role_name, permissions}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      role_id: {type: integer}
+                      role_name: {type: string}
+                      permissions: {type: array, items: {$ref: '#/components/schemas/Permission'}}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
     post:
@@ -3153,6 +3312,17 @@ paths:
       responses:
         '201':
           description: "Envelope `data` is `{user_id, role_id}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      user_id: {type: integer}
+                      role_id: {type: integer}
+                      expires_at: {type: string, format: date-time, nullable: true}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
@@ -3317,6 +3487,48 @@ paths:
             Envelope {data, message}. data has logs[] (each: id, action, actor_user_id,
             target_user_id, group_id, role_id, permission_id, project_id, details,
             created_at), plus page, page_size, total, total_pages.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      logs: {type: array, items: {$ref: '#/components/schemas/RBACAuditLogEntry'}}
+                      total: {type: integer}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/rbac/permission-matrix:
+    get:
+      tags: [Roles]
+      summary: Export the deployment-wide RBAC permission matrix
+      description: >-
+        Return every (user, role, permission, scope) tuple in the deployment, for
+        SOC2/ISO27001-style access reviews (`keyorix rbac export-matrix`). Relocated
+        out of the /system proxy tier to /api/v1/rbac/permission-matrix (#G79);
+        added to this spec for ADR-108 Phase 3 PR 3 -- it had no OpenAPI entry at all
+        before, despite being a real, routed, roles.read-gated endpoint.
+      operationId: getPermissionMatrix
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: project_id, in: query, schema: {type: integer}, description: "Filter to one project (0/omit = every project, including global grants)."}
+        - {name: format, in: query, schema: {type: string, enum: [csv]}, description: "When 'csv', return text/csv instead of the JSON envelope."}
+      responses:
+        '200':
+          description: "Envelope `data` is `{rows, total}` (JSON mode) or a CSV attachment (format=csv)."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      rows: {type: array, nullable: true, items: {$ref: '#/components/schemas/PermissionMatrixRow'}, description: "nil (JSON null), not [], when there are no grants to report."}
+                      total: {type: integer}
+            text/csv:
+              schema: {type: string, format: binary}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
   /api/v1/audit/retention:
@@ -3933,3 +4145,156 @@ components:
         machines:
           type: array
           items: {$ref: '#/components/schemas/MachineAuditRow'}
+    Group:
+      type: object
+      description: A group (server/http/handlers/groups_handler.go's groupToAPIResponse).
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        description: {type: string}
+    UserSummary:
+      type: object
+      description: >-
+        A user as returned in list/membership contexts (userToAPIResponse,
+        server/http/handlers/users_handler.go). project_count/active_project_count
+        are attached only by GET /api/v1/users (listUsers), not by
+        GET /api/v1/groups/{id}/members.
+      properties:
+        id: {type: integer}
+        username: {type: string}
+        email: {type: string}
+        display_name: {type: string}
+        active: {type: boolean}
+        account_state: {type: string}
+        external_id: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        last_login_at: {type: string, format: date-time, nullable: true}
+        deleted_at: {type: string, format: date-time, nullable: true}
+        project_count: {type: integer}
+        active_project_count: {type: integer}
+    GroupRoleGrant:
+      type: object
+      description: One role a group holds, with its time-bound expiry if any (internal/core/storage.GroupRoleGrant).
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        description: {type: string}
+        expires_at: {type: string, format: date-time, nullable: true}
+    RoleRef:
+      type: object
+      description: A minimal role reference (id, name only) -- GET /api/v1/users/{id}/roles's shape.
+      properties:
+        id: {type: integer}
+        name: {type: string}
+    Permission:
+      type: object
+      description: >-
+        A permission. internal/storage/models.Permission carries no `json:` tags,
+        so the wire keys are the bare (capitalized) Go field names, not the
+        snake_case this file uses elsewhere -- documented as such rather than as
+        an idealized snake_case shape it does not actually have. Single-word
+        field names still decode correctly into a snake_case-tagged Go client:
+        encoding/json's Unmarshal falls back to a case-insensitive match
+        ("ID" ~ "id") when no exact tag match exists.
+      properties:
+        ID: {type: integer}
+        Name: {type: string}
+        Description: {type: string}
+        Resource: {type: string}
+        Action: {type: string}
+    RoleWithPermissions:
+      type: object
+      description: >-
+        A role with its assigned permissions (internal/core.RoleWithPermissions,
+        embeds models.Role). Same untagged-model caveat as Permission above: wire
+        keys are the bare Go field names (ID, Name, Description,
+        BypassesPermissionChecks, Permissions), not snake_case.
+      properties:
+        ID: {type: integer}
+        Name: {type: string}
+        Description: {type: string}
+        BypassesPermissionChecks: {type: boolean}
+        Permissions: {type: array, items: {$ref: '#/components/schemas/Permission'}}
+    Environment:
+      type: object
+      description: >-
+        A project environment (internal/storage/models.Environment). No `json:`
+        tags on the model -- wire keys are the bare Go field names (ID,
+        ProjectID, Name, CreatedAt, UpdatedAt), not snake_case. Unlike
+        Permission/RoleWithPermissions above, ProjectID/CreatedAt/UpdatedAt do
+        NOT case-insensitively match a snake_case tag (the underscore makes
+        "project_id" a different string from "projectid"), so a generated
+        client MUST use these exact capitalized property names to decode
+        correctly.
+      properties:
+        ID: {type: integer}
+        ProjectID: {type: integer}
+        Name: {type: string}
+        CreatedAt: {type: string, format: date-time}
+        UpdatedAt: {type: string, format: date-time}
+    ProjectInvitation:
+      type: object
+      description: >-
+        A project invitation (ADR-024, internal/storage/models.ProjectInvitation).
+        No `json:` tags on the model -- wire keys are the bare Go field names
+        (ID, ProjectID, Email, ...), not snake_case. As with Environment above,
+        the multi-word field names here do not case-insensitively match a
+        snake_case tag, so a generated client must use these exact property
+        names.
+      properties:
+        ID: {type: integer}
+        ProjectID: {type: integer}
+        Email: {type: string}
+        Role: {type: string}
+        State: {type: string, enum: [pending, accepted, revoked, expired]}
+        InvitedBy: {type: integer}
+        InvitedByMachineIdentityID: {type: integer}
+        SystemRole: {type: string}
+        ExpiresAt: {type: string, format: date-time, nullable: true}
+        CreatedAt: {type: string, format: date-time}
+        AcceptedAt: {type: string, format: date-time, nullable: true}
+        RevokedAt: {type: string, format: date-time, nullable: true}
+    ProvisionSetupResult:
+      type: object
+      description: Outcome of provisioning and delivering a setup/accept link (ADR-028, internal/core.ProvisionSetupResult).
+      properties:
+        email: {type: string}
+        channel: {type: string, enum: [smtp, out_of_band, log]}
+        delivered: {type: boolean}
+        link_for_admin: {type: string, description: "Set only in out-of-band mode."}
+    RBACAuditLogEntry:
+      type: object
+      description: One RBAC audit trail entry (GET /api/v1/audit/rbac-logs).
+      properties:
+        id: {type: integer}
+        action: {type: string}
+        actor_user_id: {type: integer, nullable: true}
+        target_user_id: {type: integer, nullable: true}
+        group_id: {type: integer, nullable: true}
+        role_id: {type: integer, nullable: true}
+        permission_id: {type: integer, nullable: true}
+        project_id: {type: integer, nullable: true}
+        environment_id: {type: integer, nullable: true}
+        details: {type: string}
+        created_at: {type: string, format: date-time}
+    PermissionMatrixRow:
+      type: object
+      description: >-
+        One (user, role, permission, scope) tuple (internal/core.PermissionMatrixRow),
+        GET /api/v1/rbac/permission-matrix.
+      properties:
+        user_id: {type: integer}
+        username: {type: string}
+        email: {type: string}
+        role_id: {type: integer}
+        role_name: {type: string}
+        permission_name: {type: string}
+        resource: {type: string}
+        action: {type: string}
+        scope: {type: string, enum: [global, project, environment]}
+        project_id: {type: integer}
+        project_name: {type: string}
+        environment_id: {type: integer}
+        environment_name: {type: string}
+        expires_at: {type: string, format: date-time, nullable: true}

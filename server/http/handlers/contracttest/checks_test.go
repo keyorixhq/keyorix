@@ -52,6 +52,11 @@ func TestSpecLoadsAndValidates(t *testing.T) {
 // real response schema to produce typed accessors, so this batch backfilled
 // schemas for these previously-schema-less (or brand new, e.g. the OIDC
 // binding trio) operations and exercises each via openapi_contract_pr2_test.go.
+//
+// The 20 rbac/group/invite operations below (plus the brand-new
+// getPermissionMatrix, which had no openapi.yaml entry at all before) were
+// added by ADR-108 PR 3 (docs/cli-split-inventory.md §7), exercised via
+// openapi_contract_pr3_test.go.
 func TestEnforcedSetMatchesADR074(t *testing.T) {
 	want := map[string]bool{
 		"authGetSetupToken":             true,
@@ -77,6 +82,26 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		"listProjects":                  true,
 		"machineTokenHygiene":           true,
 		"patHygiene":                    true,
+		"addGroupMember":                true,
+		"assignRoleToGroup":             true,
+		"assignUserRole":                true,
+		"createGroup":                   true,
+		"createProjectInvitation":       true,
+		"getGroup":                      true,
+		"getGroupMembers":               true,
+		"getGroupRoles":                 true,
+		"getPermissionMatrix":           true,
+		"getRolePermissions":            true,
+		"getUserRolesForUser":           true,
+		"listGroups":                    true,
+		"listProjectEnvironments":       true,
+		"listProjectInvitations":        true,
+		"listRBACAuditLogs":             true,
+		"listRoles":                     true,
+		"listUsers":                     true,
+		"resendProjectInvitation":       true,
+		"revokeProjectInvitation":       true,
+		"updateGroup":                   true,
 	}
 
 	loadSpec()
