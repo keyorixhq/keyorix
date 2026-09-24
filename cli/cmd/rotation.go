@@ -345,14 +345,19 @@ func runRotStatus(_ *cobra.Command, _ []string) error {
 }
 
 func runRotPlan(_ *cobra.Command, args []string) error {
+	if rotPlanAllProjects {
+		if len(args) > 0 {
+			return fmt.Errorf("--all-projects takes no project-id argument")
+		}
+	} else if len(args) != 1 {
+		return fmt.Errorf("provide a project id, or use --all-projects for the deployment-wide plan")
+	}
+
 	client, err := rotationAPIClient()
 	if err != nil {
 		return err
 	}
 	if rotPlanAllProjects {
-		if len(args) > 0 {
-			return fmt.Errorf("--all-projects takes no project-id argument")
-		}
 		resp, err := client.GetDeploymentRotationPlanWithResponse(context.Background())
 		if err != nil {
 			return err
@@ -364,9 +369,6 @@ func runRotPlan(_ *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if len(args) != 1 {
-		return fmt.Errorf("provide a project id, or use --all-projects for the deployment-wide plan")
-	}
 	projectID, err := strconv.ParseUint(strings.TrimSpace(args[0]), 10, 32)
 	if err != nil || projectID == 0 {
 		return fmt.Errorf("invalid project id %q", args[0])
