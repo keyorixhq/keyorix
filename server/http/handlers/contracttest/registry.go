@@ -18,8 +18,6 @@ const (
 // one operation at a time as ADR-074's Phase 2 handoff batches land.
 var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not credentials; some contain "Token"/"PAT" (createPAT, issueMachineToken, ...), values are all the literal reason string "schema not yet written"
 	"acknowledgeAnomalyAlert":        reasonSchemaNotYetWritten, // post /api/v1/audit/anomalies/{id}/acknowledge
-	"activateBreakGlass":             reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/break-glass
-	"addGroupMember":                 reasonSchemaNotYetWritten, // post /api/v1/groups/{id}/members
 	"addProjectMember":               reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/members
 	"assignPermissionToRole":         reasonSchemaNotYetWritten, // post /api/v1/roles/{id}/permissions
 	"attestProjectAccessReview":      reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/attest
@@ -63,8 +61,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getProjectAccessReview":         reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-review
 	"getProjectDrift":                reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/drift
 	"getRole":                        reasonSchemaNotYetWritten, // get /api/v1/roles/{id}
-	"getRolePermissions":             reasonSchemaNotYetWritten, // get /api/v1/roles/{id}/permissions
-	"getRotationPolicy":              reasonSchemaNotYetWritten, // get /api/v1/rotation-policies/{id}
 	"getRotationStatus":              reasonSchemaNotYetWritten, // get /api/v1/rotation-policies/status
 	"getSecret":                      reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}
 	"getSecretAccessRequest":         reasonSchemaNotYetWritten, // get /api/v1/secret-access-requests/{requestId}
@@ -90,8 +86,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"listProjectMembers":             reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/members
 	"listProjectMemberships":         reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/memberships
 	"listRiskExceptions":             reasonSchemaNotYetWritten, // get /api/v1/risk-exceptions
-	"listRoles":                      reasonSchemaNotYetWritten, // get /api/v1/roles
-	"listRotationPolicies":           reasonSchemaNotYetWritten, // get /api/v1/rotation-policies
 	"listSecretAccessRequests":       reasonSchemaNotYetWritten, // get /api/v1/secret-access-requests
 	"listSecretShares":               reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}/shares
 	"listSecrets":                    reasonSchemaNotYetWritten, // get /api/v1/secrets
