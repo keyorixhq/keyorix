@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
 )
 
@@ -49,7 +48,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			"classification": createClassification,
 		}
 		var resp struct {
-			MachineIdentity models.MachineIdentity `json:"machine_identity"`
+			MachineIdentity machineIdentityWire `json:"machine_identity"`
 		}
 		path := fmt.Sprintf("/api/v1/projects/%d/machine-identities", projectID)
 		if err := rc.Post(ctx, path, body, &resp); err != nil {

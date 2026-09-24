@@ -188,9 +188,17 @@ func (h *PATHandler) CreatePAT(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := toPATResponse(result.Token)
-	w.WriteHeader(http.StatusCreated)
 	// The plaintext token is included once here and never again.
-	sendSuccess(w, map[string]any{
+	//
+	// sendCreated, not WriteHeader+sendSuccess: WriteHeader flushes headers
+	// immediately, so a Content-Type set inside sendSuccess afterward is a
+	// silent no-op -- Go's http.ResponseWriter then sniffs the JSON body's
+	// leading '{' as "text/plain; charset=utf-8" (its sniffer has no JSON
+	// case), which a spec-compliant generated client (the thin CLI's
+	// oapi-codegen apiclient) correctly refuses to parse as JSON. Found via
+	// docs/cli-split-inventory.md PR 2's live-server verification: curl -i
+	// showed the wrong Content-Type on this exact response.
+	sendCreated(w, map[string]any{
 		"token": result.PlainToken,
 		"pat":   resp,
 	}, "Token created — copy it now, it will not be shown again")

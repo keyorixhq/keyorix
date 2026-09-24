@@ -34,8 +34,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"createAccessRequest":            reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-requests
 	"createGlobalInvitation":         reasonSchemaNotYetWritten, // post /api/v1/invitations
 	"createGroup":                    reasonSchemaNotYetWritten, // post /api/v1/groups
-	"createMachineIdentity":          reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/machine-identities
-	"createPAT":                      reasonSchemaNotYetWritten, // post /api/v1/auth/tokens
 	"createProject":                  reasonSchemaNotYetWritten, // post /api/v1/projects
 	"createProjectEnvironment":       reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/environments
 	"createProjectInvitation":        reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/invitations
@@ -47,6 +45,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"createUser":                     reasonSchemaNotYetWritten, // post /api/v1/users
 	"decideAccessReviewCampaignItem": reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide
 	"deleteEnvironment":              reasonSchemaNotYetWritten, // delete /api/v1/environments/{id}
+	"deleteOIDCBinding":              reasonSchemaNotYetWritten, // delete /api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings/{bindingId}
 	"deleteProject":                  reasonSchemaNotYetWritten, // delete /api/v1/projects/{id}
 	"deleteSoDPolicy":                reasonSchemaNotYetWritten, // delete /api/v1/sod/policies/{id}
 	"endImpersonation":               reasonSchemaNotYetWritten, // post /api/v1/auth/end-impersonation
@@ -88,7 +87,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"grantMachineRole":               reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/machine-identities/{machineId}/roles
 	"grantSecretACL":                 reasonSchemaNotYetWritten, // post /api/v1/secrets/{id}/acl
 	"inviteMember":                   reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/memberships
-	"issueMachineToken":              reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/machine-identities/{machineId}/tokens
 	"liftLegalHold":                  reasonSchemaNotYetWritten, // delete /api/v1/legal-hold
 	"listAccessRequests":             reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-requests
 	"listAccessReviewCampaigns":      reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-review/campaigns
@@ -97,16 +95,12 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"listBreakGlassActivations":      reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/break-glass
 	"listEnvironments":               reasonSchemaNotYetWritten, // get /api/v1/environments
 	"listGroups":                     reasonSchemaNotYetWritten, // get /api/v1/groups
-	"listMachineIdentities":          reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/machine-identities
-	"listMachineTokens":              reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/machine-identities/{machineId}/tokens
 	"listNotifications":              reasonSchemaNotYetWritten, // get /api/v1/notifications
-	"listPATs":                       reasonSchemaNotYetWritten, // get /api/v1/auth/tokens
 	"listPermissions":                reasonSchemaNotYetWritten, // get /api/v1/permissions
 	"listProjectEnvironments":        reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/environments
 	"listProjectInvitations":         reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/invitations
 	"listProjectMembers":             reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/members
 	"listProjectMemberships":         reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/memberships
-	"listProjects":                   reasonSchemaNotYetWritten, // get /api/v1/projects
 	"listRBACAuditLogs":              reasonSchemaNotYetWritten, // get /api/v1/audit/rbac-logs
 	"listRiskExceptions":             reasonSchemaNotYetWritten, // get /api/v1/risk-exceptions
 	"listRoles":                      reasonSchemaNotYetWritten, // get /api/v1/roles
@@ -123,6 +117,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"listUsers":                      reasonSchemaNotYetWritten, // get /api/v1/users
 	"markAllNotificationsRead":       reasonSchemaNotYetWritten, // post /api/v1/notifications/read-all
 	"markNotificationRead":           reasonSchemaNotYetWritten, // post /api/v1/notifications/{id}/read
+	"mfaStepUp":                      reasonSchemaNotYetWritten, // post /api/v1/auth/mfa/stepup
 	"openAccessReviewCampaign":       reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/campaigns
 	"placeLegalHold":                 reasonSchemaNotYetWritten, // post /api/v1/legal-hold
 	"reactivateUser":                 reasonSchemaNotYetWritten, // post /api/v1/users/{id}/reactivate
@@ -183,6 +178,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 // its own justification, not just write a reason string here -- otherwise
 // this map would be a silent, unaudited escape hatch from enforcement.
 var outOfScopeRegistry = map[string]string{ // #nosec G101 -- operationId keys, not credentials; some contain "PAT"/"Session" (revokePAT, revokeSession, ...), values are all descriptive reason strings
+	"bulkRevokeExpiredPATs":    reason204NoContent, // delete /api/v1/auth/tokens/expired
 	"deleteGroup":              reason204NoContent, // delete /api/v1/groups/{id}
 	"deleteRole":               reason204NoContent, // delete /api/v1/roles/{id}
 	"deleteRotationPolicy":     reason204NoContent, // delete /api/v1/rotation-policies/{id}
@@ -231,4 +227,19 @@ var exercisingTests = map[string][]string{
 	"exportSecretAccessLog":         {"TestExportAccessLog_JSONFormat", "TestExportAccessLog_CSVFormat"},
 	"exportAuditLogsCSV":            {"TestExportAuditLogsCSV"},
 	"exportAccessReviewCampaignCSV": {"TestExportAccessReviewCampaignCSV"},
+	// docs/cli-split-inventory.md §7 PR 2 (pat, auth mfa/logout, machine) --
+	// openapi_contract_pr2_test.go.
+	"createMachineIdentity": {"TestContractPR2_CreateMachineIdentity"},
+	"createOIDCBinding":     {"TestContractPR2_CreateOIDCBinding"},
+	"createPAT":             {"TestContractPR2_CreatePAT"},
+	"getMachineAuditReport": {"TestContractPR2_GetMachineAuditReport"},
+	"issueMachineToken":     {"TestContractPR2_IssueMachineToken"},
+	"listExpiredPATs":       {"TestContractPR2_ListExpiredPATs"},
+	"listMachineIdentities": {"TestContractPR2_ListMachineIdentities"},
+	"listMachineTokens":     {"TestContractPR2_ListMachineTokens"},
+	"listOIDCBindings":      {"TestContractPR2_ListOIDCBindings"},
+	"listPATs":              {"TestContractPR2_ListPATs"},
+	"listProjects":          {"TestContractPR2_ListProjects"},
+	"machineTokenHygiene":   {"TestContractPR2_MachineTokenHygiene"},
+	"patHygiene":            {"TestContractPR2_PATHygiene"},
 }

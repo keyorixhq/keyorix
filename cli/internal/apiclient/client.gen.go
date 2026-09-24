@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/oapi-codegen/runtime"
 )
 
 // RequestEditorFn  is the function signature for the RequestEditor callback function
@@ -88,6 +90,11 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
+	// MfaStepUpWithBody request with any body
+	MfaStepUpWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	MfaStepUp(ctx context.Context, body MfaStepUpJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetAuthProfile request
 	GetAuthProfile(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -95,6 +102,75 @@ type ClientInterface interface {
 	UpdateAuthProfileWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	UpdateAuthProfile(ctx context.Context, body UpdateAuthProfileJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListPATs request
+	ListPATs(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePATWithBody request with any body
+	CreatePATWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreatePAT(ctx context.Context, body CreatePATJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BulkRevokeExpiredPATs request
+	BulkRevokeExpiredPATs(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListExpiredPATs request
+	ListExpiredPATs(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokePAT request
+	RevokePAT(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetMachineAuditReport request
+	GetMachineAuditReport(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MachineTokenHygiene request
+	MachineTokenHygiene(ctx context.Context, params *MachineTokenHygieneParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatHygiene request
+	PatHygiene(ctx context.Context, params *PatHygieneParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListProjects request
+	ListProjects(ctx context.Context, params *ListProjectsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateProjectWithBody request with any body
+	CreateProjectWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateProject(ctx context.Context, body CreateProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListMachineIdentities request
+	ListMachineIdentities(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateMachineIdentityWithBody request with any body
+	CreateMachineIdentityWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateMachineIdentity(ctx context.Context, id int, body CreateMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// TransitionMachineIdentityWithBody request with any body
+	TransitionMachineIdentityWithBody(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	TransitionMachineIdentity(ctx context.Context, id int, machineId int, body TransitionMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListOIDCBindings request
+	ListOIDCBindings(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateOIDCBindingWithBody request with any body
+	CreateOIDCBindingWithBody(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateOIDCBinding(ctx context.Context, id int, machineId int, body CreateOIDCBindingJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteOIDCBinding request
+	DeleteOIDCBinding(ctx context.Context, id int, machineId int, bindingId int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListMachineTokens request
+	ListMachineTokens(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IssueMachineTokenWithBody request with any body
+	IssueMachineTokenWithBody(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	IssueMachineToken(ctx context.Context, id int, machineId int, body IssueMachineTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeMachineToken request
+	RevokeMachineToken(ctx context.Context, id int, machineId int, tokenId int, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetVersion request
 	GetVersion(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -104,8 +180,35 @@ type ClientInterface interface {
 
 	AuthLogin(ctx context.Context, body AuthLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// AuthLogout request
+	AuthLogout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// HealthCheck request
 	HealthCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+func (c *Client) MfaStepUpWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMfaStepUpRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) MfaStepUp(ctx context.Context, body MfaStepUpJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMfaStepUpRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 func (c *Client) GetAuthProfile(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -134,6 +237,306 @@ func (c *Client) UpdateAuthProfileWithBody(ctx context.Context, contentType stri
 
 func (c *Client) UpdateAuthProfile(ctx context.Context, body UpdateAuthProfileJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateAuthProfileRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListPATs(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPATsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreatePATWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePATRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreatePAT(ctx context.Context, body CreatePATJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePATRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BulkRevokeExpiredPATs(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBulkRevokeExpiredPATsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListExpiredPATs(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListExpiredPATsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RevokePAT(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokePATRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetMachineAuditReport(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetMachineAuditReportRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) MachineTokenHygiene(ctx context.Context, params *MachineTokenHygieneParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMachineTokenHygieneRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PatHygiene(ctx context.Context, params *PatHygieneParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatHygieneRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListProjects(ctx context.Context, params *ListProjectsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListProjectsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateProjectWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateProjectRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateProject(ctx context.Context, body CreateProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateProjectRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListMachineIdentities(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListMachineIdentitiesRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateMachineIdentityWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateMachineIdentityRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateMachineIdentity(ctx context.Context, id int, body CreateMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateMachineIdentityRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) TransitionMachineIdentityWithBody(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTransitionMachineIdentityRequestWithBody(c.Server, id, machineId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) TransitionMachineIdentity(ctx context.Context, id int, machineId int, body TransitionMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTransitionMachineIdentityRequest(c.Server, id, machineId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListOIDCBindings(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListOIDCBindingsRequest(c.Server, id, machineId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateOIDCBindingWithBody(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateOIDCBindingRequestWithBody(c.Server, id, machineId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateOIDCBinding(ctx context.Context, id int, machineId int, body CreateOIDCBindingJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateOIDCBindingRequest(c.Server, id, machineId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteOIDCBinding(ctx context.Context, id int, machineId int, bindingId int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteOIDCBindingRequest(c.Server, id, machineId, bindingId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListMachineTokens(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListMachineTokensRequest(c.Server, id, machineId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) IssueMachineTokenWithBody(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIssueMachineTokenRequestWithBody(c.Server, id, machineId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) IssueMachineToken(ctx context.Context, id int, machineId int, body IssueMachineTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIssueMachineTokenRequest(c.Server, id, machineId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RevokeMachineToken(ctx context.Context, id int, machineId int, tokenId int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeMachineTokenRequest(c.Server, id, machineId, tokenId)
 	if err != nil {
 		return nil, err
 	}
@@ -180,6 +583,18 @@ func (c *Client) AuthLogin(ctx context.Context, body AuthLoginJSONRequestBody, r
 	return c.Client.Do(req)
 }
 
+func (c *Client) AuthLogout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAuthLogoutRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) HealthCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewHealthCheckRequest(c.Server)
 	if err != nil {
@@ -190,6 +605,46 @@ func (c *Client) HealthCheck(ctx context.Context, reqEditors ...RequestEditorFn)
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewMfaStepUpRequest calls the generic MfaStepUp builder with application/json body
+func NewMfaStepUpRequest(server string, body MfaStepUpJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewMfaStepUpRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewMfaStepUpRequestWithBody generates requests for MfaStepUp with any type of body
+func NewMfaStepUpRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/auth/mfa/stepup")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
 }
 
 // NewGetAuthProfileRequest generates requests for GetAuthProfile
@@ -259,6 +714,796 @@ func NewUpdateAuthProfileRequestWithBody(server string, contentType string, body
 	return req, nil
 }
 
+// NewListPATsRequest generates requests for ListPATs
+func NewListPATsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/auth/tokens")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreatePATRequest calls the generic CreatePAT builder with application/json body
+func NewCreatePATRequest(server string, body CreatePATJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreatePATRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreatePATRequestWithBody generates requests for CreatePAT with any type of body
+func NewCreatePATRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/auth/tokens")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewBulkRevokeExpiredPATsRequest generates requests for BulkRevokeExpiredPATs
+func NewBulkRevokeExpiredPATsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/auth/tokens/expired")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListExpiredPATsRequest generates requests for ListExpiredPATs
+func NewListExpiredPATsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/auth/tokens/expired")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRevokePATRequest generates requests for RevokePAT
+func NewRevokePATRequest(server string, id int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/auth/tokens/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetMachineAuditReportRequest generates requests for GetMachineAuditReport
+func NewGetMachineAuditReportRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/machine-identities/audit")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewMachineTokenHygieneRequest generates requests for MachineTokenHygiene
+func NewMachineTokenHygieneRequest(server string, params *MachineTokenHygieneParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/machine-token-hygiene")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Days != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "days", runtime.ParamLocationQuery, *params.Days); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPatHygieneRequest generates requests for PatHygiene
+func NewPatHygieneRequest(server string, params *PatHygieneParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/pat-hygiene")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Days != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "days", runtime.ParamLocationQuery, *params.Days); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListProjectsRequest generates requests for ListProjects
+func NewListProjectsRequest(server string, params *ListProjectsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.IncludeDeleted != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "include_deleted", runtime.ParamLocationQuery, *params.IncludeDeleted); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateProjectRequest calls the generic CreateProject builder with application/json body
+func NewCreateProjectRequest(server string, body CreateProjectJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateProjectRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateProjectRequestWithBody generates requests for CreateProject with any type of body
+func NewCreateProjectRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListMachineIdentitiesRequest generates requests for ListMachineIdentities
+func NewListMachineIdentitiesRequest(server string, id int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateMachineIdentityRequest calls the generic CreateMachineIdentity builder with application/json body
+func NewCreateMachineIdentityRequest(server string, id int, body CreateMachineIdentityJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateMachineIdentityRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewCreateMachineIdentityRequestWithBody generates requests for CreateMachineIdentity with any type of body
+func NewCreateMachineIdentityRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewTransitionMachineIdentityRequest calls the generic TransitionMachineIdentity builder with application/json body
+func NewTransitionMachineIdentityRequest(server string, id int, machineId int, body TransitionMachineIdentityJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewTransitionMachineIdentityRequestWithBody(server, id, machineId, "application/json", bodyReader)
+}
+
+// NewTransitionMachineIdentityRequestWithBody generates requests for TransitionMachineIdentity with any type of body
+func NewTransitionMachineIdentityRequestWithBody(server string, id int, machineId int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "machineId", runtime.ParamLocationPath, machineId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListOIDCBindingsRequest generates requests for ListOIDCBindings
+func NewListOIDCBindingsRequest(server string, id int, machineId int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "machineId", runtime.ParamLocationPath, machineId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities/%s/oidc-bindings", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateOIDCBindingRequest calls the generic CreateOIDCBinding builder with application/json body
+func NewCreateOIDCBindingRequest(server string, id int, machineId int, body CreateOIDCBindingJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateOIDCBindingRequestWithBody(server, id, machineId, "application/json", bodyReader)
+}
+
+// NewCreateOIDCBindingRequestWithBody generates requests for CreateOIDCBinding with any type of body
+func NewCreateOIDCBindingRequestWithBody(server string, id int, machineId int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "machineId", runtime.ParamLocationPath, machineId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities/%s/oidc-bindings", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteOIDCBindingRequest generates requests for DeleteOIDCBinding
+func NewDeleteOIDCBindingRequest(server string, id int, machineId int, bindingId int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "machineId", runtime.ParamLocationPath, machineId)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "bindingId", runtime.ParamLocationPath, bindingId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities/%s/oidc-bindings/%s", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListMachineTokensRequest generates requests for ListMachineTokens
+func NewListMachineTokensRequest(server string, id int, machineId int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "machineId", runtime.ParamLocationPath, machineId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities/%s/tokens", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewIssueMachineTokenRequest calls the generic IssueMachineToken builder with application/json body
+func NewIssueMachineTokenRequest(server string, id int, machineId int, body IssueMachineTokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIssueMachineTokenRequestWithBody(server, id, machineId, "application/json", bodyReader)
+}
+
+// NewIssueMachineTokenRequestWithBody generates requests for IssueMachineToken with any type of body
+func NewIssueMachineTokenRequestWithBody(server string, id int, machineId int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "machineId", runtime.ParamLocationPath, machineId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities/%s/tokens", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokeMachineTokenRequest generates requests for RevokeMachineToken
+func NewRevokeMachineTokenRequest(server string, id int, machineId int, tokenId int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "machineId", runtime.ParamLocationPath, machineId)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "tokenId", runtime.ParamLocationPath, tokenId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities/%s/tokens/%s", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetVersionRequest generates requests for GetVersion
 func NewGetVersionRequest(server string) (*http.Request, error) {
 	var err error
@@ -322,6 +1567,33 @@ func NewAuthLoginRequestWithBody(server string, contentType string, body io.Read
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAuthLogoutRequest generates requests for AuthLogout
+func NewAuthLogoutRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/auth/logout")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -396,6 +1668,11 @@ func WithBaseURL(baseURL string) ClientOption {
 
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
+	// MfaStepUpWithBodyWithResponse request with any body
+	MfaStepUpWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MfaStepUpResponse, error)
+
+	MfaStepUpWithResponse(ctx context.Context, body MfaStepUpJSONRequestBody, reqEditors ...RequestEditorFn) (*MfaStepUpResponse, error)
+
 	// GetAuthProfileWithResponse request
 	GetAuthProfileWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAuthProfileResponse, error)
 
@@ -403,6 +1680,75 @@ type ClientWithResponsesInterface interface {
 	UpdateAuthProfileWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAuthProfileResponse, error)
 
 	UpdateAuthProfileWithResponse(ctx context.Context, body UpdateAuthProfileJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAuthProfileResponse, error)
+
+	// ListPATsWithResponse request
+	ListPATsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListPATsResponse, error)
+
+	// CreatePATWithBodyWithResponse request with any body
+	CreatePATWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePATResponse, error)
+
+	CreatePATWithResponse(ctx context.Context, body CreatePATJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePATResponse, error)
+
+	// BulkRevokeExpiredPATsWithResponse request
+	BulkRevokeExpiredPATsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BulkRevokeExpiredPATsResponse, error)
+
+	// ListExpiredPATsWithResponse request
+	ListExpiredPATsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListExpiredPATsResponse, error)
+
+	// RevokePATWithResponse request
+	RevokePATWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*RevokePATResponse, error)
+
+	// GetMachineAuditReportWithResponse request
+	GetMachineAuditReportWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMachineAuditReportResponse, error)
+
+	// MachineTokenHygieneWithResponse request
+	MachineTokenHygieneWithResponse(ctx context.Context, params *MachineTokenHygieneParams, reqEditors ...RequestEditorFn) (*MachineTokenHygieneResponse, error)
+
+	// PatHygieneWithResponse request
+	PatHygieneWithResponse(ctx context.Context, params *PatHygieneParams, reqEditors ...RequestEditorFn) (*PatHygieneResponse, error)
+
+	// ListProjectsWithResponse request
+	ListProjectsWithResponse(ctx context.Context, params *ListProjectsParams, reqEditors ...RequestEditorFn) (*ListProjectsResponse, error)
+
+	// CreateProjectWithBodyWithResponse request with any body
+	CreateProjectWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateProjectResponse, error)
+
+	CreateProjectWithResponse(ctx context.Context, body CreateProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateProjectResponse, error)
+
+	// ListMachineIdentitiesWithResponse request
+	ListMachineIdentitiesWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ListMachineIdentitiesResponse, error)
+
+	// CreateMachineIdentityWithBodyWithResponse request with any body
+	CreateMachineIdentityWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateMachineIdentityResponse, error)
+
+	CreateMachineIdentityWithResponse(ctx context.Context, id int, body CreateMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMachineIdentityResponse, error)
+
+	// TransitionMachineIdentityWithBodyWithResponse request with any body
+	TransitionMachineIdentityWithBodyWithResponse(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TransitionMachineIdentityResponse, error)
+
+	TransitionMachineIdentityWithResponse(ctx context.Context, id int, machineId int, body TransitionMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*TransitionMachineIdentityResponse, error)
+
+	// ListOIDCBindingsWithResponse request
+	ListOIDCBindingsWithResponse(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*ListOIDCBindingsResponse, error)
+
+	// CreateOIDCBindingWithBodyWithResponse request with any body
+	CreateOIDCBindingWithBodyWithResponse(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateOIDCBindingResponse, error)
+
+	CreateOIDCBindingWithResponse(ctx context.Context, id int, machineId int, body CreateOIDCBindingJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOIDCBindingResponse, error)
+
+	// DeleteOIDCBindingWithResponse request
+	DeleteOIDCBindingWithResponse(ctx context.Context, id int, machineId int, bindingId int, reqEditors ...RequestEditorFn) (*DeleteOIDCBindingResponse, error)
+
+	// ListMachineTokensWithResponse request
+	ListMachineTokensWithResponse(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*ListMachineTokensResponse, error)
+
+	// IssueMachineTokenWithBodyWithResponse request with any body
+	IssueMachineTokenWithBodyWithResponse(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueMachineTokenResponse, error)
+
+	IssueMachineTokenWithResponse(ctx context.Context, id int, machineId int, body IssueMachineTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueMachineTokenResponse, error)
+
+	// RevokeMachineTokenWithResponse request
+	RevokeMachineTokenWithResponse(ctx context.Context, id int, machineId int, tokenId int, reqEditors ...RequestEditorFn) (*RevokeMachineTokenResponse, error)
 
 	// GetVersionWithResponse request
 	GetVersionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetVersionResponse, error)
@@ -412,8 +1758,34 @@ type ClientWithResponsesInterface interface {
 
 	AuthLoginWithResponse(ctx context.Context, body AuthLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthLoginResponse, error)
 
+	// AuthLogoutWithResponse request
+	AuthLogoutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AuthLogoutResponse, error)
+
 	// HealthCheckWithResponse request
 	HealthCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*HealthCheckResponse, error)
+}
+
+type MfaStepUpResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON401      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r MfaStepUpResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MfaStepUpResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
 }
 
 type GetAuthProfileResponse struct {
@@ -454,6 +1826,520 @@ func (r UpdateAuthProfileResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r UpdateAuthProfileResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListPATsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *[]PATToken `json:"data,omitempty"`
+	}
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPATsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPATsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreatePATResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *struct {
+		Data *struct {
+			// Pat A personal access token (ADR-027/ADR-042). The raw secret is never returned except once, in the create response.
+			Pat *PATToken `json:"pat,omitempty"`
+
+			// Token Plaintext token, shown only in this response
+			Token *string `json:"token,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r CreatePATResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreatePATResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type BulkRevokeExpiredPATsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r BulkRevokeExpiredPATsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BulkRevokeExpiredPATsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListExpiredPATsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *[]PATToken `json:"data,omitempty"`
+	}
+}
+
+// Status returns HTTPResponse.Status
+func (r ListExpiredPATsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListExpiredPATsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RevokePATResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON404      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokePATResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokePATResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetMachineAuditReportResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		// Data Deployment-wide machine identity audit report (GET /machine-identities/audit).
+		Data *MachineAuditReport `json:"data,omitempty"`
+	}
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetMachineAuditReportResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetMachineAuditReportResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type MachineTokenHygieneResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			Tokens *[]MachineTokenHygieneRow `json:"tokens,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r MachineTokenHygieneResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MachineTokenHygieneResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PatHygieneResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			Tokens *[]PATHygieneRow `json:"tokens,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r PatHygieneResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PatHygieneResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListProjectsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			Projects *[]struct {
+				Id   *int    `json:"id,omitempty"`
+				Name *string `json:"name,omitempty"`
+			} `json:"projects,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON401 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListProjectsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListProjectsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreateProjectResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON401      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateProjectResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListMachineIdentitiesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			MachineIdentities *[]MachineIdentity `json:"machine_identities,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListMachineIdentitiesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListMachineIdentitiesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreateMachineIdentityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *struct {
+		Data *struct {
+			// MachineIdentity A project-scoped machine identity (ADR-023).
+			MachineIdentity *MachineIdentity `json:"machine_identity,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateMachineIdentityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateMachineIdentityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type TransitionMachineIdentityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON401      *Error
+	JSON403      *Error
+	JSON404      *Error
+	JSON409      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r TransitionMachineIdentityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r TransitionMachineIdentityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListOIDCBindingsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			Bindings *[]OIDCBinding `json:"bindings,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListOIDCBindingsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListOIDCBindingsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreateOIDCBindingResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *struct {
+		// Data An OIDC federation binding (ADR-031) mapping an external (issuer, subject) to a machine identity.
+		Data *OIDCBinding `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
+	JSON409 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateOIDCBindingResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateOIDCBindingResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteOIDCBindingResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON401      *Error
+	JSON403      *Error
+	JSON404      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteOIDCBindingResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteOIDCBindingResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListMachineTokensResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			Tokens *[]MachineToken `json:"tokens,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListMachineTokensResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListMachineTokensResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type IssueMachineTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *struct {
+		Data *struct {
+			ExpiresAt *time.Time `json:"expires_at"`
+			Id        *int       `json:"id,omitempty"`
+			Prefix    *string    `json:"prefix,omitempty"`
+
+			// Token Plaintext token, shown only in this response
+			Token *string `json:"token,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
+	JSON409 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r IssueMachineTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IssueMachineTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RevokeMachineTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON401      *Error
+	JSON403      *Error
+	JSON404      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeMachineTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeMachineTokenResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -529,6 +2415,28 @@ func (r AuthLoginResponse) StatusCode() int {
 	return 0
 }
 
+type AuthLogoutResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r AuthLogoutResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AuthLogoutResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type HealthCheckResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -554,6 +2462,23 @@ func (r HealthCheckResponse) StatusCode() int {
 		return r.HTTPResponse.StatusCode
 	}
 	return 0
+}
+
+// MfaStepUpWithBodyWithResponse request with arbitrary body returning *MfaStepUpResponse
+func (c *ClientWithResponses) MfaStepUpWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MfaStepUpResponse, error) {
+	rsp, err := c.MfaStepUpWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMfaStepUpResponse(rsp)
+}
+
+func (c *ClientWithResponses) MfaStepUpWithResponse(ctx context.Context, body MfaStepUpJSONRequestBody, reqEditors ...RequestEditorFn) (*MfaStepUpResponse, error) {
+	rsp, err := c.MfaStepUp(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMfaStepUpResponse(rsp)
 }
 
 // GetAuthProfileWithResponse request returning *GetAuthProfileResponse
@@ -582,6 +2507,225 @@ func (c *ClientWithResponses) UpdateAuthProfileWithResponse(ctx context.Context,
 	return ParseUpdateAuthProfileResponse(rsp)
 }
 
+// ListPATsWithResponse request returning *ListPATsResponse
+func (c *ClientWithResponses) ListPATsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListPATsResponse, error) {
+	rsp, err := c.ListPATs(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPATsResponse(rsp)
+}
+
+// CreatePATWithBodyWithResponse request with arbitrary body returning *CreatePATResponse
+func (c *ClientWithResponses) CreatePATWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePATResponse, error) {
+	rsp, err := c.CreatePATWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePATResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreatePATWithResponse(ctx context.Context, body CreatePATJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePATResponse, error) {
+	rsp, err := c.CreatePAT(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePATResponse(rsp)
+}
+
+// BulkRevokeExpiredPATsWithResponse request returning *BulkRevokeExpiredPATsResponse
+func (c *ClientWithResponses) BulkRevokeExpiredPATsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BulkRevokeExpiredPATsResponse, error) {
+	rsp, err := c.BulkRevokeExpiredPATs(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBulkRevokeExpiredPATsResponse(rsp)
+}
+
+// ListExpiredPATsWithResponse request returning *ListExpiredPATsResponse
+func (c *ClientWithResponses) ListExpiredPATsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListExpiredPATsResponse, error) {
+	rsp, err := c.ListExpiredPATs(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListExpiredPATsResponse(rsp)
+}
+
+// RevokePATWithResponse request returning *RevokePATResponse
+func (c *ClientWithResponses) RevokePATWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*RevokePATResponse, error) {
+	rsp, err := c.RevokePAT(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokePATResponse(rsp)
+}
+
+// GetMachineAuditReportWithResponse request returning *GetMachineAuditReportResponse
+func (c *ClientWithResponses) GetMachineAuditReportWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMachineAuditReportResponse, error) {
+	rsp, err := c.GetMachineAuditReport(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetMachineAuditReportResponse(rsp)
+}
+
+// MachineTokenHygieneWithResponse request returning *MachineTokenHygieneResponse
+func (c *ClientWithResponses) MachineTokenHygieneWithResponse(ctx context.Context, params *MachineTokenHygieneParams, reqEditors ...RequestEditorFn) (*MachineTokenHygieneResponse, error) {
+	rsp, err := c.MachineTokenHygiene(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMachineTokenHygieneResponse(rsp)
+}
+
+// PatHygieneWithResponse request returning *PatHygieneResponse
+func (c *ClientWithResponses) PatHygieneWithResponse(ctx context.Context, params *PatHygieneParams, reqEditors ...RequestEditorFn) (*PatHygieneResponse, error) {
+	rsp, err := c.PatHygiene(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatHygieneResponse(rsp)
+}
+
+// ListProjectsWithResponse request returning *ListProjectsResponse
+func (c *ClientWithResponses) ListProjectsWithResponse(ctx context.Context, params *ListProjectsParams, reqEditors ...RequestEditorFn) (*ListProjectsResponse, error) {
+	rsp, err := c.ListProjects(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListProjectsResponse(rsp)
+}
+
+// CreateProjectWithBodyWithResponse request with arbitrary body returning *CreateProjectResponse
+func (c *ClientWithResponses) CreateProjectWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateProjectResponse, error) {
+	rsp, err := c.CreateProjectWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateProjectResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateProjectWithResponse(ctx context.Context, body CreateProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateProjectResponse, error) {
+	rsp, err := c.CreateProject(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateProjectResponse(rsp)
+}
+
+// ListMachineIdentitiesWithResponse request returning *ListMachineIdentitiesResponse
+func (c *ClientWithResponses) ListMachineIdentitiesWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ListMachineIdentitiesResponse, error) {
+	rsp, err := c.ListMachineIdentities(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListMachineIdentitiesResponse(rsp)
+}
+
+// CreateMachineIdentityWithBodyWithResponse request with arbitrary body returning *CreateMachineIdentityResponse
+func (c *ClientWithResponses) CreateMachineIdentityWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateMachineIdentityResponse, error) {
+	rsp, err := c.CreateMachineIdentityWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateMachineIdentityResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateMachineIdentityWithResponse(ctx context.Context, id int, body CreateMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMachineIdentityResponse, error) {
+	rsp, err := c.CreateMachineIdentity(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateMachineIdentityResponse(rsp)
+}
+
+// TransitionMachineIdentityWithBodyWithResponse request with arbitrary body returning *TransitionMachineIdentityResponse
+func (c *ClientWithResponses) TransitionMachineIdentityWithBodyWithResponse(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TransitionMachineIdentityResponse, error) {
+	rsp, err := c.TransitionMachineIdentityWithBody(ctx, id, machineId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTransitionMachineIdentityResponse(rsp)
+}
+
+func (c *ClientWithResponses) TransitionMachineIdentityWithResponse(ctx context.Context, id int, machineId int, body TransitionMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*TransitionMachineIdentityResponse, error) {
+	rsp, err := c.TransitionMachineIdentity(ctx, id, machineId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTransitionMachineIdentityResponse(rsp)
+}
+
+// ListOIDCBindingsWithResponse request returning *ListOIDCBindingsResponse
+func (c *ClientWithResponses) ListOIDCBindingsWithResponse(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*ListOIDCBindingsResponse, error) {
+	rsp, err := c.ListOIDCBindings(ctx, id, machineId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListOIDCBindingsResponse(rsp)
+}
+
+// CreateOIDCBindingWithBodyWithResponse request with arbitrary body returning *CreateOIDCBindingResponse
+func (c *ClientWithResponses) CreateOIDCBindingWithBodyWithResponse(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateOIDCBindingResponse, error) {
+	rsp, err := c.CreateOIDCBindingWithBody(ctx, id, machineId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateOIDCBindingResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateOIDCBindingWithResponse(ctx context.Context, id int, machineId int, body CreateOIDCBindingJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOIDCBindingResponse, error) {
+	rsp, err := c.CreateOIDCBinding(ctx, id, machineId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateOIDCBindingResponse(rsp)
+}
+
+// DeleteOIDCBindingWithResponse request returning *DeleteOIDCBindingResponse
+func (c *ClientWithResponses) DeleteOIDCBindingWithResponse(ctx context.Context, id int, machineId int, bindingId int, reqEditors ...RequestEditorFn) (*DeleteOIDCBindingResponse, error) {
+	rsp, err := c.DeleteOIDCBinding(ctx, id, machineId, bindingId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteOIDCBindingResponse(rsp)
+}
+
+// ListMachineTokensWithResponse request returning *ListMachineTokensResponse
+func (c *ClientWithResponses) ListMachineTokensWithResponse(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*ListMachineTokensResponse, error) {
+	rsp, err := c.ListMachineTokens(ctx, id, machineId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListMachineTokensResponse(rsp)
+}
+
+// IssueMachineTokenWithBodyWithResponse request with arbitrary body returning *IssueMachineTokenResponse
+func (c *ClientWithResponses) IssueMachineTokenWithBodyWithResponse(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueMachineTokenResponse, error) {
+	rsp, err := c.IssueMachineTokenWithBody(ctx, id, machineId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIssueMachineTokenResponse(rsp)
+}
+
+func (c *ClientWithResponses) IssueMachineTokenWithResponse(ctx context.Context, id int, machineId int, body IssueMachineTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueMachineTokenResponse, error) {
+	rsp, err := c.IssueMachineToken(ctx, id, machineId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIssueMachineTokenResponse(rsp)
+}
+
+// RevokeMachineTokenWithResponse request returning *RevokeMachineTokenResponse
+func (c *ClientWithResponses) RevokeMachineTokenWithResponse(ctx context.Context, id int, machineId int, tokenId int, reqEditors ...RequestEditorFn) (*RevokeMachineTokenResponse, error) {
+	rsp, err := c.RevokeMachineToken(ctx, id, machineId, tokenId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeMachineTokenResponse(rsp)
+}
+
 // GetVersionWithResponse request returning *GetVersionResponse
 func (c *ClientWithResponses) GetVersionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetVersionResponse, error) {
 	rsp, err := c.GetVersion(ctx, reqEditors...)
@@ -608,6 +2752,15 @@ func (c *ClientWithResponses) AuthLoginWithResponse(ctx context.Context, body Au
 	return ParseAuthLoginResponse(rsp)
 }
 
+// AuthLogoutWithResponse request returning *AuthLogoutResponse
+func (c *ClientWithResponses) AuthLogoutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AuthLogoutResponse, error) {
+	rsp, err := c.AuthLogout(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAuthLogoutResponse(rsp)
+}
+
 // HealthCheckWithResponse request returning *HealthCheckResponse
 func (c *ClientWithResponses) HealthCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*HealthCheckResponse, error) {
 	rsp, err := c.HealthCheck(ctx, reqEditors...)
@@ -615,6 +2768,39 @@ func (c *ClientWithResponses) HealthCheckWithResponse(ctx context.Context, reqEd
 		return nil, err
 	}
 	return ParseHealthCheckResponse(rsp)
+}
+
+// ParseMfaStepUpResponse parses an HTTP response from a MfaStepUpWithResponse call
+func ParseMfaStepUpResponse(rsp *http.Response) (*MfaStepUpResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MfaStepUpResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseGetAuthProfileResponse parses an HTTP response from a GetAuthProfileWithResponse call
@@ -663,6 +2849,815 @@ func ParseUpdateAuthProfileResponse(rsp *http.Response) (*UpdateAuthProfileRespo
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListPATsResponse parses an HTTP response from a ListPATsWithResponse call
+func ParseListPATsResponse(rsp *http.Response) (*ListPATsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPATsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *[]PATToken `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreatePATResponse parses an HTTP response from a CreatePATWithResponse call
+func ParseCreatePATResponse(rsp *http.Response) (*CreatePATResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreatePATResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			Data *struct {
+				// Pat A personal access token (ADR-027/ADR-042). The raw secret is never returned except once, in the create response.
+				Pat *PATToken `json:"pat,omitempty"`
+
+				// Token Plaintext token, shown only in this response
+				Token *string `json:"token,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBulkRevokeExpiredPATsResponse parses an HTTP response from a BulkRevokeExpiredPATsWithResponse call
+func ParseBulkRevokeExpiredPATsResponse(rsp *http.Response) (*BulkRevokeExpiredPATsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BulkRevokeExpiredPATsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseListExpiredPATsResponse parses an HTTP response from a ListExpiredPATsWithResponse call
+func ParseListExpiredPATsResponse(rsp *http.Response) (*ListExpiredPATsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListExpiredPATsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *[]PATToken `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokePATResponse parses an HTTP response from a RevokePATWithResponse call
+func ParseRevokePATResponse(rsp *http.Response) (*RevokePATResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokePATResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetMachineAuditReportResponse parses an HTTP response from a GetMachineAuditReportWithResponse call
+func ParseGetMachineAuditReportResponse(rsp *http.Response) (*GetMachineAuditReportResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetMachineAuditReportResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			// Data Deployment-wide machine identity audit report (GET /machine-identities/audit).
+			Data *MachineAuditReport `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseMachineTokenHygieneResponse parses an HTTP response from a MachineTokenHygieneWithResponse call
+func ParseMachineTokenHygieneResponse(rsp *http.Response) (*MachineTokenHygieneResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MachineTokenHygieneResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				Tokens *[]MachineTokenHygieneRow `json:"tokens,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePatHygieneResponse parses an HTTP response from a PatHygieneWithResponse call
+func ParsePatHygieneResponse(rsp *http.Response) (*PatHygieneResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PatHygieneResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				Tokens *[]PATHygieneRow `json:"tokens,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListProjectsResponse parses an HTTP response from a ListProjectsWithResponse call
+func ParseListProjectsResponse(rsp *http.Response) (*ListProjectsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListProjectsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				Projects *[]struct {
+					Id   *int    `json:"id,omitempty"`
+					Name *string `json:"name,omitempty"`
+				} `json:"projects,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateProjectResponse parses an HTTP response from a CreateProjectWithResponse call
+func ParseCreateProjectResponse(rsp *http.Response) (*CreateProjectResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateProjectResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListMachineIdentitiesResponse parses an HTTP response from a ListMachineIdentitiesWithResponse call
+func ParseListMachineIdentitiesResponse(rsp *http.Response) (*ListMachineIdentitiesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListMachineIdentitiesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				MachineIdentities *[]MachineIdentity `json:"machine_identities,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateMachineIdentityResponse parses an HTTP response from a CreateMachineIdentityWithResponse call
+func ParseCreateMachineIdentityResponse(rsp *http.Response) (*CreateMachineIdentityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateMachineIdentityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			Data *struct {
+				// MachineIdentity A project-scoped machine identity (ADR-023).
+				MachineIdentity *MachineIdentity `json:"machine_identity,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseTransitionMachineIdentityResponse parses an HTTP response from a TransitionMachineIdentityWithResponse call
+func ParseTransitionMachineIdentityResponse(rsp *http.Response) (*TransitionMachineIdentityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &TransitionMachineIdentityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListOIDCBindingsResponse parses an HTTP response from a ListOIDCBindingsWithResponse call
+func ParseListOIDCBindingsResponse(rsp *http.Response) (*ListOIDCBindingsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListOIDCBindingsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				Bindings *[]OIDCBinding `json:"bindings,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateOIDCBindingResponse parses an HTTP response from a CreateOIDCBindingWithResponse call
+func ParseCreateOIDCBindingResponse(rsp *http.Response) (*CreateOIDCBindingResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateOIDCBindingResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			// Data An OIDC federation binding (ADR-031) mapping an external (issuer, subject) to a machine identity.
+			Data *OIDCBinding `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteOIDCBindingResponse parses an HTTP response from a DeleteOIDCBindingWithResponse call
+func ParseDeleteOIDCBindingResponse(rsp *http.Response) (*DeleteOIDCBindingResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteOIDCBindingResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListMachineTokensResponse parses an HTTP response from a ListMachineTokensWithResponse call
+func ParseListMachineTokensResponse(rsp *http.Response) (*ListMachineTokensResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListMachineTokensResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				Tokens *[]MachineToken `json:"tokens,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseIssueMachineTokenResponse parses an HTTP response from a IssueMachineTokenWithResponse call
+func ParseIssueMachineTokenResponse(rsp *http.Response) (*IssueMachineTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IssueMachineTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			Data *struct {
+				ExpiresAt *time.Time `json:"expires_at"`
+				Id        *int       `json:"id,omitempty"`
+				Prefix    *string    `json:"prefix,omitempty"`
+
+				// Token Plaintext token, shown only in this response
+				Token *string `json:"token,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeMachineTokenResponse parses an HTTP response from a RevokeMachineTokenWithResponse call
+func ParseRevokeMachineTokenResponse(rsp *http.Response) (*RevokeMachineTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeMachineTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	}
 
@@ -758,6 +3753,32 @@ func ParseAuthLoginResponse(rsp *http.Response) (*AuthLoginResponse, error) {
 			return nil, err
 		}
 		response.JSON429 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAuthLogoutResponse parses an HTTP response from a AuthLogoutWithResponse call
+func ParseAuthLogoutResponse(rsp *http.Response) (*AuthLogoutResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AuthLogoutResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	}
 

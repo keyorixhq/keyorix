@@ -4,6 +4,8 @@
 package apiclient
 
 import (
+	"time"
+
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
@@ -11,13 +13,139 @@ const (
 	BearerAuthScopes = "bearerAuth.Scopes"
 )
 
+// Defines values for MachineIdentityState.
+const (
+	Active    MachineIdentityState = "active"
+	Pending   MachineIdentityState = "pending"
+	Revoked   MachineIdentityState = "revoked"
+	Suspended MachineIdentityState = "suspended"
+)
+
+// Defines values for ListProjectsParamsIncludeDeleted.
+const (
+	False ListProjectsParamsIncludeDeleted = "false"
+	True  ListProjectsParamsIncludeDeleted = "true"
+)
+
+// Defines values for TransitionMachineIdentityJSONBodyAction.
+const (
+	Activate TransitionMachineIdentityJSONBodyAction = "activate"
+	Revoke   TransitionMachineIdentityJSONBodyAction = "revoke"
+	Suspend  TransitionMachineIdentityJSONBodyAction = "suspend"
+)
+
+// MachineAuditReport Deployment-wide machine identity audit report (GET /machine-identities/audit).
+type MachineAuditReport struct {
+	GeneratedAt  *time.Time         `json:"generated_at,omitempty"`
+	Machines     *[]MachineAuditRow `json:"machines,omitempty"`
+	RevokedCount *int               `json:"revoked_count,omitempty"`
+	StaleCount   *int               `json:"stale_count,omitempty"`
+	TotalCount   *int               `json:"total_count,omitempty"`
+}
+
+// MachineAuditRow defines model for MachineAuditRow.
+type MachineAuditRow struct {
+	CreatedAt       *time.Time `json:"created_at,omitempty"`
+	CredentialCount *int       `json:"credential_count,omitempty"`
+	Description     *string    `json:"description,omitempty"`
+	IsRevoked       *bool      `json:"is_revoked,omitempty"`
+	IsStale         *bool      `json:"is_stale,omitempty"`
+	LastUsedAt      *time.Time `json:"last_used_at,omitempty"`
+	MachineId       *int       `json:"machine_id,omitempty"`
+	Name            *string    `json:"name,omitempty"`
+}
+
+// MachineIdentity A project-scoped machine identity (ADR-023).
+type MachineIdentity struct {
+	Classification             *string               `json:"classification,omitempty"`
+	CreatedAt                  *time.Time            `json:"created_at,omitempty"`
+	CreatedBy                  *int                  `json:"created_by,omitempty"`
+	CreatedByMachineIdentityId *int                  `json:"created_by_machine_identity_id,omitempty"`
+	Description                *string               `json:"description,omitempty"`
+	Id                         *int                  `json:"id,omitempty"`
+	IdentityType               *string               `json:"identity_type,omitempty"`
+	LastSeenAt                 *time.Time            `json:"last_seen_at"`
+	Name                       *string               `json:"name,omitempty"`
+	ProjectId                  *int                  `json:"project_id,omitempty"`
+	RevokedAt                  *time.Time            `json:"revoked_at"`
+	State                      *MachineIdentityState `json:"state,omitempty"`
+	UpdatedAt                  *time.Time            `json:"updated_at,omitempty"`
+}
+
+// MachineIdentityState defines model for MachineIdentity.State.
+type MachineIdentityState string
+
+// MachineToken Machine identity token metadata (never the raw secret, except once at issuance).
+type MachineToken struct {
+	ExpiresAt  *time.Time `json:"expires_at"`
+	Id         *int       `json:"id,omitempty"`
+	LastUsedAt *time.Time `json:"last_used_at"`
+	Name       *string    `json:"name,omitempty"`
+	Prefix     *string    `json:"prefix,omitempty"`
+	Revoked    *bool      `json:"revoked,omitempty"`
+}
+
+// MachineTokenHygieneRow A deployment-wide machine-token hygiene entry (GET /machine-token-hygiene) -- never includes the token secret.
+type MachineTokenHygieneRow struct {
+	Expired           *bool   `json:"expired,omitempty"`
+	Id                *int    `json:"id,omitempty"`
+	LastUsedAt        *string `json:"last_used_at,omitempty"`
+	MachineIdentityId *int    `json:"machine_identity_id,omitempty"`
+	Name              *string `json:"name,omitempty"`
+	Stale             *bool   `json:"stale,omitempty"`
+	TokenPrefix       *string `json:"token_prefix,omitempty"`
+}
+
+// OIDCBinding An OIDC federation binding (ADR-031) mapping an external (issuer, subject) to a machine identity.
+type OIDCBinding struct {
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	Id        *int       `json:"id,omitempty"`
+	Issuer    *string    `json:"issuer,omitempty"`
+	Subject   *string    `json:"subject,omitempty"`
+}
+
+// PATHygieneRow A deployment-wide PAT hygiene entry (GET /pat-hygiene) -- never includes the token secret.
+type PATHygieneRow struct {
+	Expired     *bool   `json:"expired,omitempty"`
+	ExpiresAt   *string `json:"expires_at,omitempty"`
+	Id          *int    `json:"id,omitempty"`
+	LastUsedAt  *string `json:"last_used_at,omitempty"`
+	Name        *string `json:"name,omitempty"`
+	Stale       *bool   `json:"stale,omitempty"`
+	TokenPrefix *string `json:"token_prefix,omitempty"`
+	UserId      *int    `json:"user_id,omitempty"`
+}
+
+// PATToken A personal access token (ADR-027/ADR-042). The raw secret is never returned except once, in the create response.
+type PATToken struct {
+	AllowedCidrs     *[]string  `json:"allowed_cidrs"`
+	CreatedAt        *time.Time `json:"created_at,omitempty"`
+	EnvironmentScope *int       `json:"environment_scope,omitempty"`
+	ExpiresAt        *time.Time `json:"expires_at"`
+	Id               *int       `json:"id,omitempty"`
+	LastUsedAt       *time.Time `json:"last_used_at"`
+	Name             *string    `json:"name,omitempty"`
+	ProjectScope     *int       `json:"project_scope,omitempty"`
+	Revoked          *bool      `json:"revoked,omitempty"`
+	Scopes           *[]string  `json:"scopes"`
+	TokenPrefix      *string    `json:"token_prefix,omitempty"`
+}
+
 // Error defines model for Error.
 type Error struct {
-	Error *struct {
-		Code    *int    `json:"code,omitempty"`
-		Message *string `json:"message,omitempty"`
-		Type    *string `json:"type,omitempty"`
-	} `json:"error,omitempty"`
+	Code    *int                    `json:"code,omitempty"`
+	Details *map[string]interface{} `json:"details"`
+
+	// Error Short error-type label, e.g. "NotFound", "BadRequest".
+	Error   *string `json:"error,omitempty"`
+	Message *string `json:"message,omitempty"`
+	Success *bool   `json:"success,omitempty"`
+}
+
+// MfaStepUpJSONBody defines parameters for MfaStepUp.
+type MfaStepUpJSONBody struct {
+	// Code TOTP code or a recovery code
+	Code string `json:"code"`
 }
 
 // UpdateAuthProfileJSONBody defines parameters for UpdateAuthProfile.
@@ -26,14 +154,117 @@ type UpdateAuthProfileJSONBody struct {
 	Email       *openapi_types.Email `json:"email,omitempty"`
 }
 
+// CreatePATJSONBody defines parameters for CreatePAT.
+type CreatePATJSONBody struct {
+	// AllowedCidrs Restrict the token to source IPs in these CIDRs. Omit/empty = no network restriction.
+	AllowedCidrs *[]string `json:"allowed_cidrs,omitempty"`
+
+	// EnvironmentScope ADR-042: confine the token to a single environment id; 0/omit = any environment. Env ids are globally unique, so this also pins the project.
+	EnvironmentScope *int `json:"environment_scope,omitempty"`
+
+	// ExpiresAt RFC3339; omit/null for non-expiring
+	ExpiresAt *time.Time `json:"expires_at"`
+	Name      string     `json:"name"`
+
+	// ProjectScope ADR-042: confine the token to a single project id; 0/omit = any project the owner can reach.
+	ProjectScope *int `json:"project_scope,omitempty"`
+
+	// Scopes ADR-042 least-privilege allowlist (e.g. ["secrets.read"], supports "*" and "secrets.*"). Omit/empty = inherit the owner's full permissions. Only ever narrows below the owner.
+	Scopes *[]string `json:"scopes,omitempty"`
+}
+
+// MachineTokenHygieneParams defines parameters for MachineTokenHygiene.
+type MachineTokenHygieneParams struct {
+	// Days Staleness window in days (default server-side: 90, cap 3650).
+	Days *int `form:"days,omitempty" json:"days,omitempty"`
+}
+
+// PatHygieneParams defines parameters for PatHygiene.
+type PatHygieneParams struct {
+	// Days Staleness window in days (default server-side: 90, cap 3650).
+	Days *int `form:"days,omitempty" json:"days,omitempty"`
+}
+
+// ListProjectsParams defines parameters for ListProjects.
+type ListProjectsParams struct {
+	// IncludeDeleted When 'true', also returns soft-deleted projects (each flagged via deleted/deleted_at) for the restore UI.
+	IncludeDeleted *ListProjectsParamsIncludeDeleted `form:"include_deleted,omitempty" json:"include_deleted,omitempty"`
+}
+
+// ListProjectsParamsIncludeDeleted defines parameters for ListProjects.
+type ListProjectsParamsIncludeDeleted string
+
+// CreateProjectJSONBody defines parameters for CreateProject.
+type CreateProjectJSONBody struct {
+	Description *string `json:"description,omitempty"`
+	Name        string  `json:"name"`
+}
+
+// CreateMachineIdentityJSONBody defines parameters for CreateMachineIdentity.
+type CreateMachineIdentityJSONBody struct {
+	// Classification Data classification: public | internal | confidential | restricted
+	Classification *string `json:"classification,omitempty"`
+	Description    *string `json:"description,omitempty"`
+	IdentityType   *string `json:"identity_type,omitempty"`
+	Name           string  `json:"name"`
+}
+
+// TransitionMachineIdentityJSONBody defines parameters for TransitionMachineIdentity.
+type TransitionMachineIdentityJSONBody struct {
+	Action TransitionMachineIdentityJSONBodyAction `json:"action"`
+}
+
+// TransitionMachineIdentityJSONBodyAction defines parameters for TransitionMachineIdentity.
+type TransitionMachineIdentityJSONBodyAction string
+
+// CreateOIDCBindingJSONBody defines parameters for CreateOIDCBinding.
+type CreateOIDCBindingJSONBody struct {
+	// Issuer The token's iss claim
+	Issuer string `json:"issuer"`
+
+	// Subject The token's sub claim
+	Subject string `json:"subject"`
+}
+
+// IssueMachineTokenJSONBody defines parameters for IssueMachineToken.
+type IssueMachineTokenJSONBody struct {
+	// Classification Data classification: public | internal | confidential | restricted
+	Classification *string `json:"classification,omitempty"`
+
+	// ExpiresInDays Optional; omit or 0 for no expiry
+	ExpiresInDays *int   `json:"expires_in_days,omitempty"`
+	Name          string `json:"name"`
+}
+
 // AuthLoginJSONBody defines parameters for AuthLogin.
 type AuthLoginJSONBody struct {
 	Password string `json:"password"`
 	Username string `json:"username"`
 }
 
+// MfaStepUpJSONRequestBody defines body for MfaStepUp for application/json ContentType.
+type MfaStepUpJSONRequestBody MfaStepUpJSONBody
+
 // UpdateAuthProfileJSONRequestBody defines body for UpdateAuthProfile for application/json ContentType.
 type UpdateAuthProfileJSONRequestBody UpdateAuthProfileJSONBody
+
+// CreatePATJSONRequestBody defines body for CreatePAT for application/json ContentType.
+type CreatePATJSONRequestBody CreatePATJSONBody
+
+// CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
+type CreateProjectJSONRequestBody CreateProjectJSONBody
+
+// CreateMachineIdentityJSONRequestBody defines body for CreateMachineIdentity for application/json ContentType.
+type CreateMachineIdentityJSONRequestBody CreateMachineIdentityJSONBody
+
+// TransitionMachineIdentityJSONRequestBody defines body for TransitionMachineIdentity for application/json ContentType.
+type TransitionMachineIdentityJSONRequestBody TransitionMachineIdentityJSONBody
+
+// CreateOIDCBindingJSONRequestBody defines body for CreateOIDCBinding for application/json ContentType.
+type CreateOIDCBindingJSONRequestBody CreateOIDCBindingJSONBody
+
+// IssueMachineTokenJSONRequestBody defines body for IssueMachineToken for application/json ContentType.
+type IssueMachineTokenJSONRequestBody IssueMachineTokenJSONBody
 
 // AuthLoginJSONRequestBody defines body for AuthLogin for application/json ContentType.
 type AuthLoginJSONRequestBody AuthLoginJSONBody
