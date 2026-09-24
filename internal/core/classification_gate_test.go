@@ -728,3 +728,35 @@ func TestSecretAccessRequestLifecycle_ApproveGrantsRejectRefuses(t *testing.T) {
 	_, err = c.GetSecretValueWithPermissionCheck(ctx, secretID, otherUser.ID)
 	require.Error(t, err, "an approval for one user must not unlock the read for a different user")
 }
+
+// Coverage gap found in review of #2032: nothing exercised a secret-scoped
+// request's WithdrawAccessRequest path end to end. WithdrawAccessRequest
+// itself (invitations.go) is reused unchanged, and its own project/role-scoped
+// behavior is covered elsewhere -- this pins that reuse actually holds for
+// the classification gate specifically: a withdrawn secret-scoped request
+// must (1) leave GetSecretValueWithPermissionCheck denied, exactly like a
+// rejected one, and (2) be refused by both ApproveSecretAccessRequest and
+// RejectSecretAccessRequest afterward (their own `state != pending` guards),
+// not silently accepted a second time.
+func TestWithdrawSecretAccessRequest_LeavesGateDeniedAndRefusesLaterResolution(t *testing.T) {
+	t.Parallel()
+	c, st := newBootstrappedCore(t)
+	secretID, requesterID, approverID, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
+	ctx := context.Background()
+	c.SetClassificationRestrictedRequiresApproval(true)
+
+	req, err := c.RequestSecretAccess(ctx, secretID, requesterID, "need it")
+	require.NoError(t, err)
+	require.NoError(t, c.WithdrawAccessRequest(ctx, req.ID, requesterID))
+
+	_, err = c.GetSecretValueWithPermissionCheck(ctx, secretID, requesterID)
+	require.Error(t, err, "a withdrawn secret-scoped request must not satisfy the classification gate")
+
+	_, err = c.ApproveSecretAccessRequest(ctx, req.ID, approverID)
+	require.Error(t, err, "a withdrawn request must not be approvable")
+	assert.Contains(t, err.Error(), "only a pending")
+
+	_, err = c.RejectSecretAccessRequest(ctx, req.ID, approverID, 0, "too late")
+	require.Error(t, err, "a withdrawn request must not be rejectable either")
+	assert.Contains(t, err.Error(), "only a pending")
+}
