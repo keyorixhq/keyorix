@@ -120,10 +120,12 @@ func TestHash_Deterministic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	if Hash(key) != Hash(key) {
-		t.Fatalf("Hash is not deterministic for the same input")
+	first := Hash(key)
+	second := Hash(key)
+	if first != second {
+		t.Fatalf("Hash is not deterministic for the same input: %q != %q", first, second)
 	}
-	if len(Hash(key)) != 64 {
-		t.Fatalf("Hash returned %d hex chars, want 64 (SHA-256)", len(Hash(key)))
+	if len(first) != 64 {
+		t.Fatalf("Hash returned %d hex chars, want 64 (SHA-256)", len(first))
 	}
 }
