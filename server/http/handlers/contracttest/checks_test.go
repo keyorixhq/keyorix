@@ -53,6 +53,12 @@ func TestSpecLoadsAndValidates(t *testing.T) {
 // schemas for these previously-schema-less (or brand new, e.g. the OIDC
 // binding trio) operations and exercises each via openapi_contract_pr2_test.go.
 //
+// The 35 secret-core-CRUD-and-metadata operations below were added by
+// ADR-108 PR 4 (docs/cli-split-inventory.md §7): 8 (createSecret, getSecret,
+// updateSecret, getSecretVersions, grantSecretACL, revokeSecretACL,
+// classifySecret, listSecrets) backfilled schemas for previously-schema-less
+// existing routes; the other 27 are brand-new routes added in the same PR.
+// Each is exercised via openapi_contract_pr4_test.go.
 // The 20 rbac/group/invite operations below (plus the brand-new
 // getPermissionMatrix, which had no openapi.yaml entry at all before) were
 // added by ADR-108 PR 3 (docs/cli-split-inventory.md §7), exercised via
@@ -96,6 +102,41 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		"listProjects":                  true,
 		"machineTokenHygiene":           true,
 		"patHygiene":                    true,
+		"addSecretDependency":           true,
+		"addSecretVersionComment":       true,
+		"classifySecret":                true,
+		"copyEnvironmentSecrets":        true,
+		"copySecret":                    true,
+		"createFolder":                  true,
+		"createSecret":                  true,
+		"createSecretTemplate":          true,
+		"describeSecret":                true,
+		"diffSecretVersions":            true,
+		"getSecret":                     true,
+		"getSecretAccessLog":            true,
+		"getSecretByName":               true,
+		"getSecretImpact":               true,
+		"getSecretSchedule":             true,
+		"getSecretTags":                 true,
+		"getSecretValueByRef":           true,
+		"getSecretVersions":             true,
+		"grantSecretACL":                true,
+		"listAccessors":                 true,
+		"listDeletedSecrets":            true,
+		"listFolders":                   true,
+		"listSecretDependencies":        true,
+		"listSecretTemplates":           true,
+		"listSecretVersionComments":     true,
+		"listSecrets":                   true,
+		"moveSecret":                    true,
+		"restoreSecret":                 true,
+		"resumeSecret":                  true,
+		"revokeSecretACL":               true,
+		"rollbackSecret":                true,
+		"setSecretSchedule":             true,
+		"setSecretTags":                 true,
+		"suspendSecret":                 true,
+		"updateSecret":                  true,
 		"addGroupMember":                true,
 		"assignRoleToGroup":             true,
 		"assignUserRole":                true,

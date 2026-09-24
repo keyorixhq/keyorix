@@ -25,7 +25,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"authLogout":                     reasonSchemaNotYetWritten, // post /auth/logout
 	"authPasswordReset":              reasonSchemaNotYetWritten, // post /auth/password-reset
 	"changePassword":                 reasonSchemaNotYetWritten, // post /api/v1/auth/change-password
-	"classifySecret":                 reasonSchemaNotYetWritten, // patch /api/v1/secrets/{id}/classification
 	"closeAccessReviewCampaign":      reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close
 	"createAccessRequest":            reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-requests
 	"createGlobalInvitation":         reasonSchemaNotYetWritten, // post /api/v1/invitations
@@ -33,7 +32,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"createProjectEnvironment":       reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/environments
 	"createRiskException":            reasonSchemaNotYetWritten, // post /api/v1/risk-exceptions
 	"createRole":                     reasonSchemaNotYetWritten, // post /api/v1/roles
-	"createSecret":                   reasonSchemaNotYetWritten, // post /api/v1/secrets
 	"createSecretAccessRequest":      reasonSchemaNotYetWritten, // post /api/v1/secret-access-requests
 	"createSoDPolicy":                reasonSchemaNotYetWritten, // post /api/v1/sod/policies
 	"createUser":                     reasonSchemaNotYetWritten, // post /api/v1/users
@@ -62,10 +60,8 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getProjectDrift":                reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/drift
 	"getRole":                        reasonSchemaNotYetWritten, // get /api/v1/roles/{id}
 	"getRotationStatus":              reasonSchemaNotYetWritten, // get /api/v1/rotation-policies/status
-	"getSecret":                      reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}
 	"getSecretAccessRequest":         reasonSchemaNotYetWritten, // get /api/v1/secret-access-requests/{requestId}
 	"getSecretRisk":                  reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}/risk
-	"getSecretVersions":              reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}/versions
 	"getSystemInfo":                  reasonSchemaNotYetWritten, // get /api/v1/system/info
 	"getSystemMetrics":               reasonSchemaNotYetWritten, // get /api/v1/system/metrics
 	"getUnusedSecrets":               reasonSchemaNotYetWritten, // get /api/v1/secrets/usage/unused
@@ -73,7 +69,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getUserMembershipsForUser":      reasonSchemaNotYetWritten, // get /api/v1/users/{id}/memberships
 	"getUserRoleAssignment":          reasonSchemaNotYetWritten, // get /api/v1/user-roles/user/{userId}
 	"grantMachineRole":               reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/machine-identities/{machineId}/roles
-	"grantSecretACL":                 reasonSchemaNotYetWritten, // post /api/v1/secrets/{id}/acl
 	"inviteMember":                   reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/memberships
 	"liftLegalHold":                  reasonSchemaNotYetWritten, // delete /api/v1/legal-hold
 	"listAccessRequests":             reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-requests
@@ -88,7 +83,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"listRiskExceptions":             reasonSchemaNotYetWritten, // get /api/v1/risk-exceptions
 	"listSecretAccessRequests":       reasonSchemaNotYetWritten, // get /api/v1/secret-access-requests
 	"listSecretShares":               reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}/shares
-	"listSecrets":                    reasonSchemaNotYetWritten, // get /api/v1/secrets
 	"listSessions":                   reasonSchemaNotYetWritten, // get /api/v1/auth/sessions
 	"listSharedSecrets":              reasonSchemaNotYetWritten, // get /api/v1/shared-secrets
 	"listSharedSecretsForUser":       reasonSchemaNotYetWritten, // get /api/v1/users/{id}/shared-secrets
@@ -115,7 +109,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"revokeMachineToken":             reasonSchemaNotYetWritten, // delete /api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}
 	"revokeProjectAccessReview":      reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/revoke
 	"revokeRiskException":            reasonSchemaNotYetWritten, // delete /api/v1/risk-exceptions/{id}
-	"revokeSecretACL":                reasonSchemaNotYetWritten, // delete /api/v1/secrets/{id}/acl/{aclId}
 	"rotateSecret":                   reasonSchemaNotYetWritten, // post /api/v1/secrets/{id}/rotate
 	"searchAuditLogs":                reasonSchemaNotYetWritten, // get /api/v1/audit/search
 	"searchUsers":                    reasonSchemaNotYetWritten, // get /api/v1/users/search
@@ -129,7 +122,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"updateProjectMember":            reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/members/{userId}
 	"updateRole":                     reasonSchemaNotYetWritten, // put /api/v1/roles/{id}
 	"updateRotationPolicy":           reasonSchemaNotYetWritten, // put /api/v1/rotation-policies/{id}
-	"updateSecret":                   reasonSchemaNotYetWritten, // put /api/v1/secrets/{id}
 	"updateSharePermission":          reasonSchemaNotYetWritten, // put /api/v1/shares/{id}
 	"updateUser":                     reasonSchemaNotYetWritten, // put /api/v1/users/{id}
 	"updateUserRoles":                reasonSchemaNotYetWritten, // put /api/v1/users/{id}/roles
@@ -158,19 +150,24 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 // its own justification, not just write a reason string here -- otherwise
 // this map would be a silent, unaudited escape hatch from enforcement.
 var outOfScopeRegistry = map[string]string{ // #nosec G101 -- operationId keys, not credentials; some contain "PAT"/"Session" (revokePAT, revokeSession, ...), values are all descriptive reason strings
-	"bulkRevokeExpiredPATs":    reason204NoContent, // delete /api/v1/auth/tokens/expired
-	"deleteGroup":              reason204NoContent, // delete /api/v1/groups/{id}
-	"deleteRole":               reason204NoContent, // delete /api/v1/roles/{id}
-	"deleteRotationPolicy":     reason204NoContent, // delete /api/v1/rotation-policies/{id}
-	"deleteSecret":             reason204NoContent, // delete /api/v1/secrets/{id}
-	"deleteUser":               reason204NoContent, // delete /api/v1/users/{id}
-	"removeGroupMember":        reason204NoContent, // delete /api/v1/groups/{id}/members/{userId}
-	"removePermissionFromRole": reason204NoContent, // delete /api/v1/roles/{id}/permissions/{permissionId}
-	"removeRoleFromGroup":      reason204NoContent, // delete /api/v1/groups/{id}/roles/{roleId}
-	"removeUserRole":           reason204NoContent, // delete /api/v1/user-roles
-	"revokePAT":                reason204NoContent, // delete /api/v1/auth/tokens/{id}
-	"revokeSession":            reason204NoContent, // delete /api/v1/auth/sessions/{id}
-	"revokeShare":              reason204NoContent, // delete /api/v1/shares/{id}
+	"bulkRevokeExpiredPATs":      reason204NoContent, // delete /api/v1/auth/tokens/expired
+	"deleteFolder":               reason204NoContent, // delete /api/v1/folders/{id}
+	"deleteGroup":                reason204NoContent, // delete /api/v1/groups/{id}
+	"deleteRole":                 reason204NoContent, // delete /api/v1/roles/{id}
+	"deleteRotationPolicy":       reason204NoContent, // delete /api/v1/rotation-policies/{id}
+	"deleteSecret":               reason204NoContent, // delete /api/v1/secrets/{id}
+	"deleteSecretSchedule":       reason204NoContent, // delete /api/v1/secrets/{id}/schedule
+	"deleteSecretTemplate":       reason204NoContent, // delete /api/v1/secret-templates/{id}
+	"deleteSecretVersionComment": reason204NoContent, // delete /api/v1/secrets/{id}/versions/{versionId}/comments/{commentId}
+	"deleteUser":                 reason204NoContent, // delete /api/v1/users/{id}
+	"removeGroupMember":          reason204NoContent, // delete /api/v1/groups/{id}/members/{userId}
+	"removePermissionFromRole":   reason204NoContent, // delete /api/v1/roles/{id}/permissions/{permissionId}
+	"removeRoleFromGroup":        reason204NoContent, // delete /api/v1/groups/{id}/roles/{roleId}
+	"removeSecretDependency":     reason204NoContent, // delete /api/v1/secrets/{id}/dependencies/{depId}
+	"removeUserRole":             reason204NoContent, // delete /api/v1/user-roles
+	"revokePAT":                  reason204NoContent, // delete /api/v1/auth/tokens/{id}
+	"revokeSession":              reason204NoContent, // delete /api/v1/auth/sessions/{id}
+	"revokeShare":                reason204NoContent, // delete /api/v1/shares/{id}
 
 	"prometheusMetrics": "promhttp.Handler, third-party code, no generated client will ever read Prometheus exposition format", // get /metrics
 }
@@ -222,6 +219,43 @@ var exercisingTests = map[string][]string{
 	"listProjects":          {"TestContractPR2_ListProjects"},
 	"machineTokenHygiene":   {"TestContractPR2_MachineTokenHygiene"},
 	"patHygiene":            {"TestContractPR2_PATHygiene"},
+	// docs/cli-split-inventory.md §7 PR 4 (secret core CRUD + metadata) --
+	// openapi_contract_pr4_test.go.
+	"addSecretDependency":       {"TestContractPR4_AddSecretDependency"},
+	"addSecretVersionComment":   {"TestContractPR4_AddSecretVersionComment"},
+	"classifySecret":            {"TestContractPR4_ClassifySecret"},
+	"copyEnvironmentSecrets":    {"TestContractPR4_CopyEnvironmentSecrets"},
+	"copySecret":                {"TestContractPR4_CopySecret"},
+	"createFolder":              {"TestContractPR4_CreateFolder"},
+	"createSecret":              {"TestContractPR4_CreateSecret"},
+	"createSecretTemplate":      {"TestContractPR4_CreateSecretTemplate"},
+	"describeSecret":            {"TestContractPR4_DescribeSecret"},
+	"diffSecretVersions":        {"TestContractPR4_DiffSecretVersions"},
+	"getSecret":                 {"TestContractPR4_GetSecret"},
+	"getSecretAccessLog":        {"TestContractPR4_GetSecretAccessLog"},
+	"getSecretByName":           {"TestContractPR4_GetSecretByName"},
+	"getSecretImpact":           {"TestContractPR4_GetSecretImpact"},
+	"getSecretSchedule":         {"TestContractPR4_GetSecretSchedule"},
+	"getSecretTags":             {"TestContractPR4_GetSecretTags"},
+	"getSecretValueByRef":       {"TestContractPR4_GetSecretValueByRef"},
+	"getSecretVersions":         {"TestContractPR4_GetSecretVersions"},
+	"grantSecretACL":            {"TestContractPR4_GrantSecretACL"},
+	"listAccessors":             {"TestContractPR4_ListAccessors"},
+	"listDeletedSecrets":        {"TestContractPR4_ListDeletedSecrets"},
+	"listFolders":               {"TestContractPR4_ListFolders"},
+	"listSecretDependencies":    {"TestContractPR4_ListSecretDependencies"},
+	"listSecretTemplates":       {"TestContractPR4_ListSecretTemplates"},
+	"listSecretVersionComments": {"TestContractPR4_ListSecretVersionComments"},
+	"listSecrets":               {"TestContractPR4_ListSecrets"},
+	"moveSecret":                {"TestContractPR4_MoveSecret"},
+	"restoreSecret":             {"TestContractPR4_RestoreSecret"},
+	"resumeSecret":              {"TestContractPR4_ResumeSecret"},
+	"revokeSecretACL":           {"TestContractPR4_RevokeSecretACL"},
+	"rollbackSecret":            {"TestContractPR4_RollbackSecret"},
+	"setSecretSchedule":         {"TestContractPR4_SetSecretSchedule"},
+	"setSecretTags":             {"TestContractPR4_SetSecretTags"},
+	"suspendSecret":             {"TestContractPR4_SuspendSecret"},
+	"updateSecret":              {"TestContractPR4_UpdateSecret"},
 	// docs/cli-split-inventory.md §7 PR 3 (rbac, group, invite) --
 	// openapi_contract_pr3_test.go.
 	"addGroupMember":          {"TestContractPR3_AddGroupMember"},
