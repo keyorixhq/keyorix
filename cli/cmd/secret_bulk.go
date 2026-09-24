@@ -342,9 +342,17 @@ func runSecretBulkDelete(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("--env is required when using --names (a secret name is only unique within one project's environment, not across the whole project)")
 	}
 
-	client, err := secretAPIClient()
-	if err != nil {
-		return err
+	// The API client is only built once it's actually needed: a pure --ids preview
+	// (no --names to resolve, no --confirm to execute) must work offline, the same
+	// way a plain flag-validation error does — it must never require live
+	// credentials just to print what WOULD happen.
+	var client *apiclient.ClientWithResponses
+	if len(bulkDeleteNames) > 0 || bulkDeleteConfirm {
+		var err error
+		client, err = secretAPIClient()
+		if err != nil {
+			return err
+		}
 	}
 	ctx := context.Background()
 
