@@ -17,6 +17,26 @@ All notable changes to Keyorix are documented here. This project follows
   [`docs/cli-migration.md`](docs/cli-migration.md) for the full old-command ->
   new-command table. The old CLI still ships in source (`make keyorix-legacy`)
   as a rollback for one release, and is removed entirely in Phase 6.
+- **BREAKING (opt-out available): the `keyorix`, `keyorix-k8s-sync`, and
+  `keyorix-operator` Helm charts now default to a deny-by-default egress
+  `NetworkPolicy`** on top of the existing ingress restrictions
+  (`networkPolicy.egress.enabled`, default `true`). Pods can now only reach
+  DNS and their known peers (bundled Postgres, the Kubernetes API server, the
+  configured Keyorix server) — a server-side integration that dials out on
+  another port (SMTP, syslog/SIEM forwarding, LDAP, a checkpoint notary/TSA,
+  a secret-rotation backend, a webhook sink, a non-default external Postgres)
+  needs a `networkPolicy.egress.extraRules` entry added *before* upgrading, or
+  it silently stops working — a NetworkPolicy drop is a connection timeout,
+  not an error. Set `networkPolicy.egress.enabled: false` to opt out. See
+  each chart's README "Upgrading: egress NetworkPolicy" section. (#2102)
+- **BREAKING: several REST endpoints now return `snake_case` field names**
+  instead of the Go struct's raw `PascalCase`, matching the documented wire
+  convention. Secrets (`GetSecret`, `ListSecrets`, secret sharing, and the
+  rest of the `SecretNode` family) are fixed in this wave (#2098); projects,
+  roles, shares, and machine identities are the same class of fix and follow
+  in subsequent PRs before this reaches a release. A client reading the old
+  PascalCase keys (`ID`, `ProjectID`, `IsShared`, ...) off any of these
+  routes needs to switch to the snake_case equivalents.
 
 ## v0.94.0 — 2026-09-17
 
