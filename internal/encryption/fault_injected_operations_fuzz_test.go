@@ -855,12 +855,12 @@ func checkBackupOracle(t *testing.T, path string, wantData []byte) {
 func runRewrapFaultCase(t *testing.T, seam string, ff *fileFault, oldPass, newPass string) {
 	dir := t.TempDir()
 	kmSeed := NewKeyManager(dir, rewrapDEKFile, rewrapSaltOld)
-	kmSeed.SetKeyProvider(crypto.NewPasswordKeyProvider(oldPass, dir, rewrapSaltOld))
+	kmSeed.SetKeyProvider(fastPasswordProvider(oldPass, dir, rewrapSaltOld))
 	if err := kmSeed.Initialize(oldPass); err != nil {
 		t.Fatalf("seed Initialize(old=%q): %v", oldPass, err)
 	}
 	dek0 := append([]byte(nil), kmSeed.GetDEK()...)
-	newProvider := crypto.NewPasswordKeyProvider(newPass, dir, rewrapSaltNew)
+	newProvider := fastPasswordProvider(newPass, dir, rewrapSaltNew)
 
 	restore := armFileFault(seam, ff)
 	err := kmSeed.RewrapDEK(newProvider)

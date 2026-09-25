@@ -111,7 +111,7 @@ func runRewrapCrashCase(dir, oldPass, newPass, target string) {
 	// Seed: a manager initialized under the OLD provider (salt in rewrapSaltOld). This
 	// generates the DEK we must never lose and writes dek.key wrapped under KEK(old).
 	kmSeed := NewKeyManager(dir, rewrapDEKFile, rewrapSaltOld)
-	kmSeed.SetKeyProvider(crypto.NewPasswordKeyProvider(oldPass, dir, rewrapSaltOld))
+	kmSeed.SetKeyProvider(fastPasswordProvider(oldPass, dir, rewrapSaltOld))
 	if err := kmSeed.Initialize(oldPass); err != nil {
 		// A fresh temp dir must always initialize; a failure here is a harness bug.
 		panic(fmt.Sprintf("seed Initialize(old=%q): %v", oldPass, err))
@@ -122,7 +122,7 @@ func runRewrapCrashCase(dir, oldPass, newPass, target string) {
 	}
 
 	// Re-wrap under the NEW provider (salt in rewrapSaltNew), interrupting at target.
-	newProvider := crypto.NewPasswordKeyProvider(newPass, dir, rewrapSaltNew)
+	newProvider := fastPasswordProvider(newPass, dir, rewrapSaltNew)
 	runRewrapWithCrash(kmSeed, newProvider, target)
 
 	// AVAILABILITY + VALUE INTEGRITY.
@@ -191,7 +191,7 @@ func recoverRewrap(dir, oldPass, newPass string) (dek []byte, via string, ok boo
 // provider with the given passphrase + salt path; on success returns a copy of the DEK.
 func tryOpenProvider(dir, passphrase, saltPath string) ([]byte, bool) {
 	km := NewKeyManager(dir, rewrapDEKFile, saltPath)
-	km.SetKeyProvider(crypto.NewPasswordKeyProvider(passphrase, dir, saltPath))
+	km.SetKeyProvider(fastPasswordProvider(passphrase, dir, saltPath))
 	if err := km.Initialize(passphrase); err != nil {
 		return nil, false
 	}
