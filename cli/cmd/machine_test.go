@@ -116,10 +116,10 @@ func TestRunMachineMigrateFromUser_MatchesOldCLIOutputShape(t *testing.T) {
 	var calledBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.URL.Path == "/api/v1/projects":
+		switch r.URL.Path {
+		case "/api/v1/projects":
 			_, _ = fmt.Fprint(w, `{"data":{"projects":[{"id":3,"name":"infra"}]}}`)
-		case r.URL.Path == "/api/v1/projects/3/machine-identities/migrate-from-user":
+		case "/api/v1/projects/3/machine-identities/migrate-from-user":
 			buf, _ := io.ReadAll(r.Body)
 			calledBody = string(buf)
 			w.WriteHeader(http.StatusCreated)
@@ -156,10 +156,10 @@ func TestRunMachineMigrateFromUser_MatchesOldCLIOutputShape(t *testing.T) {
 func TestRunMachineMigrateFromUser_KeepUserSkipsSuspendMessage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.URL.Path == "/api/v1/projects":
+		switch r.URL.Path {
+		case "/api/v1/projects":
 			_, _ = fmt.Fprint(w, `{"data":{"projects":[{"id":3,"name":"infra"}]}}`)
-		case r.URL.Path == "/api/v1/projects/3/machine-identities/migrate-from-user":
+		case "/api/v1/projects/3/machine-identities/migrate-from-user":
 			w.WriteHeader(http.StatusCreated)
 			_, _ = fmt.Fprint(w, `{"data":{"machine_identity":{"id":42,"name":"ci-bot","identity_type":"service","state":"active","project_id":3}}}`)
 		default:
