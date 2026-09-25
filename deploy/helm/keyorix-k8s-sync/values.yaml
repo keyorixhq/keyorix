@@ -72,6 +72,25 @@ networkPolicy:
       podSelector:
         matchLabels:
           app.kubernetes.io/name: prometheus
+  egress:
+    # Restricts the agent's OUTBOUND traffic instead of leaving it reachable to
+    # anything the cluster network permits (the default without this). Its real
+    # destinations are DNS, the in-cluster Kubernetes API server, and the
+    # Keyorix server named in keyorix.url -- neither of the latter two is a
+    # podSelector-able destination (the API server's Endpoints aren't backed by
+    # a selectable pod set, and keyorix.url is an admin-configured external
+    # host), so both are allowed by PORT only (443 and 6443, the two ports a
+    # Kubernetes API server and an https Keyorix server overwhelmingly listen
+    # on) rather than by destination. This is deliberately coarser than a
+    # per-destination allow: if your API server or Keyorix server runs on a
+    # different port, add it via extraRules below, or this agent will silently
+    # stop reconciling (a NetworkPolicy drop looks like a hung/timed-out call,
+    # not a clear error).
+    enabled: true
+    # extraRules: additional egress rules (raw NetworkPolicyEgressRule entries),
+    # appended verbatim -- e.g. for a Keyorix server or API server on a
+    # non-standard port.
+    extraRules: []
 
 # cleanup reaps orphaned Secrets: when a mapping is removed, the agent-owned Secret it
 # created (carrying app.kubernetes.io/managed-by=keyorix-sync) is deleted on the next
