@@ -3,55 +3,47 @@ package storage_test
 import (
 	"errors"
 	"fmt"
-	"net/http"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/storage/remote"
 )
 
-func TestIsUserNotFound_nil(t *testing.T) {
-	if storage.IsUserNotFound(nil) {
-		t.Error("IsUserNotFound(nil) = true, want false")
+// TestIsXNotFound_SentinelAndWrapped proves each IsXNotFound helper still
+// recognizes its own local sentinel error, recognizes it wrapped (errors.Is
+// through fmt.Errorf's %w), and returns false for nil, a different sentinel,
+// and a generic error. Originally these also proved a RemoteStorage
+// *remote.HTTPError branch (errors.As); that branch was deleted along with
+// RemoteStorage itself in ADR-108 Phase 6 step 14b-2.
+func TestIsXNotFound_SentinelAndWrapped(t *testing.T) {
+	cases := []struct {
+		name     string
+		fn       func(error) bool
+		sentinel error
+	}{
+		{"IsUserNotFound", storage.IsUserNotFound, storage.ErrUserNotFound},
+		{"IsSessionNotFound", storage.IsSessionNotFound, storage.ErrSessionNotFound},
+		{"IsSecretNotFound", storage.IsSecretNotFound, storage.ErrSecretNotFound},
+		{"IsSecretVersionNotFound", storage.IsSecretVersionNotFound, storage.ErrSecretVersionNotFound},
 	}
-}
-
-func TestIsUserNotFound_sentinel(t *testing.T) {
-	if !storage.IsUserNotFound(storage.ErrUserNotFound) {
-		t.Error("IsUserNotFound(ErrUserNotFound) = false, want true")
-	}
-	// wrapped form
-	if !storage.IsUserNotFound(fmt.Errorf("wrapped: %w", storage.ErrUserNotFound)) {
-		t.Error("IsUserNotFound(wrapped ErrUserNotFound) = false, want true")
-	}
-}
-
-func TestIsUserNotFound_otherSentinel(t *testing.T) {
-	if storage.IsUserNotFound(storage.ErrRoleNotAssigned) {
-		t.Error("IsUserNotFound(ErrRoleNotAssigned) = true, want false")
-	}
-	if storage.IsUserNotFound(errors.New("some other error")) {
-		t.Error("IsUserNotFound(generic error) = true, want false")
-	}
-}
-
-func TestIsUserNotFound_httpNotFound(t *testing.T) {
-	err := &remote.HTTPError{StatusCode: http.StatusNotFound}
-	if !storage.IsUserNotFound(err) {
-		t.Error("IsUserNotFound(HTTPError 404) = false, want true")
-	}
-	// wrapped
-	if !storage.IsUserNotFound(fmt.Errorf("wrap: %w", err)) {
-		t.Error("IsUserNotFound(wrapped HTTPError 404) = false, want true")
-	}
-}
-
-func TestIsUserNotFound_httpOtherStatus(t *testing.T) {
-	for _, code := range []int{http.StatusBadRequest, http.StatusForbidden, http.StatusInternalServerError} {
-		err := &remote.HTTPError{StatusCode: code}
-		if storage.IsUserNotFound(err) {
-			t.Errorf("IsUserNotFound(HTTPError %d) = true, want false", code)
-		}
+	otherErr := errors.New("some other error")
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if c.fn(nil) {
+				t.Errorf("%s(nil) = true, want false", c.name)
+			}
+			if !c.fn(c.sentinel) {
+				t.Errorf("%s(sentinel) = false, want true", c.name)
+			}
+			if !c.fn(fmt.Errorf("wrapped: %w", c.sentinel)) {
+				t.Errorf("%s(wrapped sentinel) = false, want true", c.name)
+			}
+			if c.fn(storage.ErrRoleNotAssigned) && c.sentinel != storage.ErrRoleNotAssigned {
+				t.Errorf("%s(a different sentinel) = true, want false", c.name)
+			}
+			if c.fn(otherErr) {
+				t.Errorf("%s(generic error) = true, want false", c.name)
+			}
+		})
 	}
 }
 
