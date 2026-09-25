@@ -3,6 +3,7 @@ import { render, screen, within, fireEvent } from '../../../test/test-utils';
 import { SecretTableRow } from '../SecretTableRow';
 import { Secret } from '../../../types';
 import { useUIStore } from '../../../store/uiStore';
+import { XSS_PAYLOADS, assertPayloadRenderedSafely } from '../../../test/xss-payloads';
 
 // Mirrors the component's own formatDate() so the assertion is correct
 // regardless of the timezone the test runs in.
@@ -284,5 +285,17 @@ describe('SecretTableRow', () => {
         const badge = screen.getByText('password');
         expect(badge.getAttribute('style')).toContain('rgb(224, 231, 255)'); // password's lightBg (#e0e7ff)
         vi.restoreAllMocks();
+    });
+
+    describe('XSS regression (WEB track backlog item 3)', () => {
+        it.each(XSS_PAYLOADS)('renders a malicious secret name as inert text: %s', (payload) => {
+            const { container } = renderRow({ secret: { ...baseSecret, name: payload } });
+            assertPayloadRenderedSafely(payload, container);
+        });
+
+        it.each(XSS_PAYLOADS)('renders a malicious tag as inert text: %s', (payload) => {
+            const { container } = renderRow({ secret: { ...baseSecret, tags: [payload] } });
+            assertPayloadRenderedSafely(payload, container);
+        });
     });
 });
