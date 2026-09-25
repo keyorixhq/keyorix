@@ -27,13 +27,13 @@ func FuzzSanitizeForTerminal(f *testing.F) {
 		"plain text",
 		"tab\tseparated",
 		"newline\nhere",
-		"\x1b[31mred\x1b[0m",      // CSI color escape
-		"\x1b]0;evil title\x07",   // OSC window-title injection
-		"\x1bP+q evil\x1b\\",      // DCS
-		"\x00\x01\x02\x03",        // C0 controls
+		"\x1b[31mred\x1b[0m",       // CSI color escape
+		"\x1b]0;evil title\x07",    // OSC window-title injection
+		"\x1bP+q evil\x1b\\",       // DCS
+		"\x00\x01\x02\x03",         // C0 controls
 		nel + csiC1,                // C1 controls
 		"café",                     // non-control multibyte, must survive
-		"\xff\xfe not valid utf8", // invalid UTF-8 bytes
+		"\xff\xfe not valid utf8",  // invalid UTF-8 bytes
 		string([]byte{0x1b, 0x5b}), // truncated CSI lead-in
 	}
 	for _, s := range seeds {

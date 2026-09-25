@@ -115,8 +115,8 @@ func parseJSONBytes(data []byte) ([]secretEntry, error) {
 
 // unquoteDotenvSingleQuoted reverses writeDotenv's exact escaping scheme for a
 // single-quoted value: the outer quotes are stripped, then every occurrence of the
-// close-escape-reopen sequence '\'' is folded back to a literal '. A naive "just strip
-// the first and last byte" (the previous implementation) leaves every embedded '\''
+// close-escape-reopen sequence '\” is folded back to a literal '. A naive "just strip
+// the first and last byte" (the previous implementation) leaves every embedded '\”
 // artifact in the value, corrupting any value containing an apostrophe on reimport
 // (FuzzDotenvRoundTrip, CLI-FUZZ target 3b).
 func unquoteDotenvSingleQuoted(inner string) string {
