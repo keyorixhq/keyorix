@@ -341,7 +341,7 @@ func isSensitiveKeyorixEnv(key string) bool {
 func execChild(args []string, derived, varMapped map[string]string, cleanEnv bool) error {
 	childEnv := buildChildEnv(derived, varMapped, cleanEnv)
 
-	c := exec.Command(args[0], args[1:]...) // #nosec G204 -- operator-supplied command, the whole point of `run`
+	c := exec.Command(args[0], args[1:]...) // #nosec G204 -- operator-supplied command, the whole point of `run` // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- same reasoning: operator-supplied command, not unverified user data
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
