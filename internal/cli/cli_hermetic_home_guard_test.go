@@ -35,6 +35,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -54,11 +55,45 @@ func TestCLIPackagesAreHermeticToRealHOMEAndXDGConfigHome(t *testing.T) {
 
 	repoRoot := findRepoRoot(t)
 
-	baseline, baseOutput := runCLISuiteWithHome(t, repoRoot, t.TempDir())
+	// GOPATH/GOCACHE/GOMODCACHE don't differ between the baseline and
+	// poisoned runs (see runCLISuiteWithHome's own comment) -- resolve them
+	// once here, in this goroutine, rather than once per call: `go env` is
+	// itself a subprocess, and this also keeps every Fatal-capable call in
+	// the test's own goroutine, since the two go test subprocess runs below
+	// now run concurrently and testing.T's Fatal/FailNow family is
+	// documented unsafe to call from a goroutine other than the test's own.
+	goPath := goEnv(t, "GOPATH")
+	goCache := goEnv(t, "GOCACHE")
+	goModCache := goEnv(t, "GOMODCACHE")
 
 	poisoned := t.TempDir()
 	writePoisonedCLIConfig(t, poisoned)
-	poisonedResults, poisonedOutput := runCLISuiteWithHome(t, repoRoot, poisoned)
+	baselineHome := t.TempDir()
+
+	// The two runs are independent (different HOME, nothing shared but the
+	// read-only Go build/module caches) -- running them concurrently instead
+	// of serially roughly halves this guard's wall-clock on any runner with
+	// 2+ free cores, with no change to what either run does or asserts.
+	var wg sync.WaitGroup
+	var baseline, poisonedResults map[string]string
+	var baseOutput, poisonedOutput map[string][]string
+	var baseErr, poisonedErr error
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		baseline, baseOutput, baseErr = runCLISuiteWithHome(t, repoRoot, baselineHome, goPath, goCache, goModCache)
+	}()
+	go func() {
+		defer wg.Done()
+		poisonedResults, poisonedOutput, poisonedErr = runCLISuiteWithHome(t, repoRoot, poisoned, goPath, goCache, goModCache)
+	}()
+	wg.Wait()
+	if baseErr != nil {
+		t.Fatalf("running go test ./internal/cli/... (HOME=isolated): %v", baseErr)
+	}
+	if poisonedErr != nil {
+		t.Fatalf("running go test ./internal/cli/... (HOME=poisoned): %v", poisonedErr)
+	}
 
 	// tail returns up to the last 20 lines of a (sub)test's captured -json
 	// "output" text, so a divergence report shows WHY a test failed (the
@@ -158,7 +193,22 @@ connections: []
 // path, not $homeDir/keyorix/cli.yaml) and silently defeat this whole guard --
 // confirmed by hand: the first version of this guard did exactly that and
 // passed even with a package's TestMain isolation deliberately disabled.
-func runCLISuiteWithHome(t *testing.T, repoRoot, homeDir string) (results map[string]string, output map[string][]string) {
+//
+// goPath/goCache/goModCache are the CALLER's already-resolved `go env`
+// values (see the caller's own comment): overriding HOME also redirects
+// Go's OWN toolchain, since GOPATH/GOCACHE/GOMODCACHE default to paths
+// under $HOME when not set explicitly, which most machines don't do.
+// Without pinning these to their real values, `go test` silently
+// re-resolves its module cache into homeDir, triggering a full
+// re-download/rebuild (slow) and, worse, leaves read-only extracted module
+// files under t.TempDir() that its own cleanup then fails to remove
+// ("permission denied"). Only HOME/XDG_CONFIG_HOME -- what keyorix's OWN
+// config resolution reads -- should differ between the two calls this
+// guard makes. Errors are RETURNED rather than reported via t.Fatalf: the
+// caller runs two of these concurrently in separate goroutines, and
+// testing.T's Fatal/FailNow family is documented unsafe to call from a
+// goroutine other than the one running the test.
+func runCLISuiteWithHome(t *testing.T, repoRoot, homeDir, goPath, goCache, goModCache string) (results map[string]string, output map[string][]string, err error) {
 	t.Helper()
 	cmd := exec.Command("go", "test", "-json", "-count=1", "./internal/cli/...")
 	cmd.Dir = repoRoot
@@ -168,25 +218,16 @@ func runCLISuiteWithHome(t *testing.T, repoRoot, homeDir string) (results map[st
 		"KEYORIX_SERVER=",
 		"KEYORIX_TOKEN=",
 		cliHermeticGuardChildEnv+"=1",
-		// Overriding HOME also redirects Go's OWN toolchain: GOPATH/GOCACHE/
-		// GOMODCACHE default to paths under $HOME when not set explicitly as
-		// env vars, which most machines don't do. Without pinning these to
-		// their real values, `go test` silently re-resolves its module cache
-		// into homeDir, triggering a full re-download/rebuild (slow) and,
-		// worse, leaves read-only extracted module files under t.TempDir()
-		// that its own cleanup then fails to remove ("permission denied").
-		// Only HOME/XDG_CONFIG_HOME -- what keyorix's OWN config resolution
-		// reads -- should differ between the two calls this guard makes.
-		"GOPATH="+goEnv(t, "GOPATH"),
-		"GOCACHE="+goEnv(t, "GOCACHE"),
-		"GOMODCACHE="+goEnv(t, "GOMODCACHE"),
+		"GOPATH="+goPath,
+		"GOCACHE="+goCache,
+		"GOMODCACHE="+goModCache,
 	)
-	out, err := cmd.Output()
+	out, cmdErr := cmd.Output()
 	// A nonzero exit is expected whenever any test fails -- that's exactly the
 	// information this guard compares between runs, not a reason to abort.
-	if err != nil {
-		if _, ok := err.(*exec.ExitError); !ok {
-			t.Fatalf("running go test ./internal/cli/... (HOME=%s): %v", homeDir, err)
+	if cmdErr != nil {
+		if _, ok := cmdErr.(*exec.ExitError); !ok {
+			return nil, nil, fmt.Errorf("running go test ./internal/cli/... (HOME=%s): %w", homeDir, cmdErr)
 		}
 	}
 
@@ -215,5 +256,5 @@ func runCLISuiteWithHome(t *testing.T, repoRoot, homeDir string) (results map[st
 			output[key] = append(output[key], ev.Output)
 		}
 	}
-	return results, output
+	return results, output, nil
 }
