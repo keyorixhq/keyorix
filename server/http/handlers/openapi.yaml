@@ -6780,40 +6780,43 @@ components:
         CreatedAt: {type: string, format: date-time}
         UpdatedAt: {type: string, format: date-time}
     # docs/cli-split-inventory.md §7 PR 5 -- secret bulk/rotation/export/import/scan/hygiene.
-    # models.SecretNode carries no `json:` tags, so it serializes with bare (capitalized)
-    # Go field names -- see the identical note on PR 3/PR 4's schemas for this same model.
+    # models.SecretNode carries no `json:` tags; every handler route now converts through
+    # the snake_case secretNodeWire type (server/http/handlers/secrets_wire.go) before
+    # sending a response, fixed as part of the API-hygiene casing campaign.
     Secret:
       type: object
       description: >-
         A secret or folder node (internal/storage/models.SecretNode), metadata
-        only -- never a value. No `json:` tags on the model -- wire keys are the
-        bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
+        only -- never a value. Wire keys are snake_case, via the handler-level
+        secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed
+        from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of
+        the API-hygiene casing campaign.
       properties:
-        ID: {type: integer}
-        ParentID: {type: integer, nullable: true}
-        ProjectID: {type: integer}
-        EnvironmentID: {type: integer}
-        Name: {type: string}
-        IsSecret: {type: boolean, description: "false = this node is a folder."}
-        Type: {type: string}
-        Description: {type: string}
-        MaxReads: {type: integer, nullable: true}
-        ReadCount: {type: integer}
-        Expiration: {type: string, format: date-time, nullable: true}
-        Classification: {type: string}
-        Status: {type: string}
-        CreatedBy: {type: string}
-        OwnerID: {type: integer}
-        OwnerMachineIdentityID: {type: integer}
-        IsShared: {type: boolean}
-        CreatedAt: {type: string, format: date-time}
-        UpdatedAt: {type: string, format: date-time}
-        LastRotatedAt: {type: string, format: date-time, nullable: true}
-        AutoRotate: {type: boolean}
-        RotationLength: {type: integer}
-        RotationCharset: {type: string}
-        RotationBackend: {type: string}
-        RotationRef: {type: string}
+        id: {type: integer}
+        parent_id: {type: integer, nullable: true}
+        project_id: {type: integer}
+        environment_id: {type: integer}
+        name: {type: string}
+        is_secret: {type: boolean, description: "false = this node is a folder."}
+        type: {type: string}
+        description: {type: string}
+        max_reads: {type: integer, nullable: true}
+        read_count: {type: integer}
+        expiration: {type: string, format: date-time, nullable: true}
+        classification: {type: string}
+        status: {type: string}
+        created_by: {type: string}
+        owner_id: {type: integer}
+        owner_machine_identity_id: {type: integer}
+        is_shared: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        last_rotated_at: {type: string, format: date-time, nullable: true}
+        auto_rotate: {type: boolean}
+        rotation_length: {type: integer}
+        rotation_charset: {type: string}
+        rotation_backend: {type: string}
+        rotation_ref: {type: string}
     RotationDryRunCheck:
       type: object
       properties:
@@ -7181,64 +7184,72 @@ components:
         properties (rather than oneOf) since the CLI always knows in advance
         which branch a given request will get -- it controls include_value.
       properties:
-        ID: {type: integer}
-        ParentID: {type: integer, nullable: true}
-        ProjectID: {type: integer}
-        EnvironmentID: {type: integer}
-        Name: {type: string}
-        IsSecret: {type: boolean}
-        Type: {type: string}
-        Description: {type: string}
-        MaxReads: {type: integer, nullable: true}
-        ReadCount: {type: integer}
-        Expiration: {type: string, format: date-time, nullable: true}
-        Classification: {type: string}
-        Status: {type: string}
-        CreatedBy: {type: string}
-        OwnerID: {type: integer}
-        IsShared: {type: boolean}
-        CreatedAt: {type: string, format: date-time}
-        UpdatedAt: {type: string, format: date-time}
-        LastRotatedAt: {type: string, format: date-time, nullable: true}
+        id: {type: integer}
+        parent_id: {type: integer, nullable: true}
+        project_id: {type: integer}
+        environment_id: {type: integer}
+        name: {type: string}
+        is_secret: {type: boolean}
+        type: {type: string}
+        description: {type: string}
+        max_reads: {type: integer, nullable: true}
+        read_count: {type: integer}
+        expiration: {type: string, format: date-time, nullable: true}
+        classification: {type: string}
+        status: {type: string}
+        created_by: {type: string}
+        owner_id: {type: integer}
+        is_shared: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        last_rotated_at: {type: string, format: date-time, nullable: true}
         secret: {$ref: '#/components/schemas/Secret'}
         value: {type: string, description: "The decrypted value. Present only when include_value=true."}
     SecretListEntry:
       type: object
       description: >-
-        One row of GET /api/v1/secrets's data.secrets[]
-        (internal/storage/models.SecretWithSharingInfo, which anonymously
-        embeds *SecretNode -- Go's encoding/json promotes the embedded
-        struct's fields onto this same object). Wire keys are a genuine MIX
-        of case conventions: SecretNode's own fields are bare capitalized
-        (ID, Name, IsShared, ...), while SecretWithSharingInfo's own fields
-        are snake_case (project_name, is_shared, ...) -- IsShared and
-        is_shared are both present as DIFFERENT keys on the same object,
-        from the two different structs.
+        One row of GET /api/v1/secrets's data.secrets[], via the handler-level
+        secretWithSharingInfoWire type (server/http/handlers/secrets_wire.go).
+        Flat, all snake_case: the embedded secret-node fields promote using
+        their own correct tags, and is_shared is the sharing-computed value
+        (it correctly shadows the embedded node's raw stored one, matching
+        Go's shallower-field-wins collision rule) -- fixed from the previous
+        mixed-case duplicate-key leak as part of the API-hygiene casing
+        campaign.
       properties:
-        ID: {type: integer}
-        ParentID: {type: integer, nullable: true}
-        ProjectID: {type: integer}
-        EnvironmentID: {type: integer}
-        Name: {type: string}
-        IsSecret: {type: boolean}
-        Type: {type: string}
-        Description: {type: string}
-        MaxReads: {type: integer, nullable: true}
-        ReadCount: {type: integer}
-        Expiration: {type: string, format: date-time, nullable: true}
-        Classification: {type: string}
-        Status: {type: string}
-        CreatedBy: {type: string}
-        OwnerID: {type: integer}
-        IsShared: {type: boolean, description: "From the embedded SecretNode. SecretWithSharingInfo's own is_shared field also exists on the wire, distinct from this one -- omitted here (oapi-codegen mangles snake_case to the same Go field name, IsShared, as this property, causing a real generation collision) since no CLI command reads it."}
-        CreatedAt: {type: string, format: date-time}
-        UpdatedAt: {type: string, format: date-time}
+        id: {type: integer}
+        parent_id: {type: integer, nullable: true}
+        project_id: {type: integer}
+        environment_id: {type: integer}
+        name: {type: string}
+        is_secret: {type: boolean}
+        type: {type: string}
+        description: {type: string}
+        max_reads: {type: integer, nullable: true}
+        read_count: {type: integer}
+        expiration: {type: string, format: date-time, nullable: true}
+        classification: {type: string}
+        status: {type: string}
+        created_by: {type: string}
+        owner_id: {type: integer}
+        owner_machine_identity_id: {type: integer}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        last_rotated_at: {type: string, format: date-time, nullable: true}
+        auto_rotate: {type: boolean}
+        rotation_length: {type: integer}
+        rotation_charset: {type: string}
+        rotation_backend: {type: string}
+        rotation_ref: {type: string}
         project_name: {type: string}
         environment_name: {type: string}
+        is_shared: {type: boolean, description: "Sharing-computed, not the raw stored node flag."}
         is_owned_by_user: {type: boolean}
         owner_username: {type: string}
         user_permission: {type: string}
         share_count: {type: integer}
+        shared_at: {type: string, format: date-time, nullable: true}
+        shared_by: {type: string}
     SecretVersion:
       type: object
       description: >-

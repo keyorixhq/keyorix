@@ -154,11 +154,11 @@ func runSecretCreate(cmd *cobra.Command, args []string) error {
 
 func printCreatedSecret(s *apiclient.Secret) {
 	fmt.Println("Secret created successfully!")
-	fmt.Printf("ID:          %d\n", derefSecretInt(s.ID))
+	fmt.Printf("ID:          %d\n", derefSecretInt(s.Id))
 	fmt.Printf("Name:        %s\n", derefStr(s.Name))
 	fmt.Printf("Type:        %s\n", derefStr(s.Type))
-	fmt.Printf("Project:     %d\n", derefSecretInt(s.ProjectID))
-	fmt.Printf("Environment: %d\n", derefSecretInt(s.EnvironmentID))
+	fmt.Printf("Project:     %d\n", derefSecretInt(s.ProjectId))
+	fmt.Printf("Environment: %d\n", derefSecretInt(s.EnvironmentId))
 	if s.CreatedAt != nil {
 		fmt.Printf("Created:     %s\n", s.CreatedAt.Format(time.RFC3339))
 	}
@@ -286,7 +286,7 @@ func runSecretGetByName(ctx context.Context, client *apiclient.ClientWithRespons
 		displaySecret(secretListEntryToSecret(found), "", false)
 		return nil
 	}
-	id := derefSecretInt(found.ID)
+	id := derefSecretInt(found.Id)
 	t := true
 	vresp, err := client.GetSecretWithResponse(ctx, id, &apiclient.GetSecretParams{IncludeValue: &t})
 	if err != nil {
@@ -315,12 +315,12 @@ func displaySecret(s *apiclient.Secret, value string, showValue bool) {
 	}
 	fmt.Println("Secret Information")
 	fmt.Println("==================")
-	fmt.Printf("ID:          %d\n", derefSecretInt(s.ID))
+	fmt.Printf("ID:          %d\n", derefSecretInt(s.Id))
 	fmt.Printf("Name:        %s\n", derefStr(s.Name))
 	fmt.Printf("Type:        %s\n", derefStr(s.Type))
 	fmt.Printf("Status:      %s\n", derefStr(s.Status))
-	fmt.Printf("Project:     %d\n", derefSecretInt(s.ProjectID))
-	fmt.Printf("Environment: %d\n", derefSecretInt(s.EnvironmentID))
+	fmt.Printf("Project:     %d\n", derefSecretInt(s.ProjectId))
+	fmt.Printf("Environment: %d\n", derefSecretInt(s.EnvironmentId))
 	fmt.Printf("Created By:  %s\n", derefStr(s.CreatedBy))
 	if s.CreatedAt != nil {
 		fmt.Printf("Created:     %s\n", s.CreatedAt.Format(time.RFC3339))
@@ -358,22 +358,22 @@ func displaySecret(s *apiclient.Secret, value string, showValue bool) {
 // requested (the server sends the secret's fields directly at the top level).
 func secretGetResultToSecret(d *apiclient.SecretGetResult) *apiclient.Secret {
 	return &apiclient.Secret{
-		ID: d.ID, ParentID: d.ParentID, ProjectID: d.ProjectID, EnvironmentID: d.EnvironmentID,
+		Id: d.Id, ParentId: d.ParentId, ProjectId: d.ProjectId, EnvironmentId: d.EnvironmentId,
 		Name: d.Name, IsSecret: d.IsSecret, Type: d.Type, Description: d.Description,
 		MaxReads: d.MaxReads, ReadCount: d.ReadCount, Expiration: d.Expiration,
 		Classification: d.Classification, Status: d.Status, CreatedBy: d.CreatedBy,
-		OwnerID: d.OwnerID, IsShared: d.IsShared, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
+		OwnerId: d.OwnerId, IsShared: d.IsShared, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
 		LastRotatedAt: d.LastRotatedAt,
 	}
 }
 
 func secretListEntryToSecret(e *apiclient.SecretListEntry) *apiclient.Secret {
 	return &apiclient.Secret{
-		ID: e.ID, ParentID: e.ParentID, ProjectID: e.ProjectID, EnvironmentID: e.EnvironmentID,
+		Id: e.Id, ParentId: e.ParentId, ProjectId: e.ProjectId, EnvironmentId: e.EnvironmentId,
 		Name: e.Name, IsSecret: e.IsSecret, Type: e.Type, Description: e.Description,
 		MaxReads: e.MaxReads, ReadCount: e.ReadCount, Expiration: e.Expiration,
 		Classification: e.Classification, Status: e.Status, CreatedBy: e.CreatedBy,
-		OwnerID: e.OwnerID, IsShared: e.IsShared, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt,
+		OwnerId: e.OwnerId, IsShared: e.IsShared, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt,
 	}
 }
 
@@ -465,7 +465,7 @@ func runSecretUpdate(cmd *cobra.Command, args []string) error {
 	}
 	s := resp.JSON200.Data
 	fmt.Println("Secret updated successfully!")
-	fmt.Printf("ID: %d\n", derefSecretInt(s.ID))
+	fmt.Printf("ID: %d\n", derefSecretInt(s.Id))
 	fmt.Printf("Name: %s\n", derefStr(s.Name))
 	fmt.Printf("Type: %s\n", derefStr(s.Type))
 	if len(value) > 0 {
@@ -590,7 +590,7 @@ func findRemoteSecretByName(ctx context.Context, client *apiclient.ClientWithRes
 	case 0:
 		return 0, "", fmt.Errorf("secret not found: no secret named %q in project %d, environment %d", name, projectID, environmentID)
 	case 1:
-		return derefSecretInt(matches[0].ID), derefStr(matches[0].Name), nil
+		return derefSecretInt(matches[0].Id), derefStr(matches[0].Name), nil
 	default:
 		return 0, "", fmt.Errorf("ambiguous: %d secrets named %q in project %d, environment %d -- use --id instead", len(matches), name, projectID, environmentID)
 	}
@@ -733,7 +733,7 @@ func displaySecretsTable(secrets []apiclient.SecretListEntry, total int64, page,
 			created = s.CreatedAt.Format("2006-01-02 15:04")
 		}
 		fmt.Printf("%-5d %-20s %-12s %-8s %-20s %-20s\n",
-			derefSecretInt(s.ID), truncateSecretString(derefStr(s.Name), 20), truncateSecretString(derefStr(s.Type), 12),
+			derefSecretInt(s.Id), truncateSecretString(derefStr(s.Name), 20), truncateSecretString(derefStr(s.Type), 12),
 			derefStr(s.Status), created, truncateSecretString(expires, 20))
 	}
 	if total > int64(pageSize) {
@@ -771,8 +771,8 @@ func displaySecretsJSON(secrets []apiclient.SecretListEntry, total int64, page, 
 	out := jsonSecretsOutput{Total: total, Offset: offset, Limit: pageSize, Count: len(secrets), Secrets: make([]jsonSecretEntry, 0, len(secrets))}
 	for _, s := range secrets {
 		entry := jsonSecretEntry{
-			ID: derefSecretInt(s.ID), Name: derefStr(s.Name), Type: derefStr(s.Type), Status: derefStr(s.Status),
-			ProjectID: derefSecretInt(s.ProjectID), EnvironmentID: derefSecretInt(s.EnvironmentID), CreatedBy: derefStr(s.CreatedBy),
+			ID: derefSecretInt(s.Id), Name: derefStr(s.Name), Type: derefStr(s.Type), Status: derefStr(s.Status),
+			ProjectID: derefSecretInt(s.ProjectId), EnvironmentID: derefSecretInt(s.EnvironmentId), CreatedBy: derefStr(s.CreatedBy),
 			MaxReads: s.MaxReads,
 		}
 		if s.CreatedAt != nil {

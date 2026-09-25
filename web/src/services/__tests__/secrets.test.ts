@@ -27,13 +27,13 @@ beforeEach(() => {
 });
 
 describe('secretsApi.list', () => {
-    it('maps LastRotatedAt → lastRotatedAt (null when never rotated)', async () => {
+    it('maps last_rotated_at → lastRotatedAt (null when never rotated)', async () => {
         mocked.get.mockResolvedValue({
             data: {
                 data: {
                     secrets: [
-                        { ID: 1, Name: 'rotated-key', Type: 'api_key', LastRotatedAt: '2026-05-01T00:00:00Z' },
-                        { ID: 2, Name: 'never-key', Type: 'password' },
+                        { id: 1, name: 'rotated-key', type: 'api_key', last_rotated_at: '2026-05-01T00:00:00Z' },
+                        { id: 2, name: 'never-key', type: 'password' },
                     ],
                     total: 2,
                     page: 1,
@@ -80,7 +80,7 @@ describe('secretsApi.list', () => {
         mocked.get.mockResolvedValue({
             data: {
                 data: {
-                    secrets: [{ ID: 3, Name: 'bare', Type: 'text' }],
+                    secrets: [{ id: 3, name: 'bare', type: 'text' }],
                 },
             },
         });
@@ -109,17 +109,17 @@ describe('secretsApi.list', () => {
                 data: {
                     secrets: [
                         {
-                            ID: 4,
-                            Name: 'scoped',
-                            Type: 'text',
+                            id: 4,
+                            name: 'scoped',
+                            type: 'text',
                             namespace_name: 'team-a',
                             namespace: 'ignored',
                             zone_name: 'us-east',
                             zone: 'ignored',
                             environment_name: 'staging',
                             environment: 'ignored',
-                            Classification: 'confidential',
-                            Status: 'suspended',
+                            classification: 'confidential',
+                            status: 'suspended',
                         },
                     ],
                 },
@@ -418,8 +418,8 @@ describe('secretsApi.auditTrail', () => {
 });
 
 describe('secretsApi.description', () => {
-    it('reads the raw PascalCase Description field', async () => {
-        mocked.get.mockResolvedValue({ data: { data: { Description: 'prod db password' } } });
+    it('reads the description field', async () => {
+        mocked.get.mockResolvedValue({ data: { data: { description: 'prod db password' } } });
 
         const out = await secretsApi.description(1);
 
@@ -427,15 +427,7 @@ describe('secretsApi.description', () => {
         expect(out).toBe('prod db password');
     });
 
-    it('tolerates lowercase description as a fallback', async () => {
-        mocked.get.mockResolvedValue({ data: { data: { description: 'lowercase note' } } });
-
-        const out = await secretsApi.description(1);
-
-        expect(out).toBe('lowercase note');
-    });
-
-    it('defaults to an empty string when neither casing nor data is present', async () => {
+    it('defaults to an empty string when data is not present', async () => {
         mocked.get.mockResolvedValue({ data: {} });
 
         const out = await secretsApi.description(1);

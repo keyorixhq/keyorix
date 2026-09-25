@@ -128,7 +128,7 @@ func (h *FolderHandler) CreateFolder(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(hdrContentType, mimeApplicationJSON)
 	w.Header().Set(hdrXContentTypeOptions, "nosniff")
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(SuccessResponse{Success: true, Data: folder, Message: "Folder created"}); err != nil {
+	if err := json.NewEncoder(w).Encode(SuccessResponse{Success: true, Data: newSecretNodeWire(folder), Message: "Folder created"}); err != nil {
 		log.Printf("Error encoding created folder: %v", err)
 	}
 }
@@ -180,7 +180,7 @@ func (h *FolderHandler) ListFolders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("X-Total-Count", fmt.Sprintf("%d", total))
-	h.sendSuccess(w, folders, "")
+	h.sendSuccess(w, newSecretNodeWireList(folders), "")
 }
 
 // DeleteFolder handles DELETE /api/v1/folders/{id}.
