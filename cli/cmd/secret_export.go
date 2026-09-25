@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -268,7 +269,18 @@ func writeDotenv(w io.Writer, secrets []exportedSecret) error {
 	return nil
 }
 
+// writeExportJSON emits a flat {"name": "value"} object. json.Marshal requires valid
+// UTF-8 in a Go string it encodes and, for an invalid byte sequence, silently
+// substitutes the Unicode replacement character (U+FFFD) rather than erroring --
+// parseJSONBytes then reads that substitution back as a DIFFERENT value than what was
+// exported (found by FuzzJSONRoundTrip: name "\xa5" round-tripped as name "�").
+// Refuse up front instead of exporting a value JSON cannot represent losslessly.
 func writeExportJSON(w io.Writer, secrets []exportedSecret) error {
+	for _, s := range secrets {
+		if !utf8.ValidString(s.Name) || !utf8.ValidString(s.Value) {
+			return fmt.Errorf("secret %q (id=%d) has a name or value that is not valid UTF-8, which JSON cannot represent losslessly — export to dotenv format instead", s.Name, s.ID)
+		}
+	}
 	m := make(map[string]string, len(secrets))
 	for _, s := range secrets {
 		m[s.Name] = s.Value
