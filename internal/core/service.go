@@ -15,7 +15,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/delivery"
-	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/license"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/pkg/trust"
@@ -46,14 +45,19 @@ type KeyorixCore struct {
 	// AES-256-GCM, AAD-bound per #94). nil = encryption disabled (plaintext at
 	// rest, dev/test only — the loud startup banner covers it). Wired from the
 	// initialised encryption.Service at server startup via SetSecretValueEncryptor.
-	// See secret_value_crypto.go for the fail-closed encrypt/decrypt helpers this
+	// ports.EncryptionProvider (ADR-109 step 5), not the concrete
+	// *encryption.Service — *encryption.Service satisfies this directly, with
+	// no alias needed (see EncryptionProvider's own doc comment). See
+	// secret_value_crypto.go for the fail-closed encrypt/decrypt helpers this
 	// backs. Replaces the former, never-wired encryption.SecretEncryption path.
-	secretValueEncryptor *encryption.Service
+	secretValueEncryptor ports.EncryptionProvider
 	// authEncryptor reversibly encrypts auth secrets that cannot be hashed (the
 	// TOTP MFA shared secret). nil or disabled = passthrough (store plaintext),
-	// consistent with the rest of the product when encryption is off. Wired from
-	// the initialised encryption.Service at server startup via SetAuthEncryptor.
-	authEncryptor *encryption.Service
+	// consistent with the rest of the product when encryption is off. Wired
+	// from the initialised encryption.Service at server startup via
+	// SetAuthEncryptor. ports.EncryptionProvider (ADR-109 step 5), same as
+	// secretValueEncryptor above.
+	authEncryptor ports.EncryptionProvider
 	// dynamicEngineFactory resolves a dynamic-secrets credential engine by backend
 	// type (ADR-035). nil = dynamic secrets unavailable (fail closed — see
 	// dynamicEngine). Wired at startup to internal/dynamic.New (server/main.go's
@@ -780,8 +784,11 @@ func (c *KeyorixCore) SetWebhookURLValidator(fn func(string) error) {
 
 // SetAuthEncryptor wires the encryption service used to protect reversibly-
 // encrypted auth secrets (the TOTP MFA secret). The server calls this at startup
-// when encryption is enabled. nil/disabled = passthrough.
-func (c *KeyorixCore) SetAuthEncryptor(s *encryption.Service) {
+// when encryption is enabled. nil/disabled = passthrough. Accepts
+// ports.EncryptionProvider (ADR-109 step 5) rather than the concrete
+// *encryption.Service — server/main.go passes the real *encryption.Service,
+// which satisfies this directly.
+func (c *KeyorixCore) SetAuthEncryptor(s ports.EncryptionProvider) {
 	c.authEncryptor = s
 }
 
@@ -790,7 +797,8 @@ func (c *KeyorixCore) SetAuthEncryptor(s *encryption.Service) {
 // storage.encryption.enabled. Once wired, every new secret version is stored as
 // AAD-bound ciphertext and reads fail closed on an unavailable key (see
 // secret_value_crypto.go). nil = encryption disabled (plaintext at rest — dev/test).
-func (c *KeyorixCore) SetSecretValueEncryptor(s *encryption.Service) {
+// Accepts ports.EncryptionProvider (ADR-109 step 5), same as SetAuthEncryptor above.
+func (c *KeyorixCore) SetSecretValueEncryptor(s ports.EncryptionProvider) {
 	c.secretValueEncryptor = s
 }
 

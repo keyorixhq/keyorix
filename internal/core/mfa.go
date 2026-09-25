@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
@@ -61,7 +61,7 @@ func (c *KeyorixCore) BeginMFAEnrollment(ctx context.Context, userID uint) (otpa
 	if err != nil {
 		return "", "", fmt.Errorf("failed to generate TOTP secret: %w", err)
 	}
-	ct, meta, err := c.encryptAuthSecret(key.Secret(), encryption.MFASecretAAD(userID))
+	ct, meta, err := c.encryptAuthSecret(key.Secret(), ports.MFASecretAAD(userID))
 	if err != nil {
 		return "", "", fmt.Errorf("failed to encrypt TOTP secret: %w", err)
 	}
@@ -405,7 +405,7 @@ func (c *KeyorixCore) loadTOTPSecret(ctx context.Context, userID uint) (string, 
 	if err != nil {
 		return "", err
 	}
-	return c.decryptAuthSecret(row.SecretEnc, row.SecretMeta, encryption.MFASecretAAD(userID))
+	return c.decryptAuthSecret(row.SecretEnc, row.SecretMeta, ports.MFASecretAAD(userID))
 }
 
 // totpPeriod is the TOTP step length in seconds.

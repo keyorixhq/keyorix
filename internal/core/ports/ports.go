@@ -12,8 +12,9 @@
 // server/main.go's DefaultIntegrations instead — see internal/core's own
 // dependency_guard_test.go, whose allowlist shrinks by one entry per
 // completed step. notary and saml are wired as of step 1, rotation as of
-// step 2, dynamic as of step 3, connect as of step 4; encryption is not
-// wired yet.
+// step 2, dynamic as of step 3, connect as of step 4, encryption as of step
+// 5 — coreIntegrationDeps is empty from step 5 onward, machine-checked by
+// TestCoreIntegrationDepsAllowlistIsEmpty.
 //
 // This package must never import an integration package itself, or any of
 // their cloud SDKs — that would silently defeat the whole point. See
@@ -23,6 +24,7 @@ package ports
 import (
 	"context"
 	"crypto/x509"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -237,14 +239,58 @@ func SanitizeErrorMessage(err error) string {
 // Mirrors internal/encryption.Service — the ONLY four methods internal/core
 // calls on it, across secret_value_crypto.go, mfa.go, dynamic_secrets.go,
 // secret_render.go and service.go's authEncryptor/secretValueEncryptor
-// helpers. AAD is built by the caller (internal/encryption.SecretAAD and
-// siblings today) and passed through opaquely — this interface has no
-// opinion on how AAD is constructed.
+// helpers. AAD is built by the caller (SecretAAD and siblings below) and
+// passed through opaquely — this interface has no opinion on how AAD is
+// constructed. Unlike every other ADR-109 integration, *internal/encryption.
+// Service (ADR-109 step 5) needs no type alias to satisfy this: its four
+// methods already have this exact signature, so it satisfies
+// EncryptionProvider structurally, with no change to internal/encryption
+// itself.
 type EncryptionProvider interface {
 	IsEnabled() bool
 	IsInitialized() bool
 	EncryptSecretWithAAD(plaintext, aad []byte) (ciphertext, meta []byte, err error)
 	DecryptSecretWithAAD(ciphertext, aad []byte) (plaintext []byte, err error)
+}
+
+// SecretAAD returns the canonical Additional Authenticated Data for a secret
+// version. Format: "keyorix:v2:<secretID>:<projectID>:<versionNumber>". This
+// binds the ciphertext to a specific secret + project + version, preventing
+// ciphertext transplant attacks (copying an encrypted value between rows). A
+// type alias target of internal/encryption.SecretAAD (ADR-109 step 5, small,
+// pure, stdlib-only) so internal/core.encryptVersionValue/decryptVersionValue
+// (secret_value_crypto.go) can build it without importing internal/encryption;
+// see that package's own re-export for the same two-line-re-export rationale
+// steps 1–4 already established for their own AAD/redaction helpers.
+func SecretAAD(secretID, projectID uint, versionNumber int) []byte {
+	return []byte(fmt.Sprintf("keyorix:v2:%d:%d:%d", secretID, projectID, versionNumber))
+}
+
+// MFASecretAAD returns the AAD for a user's encrypted TOTP shared secret
+// (#94), binding the ciphertext to the owning user so a DB-write attacker
+// cannot transplant one user's encrypted TOTP seed onto another user's row.
+// A type alias target of internal/encryption.MFASecretAAD (ADR-109 step 5) —
+// see mfa.go's BeginMFAEnrollment/VerifyMFALogin for the call sites.
+func MFASecretAAD(userID uint) []byte {
+	return []byte(fmt.Sprintf("keyorix:mfa:v1:%d", userID))
+}
+
+// DynamicSecretConfigAAD returns the AAD for a dynamic-secret config's
+// encrypted admin DSN (#94), binding the ciphertext to the config's identity
+// and project/environment scope. A type alias target of
+// internal/encryption.DynamicSecretConfigAAD (ADR-109 step 5) — see
+// dynamic_secrets.go's call sites.
+func DynamicSecretConfigAAD(configID, projectID, environmentID uint) []byte {
+	return []byte(fmt.Sprintf("keyorix:dynsecret-config:v1:%d:%d:%d", configID, projectID, environmentID))
+}
+
+// DynamicSecretLeaseAAD returns the AAD for an issued dynamic-secret lease's
+// encrypted credential (#94), binding the ciphertext to the lease's identity
+// and owning config. A type alias target of
+// internal/encryption.DynamicSecretLeaseAAD (ADR-109 step 5) — see
+// dynamic_secrets.go's IssueLease.
+func DynamicSecretLeaseAAD(leaseID string, configID uint) []byte {
+	return []byte(fmt.Sprintf("keyorix:dynsecret-lease:v1:%s:%d", leaseID, configID))
 }
 
 // NotaryReceipt is proof an external timestamping authority anchored a

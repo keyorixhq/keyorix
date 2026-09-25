@@ -17,7 +17,6 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -270,7 +269,7 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	if err != nil {
 		return nil, err
 	}
-	dsnEnc, dsnMeta, err := c.encryptAuthSecret(req.AdminDSN, encryption.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
+	dsnEnc, dsnMeta, err := c.encryptAuthSecret(req.AdminDSN, ports.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to encrypt admin DSN: %w", err)
 	}
@@ -540,7 +539,7 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 			return nil, fmt.Errorf("active-lease limit reached for this config (%d); revoke a lease before issuing another", cfg.MaxActiveLeases)
 		}
 	}
-	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta, encryption.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
+	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta, ports.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt admin DSN: %w", err)
 	}
@@ -571,7 +570,7 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 		return nil, err
 	}
 	credJSON, _ := json.Marshal(cred) // #nosec G117 -- intentional: serialized only to be immediately encrypted at rest below, never persisted or logged in cleartext
-	credEnc, credMeta, err := c.encryptAuthSecret(string(credJSON), encryption.DynamicSecretLeaseAAD(leaseID, cfg.ID))
+	credEnc, credMeta, err := c.encryptAuthSecret(string(credJSON), ports.DynamicSecretLeaseAAD(leaseID, cfg.ID))
 	if err != nil {
 		// The role exists on the target — revoke it so we don't leak it.
 		c.cleanupOrphanedRole(ctx, cfg, engine, adminDSN, roleName, userID)
@@ -678,7 +677,7 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	if err != nil {
 		return err
 	}
-	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta, encryption.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
+	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta, ports.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
 	if err != nil {
 		return fmt.Errorf("failed to decrypt admin DSN: %w", err)
 	}
@@ -937,7 +936,7 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 	if !engine.SupportsNativeExpiry() && !c.dynamicSweepEnabled {
 		return time.Time{}, fmt.Errorf("renewal is unavailable for the %s backend while the lease sweeper is disabled (its TTL would be unenforced)", cfg.BackendType)
 	}
-	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta, encryption.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
+	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta, ports.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to decrypt admin DSN: %w", err)
 	}

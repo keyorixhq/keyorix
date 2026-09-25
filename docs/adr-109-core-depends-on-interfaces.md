@@ -90,13 +90,13 @@ Methodology: `scripts/fuzzing/mapsize_of_bin.sh` (a repo-local reproduction of t
 that script's header comment), `go build -trimpath` for `GOOS=linux GOARCH=amd64`, and
 `go list -deps ./internal/core` (production files only).
 
-| Metric | Baseline (Step 0) | Step 1 (notary + saml) | Step 2 (+ rotation) | Step 3 (+ dynamic) | Step 4 (+ connect) |
-|---|---|---|---|---|---|
-| `internal/core` coverage map (`FuzzCoreOperationSequence`) | 486,874 B (~475 KiB) — matches this ADR's Context-section figure of "about 480 KB" | 485,107 B (~473.7 KiB); **−1,767 B (−0.36%)** | 485,109 B (~473.7 KiB); flat vs. step 1 (+2 B, noise) | 485,115 B (~473.7 KiB); flat vs. step 2 (+6 B, noise) | 485,114 B (~473.7 KiB); flat vs. step 3 (−1 B, noise) |
-| `keyorix-server` binary, `linux/amd64`, `-trimpath` | 100,937,259 B (~96.3 MiB) | 100,989,425 B (~96.3 MiB); flat (build noise, +0.05%) | 100,989,278 B (~96.3 MiB); flat vs. step 1 (−147 B, noise) | 100,994,799 B (~96.3 MiB); flat vs. step 2 (+5,521 B, noise) | 100,989,091 B (~96.3 MiB); flat vs. step 3 (−5,708 B, noise) |
-| `go list -deps ./internal/core` total | 872 packages | 859 packages; **−13** | 853 packages; **−6** | 753 packages; **−100** | 746 packages; **−7** |
-| ...of which cloud SDK packages (aws/azure/gcp/vault) | 131 (64 `aws-sdk-go-v2`, 33 `azure-sdk-for-go`, 34 `cloud.google.com/go`, 0 `hashicorp/vault/api` — Connect's Vault backend has no official SDK dependency today) | 131, unchanged — notary and saml carry no cloud SDK | 128; **−3** — `internal/rotation`'s `awsiam.go`/`azure.go`/`gcpsa.go` each pull one cloud SDK into core's graph today, gone once rotation is behind `ports` | 128, unchanged — see note below | 121 (58 `aws-sdk-go-v2`, 32 `azure-sdk-for-go`, 31 `cloud.google.com/go`, 0 `hashicorp/vault/api`); **−7** — the first step where the *total* package drop (7) equals the cloud-SDK drop (7) exactly: `internal/connect`'s own non-SDK code (manager, ref-matching, the four connector constructors' non-SDK glue) added nothing to core's graph beyond what `connect`+`connecttypes` already contributed pre-step-4, so every package this step actually removed was an AWS/Azure/GCP SDK leaf |
-| ...of which the 6 ADR-109 integration packages | `connect` (+ `connecttypes`, which stays), `rotation`, `dynamic`, `encryption`, `notary`, `saml` — all present, tracked exactly by `internal/core/dependency_guard_test.go`'s `coreIntegrationDeps` allowlist | `connect` (+ `connecttypes`), `rotation`, `dynamic`, `encryption` — notary and saml removed from the allowlist and confirmed absent from `go list -deps` | `connect` (+ `connecttypes`), `dynamic`, `encryption` — rotation removed too, confirmed absent | `connect` (+ `connecttypes`), `encryption` — dynamic removed too, confirmed absent | `encryption` only — connect removed too, confirmed absent; `connecttypes` (the carve-out, no SDK dependency) still appears in `go list -deps`, now reached only via `encryption` → `internal/config` → `internal/connect/connecttypes` (not tracked by the allowlist — see its own doc comment) rather than via `internal/connect` itself, which no longer appears at all |
+| Metric | Baseline (Step 0) | Step 1 (notary + saml) | Step 2 (+ rotation) | Step 3 (+ dynamic) | Step 4 (+ connect) | Step 5 (+ encryption) |
+|---|---|---|---|---|---|---|
+| `internal/core` coverage map (`FuzzCoreOperationSequence`) | 486,874 B (~475 KiB) — matches this ADR's Context-section figure of "about 480 KB" | 485,107 B (~473.7 KiB); **−1,767 B (−0.36%)** | 485,109 B (~473.7 KiB); flat vs. step 1 (+2 B, noise) | 485,115 B (~473.7 KiB); flat vs. step 2 (+6 B, noise) | 485,114 B (~473.7 KiB); flat vs. step 3 (−1 B, noise) | 486,254 B (~474.9 KiB); **+1,140 B vs. step 4** — NOT noise, see note below |
+| `keyorix-server` binary, `linux/amd64`, `-trimpath` | 100,937,259 B (~96.3 MiB) | 100,989,425 B (~96.3 MiB); flat (build noise, +0.05%) | 100,989,278 B (~96.3 MiB); flat vs. step 1 (−147 B, noise) | 100,994,799 B (~96.3 MiB); flat vs. step 2 (+5,521 B, noise) | 100,989,091 B (~96.3 MiB); flat vs. step 3 (−5,708 B, noise) | 100,985,643 B (~96.3 MiB); flat vs. step 4 (−3,448 B, noise) |
+| `go list -deps ./internal/core` total | 872 packages | 859 packages; **−13** | 853 packages; **−6** | 753 packages; **−100** | 746 packages; **−7** | 357 packages; **−389** |
+| ...of which cloud SDK packages (aws/azure/gcp/vault) | 131 (64 `aws-sdk-go-v2`, 33 `azure-sdk-for-go`, 34 `cloud.google.com/go`, 0 `hashicorp/vault/api` — Connect's Vault backend has no official SDK dependency today) | 131, unchanged — notary and saml carry no cloud SDK | 128; **−3** — `internal/rotation`'s `awsiam.go`/`azure.go`/`gcpsa.go` each pull one cloud SDK into core's graph today, gone once rotation is behind `ports` | 128, unchanged — see note below | 121 (58 `aws-sdk-go-v2`, 32 `azure-sdk-for-go`, 31 `cloud.google.com/go`, 0 `hashicorp/vault/api`); **−7** — the first step where the *total* package drop (7) equals the cloud-SDK drop (7) exactly: `internal/connect`'s own non-SDK code (manager, ref-matching, the four connector constructors' non-SDK glue) added nothing to core's graph beyond what `connect`+`connecttypes` already contributed pre-step-4, so every package this step actually removed was an AWS/Azure/GCP SDK leaf | **0** — **−121, ALL remaining cloud SDK packages gone.** `internal/encryption`'s KMS-provider layer (`crypto.KeyProvider` implementations for AWS KMS/Azure Key Vault/GCP KMS) was the single largest concentration of cloud-SDK weight in core's graph; removing `internal/encryption` itself (not just its own direct SDK imports) also drops every SDK package `internal/connect`/`internal/dynamic` were ALSO sharing with it (step 3/4's own notes on why their cloud-SDK counts didn't move independently) |
+| ...of which the 6 ADR-109 integration packages | `connect` (+ `connecttypes`, which stays), `rotation`, `dynamic`, `encryption`, `notary`, `saml` — all present, tracked exactly by `internal/core/dependency_guard_test.go`'s `coreIntegrationDeps` allowlist | `connect` (+ `connecttypes`), `rotation`, `dynamic`, `encryption` — notary and saml removed from the allowlist and confirmed absent from `go list -deps` | `connect` (+ `connecttypes`), `dynamic`, `encryption` — rotation removed too, confirmed absent | `connect` (+ `connecttypes`), `encryption` — dynamic removed too, confirmed absent | `encryption` only — connect removed too, confirmed absent; `connecttypes` (the carve-out, no SDK dependency) still appears in `go list -deps`, now reached only via `encryption` → `internal/config` → `internal/connect/connecttypes` (not tracked by the allowlist — see its own doc comment) rather than via `internal/connect` itself, which no longer appears at all | **none — `coreIntegrationDeps` is empty**, machine-asserted by `TestCoreIntegrationDepsAllowlistIsEmpty`; `internal/config` and, with it, `connecttypes` also disappear from `go list -deps` entirely (their only path in was via `encryption`) — the connecttypes carve-out in `dependency_guard_test.go`'s doc comment is now dormant, not deleted, in case a future core file reaches it by some other path |
 
 Step 0 itself does not change any of these numbers — it adds `internal/core/ports` (the target
 interface shapes, unwired) and the two dependency-guard tests (`internal/core`'s allowlist,
@@ -263,3 +263,68 @@ actually removed was an SDK leaf, not glue code. The map-size and binary-size de
 the same reason steps 1–3's did: `server/main.go` still wires the real `internal/connect`
 implementation unconditionally when `connect.enabled` is configured, so a full server build is
 unaffected until the lean/air-gapped build (step 6) drops it via build tags.
+
+**Step 5** swaps `internal/core`'s direct use of `internal/encryption` for `ports.EncryptionProvider`
+(`secretValueEncryptor`/`authEncryptor`, `SetSecretValueEncryptor`/`SetAuthEncryptor`) and
+`ports.SecretAAD`/`ports.MFASecretAAD`/`ports.DynamicSecretConfigAAD`/`ports.DynamicSecretLeaseAAD`
+(the AAD-construction helpers `secret_value_crypto.go`/`mfa.go`/`dynamic_secrets.go` call before
+every encrypt/decrypt). Unlike every prior step, `*internal/encryption.Service` needs **no type
+alias** to satisfy `EncryptionProvider`: its four methods (`IsEnabled`/`IsInitialized`/
+`EncryptSecretWithAAD`/`DecryptSecretWithAAD`) already have the exact signatures
+`ports.EncryptionProvider` declares (they were written before ADR-109 and just happen to match), so
+Go's structural interface satisfaction covers it with zero changes to `internal/encryption` beyond
+the AAD helpers below — the first step where the integration package itself needed no edit for the
+core-facing type, only for the free functions. `SecretAAD`/`MFASecretAAD`/
+`DynamicSecretConfigAAD`/`DynamicSecretLeaseAAD` move to `ports` outright (small, pure, stdlib-only
+`fmt.Sprintf` formatting — the same treatment step 3/4 gave `RedactSensitive`/`RefHasDotSegment`),
+with `internal/encryption/encryption.go`'s own copies becoming two-line re-exports so existing
+callers (this package's own tests, `server/http`) keep working unchanged. `APITokenAAD`/
+`PasswordResetTokenAAD` (the same file's other two AAD helpers) are untouched — `internal/core`
+never called them; they exist for `server/http`'s PAT/password-reset flows, outside this ADR's
+scope.
+
+`internal/encryption`'s own wiring call site (`SetSecretValueEncryptor(encSvc)`/
+`SetAuthEncryptor(encSvc)`, `server/main.go`'s `initializeCoreService`) was deliberately **not**
+folded into `DefaultIntegrations`, unlike connect's extraction in step 4 — see
+`DefaultIntegrations`'s own doc comment for the full reasoning: encryption's initialization feeds
+the audit-checkpoint and evidence-pack signing keys, both derived and wired immediately after it
+and strictly before `DefaultIntegrations` is ever called, so moving it would either reorder that
+dependency or require threading derived key material back out of `DefaultIntegrations` — extra
+surgery ADR-109's actual target (internal/core's import graph) does not need. The ADR's own
+"Definition of done" bullet ("`go list -deps ./internal/core` (production) contains no cloud SDK
+and no integration package") is now literally true, and machine-checked twice over: `go list -deps`
+itself shows zero cloud-SDK packages and zero of the six ADR-109 integration packages, and
+`dependency_guard_test.go`'s new `TestCoreIntegrationDepsAllowlistIsEmpty` asserts
+`coreIntegrationDeps` is empty directly, rather than leaving "empty" as something a reader has to
+infer from the map literal having no entries.
+
+The dependency-count drop here (389 packages, `go list -deps` 746 → 357) dwarfs every prior step,
+including step 3's 100-package drop from `internal/dynamic`'s MongoDB/Redis/client-go trees:
+`internal/encryption`'s KMS-provider layer (`crypto.KeyProvider` implementations backing AWS KMS,
+Azure Key Vault, and GCP KMS) is the single largest concentration of cloud-SDK weight anywhere in
+core's graph, and removing `internal/encryption` itself also drops every SDK package `internal/
+connect` and `internal/dynamic` were sharing with it rather than owning independently (steps 3/4's
+own notes on why *their* cloud-SDK counts stayed flat) — this step is where that shared weight
+actually leaves the graph. `internal/config` (and, through it, `internal/connect/connecttypes`,
+the carve-out `dependency_guard_test.go` has tracked since step 0) also disappear from `go list
+-deps` entirely: `internal/encryption` was their only path into core's production graph, confirmed
+by the same `go list -deps` run this step's own table row is built from.
+
+The map-size delta (+1,140 B) is the first one in this ADR that is **not** noise, and reporting it
+as flat would be the wrong call: steps 1–4's near-zero map deltas were never actually caused by
+"nothing changed" — `FuzzCoreOperationSequence`'s test binary links whichever packages `internal/
+core`'s _test.go files import for realistic fixtures (`mfa_test.go`/`secret_value_crypto_test.go`/
+`dynamic_secrets_test.go`/`catalog_delete_project_test.go` all construct a real
+`encryption.NewService` today, exactly as steps 1–4's own test fixtures kept constructing their
+real integrations), so `internal/encryption` and its cloud-SDK weight stay part of the *test*
+binary's build graph regardless of what the *production* files import — the 389-package,
+121-cloud-SDK drop above is real and machine-verified, but it is a production-graph fact this
+particular fuzz-map measurement was never sensitive to, in this step or any prior one. What
+actually moved the map this time is that `ports.go` itself gained five real functions with real
+branches (`RefHasDotSegment`'s loop, `RefWithinPrefix`'s three-way branch, the four `fmt.Sprintf`
+AAD builders) across steps 4 and 5 combined — `ports` is part of `internal/core`'s own build graph,
+so its own coverage instrumentation grows the map exactly as much as any other in-graph package's
+would. The binary-size delta (−3,448 B) stays flat for the same reason steps 1–4's did:
+`server/main.go` still wires the real `internal/encryption` implementation unconditionally, so a
+full server build is unaffected until the lean/air-gapped build (step 6) drops the cloud KMS
+providers via build tags.
