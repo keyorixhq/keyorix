@@ -76,13 +76,11 @@ func (h *CatalogHandler) CreateInvitation(w http.ResponseWriter, r *http.Request
 			sendError(w, "Error", msg, status, nil)
 			return
 		}
-		w.WriteHeader(http.StatusCreated)
-		sendSuccess(w, map[string]interface{}{"invitation": inv, "delivery_error": err.Error()},
+		sendCreated(w, map[string]interface{}{"invitation": inv, "delivery_error": err.Error()},
 			"Invitation created but the setup link could not be delivered")
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"invitation": inv, "setup_link": prov}, "Invitation created")
+	sendCreated(w, map[string]interface{}{"invitation": inv, "setup_link": prov}, "Invitation created")
 }
 
 // CreateGlobalInvitation is the Global-Admin counterpart to CreateInvitation: a
@@ -150,13 +148,11 @@ func (h *CatalogHandler) CreateGlobalInvitation(w http.ResponseWriter, r *http.R
 			sendError(w, "Error", msg, status, nil)
 			return
 		}
-		w.WriteHeader(http.StatusCreated)
-		sendSuccess(w, map[string]interface{}{"invitation": inv, "delivery_error": err.Error()},
+		sendCreated(w, map[string]interface{}{"invitation": inv, "delivery_error": err.Error()},
 			"Invitation created but the setup link could not be delivered")
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"invitation": inv, "setup_link": prov}, "Invitation created")
+	sendCreated(w, map[string]interface{}{"invitation": inv, "setup_link": prov}, "Invitation created")
 }
 
 // ResendInvitation handles POST /api/v1/projects/{id}/invitations/{invitationId}/resend
@@ -278,8 +274,7 @@ func (h *CatalogHandler) CreateAccessRequest(w http.ResponseWriter, r *http.Requ
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"access_request": req}, "Access requested")
+	sendCreated(w, map[string]interface{}{"access_request": req}, "Access requested")
 }
 
 // ResolveAccessRequest handles PUT /api/v1/projects/{id}/access-requests/{requestId}

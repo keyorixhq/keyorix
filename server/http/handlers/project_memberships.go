@@ -115,8 +115,7 @@ func (h *CatalogHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"membership": m}, "Member invited")
+	sendCreated(w, map[string]interface{}{"membership": m}, "Member invited")
 }
 
 // TransitionMembership handles PUT /api/v1/projects/{id}/memberships/{membershipId}.

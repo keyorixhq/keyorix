@@ -131,8 +131,7 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 		h.coreService.LogSecretCreatedWithProject(auditCtx, uid, sID, response.ProjectID, uname, sname, ip, ua)
 	}) // #nosec G118
 
-	w.WriteHeader(http.StatusCreated)
-	h.sendSuccess(w, response, i18n.T("SuccessSecretCreated", nil))
+	sendCreated(w, response, i18n.T("SuccessSecretCreated", nil))
 }
 
 // ClassifySecret handles PATCH /api/v1/secrets/{id}/classification — set or clear

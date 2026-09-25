@@ -208,8 +208,7 @@ func (h *CatalogHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, newProjectWire(project), "Project created")
+	sendCreated(w, newProjectWire(project), "Project created")
 }
 
 // ListEnvironments handles GET /api/v1/environments (global, for backward compat)
@@ -338,8 +337,7 @@ func (h *CatalogHandler) CreateProjectEnvironment(w http.ResponseWriter, r *http
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, newEnvironmentWire(env), "Environment created")
+	sendCreated(w, newEnvironmentWire(env), "Environment created")
 }
 
 // DeleteEnvironment handles DELETE /api/v1/environments/:id

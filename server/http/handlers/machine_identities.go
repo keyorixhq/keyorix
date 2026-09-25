@@ -156,8 +156,7 @@ func (h *CatalogHandler) MigrateUserToMachine(w http.ResponseWriter, r *http.Req
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"machine_identity": m}, "User migrated to machine identity")
+	sendCreated(w, map[string]interface{}{"machine_identity": m}, "User migrated to machine identity")
 }
 
 // TransitionMachineIdentity handles PUT /api/v1/projects/{id}/machine-identities/{machineId}.
