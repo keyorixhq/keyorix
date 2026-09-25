@@ -839,12 +839,19 @@ type SecretACL struct {
 	UserId      *int       `json:"user_id,omitempty"`
 }
 
-// SecretAccessLogEntry One read event from a secret's access log. Mirrors a GET .../access-log entry (a PascalCase raw-model response, not snake_case).
+// SecretAccessLogEntry One read event from a secret's access log (server/http/handlers/secrets_access_history.go's secretAccessLogEntry -- a snake_case DTO, not the raw internal/storage/models.SecretAccessLog). ip_address/user_agent are present only when the caller separately holds audit.read (see the route's own description); an ordinary secrets.read-only caller never sees another user's originating IP.
 type SecretAccessLogEntry struct {
-	AccessTime *string `json:"AccessTime,omitempty"`
-	AccessedBy *string `json:"AccessedBy,omitempty"`
-	Action     *string `json:"Action,omitempty"`
-	IPAddress  *string `json:"IPAddress,omitempty"`
+	AccessTime *time.Time `json:"access_time,omitempty"`
+	AccessedBy *string    `json:"accessed_by,omitempty"`
+	Action     *string    `json:"action,omitempty"`
+	Id         *int       `json:"id,omitempty"`
+
+	// IpAddress Only present for a caller who separately holds audit.read.
+	IpAddress       *string `json:"ip_address,omitempty"`
+	SecretVersionId *int    `json:"secret_version_id,omitempty"`
+
+	// UserAgent Only present for a caller who separately holds audit.read.
+	UserAgent *string `json:"user_agent,omitempty"`
 }
 
 // SecretAccessSchedule A secret's temporal access-window policy (internal/storage/models.SecretAccessSchedule -- properly snake_case-tagged, unlike SecretNode).
