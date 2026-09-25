@@ -206,7 +206,7 @@
 | `secret folder list` | moved (thin CLI) | PR 4/5, #2069 |  |
 | `secret get` | moved (thin CLI) | PR 4/5, #2069 |  |
 | `secret get-schedule` | moved (thin CLI) | PR 4/5, #2069 |  |
-| `secret import` | moved (thin CLI) | PR 4/5, #2069 | cloud/Vault `--source` import stays dropped (SBOM goal); moves to keyorix-migrate instead (separate track) |
+| `secret import` | moved out (separate tool) | #2077/#2079 | file mode stays in the thin CLI (cli/cmd/secret_import.go); the vault/aws/azure/gcp live-credential `--source` modes moved to keyorix-migrate |
 | `secret info` | moved (thin CLI) | PR 4/5, #2069 |  |
 | `secret list` | moved (thin CLI) | PR 4/5, #2069 |  |
 | `secret move` | moved (thin CLI) | PR 4/5, #2069 |  |
