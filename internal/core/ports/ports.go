@@ -12,7 +12,8 @@
 // server/main.go's DefaultIntegrations instead — see internal/core's own
 // dependency_guard_test.go, whose allowlist shrinks by one entry per
 // completed step. notary and saml are wired as of step 1, rotation as of
-// step 2, dynamic as of step 3; connect and encryption are not wired yet.
+// step 2, dynamic as of step 3, connect as of step 4; encryption is not
+// wired yet.
 //
 // This package must never import an integration package itself, or any of
 // their cloud SDKs — that would silently defeat the whole point. See
@@ -28,10 +29,13 @@ import (
 	"time"
 )
 
-// Connector reads a secret value from one external store. Mirrors
-// internal/connect.Connector — internal/core.ReadFederatedSecret
-// (connect.go) calls only these three methods on the value
-// internal/connect.Manager.Get returns.
+// Connector reads a secret value from one external store. A type alias of
+// internal/connect.Connector (ADR-109 step 4) — the alias lives on the
+// internal/connect side (see that package's doc comment) so every existing
+// connector implementation (AWS Secrets Manager, Azure Key Vault, GCP Secret
+// Manager, Vault) satisfies this directly, with no adapter.
+// internal/core.ReadFederatedSecret (connect.go) calls only these three
+// methods on the value internal/connect.Manager.Get returns.
 type Connector interface {
 	Name() string
 	Type() string
@@ -39,11 +43,48 @@ type Connector interface {
 }
 
 // ConnectorResolver resolves a configured Keyorix Connect connector by name.
-// Mirrors internal/connect.Manager, the only methods internal/core calls on
-// it (connect.go, service.go).
+// Mirrors internal/connect.Manager (a concrete type, not aliased — only the
+// element type it returns is, same shape as RotationExecutorResolver/
+// internal/rotation.Manager), the only methods internal/core calls on it
+// (connect.go, service.go).
 type ConnectorResolver interface {
 	Get(name string) (Connector, bool)
 	Names() []string
+}
+
+// RefHasDotSegment reports whether ref contains a "." or ".." path segment.
+// A type alias target of internal/connect.RefHasDotSegment (ADR-109 step 4)
+// — the implementation lives here so internal/core.refMatches (connect.go)
+// can apply the same traversal guard internal/connect's own per-reference
+// allowlist (prefixAllowed) uses, without importing internal/connect. See
+// internal/connect/connect.go's own doc comment on RefHasDotSegment for the
+// full rationale.
+func RefHasDotSegment(ref string) bool {
+	for _, seg := range strings.Split(ref, "/") {
+		if seg == "." || seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// RefWithinPrefix reports whether ref is scoped by prefix p on a
+// path-segment boundary rather than a bare substring match: ref must equal p
+// exactly, or extend it starting with '/'. A type alias target of
+// internal/connect.RefWithinPrefix (ADR-109 step 4) — see that function's
+// doc comment for the full rationale. An empty prefix p matches nothing (use
+// a separate empty-prefix guard to mean "allow all").
+func RefWithinPrefix(p, ref string) bool {
+	if ref == p {
+		return true
+	}
+	if !strings.HasPrefix(ref, p) {
+		return false
+	}
+	if strings.HasSuffix(p, "/") {
+		return true
+	}
+	return ref[len(p)] == '/'
 }
 
 // RotationExecutor applies a new credential to an upstream system during

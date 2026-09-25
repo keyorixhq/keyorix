@@ -90,13 +90,13 @@ Methodology: `scripts/fuzzing/mapsize_of_bin.sh` (a repo-local reproduction of t
 that script's header comment), `go build -trimpath` for `GOOS=linux GOARCH=amd64`, and
 `go list -deps ./internal/core` (production files only).
 
-| Metric | Baseline (Step 0) | Step 1 (notary + saml) | Step 2 (+ rotation) | Step 3 (+ dynamic) |
-|---|---|---|---|---|
-| `internal/core` coverage map (`FuzzCoreOperationSequence`) | 486,874 B (~475 KiB) — matches this ADR's Context-section figure of "about 480 KB" | 485,107 B (~473.7 KiB); **−1,767 B (−0.36%)** | 485,109 B (~473.7 KiB); flat vs. step 1 (+2 B, noise) | 485,115 B (~473.7 KiB); flat vs. step 2 (+6 B, noise) |
-| `keyorix-server` binary, `linux/amd64`, `-trimpath` | 100,937,259 B (~96.3 MiB) | 100,989,425 B (~96.3 MiB); flat (build noise, +0.05%) | 100,989,278 B (~96.3 MiB); flat vs. step 1 (−147 B, noise) | 100,994,799 B (~96.3 MiB); flat vs. step 2 (+5,521 B, noise) |
-| `go list -deps ./internal/core` total | 872 packages | 859 packages; **−13** | 853 packages; **−6** | 753 packages; **−100** |
-| ...of which cloud SDK packages (aws/azure/gcp/vault) | 131 (64 `aws-sdk-go-v2`, 33 `azure-sdk-for-go`, 34 `cloud.google.com/go`, 0 `hashicorp/vault/api` — Connect's Vault backend has no official SDK dependency today) | 131, unchanged — notary and saml carry no cloud SDK | 128; **−3** — `internal/rotation`'s `awsiam.go`/`azure.go`/`gcpsa.go` each pull one cloud SDK into core's graph today, gone once rotation is behind `ports` | 128, unchanged — see note below |
-| ...of which the 6 ADR-109 integration packages | `connect` (+ `connecttypes`, which stays), `rotation`, `dynamic`, `encryption`, `notary`, `saml` — all present, tracked exactly by `internal/core/dependency_guard_test.go`'s `coreIntegrationDeps` allowlist | `connect` (+ `connecttypes`), `rotation`, `dynamic`, `encryption` — notary and saml removed from the allowlist and confirmed absent from `go list -deps` | `connect` (+ `connecttypes`), `dynamic`, `encryption` — rotation removed too, confirmed absent | `connect` (+ `connecttypes`), `encryption` — dynamic removed too, confirmed absent |
+| Metric | Baseline (Step 0) | Step 1 (notary + saml) | Step 2 (+ rotation) | Step 3 (+ dynamic) | Step 4 (+ connect) |
+|---|---|---|---|---|---|
+| `internal/core` coverage map (`FuzzCoreOperationSequence`) | 486,874 B (~475 KiB) — matches this ADR's Context-section figure of "about 480 KB" | 485,107 B (~473.7 KiB); **−1,767 B (−0.36%)** | 485,109 B (~473.7 KiB); flat vs. step 1 (+2 B, noise) | 485,115 B (~473.7 KiB); flat vs. step 2 (+6 B, noise) | 485,114 B (~473.7 KiB); flat vs. step 3 (−1 B, noise) |
+| `keyorix-server` binary, `linux/amd64`, `-trimpath` | 100,937,259 B (~96.3 MiB) | 100,989,425 B (~96.3 MiB); flat (build noise, +0.05%) | 100,989,278 B (~96.3 MiB); flat vs. step 1 (−147 B, noise) | 100,994,799 B (~96.3 MiB); flat vs. step 2 (+5,521 B, noise) | 100,989,091 B (~96.3 MiB); flat vs. step 3 (−5,708 B, noise) |
+| `go list -deps ./internal/core` total | 872 packages | 859 packages; **−13** | 853 packages; **−6** | 753 packages; **−100** | 746 packages; **−7** |
+| ...of which cloud SDK packages (aws/azure/gcp/vault) | 131 (64 `aws-sdk-go-v2`, 33 `azure-sdk-for-go`, 34 `cloud.google.com/go`, 0 `hashicorp/vault/api` — Connect's Vault backend has no official SDK dependency today) | 131, unchanged — notary and saml carry no cloud SDK | 128; **−3** — `internal/rotation`'s `awsiam.go`/`azure.go`/`gcpsa.go` each pull one cloud SDK into core's graph today, gone once rotation is behind `ports` | 128, unchanged — see note below | 121 (58 `aws-sdk-go-v2`, 32 `azure-sdk-for-go`, 31 `cloud.google.com/go`, 0 `hashicorp/vault/api`); **−7** — the first step where the *total* package drop (7) equals the cloud-SDK drop (7) exactly: `internal/connect`'s own non-SDK code (manager, ref-matching, the four connector constructors' non-SDK glue) added nothing to core's graph beyond what `connect`+`connecttypes` already contributed pre-step-4, so every package this step actually removed was an AWS/Azure/GCP SDK leaf |
+| ...of which the 6 ADR-109 integration packages | `connect` (+ `connecttypes`, which stays), `rotation`, `dynamic`, `encryption`, `notary`, `saml` — all present, tracked exactly by `internal/core/dependency_guard_test.go`'s `coreIntegrationDeps` allowlist | `connect` (+ `connecttypes`), `rotation`, `dynamic`, `encryption` — notary and saml removed from the allowlist and confirmed absent from `go list -deps` | `connect` (+ `connecttypes`), `dynamic`, `encryption` — rotation removed too, confirmed absent | `connect` (+ `connecttypes`), `encryption` — dynamic removed too, confirmed absent | `encryption` only — connect removed too, confirmed absent; `connecttypes` (the carve-out, no SDK dependency) still appears in `go list -deps`, now reached only via `encryption` → `internal/config` → `internal/connect/connecttypes` (not tracked by the allowlist — see its own doc comment) rather than via `internal/connect` itself, which no longer appears at all |
 
 Step 0 itself does not change any of these numbers — it adds `internal/core/ports` (the target
 interface shapes, unwired) and the two dependency-guard tests (`internal/core`'s allowlist,
@@ -215,3 +215,51 @@ on the same underlying SDK packages `internal/connect` and `internal/encryption`
 decoupled) already pull into core's graph, so removing dynamic's own copies of those references
 doesn't shrink the *distinct*-package count — the cloud-SDK number will move only once connect and
 encryption themselves move behind `ports`. Steps 4–5 each report a new column here as they land.
+
+**Step 4** swaps `internal/core`'s direct use of `internal/connect` for `ports.ConnectorResolver`
+(`connectManager`, `SetConnectManager`) and `ports.RefHasDotSegment`/`ports.RefWithinPrefix` (the
+traversal-guard/prefix-match helpers `refMatches` calls for ADR-045 per-reference RBAC).
+`internal/connect.Connector` becomes a type alias of `ports.Connector` — the same struct/interface
+aliasing pattern steps 1–3 already established, here applied to an interface with three methods
+(`Name`/`Type`/`GetSecret`) rather than the struct aliases steps 1 and 3 used — so every existing
+connector implementation (`awssm.go`, `azurekv.go`, `gcpsm.go`, `vault.go`) satisfies
+`ports.ConnectorResolver`'s element type with no adapter, and `*connect.Manager`'s existing
+`Get`/`Names` methods (whose signatures name `Connector`, not `ports.Connector`) satisfy
+`ports.ConnectorResolver` directly after the alias, mirroring `internal/rotation.Executor`'s own
+alias of `ports.RotationExecutor` (step 2) rather than `RotationPartialError`'s struct-aliased-the-
+other-way shape (steps 1/3) — the choice depends on which side already declares the canonical
+shape, not on a fixed convention. `ports.RefHasDotSegment`/`ports.RefWithinPrefix` move to `ports`
+outright (not just aliased), same as step 3's `SanitizeErrorMessage`/`RedactSensitive` — small,
+pure, stdlib-only text/path logic — with `internal/connect/connect.go`'s own
+`RefHasDotSegment`/`RefWithinPrefix`/`refWithinPrefix` becoming two-line re-exports so existing
+callers (`prefixAllowed`, and this package's own tests, which call the unexported
+`refWithinPrefix` directly by name) keep working unchanged.
+
+Unlike steps 1–3, connect's wiring was not already isolated behind its own `wireXxx` helper before
+this step — the ~120-line connector-construction switch, ownership resolution, and boot-time drift
+check lived inline inside `initializeCoreService`, running *after* `DefaultIntegrations`'s call
+site rather than through it. This step extracts that block verbatim into `wireConnect`
+(`server/main.go`), called from `DefaultIntegrations` alongside `wireCheckpointNotary`/
+`wireHumanSSO`/`wireBackendRotation`/`wireDynamicSecrets` — the "later step only has one wiring
+call site to extend" `DefaultIntegrations` doc comment (steps 1–3) is now true in practice, not
+just in the comment. `wireConnect` still calls `log.Fatalf` for the same boot-time
+misconfigurations the original inline block already treated as fatal (ADR-082: an unrecognized
+connector type, a `gcp-secret-manager` connector missing `project_id`, an ownership-resolution
+failure, or a manager/ownership key-set mismatch) — an intentional divergence from
+`wireCheckpointNotary`'s `error`-returning shape, since `DefaultIntegrations` propagating an error
+here would only convert an already-fatal `log.Fatalf` into a different fatal exit path, with no
+behavior change to preserve. `wireConnect` depends on `coreService.Storage()` (for
+`resolveConnectorOwnership`/`warnConnectConfigDrift`), which `core.NewKeyorixCore(store)` sets well
+before `DefaultIntegrations` is ever called — folding this wiring into `DefaultIntegrations` moves
+it earlier in boot (before notification-channel wiring, previously after) with no dependency on
+anything wired in between.
+
+This is the step the ADR's own "Order of work" called "the largest surface" (four connector
+backends: AWS Secrets Manager, Azure Key Vault, GCP Secret Manager, Vault), and it is also the
+first step where the *dependency-count* drop (7) exactly equals the *cloud-SDK* drop (7) — see the
+table cell above for why: `internal/connect`'s own code contributed nothing to core's graph beyond
+what `dynamic`/`encryption` already pulled in from the same cloud SDKs, so every package this step
+actually removed was an SDK leaf, not glue code. The map-size and binary-size deltas stay flat for
+the same reason steps 1–3's did: `server/main.go` still wires the real `internal/connect`
+implementation unconditionally when `connect.enabled` is configured, so a full server build is
+unaffected until the lean/air-gapped build (step 6) drops it via build tags.

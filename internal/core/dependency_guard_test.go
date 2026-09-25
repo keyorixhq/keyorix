@@ -14,11 +14,12 @@ import (
 // implementation from server/main.go deletes its own entry here.
 //
 // notary and saml were removed at step 1, rotation at step 2, dynamic at step
-// 3: internal/core now depends only on ports.TimestampNotary/
+// 3, connect at step 4: internal/core now depends only on ports.TimestampNotary/
 // ports.VerifyReceiptFunc, ports.SAMLServiceProvider,
-// ports.RotationExecutorResolver/ports.RotationPartialError, and
-// ports.DynamicBackendFactory/ports.DynamicBackendEngine, wired from
-// server/main.go's DefaultIntegrations. All four prefixes stay in the scan
+// ports.RotationExecutorResolver/ports.RotationPartialError,
+// ports.DynamicBackendFactory/ports.DynamicBackendEngine, and
+// ports.ConnectorResolver/ports.RefHasDotSegment/ports.RefWithinPrefix, wired
+// from server/main.go's DefaultIntegrations. All five prefixes stay in the scan
 // below (see present's HasPrefix checks) so a regression back to any of them
 // is still caught by the "not on the allowlist" branch, not silently dropped
 // from the scan.
@@ -34,7 +35,6 @@ import (
 // carve-out in internal/i18n/deps_guard_test.go), and ADR-109 has no reason
 // to ever remove it from internal/core.
 var coreIntegrationDeps = map[string]bool{
-	"github.com/keyorixhq/keyorix/internal/connect":    true,
 	"github.com/keyorixhq/keyorix/internal/encryption": true,
 }
 

@@ -9,10 +9,7 @@
 // an interface seam so the engine is unit-tested with a fake.
 package connect
 
-import (
-	"context"
-	"strings"
-)
+import "github.com/keyorixhq/keyorix/internal/core/ports"
 
 // RefHasDotSegment reports whether ref contains a "." or ".." path segment, e.g.
 // "secret/data/myapp/../otherapp/secret". strings.HasPrefix (used by prefixAllowed
@@ -28,13 +25,13 @@ import (
 // sanitizeVaultRef). Unlike azure.go's blanket `/?#%` rejection, this only rejects
 // the traversal segments themselves — a legitimate multi-segment ref (Vault paths,
 // GCP resource names, AWS Secrets Manager friendly names) still contains plain "/".
+// The implementation moved to ports.RefHasDotSegment (ADR-109 step 4, small, pure,
+// stdlib-only) so internal/core.refMatches can apply the same guard without
+// importing internal/connect; this stays a two-line re-export so existing callers
+// (prefixAllowed below, and this package's own tests, which call it by name) keep
+// working unchanged.
 func RefHasDotSegment(ref string) bool {
-	for _, seg := range strings.Split(ref, "/") {
-		if seg == "." || seg == ".." {
-			return true
-		}
-	}
-	return false
+	return ports.RefHasDotSegment(ref)
 }
 
 // prefixAllowed reports whether ref is permitted by an allowlist of prefixes. An
@@ -63,7 +60,10 @@ func prefixAllowed(allowed []string, ref string) bool {
 // the unrelated sibling "db/production-other-team" — an over-grant a plain
 // strings.HasPrefix would allow. A prefix already ending in '/' is treated as
 // already segment-scoped (any continuation is fine). An empty prefix p matches
-// nothing (use a separate empty-prefix guard to mean "allow all").
+// nothing (use a separate empty-prefix guard to mean "allow all"). The
+// implementation moved to ports.RefWithinPrefix (ADR-109 step 4) alongside
+// RefHasDotSegment above — see its doc comment for the same two-line-re-export
+// rationale.
 func RefWithinPrefix(p, ref string) bool {
 	return refWithinPrefix(p, ref)
 }
@@ -71,30 +71,23 @@ func RefWithinPrefix(p, ref string) bool {
 // refWithinPrefix is the unexported implementation; callers inside this package
 // use it directly while external callers (e.g. core.refMatches) use RefWithinPrefix.
 func refWithinPrefix(p, ref string) bool {
-	if ref == p {
-		return true
-	}
-	if !strings.HasPrefix(ref, p) {
-		return false
-	}
-	if strings.HasSuffix(p, "/") {
-		return true
-	}
-	return ref[len(p)] == '/'
+	return ports.RefWithinPrefix(p, ref)
 }
 
 // Connector reads a secret value from one external store. It is read-only: there is
 // no create/update/delete — federation proxies reads, it does not own the secret.
-type Connector interface {
-	// Name is the operator-assigned connector name (the API path key); unique per
-	// deployment.
-	Name() string
-	// Type identifies the backend kind, e.g. "aws-secrets-manager".
-	Type() string
-	// GetSecret returns the current value of the referenced secret. ref is
-	// connector-specific (for AWS Secrets Manager: the secret name or ARN).
-	GetSecret(ctx context.Context, ref string) (string, error)
-}
+// A type alias of ports.Connector (ADR-109 step 4, identical method set) so every
+// existing connector implementation (AWS Secrets Manager, Azure Key Vault, GCP
+// Secret Manager, Vault) satisfies internal/core/ports.ConnectorResolver's element
+// type directly, with no adapter — mirrors internal/rotation.Executor's own alias
+// of ports.RotationExecutor (ADR-109 step 2).
+//
+//   - Name is the operator-assigned connector name (the API path key); unique per
+//     deployment.
+//   - Type identifies the backend kind, e.g. "aws-secrets-manager".
+//   - GetSecret returns the current value of the referenced secret. ref is
+//     connector-specific (for AWS Secrets Manager: the secret name or ARN).
+type Connector = ports.Connector
 
 // Manager holds the configured connectors, keyed by name.
 type Manager struct {
