@@ -162,7 +162,7 @@ github.com/keyorixhq/keyorix/internal/testhelper
 github.com/keyorixhq/keyorix/internal/cli/accessreview
 github.com/keyorixhq/keyorix/internal/cli/anomalies
 github.com/keyorixhq/keyorix/internal/cli/auth
-github.com/keyorixhq/keyorix/internal/bundle
+github.com/keyorixhq/keyorix/pkg/bundleverify
 github.com/keyorixhq/keyorix/internal/rotation
 github.com/keyorixhq/keyorix/internal/cli/license
 github.com/keyorixhq/keyorix/internal/cli/config
@@ -189,8 +189,8 @@ github.com/keyorixhq/keyorix/internal/saml
 github.com/keyorixhq/keyorix/internal/i18n
 github.com/keyorixhq/keyorix/internal/notary
 github.com/keyorixhq/keyorix/internal/securefiles
-github.com/keyorixhq/keyorix/internal/trust
-github.com/keyorixhq/keyorix/internal/license
+github.com/keyorixhq/keyorix/pkg/trust
+github.com/keyorixhq/keyorix/pkg/licenseverify
 github.com/keyorixhq/keyorix/internal/cli/trust
 github.com/keyorixhq/keyorix/internal/crypto/awskms
 github.com/keyorixhq/keyorix/internal/utils/safeconv
