@@ -66,11 +66,13 @@ separate from human users, with their own lifecycle. (OIDC service-account auth 
 e.g. Kubernetes projected tokens — is a roadmap item.)
 
 **Do you support MFA?**
-Yes — per-user opt-in **TOTP** (RFC 6238) second factor with a two-step login,
-single-use recovery codes, and the TOTP secret encrypted at rest (ADR-034).
-A deployment can mandate MFA for interactive login (`security.require_mfa`); WebAuthn/passkeys are on the roadmap. Password
-policy, short-lived sessions with an absolute lifetime ceiling, and first-login
-password-change enforcement are also shipped.
+Yes — per-user opt-in **TOTP** (RFC 6238, ADR-034) and **phishing-resistant
+WebAuthn/passkeys** (ADR-036), each with a two-step login and single-use TOTP
+recovery codes; the TOTP secret is encrypted at rest. A deployment can mandate
+either factor for interactive login (`security.require_mfa`), and the mandate
+can be scoped to a single sensitive project even when the global policy is off
+(ADR-037). Password policy, short-lived sessions with an absolute lifetime
+ceiling, and first-login password-change enforcement are also shipped.
 
 **Can an admin act as another user, and is that visible?**
 Yes — impersonation issues a separate short-lived session (the admin's own session
@@ -133,14 +135,19 @@ issues. See [`../SECURITY.md`](../SECURITY.md) for details.
 
 We would rather tell you these up front than have you find them:
 
-- **WebAuthn / passkeys** — roadmap. (TOTP MFA is shipped and can be mandated deployment-wide via `security.require_mfa`, ADR-034.)
-- **Audit-log tamper-evidence** (cryptographic chaining / WORM) — roadmap;
-  integrity today relies on operator-controlled PostgreSQL.
+- **Audit-log tamper-evidence** — a SHA-256 hash chain over audit events
+  (ADR-029) is shipped, detecting after-the-fact modification, deletion,
+  insertion, or reordering (`GET /api/v1/audit/verify`, and independently via
+  `keyorix-server admin verify-audit` — see
+  [`OFFLINE-AUDIT-VERIFICATION.md`](./OFFLINE-AUDIT-VERIFICATION.md)). This is
+  tamper-*evidence*, not WORM prevention: a database-level actor can still
+  alter rows, but cannot do so undetectably. Physical write-once-read-many
+  storage remains operator-owned infrastructure, outside the application.
 - **Automated purge schedulers** for soft-deleted records — config-present, not
   yet wired.
-- **PAT per-token permission scoping** — a personal access token currently
-  inherits the owner's full permission set; least-privilege scoping is a roadmap
-  item.
+- **PAT per-token permission scoping** — shipped (ADR-042): a personal access
+  token can be minted with a restricted permission/scope subset of its
+  owner's, rather than always inheriting the owner's full authority.
 - **No independent certification yet** — NIS2/DORA/ISO mappings are informational;
   detailed reviewed reports are targeted for Q3 2026.
 - **`keyorix run`'s injected secrets are readable via OS process-environment
