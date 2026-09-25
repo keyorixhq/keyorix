@@ -1735,6 +1735,40 @@ the old CLI in client mode against a real server, until Phase 5 formally retires
 schedules PR 14a–c should confirm Phase 5's timeline is either already ahead of it, or accept
 that narrow window explicitly, rather than deleting silently and discovering the gap from a
 support ticket.
+## 11. Phase 6 deletion progress (ADR-108 Decision C)
+
+Tracks the 3 PRs in §7's "PR 14 (final)" plan, now split into one PR per deletion tier (14a/14b/14c)
+to keep each under review size. Started only after the Phase 5 switch PR (§1) merged.
+
+- **14a — RemoteStorage differential/parity conformance harness.** Deleted all 59
+  `server/http/remote_storage_*_test.go` files (364 `Test`/`Fuzz` functions; net -22,639 lines).
+  No standalone parity fuzzer existed only for this harness (checked every `func Fuzz` in
+  `server/http/*.go`: the 5 that exist — `FuzzKeyorixHTTPAPISequence`, `FuzzConcurrentOpsLinearizable`,
+  `FuzzMultiTenantIsolation`, `FuzzGRPCRESTSecretReadAuthzParity`, `FuzzCanarySecretLeakage` — are all
+  independent, no `RemoteStorage`/`RealServer`/`conformance` references), so `scripts/fuzzing/targets.conf`
+  needed no change. Same check for `docs/review-coverage.tsv`'s `internal/testutil/fuzzworld` row (its
+  "server/http fuzz test files" clause still holds — those 5 fuzzers are the ones importing it, not any
+  file in the deleted set) — no change needed there either.
+  - `docs/security-closures.tsv`: retired FIX-3-1551 (verification→`manual`, pkg/test→`-`, note prefixed
+    `SURFACE REMOVED` — the RemoteStorage machine-identity-credential-revoke proxy this proved is being
+    deleted in the same Phase, so the property is moot). `secret-delete-machine-actor-001` was NOT
+    moot — its fixed code (`secrets_crud.go`'s `DeleteSecret` handler, an ordinary REST route Phase 6
+    doesn't touch) is still live and had zero other coverage, so it was re-pointed at a new direct
+    handler test (`TestDeleteSecret_MachineActorUsesScopedPermissionNotOwnerCheck`,
+    `server/http/handlers/secrets_crud_s13_test.go`) instead of retired — red/green-verified against
+    the real `isMachine` branch.
+  - Two `server/http` guard tests broke on the deletion and needed re-pointing, not retiring, since
+    the routes/properties they cover are still live (Phase 6 hasn't reached them yet):
+    `system_write_ceiling_walk_test.go`'s `systemCeilingAllowlist` had 2 entries citing deleted
+    `TestConformance_*` functions for `/system/project-memberships` routes — re-pointed at the
+    already-existing, already-equivalent `TestG3Probe_CreateMembershipProxy_...`/
+    `TestG3Probe_TransitionMembershipProxy_...` gap probes (no new test needed, these already proved
+    the same ceiling). `node_credential_route_classification_test.go`'s `perActorCeilingCoverage` had
+    2 dead wire-level entries (for the groups and risk-exception per-actor ceilings); removed them,
+    leaving the still-live `internal/core`-level entries each route already had as its other,
+    still-real, coverage.
+  - `go build ./...`, `go vet ./...`, and the full `go test ./...` all green; `scripts/check-closures.sh`
+    and `scripts/check-adr-conformance.sh` both green.
 
 
 
