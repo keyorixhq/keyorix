@@ -111,18 +111,18 @@ export async function mockDashboardData(page: Page) {
 }
 
 export interface MockSecret {
-    ID: number;
-    Name: string;
-    Type: string;
+    id: number;
+    name: string;
+    type: string;
     environment_name?: string;
-    Status?: string;
-    UpdatedAt?: string;
+    status?: string;
+    updated_at?: string;
 }
 
 /** SecretTableRow formats `lastModified` via Intl.DateTimeFormat, which
  * throws on an invalid/empty date — always provide a real ISO timestamp. */
 function withDate(s: MockSecret): MockSecret {
-    return { UpdatedAt: new Date().toISOString(), ...s };
+    return { updated_at: new Date().toISOString(), ...s };
 }
 
 export async function mockSecretsList(page: Page, secrets: MockSecret[]) {

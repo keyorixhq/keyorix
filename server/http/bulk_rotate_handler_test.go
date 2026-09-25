@@ -42,8 +42,8 @@ func createBulkTestSecret(t *testing.T, client *http.Client, baseURL, token, nam
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
 	data, ok := out["data"].(map[string]interface{})
 	require.True(t, ok, "expected data object in create-secret response: %v", out)
-	id, ok := data["ID"].(float64)
-	require.True(t, ok, "expected numeric ID in create-secret response data: %v", data)
+	id, ok := data["id"].(float64)
+	require.True(t, ok, "expected numeric id in create-secret response data: %v", data)
 	return uint(id)
 }
 
