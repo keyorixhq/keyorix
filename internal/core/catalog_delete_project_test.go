@@ -14,6 +14,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
+	"github.com/keyorixhq/keyorix/internal/dynamic/dynamictest"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -188,7 +189,7 @@ func TestDeleteProject_RealStorage_DisablesDynamicSecretConfigsAndRevokesLeases(
 
 	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())
 	require.NoError(t, enc.Initialize("test-passphrase"))
-	fake := &dynamic.FakeEngine{NativeExpiry: true}
+	fake := &dynamictest.FakeEngine{NativeExpiry: true}
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	c.SetAuthEncryptor(enc)

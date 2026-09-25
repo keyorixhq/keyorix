@@ -4,11 +4,8 @@
 package dynamic
 
 import (
-	"context"
 	"crypto/rand"
 	"fmt"
-	"sync"
-	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/netutil"
@@ -96,71 +93,4 @@ func randString(n int) (string, error) {
 		out = append(out, alphabet[int(buf[0])%len(alphabet)])
 	}
 	return string(out), nil
-}
-
-// FakeEngine is an in-memory engine for tests: it records issued and revoked
-// roles without touching any real database.
-type FakeEngine struct {
-	mu           sync.Mutex
-	Issued       []string
-	Revoked      []string
-	Renewed      []string
-	FailIssue    bool
-	FailRevoke   bool
-	FailRenew    bool
-	NativeExpiry bool              // when true, mimics a backend with DB-level TTL (e.g. Postgres)
-	Ephemeral    bool              // when true, mimics a cloud-IAM backend (no renew)
-	IssueFields  map[string]string // when set, returned in the issued Credential.Fields
-	// RevokeEffective overrides RevokeInvalidatesCredential's result when non-nil,
-	// for tests simulating a backend (like Kubernetes' opt-in bound-token mode)
-	// whose Revoke genuinely invalidates the credential despite being ephemeral.
-	// When nil, it defaults to !Ephemeral (matching every real non-ephemeral
-	// engine, and AWS STS/Azure/GCP's always-false ephemeral no-op).
-	RevokeEffective *bool
-}
-
-func (f *FakeEngine) BackendType() string        { return "fake" }
-func (f *FakeEngine) SupportsNativeExpiry() bool { return f.NativeExpiry }
-func (f *FakeEngine) IsEphemeralBackend() bool   { return f.Ephemeral }
-func (f *FakeEngine) RevokeInvalidatesCredential(_ string) bool {
-	if f.RevokeEffective != nil {
-		return *f.RevokeEffective
-	}
-	return !f.Ephemeral
-}
-
-func (f *FakeEngine) Issue(_ context.Context, _, _ string, _ time.Duration) (Credential, string, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.FailIssue {
-		return Credential{}, "", fmt.Errorf("fake issue failure")
-	}
-	suffix, err := randString(8)
-	if err != nil {
-		return Credential{}, "", err
-	}
-	role := "kx_fake_" + suffix
-	pw, _ := randString(16)
-	f.Issued = append(f.Issued, role)
-	return Credential{Username: role, Password: pw, Fields: f.IssueFields}, role, nil
-}
-
-func (f *FakeEngine) Revoke(_ context.Context, _, roleName string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.FailRevoke {
-		return fmt.Errorf("fake revoke failure")
-	}
-	f.Revoked = append(f.Revoked, roleName)
-	return nil
-}
-
-func (f *FakeEngine) Renew(_ context.Context, _, roleName string, _ time.Time) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.FailRenew {
-		return fmt.Errorf("fake renew failure")
-	}
-	f.Renewed = append(f.Renewed, roleName)
-	return nil
 }
