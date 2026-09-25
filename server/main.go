@@ -562,46 +562,14 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		}
 	}
 
-	// Wire external-notary anchoring of audit checkpoints if enabled (ADR-029): each
-	// written checkpoint gets an independent RFC 3161 timestamp the server cannot
-	// forge. Anchoring is best-effort and only meaningful when checkpoints are
-	// written (which requires encryption).
-	if cn := cfg.Audit.CheckpointNotary; cn.Enabled {
-		if cn.URL == "" {
-			log.Printf("Audit checkpoint notary enabled but no url set; skipping external anchoring")
-		} else {
-			// NewRFC3161 validates the URL is https (or http to a loopback host, for
-			// local testing) — fail closed at startup rather than silently accepting a
-			// plaintext TSA URL that would leak every anchored checkpoint hash (and any
-			// rogue-response substitution) to a network attacker on the path.
-			tsa, err := notary.NewRFC3161(cn.URL, cn.GetTimeout())
-			if err != nil {
-				return nil, nil, fmt.Errorf("audit.checkpoint_notary: %w", err)
-			}
-			coreService.SetCheckpointNotary(tsa)
-			// Load the TSA trust anchor used to VERIFY stored anchors. Without it,
-			// anchoring still records each checkpoint's raw RFC 3161 receipt — that
-			// token remains valid, portable proof an independent party holding the
-			// TSA's root cert can check out-of-box (#182) — but THIS server cannot
-			// re-verify it locally, and must not present a merely-recorded anchor as
-			// though it were one this server actually checked against a root of trust.
-			// Deliberately not fail-closed here (unlike the URL-scheme check above):
-			// anchoring-without-local-verification is a legitimate, intentional
-			// configuration (see CheckpointNotaryConfig.CACertPath's doc comment) —
-			// the trust root can be wired in later, or verification can be done
-			// entirely off-box. Instead, the unverifiable state is surfaced explicitly
-			// on every checkpoint-verification read (KeyorixCore.CheckpointAnchorVerifiable,
-			// AuditChainVerification.AnchorTrustRootConfigured) so a caller/auditor can
-			// always tell a recorded-but-unverifiable anchor apart from a verified one.
-			if cn.CACertPath == "" {
-				log.Printf("Audit checkpoint external anchoring enabled (rfc3161, url=%s) — WARNING: no ca_cert_path set, stored anchors are recorded but CANNOT be locally verified (checkpoint reads will report them as unverified)", cn.URL)
-			} else if roots, err := loadCertPool(cn.CACertPath); err != nil {
-				log.Printf("Audit checkpoint notary: failed to load ca_cert_path %q (%v) — anchors cannot be verified", cn.CACertPath, err)
-			} else {
-				coreService.SetCheckpointAnchorRoots(roots)
-				log.Printf("Audit checkpoint external anchoring enabled (rfc3161, url=%s, timeout=%s, trust anchor=%s)", cn.URL, cn.GetTimeout(), cn.CACertPath)
-			}
-		}
+	// Wire every ADR-109 integration this step has moved behind internal/core/ports
+	// (docs/adr-109-core-depends-on-interfaces.md): external-notary checkpoint
+	// anchoring (ADR-029) and human SSO (OIDC + SAML). This is the single point
+	// that constructs the concrete implementations from config and registers them
+	// on coreService — a later ADR-109 step (rotation, dynamic, connect) only has
+	// one wiring call site to extend.
+	if err := DefaultIntegrations(cfg, coreService); err != nil {
+		return nil, nil, err
 	}
 
 	// Apply the configured password policy, merging any rule the operator didn't
@@ -1123,17 +1091,6 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		}
 		coreService.SetOIDCVerifier(verifier)
 		log.Printf("OIDC federation enabled for %d issuer(s)", len(oidc.Issuers))
-	}
-
-	// Wire human SSO login (OIDC authorization-code flow) when configured. Each
-	// provider's endpoints are discovered from its issuer; a provider whose discovery
-	// fails is skipped with a warning rather than failing startup.
-	if sso := cfg.SSO; sso.Enabled && len(sso.Providers) > 0 {
-		providers, jwks, n := buildSSOProviders(sso)
-		if n > 0 {
-			coreService.SetSSOProviders(providers, jwks)
-			log.Printf("Human SSO enabled for %d provider(s)", n)
-		}
 	}
 
 	// Wire WebAuthn / passkeys (ADR-036) when configured. A bad RP config (no
@@ -2456,6 +2413,96 @@ func noDiscoveryCrossOriginRedirect(req *http.Request, via []*http.Request) erro
 		return fmt.Errorf("discovery: refusing scheme downgrade to %q", req.URL.Scheme)
 	}
 	return nil
+}
+
+// DefaultIntegrations wires every ADR-109 integration currently moved behind
+// internal/core/ports (docs/adr-109-core-depends-on-interfaces.md) — as of step
+// 1, TimestampNotary + its receipt verifier, and SAMLServiceProvider (folded
+// into human SSO wiring alongside OIDC). It is the single point that constructs
+// the concrete implementations from config and registers them on coreService,
+// so a later ADR-109 step (rotation, dynamic, connect) only has one wiring call
+// site to extend.
+//
+// A nil implementation means the feature is unavailable; wiring never fails
+// open (ADR-109 decision #2). A malformed config for an explicitly ENABLED
+// feature returns an error and stops boot (the ADR-082 fail-closed shape); a
+// feature left disabled, or a single misconfigured provider within an enabled
+// one, is skipped with a warning — unchanged from this wiring's pre-ADR-109
+// behavior.
+func DefaultIntegrations(cfg *config.Config, coreService *core.KeyorixCore) error {
+	if err := wireCheckpointNotary(cfg, coreService); err != nil {
+		return err
+	}
+	wireHumanSSO(cfg, coreService)
+	return nil
+}
+
+// wireCheckpointNotary wires external-notary anchoring of audit checkpoints when
+// enabled (ADR-029): each written checkpoint gets an independent RFC 3161
+// timestamp the server cannot forge. Anchoring is best-effort and only
+// meaningful when checkpoints are written (which requires encryption).
+func wireCheckpointNotary(cfg *config.Config, coreService *core.KeyorixCore) error {
+	cn := cfg.Audit.CheckpointNotary
+	if !cn.Enabled {
+		return nil
+	}
+	if cn.URL == "" {
+		log.Printf("Audit checkpoint notary enabled but no url set; skipping external anchoring")
+		return nil
+	}
+	// NewRFC3161 validates the URL is https (or http to a loopback host, for
+	// local testing) — fail closed at startup rather than silently accepting a
+	// plaintext TSA URL that would leak every anchored checkpoint hash (and any
+	// rogue-response substitution) to a network attacker on the path.
+	tsa, err := notary.NewRFC3161(cn.URL, cn.GetTimeout())
+	if err != nil {
+		return fmt.Errorf("audit.checkpoint_notary: %w", err)
+	}
+	coreService.SetCheckpointNotary(tsa)
+	// Load the TSA trust anchor (and its verifier — internal/notary.VerifyReceipt
+	// is a free function, not a TimestampNotary method, so ADR-109 wires it
+	// separately; see ports.VerifyReceiptFunc) used to VERIFY stored anchors.
+	// Without it, anchoring still records each checkpoint's raw RFC 3161 receipt
+	// — that token remains valid, portable proof an independent party holding
+	// the TSA's root cert can check out-of-box (#182) — but THIS server cannot
+	// re-verify it locally, and must not present a merely-recorded anchor as
+	// though it were one this server actually checked against a root of trust.
+	// Deliberately not fail-closed here (unlike the URL-scheme check above):
+	// anchoring-without-local-verification is a legitimate, intentional
+	// configuration (see CheckpointNotaryConfig.CACertPath's doc comment) —
+	// the trust root can be wired in later, or verification can be done
+	// entirely off-box. Instead, the unverifiable state is surfaced explicitly
+	// on every checkpoint-verification read (KeyorixCore.CheckpointAnchorVerifiable,
+	// AuditChainVerification.AnchorTrustRootConfigured) so a caller/auditor can
+	// always tell a recorded-but-unverifiable anchor apart from a verified one.
+	if cn.CACertPath == "" {
+		log.Printf("Audit checkpoint external anchoring enabled (rfc3161, url=%s) — WARNING: no ca_cert_path set, stored anchors are recorded but CANNOT be locally verified (checkpoint reads will report them as unverified)", cn.URL)
+		return nil
+	}
+	roots, err := loadCertPool(cn.CACertPath)
+	if err != nil {
+		log.Printf("Audit checkpoint notary: failed to load ca_cert_path %q (%v) — anchors cannot be verified", cn.CACertPath, err)
+		return nil
+	}
+	coreService.SetCheckpointAnchorRoots(roots, notary.VerifyReceipt)
+	log.Printf("Audit checkpoint external anchoring enabled (rfc3161, url=%s, timeout=%s, trust anchor=%s)", cn.URL, cn.GetTimeout(), cn.CACertPath)
+	return nil
+}
+
+// wireHumanSSO wires human SSO login (OIDC authorization-code flow, and SAML)
+// when configured. Each provider's endpoints are discovered from its issuer; a
+// provider whose discovery fails (or, for SAML, is misconfigured) is skipped
+// with a warning rather than failing startup.
+func wireHumanSSO(cfg *config.Config, coreService *core.KeyorixCore) {
+	sso := cfg.SSO
+	if !sso.Enabled || len(sso.Providers) == 0 {
+		return
+	}
+	providers, jwks, n := buildSSOProviders(sso)
+	if n > 0 {
+		coreService.SetSSOProviders(providers, jwks)
+		log.Printf("Human SSO enabled for %d provider(s)", n)
+	}
 }
 
 // ssoCompleteURL derives the SPA completion URL (<redirect origin>/auth/sso/complete)

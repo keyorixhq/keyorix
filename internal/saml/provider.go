@@ -26,6 +26,8 @@ import (
 
 	csaml "github.com/crewjam/saml"
 	xrv "github.com/mattermost/xml-roundtrip-validator"
+
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 )
 
 // Default attribute names (used when a Config field is empty). These cover the common
@@ -59,13 +61,10 @@ type Provider struct {
 	emailAttr, nameAttr, groupsAttr string
 }
 
-// AssertionInfo is the identity extracted from a validated assertion.
-type AssertionInfo struct {
-	Subject string // the NameID
-	Email   string
-	Name    string
-	Groups  []string
-}
+// AssertionInfo is the identity extracted from a validated assertion. A type
+// alias of ports.SAMLAssertion (ADR-109 step 1) so Provider — unchanged below —
+// satisfies ports.SAMLServiceProvider directly, with no adapter.
+type AssertionInfo = ports.SAMLAssertion
 
 // NewProvider builds a Provider from config, parsing the IdP metadata.
 func NewProvider(cfg Config) (*Provider, error) {

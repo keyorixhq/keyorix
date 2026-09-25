@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	"github.com/keyorixhq/keyorix/internal/notary"
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
@@ -155,15 +155,24 @@ type fakeNotary struct {
 	lastMsg []byte
 }
 
-func (f *fakeNotary) Anchor(_ context.Context, msg []byte) (*notary.Receipt, error) {
+func (f *fakeNotary) Anchor(_ context.Context, msg []byte) (*ports.NotaryReceipt, error) {
 	f.calls++
 	f.lastMsg = append([]byte(nil), msg...)
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &notary.Receipt{Token: f.token, Time: f.at, Provider: "fake"}, nil
+	return &ports.NotaryReceipt{Token: f.token, Time: f.at, Provider: "fake"}, nil
 }
 func (f *fakeNotary) Provider() string { return "fake" }
+
+// fakeVerifyReceiptAlwaysFails is a stub ports.VerifyReceiptFunc that never
+// verifies — used where a test needs SetCheckpointAnchorRoots' verifier wired
+// but is exercising CORE's handling of a verification failure/success surface,
+// not notary's own RFC 3161 crypto (that round-trip is covered by
+// internal/notary's own tests).
+func fakeVerifyReceiptAlwaysFails(_ *x509.CertPool, _, _ []byte) (time.Time, error) {
+	return time.Time{}, fmt.Errorf("fake: receipt does not verify")
+}
 
 func TestAuditCheckpoint_AnchorsWhenNotarySet(t *testing.T) {
 	t.Parallel()
@@ -250,7 +259,7 @@ func TestAuditCheckpoint_AnchorTrustRootConfigured_WithRoots(t *testing.T) {
 	logEvents(t, c, 3)
 	fn := &fakeNotary{token: []byte("opaque-tsa-token"), at: time.Date(2026, 6, 15, 9, 0, 0, 0, time.UTC)}
 	c.SetCheckpointNotary(fn)
-	c.SetCheckpointAnchorRoots(x509.NewCertPool())
+	c.SetCheckpointAnchorRoots(x509.NewCertPool(), fakeVerifyReceiptAlwaysFails)
 
 	_, written, err := c.WriteAuditCheckpoint(ctx)
 	require.NoError(t, err)
@@ -635,7 +644,7 @@ func TestAuditCheckpoint_VerifiesAnchorWhenRootsConfigured(t *testing.T) {
 	logEvents(t, c, 3)
 	fn := &fakeNotary{token: []byte("not-a-real-rfc3161-token"), at: time.Date(2026, 6, 15, 9, 0, 0, 0, time.UTC)}
 	c.SetCheckpointNotary(fn)
-	c.SetCheckpointAnchorRoots(x509.NewCertPool()) // roots configured → anchor verified on read
+	c.SetCheckpointAnchorRoots(x509.NewCertPool(), fakeVerifyReceiptAlwaysFails) // roots configured → anchor verified on read
 	_, _, err := c.WriteAuditCheckpoint(ctx)
 	require.NoError(t, err)
 
