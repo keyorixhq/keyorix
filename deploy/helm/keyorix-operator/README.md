@@ -39,16 +39,29 @@ helm install keyorix-operator deploy/helm/keyorix-operator -n keyorix-system --c
 - **A referenced secret is deleted upstream, or access/the token is
   revoked/expired:** detected (Keyorix returns 401/403/404) and always
   surfaced distinctly on the `Ready` condition (`reason` `UpstreamSecretGone`
-  or `UpstreamAccessRevoked`), but by default (`spec.prunePolicy: Keep`) the
-  target Secret's last-known value is left completely untouched — not
-  deleted or trimmed. This matters beyond any one `KeyorixSecret`:
-  `tokenSecretRef` is commonly *shared* across several of them, so a single
-  credential rotation or revocation event reads as the identical 401 on
-  every `KeyorixSecret` that references it, not just one. Set
-  `spec.prunePolicy: Delete` per-CR to have the operator actively reap that
-  one Secret the moment its reference is confirmed gone/revoked — see the
-  field's own CRD description (and the [example](examples/keyorixsecret.yaml))
-  for the token-sharing tradeoff before enabling it.
+  or `UpstreamAccessRevoked`). By default (`spec.prunePolicy: Delete` — the
+  secure default) the operator actively reaps the target Secret the moment
+  its reference is confirmed gone/revoked. Set `spec.prunePolicy: Keep`
+  per-CR to opt OUT and leave the target Secret's last-known value untouched
+  instead, for deployments that prefer availability over immediate reap —
+  see the field's own CRD description.
+- **Mass-revocation circuit breaker:** `tokenSecretRef` is commonly *shared*
+  across several `KeyorixSecret`s, so a single credential rotation or
+  revocation event reads as the identical 401 (or a simultaneous 404/403) on
+  every `KeyorixSecret` that references it, not just one — with
+  `prunePolicy: Delete` on by default, an unconditional wipe would otherwise
+  delete every target Secret backed by that token, triggered by nothing more
+  than a routine credential rotation. Before wiping, the operator checks
+  every OTHER `KeyorixSecret` sharing the same `tokenSecretRef`: if more than
+  one AND more than 20% of that group are confirmed gone/revoked at once,
+  none of them are wiped — the `Ready` condition instead reads
+  `MassRevocationSuspected`, a Warning Event is emitted, and the
+  `keyorix_operator_mass_revocation_suspected_total` metric increments. A
+  single revocation is unaffected and always wipes immediately. To
+  acknowledge a suspected mass revocation you've confirmed is intentional
+  (e.g. a planned rotation) and proceed with the wipe, annotate the affected
+  CR(s) with `keyorix.io/confirm-prune=<RFC3339 timestamp>` (valid for 1 hour
+  after it's set) — see the [example](examples/keyorixsecret.yaml).
 
 ## Versioning
 

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -25,6 +26,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
+	"sigs.k8s.io/controller-runtime/pkg/recorder"
 
 	secretsv1alpha1 "github.com/keyorixhq/keyorix/operator/api/v1alpha1"
 	"github.com/keyorixhq/keyorix/operator/internal/keyorix"
@@ -63,7 +66,82 @@ const (
 	// complete in well under a second each) while capping the worst case to a fraction of
 	// that 25-minute ceiling.
 	reconcileTimeout = 5 * time.Minute
+
+	// confirmPruneAnnotation is the explicit escape hatch for the mass-revocation
+	// circuit breaker (see massRevocationSuspected): set to an RFC3339 timestamp
+	// (valid for massPruneAckWindow after it's set) to acknowledge a suspected mass
+	// revocation and proceed with the wipe anyway. Coordinator decision, 2026-09-25
+	// inbox item 1.
+	confirmPruneAnnotation = "keyorix.io/confirm-prune"
+	// massPruneAckWindow bounds how long confirmPruneAnnotation stays valid after
+	// being set, so a stale ack left over from a past, already-resolved incident
+	// doesn't silently authorize wiping a FUTURE, unrelated mass-revocation event
+	// forever. 1 hour comfortably covers "I just saw the alert and am unblocking
+	// this reconcile" while still requiring a fresh, deliberate action for the next
+	// incident.
+	massPruneAckWindow = 1 * time.Hour
+	// massPruneMinCount and massPruneFraction define the mass-revocation circuit
+	// breaker's trip threshold: more than massPruneMinCount KeyorixSecrets sharing
+	// one TokenSecretRef AND more than massPruneFraction of that group confirmed
+	// gone/revoked at once looks like one shared credential event (a rotation or
+	// revocation of the token itself), not that many independent, coincidental
+	// per-secret revocations. A single revocation — however large a fraction of a
+	// very small group it is — never trips this on its own.
+	massPruneMinCount = 1
+	massPruneFraction = 0.20
+	// massPruneProbeCap bounds how many OTHER KeyorixSecrets sharing this CR's
+	// TokenSecretRef get live-probed by massRevocationSuspected before deciding
+	// whether to wipe THIS CR's target Secret. Uncapped, a pathologically large
+	// group sharing one token would turn a single confirmed-gone/revoked reconcile
+	// into an unbounded fan-out of extra Keyorix requests. 100 is far above any
+	// realistic fleet sharing one machine-identity token in practice.
+	massPruneProbeCap = 100
+	// reasonMassRevocationSuspected is the Ready condition reason set when the
+	// circuit breaker withholds a wipe — distinct from UpstreamSecretGone/
+	// UpstreamAccessRevoked (the underlying cause is still in the message) so a
+	// reader of .status can tell "wipe withheld, suspected mass event" apart from
+	// "wipe applied" or "wipe deliberately skipped by PrunePolicy Keep".
+	reasonMassRevocationSuspected = "MassRevocationSuspected"
 )
+
+// massRevocationSuspectedTotal counts reconciles where the mass-revocation circuit
+// breaker withheld a confirmed-gone/revoked wipe pending an explicit
+// keyorix.io/confirm-prune ack. Registered once at package init via
+// controller-runtime's own metrics registry (served on the manager's existing
+// /metrics endpoint — see newMetricsOptions in cmd/main.go), matching this
+// module's convention of no separate custom metrics server.
+var massRevocationSuspectedTotal = prometheus.NewCounter(prometheus.CounterOpts{
+	Name: "keyorix_operator_mass_revocation_suspected_total",
+	Help: "KeyorixSecret reconciles where the mass-revocation circuit breaker withheld a confirmed-gone/revoked wipe pending an explicit keyorix.io/confirm-prune ack.",
+})
+
+func init() {
+	ctrlmetrics.Registry.MustRegister(massRevocationSuspectedTotal)
+}
+
+// massRevocationTripped implements the mass-revocation circuit breaker's pure
+// threshold decision (see massPruneMinCount/massPruneFraction), split out so the
+// boundary is directly unit-testable without constructing a full reconciler/List.
+func massRevocationTripped(revokedCount, groupSize int) bool {
+	if groupSize == 0 || revokedCount <= massPruneMinCount {
+		return false
+	}
+	return float64(revokedCount) > massPruneFraction*float64(groupSize)
+}
+
+// effectivePrunePolicy resolves ks.Spec.PrunePolicy's effective value, treating an
+// EMPTY policy the same as PrunePolicyDelete (the restored secure default,
+// 2026-09-25 coordinator decision) — defense in depth alongside the CRD's own
+// +kubebuilder:default=Delete admission-time defaulting, for any path that builds
+// a KeyorixSecret without going through API-server admission (a test, a direct
+// client.Create, an object created under an older CRD version before this default
+// existed).
+func effectivePrunePolicy(p secretsv1alpha1.PrunePolicy) secretsv1alpha1.PrunePolicy {
+	if p == "" {
+		return secretsv1alpha1.PrunePolicyDelete
+	}
+	return p
+}
 
 // KeyorixSecretReconciler reconciles KeyorixSecret objects.
 type KeyorixSecretReconciler struct {
@@ -94,13 +172,26 @@ type KeyorixSecretReconciler struct {
 	// point-in-time fingerprint for drift detection, not something requiring
 	// cross-restart stability, so a fresh key on every restart is correct.
 	hashKey []byte
+	// Recorder emits Kubernetes Events (kubectl describe / events -n <ns>) for
+	// reconcile-visible incidents — currently only the mass-revocation circuit
+	// breaker tripping (see failSuspected). nil is safe (guarded at every call
+	// site): tests that don't exercise that path construct the struct literal
+	// directly and have no need for one. The events.k8s.io/v1 recorder API
+	// (mgr.GetEventRecorder, not the deprecated GetEventRecorderFor/
+	// corev1 record.EventRecorder) — see cmd/main.go's wiring.
+	Recorder recorder.EventRecorder
+	// now returns the current time; overridden in tests for deterministic
+	// massPruneAcked window checks. nil (the zero value from a struct literal, as
+	// tests that don't exercise the mass-revocation breaker use) falls back to
+	// time.Now via clockNow.
+	now func() time.Time
 }
 
 // NewReconciler builds a KeyorixSecretReconciler with a fresh random HMAC key for
 // status.syncedHash (#124). Use this rather than constructing the struct literal
 // directly in production code; tests that don't exercise hashData may still build
 // the struct literal directly.
-func NewReconciler(c client.Client, scheme *runtime.Scheme, apiReader client.Reader, allowedServers []string) (*KeyorixSecretReconciler, error) {
+func NewReconciler(c client.Client, scheme *runtime.Scheme, apiReader client.Reader, allowedServers []string, rec recorder.EventRecorder) (*KeyorixSecretReconciler, error) {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		return nil, fmt.Errorf("generate status-hash HMAC key: %w", err)
@@ -111,7 +202,16 @@ func NewReconciler(c client.Client, scheme *runtime.Scheme, apiReader client.Rea
 		APIReader:      apiReader,
 		AllowedServers: allowedServers,
 		hashKey:        key,
+		Recorder:       rec,
 	}, nil
+}
+
+// clockNow returns the current time via r.now, defaulting to time.Now.
+func (r *KeyorixSecretReconciler) clockNow() time.Time {
+	if r.now != nil {
+		return r.now()
+	}
+	return time.Now()
 }
 
 // validateServer rejects a CR-supplied server that is not https or not in the operator's
@@ -220,7 +320,7 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		secretName = ks.Name
 	}
 
-	desired, err := r.buildDesired(ctx, &ks)
+	desired, token, err := r.buildDesired(ctx, &ks)
 	if err != nil {
 		logger.Error(err, "failed to assemble secret data")
 		switch {
@@ -232,7 +332,7 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// upstream secret leaves the previously synced target Secret sitting in
 			// the cluster indefinitely, fully readable by every workload that mounts
 			// it, with no indication anything is wrong (#428).
-			return r.wipeAndFailGone(ctx, &ks, secretName, "UpstreamSecretGone", err)
+			return r.wipeAndFailGone(ctx, &ks, secretName, "UpstreamSecretGone", err, token)
 		case errors.Is(err, keyorix.ErrUnauthorized):
 			// A 401 doesn't confirm the referenced secret itself is gone, but in
 			// practice it overwhelmingly means the machine-identity credential was
@@ -240,7 +340,7 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// That's the same "stop serving the stale value" signal as a confirmed
 			// 404/403, so it gets the same wipe treatment, just with a distinct
 			// status reason so it's clear from .status which of the two happened.
-			return r.wipeAndFailGone(ctx, &ks, secretName, "UpstreamAccessRevoked", err)
+			return r.wipeAndFailGone(ctx, &ks, secretName, "UpstreamAccessRevoked", err, token)
 		default:
 			return r.fail(ctx, &ks, err)
 		}
@@ -295,14 +395,17 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return ctrl.Result{RequeueAfter: interval}, nil
 }
 
-// buildDesired reads the token and fetches every referenced value, assembling the target
-// Secret's data. Any failure fails the whole reconcile so a Secret is never written with
-// a partially-fetched set of keys.
-func (r *KeyorixSecretReconciler) buildDesired(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret) (map[string][]byte, error) {
+// buildDesired reads the token and fetches every referenced value, assembling the
+// target Secret's data. Any failure fails the whole reconcile so a Secret is never
+// written with a partially-fetched set of keys. The token is also returned (even on
+// a fetch error, once obtained) so the caller can reuse it for the mass-revocation
+// circuit breaker's live peer probe (see massRevocationSuspected) without a second
+// token Secret read.
+func (r *KeyorixSecretReconciler) buildDesired(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret) (desired map[string][]byte, token string, err error) {
 	// Validate the destination BEFORE reading the token Secret, so a CR pointing at an
 	// untrusted server can't even cause the operator to read (let alone transmit) a Secret.
 	if err := r.validateServer(ks.Spec.Server); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	tokenKey := ks.Spec.TokenSecretRef.Key
 	if tokenKey == "" {
@@ -329,7 +432,7 @@ func (r *KeyorixSecretReconciler) buildDesired(ctx context.Context, ks *secretsv
 		// actually revoked. Wiping the target Secret on a merely-ambiguous "we don't know"
 		// failure would cause an unnecessary outage for every workload depending on it,
 		// the same reasoning that already keeps network errors/5xx out of the wipe path.
-		return nil, fmt.Errorf("read token secret %s: %w", ref, err)
+		return nil, "", fmt.Errorf("read token secret %s: %w", ref, err)
 	}
 	// A CRD-write-only principal (the CRD's own documented least-privilege deployment
 	// model has no direct core-Secret read/write RBAC) can name ANY pre-existing Secret
@@ -344,24 +447,24 @@ func (r *KeyorixSecretReconciler) buildDesired(ctx context.Context, ks *secretsv
 	// attacker cannot), so an unlabeled pre-existing Secret can never be used as a token
 	// source, however it got created.
 	if tokenSecret.Labels[tokenSecretLabel] != tokenSecretValue {
-		return nil, fmt.Errorf("token secret %s is missing the required label %s=%s (only a Secret explicitly marked as a Keyorix token source may be used as tokenSecretRef)",
+		return nil, "", fmt.Errorf("token secret %s is missing the required label %s=%s (only a Secret explicitly marked as a Keyorix token source may be used as tokenSecretRef)",
 			ref, tokenSecretLabel, tokenSecretValue)
 	}
-	token := string(tokenSecret.Data[tokenKey])
+	token = string(tokenSecret.Data[tokenKey])
 	if token == "" {
-		return nil, fmt.Errorf("token secret %s has no key %q", ref, tokenKey)
+		return nil, "", fmt.Errorf("token secret %s has no key %q", ref, tokenKey)
 	}
 
 	fetcher := r.fetcher(ks.Spec.Server, token)
-	desired := make(map[string][]byte, len(ks.Spec.Data))
+	desired = make(map[string][]byte, len(ks.Spec.Data))
 	for _, d := range ks.Spec.Data {
-		val, err := fetcher.FetchValue(ctx, d.Ref)
-		if err != nil {
-			return nil, fmt.Errorf("fetch %q: %w", d.Ref, err)
+		val, ferr := fetcher.FetchValue(ctx, d.Ref)
+		if ferr != nil {
+			return nil, token, fmt.Errorf("fetch %q: %w", d.Ref, ferr)
 		}
 		desired[d.SecretKey] = val
 	}
-	return desired, nil
+	return desired, token, nil
 }
 
 func (r *KeyorixSecretReconciler) fetcher(server, token string) valueFetcher {
@@ -444,18 +547,34 @@ func (r *KeyorixSecretReconciler) fail(ctx context.Context, ks *secretsv1alpha1.
 	return ctrl.Result{}, cause
 }
 
-// wipeAndFailGone wipes the target Secret — ONLY when ks.Spec.PrunePolicy is
+// wipeAndFailGone wipes the target Secret — ONLY when effectivePrunePolicy is
 // PrunePolicyDelete — and records the failure on the Ready condition via failGone,
 // distinguishing a successful wipe, a failed wipe, and a deliberately-skipped one
-// (PrunePolicyKeep, the default — see KeyorixSecretSpec.PrunePolicy for why). Before
-// PrunePolicy existed, a wipeTargetSecret failure was only passed to logger.Error and
-// otherwise discarded: the CR's Ready condition would still read as an ordinary
-// confirmed-gone sync failure with no indication the stale (possibly revoked/rotated)
-// Secret was NOT actually removed — a delete-blocking admission webhook, RBAC drift, or
-// a transient API error could leave it silently mounted into every workload that
+// (PrunePolicyKeep — see KeyorixSecretSpec.PrunePolicy for why). Before PrunePolicy
+// existed, a wipeTargetSecret failure was only passed to logger.Error and otherwise
+// discarded: the CR's Ready condition would still read as an ordinary confirmed-gone
+// sync failure with no indication the stale (possibly revoked/rotated) Secret was
+// NOT actually removed — a delete-blocking admission webhook, RBAC drift, or a
+// transient API error could leave it silently mounted into every workload that
 // references it, with nothing in .status to say so.
-func (r *KeyorixSecretReconciler) wipeAndFailGone(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, secretName, reason string, cause error) (ctrl.Result, error) {
-	pruned := ks.Spec.PrunePolicy == secretsv1alpha1.PrunePolicyDelete
+//
+// Before actually wiping, the mass-revocation circuit breaker (massRevocationSuspected,
+// coordinator decision 2026-09-25 inbox item 1) gets a chance to withhold the wipe
+// entirely if this looks like a shared-credential event across several KeyorixSecrets,
+// not an independent per-secret revocation — see failSuspected. A breaker-evaluation
+// error (e.g. the List call itself failed) fails OPEN toward the wipe, matching the
+// pre-breaker behavior, rather than letting a transient error in the SAFETY check
+// silently defeat the restored secure default.
+func (r *KeyorixSecretReconciler) wipeAndFailGone(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, secretName, reason string, cause error, token string) (ctrl.Result, error) {
+	pruned := effectivePrunePolicy(ks.Spec.PrunePolicy) == secretsv1alpha1.PrunePolicyDelete
+	if pruned && token != "" {
+		suspected, groupSize, revokedInGroup, serr := r.massRevocationSuspected(ctx, ks, token)
+		if serr != nil {
+			log.FromContext(ctx).Error(serr, "failed to evaluate the mass-revocation circuit breaker; proceeding without it")
+		} else if suspected && !r.massPruneAcked(ks) {
+			return r.failSuspected(ctx, ks, cause, groupSize, revokedInGroup)
+		}
+	}
 	var wipeErr error
 	if pruned {
 		if err := r.wipeTargetSecret(ctx, ks, secretName); err != nil {
@@ -466,23 +585,133 @@ func (r *KeyorixSecretReconciler) wipeAndFailGone(ctx context.Context, ks *secre
 	return r.failGone(ctx, ks, reason, cause, wipeErr, pruned)
 }
 
+// massRevocationSuspected implements the operator side of the mass-revocation
+// circuit breaker (coordinator decision, 2026-09-25 inbox item 1). TokenSecretRef is
+// commonly SHARED across several KeyorixSecrets, so one credential rotation/
+// revocation reads as the identical confirmed-gone/revoked failure on every CR built
+// on it — wiping every one of them in response to a single event is the exact blast
+// radius an earlier default-Keep change (reverted alongside this fix) was trying to
+// prevent, just applied unconditionally instead of only when a mass event is
+// actually happening.
+//
+// Unlike a design that only trusts each peer's LAST PERSISTED status (which would
+// let the very FIRST CR to reconcile after a rotation wipe before any peer has had a
+// chance to record its own failure), this LIVE-PROBES one representative ref from
+// every OTHER KeyorixSecret in the group, using the SAME already-validated server
+// and already-obtained bearer token this reconcile just used — so it sees the
+// group's CURRENT state, not a stale one, and correctly protects even the first CR
+// to detect the event. The cost is one extra lightweight request per peer (capped at
+// massPruneProbeCap), only on the confirmed-gone/revoked path, never on an ordinary
+// successful reconcile.
+//
+// A peer whose probe itself errors transiently (not a confirmed
+// ErrSecretGone/ErrUnauthorized) is excluded from BOTH the numerator and the
+// denominator — an ambiguous probe result must not be allowed to either force a trip
+// or mask one.
+func (r *KeyorixSecretReconciler) massRevocationSuspected(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, token string) (suspected bool, groupSize, revokedInGroup int, err error) {
+	var list secretsv1alpha1.KeyorixSecretList
+	if err := r.List(ctx, &list, client.InNamespace(ks.Namespace)); err != nil {
+		return false, 0, 0, err
+	}
+
+	fetcher := r.fetcher(ks.Spec.Server, token)
+	groupSize = 1 // this CR itself
+	revokedInGroup = 1
+	probed := 0
+	for i := range list.Items {
+		if probed >= massPruneProbeCap {
+			break
+		}
+		peer := &list.Items[i]
+		if peer.Name == ks.Name && peer.Namespace == ks.Namespace {
+			continue
+		}
+		if peer.Spec.TokenSecretRef.Name != ks.Spec.TokenSecretRef.Name || peer.Spec.TokenSecretRef.Key != ks.Spec.TokenSecretRef.Key {
+			continue
+		}
+		if len(peer.Spec.Data) == 0 {
+			continue
+		}
+		probed++
+		_, ferr := fetcher.FetchValue(ctx, peer.Spec.Data[0].Ref)
+		switch {
+		case ferr == nil:
+			groupSize++
+		case errors.Is(ferr, keyorix.ErrSecretGone), errors.Is(ferr, keyorix.ErrUnauthorized):
+			groupSize++
+			revokedInGroup++
+		default:
+			// Ambiguous/transient probe failure: excluded from both numerator and
+			// denominator, not counted either way.
+		}
+	}
+
+	return massRevocationTripped(revokedInGroup, groupSize), groupSize, revokedInGroup, nil
+}
+
+// massPruneAcked reports whether ks carries a fresh confirmPruneAnnotation — an
+// operator's explicit acknowledgement that a suspected mass revocation is expected
+// (e.g. a planned credential rotation) and the wipe should proceed anyway. Bounded to
+// massPruneAckWindow so a stale ack left from a past incident can't silently
+// authorize a future, unrelated one.
+func (r *KeyorixSecretReconciler) massPruneAcked(ks *secretsv1alpha1.KeyorixSecret) bool {
+	raw := ks.Annotations[confirmPruneAnnotation]
+	if raw == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return false
+	}
+	age := r.clockNow().Sub(t)
+	return age >= 0 && age < massPruneAckWindow
+}
+
+// failSuspected records that this reconcile's confirmed-gone/revoked wipe was
+// withheld because the mass-revocation circuit breaker tripped (see
+// massRevocationSuspected) and no valid confirmPruneAnnotation ack is present. The
+// target Secret's last-known value is left completely untouched — exactly like
+// PrunePolicy Keep — but with a status reason, an Event, and a metric that make
+// clear this is a suspected mass event, not a deliberate per-CR policy choice, and
+// how to unblock it.
+func (r *KeyorixSecretReconciler) failSuspected(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, cause error, groupSize, revokedInGroup int) (ctrl.Result, error) {
+	msg := fmt.Sprintf(
+		"%s — MASS REVOCATION SUSPECTED: %d/%d KeyorixSecrets sharing tokenSecretRef %q are confirmed gone/revoked right now, which looks like one shared credential event rather than independent ones. The target Secret was left untouched; prunePolicy Delete was NOT applied. Set the %s=<RFC3339 timestamp> annotation on this CR (valid for %s after it's set) to acknowledge and proceed with the wipe.",
+		cause.Error(), revokedInGroup, groupSize, ks.Spec.TokenSecretRef.Name, confirmPruneAnnotation, massPruneAckWindow)
+	r.setReady(ks, metav1.ConditionFalse, reasonMassRevocationSuspected, msg)
+	if r.Recorder != nil {
+		r.Recorder.Eventf(ks, nil, corev1.EventTypeWarning, reasonMassRevocationSuspected, "PruneWithheld",
+			"%d/%d KeyorixSecrets sharing tokenSecretRef %q confirmed gone/revoked at once; wipe withheld pending %s ack",
+			revokedInGroup, groupSize, ks.Spec.TokenSecretRef.Name, confirmPruneAnnotation)
+	}
+	massRevocationSuspectedTotal.Inc()
+	if err := r.Status().Update(ctx, ks); err != nil {
+		return ctrl.Result{}, err
+	}
+	// Still return the cause so the workqueue keeps retrying (with backoff): once
+	// acknowledged (or the group's ratio drops back below threshold), a later
+	// reconcile proceeds with the wipe.
+	return ctrl.Result{}, cause
+}
+
 // failGone is fail's counterpart for a confirmed access-cut upstream failure (#428): it
 // records a distinct reason ("UpstreamSecretGone" for a confirmed-gone 404/403,
 // "UpstreamAccessRevoked" for a 401 — see the ErrSecretGone/ErrUnauthorized handling in
 // Reconcile) so the CR's status makes the outcome visible and explicable, rather than
 // looking like an ordinary transient sync failure.
 //
-// pruned reflects ks.Spec.PrunePolicy at the time wipeAndFailGone ran: false (the
-// default, PrunePolicyKeep) means wipeTargetSecret was never even attempted — the
-// message says so explicitly, so a reader of .status can't mistake "left alone on
-// purpose" for "wipe attempted and silently succeeded". When pruned is true, wipeErr
-// (non-nil meaning wipeTargetSecret itself failed) still gets its own distinct
-// "WipeFailed" reason suffix and message, exactly as before PrunePolicy existed.
+// pruned reflects effectivePrunePolicy(ks.Spec.PrunePolicy) at the time
+// wipeAndFailGone ran: false (PrunePolicyKeep) means wipeTargetSecret was never even
+// attempted — the message says so explicitly, so a reader of .status can't mistake
+// "left alone on purpose" for "wipe attempted and silently succeeded". When pruned is
+// true, wipeErr (non-nil meaning wipeTargetSecret itself failed) still gets its own
+// distinct "WipeFailed" reason suffix and message, exactly as before PrunePolicy
+// existed.
 func (r *KeyorixSecretReconciler) failGone(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, reason string, cause, wipeErr error, pruned bool) (ctrl.Result, error) {
 	msg := cause.Error()
 	switch {
 	case !pruned:
-		msg = fmt.Sprintf("%s — prunePolicy is Keep (the default): the target Secret's last-known value was left untouched, not deleted. Set spec.prunePolicy: Delete to reap it automatically.", cause.Error())
+		msg = fmt.Sprintf("%s — prunePolicy is Keep: the target Secret's last-known value was left untouched, not deleted. Set spec.prunePolicy: Delete (the default) to reap it automatically.", cause.Error())
 	case wipeErr != nil:
 		reason += "WipeFailed"
 		msg = fmt.Sprintf("%s — additionally, wiping the stale target Secret failed, it may still contain revoked/rotated data: %v", cause.Error(), wipeErr)

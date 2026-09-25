@@ -29,14 +29,50 @@ type Config struct {
 	Interval   string `yaml:"interval"`    // Go duration (e.g. "5m"); default 5m
 	HealthPort int    `yaml:"health_port"` // probe/status HTTP port; default 8080
 	Cleanup    bool   `yaml:"cleanup"`     // reap orphaned owned Secrets; default false
-	// PruneOnRevoke gates WithPruneOnRevoke (see its own doc comment) — whether a
-	// confirmed-gone/revoked upstream reference actually removes/trims its target
-	// Secret, vs. leaving it untouched. Default false ("keep"): distinct from Cleanup
-	// above, which reaps Secrets for mappings REMOVED FROM THIS CONFIG; this instead
-	// governs mappings still IN the config whose upstream Keyorix value became
-	// inaccessible.
-	PruneOnRevoke bool            `yaml:"prune_on_revoke"`
-	Mappings      []SecretMapping `yaml:"mappings"`
+	// PruneOnRevoke gates WithPruneOnRevoke/WithKeepOnRevoke (see their doc
+	// comments) — whether a confirmed-gone/revoked upstream reference actually
+	// removes/trims its target Secret, vs. leaving it untouched. Defaults to true
+	// (wipe — the secure default restored 2026-09-25, coordinator inbox item 1)
+	// when unset. Distinct from Cleanup above, which reaps Secrets for mappings
+	// REMOVED FROM THIS CONFIG; this instead governs mappings still IN the config
+	// whose upstream Keyorix value became inaccessible.
+	//
+	// A tri-state (*bool, not bool) is required: a plain bool's zero value (the
+	// field simply omitted from YAML) would be indistinguishable from an explicit
+	// `prune_on_revoke: false`, silently defaulting every new deployment to Keep
+	// instead of the secure default. nil means "unset — use the default";
+	// non-nil is always an explicit, deliberate choice. See GetPruneOnRevoke.
+	PruneOnRevoke *bool `yaml:"prune_on_revoke"`
+	// MassPruneAck acknowledges the mass-revocation circuit breaker (K8S track
+	// coordinator inbox item 1): an RFC3339 timestamp, valid for massPruneAckWindow
+	// after it's set. When the breaker trips (more than one target, more than 20%
+	// of all managed targets, confirmed gone/revoked in the SAME reconcile pass —
+	// see massRevocationTripped), none of them are wiped/trimmed even with
+	// PruneOnRevoke true, until this ack is present and recent. Leave unset in
+	// normal operation; set it only in direct response to an observed
+	// mass-revocation alert (the "MASS REVOCATION SUSPECTED" log line / the
+	// suspected metric/status count), then unset it again once resolved — a
+	// permanently-set ack defeats the breaker for every future incident, not just
+	// this one.
+	MassPruneAck     string `yaml:"mass_prune_ack"`
+	massPruneAckTime time.Time
+	Mappings         []SecretMapping `yaml:"mappings"`
+}
+
+// GetPruneOnRevoke returns whether a confirmed-gone/revoked upstream reference
+// should actually wipe/trim its target Secret, defaulting to true (the secure
+// default) when PruneOnRevoke is unset in the config file.
+func (c *Config) GetPruneOnRevoke() bool {
+	if c.PruneOnRevoke == nil {
+		return true
+	}
+	return *c.PruneOnRevoke
+}
+
+// GetMassPruneAck returns the parsed mass_prune_ack timestamp (set by validate),
+// or the zero Time if unset — a zero Time never satisfies massPruneAckValid.
+func (c *Config) GetMassPruneAck() time.Time {
+	return c.massPruneAckTime
 }
 
 const defaultSyncInterval = 5 * time.Minute
@@ -83,6 +119,13 @@ func (c *Config) validate() error {
 		if _, err := time.ParseDuration(c.Interval); err != nil {
 			return fmt.Errorf("invalid interval %q: %w", c.Interval, err)
 		}
+	}
+	if c.MassPruneAck != "" {
+		t, err := time.Parse(time.RFC3339, c.MassPruneAck)
+		if err != nil {
+			return fmt.Errorf("invalid mass_prune_ack %q: must be an RFC3339 timestamp: %w", c.MassPruneAck, err)
+		}
+		c.massPruneAckTime = t
 	}
 	return nil
 }

@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Kubernetes object-name constraints. A namespace is an RFC1123 DNS label; a Secret
@@ -65,8 +66,12 @@ type Sink interface {
 // Result summarises one reconcile pass. Created/Updated/Unchanged count target
 // Secrets (not individual keys); Failed counts targets skipped due to an error;
 // Deleted counts orphaned Secrets reaped by cleanup (or that WOULD be, in dry-run).
-// Revoked counts targets whose materialized Secret was removed because the
-// upstream value is definitively gone (deleted or access revoked) — #140.
+// Revoked counts targets whose materialized Secret was actually wiped/trimmed
+// because the upstream value is definitively gone (deleted or access revoked) —
+// #140. Suspected counts targets whose confirmed-gone/revoked state was detected
+// but NOT acted on because the mass-revocation circuit breaker tripped (coordinator
+// decision, 2026-09-25 inbox item 1) and no valid mass_prune_ack was present — see
+// massRevocationTripped.
 type Result struct {
 	Created   int
 	Updated   int
@@ -74,6 +79,7 @@ type Result struct {
 	Failed    int
 	Deleted   int
 	Revoked   int
+	Suspected int
 	Errors    []string
 }
 
@@ -110,54 +116,87 @@ func (e *Engine) Reconcile(ctx context.Context, mappings []SecretMapping) (Resul
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].String() < targets[j].String() })
 
+	// Phase 1: fetch every target's desired data BEFORE deciding whether to act on
+	// any confirmed-gone/revoked result. The mass-revocation circuit breaker (below)
+	// needs the FULL pass's revoked-vs-total ratio to decide whether this looks like
+	// one shared credential event rather than N independent ones — a decision that
+	// can only be made once every target for this pass has been fetched, not
+	// target-by-target as the original single-loop version did.
+	states := make([]reconcileState, 0, len(targets))
+	revokedCount := 0
 	for _, t := range targets {
 		desired, revokedRefs, ferr := e.buildDesired(ctx, grouped[t])
-		if ferr != nil {
+		states = append(states, reconcileState{t: t, desired: desired, revokedRefs: revokedRefs, ferr: ferr})
+		if ferr == nil && len(revokedRefs) > 0 {
+			revokedCount++
+		}
+	}
+
+	// Mass-revocation circuit breaker (coordinator decision, 2026-09-25 inbox item
+	// 1, restoring the secure default reverted below): more than massPruneMinCount
+	// targets AND more than massPruneFraction of ALL targets in this SAME pass
+	// confirmed gone/revoked looks like one shared credential rotation/revocation —
+	// e.g. the agent's own machine-identity token was rotated, which reads as a
+	// 401/403 on every mapping's fetch at once — not N unrelated per-secret events.
+	// Tripped means none of them are wiped this pass, no matter how confidently each
+	// one individually looks gone, until massPruneAckValid says an operator
+	// explicitly acknowledged it via mass_prune_ack. A single revocation (or a few,
+	// below the threshold) is unaffected and still wipes immediately below.
+	massTripped := e.pruneOnRevoke && massRevocationTripped(revokedCount, len(targets))
+	massBlocked := massTripped && !e.massPruneAckValid(e.clockNow())
+
+	for _, st := range states {
+		t := st.t
+		if st.ferr != nil {
 			// A TRANSIENT failure (network/5xx — never ErrUpstreamGone, see
 			// buildDesired) just skips this pass and retries next time: the value
 			// may still be valid, so the existing Secret is left completely
 			// untouched rather than written with a key missing or removed outright.
 			res.Failed++
-			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", t, ferr))
+			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", t, st.ferr))
 			continue
 		}
+		desired := st.desired
+		revokedRefs := st.revokedRefs
 
 		if len(revokedRefs) > 0 {
-			if !e.pruneOnRevoke {
-				// prune_on_revoke is OFF (the default — K8S track backlog item 3c):
-				// a confirmed revoke/gone is surfaced but NOT acted on — the target is
-				// skipped entirely, exactly like a transient failure, leaving any
-				// existing Secret (every key, not just the revoked one) completely
-				// untouched. Without this gate, EVERY mapping fails identically the
-				// moment the agent's own machine-identity token is revoked or expires
-				// (a 401 on every request, not just one secret's own access) — the
-				// pre-gate behavior below would then delete or trim every single
-				// Secret this agent manages in one pass, triggered by nothing more
-				// than a routine credential rotation. Applying only the still-valid
-				// keys instead of skipping outright isn't safe either: Apply's
-				// Server-Side-Apply field-manager ownership prunes any key NOT
-				// present in the applied data, so a "partial" apply would still
-				// silently drop the revoked key's last-known value. Set
-				// prune_on_revoke: true to opt into the pre-gate reap behavior below.
+			switch {
+			case !e.pruneOnRevoke:
+				// prune_on_revoke is explicitly false (opt-out of the secure
+				// default): a confirmed revoke/gone is surfaced but NOT acted on —
+				// the target is skipped entirely, exactly like a transient failure,
+				// leaving any existing Secret (every key, not just the revoked one)
+				// completely untouched. Applying only the still-valid keys instead
+				// of skipping outright isn't safe either: Apply's Server-Side-Apply
+				// field-manager ownership prunes any key NOT present in the applied
+				// data, so a "partial" apply would still silently drop the revoked
+				// key's last-known value.
 				res.Revoked++
-				res.Errors = append(res.Errors, fmt.Sprintf("%s: upstream secret gone or access revoked for %s; prune_on_revoke is false (default), target Secret left unchanged — set prune_on_revoke: true to reap it automatically", t, strings.Join(revokedRefs, ", ")))
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: upstream secret gone or access revoked for %s; prune_on_revoke is false, target Secret left unchanged", t, strings.Join(revokedRefs, ", ")))
 				continue
+			case massBlocked:
+				res.Suspected++
+				res.Errors = append(res.Errors, fmt.Sprintf(
+					"%s: upstream secret gone or access revoked for %s; MASS REVOCATION SUSPECTED (%d/%d targets confirmed gone/revoked this pass) — target Secret left unchanged, prune_on_revoke NOT applied. Set mass_prune_ack to an RFC3339 timestamp within the last %s to acknowledge and proceed",
+					t, strings.Join(revokedRefs, ", "), revokedCount, len(targets), massPruneAckWindow))
+				continue
+			default:
+				// #140 / G05: a DEFINITIVE failure for one or more mappings (the
+				// upstream secret was deleted, or this agent's access to it was
+				// revoked — 404/401/403, never a transient network/5xx error) must
+				// propagate to the cluster rather than being left at its last-known,
+				// possibly-compromised or now-unauthorized value indefinitely (skip
+				// and retry never converges, since the SAME definitive failure
+				// recurs every pass). Only the affected key(s) are dropped here —
+				// unrelated keys mapped to the same target Secret that fetched fine
+				// are still applied below; the Secret itself is removed only if
+				// buildDesired left nothing valid for it at all.
+				action := "dropping the affected key(s) from the Secret"
+				if len(desired) == 0 {
+					action = "removing the now-empty Secret entirely"
+				}
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: upstream secret gone or access revoked for %s; %s", t, strings.Join(revokedRefs, ", "), action))
 			}
-			// #140 / G05: a DEFINITIVE failure for one or more mappings (the
-			// upstream secret was deleted, or this agent's access to it was
-			// revoked — 404/401/403, never a transient network/5xx error) must
-			// propagate to the cluster rather than being left at its last-known,
-			// possibly-compromised or now-unauthorized value indefinitely (skip
-			// and retry never converges, since the SAME definitive failure
-			// recurs every pass). Only the affected key(s) are dropped here —
-			// unrelated keys mapped to the same target Secret that fetched fine
-			// are still applied below; the Secret itself is removed only if
-			// buildDesired left nothing valid for it at all.
-			action := "dropping the affected key(s) from the Secret"
-			if len(desired) == 0 {
-				action = "removing the now-empty Secret entirely"
-			}
-			res.Errors = append(res.Errors, fmt.Sprintf("%s: upstream secret gone or access revoked for %s; %s", t, strings.Join(revokedRefs, ", "), action))
 		}
 
 		if len(desired) == 0 {
@@ -274,13 +313,91 @@ func (e *Engine) cleanupOrphans(ctx context.Context, grouped map[target][]Secret
 	}
 }
 
+// reconcileState holds one target's Phase-1 fetch result, computed for every target
+// up front so the mass-revocation circuit breaker (see Reconcile) can see the WHOLE
+// pass's revoked-vs-total ratio before any target is actually acted on.
+type reconcileState struct {
+	t           target
+	desired     map[string][]byte
+	revokedRefs []string
+	ferr        error
+}
+
+// massPruneMinCount and massPruneFraction define the mass-revocation circuit
+// breaker's trip threshold (coordinator decision, 2026-09-25 inbox item 1): a pass
+// that confirms MORE than massPruneMinCount targets gone/revoked AND that count is
+// MORE than massPruneFraction of every managed target is treated as a suspected
+// shared-credential event (e.g. the agent's own machine-identity token was rotated
+// or revoked, which reads as a definitive failure on every mapping at once) rather
+// than that many independent, coincidental per-secret revocations. A single
+// revocation — however large a fraction of a very small target set it is — never
+// trips this on its own: massPruneMinCount requires more than one.
+const (
+	massPruneMinCount = 1
+	massPruneFraction = 0.20
+)
+
+// massRevocationTripped implements the mass-revocation circuit breaker's pure
+// threshold decision (see massPruneMinCount/massPruneFraction), split out from
+// Reconcile so the boundary (exactly massPruneMinCount, exactly
+// massPruneFraction) is directly unit-testable without constructing a full
+// Engine/Reconcile pass.
+func massRevocationTripped(revokedCount, totalTargets int) bool {
+	if totalTargets == 0 || revokedCount <= massPruneMinCount {
+		return false
+	}
+	return float64(revokedCount) > massPruneFraction*float64(totalTargets)
+}
+
+// massPruneAckWindow bounds how long an operator's explicit mass-prune
+// acknowledgement (the mass_prune_ack config field) stays valid after being set —
+// so a stale ack left over from a past, already-resolved incident doesn't silently
+// authorize wiping a FUTURE, unrelated mass-revocation event forever. 1 hour
+// comfortably covers "I just saw the alert and am unblocking this pass" while still
+// requiring a fresh, deliberate action for the next incident.
+const massPruneAckWindow = 1 * time.Hour
+
+// massPruneAckValid reports whether e's configured mass-prune ack timestamp is
+// present and falls within massPruneAckWindow of now (and not in the future, which
+// would only ever indicate clock skew or a mis-set config value, not a genuine
+// acknowledgement of an event that has already happened).
+func (e *Engine) massPruneAckValid(now time.Time) bool {
+	if e.massPruneAck.IsZero() {
+		return false
+	}
+	age := now.Sub(e.massPruneAck)
+	return age >= 0 && age < massPruneAckWindow
+}
+
+// clockNow returns the current time via e.now, defaulting to time.Now — overridden
+// in tests for deterministic massPruneAckValid checks.
+func (e *Engine) clockNow() time.Time {
+	if e.now != nil {
+		return e.now()
+	}
+	return time.Now()
+}
+
 // Engine reconciles Keyorix secrets into Kubernetes Secrets via a Fetcher and Sink.
 type Engine struct {
-	fetcher       Fetcher
-	sink          Sink
-	dryRun        bool
-	cleanup       bool
+	fetcher Fetcher
+	sink    Sink
+	dryRun  bool
+	cleanup bool
+	// pruneOnRevoke gates whether a confirmed-gone/revoked upstream reference
+	// actually wipes/trims its target Secret (see the Reconcile branch it guards).
+	// Defaults to true (NewEngine) — the secure default (coordinator decision,
+	// 2026-09-25 inbox item 1, restoring commit 03d08f23's original "#428/#676"
+	// behavior after a brief default-keep regression): a secret confirmed gone or
+	// access confirmed revoked must not stay readable in the cluster indefinitely.
+	// The mass-revocation circuit breaker above bounds the blast radius of this
+	// default when many targets are confirmed gone/revoked in the SAME pass (a
+	// shared credential rotation, not independent per-secret events) — see
+	// massRevocationTripped. Set explicitly to false (WithKeepOnRevoke) to opt out
+	// entirely for deployments that prefer availability over immediate reap.
 	pruneOnRevoke bool
+	massPruneAck  time.Time
+	now           func() time.Time
 }
 
 // Option configures an Engine.
@@ -300,20 +417,37 @@ func WithCleanup() Option {
 }
 
 // WithPruneOnRevoke makes the engine actually remove/trim a target Secret when the
-// upstream Keyorix reference for one of its mappings is confirmed gone or the agent's
-// access is confirmed revoked (see the pruneOnRevoke branch in Reconcile). Off by
-// default (K8S track backlog item 3c: "deletion only if the CR/config says so,
-// default keep") — a revoked/expired agent TOKEN reads as a 401 on every single
-// mapping's fetch, not just one, so without this gate the FIRST reconcile pass after
-// a routine credential rotation would delete or trim every Secret this agent manages
-// in one shot.
+// upstream Keyorix reference for one of its mappings is confirmed gone or the
+// agent's access is confirmed revoked (see the pruneOnRevoke branch in Reconcile).
+// This is now also NewEngine's default — WithPruneOnRevoke is kept as an explicit,
+// idempotent knob (K8S track / coordinator decision: "keep prune_on_revoke as an
+// explicit knob") so config wiring and existing call sites can still state the
+// intent directly instead of relying on the zero-value default.
 func WithPruneOnRevoke() Option {
 	return func(e *Engine) { e.pruneOnRevoke = true }
 }
 
-// NewEngine constructs an Engine over the given Fetcher and Sink.
+// WithKeepOnRevoke opts OUT of the secure default: a confirmed-gone/revoked upstream
+// reference is surfaced (Result.Revoked) but the target Secret is left completely
+// untouched, for deployments that prefer availability over immediate reap. See
+// pruneOnRevoke's doc comment for the default this reverses.
+func WithKeepOnRevoke() Option {
+	return func(e *Engine) { e.pruneOnRevoke = false }
+}
+
+// WithMassPruneAck sets the mass-revocation circuit breaker's acknowledgement
+// timestamp (see massPruneAckValid) — sourced from Config.GetMassPruneAck (the
+// mass_prune_ack config field). A zero Time (the field left unset) never
+// acknowledges anything.
+func WithMassPruneAck(ack time.Time) Option {
+	return func(e *Engine) { e.massPruneAck = ack }
+}
+
+// NewEngine constructs an Engine over the given Fetcher and Sink. pruneOnRevoke
+// defaults to true (the secure default — see its doc comment); pass
+// WithKeepOnRevoke to opt out.
 func NewEngine(fetcher Fetcher, sink Sink, opts ...Option) *Engine {
-	e := &Engine{fetcher: fetcher, sink: sink}
+	e := &Engine{fetcher: fetcher, sink: sink, pruneOnRevoke: true}
 	for _, opt := range opts {
 		opt(e)
 	}

@@ -41,7 +41,8 @@ helm install kx-sync deploy/helm/keyorix-k8s-sync \
 | `keyorix.projectID` | Numeric id of the Keyorix project the token's machine identity belongs to (**required**) — every `mappings[].ref` names only an environment and secret, never a project, since environment names are unique per-project, not globally |
 | `keyorix.interval` | Reconcile cadence (Go duration; default `5m`) |
 | `cleanup` | Reap orphaned owned Secrets when a mapping is removed (default `false`) |
-| `pruneOnRevoke` | Actually delete/trim a Secret when its upstream Keyorix reference is confirmed gone or access is revoked, instead of leaving the last-known value untouched (default `false` — see [Failure modes](#failure-modes)) |
+| `pruneOnRevoke` | Actually delete/trim a Secret when its upstream Keyorix reference is confirmed gone or access is revoked, instead of leaving the last-known value untouched (default `true` — the secure default; bounded by the mass-revocation circuit breaker, see [Failure modes](#failure-modes)) |
+| `massPruneAck` | RFC3339 timestamp acknowledging a suspected mass revocation, valid for 1 hour (default empty — see [Failure modes](#failure-modes)) |
 | `keyorix.tokenSecret.name` | Existing Secret holding the Keyorix token (**required**) |
 | `keyorix.tokenSecret.key` | Key within that Secret (default `token`) |
 | `mappings` | List of `{ref, namespace, name, key}` — Keyorix secret → Kubernetes Secret key |
@@ -107,18 +108,27 @@ kubectl -n <namespace> describe networkpolicy <release>-keyorix-k8s-sync
   (see "Retry cadence" below for the backoff this now applies on repeated
   failure).
 - **A specific secret is deleted upstream, or a token is revoked/expired:**
-  detected (Keyorix returns 401/403/404) and counted as `revoked` — visible
-  via `/status`'s `revoked` field and the
-  `keyorix_k8s_sync_secrets_total{outcome="revoked"}` metric — but by default
-  (`pruneOnRevoke: false`) the target Secret's last-known value is left
-  completely untouched, not deleted or trimmed. This matters beyond any one
-  secret: a revoked or expired agent token reads as the exact same failure on
-  *every* mapping's fetch, not just one, so with pruning on by default the
-  first reconcile pass after a routine credential rotation would delete or
-  trim every Secret the agent manages in one shot. Set `pruneOnRevoke: true`
-  to opt into actively reaping a Secret the moment its reference is confirmed
-  gone/revoked — see `pruneOnRevoke`'s own values.yaml comment for the
-  token-wide-revocation tradeoff before enabling it.
+  detected (Keyorix returns 401/403/404). By default (`pruneOnRevoke: true`
+  — the secure default) the target Secret is actively wiped/trimmed the
+  moment its reference is confirmed gone/revoked, counted as `revoked` —
+  visible via `/status`'s `revoked` field and the
+  `keyorix_k8s_sync_secrets_total{outcome="revoked"}` metric. Set
+  `pruneOnRevoke: false` to opt OUT and leave the target Secret's last-known
+  value untouched instead, for deployments that prefer availability over
+  immediate reap.
+- **Mass-revocation circuit breaker:** a revoked or expired agent token reads
+  as the exact same failure on *every* mapping's fetch, not just one — with
+  `pruneOnRevoke` on by default, an unconditional wipe would otherwise delete
+  or trim every Secret the agent manages in a single pass, triggered by
+  nothing more than a routine credential rotation. When a SINGLE reconcile
+  pass would wipe more than one target AND more than 20% of everything this
+  agent manages, none of them are wiped: the pass instead reports "MASS
+  REVOCATION SUSPECTED" — visible via `/status`'s `suspected` field and the
+  `keyorix_k8s_sync_secrets_total{outcome="mass_revocation_suspected"}`
+  metric — until acknowledged via `massPruneAck` (an RFC3339 timestamp,
+  valid for 1 hour after it's set). A single revocation is unaffected by the
+  breaker and always wipes immediately, regardless of what fraction of a
+  very small mapping set it represents.
 - **Retry cadence:** the agent's default poll interval (`keyorix.interval`,
   5m) applies as long as every pass is clean. After a pass with any failed or
   revoked target, the next pass's delay backs off exponentially (bounded at

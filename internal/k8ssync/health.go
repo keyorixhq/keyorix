@@ -20,8 +20,8 @@ type Status struct {
 	last    Result
 	passes  int64
 	// Cumulative target-Secret outcomes across all passes (monotonic counters).
-	totCreated, totUpdated, totUnchanged, totFailed, totDeleted, totRevoked int64
-	now                                                                     func() time.Time
+	totCreated, totUpdated, totUnchanged, totFailed, totDeleted, totRevoked, totSuspected int64
+	now                                                                                   func() time.Time
 }
 
 // NewStatus returns a Status with a real clock.
@@ -44,6 +44,7 @@ func (s *Status) Record(res Result) {
 	s.totFailed += int64(res.Failed)
 	s.totDeleted += int64(res.Deleted)
 	s.totRevoked += int64(res.Revoked)
+	s.totSuspected += int64(res.Suspected)
 }
 
 func (s *Status) snapshot() (bool, time.Time, Result) {
@@ -101,6 +102,7 @@ func (s *Status) HandlerWithToken(token string) http.Handler {
 			"failed":    last.Failed,
 			"deleted":   last.Deleted,
 			"revoked":   last.Revoked,
+			"suspected": last.Suspected,
 			"errors":    len(last.Errors),
 		}
 		if ran {
@@ -140,7 +142,7 @@ func (s *Status) metrics() string {
 	lastRun := s.lastRun
 	last := s.last
 	passes := s.passes
-	c, u, n, f, d, rv := s.totCreated, s.totUpdated, s.totUnchanged, s.totFailed, s.totDeleted, s.totRevoked
+	c, u, n, f, d, rv, sp := s.totCreated, s.totUpdated, s.totUnchanged, s.totFailed, s.totDeleted, s.totRevoked, s.totSuspected
 	s.mu.Unlock()
 
 	var lastTS int64
@@ -158,11 +160,12 @@ keyorix_k8s_sync_secrets_total{outcome="unchanged"} %d
 keyorix_k8s_sync_secrets_total{outcome="failed"} %d
 keyorix_k8s_sync_secrets_total{outcome="deleted"} %d
 keyorix_k8s_sync_secrets_total{outcome="revoked"} %d
+keyorix_k8s_sync_secrets_total{outcome="mass_revocation_suspected"} %d
 # HELP keyorix_k8s_sync_last_run_timestamp_seconds Unix time of the last completed reconcile (0 if none).
 # TYPE keyorix_k8s_sync_last_run_timestamp_seconds gauge
 keyorix_k8s_sync_last_run_timestamp_seconds %d
 # HELP keyorix_k8s_sync_last_failed Target Secrets that failed in the most recent reconcile.
 # TYPE keyorix_k8s_sync_last_failed gauge
 keyorix_k8s_sync_last_failed %d
-`, passes, c, u, n, f, d, rv, lastTS, last.Failed)
+`, passes, c, u, n, f, d, rv, sp, lastTS, last.Failed)
 }

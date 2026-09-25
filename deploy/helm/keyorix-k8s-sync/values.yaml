@@ -101,17 +101,29 @@ cleanup: false
 
 # pruneOnRevoke controls a DIFFERENT case than cleanup above: a mapping still IN the
 # config whose upstream Keyorix reference becomes inaccessible (the secret was deleted,
-# or the agent's own access/token was revoked). Off by default (K8S track): a revoked
-# or expired agent token reads as the SAME failure on every single mapping's fetch, not
-# just one -- with this on by default, the first reconcile pass after a routine
-# credential rotation would delete or trim every Secret this agent manages in one shot.
-# With this off, a revoked/gone reference is reported (see the "revoked" count in
-# /status and the keyorix_k8s_sync_secrets_total{outcome="revoked"} metric) but the
-# target Secret's last-known value is left completely untouched. Enable this only if
-# you want the agent to actively reap a Secret the moment Keyorix confirms it's gone or
-# access to it was cut -- and be aware a token-wide revocation will then delete
-# EVERYTHING this agent manages, not just the one secret that motivated turning it on.
-pruneOnRevoke: false
+# or the agent's own access/token was revoked). On by default (the secure default,
+# restored 2026-09-25 -- a secret confirmed gone or access confirmed revoked must not
+# stay readable in the cluster indefinitely): a confirmed-gone/revoked reference actively
+# wipes/trims its target Secret. The MASS-REVOCATION CIRCUIT BREAKER bounds the blast
+# radius of this default when many targets are confirmed gone/revoked in the SAME
+# reconcile pass (more than one target AND more than 20% of everything this agent
+# manages) -- a shared credential rotation, not independent per-secret events: none of
+# them are wiped, the pass instead reports "MASS REVOCATION SUSPECTED" (see the
+# "suspected" count in /status and the keyorix_k8s_sync_secrets_total{outcome=
+# "mass_revocation_suspected"} metric), until acknowledged via massPruneAck below. A
+# single revocation is unaffected by the breaker and still wipes immediately. Set this
+# to false to opt OUT of wiping entirely (the target Secret's last-known value is always
+# left untouched, reported via the "revoked" count/metric instead) for deployments that
+# prefer availability over immediate reap.
+pruneOnRevoke: true
+
+# massPruneAck acknowledges the mass-revocation circuit breaker above: an RFC3339
+# timestamp, valid for 1 hour after it's set. Leave empty in normal operation -- set it
+# only in direct response to an observed "MASS REVOCATION SUSPECTED" alert that you've
+# confirmed is an intentional, expected event (e.g. a planned credential rotation), then
+# clear it again once resolved. A permanently-set ack defeats the breaker for every
+# future incident, not just this one.
+massPruneAck: ""
 
 # mappings: each copies one Keyorix secret ("<environment>/<name>") into one key of
 # one Kubernetes Secret. Several mappings may target the same Secret.
