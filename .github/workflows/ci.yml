@@ -69,6 +69,11 @@ env:
   # source alone.
   ACTIONLINT_VERSION: 1.7.12
   ACTIONLINT_LINUX_AMD64_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+  # kube-score publishes an official checksums.txt; verified the linux_amd64
+  # tarball's sha256 against it locally before pinning here, matching the
+  # gitleaks/kubeconform/checkov/actionlint convention above.
+  KUBE_SCORE_VERSION: 1.20.0
+  KUBE_SCORE_LINUX_AMD64_SHA256: ff777b4b3f45905b2d22c69e93c57a7a170e61529a79d54e59cb95cca4bc2a55
   COVERAGE_FLOOR: '80'
 
 jobs:
@@ -2009,6 +2014,167 @@ jobs:
           CHECKS="CKV_K8S_16,CKV_K8S_17,CKV_K8S_18,CKV_K8S_19,CKV_K8S_20,CKV_K8S_22,CKV_K8S_23,CKV_K8S_28,CKV_K8S_31,CKV_K8S_37,CKV_K8S_42,CKV_K8S_43,CKV_K8S_49,CKV_K8S_155,CKV_K8S_156,CKV_K8S_157,CKV_K8S_158"
           checkov --framework kubernetes --compact --check "$CHECKS" \
             -f keyorix-render.yaml -f k8s-sync-render.yaml -f operator-render.yaml
+
+  # Policy-as-code for the 3 charts: kubeconform (schema shape, like helm-chart
+  # above, but also over a "maximal" values file with every optional feature on
+  # -- ingress+TLS, CORS, a scaled-out web replica set, multiple k8s-sync
+  # mappings/target namespaces + cleanup, operator leaderElection+replicas=2 +
+  # allowedServers -- so templating paths the helm-chart job's narrower default/
+  # external-DB renders never exercise still get schema-validated) plus
+  # kube-score (policy: security context, probes, NetworkPolicy coverage,
+  # PodDisruptionBudget presence -- checkov above already covers the
+  # security-context/RBAC-escalation family; kube-score adds the
+  # probes/NetworkPolicy-coverage/PDB checks neither checkov nor kubeconform's
+  # schema-shape validation touches). A positive-control fixture
+  # (.github/testdata/helm-policy-bad-fixture.yaml: privileged container, no
+  # resource limits, no securityContext) is scored FIRST, in isolation, to prove
+  # the job's own flags don't accidentally neuter it before trusting a clean
+  # result on the real charts -- see CLAUDE.md's "confirm it is green on a
+  # known-good case as well as red on a known-bad one."
+  #
+  # No Kubernetes cluster, no network calls beyond the two pinned+checksummed
+  # tool downloads below (cached after the first run) -- pure `helm template` +
+  # two static Go binaries over ~15 small YAML files, comfortably under a
+  # minute. Gated the same way as helm-chart/helm-chart-security above (chart-
+  # relevant changes), not further restricted to deploy/helm/** specifically:
+  # at this runtime there's no CI-minute budget reason to narrow it further.
+  helm-chart-policy:
+    needs: [changes]
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+
+      - name: Cache kubeconform binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: kubeconform
+          key: kubeconform-${{ env.KUBECONFORM_VERSION }}-${{ runner.os }}
+
+      - name: Install kubeconform
+        run: |
+          # Same pinned version + checksum-verified download as the helm-chart
+          # job above (env.KUBECONFORM_VERSION/KUBECONFORM_LINUX_AMD64_SHA256) --
+          # a separate job-level cache entry under the same key, so a cache hit
+          # here skips the download regardless of which job populated it first.
+          if [ ! -x ./kubeconform ]; then
+            curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+            echo "${KUBECONFORM_LINUX_AMD64_SHA256}  kubeconform-linux-amd64.tar.gz" | sha256sum -c -
+            tar -xz -f kubeconform-linux-amd64.tar.gz kubeconform
+          fi
+
+      - name: Cache kube-score binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: kube-score
+          key: kube-score-${{ env.KUBE_SCORE_VERSION }}-${{ runner.os }}
+
+      - name: Install kube-score
+        run: |
+          if [ ! -x ./kube-score ]; then
+            curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/zegl/kube-score/releases/download/v${KUBE_SCORE_VERSION}/kube-score_${KUBE_SCORE_VERSION}_linux_amd64.tar.gz"
+            echo "${KUBE_SCORE_LINUX_AMD64_SHA256}  kube-score_${KUBE_SCORE_VERSION}_linux_amd64.tar.gz" | sha256sum -c -
+            tar -xz -f "kube-score_${KUBE_SCORE_VERSION}_linux_amd64.tar.gz" kube-score
+          fi
+
+      - name: Positive control -- kube-score must fail on a deliberately bad manifest
+        run: |
+          # Run BEFORE trusting a clean result on the real charts below, with the
+          # exact same --ignore-test flag the real scan uses, so a too-broad
+          # ignore-list change here can't silently mask itself. If this step ever
+          # stops failing, the CHECK is broken, not the fixture -- see the
+          # fixture file's own header comment.
+          if ./kube-score score .github/testdata/helm-policy-bad-fixture.yaml \
+              --ignore-test container-image-pull-policy > positive-control.txt 2>&1; then
+            echo "expected kube-score to fail (exit non-zero) on the deliberately bad fixture"
+            cat positive-control.txt
+            exit 1
+          fi
+          if ! grep -q 'Security Context Privileged' positive-control.txt; then
+            echo "expected the privileged-container finding specifically, not just any failure"
+            cat positive-control.txt
+            exit 1
+          fi
+
+      - name: Render default + maximal values for all 3 charts
+        run: |
+          # "Default" mirrors the helm-chart job's own default render. "Maximal"
+          # (.github/testdata/helm-maximal/*.yaml) turns on every optional
+          # feature this job's narrower default doesn't touch -- see each
+          # fixture's own header comment for exactly what it exercises.
+          helm template kx deploy/helm/keyorix \
+            --set auth.masterPassword=ci --set postgresql.auth.password=ci \
+            > keyorix-default.yaml
+          helm template kx deploy/helm/keyorix \
+            -f .github/testdata/helm-maximal/keyorix-chart.yaml \
+            > keyorix-maximal.yaml
+          helm template kx deploy/helm/keyorix-k8s-sync \
+            --set keyorix.url=https://k --set keyorix.projectID=1 --set keyorix.tokenSecret.name=tok \
+            > k8s-sync-default.yaml
+          helm template kx deploy/helm/keyorix-k8s-sync \
+            -f .github/testdata/helm-maximal/keyorix-k8s-sync.yaml \
+            > k8s-sync-maximal.yaml
+          # --include-crds: helm template omits a chart's crds/ directory from its
+          # output unless this is passed -- without it, the operator's own
+          # CustomResourceDefinition object (deploy/helm/keyorix-operator/crds/)
+          # is never rendered here at all, let alone validated. The existing
+          # helm-chart job's own operator render (above, pre-existing) doesn't
+          # pass this flag either -- this job is the first one in this repo that
+          # actually validates the CRD object.
+          helm template kx deploy/helm/keyorix-operator --include-crds \
+            > operator-default.yaml
+          helm template kx deploy/helm/keyorix-operator --include-crds \
+            -f .github/testdata/helm-maximal/keyorix-operator.yaml \
+            > operator-maximal.yaml
+
+      - name: kubeconform (schema validation, default + maximal, all 3 charts)
+        run: |
+          for f in keyorix-default.yaml keyorix-maximal.yaml \
+                   k8s-sync-default.yaml k8s-sync-maximal.yaml; do
+            ./kubeconform -strict -summary -kubernetes-version 1.29.0 < "$f"
+          done
+          # -skip CustomResourceDefinition: kubeconform's bundled schema catalog
+          # has no schema for apiextensions.k8s.io's CustomResourceDefinition
+          # kind at all (confirmed locally: "could not find schema for
+          # CustomResourceDefinition" even with no other flags changed) -- a
+          # kubeconform catalog gap, not a property of this chart's CRD. Scoped
+          # to exactly this one kind via -skip (not -ignore-missing-schemas,
+          # which would also silently skip any OTHER unrecognized kind in the
+          # file) so every other object in the render is still strictly checked.
+          for f in operator-default.yaml operator-maximal.yaml; do
+            ./kubeconform -strict -summary -kubernetes-version 1.29.0 \
+              -skip CustomResourceDefinition < "$f"
+          done
+
+      - name: kube-score (policy scan, default + maximal, all 3 charts)
+        run: |
+          # container-image-pull-policy is the ONLY check ignored globally (every
+          # container in every chart here uses IfNotPresent with an explicit,
+          # non-`latest` tag or digest -- see each chart's own image.tag/digest
+          # values.yaml comments -- so `Always` buys no security benefit once
+          # content is pinned, only an extra registry round-trip on every pod
+          # (re)start; pullPolicy stays user-configurable per chart for anyone
+          # who wants `Always` anyway). Every OTHER ignore is scoped to the
+          # specific resource it applies to via a `kube-score/ignore` annotation
+          # committed in that resource's own template, each with its own
+          # documented reason there -- not listed again here, so there is
+          # exactly one place per exclusion to keep in sync, not two.
+          #
+          # Deliberately does NOT pass --exit-one-on-warning: two WARNINGs are
+          # left un-ignored on purpose (web's few-replicas and missing host
+          # podAntiAffinity, both real, both non-blocking, see keyorix/README.md
+          # -- ignoring them would misrepresent an open gap as a reviewed
+          # decision). CRITICAL findings still fail this step by kube-score's
+          # own default exit behavior.
+          ./kube-score score keyorix-default.yaml keyorix-maximal.yaml \
+            k8s-sync-default.yaml k8s-sync-maximal.yaml \
+            operator-default.yaml operator-maximal.yaml \
+            --ignore-test container-image-pull-policy
 
   # The 3,000-line openapi.yaml is the contract between the server and every
   # client (dashboard, CLI remote mode, SDK users). Spectral validates structural
