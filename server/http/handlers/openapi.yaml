@@ -159,6 +159,8 @@ paths:
                 username: {type: string}
                 email: {type: string, format: email}
                 password: {type: string, format: password}
+                display_name: {type: string}
+                bootstrap_token: {type: string, description: 'Prefer the X-Keyorix-Bootstrap-Token header; this field is the fallback for clients that cannot set headers.'}
       responses:
         '200':
           description: System initialised (idempotent; already_initialized=true if previously bootstrapped)

@@ -3,9 +3,15 @@
 // `token-expiry-check`. Same flags, output, and exit codes as the old CLI's
 // internal/cli/system package -- a pure transport port, not a behavior change.
 //
-// `system init`/`audit`/`validate` are NOT ported here -- they are host-filesystem
+// `system audit`/`validate` are NOT ported here -- they are host-filesystem
 // operations with no server interaction at all (ADMIN-B1 per the inventory doc), and belong
 // in `keyorix-server admin`, not this network-only CLI.
+//
+// `system init` WAS dual-mode in the old CLI: local (host config/keys/DB, no server
+// interaction) and --server (network bootstrap via POST /system/init). Only the local half
+// is out of scope for the reason above -- it moved to `keyorix-server admin init`. The
+// --server half is pure network I/O and belongs here; it was a PR 10 leftover gap, closed in
+// systeminit.go.
 package cmd
 
 import (
