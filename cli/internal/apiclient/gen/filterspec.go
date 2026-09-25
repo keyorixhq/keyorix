@@ -189,6 +189,14 @@ var keptPaths = []string{
 	"/api/v1/projects/{id}/rotation-order",
 	"/api/v1/projects/{id}/break-glass",
 	"/api/v1/projects/{id}/break-glass/{activationId}/revoke",
+	// PR 9 (docs/cli-split-inventory.md §7) -- share.
+	"/api/v1/secrets/{id}/share",
+	"/api/v1/secrets/{id}/shares",
+	"/api/v1/secrets/{id}/self-share",
+	"/api/v1/shares/{id}",
+	"/api/v1/shared-secrets",
+	"/api/v1/users/{id}/shared-secrets",
+	"/api/v1/groups/{id}/shares",
 	// PR 5 (docs/cli-split-inventory.md §7) -- secret bulk/rotation/export/import/scan/hygiene.
 	// /api/v1/secrets and /api/v1/secrets/{id} are kept without a response schema here on
 	// purpose -- authoring Secret/SecretGetResult/SecretListEntry is PR 4's job (a sibling,

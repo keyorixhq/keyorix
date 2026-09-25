@@ -81,3 +81,24 @@ The CLI/server split removes the SDKs from the *client*. This ADR is about the *
    - Tags per integration: `noaws`, `noazure`, `nogcp`, `novault`, `nok8s`.
    - Officially supported profiles: **full** and **air-gapped** (no cloud connectors) only. They are defined in the Makefile/goreleaser, and CI builds, tests and publishes an SBOM for each.
    - Other tag combinations compile but are not supported, which keeps the test matrix at two profiles.
+
+## M4 measurements
+
+Measured on `main` before any ADR-109 step, on this checkout's commit at the time of Step 0.
+Methodology: `scripts/fuzzing/mapsize_of_bin.sh` (a repo-local reproduction of the rig's
+`mapsize_of_bin`, validated against this ADR's own stated baseline before being trusted — see
+that script's header comment), `go build -trimpath` for `GOOS=linux GOARCH=amd64`, and
+`go list -deps ./internal/core` (production files only).
+
+| Metric | Baseline (Step 0) |
+|---|---|
+| `internal/core` coverage map (`FuzzCoreOperationSequence`) | 486,874 B (~475 KiB) — matches this ADR's Context-section figure of "about 480 KB" |
+| `keyorix-server` binary, `linux/amd64`, `-trimpath` | 100,937,259 B (~96.3 MiB) |
+| `go list -deps ./internal/core` total | 872 packages |
+| ...of which cloud SDK packages (aws/azure/gcp/vault) | 131 (64 `aws-sdk-go-v2`, 33 `azure-sdk-for-go`, 34 `cloud.google.com/go`, 0 `hashicorp/vault/api` — Connect's Vault backend has no official SDK dependency today) |
+| ...of which the 6 ADR-109 integration packages | `connect` (+ `connecttypes`, which stays), `rotation`, `dynamic`, `encryption`, `notary`, `saml` — all present, tracked exactly by `internal/core/dependency_guard_test.go`'s `coreIntegrationDeps` allowlist |
+
+Step 0 itself does not change any of these numbers — it adds `internal/core/ports` (the target
+interface shapes, unwired) and the two dependency-guard tests (`internal/core`'s allowlist,
+`internal/core/ports`'s own must-stay-free guard) without moving any existing import. Steps 1–5
+each report a new row here as they land.

@@ -31,6 +31,7 @@ wherever a claim rests on a router/handler comment rather than a direct read of 
 6. [Top 5 GAPs by user impact](#6-top-5-gaps-by-user-impact)
 7. [Phase 3 PR breakdown](#7-phase-3-pr-breakdown)
 8. [Candidate security findings — consolidated](#8-candidate-security-findings--consolidated)
+9. [Command census (FINISH-SPLIT step 3)](#9-command-census-finish-split-step-3)
 
 ---
 
@@ -1264,6 +1265,29 @@ plus a real pre-existing doc defect fixed: `DELETE /api/v1/legal-hold` genuinely
 (§6, secondary gap) is now closed — `GET /api/v1/users/{id}/shared-secrets`, admin-rank-ceiling-
 gated; no remaining product decision here. Size: small.
 
+**Closed by PR split/pr9-cli-share.** Ported all 7 commands (`create`, `list`, `update`, `revoke`,
+`self-remove`, `shared-secrets`, `group-shares`) to `cli/cmd/share.go` against a freshly generated
+client. Two REST routes this PR needed already had live server handlers with no route wired
+(`RemoveSelfFromShare`, `ListGroupShares` in `shares_query.go`) — only the OpenAPI path/schema and
+CLI client were missing, not the underlying logic; both `#G66` findings the old CLI's own comments
+already named as the reason those handlers existed unreached. Spec gaps closed in this PR: added the
+`Share` and a PR9-local `Secret` component schema (both PascalCase, `models.ShareRecord`/`SecretNode`
+have no json tags — sibling-PR duplication of `Secret` is expected, see PR4/PR5's identical note);
+added `expires_at` to `shareSecret`'s request body and a full response schema; added
+`expires_at`/`clear_expiry` to `updateSharePermission`'s request body and a full response schema;
+added response schemas to `listSecretShares`, `listSharedSecrets`, `listSharedSecretsForUser`; added
+the brand-new `DELETE /api/v1/secrets/{id}/self-share` and `GET /api/v1/groups/{id}/shares` paths
+outright (previously absent from the spec, not just schema-less). `revokeShare` was already
+204-typed and out-of-scope; `removeSelfFromShare` (also 204) was added to `outOfScopeRegistry`
+alongside it, matching the existing 204 convention. The other 6 newly-schema'd operations moved from
+`pendingRegistry` to enforced, each exercised by a dedicated `openapi_contract_pr9_test.go` test —
+`TestEnforcedSetMatchesADR074`'s pinned baseline and `exercisingTests` updated accordingly. Deliberate
+output-parity fix (not a faithful port): `share update`'s old CLI remote-mode output printed only 3
+of the ~8 fields the embedded branch and `share create` print (§2.x inventory table, "API — minor
+CLI output-parity gap only"). This port prints all 8 (adding Secret ID, Owner ID, Recipient ID, Is
+Group, replacing the label with "Updated At"), matching create/list/revoke's shape instead of
+carrying the narrower one forward.
+
 **PR 10 — `bundle`, `license`, `system info`/`role-expiry-check`/`token-expiry-check`, `status`
 (remote branch only), `run` (remote branch only) — CLIENT-ONLY/API cleanup (~15 commands).**
 **`system info`/`role-expiry-check`/`token-expiry-check` DONE (#2062)**; `status`'s remote branch
@@ -1555,6 +1579,51 @@ check exists and fails closed for actor `0` (the safer minority shape, e.g.
 (the majority of "no behavior difference beyond the general pattern" rows in §2) becomes moot,
 structurally, the moment ADR-108 Decision A removes local mode from the CLI — that removal is this
 report's single strongest piece of evidence *for* the program, not against it.
+
+---
+
+## 9. Command census (FINISH-SPLIT step 3)
+
+Machine-checked, not asserted: `internal/cli/command_census_test.go`'s `TestCLICommandCensus` walks
+the old CLI's live cobra tree (`internal/cli`'s `rootCmd`, reusing the existing
+`walkLeafCommands`/`leafCommand` helper from `cli_remote_mode_behavior_test.go` rather than
+duplicating it) and checks every leaf command against a hand-maintained classification map in the
+same file. A leaf command with no entry fails CI immediately — this is the mechanism (not this
+document) that stays correct as the old CLI keeps changing underneath it. Run it directly with
+`scripts/cli-command-census.sh`, or regenerate the table below with
+`scripts/cli-command-census.sh --regen`.
+
+**259 leaf commands** as of 2026-09-24 (256 counted by a naive "no-children" walk, plus 3 the real
+walker's `cmd.Runnable()` check correctly caught that a naive walk misses: `access-review`,
+`connect`, and `encryption migrate-provider` are all runnable in their own right *and* have
+subcommands — a real gap the machine check found on its first run, not a hypothetical).
+
+Full table: [`docs/cli-split-inventory-census.md`](cli-split-inventory-census.md) (generated;
+do not hand-edit — edit `commandCensus` in `internal/cli/command_census_test.go` instead).
+
+**8 open gaps** at this writing — commands with no assigned home yet. These block PR 14 (delete
+`/system` + `RemoteStorage`) and Phase 5 (delete the old CLI); `TestNoGapsRemain`
+(`KEYORIX_CENSUS_CHECK_GAPS=1`) is the gate that gets re-run before either starts:
+
+- `billing report`, `usage show` — dual-mode REST routes exist (`GET /admin/billing/report`,
+  `GET /admin/usage`) and are genuinely `audit.read`-gated on the server side, but neither was in
+  any split PR's scope (§8 Finding S17: the embedded-mode path has no `userID` parameter to
+  authorize against at all). Needs a small PR, unassigned.
+- `migrate user-to-machine` — should collapse to a REST-backed thin-CLI command (the route already
+  exists: `POST /projects/{id}/machine-identities/migrate-from-user`); not related to the separate
+  `keyorix-migrate` tool (Vault/cloud import) despite the name collision. Needs a small PR,
+  unassigned.
+- `system init`'s `--server` half — the local-host half (create config/keys/DB) moved to
+  `keyorix-server admin init` (B1, #2016); the network-bootstrap half (`POST /system/init`,
+  unauthenticated, bootstrap-token-gated) has no thin-CLI home yet. Tracked as a note on the
+  `system init` row (same cobra leaf, can't be split in the census map), not a separate gap key.
+- `bundle import`, `bundle verify`, `license install`, `license status`, `run` — in progress this
+  same track (FINISH-SPLIT step 2, opened alongside or immediately after this PR); flip to
+  `censusMoved` once that PR lands.
+
+`bundle build`, `license issue`, and everything under the old `config`/`connect` groups are
+`censusDropped` (maintainer-only tooling and ADR-108 Decision A's config-mechanism consolidation,
+respectively) — not gaps, a closed decision each with its own reason in the table.
 
 
 
