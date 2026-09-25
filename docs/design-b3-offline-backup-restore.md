@@ -1,6 +1,7 @@
 # Design: offline backup and restore (ADR-108 §B3)
 
-**Status:** Draft for review
+**Status:** Design decided (2026-09-25) — see §12 for Andrei's resolutions of
+every open question. Implementation blocked on PR #2099 merging; see §13.
 **Scope:** `keyorix-server admin backup` and `keyorix-server admin restore` —
 a consistent, backend-neutral, confidentiality-preserving, integrity-verified
 full-state export/import of a Keyorix database, run without a live server
@@ -39,8 +40,7 @@ What this is **not**:
   "operations that need the database to themselves" — the availability cost
   is accepted by that decision, not introduced here.
 - **Not partial or selective.** v1 backs up everything or nothing — no
-  per-project, per-table, or time-range export. §12 Q7 asks whether that
-  should change.
+  per-project, per-table, or time-range export (§12 decision 7).
 - **Not a KEK rotation tool.** Confidentiality (§4) requires the *same*
   passphrase/KMS access at restore time as at backup time; it does not
   re-encrypt anything.
@@ -115,7 +115,8 @@ table's hash, and verifies the manifest signature and schema epoch, without
 creating or touching the target database at all; pass 2 (only entered if
 pass 1 passed) replays the same file into the target. This means `admin
 restore` requires its input already landed as a regular file — it cannot
-consume a live, non-seekable stream. Flagged as §12 Q1 for confirmation.
+consume a live, non-seekable stream (§12 decision 1: confirmed acceptable
+for v1).
 
 ## 4. Confidentiality
 
@@ -135,20 +136,33 @@ a KEK (`wrapKey`/`unwrapKey`, `internal/encryption/keymanager_lifecycle.go:
 several other provider shapes (file/env/exec/Shamir/TPM).
 
 **Restoring onto a different host needs a portable copy of this wrapped
-material — and no such export exists today.** The wrapped DEK and salt (or
-KMS-wrapped-key blob) live only as files on the source host
-(`config.EncryptionConfig.DEKPath`/`SaltPath`, `internal/config/config.go:
-623`; `WrappedKeyPath`, `kms_provider.go:94`). The one existing "backup" of
-this material, `internal/encryptionops/migrate_provider.go`'s
-`MigrateProviderWithConfig` (lines 161–240), is a same-host, same-format
-crash-safety copy taken immediately before an in-place re-wrap, verified by
-a decrypt probe and restored on failure (`RestoreBackup`, line 285) — it
-never bundles the salt and never crosses machines or passphrases. This
-design adds the missing piece: the backup manifest's `encryption` section
-carries the same on-disk bytes (wrapped DEK, salt if password-provider,
-wrapped-KEK blob if KMS-provider) plus the provider type and key version,
-relocated into the portable container rather than reinvented. No new wrap
-format — this is new *plumbing*, not new cryptography.
+material.** The wrapped DEK and salt (or KMS-wrapped-key blob) live only as
+files on the source host (`config.EncryptionConfig.DEKPath`/`SaltPath`,
+`internal/config/config.go:623`; `WrappedKeyPath`, `kms_provider.go:94`).
+The enumeration of exactly these files already exists —
+`internal/keyfiles.Registry` (pre-existing, originally built for the
+permission-fixing call sites: `keyorix system audit`/`fixfileperm`, server
+boot validation, `KeyManager.ValidateKeyFiles`) walks `*config.
+EncryptionConfig` and returns the KEK salt, wrapped DEK, and any
+provider-specific wrapped-KEK blob or Shamir share files as one list — the
+single source of truth this design should read from rather than
+re-deriving its own. §13 records that PR #2099 (backup format v1) is the
+first consumer to repurpose this registry for bundling into an archive
+(SQLite-only, into a checksummed tar); this design's manifest `encryption`
+section does the same enumeration for the backend-neutral v2 format: the
+same on-disk bytes (wrapped DEK, salt if password-provider, wrapped-KEK
+blob if KMS-provider), plus the provider type and key version, relocated
+into the portable container rather than reinvented, and read via the same
+`keyfiles.Registry` call v1 already uses rather than a second hand-written
+list. No new wrap format, and — once #2099 lands — no new enumeration
+either; this is plumbing, not new cryptography.
+
+(For historical context: before #2099 existed, the only *backup* of this
+material anywhere in the repo was `internal/encryptionops/migrate_provider.
+go`'s `MigrateProviderWithConfig`, a same-host, same-format crash-safety
+copy taken immediately before an in-place re-wrap — it never bundled the
+salt and never crossed machines or passphrases, so it could not have served
+this purpose even before v1 shipped.)
 
 At restore time, the operator supplies the same passphrase (or has
 equivalent KMS access) as the source. `admin restore` derives the KEK,
@@ -286,8 +300,13 @@ target:
   deployment pattern rather than introducing a new one.
 
 Either path needs enough free space to hold both the (empty) target shell
-and the fully-loaded copy simultaneously during restore — flagged as §12
-Q3.
+and the fully-loaded copy simultaneously during restore. **Decided (§12
+decision 3): a preflight free-space check runs before pass 2 begins loading
+anything** — comparing the archive's declared uncompressed size (manifest,
+§5) against free space on the target's filesystem (and, for the Postgres
+scratch-schema path, the tablespace's backing volume), refusing up front
+with a clear message naming both numbers if there is not enough headroom,
+rather than failing partway through a load.
 
 **Refuse a backup from a newer schema.** Reuses `checkSchemaEpoch`'s exact
 comparison (§5) — no new refusal logic to get subtly wrong.
@@ -342,32 +361,65 @@ to parse (type change), rather than being migrated forward. This is not a
 new gap this design introduces — it is the same class of hazard
 `migrateDatabase`'s own "existing-DB path" already has (per-column
 `ADD COLUMN` steps are hand-maintained today; issue #1642 found three
-missing ones). Flagged as §12 Q4 rather than solved here.
+missing ones).
 
-## 9. Anti-rollback: opt-in via the same external-anchor mechanism as design-b4
+**Decided (§12 decision 4): acceptable only if restore does not silently
+tolerate it.** Pass 1 (§3) compares each table's set of manifest-declared
+column names against the restoring binary's own current model schema for
+that table; a column present in the backup but absent from the current
+model **under a name the model doesn't recognize as a known-retired field**
+is an unsupported schema delta, and restore refuses before pass 2 begins,
+naming the table and column. This requires a companion documentation rule,
+recorded here rather than left implicit: **schema migrations in this repo
+must be additive-only going forward** — new columns and tables are fine
+(the whole mechanism in §8 point 2 depends on that being safe), but
+in-place column rename or type change is not permitted; a genuine rename is
+modeled as add-new-column-plus-deprecate-old, never an `ALTER COLUMN`. This
+rule needs to land in `docs/g80-remediation-notes.md` or equivalent
+engineering-practice documentation alongside this design, not only here.
+
+## 9. Anti-rollback: fails closed when an anchor is supplied and mismatches
 
 A validly-signed *older* backup restored on purpose is a legitimate DR
-action (§2); this design does not refuse it by default. But §7's automatic
-post-restore verification already accepts an optional `--anchor` flag
-(forwarded straight into the `auditverify.Verify` call, §7), and design-b4's
-`crossCheckExternalAnchor` already does exactly the check this needs for
-free: an externally-held anchor certifying *more* chained events than the
+action (§2), and with no `--anchor` supplied this design cannot rule out
+rollback at all — the same honest limitation design-b4 states for a bare
+verification run with no key (`Result.NotProven`), not silently assumed
+away. **But once an anchor is supplied, decision 2 (§12) makes the check
+load-bearing, not advisory.**
+
+§7's automatic post-restore verification accepts an optional `--anchor`
+flag, forwarded straight into the `auditverify.Verify` call, and design-b4's
+`crossCheckExternalAnchor` already performs exactly the check this needs:
+an externally-held anchor certifying *more* chained events than the
 just-restored chain contains is reported as a truncation, regardless of
 whether the restored data is internally self-consistent and validly signed
-in isolation. Restoring an older backup, when the operator supplies a newer
-external anchor, surfaces as exactly that condition.
+in isolation. Restoring an older backup while supplying a newer external
+anchor surfaces as exactly that condition.
 
-This mirrors design-b4's own trust model rather than inventing a new one:
-no anchor supplied means rollback cannot be ruled out, stated plainly (via
-`Result.NotProven`), not silently assumed away. Whether an anchor mismatch
-should be a hard refusal rather than a reported warning is §12 Q2.
+**Decided (§12 decision 2): fail closed.** When `--anchor` is supplied and
+the post-restore check reports the anchor mismatch (truncation/rollback
+evidence), `admin restore` refuses — the restore is left in the forensic
+state §7 already establishes for a `VerdictBroken` outcome (data loaded,
+command exits non-zero, nothing deleted), not silently accepted. The only
+way past this refusal is an explicit `--allow-rollback` flag, which does
+not suppress the check silently: it **writes an explicit audit event**
+(`audit_events`, a new event type naming the operator, the supplied anchor,
+and the certified-vs-restored chained-event counts) into the now-restored
+database before the command reports success, so a rollback that was
+knowingly overridden is itself part of the tamper-evident record going
+forward — an operator can no longer make this override invisible even to
+themselves.
 
 ## 10. CLI surface
 
 ```
 keyorix-server admin backup  --output <path> [--force]
-keyorix-server admin restore --input  <path> [--anchor <path>] [--force]
+keyorix-server admin restore --input  <path> [--anchor <path>] [--allow-rollback] [--force]
 ```
+
+`--allow-rollback` is only meaningful together with `--anchor` (§9): it does
+not weaken any other check, and is rejected as a usage error if passed
+without `--anchor`, since there is nothing to override otherwise.
 
 Both commands take the same `--config` every admin command already takes
 (source DB for backup, target DB for restore) and hold
@@ -425,65 +477,155 @@ rather than buffered and written once like the checkpoint export.
    rows but reports the overall command as failed once its automatic
    post-restore `verify-audit` returns `BROKEN` — and that the loaded
    (broken) database is left in place, not deleted.
-7. **Rollback/anchor test (§9).** Take backup A, log further audit events
-   and a new checkpoint, take backup B. Restore A while supplying an anchor
-   derived from B's checkpoint; assert the post-restore anchor check
-   surfaces the truncation.
-8. **SQLite ↔ Postgres round trip**, `pg-gated` per this repo's
-   `docs/security-closures.tsv` convention (needs `KEYORIX_TEST_PG_DSN`):
-   back up a SQLite fixture, restore into Postgres, and the reverse
-   direction, asserting equivalent content both ways.
+7. **Rollback/anchor test, fail-closed (§9).** Take backup A, log further
+   audit events and a new checkpoint, take backup B. Restore A while
+   supplying an anchor derived from B's checkpoint; assert the whole restore
+   command fails (non-zero exit) with the truncation named, and that no
+   `--allow-rollback` audit event exists (since it wasn't passed). Repeat
+   with `--allow-rollback` added: assert the restore now succeeds, AND that
+   the restored database's own audit chain contains the new
+   rollback-override event naming the operator and the anchor mismatch —
+   asserting the event's *presence*, not just the command's exit code, per
+   this repo's own "assert the effect, not the return value" discipline for
+   a path that could otherwise silently swallow the override.
+8. **Free-space preflight test (§7, decision 3).** Restore against a target
+   filesystem with less free space than the manifest's declared uncompressed
+   size; assert refusal before pass 2 begins, with both numbers named in the
+   error, and zero bytes written to the target.
+9. **Unsupported schema-delta refusal test (§8, decision 4).** Construct a
+   backup whose manifest declares a column name the restoring binary's
+   current model does not recognize; assert restore refuses in pass 1,
+   naming the table and column, rather than silently dropping it.
+10. **SQLite ↔ Postgres round trip**, `pg-gated` per this repo's
+    `docs/security-closures.tsv` convention (needs `KEYORIX_TEST_PG_DSN`):
+    back up a SQLite fixture, restore into Postgres, and the reverse
+    direction, asserting equivalent content both ways.
+11. **v1-archive restore compatibility (§13).** Once #2099 merges: restore a
+    v1 (`gzip(tar(...))`) archive produced by that PR's `admin backup`
+    unmodified, and assert it still succeeds end to end (format detection,
+    delegation to v1's own loader, then this design's post-restore
+    `verify-audit` running against the result) — a regression test proving
+    v2's restore command never drops v1 support.
 
-## 12. Open questions for Andrei
+## 12. Decisions (Andrei, 2026-09-25)
+
+Every question this design originally left open is resolved below. Each
+decision's reasoning is also folded into the section it governs (§3, §7,
+§8, §9, §10) so those sections read correctly standalone — this list is the
+record of *what was decided and why*, not the only place the decision is
+reflected.
 
 1. **Restore requires a local, seekable file — never a live pipe (§3).**
-   Backup can stream to stdout/a pipe/object storage; restore cannot,
-   because verification must complete before any row is applied. Is
-   requiring operators to land the file locally before restoring acceptable
-   for v1, or does a future version need a buffer-to-local-scratch-file
-   fallback for a non-seekable source?
-2. **Anti-rollback (§9) is opt-in, not enforced by default** — restoring an
-   older backup without supplying `--anchor` succeeds, since that is a
-   legitimate DR action. Should restore instead *refuse* (not just warn)
-   whenever an anchor *is* supplied and mismatches, or is "warn loudly"
-   sufficient?
-3. **All-or-nothing via atomic rename (§7) needs transient double disk
-   space** — the empty target shell plus the fully-loaded copy exist
-   simultaneously during restore. Acceptable for the expected deployment
-   sizes, or does this need a documented minimum free-space requirement (or
-   an alternate design) up front?
-4. **Version-skipping upgrade (§8) does not handle a renamed or
-   type-changed column** between the backup's schema version and the
-   restoring binary's — same residual gap `migrateDatabase`'s own upgrade
-   path already carries. Acceptable as a known, shared limitation, or does
-   this design need an explicit per-version column-mapping table before
-   shipping?
-5. **A new KEK-derived signing key (§5)** — confirm no objection to minting
-   a new HKDF domain-separation string/"slot" alongside the existing
-   audit-checkpoint one, rather than reusing that key for manifest
-   signatures too.
-6. **Should the SQLite→Postgres move and version-skipping upgrade get
-   dedicated wrapper subcommands/UX** (e.g. `admin migrate-to-postgres`)
-   **or just be documented usage patterns of the same `backup`/`restore`
-   pair** (this design's default assumption, §8)?
-7. **Is a full, all-or-nothing export the only mode v1 needs**, or should
-   selective/partial backup (by project, by table, by time range) be
-   in scope from the start? Assumed "full only" throughout this document;
-   flagging since it materially affects §3's format and §7's restore
-   semantics if reversed later.
+   **Decided: yes, for v1.** Backup can stream to stdout/a pipe/object
+   storage; restore cannot, because verification must complete before any
+   row is applied. Operators land the file locally before restoring; no
+   buffer-to-local-scratch-file fallback for a non-seekable source in v1.
+2. **Anti-rollback (§9).** **Decided: fails closed.** A supplied `--anchor`
+   that doesn't match the just-restored chain causes restore to refuse, not
+   just warn. The only override is an explicit `--allow-rollback` flag,
+   which writes an audit event recording that the override happened —
+   restoring an older backup is legitimate DR, but doing so past a
+   mismatched anchor is now itself part of the tamper-evident record, never
+   silent.
+3. **Transient double disk space during atomic-rename restore (§7).**
+   **Decided: acceptable**, gated by a preflight free-space check that
+   refuses up front with a clear message (declared vs. available space)
+   rather than failing partway through a load.
+4. **The renamed/retyped-column gap in version-skipping upgrade (§8).**
+   **Decided: acceptable only if restore detects it and refuses**, rather
+   than silently dropping or mis-parsing the column. Companion documentation
+   rule: schema migrations in this repo are additive-only going forward — no
+   in-place `ALTER COLUMN` rename or type change; a rename is modeled as
+   add-new-column-plus-deprecate-old.
+5. **A new KEK-derived manifest-signing key (§5).** **Decided: yes** — a new
+   HKDF domain-separation info label, distinct from the existing
+   audit-checkpoint key's, not a reuse of that key for a second signature
+   protocol.
+6. **Dedicated wrapper subcommands for the SQLite→Postgres move / version-
+   skipping upgrade, vs. documented usage of `backup`/`restore` (§8).**
+   **Decided: no wrapper subcommands in v1** — both are documented usage
+   patterns of the same `admin backup`/`admin restore` pair.
+7. **Selective/partial backup scope for v1 (§3, §7).** **Decided: full
+   backup only for v1.** No per-project, per-table, or time-range export.
+
+## 13. Relationship to PR #2099 — backup format v1 (2026-09-25 addendum)
+
+PR #2099 (`feat(server/admin): add admin backup/admin restore`, ADR-108
+§B3, open at the time of this addendum) ships ahead of this design as
+**backup format v1**. It is SQLite-only by explicit scope (refuses on
+Postgres, pointing operators at `docs/SELF_HOSTING.md` §5's manual
+`pg_dump`/`psql` path instead): `admin backup --output` takes a consistent
+snapshot via SQLite's own `VACUUM INTO` under the same `serverguard`
+exclusive lock this design also uses (§6, `backup.go`), bundles it with
+every encryption key-material file already enumerated by the existing
+`internal/keyfiles.Registry` (KEK salt, wrapped DEK, wrapped-KEK blobs,
+Shamir shares — precisely the "portable wrapped-DEK+salt" need §4
+identifies, already solved by pre-existing code this design should reuse,
+not duplicate) into one checksummed `gzip(tar(...))` archive: a
+`MANIFEST.json` (`format_version: 1`, `backend: "sqlite"`, a `SHA256` and
+tar entry name per bundled file) plus one tar entry per file.
+`admin restore --input` checksum-verifies every entry before writing
+anything, refuses a backend mismatch and a non-empty target (without
+`--overwrite-existing`), then applies pending migrations exactly like
+`admin migrate` — already covering the "version-skipping upgrade" case for
+this SQLite-only, physical-snapshot shape.
+
+This design (v2) does not replace v1; it is the SQLite↔Postgres-portable,
+logical-export superset ADR-108 §B3 still needs — v1's own PR description
+explicitly scopes the backend move and Postgres backup/restore out as
+follow-up work. **`admin restore` must accept both formats, so an archive
+taken by a pre-v2 binary is never stranded:**
+
+- **Format detection is free, no version negotiation needed.** A v1 archive
+  is valid gzip (magic bytes `1f 8b`) containing a `MANIFEST.json` entry; a
+  v2 archive opens with the new `KYXBKP1` magic string (§3), which is not
+  valid gzip. Restore inspects the first few bytes and dispatches before
+  doing anything else.
+- **v1 archives are handled by v1's own code, not reimplemented.** Once
+  #2099 merges, this design's `admin restore` becomes the single CLI entry
+  point; internally, a detected v1 archive is handed to (an exported form
+  of) #2099's own archive-reading and restore logic unchanged — its
+  checksum verification, its `internal/keyfiles.Registry`-driven key-file
+  handling, and its post-load migration step all reused as-is, not
+  rewritten against this design's own manifest/signature scheme, which v1
+  archives were never built to carry. A v1 archive against a non-SQLite
+  target still refuses exactly as it does today.
+- **v2's new safety nets still apply to a v1 restore, layered on top, not
+  duplicated into v1's code.** The free-space preflight (§12 decision 3) and
+  the empty-target check run identically regardless of detected format,
+  before either loader starts. Once a v1 archive is physically installed and
+  migrated (v1's own mechanism), it is a live, fully-migrated SQLite
+  database exactly like a v2 restore's output — so this design's automatic
+  post-restore `verify-audit` (§7) and the fail-closed `--anchor`/
+  `--allow-rollback` check (§9, §12 decision 2) run against it the same way,
+  even though the v1 archive itself carries none of v2's signed-manifest/
+  schema-epoch machinery (§5) to check on the way in.
+- **`admin backup` only ever emits v2 archives once this design ships** —
+  v1 compatibility is read-only, on the restore side, for archives already
+  taken by pre-v2 binaries. There is no ongoing "which version should I
+  write" choice for an operator to make.
+
+**Sequencing: implementation starts only after #2099 merges.** Building v2
+concurrently against a moving, unmerged v1 would mean two independently-
+written restore paths landing and conflicting over the same `serverguard`
+lock-acquisition and archive-handling code that #2099 is introducing right
+now. Once #2099 is on `main`, v2's implementation extends and reuses that
+code directly instead of re-deriving it.
 
 ## Effort estimate
 
 | Piece | Estimate |
 |---|---|
 | Container format + FK-safe ordering derivation + streaming writer/reader | 3–4 days |
-| Manifest: signing key derivation, per-table hashing, schema-epoch check | 2 days |
-| DEK/salt/wrapped-KEK portable export + restore-side unwrap probe (§4) | 2–3 days |
-| `admin backup` + `admin restore` CLI commands, `serverguard` wiring, atomic swap-in (both backends) | 3–4 days |
-| Post-restore automatic `verify-audit` integration + anchor forwarding (§9) | 1–2 days |
-| Test plan (§11): property test, byte-tamper/truncation fuzz, PG round trip | 4–5 days |
-| Docs (operator guide, DR runbook, SQLite→Postgres move walkthrough) | 1–2 days |
+| Manifest: signing key derivation, per-table hashing, schema-epoch check, schema-delta refusal (§8 decision 4) | 2–3 days |
+| DEK/salt/wrapped-KEK portable export (reusing `internal/keyfiles.Registry`, §13 — smaller than originally scoped since this enumeration already exists) + restore-side unwrap probe (§4) | 1–2 days |
+| `admin backup` + `admin restore` CLI commands, `serverguard` wiring, atomic swap-in (both backends), free-space preflight (§7 decision 3) | 3–4 days |
+| Post-restore automatic `verify-audit` integration, fail-closed anchor check + `--allow-rollback` audit event (§9 decision 2) | 2 days |
+| v1-archive delegation path (§13): format detection + wiring to #2099's (exported) archive reader | 1–2 days |
+| Test plan (§11): property test, byte-tamper/truncation fuzz, PG round trip, v1-compat regression | 4–5 days |
+| Docs (operator guide, DR runbook, SQLite→Postgres move walkthrough, additive-only-migrations rule) | 1–2 days |
 
-**Total: ~16–22 engineer-days**, plus review time given the
+**Total: ~17–24 engineer-days**, plus review time given the
 security-sensitive nature of a tool that handles the entire system's
-confidential material and is the last line of defense in a disaster.
+confidential material and is the last line of defense in a disaster. Not
+started until PR #2099 merges (§13).
