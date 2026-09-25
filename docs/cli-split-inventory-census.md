@@ -31,7 +31,7 @@
 | `auth logout` | moved (thin CLI) | PR 2, #2030 | renamed to top-level `logout` |
 | `auth mfa stepup` | moved (thin CLI) | PR 2, #2030 | renamed to top-level `mfa stepup` |
 | `auth status` | moved (thin CLI) | PR 0, #2019 | folded into top-level `status`, which now shows server/login state directly |
-| `billing report` | GAP (unresolved) | unassigned | dual-mode REST route exists (GET /admin/billing/report); not in any split PR's scope; Finding S17 (embedded mode has no userID param to authorize against) |
+| `billing report` | moved (thin CLI) | FINISH-SPLIT census-gaps | ported the REST/remote branch only (cli/cmd/billing.go); local/embedded branch dropped, not carried forward -- Finding S17 |
 | `break-glass activate` | moved (thin CLI) | PR 1, #2043 |  |
 | `break-glass list` | moved (thin CLI) | PR 1, #2043 |  |
 | `break-glass revoke` | moved (thin CLI) | PR 1, #2043 |  |
@@ -112,7 +112,7 @@
 | `machine token list` | moved (thin CLI) | PR 2, #2030 |  |
 | `machine token revoke` | moved (thin CLI) | PR 2, #2030 |  |
 | `machine token-hygiene` | moved (thin CLI) | PR 2, #2030 |  |
-| `migrate user-to-machine` | GAP (unresolved) | unassigned | inventory recommends collapsing to a REST-backed thin-CLI command (route exists: POST /projects/{id}/machine-identities/migrate-from-user); not in any split PR's scope. NOT related to the separate keyorix-migrate tool (Vault/cloud import) despite the name collision |
+| `migrate user-to-machine` | moved (thin CLI) | FINISH-SPLIT census-gaps | collapsed to `keyorix machine migrate-from-user` (cli/cmd/machine.go), not `migrate ...` -- a top-level migrate verb would collide with the separate keyorix-migrate tool (Vault/cloud import) despite being unrelated. --by dropped: POST /machine-identities/migrate-from-user's bearer token IS the acting identity, already permission-gated by router middleware |
 | `notification channel add` | moved (thin CLI) | PR 7, #2069 |  |
 | `notification channel delete` | moved (thin CLI) | PR 7, #2069 |  |
 | `notification channel get` | moved (thin CLI) | PR 7, #2069 |  |
@@ -252,7 +252,7 @@
 | `system token-expiry-check` | moved (thin CLI) | PR 7/10, #2069 |  |
 | `system validate` | moved (keyorix-server admin) | B1, #2016 |  |
 | `trust keygen` | moved (thin CLI) | PR 8, #2069 |  |
-| `usage show` | GAP (unresolved) | unassigned | dual-mode REST route exists (GET /admin/usage); not in any split PR's scope; Finding S17 (embedded mode has no userID param to authorize against) |
+| `usage show` | moved (thin CLI) | FINISH-SPLIT census-gaps | ported the REST/remote branch only (cli/cmd/usage.go); local/embedded branch dropped, not carried forward -- Finding S17 |
 | `user create` | moved (thin CLI) | PR 6, #2049 |  |
 | `user delete` | moved (thin CLI) | PR 6, #2049 |  |
 | `user force-password-reset` | moved (thin CLI) | PR 6, #2049 |  |
@@ -265,13 +265,10 @@
 | `user suspend-inactive` | moved (thin CLI) | PR 6, #2049 |  |
 | `user update` | moved (thin CLI) | PR 6, #2049 |  |
 
-**8 open gap(s)** (blocks PR 14 / Phase 5 -- see TestNoGapsRemain):
+**5 open gap(s)** (blocks PR 14 / Phase 5 -- see TestNoGapsRemain):
 
-- `billing report`: dual-mode REST route exists (GET /admin/billing/report); not in any split PR's scope; Finding S17 (embedded mode has no userID param to authorize against)
 - `bundle import`: verification code is moving into pkg/bundleverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands
 - `bundle verify`: verification code is moving into pkg/bundleverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands
 - `license install`: verification code is moving into pkg/licenseverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands
 - `license status`: verification code is moving into pkg/licenseverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands
-- `migrate user-to-machine`: inventory recommends collapsing to a REST-backed thin-CLI command (route exists: POST /projects/{id}/machine-identities/migrate-from-user); not in any split PR's scope. NOT related to the separate keyorix-migrate tool (Vault/cloud import) despite the name collision
 - `run`: flips to censusMoved once that PR lands; the local/embedded fetch branch will be dropped, not ported -- Finding S18: it had zero authorization check and zero audit event, so dropping it is a security fix, not just cleanup
-- `usage show`: dual-mode REST route exists (GET /admin/usage); not in any split PR's scope; Finding S17 (embedded mode has no userID param to authorize against)

@@ -358,4 +358,9 @@ var exercisingTests = map[string][]string{
 	"getSecretBlastRadius":            {"TestContractPR5_GetBlastRadius"},
 	"getSecretRisk":                   {"TestContractPR5_GetSecretRisk"},
 	"getQuotaReport":                  {"TestContractPR5_GetQuotaReport"},
+	// FINISH-SPLIT census-gaps batch (docs/cli-split-inventory-census.md) --
+	// openapi_contract_finishsplit_test.go.
+	"getUsageReport":       {"TestContractFinishSplit_GetUsageReport"},
+	"getBillingReport":     {"TestContractFinishSplit_GetBillingReport"},
+	"migrateUserToMachine": {"TestContractFinishSplit_MigrateUserToMachine"},
 }

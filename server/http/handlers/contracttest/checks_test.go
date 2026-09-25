@@ -213,6 +213,12 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		"getSecretBlastRadius":            true,
 		"getSecretRisk":                   true,
 		"getQuotaReport":                  true,
+		// FINISH-SPLIT census-gaps batch (docs/cli-split-inventory-census.md): the last
+		// 3 command-census gaps ported to the thin CLI. Each is exercised via
+		// openapi_contract_finishsplit_test.go.
+		"getUsageReport":       true,
+		"getBillingReport":     true,
+		"migrateUserToMachine": true,
 	}
 
 	loadSpec()

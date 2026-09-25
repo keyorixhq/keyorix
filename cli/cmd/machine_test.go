@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -104,5 +105,83 @@ func TestRunMachineTokenIssue_PrintsRawTokenOnceToStdoutOnly(t *testing.T) {
 
 	if !containsAll(out, "Copy it now", "will not be shown again", "kx_machine_the_raw_secret") {
 		t.Fatalf("output missing the one-time-secret warning or the token itself: %q", out)
+	}
+}
+
+// TestRunMachineMigrateFromUser_MatchesOldCLIOutputShape is a golden-output parity check
+// against internal/cli/migrate/user_to_machine.go's runUserToMachine (its remote-equivalent
+// output lines) -- minus --by, which has no REST equivalent (the bearer token IS the acting
+// identity; see machine.go's own doc comment on this command for why).
+func TestRunMachineMigrateFromUser_MatchesOldCLIOutputShape(t *testing.T) {
+	var calledBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v1/projects":
+			_, _ = fmt.Fprint(w, `{"data":{"projects":[{"id":3,"name":"infra"}]}}`)
+		case r.URL.Path == "/api/v1/projects/3/machine-identities/migrate-from-user":
+			buf, _ := io.ReadAll(r.Body)
+			calledBody = string(buf)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprint(w, `{"data":{"machine_identity":{"id":42,"name":"ci-bot","identity_type":"service","state":"active","project_id":3}}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	setMachineCreds(t, srv)
+	machineMigrateProjectName = "infra"
+	machineMigrateType = "service"
+	machineMigrateName = ""
+	machineMigrateKeepUser = false
+	defer func() {
+		machineMigrateProjectName, machineMigrateType, machineMigrateName, machineMigrateKeepUser = "", "", "", false
+	}()
+
+	out := captureStdout(t, func() {
+		if err := runMachineMigrateFromUser(machineMigrateFromUserCmd, []string{"ci-bot"}); err != nil {
+			t.Fatalf("runMachineMigrateFromUser: %v", err)
+		}
+	})
+
+	if !containsAll(calledBody, `"username":"ci-bot"`, `"identity_type":"service"`, `"keep_user":false`) {
+		t.Fatalf("request body missing expected fields: %q", calledBody)
+	}
+	if !containsAll(out, `Migrated user "ci-bot" to machine identity: id=42 name="ci-bot" type=service state=active`,
+		"Source user suspended (login blocked)") {
+		t.Fatalf("output missing expected fields: %q", out)
+	}
+}
+
+func TestRunMachineMigrateFromUser_KeepUserSkipsSuspendMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v1/projects":
+			_, _ = fmt.Fprint(w, `{"data":{"projects":[{"id":3,"name":"infra"}]}}`)
+		case r.URL.Path == "/api/v1/projects/3/machine-identities/migrate-from-user":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprint(w, `{"data":{"machine_identity":{"id":42,"name":"ci-bot","identity_type":"service","state":"active","project_id":3}}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	setMachineCreds(t, srv)
+	machineMigrateProjectName = "infra"
+	machineMigrateType = "service"
+	machineMigrateName = ""
+	machineMigrateKeepUser = true
+	defer func() {
+		machineMigrateProjectName, machineMigrateType, machineMigrateName, machineMigrateKeepUser = "", "", "", false
+	}()
+
+	out := captureStdout(t, func() {
+		if err := runMachineMigrateFromUser(machineMigrateFromUserCmd, []string{"ci-bot"}); err != nil {
+			t.Fatalf("runMachineMigrateFromUser: %v", err)
+		}
+	})
+	if containsAll(out, "Source user suspended") {
+		t.Fatalf("output should not mention suspension when --keep-user is set: %q", out)
 	}
 }
