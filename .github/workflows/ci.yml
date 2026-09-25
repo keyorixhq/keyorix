@@ -933,6 +933,11 @@ jobs:
           source scripts/ci-test-legs.sh
           assert_leg_completeness
 
+      - name: Assert every leg-pinned package exists in go list and is pinned exactly once
+        run: |
+          source scripts/ci-test-legs.sh
+          assert_pinned_leg_packages_valid
+
   # Independent of test execution/coverage -- both tools statically analyze
   # source, so this runs in parallel with test-suite instead of waiting for it
   # (as it did when both lived inside one sequential build-and-test job).
@@ -1820,6 +1825,90 @@ jobs:
           fi
           if ! grep -q 'mutually exclusive' contradictory-error.txt; then
             echo "expected the failure message to name the contradiction"; cat contradictory-error.txt; exit 1
+          fi
+
+      - name: "Egress NetworkPolicy + PodDisruptionBudget (K8S-HARDENING)"
+        run: |
+          # Before this, every chart's NetworkPolicy set policyTypes: [Ingress] only --
+          # egress was completely unrestricted by default (any pod could reach anything
+          # the cluster network permits: internal services, cloud metadata endpoints,
+          # arbitrary internet hosts). This asserts the fix actually landed in the
+          # rendered output, not just that egress: {} templating exists in the source.
+          helm template kx deploy/helm/keyorix \
+            --set auth.masterPassword=ci --set postgresql.auth.password=ci \
+            > keyorix-egress-render.yaml
+          for name in kx-keyorix-server kx-keyorix-web kx-keyorix-postgresql; do
+            if ! grep -A1 "^  name: $name\$" keyorix-egress-render.yaml | grep -q "$name"; then
+              echo "expected a NetworkPolicy named $name"; exit 1
+            fi
+          done
+          # server and web must have Egress in policyTypes (postgresql too, even though
+          # its own rule list is empty -- Egress must still be in policyTypes for the
+          # empty egress: [] to actually mean deny-all, not "unset/unrestricted").
+          EGRESS_POLICYTYPE_COUNT="$(grep -c '^    - Egress$' keyorix-egress-render.yaml)"
+          if [ "$EGRESS_POLICYTYPE_COUNT" -lt 3 ]; then
+            echo "expected at least 3 'Egress' policyType entries (server, web, postgresql), found $EGRESS_POLICYTYPE_COUNT"
+            exit 1
+          fi
+          # web must NOT gain an Ingress restriction (#137's original design: the web UI
+          # is the public entry point and stays open to inbound traffic from any pod, only
+          # egress is now scoped) -- assert its NetworkPolicy has no `ingress:` key at all.
+          if awk '/^  name: kx-keyorix-web$/{f=1} f && /^kind: NetworkPolicy$/{exit} f && /^  ingress:$/{found=1} f && /^---$/{exit} END{exit !found}' keyorix-egress-render.yaml; then
+            echo "did not expect an ingress: block on the web NetworkPolicy"; exit 1
+          fi
+          # No PDB at the default replica count of 1 anywhere (a PDB on a singleton can
+          # only ever block its own voluntary eviction/drain, never add real tolerance).
+          if grep -q '^kind: PodDisruptionBudget$' keyorix-egress-render.yaml; then
+            echo "did not expect a PodDisruptionBudget at the default web.replicas=1"; exit 1
+          fi
+          # Scaling web out must produce a PDB with minAvailable: 1.
+          helm template kx deploy/helm/keyorix \
+            --set auth.masterPassword=ci --set postgresql.auth.password=ci --set web.replicas=2 \
+            > keyorix-web-scaled-render.yaml
+          if ! grep -A3 '^kind: PodDisruptionBudget$' keyorix-web-scaled-render.yaml | grep -q 'name: kx-keyorix-web$'; then
+            echo "expected a PodDisruptionBudget named kx-keyorix-web when web.replicas=2"; exit 1
+          fi
+          if ! grep -q '^  minAvailable: 1$' keyorix-web-scaled-render.yaml; then
+            echo "expected minAvailable: 1 on the web PodDisruptionBudget"; exit 1
+          fi
+
+          K8S_SYNC_SET="--set keyorix.url=https://k --set keyorix.projectID=1 --set keyorix.tokenSecret.name=tok"
+          # shellcheck disable=SC2086
+          helm template kx deploy/helm/keyorix-k8s-sync $K8S_SYNC_SET > k8s-sync-egress-render.yaml
+          if ! grep -A2 '^kind: NetworkPolicy$' k8s-sync-egress-render.yaml | grep -q 'name: kx-keyorix-k8s-sync$'; then
+            echo "expected a NetworkPolicy named kx-keyorix-k8s-sync"; exit 1
+          fi
+          if ! grep -q '^    - Egress$' k8s-sync-egress-render.yaml; then
+            echo "expected Egress in keyorix-k8s-sync's NetworkPolicy policyTypes"; exit 1
+          fi
+
+          helm template kx deploy/helm/keyorix-operator > operator-egress-render.yaml
+          if ! grep -A2 '^kind: NetworkPolicy$' operator-egress-render.yaml | grep -q 'name: kx-keyorix-operator-metrics$'; then
+            echo "expected a NetworkPolicy named kx-keyorix-operator-metrics"; exit 1
+          fi
+          if ! grep -q '^    - Egress$' operator-egress-render.yaml; then
+            echo "expected Egress in keyorix-operator's NetworkPolicy policyTypes"; exit 1
+          fi
+          if grep -q '^kind: PodDisruptionBudget$' operator-egress-render.yaml; then
+            echo "did not expect a PodDisruptionBudget at the default replicas=1"; exit 1
+          fi
+          helm template kx deploy/helm/keyorix-operator --set replicas=2 --set leaderElection=true \
+            > operator-scaled-render.yaml
+          if ! grep -A3 '^kind: PodDisruptionBudget$' operator-scaled-render.yaml | grep -q "name: kx-keyorix-operator\$"; then
+            echo "expected a PodDisruptionBudget named kx-keyorix-operator when replicas=2"; exit 1
+          fi
+
+          # allowedServers (the confused-deputy control, operator/internal/controller's
+          # validateServer) must actually reach the manager's CLI flag -- without this
+          # wiring, every KeyorixSecret CR is rejected on any helm-installed operator with
+          # no way to configure it short of hand-editing the rendered Deployment.
+          if grep -q '\-allowed-servers=' operator-egress-render.yaml; then
+            echo "did not expect -allowed-servers in the default render (allowedServers unset)"; exit 1
+          fi
+          helm template kx deploy/helm/keyorix-operator --set 'allowedServers={https://a,https://b}' \
+            > operator-allowed-servers-render.yaml
+          if ! grep -q -- '-allowed-servers=https://a,https://b' operator-allowed-servers-render.yaml; then
+            echo "expected -allowed-servers=https://a,https://b on the manager Deployment"; exit 1
           fi
 
   # helm-chart (above) validates chart/schema *shape* (helm lint + kubeconform

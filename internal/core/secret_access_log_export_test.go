@@ -84,6 +84,7 @@ func TestExportSecretAccessLog_JSONFormat(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(42)).Return(aSecret(), nil)
 	stubAuthorizedSecretPrincipal(ms, 1, 42, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
+	stubUnauthorizedPrincipal(ms, 1, Scope{}) // no audit.read: IPAddress must come back empty
 	uid := uint(7)
 	events := []*models.AuditEvent{
 		anEvent(101, &uid, ptrUint(42), ptrBool(true), "user"),
@@ -104,6 +105,7 @@ func TestExportSecretAccessLog_JSONFormat(t *testing.T) {
 	require.NotNil(t, rows[0].UserID)
 	require.Equal(t, uint(7), *rows[0].UserID)
 	require.True(t, rows[0].Success)
+	require.Empty(t, rows[0].IPAddress, "a caller without audit.read must not see IPAddress")
 }
 
 // CSV format returns text/csv with header + rows.
@@ -112,6 +114,7 @@ func TestExportSecretAccessLog_CSVFormat(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(42)).Return(aSecret(), nil)
 	stubAuthorizedSecretPrincipal(ms, 1, 42, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
+	stubUnauthorizedPrincipal(ms, 1, Scope{})
 	uid := uint(5)
 	events := []*models.AuditEvent{
 		anEvent(202, &uid, ptrUint(42), ptrBool(false), "machine_identity"),
@@ -140,6 +143,7 @@ func TestExportSecretAccessLog_NilUserID(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(42)).Return(aSecret(), nil)
 	stubAuthorizedSecretPrincipal(ms, 1, 42, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
+	stubUnauthorizedPrincipal(ms, 1, Scope{})
 	events := []*models.AuditEvent{
 		anEvent(303, nil, ptrUint(42), ptrBool(true), "system"),
 	}
@@ -161,6 +165,7 @@ func TestExportSecretAccessLog_NilSuccess(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(42)).Return(aSecret(), nil)
 	stubAuthorizedSecretPrincipal(ms, 1, 42, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
+	stubUnauthorizedPrincipal(ms, 1, Scope{})
 	events := []*models.AuditEvent{
 		anEvent(404, nil, ptrUint(42), nil /* nil Success */, "user"),
 	}
@@ -182,6 +187,12 @@ func TestExportSecretAccessLog_NilSecretNodeID(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(99)).Return(&models.SecretNode{ID: 99}, nil)
 	stubAuthorizedSecretPrincipal(ms, 1, 99, Scope{}, permSecretsRead)
+	// This test's secret has a zero-value Scope, the SAME scope the audit.read
+	// check below uses -- stubAuthorizedSecretPrincipal already wired
+	// GetUserRoleIDsAt for (actor 1, Scope{}); only override the permission-name
+	// check itself, not the role resolution (a second GetUserRoleIDsAt stub for
+	// the identical args would conflict with the one above).
+	ms.On("RoleSetHasPermission", mock.Anything, mock.Anything, "audit.read").Return(false, nil).Maybe()
 	events := []*models.AuditEvent{
 		anEvent(505, nil, nil /* nil SecretNodeID */, ptrBool(true), "user"),
 	}
@@ -203,6 +214,7 @@ func TestExportSecretAccessLog_EmptyEvents(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(1)).Return(aSecret(), nil)
 	stubAuthorizedSecretPrincipal(ms, 1, 1, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
+	stubUnauthorizedPrincipal(ms, 1, Scope{})
 	ms.On("GetAuditLogs", mock.Anything, mock.AnythingOfType("*storage.AuditFilter")).
 		Return([]*models.AuditEvent{}, int64(0), nil)
 	k := newExportCore(ms)
@@ -219,6 +231,7 @@ func TestExportSecretAccessLog_FilterParams(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(77)).Return(aSecret(), nil)
 	stubAuthorizedSecretPrincipal(ms, 1, 77, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
+	stubUnauthorizedPrincipal(ms, 1, Scope{})
 
 	var capturedFilter *storage.AuditFilter
 	ms.On("GetAuditLogs", mock.Anything, mock.MatchedBy(func(f *storage.AuditFilter) bool {
@@ -235,4 +248,30 @@ func TestExportSecretAccessLog_FilterParams(t *testing.T) {
 	require.Equal(t, exportAccessAction, *capturedFilter.Action)
 	require.Equal(t, ExportMaxRows, capturedFilter.PageSize)
 	require.True(t, capturedFilter.Ascending)
+}
+
+// A caller who separately holds audit.read (global scope, matching
+// /api/v1/audit/*'s own gate) sees IPAddress -- the gate is a real gate, not
+// just always-off.
+func TestExportSecretAccessLog_AuditReadCallerSeesIPAddress(t *testing.T) {
+	t.Parallel()
+	ms := new(MockStorage)
+	ms.On("GetSecret", mock.Anything, uint(42)).Return(aSecret(), nil)
+	stubAuthorizedSecretPrincipal(ms, 1, 42, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
+	stubAuthorizedPrincipal(ms, 1, Scope{}, "audit.read")
+	uid := uint(7)
+	events := []*models.AuditEvent{
+		anEvent(101, &uid, ptrUint(42), ptrBool(true), "user"),
+	}
+	ms.On("GetAuditLogs", mock.Anything, mock.AnythingOfType("*storage.AuditFilter")).
+		Return(events, int64(1), nil)
+	k := newExportCore(ms)
+
+	data, _, err := k.ExportSecretAccessLog(context.Background(), ActorTypeUser, 1, 42, ExportFormatJSON)
+	require.NoError(t, err)
+
+	var rows []AccessLogExportRow
+	require.NoError(t, json.Unmarshal(data, &rows))
+	require.Len(t, rows, 1)
+	require.Equal(t, "10.0.0.1", rows[0].IPAddress)
 }

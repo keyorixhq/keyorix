@@ -4,6 +4,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -82,7 +83,11 @@ var secretAccessLogCmd = &cobra.Command{
 		}
 		fmt.Printf("%-24s %-8s %-18s %s\n", "ACCESSED BY", "ACTION", "IP", "TIME")
 		for _, r := range rows {
-			fmt.Printf("%-24s %-8s %-18s %s\n", derefStr(r.AccessedBy), derefStr(r.Action), derefStr(r.IPAddress), derefStr(r.AccessTime))
+			// IpAddress is present only for a caller who separately holds audit.read
+			// (server/http/handlers/secrets_access_history.go) -- derefStr renders
+			// the common case (an ordinary secrets.read caller) as a blank column,
+			// not an error.
+			fmt.Printf("%-24s %-8s %-18s %s\n", derefStr(r.AccessedBy), derefStr(r.Action), derefStr(r.IpAddress), derefTimeRFC3339(r.AccessTime))
 		}
 		return nil
 	},
@@ -100,6 +105,13 @@ func derefSecretAccessLogSlice(s *[]apiclient.SecretAccessLogEntry) []apiclient.
 		return nil
 	}
 	return *s
+}
+
+func derefTimeRFC3339(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format(time.RFC3339)
 }
 
 func init() {

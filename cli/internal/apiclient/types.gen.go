@@ -279,6 +279,40 @@ type AccessReviewDecisionPrincipalType string
 // AccessReviewDecisionSource Which mechanism conferred the grant.
 type AccessReviewDecisionSource string
 
+// BillingProjectStat One project's usage breakdown for a billing period.
+type BillingProjectStat struct {
+	MachineReads    *int    `json:"machine_reads,omitempty"`
+	ProjectId       *int    `json:"project_id,omitempty"`
+	ProjectName     *string `json:"project_name,omitempty"`
+	SecretCount     *int    `json:"secret_count,omitempty"`
+	SecretReads     *int    `json:"secret_reads,omitempty"`
+	SecretRotations *int    `json:"secret_rotations,omitempty"`
+	SecretWrites    *int    `json:"secret_writes,omitempty"`
+	UniqueUsers     *int    `json:"unique_users,omitempty"`
+}
+
+// BillingReport defines model for BillingReport.
+type BillingReport struct {
+	From        *time.Time            `json:"from,omitempty"`
+	GeneratedAt *time.Time            `json:"generated_at,omitempty"`
+	Projects    *[]BillingProjectStat `json:"projects,omitempty"`
+	To          *time.Time            `json:"to,omitempty"`
+
+	// Totals BillingProjectStat aggregated across all projects.
+	Totals *BillingTotals `json:"totals,omitempty"`
+}
+
+// BillingTotals BillingProjectStat aggregated across all projects.
+type BillingTotals struct {
+	MachineReads    *int `json:"machine_reads,omitempty"`
+	Projects        *int `json:"projects,omitempty"`
+	SecretCount     *int `json:"secret_count,omitempty"`
+	SecretReads     *int `json:"secret_reads,omitempty"`
+	SecretRotations *int `json:"secret_rotations,omitempty"`
+	SecretWrites    *int `json:"secret_writes,omitempty"`
+	UniqueUsers     *int `json:"unique_users,omitempty"`
+}
+
 // BlastRadiusNode defines model for BlastRadiusNode.
 type BlastRadiusNode struct {
 	Depth      *int                      `json:"depth,omitempty"`
@@ -654,6 +688,15 @@ type ProjectInvitation struct {
 // ProjectInvitationState defines model for ProjectInvitation.State.
 type ProjectInvitationState string
 
+// ProjectUsageStat One project's row in a usage report, aggregating metrics over the reporting window.
+type ProjectUsageStat struct {
+	ProjectId     *int    `json:"project_id,omitempty"`
+	ProjectName   *string `json:"project_name,omitempty"`
+	ReadsInWindow *int    `json:"reads_in_window,omitempty"`
+	SecretCount   *int    `json:"secret_count,omitempty"`
+	UniqueReaders *int    `json:"unique_readers,omitempty"`
+}
+
 // ProvisionSetupResult Outcome of provisioning and delivering a setup/accept link (ADR-028, internal/core.ProvisionSetupResult).
 type ProvisionSetupResult struct {
 	Channel   *ProvisionSetupResultChannel `json:"channel,omitempty"`
@@ -839,12 +882,19 @@ type SecretACL struct {
 	UserId      *int       `json:"user_id,omitempty"`
 }
 
-// SecretAccessLogEntry One read event from a secret's access log. Mirrors a GET .../access-log entry (a PascalCase raw-model response, not snake_case).
+// SecretAccessLogEntry One read event from a secret's access log (server/http/handlers/secrets_access_history.go's secretAccessLogEntry -- a snake_case DTO, not the raw internal/storage/models.SecretAccessLog). ip_address/user_agent are present only when the caller separately holds audit.read (see the route's own description); an ordinary secrets.read-only caller never sees another user's originating IP.
 type SecretAccessLogEntry struct {
-	AccessTime *string `json:"AccessTime,omitempty"`
-	AccessedBy *string `json:"AccessedBy,omitempty"`
-	Action     *string `json:"Action,omitempty"`
-	IPAddress  *string `json:"IPAddress,omitempty"`
+	AccessTime *time.Time `json:"access_time,omitempty"`
+	AccessedBy *string    `json:"accessed_by,omitempty"`
+	Action     *string    `json:"action,omitempty"`
+	Id         *int       `json:"id,omitempty"`
+
+	// IpAddress Only present for a caller who separately holds audit.read.
+	IpAddress       *string `json:"ip_address,omitempty"`
+	SecretVersionId *int    `json:"secret_version_id,omitempty"`
+
+	// UserAgent Only present for a caller who separately holds audit.read.
+	UserAgent *string `json:"user_agent,omitempty"`
 }
 
 // SecretAccessSchedule A secret's temporal access-window policy (internal/storage/models.SecretAccessSchedule -- properly snake_case-tagged, unlike SecretNode).
@@ -1093,6 +1143,13 @@ type Share struct {
 // SharePermission defines model for Share.Permission.
 type SharePermission string
 
+// UsageReport defines model for UsageReport.
+type UsageReport struct {
+	GeneratedAt *time.Time          `json:"generated_at,omitempty"`
+	Projects    *[]ProjectUsageStat `json:"projects,omitempty"`
+	WindowDays  *int                `json:"window_days,omitempty"`
+}
+
 // UserSummary A user as returned in list/membership contexts (userToAPIResponse, server/http/handlers/users_handler.go). project_count/active_project_count are attached only by GET /api/v1/users (listUsers), not by GET /api/v1/groups/{id}/members.
 type UserSummary struct {
 	AccountState       *string    `json:"account_state,omitempty"`
@@ -1146,6 +1203,18 @@ type UpdateAnomalyConfigJSONBody struct {
 	QuarantineHours  *int     `json:"quarantine_hours,omitempty"`
 }
 
+// GetBillingReportParams defines parameters for GetBillingReport.
+type GetBillingReportParams struct {
+	// From RFC3339 start of the billing window
+	From time.Time `form:"from" json:"from"`
+
+	// To RFC3339 end of the billing window
+	To time.Time `form:"to" json:"to"`
+
+	// ProjectId Comma-separated project IDs to include (omit for all)
+	ProjectId *string `form:"project_id,omitempty" json:"project_id,omitempty"`
+}
+
 // SuspendInactiveUsersJSONBody defines parameters for SuspendInactiveUsers.
 type SuspendInactiveUsersJSONBody struct {
 	// DryRun Preview which users would be suspended without making changes.
@@ -1153,6 +1222,15 @@ type SuspendInactiveUsersJSONBody struct {
 
 	// InactiveDays Inactivity threshold in days (must be > 0).
 	InactiveDays int `json:"inactive_days"`
+}
+
+// GetUsageReportParams defines parameters for GetUsageReport.
+type GetUsageReportParams struct {
+	// Days Reporting window in days (1-365, default 30)
+	Days *int `form:"days,omitempty" json:"days,omitempty"`
+
+	// ProjectId Scope to a single project (omit for all)
+	ProjectId *int `form:"project_id,omitempty" json:"project_id,omitempty"`
 }
 
 // CreateAlertEscalationPolicyJSONBody defines parameters for CreateAlertEscalationPolicy.
@@ -1615,6 +1693,16 @@ type CreateMachineIdentityJSONBody struct {
 	Description    *string `json:"description,omitempty"`
 	IdentityType   *string `json:"identity_type,omitempty"`
 	Name           string  `json:"name"`
+}
+
+// MigrateUserToMachineJSONBody defines parameters for MigrateUserToMachine.
+type MigrateUserToMachineJSONBody struct {
+	IdentityType *string `json:"identity_type,omitempty"`
+
+	// KeepUser Leave the source user active (default: false, suspends it)
+	KeepUser *bool   `json:"keep_user,omitempty"`
+	Name     *string `json:"name,omitempty"`
+	Username string  `json:"username"`
 }
 
 // TransitionMachineIdentityJSONBody defines parameters for TransitionMachineIdentity.
@@ -2224,6 +2312,9 @@ type CreateProjectInvitationJSONRequestBody CreateProjectInvitationJSONBody
 
 // CreateMachineIdentityJSONRequestBody defines body for CreateMachineIdentity for application/json ContentType.
 type CreateMachineIdentityJSONRequestBody CreateMachineIdentityJSONBody
+
+// MigrateUserToMachineJSONRequestBody defines body for MigrateUserToMachine for application/json ContentType.
+type MigrateUserToMachineJSONRequestBody MigrateUserToMachineJSONBody
 
 // TransitionMachineIdentityJSONRequestBody defines body for TransitionMachineIdentity for application/json ContentType.
 type TransitionMachineIdentityJSONRequestBody TransitionMachineIdentityJSONBody

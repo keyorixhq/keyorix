@@ -172,5 +172,30 @@ externalDatabase:
 # have an equivalent policy managed elsewhere.
 networkPolicy:
   enabled: true
+  egress:
+    # Restricts each pod's OUTBOUND traffic to only what it actually needs (DNS,
+    # and its one known in-cluster peer) instead of the cluster-wide-reachable
+    # default every pod has without this. web and postgresql get a fully static,
+    # known egress surface with no further configuration needed. server's real
+    # egress surface is NOT static — SSO/OIDC/SAML identity providers, webhook
+    # notification sinks, secret-rotation backends (Vault/Azure/AWS/etc.), and
+    # externalDatabase.host (when postgresql.enabled is false) are all
+    # admin-configured destinations this chart cannot know ahead of time. Turning
+    # this on WITHOUT also populating extraRules below for whichever of those
+    # features you use will silently break them — a NetworkPolicy drop looks like
+    # a hung/timed-out call, not a clear error. See templates/networkpolicy.yaml
+    # for the full per-component rule set.
+    enabled: true
+    # extraRules: additional egress rules (raw NetworkPolicyEgressRule entries, the
+    # same `to`/`ports` shape Kubernetes itself uses), appended verbatim to the
+    # server pod's egress rules only. Required for SSO/webhook/rotation-backend
+    # destinations and for externalDatabase when postgresql.enabled is false — e.g.:
+    #   extraRules:
+    #     - to:
+    #         - ipBlock: { cidr: 10.0.5.0/32 }
+    #       ports:
+    #         - protocol: TCP
+    #           port: 5432
+    extraRules: []
 
 imagePullSecrets: []

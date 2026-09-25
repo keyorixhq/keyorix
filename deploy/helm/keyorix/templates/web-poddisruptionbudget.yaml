@@ -1,0 +1,25 @@
+{{/*
+web is the only component in this chart that supports running more than one
+replica (server and postgresql are both pinned to exactly 1 — see their own
+resources' comments: a ReadWriteOnce keys volume and a single logical Postgres
+instance respectively — so a PodDisruptionBudget on either of them could only
+ever BLOCK the one voluntary eviction/drain a singleton has, never add real
+disruption tolerance). Guarded on replicas > 1: at the default of 1 replica, a
+PDB here would have the same singleton-blocks-drain problem, so it renders only
+once an operator has actually scaled web out.
+*/}}
+{{- if and .Values.web.enabled (gt (int .Values.web.replicas) 1) -}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "keyorix.web.fullname" . }}
+  labels:
+    {{- include "keyorix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: web
+{{- end -}}

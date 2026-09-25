@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, act } from '../../../test/test-util
 import { SecretDetailView } from '../SecretDetailView';
 import { Secret } from '../../../types';
 import { DEFAULT_SENSITIVE_IDLE_MS } from '../../../hooks/useAutoClearOnIdle';
+import { XSS_PAYLOADS, assertPayloadRenderedSafely } from '../../../test/xss-payloads';
 
 const mockClassifyMutate = vi.fn();
 const mockRollbackMutate = vi.fn();
@@ -1118,5 +1119,51 @@ describe('SecretDetailView copy to another environment', () => {
         fireEvent.click(screen.getByRole('button', { name: /^Copy$/i }));
         expect(screen.getByText('Copy failed.')).toBeInTheDocument();
         promptSpy.mockRestore();
+    });
+});
+
+describe('SecretDetailView XSS regression (WEB track backlog item 3)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockVersions = [];
+        mockAccessors = [];
+        mockAccessLog = [];
+        mockAuditTrail = [];
+        mockTags = [];
+        mockDescription = 'the prod DB';
+        mockDescriptionState = { isPending: false };
+    });
+
+    it.each(XSS_PAYLOADS)('renders a malicious secret name as inert text: %s', (payload) => {
+        const { container } = render(<SecretDetailView secret={makeSecret({ name: payload })} />);
+        assertPayloadRenderedSafely(payload, container);
+    });
+
+    it.each(XSS_PAYLOADS)('renders a malicious description in the textarea value, not as markup: %s', (payload) => {
+        mockDescription = payload;
+        render(<SecretDetailView secret={makeSecret()} />);
+        // The description renders inside a <textarea>, whose value is a DOM
+        // property (never parsed as HTML) regardless of content — assert via
+        // getByDisplayValue rather than getByText, which does not see form
+        // control values, and confirm no element was created from it either
+        // way.
+        expect(screen.getByDisplayValue(payload)).toBeInTheDocument();
+        expect(document.querySelector('img[onerror]')).not.toBeInTheDocument();
+        expect(document.querySelector('script')).not.toBeInTheDocument();
+    });
+
+    it.each(XSS_PAYLOADS)('renders a malicious audit-trail description as inert text: %s', (payload) => {
+        mockAuditTrail = [
+            {
+                id: 1,
+                event_type: 'secret.created',
+                timestamp: '2026-06-18T10:00:00Z',
+                actor_type: 'user',
+                description: payload,
+                success: true,
+            },
+        ];
+        const { container } = render(<SecretDetailView secret={makeSecret()} />);
+        assertPayloadRenderedSafely(payload, container);
     });
 });
