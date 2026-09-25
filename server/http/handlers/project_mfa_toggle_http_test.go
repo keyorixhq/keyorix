@@ -66,7 +66,7 @@ func TestCatalogHandler_UpdateProject_RequireMFA_AuthorizedSucceeds(t *testing.T
 
 	var resp struct {
 		Data struct {
-			RequireMFA bool `json:"RequireMFA"`
+			RequireMFA bool `json:"require_mfa"`
 		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))

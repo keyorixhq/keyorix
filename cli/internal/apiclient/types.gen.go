@@ -474,13 +474,14 @@ type DynamicSecretLease struct {
 // DynamicSecretLeaseStatus defines model for DynamicSecretLease.Status.
 type DynamicSecretLeaseStatus string
 
-// Environment A project environment (internal/storage/models.Environment). No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, Name, CreatedAt, UpdatedAt), not snake_case. Unlike Permission/RoleWithPermissions above, ProjectID/CreatedAt/UpdatedAt do NOT case-insensitively match a snake_case tag (the underscore makes "project_id" a different string from "projectid"), so a generated client MUST use these exact capitalized property names to decode correctly.
+// Environment A project environment. Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's environmentWire) -- internal/storage/models.Environment itself carries no `json:` tags and is never serialized directly.
 type Environment struct {
-	CreatedAt *time.Time `json:"CreatedAt,omitempty"`
-	ID        *int       `json:"ID,omitempty"`
-	Name      *string    `json:"Name,omitempty"`
-	ProjectID *int       `json:"ProjectID,omitempty"`
-	UpdatedAt *time.Time `json:"UpdatedAt,omitempty"`
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	Id        *int       `json:"id,omitempty"`
+	Name      *string    `json:"name,omitempty"`
+	ProjectId *int       `json:"project_id,omitempty"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
 // ExpiringSecretEntry defines model for ExpiringSecretEntry.
@@ -668,6 +669,17 @@ type PermissionMatrixRow struct {
 
 // PermissionMatrixRowScope defines model for PermissionMatrixRow.Scope.
 type PermissionMatrixRowScope string
+
+// Project A project. Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's projectWire) -- internal/storage/models.Project itself carries no `json:` tags and is never serialized directly.
+type Project struct {
+	CreatedAt   *time.Time `json:"created_at,omitempty"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
+	Description *string    `json:"description,omitempty"`
+	Id          *int       `json:"id,omitempty"`
+	Name        *string    `json:"name,omitempty"`
+	RequireMfa  *bool      `json:"require_mfa,omitempty"`
+	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
+}
 
 // ProjectInvitation A project invitation (ADR-024, internal/storage/models.ProjectInvitation). No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, Email, ...), not snake_case. As with Environment above, the multi-word field names here do not case-insensitively match a snake_case tag, so a generated client must use these exact property names.
 type ProjectInvitation struct {

@@ -129,7 +129,7 @@ func fetchRunSecrets(ctx context.Context, client *apiclient.ClientWithResponses,
 	var envID int
 	for _, e := range derefEnvironmentSlice(envResp.JSON200.Data.Environments) {
 		if e.Name != nil && strings.EqualFold(*e.Name, env) {
-			envID = derefInt(e.ID)
+			envID = derefInt(e.Id)
 			break
 		}
 	}
