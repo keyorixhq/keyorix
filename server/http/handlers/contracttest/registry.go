@@ -26,7 +26,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"authPasswordReset":                  reasonSchemaNotYetWritten, // post /auth/password-reset
 	"changePassword":                     reasonSchemaNotYetWritten, // post /api/v1/auth/change-password
 	"closeAccessReviewCampaign":          reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close
-	"cloneEnvironment":                   reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/environments/{envId}/clone
 	"createAccessRequest":                reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-requests
 	"createGlobalInvitation":             reasonSchemaNotYetWritten, // post /api/v1/invitations
 	"createRiskException":                reasonSchemaNotYetWritten, // post /api/v1/risk-exceptions
@@ -365,4 +364,5 @@ var exercisingTests = map[string][]string{
 	"updateProject":            {"TestContractCatalog_UpdateProject"},
 	"createProjectEnvironment": {"TestContractCatalog_CreateProjectEnvironment"},
 	"listEnvironments":         {"TestContractCatalog_ListEnvironments"},
+	"cloneEnvironment":         {"TestContractCatalog_CloneEnvironment"},
 }

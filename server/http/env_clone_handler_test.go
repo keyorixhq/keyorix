@@ -117,7 +117,7 @@ func TestCloneEnvironment_EmptySource(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
 	data, ok := out["data"].(map[string]interface{})
 	require.True(t, ok, "response must contain a data object")
-	assert.EqualValues(t, 0, data["SecretsCloned"])
+	assert.EqualValues(t, 0, data["secrets_cloned"])
 }
 
 // TestCloneEnvironment_WithSecrets creates 2 secrets in env 1, clones to a new env,
@@ -147,7 +147,7 @@ func TestCloneEnvironment_WithSecrets(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
 	data, ok := out["data"].(map[string]interface{})
 	require.True(t, ok, "response must contain a data object")
-	assert.EqualValues(t, 2, data["SecretsCloned"])
+	assert.EqualValues(t, 2, data["secrets_cloned"])
 }
 
 // TestCloneEnvironment_SkipsExisting creates "foo" in env 1, creates env 2 with
@@ -179,7 +179,7 @@ func TestCloneEnvironment_SkipsExisting(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
 	data, ok := out["data"].(map[string]interface{})
 	require.True(t, ok, "response must contain a data object")
-	skipped, _ := data["SecretsSkipped"].(float64)
+	skipped, _ := data["secrets_skipped"].(float64)
 	assert.GreaterOrEqual(t, int(skipped), 1, "at least one secret must be skipped")
 }
 

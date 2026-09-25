@@ -14,6 +14,7 @@ package handlers
 import (
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -73,4 +74,22 @@ func newEnvironmentWireList(envs []*models.Environment) []environmentWire {
 		out = append(out, newEnvironmentWire(e))
 	}
 	return out
+}
+
+type envCloneResultWire struct {
+	SourceEnv      string   `json:"source_env"`
+	DestEnv        string   `json:"dest_env"`
+	SecretsCloned  int      `json:"secrets_cloned"`
+	SecretsSkipped int      `json:"secrets_skipped"`
+	Errors         []string `json:"errors,omitempty"`
+}
+
+func newEnvCloneResultWire(r *core.EnvCloneResult) envCloneResultWire {
+	return envCloneResultWire{
+		SourceEnv:      r.SourceEnv,
+		DestEnv:        r.DestEnv,
+		SecretsCloned:  r.SecretsCloned,
+		SecretsSkipped: r.SecretsSkipped,
+		Errors:         r.Errors,
+	}
 }

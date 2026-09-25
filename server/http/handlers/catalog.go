@@ -439,7 +439,7 @@ func (h *CatalogHandler) CloneEnvironment(w http.ResponseWriter, r *http.Request
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
-	sendSuccess(w, result, "")
+	sendSuccess(w, newEnvCloneResultWire(result), "")
 }
 
 // RestoreEnvironment handles POST /api/v1/projects/{projectId}/environments/{id}/restore.

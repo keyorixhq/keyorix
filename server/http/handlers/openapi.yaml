@@ -1493,11 +1493,13 @@ paths:
                 destination_environment_id: {type: integer, format: uint32}
       responses:
         '200':
-          description: >-
-            Envelope {data, message}. data is an EnvCloneResult: SourceEnv, DestEnv
-            (names), SecretsCloned, SecretsSkipped (counts), Errors (array of
-            strings) -- PascalCase, untagged Go struct fields (core.EnvCloneResult
-            has no json tags, matching RotationPolicy's documented precedent above).
+          description: "Envelope {data, message}. data is an EnvCloneResult."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/EnvCloneResult'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -7646,6 +7648,20 @@ components:
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
         deleted_at: {type: string, format: date-time}
+    EnvCloneResult:
+      type: object
+      description: >-
+        The result of cloning one environment's secrets into another
+        (internal/core.EnvCloneResult). Handler-level snake_case wire type
+        (server/http/handlers/catalog_wire.go's envCloneResultWire) --
+        internal/core.EnvCloneResult itself carries no `json:` tags and is
+        never serialized directly.
+      properties:
+        source_env: {type: string}
+        dest_env: {type: string}
+        secrets_cloned: {type: integer}
+        secrets_skipped: {type: integer}
+        errors: {type: array, items: {type: string}}
     ProjectInvitation:
       type: object
       description: >-

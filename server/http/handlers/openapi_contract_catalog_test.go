@@ -8,6 +8,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -87,6 +88,26 @@ func TestContractCatalog_ListEnvironments(t *testing.T) {
 	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/environments", nil))
 	w := httptest.NewRecorder()
 	h.ListEnvironments(w, req)
+
+	contracttest.AssertOpenAPIResponse(t, req, w)
+	require.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestContractCatalog_CloneEnvironment(t *testing.T) {
+	_, cs, _, projID, srcEnvID := freshSecretFixturePR4(t)
+	h := NewCatalogHandler(cs)
+	pr4CreateSecret(t, cs, projID, srcEnvID, "catalog-clone-secret")
+	dstEnv, err := cs.CreateEnvironment(context.Background(), projID, "catalog-clone-dest")
+	require.NoError(t, err)
+
+	body, _ := json.Marshal(map[string]any{"destination_environment_id": dstEnv.ID})
+	req := withUserCtx(withChiParamsPR2(
+		httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/environments/1/clone", bytes.NewReader(body)),
+		"id", pr4SecretIDStr(projID), "envId", pr4SecretIDStr(srcEnvID),
+	))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.CloneEnvironment(w, req)
 
 	contracttest.AssertOpenAPIResponse(t, req, w)
 	require.Equal(t, http.StatusOK, w.Code)
