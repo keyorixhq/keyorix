@@ -2,24 +2,30 @@
 // (docs/adr-109-core-depends-on-interfaces.md): confirms DefaultIntegrations
 // (called from initializeCoreService) actually registers EVERY integration
 // moved behind internal/core/ports so far — external-notary checkpoint
-// anchoring (step 1), SAML SSO (step 1), and backend rotation executors
-// (step 2) — from one config, in one call. Each integration already has
-// narrower coverage elsewhere (checkpoint_notary_startup_test.go;
-// server_s4_test.go's TestInitializeCoreService_CheckpointNotary_*,
-// TestInitializeCoreService_SSO_OIDCSuccess, and
-// TestInitializeCoreService_RotationBackend_PostgreSQL); this test is the
-// ADR's own "wiring test that the default server registers every
-// integration" — SAML specifically, since no prior test drove
-// initializeCoreService with a type: "saml" provider (only unit-level
-// buildSAMLProvider/buildSSOProviders tests in server_s3_test.go); the
-// rotation manager specifically, since no prior test checked
-// RotationBackendNames() actually reflects a configured backend (only that
-// initializeCoreService didn't error); and the combination of all three
+// anchoring (step 1), SAML SSO (step 1), backend rotation executors (step 2),
+// and the dynamic-secrets engine factory (step 3) — from one config, in one
+// call. Each integration already has narrower coverage elsewhere
+// (checkpoint_notary_startup_test.go; server_s4_test.go's
+// TestInitializeCoreService_CheckpointNotary_*,
+// TestInitializeCoreService_SSO_OIDCSuccess,
+// TestInitializeCoreService_RotationBackend_PostgreSQL, and
+// TestInitializeCoreService_DynamicSecrets); this test is the ADR's own
+// "wiring test that the default server registers every integration" — SAML
+// specifically, since no prior test drove initializeCoreService with a
+// type: "saml" provider (only unit-level buildSAMLProvider/buildSSOProviders
+// tests in server_s3_test.go); the rotation manager specifically, since no
+// prior test checked RotationBackendNames() actually reflects a configured
+// backend (only that initializeCoreService didn't error); the dynamic-secrets
+// factory specifically, since no prior test drove a real
+// CreateDynamicSecretConfig call through initializeCoreService's own wiring
+// (server/http/handlers' equivalent tests wire their own factory manually,
+// bypassing DefaultIntegrations entirely); and the combination of all four
 // integrations at once, which is what would catch DefaultIntegrations wiring
 // some but silently skipping another.
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -32,7 +38,12 @@ import (
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 )
 
 // samlIDPMetadata builds minimal-but-valid IdP SAML metadata with a self-signed
@@ -141,5 +152,60 @@ func TestDefaultIntegrations_RegistersCheckpointNotarySAMLAndRotation(t *testing
 	names := svc.RotationBackendNames()
 	if len(names) != 1 || names[0] != "pg-prod" {
 		t.Errorf("expected DefaultIntegrations to register rotation backend \"pg-prod\" (ports.RotationExecutorResolver), got %v", names)
+	}
+}
+
+// TestDefaultIntegrations_WiresDynamicSecretsFactoryUnconditionally confirms
+// wireDynamicSecrets (DefaultIntegrations' fourth component, ADR-109 step 3)
+// always wires the real ports.DynamicBackendFactory — there is no top-level
+// "dynamic secrets enabled" flag to gate it on — by driving a real
+// CreateDynamicSecretConfig call through initializeCoreService's own wiring
+// (not a manually-wired test factory, which is how server/http/handlers'
+// equivalent tests cover this). A minimal config (nothing else enabled) must
+// still accept a supported backend type, proving the factory is reachable and
+// is not the "no engine factory configured" fail-closed stub
+// TestDynamicSecrets_NoFactoryConfigured_FailsClosed (internal/core) pins for
+// the unwired case.
+func TestDefaultIntegrations_WiresDynamicSecretsFactoryUnconditionally(t *testing.T) {
+	initI18n(t)
+	cfg := newMinimalCfg(t)
+	cfg.DynamicSecrets.AllowPrivateNetworkTargets = true // test uses a localhost-shaped DSN
+
+	svc, _, err := initializeCoreService(cfg)
+	if err != nil {
+		t.Fatalf("initializeCoreService: %v", err)
+	}
+
+	// initializeCoreService already created and migrated the SQLite file at
+	// cfg.Storage.Database.Path; open a second connection to seed the
+	// project/environment/admin-role fixtures CreateDynamicSecretConfig needs.
+	db, err := gorm.Open(sqlite.Open(cfg.Storage.Database.Path), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open seed DB connection: %v", err)
+	}
+	if err := db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.Role{}, &models.UserRole{}); err != nil {
+		t.Fatalf("migrate seed fixtures: %v", err)
+	}
+	if err := db.Create(&models.Project{ID: 1, Name: "wiring-test-project"}).Error; err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if err := db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "wiring-test-env"}).Error; err != nil {
+		t.Fatalf("seed environment: %v", err)
+	}
+	adminRole := &models.Role{Name: "admin", BypassesPermissionChecks: true}
+	if err := db.Create(adminRole).Error; err != nil {
+		t.Fatalf("seed admin role: %v", err)
+	}
+	const actorID = 1
+	if err := db.Create(&models.UserRole{UserID: actorID, RoleID: adminRole.ID}).Error; err != nil {
+		t.Fatalf("seed admin role grant: %v", err)
+	}
+
+	_, err = svc.CreateDynamicSecretConfig(context.Background(), &core.CreateDynamicSecretConfigRequest{
+		Name: "pg-cfg", ProjectID: 1, EnvironmentID: 1, BackendType: "postgres",
+		AdminDSN: "postgres://admin:s3cr3t@127.0.0.1:5432/app", ActorID: actorID,
+	})
+	if err != nil {
+		t.Errorf("expected DefaultIntegrations to wire a working dynamic-secrets factory (ports.DynamicBackendFactory) unconditionally, got: %v", err)
 	}
 }

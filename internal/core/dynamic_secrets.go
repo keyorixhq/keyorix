@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -620,7 +620,7 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 // every list/sweep/revoke path (all keyed off the lease table) and therefore
 // permanent and undrop-able. To keep it visible, we record a revoke_failed lease
 // capturing the role name and audit it, mirroring RevokeLease's failure handling.
-func (c *KeyorixCore) cleanupOrphanedRole(ctx context.Context, cfg *models.DynamicSecretConfig, engine dynamic.CredentialEngine, adminDSN, roleName string, userID uint) {
+func (c *KeyorixCore) cleanupOrphanedRole(ctx context.Context, cfg *models.DynamicSecretConfig, engine ports.DynamicBackendEngine, adminDSN, roleName string, userID uint) {
 	if err := engine.Revoke(ctx, adminDSN, roleName); err == nil {
 		return // role dropped cleanly — nothing to track
 	} else {
@@ -694,7 +694,7 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	pid := lease.ProjectID
 	if rerr := engine.Revoke(ctx, adminDSN, lease.RoleName); rerr != nil {
 		lease.Status = "revoke_failed"
-		log.Printf("failed to revoke dynamic secret lease %s: %s", lease.LeaseID, dynamic.SanitizeErrorMessage(rerr))
+		log.Printf("failed to revoke dynamic secret lease %s: %s", lease.LeaseID, ports.SanitizeErrorMessage(rerr))
 		lease.RevokeError = "backend revoke failed — see server audit log for details"
 		// Deliberately NOT stamping RevokedAt here: the target drop failed, so the
 		// credential is still live. Stamping it would make the audit trail / API

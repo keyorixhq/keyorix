@@ -90,13 +90,13 @@ Methodology: `scripts/fuzzing/mapsize_of_bin.sh` (a repo-local reproduction of t
 that script's header comment), `go build -trimpath` for `GOOS=linux GOARCH=amd64`, and
 `go list -deps ./internal/core` (production files only).
 
-| Metric | Baseline (Step 0) | Step 1 (notary + saml) | Step 2 (+ rotation) |
-|---|---|---|---|
-| `internal/core` coverage map (`FuzzCoreOperationSequence`) | 486,874 B (~475 KiB) — matches this ADR's Context-section figure of "about 480 KB" | 485,107 B (~473.7 KiB); **−1,767 B (−0.36%)** | 485,109 B (~473.7 KiB); flat vs. step 1 (+2 B, noise) |
-| `keyorix-server` binary, `linux/amd64`, `-trimpath` | 100,937,259 B (~96.3 MiB) | 100,989,425 B (~96.3 MiB); flat (build noise, +0.05%) | 100,989,278 B (~96.3 MiB); flat vs. step 1 (−147 B, noise) |
-| `go list -deps ./internal/core` total | 872 packages | 859 packages; **−13** | 853 packages; **−6** |
-| ...of which cloud SDK packages (aws/azure/gcp/vault) | 131 (64 `aws-sdk-go-v2`, 33 `azure-sdk-for-go`, 34 `cloud.google.com/go`, 0 `hashicorp/vault/api` — Connect's Vault backend has no official SDK dependency today) | 131, unchanged — notary and saml carry no cloud SDK | 128; **−3** — `internal/rotation`'s `awsiam.go`/`azure.go`/`gcpsa.go` each pull one cloud SDK into core's graph today, gone once rotation is behind `ports` |
-| ...of which the 6 ADR-109 integration packages | `connect` (+ `connecttypes`, which stays), `rotation`, `dynamic`, `encryption`, `notary`, `saml` — all present, tracked exactly by `internal/core/dependency_guard_test.go`'s `coreIntegrationDeps` allowlist | `connect` (+ `connecttypes`), `rotation`, `dynamic`, `encryption` — notary and saml removed from the allowlist and confirmed absent from `go list -deps` | `connect` (+ `connecttypes`), `dynamic`, `encryption` — rotation removed too, confirmed absent |
+| Metric | Baseline (Step 0) | Step 1 (notary + saml) | Step 2 (+ rotation) | Step 3 (+ dynamic) |
+|---|---|---|---|---|
+| `internal/core` coverage map (`FuzzCoreOperationSequence`) | 486,874 B (~475 KiB) — matches this ADR's Context-section figure of "about 480 KB" | 485,107 B (~473.7 KiB); **−1,767 B (−0.36%)** | 485,109 B (~473.7 KiB); flat vs. step 1 (+2 B, noise) | 485,115 B (~473.7 KiB); flat vs. step 2 (+6 B, noise) |
+| `keyorix-server` binary, `linux/amd64`, `-trimpath` | 100,937,259 B (~96.3 MiB) | 100,989,425 B (~96.3 MiB); flat (build noise, +0.05%) | 100,989,278 B (~96.3 MiB); flat vs. step 1 (−147 B, noise) | 100,994,799 B (~96.3 MiB); flat vs. step 2 (+5,521 B, noise) |
+| `go list -deps ./internal/core` total | 872 packages | 859 packages; **−13** | 853 packages; **−6** | 753 packages; **−100** |
+| ...of which cloud SDK packages (aws/azure/gcp/vault) | 131 (64 `aws-sdk-go-v2`, 33 `azure-sdk-for-go`, 34 `cloud.google.com/go`, 0 `hashicorp/vault/api` — Connect's Vault backend has no official SDK dependency today) | 131, unchanged — notary and saml carry no cloud SDK | 128; **−3** — `internal/rotation`'s `awsiam.go`/`azure.go`/`gcpsa.go` each pull one cloud SDK into core's graph today, gone once rotation is behind `ports` | 128, unchanged — see note below |
+| ...of which the 6 ADR-109 integration packages | `connect` (+ `connecttypes`, which stays), `rotation`, `dynamic`, `encryption`, `notary`, `saml` — all present, tracked exactly by `internal/core/dependency_guard_test.go`'s `coreIntegrationDeps` allowlist | `connect` (+ `connecttypes`), `rotation`, `dynamic`, `encryption` — notary and saml removed from the allowlist and confirmed absent from `go list -deps` | `connect` (+ `connecttypes`), `dynamic`, `encryption` — rotation removed too, confirmed absent | `connect` (+ `connecttypes`), `encryption` — dynamic removed too, confirmed absent |
 
 Step 0 itself does not change any of these numbers — it adds `internal/core/ports` (the target
 interface shapes, unwired) and the two dependency-guard tests (`internal/core`'s allowlist,
@@ -161,4 +161,57 @@ core-facing package itself has zero cloud SDK code (`rotation.go` only pulls in 
 `strings`) but whose SIBLING files in the same package (`awsiam.go`, `azure.go`, `gcpsa.go`) do,
 one cloud SDK each — so `internal/core`'s cloud-SDK dependency count drops for the first time in
 this ADR (131 → 128), ahead of the two steps (connect, encryption) expected to move it the most.
-Steps 3–5 each report a new column here as they land.
+
+**Step 3** swaps `internal/core`'s direct use of `internal/dynamic` for `ports.DynamicBackendFactory`
+(`dynamicEngineFactory`, `SetDynamicEngineFactory`), `ports.DynamicBackendEngine`
+(`cleanupOrphanedRole`'s `engine` parameter), and `ports.SanitizeErrorMessage`/`ports.RedactSensitive`
+(the free-function error-redaction helpers `RevokeLease` calls before logging a backend error).
+`internal/dynamic.CredentialEngine` and `internal/dynamic.Credential` are themselves aliased to
+their `ports` equivalents (an interface and a struct respectively — the same two shapes step 1/2
+already covered), so every backend engine's `Issue`/`Revoke`/`Renew` implementation satisfies
+`ports.DynamicBackendEngine` with no adapter. `ports.DynamicBackendEngine` gained one method,
+`RevokeInvalidatesCredential`, that Step 0's original draft had missed relative to
+`internal/dynamic.CredentialEngine`'s actual current shape — found by cross-checking the two side
+by side before aliasing, not by a build failure (a missing interface method doesn't fail to build
+until something tries to satisfy the narrower interface; it would have surfaced as a silent
+capability gap instead). `ports.DynamicBackendFactory` itself is a plain function type, not an
+interface with an `Engine` method — Step 0's original draft used an interface, but the shape
+`internal/core.dynamicEngineFactory` actually holds (and always held) is a bare closure
+(`func(string) (dynamic.CredentialEngine, error)`), the same pattern `ports.VerifyReceiptFunc`
+already established in step 1; revised here rather than adapted around, since nothing was wired
+against the original interface shape yet. `SanitizeErrorMessage`/`RedactSensitive`'s
+implementation moves to `ports` outright (not just aliased) since it is a small, pure,
+stdlib-only text filter (`regexp`/`strings`, no third-party or cloud dependency) that `internal/core`
+calls directly — `internal/dynamic`'s own `redact.go` becomes a two-line re-export so its existing
+callers (`server/http/handlers/dynamic_secrets.go`, `internal/dynamic`'s own
+`log_redaction_guard_test.go`, which recognizes the call by method name only, not by package
+qualifier) keep working unchanged.
+
+Unlike steps 1/2, `internal/core.dynamicEngine`'s pre-ADR-109 behavior fell back to calling
+`dynamic.New` directly whenever no factory was wired (`SetDynamicEngineFactory` is test-only in
+today's codebase — no production caller had ever used it) — so removing the fallback is a real,
+intentional behavior change, not just an import swap: a `*KeyorixCore` built without going through
+`server/main.go`'s `DefaultIntegrations` now fails closed with "dynamic secrets are unavailable: no
+engine factory configured" instead of silently working. `wireDynamicSecrets` (`DefaultIntegrations`'s
+fourth component) always wires the real `dynamic.New`-backed factory unconditionally — there is no
+top-level "dynamic secrets enabled" config flag to gate it on (each `DynamicSecretConfig` opts a
+project into a specific backend individually) — mirroring the removed fallback's own
+unconditional behavior exactly. A new test, `TestDynamicSecrets_NoFactoryConfigured_FailsClosed`,
+pins the fail-closed behavior directly (ADR-109's "never fails open" is now machine-checked, not
+just asserted). This changed behavior surfaced immediately in existing tests: four handler-package
+test helpers (`server/http/handlers/handlers_s8_test.go`'s `freshCoreS8`,
+`handlers_s11_test.go`'s `freshCoreS11`, `handlers_s12_test.go`'s `freshCoreS12WithAdmin`) built a
+bare `*KeyorixCore` directly and relied on the old implicit fallback reaching a real (if
+unreachable-in-tests) backend; each now wires the same factory `wireDynamicSecrets` uses,
+explicitly, at the helper level.
+
+The dependency-count drop here is far larger than steps 1/2's — 100 packages, not roughly a
+dozen — because `internal/dynamic`'s MongoDB, Redis, and Kubernetes backends each pull in a large
+driver dependency tree of their own (`go.mongodb.org/mongo-driver`, `go-redis`, and especially
+`k8s.io/client-go` — client-go alone is one of the largest dependency trees in the Go ecosystem),
+none of which any other integration `internal/core` still imports shares. The cloud-SDK-specific
+count, by contrast, stayed flat (128 → 128): `internal/dynamic`'s AWS-STS/Azure/GCP backends draw
+on the same underlying SDK packages `internal/connect` and `internal/encryption` (not yet
+decoupled) already pull into core's graph, so removing dynamic's own copies of those references
+doesn't shrink the *distinct*-package count — the cloud-SDK number will move only once connect and
+encryption themselves move behind `ports`. Steps 4–5 each report a new column here as they land.
