@@ -2,7 +2,6 @@ package admin
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -18,7 +17,13 @@ import (
 var auditCmd = &cobra.Command{
 	Use:   "audit",
 	Short: "Audit critical files for permissions and ownership",
-	RunE:  runAdminAudit,
+	Long: `Checks the config file and every encryption key-material path
+(internal/keyfiles.Registry) for correct permissions and ownership, without
+modifying anything (see 'admin encryption fix-perms' to auto-correct).
+
+Exit codes: 0 if every file passes, 1 if any file fails (see the printed
+warnings/errors).`,
+	RunE: runAdminAudit,
 }
 
 func runAdminAudit(cmd *cobra.Command, args []string) error {
@@ -54,7 +59,16 @@ func runAdminAudit(cmd *cobra.Command, args []string) error {
 
 	if err := securefiles.FixFilePerms(files, false); err != nil { // false = audit only
 		fmt.Println("\nAudit finished with warnings/errors. Please fix the issues.")
-		os.Exit(1)
+		// Returning an error here (not os.Exit(1) directly) matters: os.Exit
+		// terminates the process immediately, WITHOUT unwinding the call
+		// stack -- it would skip this function's own `defer lock.Release()`
+		// above, leaving the exclusive database lock to release only via
+		// Postgres's slower, asynchronous connection-close detection (or,
+		// for SQLite, the kernel's fd cleanup) instead of the fast,
+		// synchronous, explicit unlock every other exit path gets. Returning
+		// an error lets Execute() (admin.go) set the same exit code AFTER
+		// this function's defers -- including the lock release -- have run.
+		return fmt.Errorf("audit found permission/ownership issues")
 	}
 
 	fmt.Println("Audit passed: all critical files have correct permissions and ownership.")

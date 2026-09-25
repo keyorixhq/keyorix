@@ -106,10 +106,10 @@ func TestAdminWorkflow_Postgres(t *testing.T) {
 server:
   http:
     enabled: true
-    port: "8080"
+    port: %q
   grpc:
     enabled: false
-`, dsn)
+`, dsn, freeTCPPort(t))
 	if err := os.WriteFile(filepath.Join(dir, "keyorix.yaml"), []byte(configContent), 0600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -183,10 +183,10 @@ func TestAdminGuard_Postgres_RefusesWhileServerRunning(t *testing.T) {
 server:
   http:
     enabled: true
-    port: "8081"
+    port: %q
   grpc:
     enabled: false
-`, dsn)
+`, dsn, freeTCPPort(t))
 	if err := os.WriteFile(filepath.Join(dir, "keyorix.yaml"), []byte(configContent), 0600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -261,10 +261,10 @@ func TestServerStartup_RefusedWhileAdminHoldsExclusiveLock_Postgres(t *testing.T
 server:
   http:
     enabled: true
-    port: "8082"
+    port: %q
   grpc:
     enabled: false
-`, dsn)
+`, dsn, freeTCPPort(t))
 	if err := os.WriteFile(filepath.Join(dir, "keyorix.yaml"), []byte(configContent), 0600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -339,5 +339,87 @@ server:
 	if !waitForPresence(t, probeCfg, 15) {
 		logBytes, _ := os.ReadFile(filepath.Join(dir, "server-after-release.log"))
 		t.Fatalf("expected the server to start successfully after the admin lock released; server log:\n%s", logBytes)
+	}
+}
+
+// TestAdminAudit_PermissionIssue_ReleasesLockPromptly_Postgres covers a bug
+// found alongside this file's own flake investigation (TRACK ADMIN):
+// runAdminAudit's failure path used to call os.Exit(1) directly
+// (server/admin/audit.go), which terminates the process WITHOUT unwinding
+// the call stack -- skipping that function's own `defer lock.Release()`.
+// Fixed by returning an error instead, so Execute() (admin.go) sets the same
+// exit code AFTER that defer (and the explicit, synchronous
+// pg_advisory_unlock it triggers) has run.
+//
+// Caveat, stated plainly rather than overclaimed: this test is NOT a
+// red/green proof of the historical bug. Manually reverted to the old
+// os.Exit(1) form and re-run at -count=15 locally, it stayed GREEN every
+// time (~0.6s) -- a healthy, unloaded local Postgres's connection-close
+// detection (the fallback path os.Exit forced) is ALSO fast enough here to
+// clear waitForLockFree's 2s bound, so this specific assertion doesn't
+// discriminate the two code paths by timing alone in this environment. The
+// bug itself is proven independent of any test: os.Exit skips deferred
+// calls unconditionally, a language-level fact, not something requiring a
+// timing reproduction. What this test actually verifies, and is worth
+// keeping for: `admin audit`'s failure path (previously untested -- see
+// TestAdminWorkflow_Postgres for the only prior coverage, success-only)
+// exits non-zero with the expected message and does not leave the lock
+// stuck for anywhere near this file's other tests' 10-15s windows.
+func TestAdminAudit_PermissionIssue_ReleasesLockPromptly_Postgres(t *testing.T) {
+	base := adminPgTestDSN(t)
+	dsn := adminPgIsolatedDatabaseDSN(t, base)
+
+	bin := buildServerBinary(t)
+	dir := t.TempDir()
+	env := append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD=test-passphrase-audit-perms")
+
+	configContent := fmt.Sprintf(`storage:
+  type: postgres
+  database:
+    dsn: %q
+  encryption:
+    enabled: true
+    dek_path: keys/dek.key
+    salt_path: keys/kek.salt
+server:
+  http:
+    enabled: true
+    port: %q
+  grpc:
+    enabled: false
+`, dsn, freeTCPPort(t))
+	configPath := filepath.Join(dir, "keyorix.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "keys"), 0750); err != nil {
+		t.Fatalf("create keys dir: %v", err)
+	}
+
+	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin diagnose (key derivation) failed: %v\n%s", err, out)
+	}
+
+	// Loosen the config file's permissions below the 0600 audit expects --
+	// securefiles.FixFilePerms (audit-only mode) reports this as a failing
+	// check, taking runAdminAudit's failure path.
+	if err := os.Chmod(configPath, 0644); err != nil {
+		t.Fatalf("chmod config file: %v", err)
+	}
+
+	out, err := runAdmin(t, bin, dir, env, "audit", "--config", "./keyorix.yaml")
+	if err == nil {
+		t.Fatalf("expected admin audit to report the permission issue as a failure, got success:\n%s", out)
+	}
+	if !strings.Contains(out, "Audit finished with warnings/errors") {
+		t.Errorf("expected the audit-failure message, got:\n%s", out)
+	}
+
+	cfg, err := adminConfigForProbe(configPath)
+	if err != nil {
+		t.Fatalf("load config for probe: %v", err)
+	}
+	if !waitForLockFree(t, cfg, 2) {
+		t.Fatalf("expected admin audit's exclusive lock to be free within 2s of its (failure-path) exit")
 	}
 }

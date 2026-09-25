@@ -77,6 +77,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -308,7 +309,18 @@ func acquirePostgresPresence(cfg *config.Config) (*Presence, error) {
 	return &Presence{release: func() error {
 		relCtx, relCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer relCancel()
-		_, _ = conn.ExecContext(relCtx, "SELECT pg_advisory_unlock_shared($1)", serverPresenceLockKey)
+		// Explicit and synchronous: by the time this call returns, the lock
+		// is released server-side -- callers don't need to rely on Postgres
+		// noticing the connection close below (which happens too, as a
+		// fallback for a crash that skips this call entirely, but is not the
+		// primary release path and can lag it). If this ever fails (e.g. a
+		// timeout under load), the connection is still closed immediately
+		// after, so release still eventually happens via that fallback --
+		// but silently, with no signal that the fast path didn't fire. Log
+		// it so that's visible rather than invisible.
+		if _, err := conn.ExecContext(relCtx, "SELECT pg_advisory_unlock_shared($1)", serverPresenceLockKey); err != nil {
+			log.Printf("serverguard: explicit pg_advisory_unlock_shared(%d) failed, falling back to connection-close release: %v", serverPresenceLockKey, err)
+		}
 		_ = conn.Close()
 		return sqlDB.Close()
 	}}, nil
@@ -335,7 +347,15 @@ func acquirePostgresExclusive(cfg *config.Config) (*Exclusive, error) {
 	return &Exclusive{release: func() error {
 		relCtx, relCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer relCancel()
-		_, _ = conn.ExecContext(relCtx, "SELECT pg_advisory_unlock($1)", serverPresenceLockKey)
+		// See acquirePostgresPresence's release closure for why this is
+		// logged rather than swallowed: an admin command's exclusive hold
+		// outliving this explicit unlock (falling back to connection-close
+		// detection) is exactly the kind of availability gap a server
+		// startup racing the release would notice as "still refused" for
+		// longer than expected.
+		if _, err := conn.ExecContext(relCtx, "SELECT pg_advisory_unlock($1)", serverPresenceLockKey); err != nil {
+			log.Printf("serverguard: explicit pg_advisory_unlock(%d) failed, falling back to connection-close release: %v", serverPresenceLockKey, err)
+		}
 		_ = conn.Close()
 		return sqlDB.Close()
 	}}, nil

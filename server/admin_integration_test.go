@@ -18,10 +18,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -125,11 +127,62 @@ func waitForPresence(t *testing.T, cfg *config.Config, timeoutSeconds int) bool 
 	return false
 }
 
+// waitForLockFree is waitForPresence's mirror image: polls
+// internal/serverguard.ProbeRunning until it reports NO live server or admin
+// operation holds cfg's lock (or the timeout elapses). Use this after
+// releasing a lock holder (a subprocess exiting, a killed/shut-down server)
+// and before the test re-acquires the same lock -- a subprocess exiting, or
+// cmd.Wait() returning, is not by itself proof the underlying lock is free.
+// Product code (internal/serverguard's acquirePostgresExclusive/Presence)
+// already calls pg_advisory_unlock explicitly and synchronously before
+// closing its connection, but a CI run (36115004629) captured a server
+// startup still refused up to the full poll window after the admin
+// lock-holder had already exited -- polling the lock's OBSERVED state, not
+// trusting process-exit as a release signal, is what actually closes that
+// gap regardless of its exact cause.
+func waitForLockFree(t *testing.T, cfg *config.Config, timeoutSeconds int) bool {
+	t.Helper()
+	deadline := time.Now().Add(time.Duration(timeoutSeconds) * time.Second)
+	for {
+		running, _, err := serverguard.ProbeRunning(cfg)
+		if err != nil {
+			t.Fatalf("ProbeRunning: %v", err)
+		}
+		if !running {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func baseEnv(dir string) []string {
 	return []string{
 		"HOME=" + dir,
 		"PATH=/usr/bin:/bin",
 	}
+}
+
+// freeTCPPort returns a port number no listener is bound to, by binding to
+// 127.0.0.1:0 (kernel-assigned) and immediately releasing it. This repo's
+// admin/server integration tests previously hard-coded distinct ports
+// (8080/8081/8082) per test to avoid same-suite collisions -- a magic
+// number that still collides with anything else already using that exact
+// port on the host or CI runner, and silently caps how many such tests can
+// coexist. There is an inherent, narrow TOCTOU window between this call and
+// the caller's own listener binding that port; acceptable here since this
+// is only used to hand out non-colliding default ports for test servers,
+// not for anything security-sensitive.
+func freeTCPPort(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("find a free TCP port: %v", err)
+	}
+	defer l.Close() //nolint:errcheck
+	return strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
 }
 
 // --- Plain server flag parsing/behavior stays unchanged ---------------------
@@ -417,8 +470,9 @@ func TestAdminGuard_RefusesWhileServerRunning_ThenForceOverrides(t *testing.T) {
 // hold it across a concurrent server-startup attempt without racing a real
 // command's own (often sub-second) actual work.
 type lockHolderHook struct {
-	cmd   *exec.Cmd
-	stdin io.WriteCloser
+	cmd        *exec.Cmd
+	stdin      io.WriteCloser
+	configPath string
 }
 
 // startLockHolderHook starts the hook and blocks until it confirms (via a
@@ -458,16 +512,28 @@ func startLockHolderHook(t *testing.T, bin, dir string, env []string) *lockHolde
 		_ = cmd.Process.Kill()
 		t.Fatalf("timed out waiting for lock-holder hook to acquire the lock (stderr: %s)", stderr.String())
 	}
-	return &lockHolderHook{cmd: cmd, stdin: stdin}
+	return &lockHolderHook{cmd: cmd, stdin: stdin, configPath: filepath.Join(dir, "keyorix.yaml")}
 }
 
-// release tells the hook to stop holding the lock and waits for it to exit.
+// release tells the hook to stop holding the lock, waits for it to exit, and
+// then polls until the underlying lock is OBSERVABLY free (waitForLockFree)
+// before returning -- the hook process exiting is not by itself proof the
+// lock it held is free; see waitForLockFree's doc comment for why a caller
+// that immediately re-acquires the same lock (every current caller does)
+// needs this rather than trusting cmd.Wait() alone.
 func (h *lockHolderHook) release(t *testing.T) {
 	t.Helper()
 	_, _ = h.stdin.Write([]byte("\n"))
 	_ = h.stdin.Close()
 	if err := h.cmd.Wait(); err != nil {
 		t.Fatalf("lock-holder hook exited with error: %v", err)
+	}
+	cfg, err := adminConfigForProbe(h.configPath)
+	if err != nil {
+		t.Fatalf("load config %q to confirm lock release: %v", h.configPath, err)
+	}
+	if !waitForLockFree(t, cfg, 10) {
+		t.Fatalf("lock-holder hook process exited but its lock (%q) is still observably held 10s later", h.configPath)
 	}
 }
 
