@@ -837,6 +837,39 @@ audit:
 > `keyorix audit checkpoint`. Requires `audit_checkpoints` to be doing the writing
 > (which requires encryption — the checkpoint signing key is DEK-derived).
 
+**Offline anchor source** (`audit.offline_anchor_path`, ADR-108 §B4, opt-in). An
+always-on external notary (above) needs live network access, which an air-gapped
+install by definition does not have. `keyorix-server admin audit export-checkpoint`
+writes the latest signed checkpoint to a file for transfer onto write-once media
+(a burned CD/DVD, a WORM-mode USB stick, an object-lock bucket) held OUTSIDE this
+host; `keyorix-server admin verify-audit` cross-checks the live chain against that
+file as an anchor genuinely outside the host's blast radius — the same protection
+an RFC 3161 timestamp gives, without needing an always-on TSA. `offline_anchor_path`
+lets an operator configure this file's location once instead of passing `--anchor`
+on every offline verification run; an explicit `--anchor <path>` on the command
+line always takes precedence over this setting.
+
+```yaml
+audit:
+  offline_anchor_path: /media/offline-anchor/checkpoint-export.json
+```
+
+> The file at this path must be the exact, unmodified output of `admin audit
+> export-checkpoint` — `verify-audit` fails closed (a hard, exit-3 error) if the
+> configured path does not exist or is not readable; it never silently proceeds as
+> if no anchor had been configured. It also fails closed (reported as an
+> unauthenticated, advisory-only anchor — see `verify-audit --help`) if the file's
+> signature does not verify under the checkpoint key supplied to that same run via
+> `--checkpoint-key-file`. The same fail-closed rule applies one level up: if
+> `--anchor` is not passed and the config FILE ITSELF exists but fails to load
+> (bad YAML, a permissions problem), that is also a hard exit-3 error, never a
+> silent fallback to "no anchor" — a config file that genuinely does not exist
+> is the only case tolerated without one (e.g. a `--db`-only offline host with
+> no config at all). Every report (human and `--json`) states which source
+> served the anchor via `anchor_source`: `"flag"`, `"config
+> (audit.offline_anchor_path)"`, or `"none"`. See
+> `docs/design-b4-offline-audit-verify.md` §10 Q5.
+
 ## jit_access_expiry
 
 An opt-in background sweeper for **just-in-time / time-bound access**. A role grant

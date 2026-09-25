@@ -901,6 +901,16 @@ type AuditConfig struct {
 	// CheckpointNotary anchors each written audit checkpoint to an external RFC 3161
 	// timestamp authority for a forge-proof proof-of-existence (ADR-029). Opt-in.
 	CheckpointNotary CheckpointNotaryConfig `yaml:"checkpoint_notary"`
+	// OfflineAnchorPath is the offline anchor source for `keyorix-server admin
+	// verify-audit` (ADR-108 §B4, design-b4-offline-audit-verify.md §10 Q5): the
+	// path to a signed checkpoint export (`admin audit export-checkpoint`'s
+	// output) held on write-once media (USB, WORM, an air-gapped transfer),
+	// read as the default `--anchor` bundle when the flag is not passed
+	// explicitly. verify-audit's own `--anchor <path>` always takes precedence
+	// over this when both are set. Lets an operator configure the anchor
+	// location once instead of remembering the flag on every offline
+	// verification run.
+	OfflineAnchorPath string `yaml:"offline_anchor_path"`
 }
 
 // CheckpointNotaryConfig configures external-notary anchoring of audit checkpoints.

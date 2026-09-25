@@ -117,6 +117,17 @@ type Result struct {
 	Anchor         AnchorStatus         `json:"anchor"`
 	ExternalAnchor ExternalAnchorStatus `json:"external_anchor"`
 
+	// AnchorSource records how this run resolved its Options.ExternalAnchor
+	// bundle: "flag" (the caller's --anchor was passed explicitly), "config
+	// (audit.offline_anchor_path)" (resolved from config because --anchor was
+	// not passed), or "none" (no anchor bundle was resolved from either).
+	// Set by the caller (server/admin/audit_verify.go's resolveOfflineAnchor)
+	// after Verify returns -- this package has no notion of flags or config,
+	// only of the bundle it was handed (design §10 Q5 addendum: reviewers of
+	// #2084 asked the report to disclose which source served the anchor, not
+	// just whether one was authenticated).
+	AnchorSource string `json:"anchor_source,omitempty"`
+
 	// NotProven states, in plain language, what this specific run — given
 	// the inputs it was handed — does NOT establish. Always non-empty: even
 	// a fully-authenticated VALID run cannot rule out a host admin who holds

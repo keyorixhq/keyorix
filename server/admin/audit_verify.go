@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -25,6 +26,15 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/serverguard"
 	"github.com/spf13/cobra"
+)
+
+// anchorSourceFlag/Config/None are the values reported as
+// Result.AnchorSource (design §10 Q5 addendum) — the exact strings the
+// review on #2084 asked for.
+const (
+	anchorSourceFlag   = "flag"
+	anchorSourceConfig = "config (audit.offline_anchor_path)"
+	anchorSourceNone   = "none"
 )
 
 var (
@@ -50,9 +60,12 @@ insertion, or reordering of a row still present in the table. With
 --checkpoint-key-file (the KEK-derived checkpoint signing key, extracted by
 the operator out of band -- never the KEK or passphrase itself), it
 additionally detects tail-truncation and genesis re-seed against the
-certified high-water mark. With --anchor, it cross-checks the live chain
-against a signed checkpoint snapshot held OUTSIDE this host -- catching a
-truncation or re-seed even if the local checkpoint/high-water rows were
+certified high-water mark. With --anchor (or, if not passed, audit.
+offline_anchor_path from config -- an offline anchor source: a checkpoint
+export written to write-once media by 'admin audit export-checkpoint', see
+docs/design-b4-offline-audit-verify.md §10 Q5), it cross-checks the live
+chain against a signed checkpoint snapshot held OUTSIDE this host -- catching
+a truncation or re-seed even if the local checkpoint/high-water rows were
 themselves deleted. With --tsa-roots (a PEM bundle of trusted RFC 3161 TSA
 root certs), it independently re-verifies a checkpoint's or --anchor's
 timestamp token against a third-party time-stamping authority -- the one
@@ -79,10 +92,18 @@ exclusive lock every other admin command does (internal/serverguard) for its
 entire run, refusing (unless --force) if a server or another admin command
 already holds it.
 
+If --anchor is not passed and a config file EXISTS but fails to load (bad
+YAML, a permissions problem), this is a hard error (exit 3), not a silent
+"no anchor" -- an operator who configured audit.offline_anchor_path must
+never have that setting silently dropped because their config also happened
+to break. Every report (human and --json) states which source actually
+served the anchor: "flag", "config (audit.offline_anchor_path)", or "none".
+
 Exit codes: 0 VALID, 1 BROKEN (tamper detected), 2 INDETERMINATE (could not
 fully verify -- e.g. an unauthenticated retention gap, or no key to check a
 real truncation), 3 usage/input error (bad DSN, unreadable file, malformed
-key or anchor). Never 0 when something was silently left unverified.`,
+key or anchor, or an unloadable config file that could have configured one).
+Never 0 when something was silently left unverified.`,
 	RunE: runVerifyAudit,
 }
 
@@ -94,7 +115,7 @@ func init() {
 	verifyAuditCmd.Flags().StringVar(&verifyAuditKeyFile, "checkpoint-key-file", "",
 		"Path to the derived audit-checkpoint signing key (hex or base64) -- enables checkpoint/high-water/truncation checks")
 	verifyAuditCmd.Flags().StringVar(&verifyAuditAnchorFile, "anchor", "",
-		"Path to a JSON checkpoint snapshot held externally -- cross-checks the live chain against a copy this host does not control")
+		"Path to a JSON checkpoint snapshot held externally (e.g. an 'export-checkpoint' export) -- cross-checks the live chain against a copy this host does not control. Defaults to audit.offline_anchor_path from config when not passed")
 	verifyAuditCmd.Flags().StringVar(&verifyAuditTSARootFile, "tsa-roots", "",
 		"Path to a PEM bundle of trusted RFC 3161 TSA root certs -- independently re-verifies a checkpoint's or --anchor's timestamp token against them, without needing --checkpoint-key-file or any other shared secret")
 	verifyAuditCmd.Flags().BoolVar(&verifyAuditJSON, "json", false,
@@ -120,12 +141,18 @@ func newExitCodeError(code int, err error) error {
 }
 
 func runVerifyAudit(cmd *cobra.Command, args []string) error {
-	opts, err := buildVerifyAuditOptions()
+	// Loaded once: cs distinguishes "no config file at all" (design §10 Q2's
+	// deliberately-supported --db/--pg-dsn-without-config case) from "a config
+	// file exists but failed to load" (a real misconfiguration -- see
+	// resolveOfflineAnchor, which is the only place this distinction matters).
+	cs := loadConfigForVerifyAudit()
+
+	opts, anchorSource, err := buildVerifyAuditOptions(cs)
 	if err != nil {
 		return newExitCodeError(3, err)
 	}
 
-	db, lock, err := openVerifyAuditTarget()
+	db, lock, err := openVerifyAuditTarget(cs.cfg, cs.err)
 	if err != nil {
 		return newExitCodeError(3, err)
 	}
@@ -140,6 +167,7 @@ func runVerifyAudit(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return newExitCodeError(3, fmt.Errorf("verification failed to run: %w", err))
 	}
+	result.AnchorSource = anchorSource
 
 	printVerifyAuditReport(result)
 
@@ -149,37 +177,96 @@ func runVerifyAudit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// configLoadState is loadConfig's raw (cfg, err) result PLUS whether the
+// config file exists at all. openVerifyAuditTarget only ever needs the raw
+// pair (it already tolerates a missing file when --db/--pg-dsn is given, and
+// requires cfg regardless of why loading failed otherwise); resolveOfflineAnchor
+// is the one place that needs to tell "nothing to load" apart from "loading
+// failed" (see its own doc comment).
+type configLoadState struct {
+	cfg         *config.Config
+	err         error
+	fileMissing bool
+}
+
+// loadConfigForVerifyAudit wraps loadConfig with an independent check of
+// whether the resolved config path exists, resolved the same way
+// config.Load itself resolves it (mirrors server/admin/audit.go's own
+// runAdminAudit, which needs the identical resolved path for its own
+// purposes).
+func loadConfigForVerifyAudit() configLoadState {
+	configPath := filepath.Clean(config.ResolvedPath(configPathFlag))
+	_, statErr := os.Stat(configPath)
+	cfg, err := loadConfig()
+	return configLoadState{cfg: cfg, err: err, fileMissing: os.IsNotExist(statErr)}
+}
+
 // buildVerifyAuditOptions resolves --checkpoint-key-file/--anchor/--tsa-roots
-// into an auditverify.Options. All interpretation of the anchor bundle's
-// JSON lives in auditverify.ParseExternalAnchorBundle, not here.
-func buildVerifyAuditOptions() (auditverify.Options, error) {
+// into an auditverify.Options, plus the anchor source string for the report
+// (design §10 Q5 addendum). All interpretation of the anchor bundle's JSON
+// lives in auditverify.ParseExternalAnchorBundle, not here.
+func buildVerifyAuditOptions(cs configLoadState) (auditverify.Options, string, error) {
 	var opts auditverify.Options
 	if verifyAuditKeyFile != "" {
 		key, err := readCheckpointKeyFile(verifyAuditKeyFile)
 		if err != nil {
-			return opts, fmt.Errorf("--checkpoint-key-file: %w", err)
+			return opts, "", fmt.Errorf("--checkpoint-key-file: %w", err)
 		}
 		opts.CheckpointKey = key
 	}
-	if verifyAuditAnchorFile != "" {
-		data, err := os.ReadFile(verifyAuditAnchorFile) // #nosec G304 -- operator-supplied path, the whole point of this flag
+
+	anchorPath, anchorSource, err := resolveOfflineAnchor(cs)
+	if err != nil {
+		return opts, "", err
+	}
+	if anchorPath != "" {
+		data, err := os.ReadFile(anchorPath) // #nosec G304 -- operator-supplied path (flag or config), the whole point of this setting
 		if err != nil {
-			return opts, fmt.Errorf("--anchor: read %q: %w", verifyAuditAnchorFile, err)
+			return opts, anchorSource, fmt.Errorf("--anchor: read %q: %w", anchorPath, err)
 		}
 		bundle, err := auditverify.ParseExternalAnchorBundle(data)
 		if err != nil {
-			return opts, fmt.Errorf("--anchor: %w", err)
+			return opts, anchorSource, fmt.Errorf("--anchor: %w", err)
 		}
 		opts.ExternalAnchor = bundle
 	}
 	if verifyAuditTSARootFile != "" {
 		roots, err := readTSARootsFile(verifyAuditTSARootFile)
 		if err != nil {
-			return opts, fmt.Errorf("--tsa-roots: %w", err)
+			return opts, anchorSource, fmt.Errorf("--tsa-roots: %w", err)
 		}
 		opts.TSARoots = roots
 	}
-	return opts, nil
+	return opts, anchorSource, nil
+}
+
+// resolveOfflineAnchor resolves design §10 Q5's --anchor precedence AND
+// classifies which source served it, for Result.AnchorSource: "flag",
+// "config (audit.offline_anchor_path)", or "none".
+//
+// A config file that EXISTS but fails to load/parse is deliberately NOT
+// treated the same as no config file at all. Before this function existed,
+// buildVerifyAuditOptions took a bare *config.Config that was already nil in
+// both cases -- so an operator who genuinely configured
+// audit.offline_anchor_path, but whose config had since developed a typo or
+// permissions problem, got a SILENT downgrade to a bare re-walk with no
+// anchor and no indication why (found in review of #2084). When --anchor was
+// not passed explicitly and cs reports a present-but-unloadable config file,
+// this returns a hard error instead. An explicit --anchor always resolves
+// regardless of cs, since it does not depend on config at all.
+func resolveOfflineAnchor(cs configLoadState) (path, source string, err error) {
+	if verifyAuditAnchorFile != "" {
+		return verifyAuditAnchorFile, anchorSourceFlag, nil
+	}
+	if cs.cfg != nil && cs.cfg.Audit.OfflineAnchorPath != "" {
+		return cs.cfg.Audit.OfflineAnchorPath, anchorSourceConfig, nil
+	}
+	if cs.err != nil && !cs.fileMissing {
+		return "", "", fmt.Errorf(
+			"--anchor was not passed, and audit.offline_anchor_path could not be checked because the config file "+
+				"failed to load -- refusing to silently verify without a possibly-configured anchor: %w", cs.err)
+	}
+	return "", anchorSourceNone, nil
 }
 
 // readCheckpointKeyFile reads the derived audit-checkpoint signing key
@@ -222,8 +309,12 @@ func readTSARootsFile(path string) (*x509.CertPool, error) {
 // openVerifyAuditTarget resolves --db/--pg-dsn/config precedence into an
 // auditverify.DB. The returned lock is non-nil ONLY when this run fell back
 // to the config's own live database (design Q2) — an explicit --db/--pg-dsn
-// copy never touches that path, so it is never guarded.
-func openVerifyAuditTarget() (*auditverify.DB, *serverguard.Exclusive, error) {
+// copy never touches that path, so it is never guarded. cfg/cfgErr are the
+// single loadConfig() call runVerifyAudit already made: --db/--pg-dsn mode
+// never needs cfg to have loaded (design §10 Q2), so cfgErr is surfaced only
+// in the fallback branch below, where a live config-referenced database is
+// genuinely required.
+func openVerifyAuditTarget(cfg *config.Config, cfgErr error) (*auditverify.DB, *serverguard.Exclusive, error) {
 	if verifyAuditDBPath != "" {
 		db, err := auditverify.OpenSQLiteReadOnly(verifyAuditDBPath)
 		if err != nil {
@@ -239,9 +330,8 @@ func openVerifyAuditTarget() (*auditverify.DB, *serverguard.Exclusive, error) {
 		return db, nil, nil
 	}
 
-	cfg, err := loadConfig()
-	if err != nil {
-		return nil, nil, err
+	if cfgErr != nil {
+		return nil, nil, cfgErr
 	}
 	lock, err := acquireDatabaseLock(cfg)
 	if err != nil {
@@ -337,6 +427,8 @@ func printVerifyAuditReport(r *auditverify.Result) {
 			fmt.Println("  present but not independently re-verified against a TSA trust root")
 		}
 	}
+
+	fmt.Printf("\nAnchor source: %s\n", r.AnchorSource)
 
 	if r.ExternalAnchor.Supplied {
 		fmt.Println("\nExternal anchor bundle (--anchor):")

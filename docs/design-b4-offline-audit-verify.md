@@ -281,6 +281,93 @@ read into memory at once.
    `GRANT` statements as a first-class deliverable (auditors will ask)?
    Recommend: yes, ship a `docs/` snippet alongside the command's `--help`.
 
+5. **Should the offline anchor source (a checkpoint export read from a file on
+   write-once media) be a CLI-only flag, or also config-driven?** Decided
+   (2026-09-25): **both**, with `--anchor` taking precedence when set. Added
+   `audit.offline_anchor_path` (`internal/config`, documented in
+   `docs/CONFIGURATION.md`) as the default `verify-audit --anchor` source when
+   the flag is not passed — lets an operator on an air-gapped host configure the
+   anchor's location once (in the same config file already governing storage)
+   instead of remembering the flag on every verification run. Resolution order
+   lives in `resolveOfflineAnchorPath` (`server/admin/audit_verify.go`):
+   explicit `--anchor` always wins; otherwise the config value, if any; neither
+   set means no anchor, same pre-existing behavior (an already-reported
+   limitation via `Result.NotProven`, never a failure). Config loading for this
+   purpose is deliberately best-effort: `--db`/`--pg-dsn` mode (Q2) works with
+   no config file present at all, so a missing/unparseable config must not
+   block verification when the operator never relied on it — it only costs the
+   config-derived default in that case. Once a path IS resolved (from either
+   source), reading it is NOT best-effort: a missing or unreadable file at
+   that path is a hard, exit-3 error (`buildVerifyAuditOptions` wraps
+   `os.ReadFile`'s error), never a silent "no anchor" — a configured-but-broken
+   anchor must never be indistinguishable from "nothing configured" (§2's
+   fail-closed framing applies to resolution, not just to signature checking).
+
+   **No new Go interface.** `ExternalAnchorBundle` + `Options.ExternalAnchor`
+   (§4, `internal/auditverify/anchor_bundle.go`) already fully generalizes "an
+   anchor bundle from somewhere external" — the offline-file case just supplies
+   one by reading a path, the same shape `--anchor` already consumed before
+   this change. Introducing a formal `AnchorSource` interface for a single
+   concrete implementation would be exactly the premature abstraction
+   `CLAUDE.md`'s engineering practices section warns against ("does this fact
+   exist in more than one place, or will someone rely on the claim?" — today,
+   no). If a second offline-anchor *source* shape ever materializes (e.g.
+   pulling the export from a fixed removable-media mount point that changes
+   across reboots, rather than a static path), that is the point to introduce
+   one, not before.
+
+   **Convergence with the DECOUPLE program's `TimestampNotary` port**
+   (`internal/core/ports.TimestampNotary`, ADR-109): that port is orthogonal to
+   this one, not a duplicate. `TimestampNotary` abstracts *creating* a new RFC
+   3161 anchor at checkpoint-write time (server-side, online, `internal/notary`
+   as today's only implementation); this offline anchor source is about
+   *consuming* an already-signed checkpoint export at verify time (CLI-side,
+   deliberately independent of any running server or live network — see §4's
+   independence rationale). Neither needs the other. If a future step wants a
+   single abstraction spanning both anchor lifecycles (create-time and
+   verify-time), the natural seam is `resolveOfflineAnchorPath`'s return value
+   (a resolved bundle) versus `TimestampNotary.Anchor`'s return value (a fresh
+   receipt) — but that unification is speculative and explicitly out of scope
+   here; this change does not touch `internal/core/ports` or any
+   `TimestampNotary` wiring.
+
+   **Test coverage**: the bundle-level authentication logic (tampered
+   signature, wrong verifier key, truncation-after-export, genesis re-seed)
+   is covered by `internal/auditverify`'s own differential tests
+   (`TestDifferential_ExternalAnchor_*`, `anchor_bundle_test.go`) against the
+   exact `crossCheckExternalAnchor` this command calls into — unchanged by
+   this step, so not re-tested at the CLI layer to avoid duplication. New for
+   this step, in `server/admin/audit_offline_anchor_test.go`: the config
+   resolution itself — a full `export-checkpoint` → config-anchored
+   `verify-audit` round trip (`ConfigDefault_RoundTrip`), a configured-but-
+   missing file surfacing a clear exit-3 error rather than silently verifying
+   without an anchor (`MissingConfiguredFile_ClearError`), and `--anchor`'s
+   precedence over a simultaneously-configured (and deliberately unwritten)
+   config path (`ExplicitFlagOverridesConfig`).
+
+   **Addendum (review of #2084, 2026-09-25): "no config file" and "config file
+   present but unloadable" are different states and must not collapse into
+   the same silent outcome.** The first cut of `buildVerifyAuditOptions` took
+   a bare `*config.Config`, already `nil` in both cases — so an operator who
+   genuinely set `audit.offline_anchor_path`, but whose config later developed
+   a typo, bad permissions, or any other load failure, got a **silent**
+   downgrade to a bare re-walk with no anchor and no indication why. Fixed via
+   `configLoadState` (`server/admin/audit_verify.go`): an independent
+   `os.Stat` on the resolved config path (mirroring `runAdminAudit`'s own
+   resolution) tags the `loadConfig()` result as `fileMissing` or not.
+   `resolveOfflineAnchor` then only tolerates a load failure when the file
+   was genuinely absent (§10 Q2's case); a present-but-broken config with no
+   `--anchor` passed is now a hard exit-3 error naming the load failure,
+   never a silent "none." An explicit `--anchor` still resolves regardless,
+   since it never depended on config. `Result` also gained `AnchorSource`
+   (`"flag"` / `"config (audit.offline_anchor_path)"` / `"none"`), reported in
+   both the human report and `--json`, so a run discloses which source
+   actually served its anchor rather than leaving that implicit. Tests:
+   `TestVerifyAudit_OfflineAnchor_ConfigPresentButUnloadable_NoAnchorFlag_FailsClosed`,
+   its `_ExplicitAnchorFlag_StillVerifies` counterpart (proving the fix
+   doesn't overcorrect), and `TestVerifyAudit_AnchorSourceReported`'s three
+   subtests (flag/config/none).
+
 ## Effort estimate
 
 - `internal/auditverify` package (DB access, duplicated hash/HMAC + parity
