@@ -14,32 +14,17 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 )
 
-// TestCreateStorage_Remote_NilConfig exercises createRemoteStorage when the Remote
-// config is nil — the factory must return an error (not panic).
-func TestCreateStorage_Remote_NilConfig(t *testing.T) {
+// TestCreateStorage_Remote_Rejected proves CreateStorage refuses storage.type:
+// "remote" outright (ADR-108 Phase 6 step 14b-2: RemoteStorage was deleted
+// entirely, so this now falls into the same "invalid storage.type" default
+// case as any other unrecognized value, not a dedicated remote-storage path).
+func TestCreateStorage_Remote_Rejected(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Storage.Type = "remote"
-	cfg.Storage.Remote = nil // no remote config provided
 
 	_, err := NewStorageFactory().CreateStorage(cfg)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "remote storage configuration is required")
-}
-
-// TestCreateStorage_Remote_WithConfig exercises createRemoteStorage when a full
-// Remote config is provided. NewHTTPClient validates the URL, so we use a valid
-// https URL with a non-empty API key (localhost is allowed under http for local dev).
-func TestCreateStorage_Remote_WithConfig(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.Storage.Type = "remote"
-	cfg.Storage.Remote = &config.RemoteConfig{
-		BaseURL: "https://keyorix.example.com",
-		APIKey:  "test-api-key-for-coverage",
-	}
-
-	st, err := NewStorageFactory().CreateStorage(cfg)
-	require.NoError(t, err)
-	assert.NotNil(t, st)
+	assert.Contains(t, err.Error(), "invalid storage.type")
 }
 
 // TestCreateStorage_Postgresql exercises the postgres type alias.

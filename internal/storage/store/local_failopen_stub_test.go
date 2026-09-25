@@ -60,6 +60,25 @@ func localStorageSourceFiles(t *testing.T) []string {
 	return files
 }
 
+// exprString renders a receiver type expression back to source form (e.g.
+// "*LocalStorage"), the minimal set of node kinds a method receiver can
+// actually be. Originally shared with the RemoteStorage stub-completeness
+// scanners (remote_unsupported_completeness_test.go /
+// remote_proxy_correctness_audit_test.go), deleted along with RemoteStorage
+// itself in ADR-108 Phase 6 step 14b-2; this is the only remaining caller.
+func exprString(e ast.Expr) string {
+	switch t := e.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.StarExpr:
+		return "*" + exprString(t.X)
+	case *ast.SelectorExpr:
+		return exprString(t.X) + "." + t.Sel.Name
+	default:
+		return fmt.Sprintf("%T", e)
+	}
+}
+
 // isZeroValueLiteral reports whether expr is a trivial zero-value literal:
 // the bare identifiers nil/false, an integer literal "0", or an empty string
 // literal `""`. Deliberately narrow — a real computed value (even one that

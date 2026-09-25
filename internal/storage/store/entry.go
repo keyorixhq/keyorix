@@ -1,46 +1,16 @@
-// Package store handles secret persistence across remote and local backends.
+// Package store handles secret persistence via direct GORM database access.
 //
 // # Domain
 //
-// Two storage backends implement the core [storage.Storage] interface:
+// LocalStorage implements the core [storage.Storage] interface by accessing
+// the database directly via GORM. Used by the server itself and for
+// air-gapped / offline deployments.
 //
-//   - RemoteStorage — proxies all operations to a running Keyorix server via
-//     the REST API. Used by the CLI when a server is reachable.
-//   - LocalStorage  — accesses the database directly via GORM. Used by the
-//     server itself and for air-gapped / offline deployments.
-//
-// # Operation Map
-//
-// Navigate directly to the file for the operation you need:
-//
-//	Secrets (node + version):
-//	  remote_secrets.go  /  local_secrets.go
-//
-//	Sharing (ShareRecord):
-//	  remote_sharing.go  /  local_sharing.go   (local: not yet implemented)
-//
-//	Users & Groups:
-//	  remote_users.go    /  local_users.go
-//
-//	Roles & RBAC:
-//	  remote_rbac.go     /  local_rbac.go
-//
-//	Audit & Anomaly:
-//	  remote_audit.go    /  local_audit.go
-//
-//	Sessions & API Clients:
-//	  remote_auth.go     /  local_auth.go
-//
-//	Stats & Health:
-//	  remote_stats.go    /  local_stats.go
-//
-// # Struct Constructors
-//
-//	NewRemoteStorage(config *remote.Config) (*RemoteStorage, error)
-//	NewLocalStorage(db *gorm.DB) *LocalStorage
-//
-// Both constructors live in this file. Configuration and HTTP transport for
-// RemoteStorage are in the sibling remote/ package (config.go, client.go).
+// A second backend, RemoteStorage (proxying operations to a running Keyorix
+// server via the REST API, used by the pre-ADR-108 thick CLI), was deleted
+// entirely in ADR-108 Phase 6 step 14b-2 once the CLI switch (Phase 5) made
+// it unreachable in any supported deployment. Each operation file that used
+// to pair a remote_*.go with a local_*.go now stands alone.
 //
 // # Entry Point
 //
@@ -49,14 +19,10 @@
 package store
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/remote"
 	"gorm.io/gorm"
 )
 
@@ -127,51 +93,6 @@ func escapeLIKE(s string) string {
 	s = strings.ReplaceAll(s, `%`, `\%`)
 	s = strings.ReplaceAll(s, `_`, `\_`)
 	return s
-}
-
-// RemoteStorage implements storage.Storage via the Keyorix REST API.
-type RemoteStorage struct {
-	client *remote.HTTPClient
-}
-
-// NewRemoteStorage creates a RemoteStorage backed by the given config.
-func NewRemoteStorage(config *remote.Config) (*RemoteStorage, error) {
-	client, err := remote.NewHTTPClient(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP client: %w", err)
-	}
-	return &RemoteStorage{client: client}, nil
-}
-
-// putConditionalTransition PUTs body to path and decodes the standard
-// {"matched": bool} response shared by every conditional-transition storage
-// primitive in this package (TransitionMachineIdentityState,
-// TransitionSecretStatus, TransitionDynamicSecretConfigDisabled,
-// UpdateUserIfActiveStateMatches, ...): each one carries a full row plus the
-// "from" value the caller observed before mutating it, so the upstream can
-// apply the exact same conditional "WHERE id = ? AND <field> = ?" write its
-// own LocalStorage would in a single round trip (see the atomicity note in
-// internal/core/storage/interface.go for why a generic read-then-write proxy
-// pair isn't safe here: RemoteStorage.WithTransaction is a no-op passthrough).
-//
-// opName is used only to build each call site's own wrapped error text
-// ("failed to %s: %w" / "%s failed: %s"), so callers keep their existing
-// exact error messages.
-func (rs *RemoteStorage) putConditionalTransition(ctx context.Context, path string, body interface{}, opName string) (bool, error) {
-	resp, err := rs.client.Put(ctx, path, body)
-	if err != nil {
-		return false, fmt.Errorf("failed to %s: %w", opName, err)
-	}
-	if !resp.Success {
-		return false, fmt.Errorf("%s failed: %s", opName, resp.Error.Error())
-	}
-	var result struct {
-		Matched bool `json:"matched"`
-	}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return false, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result.Matched, nil
 }
 
 // LocalStorage implements storage.Storage via direct GORM database access.
