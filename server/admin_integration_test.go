@@ -11,14 +11,17 @@ package main
 // admin_integration_postgres_test.go (gated on KEYORIX_TEST_PG_DSN).
 
 import (
+	"archive/tar"
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -556,5 +559,299 @@ func TestServerStartup_RefusedWhileAdminHoldsExclusiveLock_SQLite(t *testing.T) 
 	if !waitForPresence(t, probeCfg, 15) {
 		logBytes, _ := os.ReadFile(filepath.Join(dir, "server-after-release.log"))
 		t.Fatalf("expected the server to start successfully after the admin lock released; server log:\n%s", logBytes)
+	}
+}
+
+// --- backup / restore (ADR-108 §B3) ------------------------------------------
+
+var chainedEventsRE = regexp.MustCompile(`chained events:\s+(\d+)`)
+
+func chainedEventsCount(t *testing.T, verifyAuditOutput string) int {
+	t.Helper()
+	m := chainedEventsRE.FindStringSubmatch(verifyAuditOutput)
+	if m == nil {
+		t.Fatalf("could not find 'chained events: N' in verify-audit output:\n%s", verifyAuditOutput)
+	}
+	var n int
+	if _, err := fmt.Sscanf(m[1], "%d", &n); err != nil {
+		t.Fatalf("parse chained events count %q: %v", m[1], err)
+	}
+	return n
+}
+
+// TestAdminBackupRestore_SQLite_RoundTrip is the AIRGAP-E2E core assertion at
+// the Go-test level (docs/AIRGAP_RUNBOOK.md and scripts/airgap-e2e.sh exercise
+// the same flow end-to-end against a running container): init -> migrate ->
+// backup -> wipe the data dir entirely (db file AND key files, simulating a
+// genuinely fresh host) -> restore -> the audit chain's chained-event count
+// is identical and verify-audit still reports VALID.
+func TestAdminBackupRestore_SQLite_RoundTrip(t *testing.T) {
+	bin := buildServerBinary(t)
+	dir := t.TempDir()
+	env := append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD=test-passphrase-backup-restore")
+
+	if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin init failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin diagnose (key derivation) failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "migrate", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin migrate failed: %v\n%s", err, out)
+	}
+
+	beforeOut, err := runAdmin(t, bin, dir, env, "verify-audit", "--config", "./keyorix.yaml")
+	if err != nil {
+		t.Fatalf("verify-audit before backup failed: %v\n%s", err, beforeOut)
+	}
+	beforeCount := chainedEventsCount(t, beforeOut)
+	if beforeCount == 0 {
+		t.Fatalf("expected admin init/migrate to have written at least one audit event, got 0:\n%s", beforeOut)
+	}
+
+	backupPath := filepath.Join(dir, "backup.tar.gz")
+	out, err := runAdmin(t, bin, dir, env, "backup", "--config", "./keyorix.yaml", "--output", "./backup.tar.gz")
+	if err != nil {
+		t.Fatalf("admin backup failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Backup written to") {
+		t.Errorf("expected backup to report success, got:\n%s", out)
+	}
+	if _, statErr := os.Stat(backupPath); statErr != nil {
+		t.Fatalf("expected backup archive to exist: %v", statErr)
+	}
+
+	// Simulate a genuinely fresh host: remove the database AND every
+	// key-material file admin init created, not just the database. A backup
+	// that only restores the DB and leaves stale keys behind would silently
+	// pass this test for the wrong reason (the OLD keys would still decrypt
+	// fine) -- wiping both is what actually exercises the restore path.
+	if err := os.Remove(filepath.Join(dir, "keyorix.db")); err != nil {
+		t.Fatalf("remove db: %v", err)
+	}
+	keysDir := filepath.Join(dir, "keys")
+	if err := os.RemoveAll(keysDir); err != nil {
+		t.Fatalf("remove keys dir: %v", err)
+	}
+
+	out, err = runAdmin(t, bin, dir, env, "restore", "--config", "./keyorix.yaml", "--input", "./backup.tar.gz")
+	if err != nil {
+		t.Fatalf("admin restore failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Restored database") {
+		t.Errorf("expected restore to report success, got:\n%s", out)
+	}
+
+	out, err = runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml")
+	if err != nil {
+		t.Fatalf("admin diagnose after restore failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"[ OK ] config parse",
+		"[ OK ] KEK/passphrase access",
+		"[ OK ] database open",
+		"[ OK ] migration state",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected post-restore diagnose to contain %q, got:\n%s", want, out)
+		}
+	}
+
+	afterOut, err := runAdmin(t, bin, dir, env, "verify-audit", "--config", "./keyorix.yaml")
+	if err != nil {
+		t.Fatalf("verify-audit after restore failed (expected VALID/exit 0): %v\n%s", err, afterOut)
+	}
+	if !strings.Contains(afterOut, "Verdict: VALID") {
+		t.Errorf("expected verify-audit to report VALID after restore, got:\n%s", afterOut)
+	}
+	// restore itself writes one more admin.restore_completed audit event
+	// AFTER the pre-backup snapshot was taken, so the post-restore chain is
+	// exactly one event longer than what backup captured -- not merely equal.
+	afterCount := chainedEventsCount(t, afterOut)
+	if afterCount != beforeCount+1 {
+		t.Errorf("expected chained events to be beforeCount+1 (%d) after the restored chain recorded its own restore event, got %d", beforeCount+1, afterCount)
+	}
+}
+
+func TestAdminBackup_OutputAlreadyExists_Refuses(t *testing.T) {
+	bin := buildServerBinary(t)
+	dir := t.TempDir()
+	env := append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD=test-passphrase-backup-exists")
+
+	if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin init failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin diagnose (key derivation) failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "migrate", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin migrate failed: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "backup.tar.gz"), []byte("existing"), 0600); err != nil {
+		t.Fatalf("pre-create output file: %v", err)
+	}
+
+	out, err := runAdmin(t, bin, dir, env, "backup", "--config", "./keyorix.yaml", "--output", "./backup.tar.gz")
+	if err == nil {
+		t.Fatalf("expected admin backup to refuse an existing --output, got success:\n%s", out)
+	}
+	if !strings.Contains(out, "already exists") {
+		t.Errorf("expected the 'already exists' refusal message, got:\n%s", out)
+	}
+}
+
+func TestAdminRestore_RefusesNonEmptyTargetWithoutOverwrite(t *testing.T) {
+	bin := buildServerBinary(t)
+	dir := t.TempDir()
+	env := append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD=test-passphrase-restore-nonempty")
+
+	if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin init failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin diagnose failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "migrate", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin migrate failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "backup", "--config", "./keyorix.yaml", "--output", "./backup.tar.gz"); err != nil {
+		t.Fatalf("admin backup failed: %v\n%s", err, out)
+	}
+
+	// Deliberately do NOT wipe the data dir this time -- keyorix.db still has
+	// the real, non-empty database in it.
+	out, err := runAdmin(t, bin, dir, env, "restore", "--config", "./keyorix.yaml", "--input", "./backup.tar.gz")
+	if err == nil {
+		t.Fatalf("expected admin restore to refuse a non-empty existing database without --overwrite-existing, got success:\n%s", out)
+	}
+	if !strings.Contains(out, "already exists and is not empty") {
+		t.Errorf("expected the non-empty-target refusal message, got:\n%s", out)
+	}
+
+	// --overwrite-existing must let it through.
+	out, err = runAdmin(t, bin, dir, env, "restore", "--config", "./keyorix.yaml", "--input", "./backup.tar.gz", "--overwrite-existing")
+	if err != nil {
+		t.Fatalf("admin restore --overwrite-existing failed: %v\n%s", err, out)
+	}
+}
+
+func TestAdminRestore_ChecksumMismatchDetected(t *testing.T) {
+	bin := buildServerBinary(t)
+	dir := t.TempDir()
+	env := append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD=test-passphrase-restore-corrupt")
+
+	if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin init failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin diagnose failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "migrate", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin migrate failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "backup", "--config", "./keyorix.yaml", "--output", "./backup.tar.gz"); err != nil {
+		t.Fatalf("admin backup failed: %v\n%s", err, out)
+	}
+
+	corruptBackupDBEntry(t, filepath.Join(dir, "backup.tar.gz"))
+
+	if err := os.Remove(filepath.Join(dir, "keyorix.db")); err != nil {
+		t.Fatalf("remove db: %v", err)
+	}
+	if err := os.RemoveAll(filepath.Join(dir, "keys")); err != nil {
+		t.Fatalf("remove keys dir: %v", err)
+	}
+
+	out, err := runAdmin(t, bin, dir, env, "restore", "--config", "./keyorix.yaml", "--input", "./backup.tar.gz")
+	if err == nil {
+		t.Fatalf("expected admin restore to detect the tampered db.sqlite entry, got success:\n%s", out)
+	}
+	if !strings.Contains(out, "integrity check") {
+		t.Errorf("expected the integrity-check failure message, got:\n%s", out)
+	}
+}
+
+// corruptBackupDBEntry rewrites path's db.sqlite tar entry with one flipped
+// byte, leaving every other entry (including MANIFEST.json's recorded
+// checksum) untouched -- the minimal change that should make restore's
+// checksum verification fail without otherwise breaking archive parsing.
+func corruptBackupDBEntry(t *testing.T, path string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read backup archive: %v", err)
+	}
+
+	gz, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("gzip.NewReader: %v", err)
+	}
+	tr := tar.NewReader(gz)
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read tar entry: %v", err)
+		}
+		data, err := io.ReadAll(tr)
+		if err != nil {
+			t.Fatalf("read tar entry %q: %v", hdr.Name, err)
+		}
+		if hdr.Name == "db.sqlite" && len(data) > 0 {
+			data[0] ^= 0xFF
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatalf("write tar header: %v", err)
+		}
+		if _, err := tw.Write(data); err != nil {
+			t.Fatalf("write tar entry: %v", err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar writer: %v", err)
+	}
+
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		t.Fatalf("reopen backup archive for corruption: %v", err)
+	}
+	defer f.Close() //nolint:errcheck
+	gzw := gzip.NewWriter(f)
+	if _, err := gzw.Write(buf.Bytes()); err != nil {
+		t.Fatalf("write corrupted archive: %v", err)
+	}
+	if err := gzw.Close(); err != nil {
+		t.Fatalf("close gzip writer: %v", err)
+	}
+}
+
+func TestAdminBackupRestore_PostgresStorageType_Refused(t *testing.T) {
+	bin := buildServerBinary(t)
+	dir := t.TempDir()
+	env := baseEnv(dir)
+	cfg := "storage:\n  type: postgres\n  database:\n    host: 127.0.0.1\n    name: keyorix\n    user: keyorix\n"
+	if err := os.WriteFile(filepath.Join(dir, "keyorix.yaml"), []byte(cfg), 0600); err != nil {
+		t.Fatalf("write postgres config: %v", err)
+	}
+
+	out, err := runAdmin(t, bin, dir, env, "backup", "--config", "./keyorix.yaml", "--output", "./backup.tar.gz")
+	if err == nil {
+		t.Fatalf("expected admin backup to refuse postgres storage, got success:\n%s", out)
+	}
+	if !strings.Contains(out, "only supports local/sqlite storage") {
+		t.Errorf("expected the local/sqlite-only refusal message, got:\n%s", out)
+	}
+
+	out, err = runAdmin(t, bin, dir, env, "restore", "--config", "./keyorix.yaml", "--input", "./backup.tar.gz")
+	if err == nil {
+		t.Fatalf("expected admin restore to refuse postgres storage, got success:\n%s", out)
+	}
+	if !strings.Contains(out, "only supports local/sqlite storage") {
+		t.Errorf("expected the local/sqlite-only refusal message, got:\n%s", out)
 	}
 }
