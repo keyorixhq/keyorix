@@ -194,6 +194,61 @@ the single highest-traffic resource in the product — the single-secret
 GET/CREATE/UPDATE/CLASSIFY routes belong at the front of PR C's queue, not
 folded in incidentally at the end.
 
+## Correction while starting PR C: `ListSecrets` is NOT safe either — Go embedding promotes `SecretNode`'s untagged fields even through the "safe" DTO
+
+This directly reverses one of Step 1's "confirmed safe" verdicts, caught while
+starting the fix for the routes above; recording it here immediately rather
+than letting a wrong "confirmed safe" sit in the record.
+
+`SecretWithSharingInfo` (the type Step 1 verified is "fully snake_case-tagged"
+and used by `ListSecrets`) embeds `*SecretNode` **anonymously**:
+
+```go
+type SecretWithSharingInfo struct {
+	*SecretNode
+	ProjectName string `json:"project_name,omitempty"`
+	IsShared    bool   `json:"is_shared"`
+	// ...
+}
+```
+
+`encoding/json` promotes an anonymous embedded struct's exported fields to the
+outer struct's own top level, each keyed by *its own* tag (or bare Go field
+name, absent a tag) — it does not inherit or get masked by the embedding
+struct's tags. Verified empirically (not asserted): marshaling a
+`SecretWithSharingInfo{SecretNode: &SecretNode{ID:1, Name:"foo", ProjectID:5},
+ProjectName:"bar", IsShared:true}` produces
+`{"ID":1,"Name":"foo","ProjectID":5,"project_name":"bar","is_shared":true}` —
+`SecretNode`'s fields promoted bare-PascalCase, sitting alongside the
+wrapper's own snake_case fields in the **same object**.
+
+This means **every route Step 1 marked safe because it returns
+`SecretWithSharingInfo`/`SecretListResponse` is actually a mixed-casing
+response** — `ListSecrets` and all its scoped variants
+(`ListSecretsInScope`, `ListSecretsWithSharingInfo`,
+`ListSecretsInScopeWithSharingInfo`) included. Confirmed live, not
+hypothetical: `web/src/services/secrets.ts`'s `list()` mapper reads
+`s.ID`, `s.Name`, `s.Type`, `s.UpdatedAt`, `s.CreatedAt`, `s.CreatedBy`,
+`s.Expiration`, `s.LastRotatedAt` — bare PascalCase, several with **no**
+snake_case fallback at all (unlike `projects.ts`'s consistent `??` dual-read)
+— while reading `s.IsShared`, `s.share_count`, `s.namespace_name` in a mix of
+both conventions on the very same object. This is a second, independent way
+the exact same root cause (an untagged model reaching the wire) manifests,
+beyond the "handler passes the model straight to `sendSuccess`" shape the rest
+of this document catalogs — PR C's regression guard (an AST scan for
+`internal/storage/models` types reaching `sendSuccess`/`sendCreated`) will
+**not** catch this one, since the type it sees at the call site
+(`*models.SecretListResponse`) has no offending field of its own — the leak
+is one level down, through the embed. The guard needs a second check: does
+any allowlisted-safe type embed an unexported-tag model anonymously.
+
+Also worth checking in PR C, not yet confirmed: `secrets.ts`'s `get(id)`
+types the raw response directly as `Secret` with no mapping function at all —
+worth confirming what shape the frontend actually receives from `GetSecret`
+(raw, unwrapped `SecretNode`, no embedding) lines up with what `Secret`'s
+TypeScript fields expect, since `list()` and `get()` clearly do not share a
+wire contract today.
+
 ## Scope note per CENSUS-GAPS coordination
 
 Per the track brief, I did not touch or re-verify `billing report`, `usage show`, or
