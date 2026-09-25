@@ -1625,6 +1625,116 @@ do not hand-edit — edit `commandCensus` in `internal/cli/command_census_test.g
 `censusDropped` (maintainer-only tooling and ADR-108 Decision A's config-mechanism consolidation,
 respectively) — not gaps, a closed decision each with its own reason in the table.
 
+## 10. PR 14 readiness (analysis only — no deletions in this pass)
+
+PR 14 deletes the `/system` route tier and `internal/storage/store`'s `RemoteStorage` type
+entirely (the server-to-server proxy tier `RemoteStorage` is the CLI's client-mode Go
+implementation of, per §3 above). This section resolves the last open question blocking that
+deletion — whether every currently-live-or-unresolved `RemoteStorage` method is safe to remove —
+and sizes the actual deletion.
+
+### 10.1 The 21 `reachabilityLive`/`reachabilityUnresolved` methods, resolved
+
+`internal/storage/store/remote_reachability_registry_test.go` classifies every structurally-stub
+`RemoteStorage` method's reachability. As of this pass, 21 of ~183 are `reachabilityLive` or
+`reachabilityUnresolved` (not `reachabilityDead`) — every one of them, without exception, traces
+to a call made by the **old CLI's (`internal/cli`) embedded-mode fallback** (`storage.type:
+remote` configured for a CLI process, not a server), never to the new thin CLI (`cli/`): the
+thin CLI performs no local authorization or local storage access at all — every command is a
+REST call, with the real server doing its own authorization over the wire. That structural fact
+is why the resolution below is the same shape for all 21: either the underlying feature already
+has a REST-routed thin-CLI equivalent (so the old-CLI path becomes dead, not replaced, the moment
+Phase 5 deletes `internal/cli`), or fresh verification found no real caller at all, old CLI
+included.
+
+| Method | Resolution |
+|---|---|
+| `AddPasswordHistory` | ROUTED — old path: `internal/cli/user/create.go` embedded fallback → `core.CreateUser`. Thin-CLI equivalent: `keyorix-next user create` (`cli/cmd/user.go`, PR 6/3, REST `createUser`). Note: the storage error was already discarded at every call site (`internal/core/users.go`, `account.go`), so this was a registry-accuracy issue, not a functional one, even before Phase 5. |
+| `AssignPermissionToRole` | **CONFIRMED DEAD** — fresh repo-wide grep for `.AssignPermissionToRole(` outside `_test.go` finds only `server/http/handlers/rbac.go` and boot-time-only `auth_bootstrap.go`/`rbac_reconcile.go`/`rbac_roles.go` callers of the *core* method; zero matches anywhere under `internal/cli` (old or new). The original Wave 0 "no CLI caller found" holds up under a full re-check — this is the one entry not gated on Phase 5 at all. |
+| `CountSecretReadsBySecretIDs` | ROUTED — old path: `internal/cli/project/health.go` embedded fallback → `core.GetProjectHealthSummary`. Thin-CLI equivalent: `keyorix-next project health` (`cli/cmd/project.go:575`, PR 6). |
+| `CreateSecretAccessLog` | ROUTED — old path: `internal/cli/secret/bulk_delete.go` embedded fallback → `core.BulkDeleteSecrets`. Thin-CLI equivalent: `keyorix-next secret bulk-delete` (`cli/cmd/secret_bulk.go`, PR 5). |
+| `GetBillingReport` | ROUTED — old path: `internal/cli/billing/billing.go` embedded fallback → `core.GenerateBillingReport`. Thin-CLI equivalent: `keyorix-next billing report` (`cli/cmd/billing.go`, this track's FINISH-SPLIT census-gaps PR, `GET /admin/billing/report`). |
+| `GetMachineRoleScopes` | ROUTED (ADR-086 family, see `GetUserRoleIDsAt` below) — the one path independently traced to a real caller (`core.ReadFederatedSecret`/`ConnectReadableConnectorNames`, the ADR-082 Connect *feature* — unrelated to the CLI's own `connect`/`disconnect` commands despite the name collision) is itself **confirmed dead**: called only from `server/grpc/services/connect_service.go` and `server/http/handlers/connect.go`, both server-only per ADR-083. The remaining path is via `core.GetReadableScopes`, part of the same local-authorization-resolution family as `GetUserRoleIDsAt`. |
+| `GetProjectUsageStats` | ROUTED — old path: `internal/cli/usage/usage.go` embedded fallback → `core.GetUsageReport`. Thin-CLI equivalent: `keyorix-next usage show` (`cli/cmd/usage.go`, this track's FINISH-SPLIT census-gaps PR, `GET /admin/usage`). |
+| `GetUserGroupPermissions` | ROUTED — old path: `internal/cli/rbac/assign_role.go` embedded fallback → `core.AssignUserRole` → `requireNoSoDViolation` → `userHeldPermissionSet`. Thin-CLI equivalent: `keyorix-next rbac assign-role` (`cli/cmd/rbac.go`, PR 3, #2044, REST `assignUserRole`). The `GetUserPermissionsByID`/dashboard path (`server/http/handlers/users_roles.go`) is separately server-only, zero CLI caller either way. |
+| `GetUserGroupRoleIDsAt` | ROUTED (ADR-086 family, see `GetUserRoleIDsAt` below). |
+| `GetUserRoleIDsAt` | ROUTED — called directly by `core.Authorize`, reached by 11 old-CLI commands doing their own local authorization check under `storage.type: remote` (#1575) — e.g. `internal/cli/migrate/user_to_machine.go`'s `requireMigrationAuthority`, which calls `svc.Authorize(...)` directly. Deliberately kept an unconditional stub per ADR-086 (implementing scoped-authorization over the wire would be a fat-client anti-pattern) — not something PR 14 changes, but every one of those 11 old-CLI local-authorization checks has a thin-CLI equivalent that defers authorization to the server instead of checking it locally (e.g. `migrate user-to-machine`'s own thin-CLI port, this same track, drops the local authority check entirely — the bearer token IS the authorization). |
+| `GetUserRoleIDsExact` | ROUTED — old path: `internal/core/rbac_management.go`'s `AssignUserRole`/`RemoveUserRole` (called from `internal/cli/rbac/assign_role.go`'s embedded fallback, same as `GetUserGroupPermissions` above). Thin-CLI equivalent: `keyorix-next rbac assign-role`/`remove-role` (PR 3, #2044). The separate `project_members.go` (add/remove project member) and `break_glass.go` call sites have **zero CLI caller at all**, old or new — server-only. |
+| `GetUserRoleScopes` | ROUTED (ADR-086 family) — three real paths, all old-CLI-only: (1) `core.HasPermissionByEmail`, doc-commented as "the CLI diagnostic" (#376), called by `internal/cli/rbac/check_permission.go` → thin-CLI equivalent `keyorix-next rbac check-permission` (PR 3, #2044); (2) `core.requireEqualOrGreaterAdminAuthority`, the admin-ceiling check on user mutations → thin-CLI equivalent `keyorix-next user update`/etc. (PR 6) defers this to the server; (3) `core.GetReadableScopes`, used by old-CLI embedded-mode scoped listing. The fourth path (`connectOwnershipSatisfied`/`ReadFederatedSecret`) is separately confirmed dead — server-only, see `GetMachineRoleScopes` above. |
+| `ListAccessRequestsByIDs` | ROUTED — old path: none at all (Finding S15/GAP-F-BULK: the OLD CLI's `request bulk-approve`/`bulk-reject` never actually called the REST route despite the route existing). Thin-CLI equivalent now genuinely calls it: `keyorix-next request bulk-approve`/`bulk-reject` (`cli/cmd/request.go`, `BulkApproveAccessRequestsWithResponse`). |
+| `ListAllUserRoleGrants` | ROUTED — old path: `internal/cli/rbac/export_matrix.go` embedded fallback → `core.GetPermissionMatrix`. Thin-CLI equivalent: `keyorix-next rbac export-matrix` (`cli/cmd/rbac_audit.go`, PR 3, #2044). |
+| `ListInactiveUsers` | ROUTED — old path: `internal/cli/user/inactivity_suspend.go` embedded fallback → `core.SuspendInactiveUsers`. Thin-CLI equivalent: `keyorix-next user suspend-inactive` (`cli/cmd/user.go`, PR 6, `POST /admin/jobs/suspend-inactive-users`). |
+| `ListLiveSecretNamesByProject` | ROUTED — old path: `internal/cli/project/stats.go` embedded fallback → `core.GetProjectStats`. Thin-CLI equivalent: `keyorix-next project stats` (`cli/cmd/project.go:395`, PR 6). |
+| `ListSecretACLs` | ROUTED — old path: `internal/cli/secret/diff.go` embedded fallback → `core.DiffSecretVersions`. Thin-CLI equivalent: `keyorix-next secret diff` (`cli/cmd/secret_versions.go`, PR 4, `DiffSecretVersionsWithResponse`). |
+| `ListSecretAccessLogs` | ROUTED — old path: `internal/cli/secret/score.go` embedded fallback → `core.ComputeSecretRiskScore`. Thin-CLI equivalent: `keyorix-next secret score` (`cli/cmd/secret_risk.go`, PR 5, `GetSecretRiskWithResponse`). |
+| `ListSessionTokenHashesForUser` | ROUTED — old path: `user update --active=false` embedded fallback. Thin-CLI equivalent: `keyorix-next user update --active=false` (`cli/cmd/user.go:313`, PR 6, REST). |
+| `RoleSetHasPermission` | ROUTED (ADR-086 family, see `GetUserRoleIDsAt` above — final step of the same `core.Authorize` chain). |
+| `WithTransaction` | ROUTED — same `user update --active=false` path as `ListSessionTokenHashesForUser` above; no real cross-call atomicity under `RemoteStorage` (each sub-call its own HTTP round trip) but the thin-CLI's REST call is a single request handled transactionally server-side, so the limitation this entry described doesn't carry forward at all. |
+
+**Net result: 20 of 21 resolve to ROUTED (blocked only on Phase 5 deleting `internal/cli`, not on
+any unported functionality), 1 resolves to CONFIRMED DEAD (no blocker at all).** No entry is
+newly promoted to a hard blocker — the one true blocker (Phase 5) was already known, not
+discovered by this pass.
+
+### 10.2 What PR 14 deletes, sized
+
+| Group | Files | Lines (impl / test) |
+|---|---|---|
+| `/system` route registrations (`server/http/router.go:1126`–`:2078`) | 1 (partial) | 953 (registrations only) |
+| `/system` proxy handlers (`server/http/handlers/*_proxy.go` and siblings) | 29 | 9,239 / 6,008 |
+| `internal/storage/store/remote_*.go` (the `RemoteStorage` type itself + its own package tests) | 50 impl + 92 test | 9,743 / 19,339 |
+| `server/http/remote_storage_*_test.go` (the differential/parity conformance harness, PR #1812) | 59 (all test) | 0 / 22,631 |
+| `validateRemoteStorageNotServer` (`internal/config/config.go:2396`) + the `storage.type: "remote"` factory case (`internal/storage/factory.go`) | 2 (partial) | ~15 |
+| **Total** | **~141 files touched** | **~67,928 lines** |
+
+Far over the ~3,000-line single-PR guideline — proposed 3-PR split, in dependency order (each
+PR's deletions must compile clean on their own; test files that assert against code a later PR
+deletes have to go first):
+
+1. **PR 14a — delete the parity/conformance test harness.** All 59
+   `server/http/remote_storage_*_test.go` files (~22,631 lines, entirely test code, zero
+   production risk). These tests exercise both the `/system` handlers and `RemoteStorage`
+   together; they must be deleted before either side, or PR 14b/14c break the build.
+2. **PR 14b — delete `RemoteStorage` itself.** `internal/storage/store/remote_*.go` (impl +
+   package tests, ~29,082 lines) plus the small `factory.go` wiring update
+   (`createRemoteStorage`'s call site and the `"remote"` switch case — a few lines, not counted
+   above). Also deletes `scripts/analysis/remote_storage_stub_rewrite.go` (a one-off dev tool
+   whose only purpose was maintaining these files, per §10.3's guard). Does NOT yet touch
+   `/system` — `RemoteStorage`'s wire calls are HTTP at runtime, not a Go import dependency on
+   the handler package, so this compiles standalone.
+3. **PR 14c — delete the `/system` route tier, last.** The `server/http/router.go` route block
+   (953 lines) and the 29 proxy handler files (9,239 impl + 6,008 test lines). As the FINAL
+   commit in this PR, not a separate one: remove `validateRemoteStorageNotServer` and the
+   `storage.type: "remote"` config value's validation entirely — sequenced last on purpose, so
+   at every intermediate commit up to this point, a misconfigured `storage.type: remote` still
+   fails loudly (via this validator) rather than silently succeeding with nothing behind it.
+
+### 10.3 CI guard added now (this PR)
+
+`internal/storage/store/remote_storage_importer_allowlist_test.go`
+(`TestNoNewRemoteStorageImportersOutsideAllowlist`) fails the build if any NEW non-test file
+outside `internal/storage/store` references `store.RemoteStorage`/`store.NewRemoteStorage` — the
+allowlist is today's exactly two real external references (`internal/storage/factory.go`,
+`scripts/analysis/remote_storage_stub_rewrite.go`) and must only shrink toward PR 14, never grow.
+A sibling test (`TestRemoteStorageAllowlistEntriesStillExistAndStillReference`) guards the
+allowlist itself against staleness in both directions. Verified RED (a planted
+`store.RemoteStorage{}` reference in `internal/core` was caught and reported by name) and GREEN
+(the real, unmodified tree) before landing.
+
+### 10.4 Still blocking
+
+**One thing, and it was already known, not newly discovered: `internal/cli` (the old CLI) still
+exists and still imports `internal/storage/store` — every one of §10.1's 20 ROUTED findings
+stays live until Phase 5 deletes it.** PR 14 as scoped above (the `/system` route tier +
+`RemoteStorage` + the conformance harness) does not require deleting the old CLI first — the old
+CLI's embedded-mode commands would simply start failing at runtime against a `storage.type:
+remote` config the moment `RemoteStorage` is gone (a config value that stops working, not a
+compile break, since `internal/cli` depends on `internal/core`/`internal/storage`, not on
+`RemoteStorage` directly) — but that IS a real, if narrow, regression for anyone still running
+the old CLI in client mode against a real server, until Phase 5 formally retires it. Whoever
+schedules PR 14a–c should confirm Phase 5's timeline is either already ahead of it, or accept
+that narrow window explicitly, rather than deleting silently and discovering the gap from a
+support ticket.
 
 
 
