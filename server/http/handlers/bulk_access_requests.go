@@ -102,8 +102,7 @@ func (h *CatalogHandler) CreateRejectionReasonTemplate(w http.ResponseWriter, r 
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"template": t}, "Template created")
+	sendCreated(w, map[string]interface{}{"template": t}, "Template created")
 }
 
 // ListRejectionReasonTemplates handles

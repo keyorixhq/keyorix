@@ -66,8 +66,7 @@ func (h *CatalogHandler) OpenAccessReviewCampaign(w http.ResponseWriter, r *http
 		sendCampaignError(w, "opening access-review campaign", err)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"campaign": result.Campaign, "progress": result.Progress}, "Campaign opened")
+	sendCreated(w, map[string]interface{}{"campaign": result.Campaign, "progress": result.Progress}, "Campaign opened")
 }
 
 // ListAccessReviewCampaigns handles GET /api/v1/projects/{id}/access-review/campaigns.
