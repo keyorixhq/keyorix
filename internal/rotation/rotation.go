@@ -7,10 +7,11 @@
 package rotation
 
 import (
-	"context"
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 )
 
 // PartialRotationError reports that the upstream rotation minted the new credential
@@ -20,26 +21,21 @@ import (
 // once, so discarding it would orphan a live key), while the failure is surfaced so
 // an operator removes the leftover credential — the rotation did not fully invalidate
 // the old one. Err is the underlying cause.
-type PartialRotationError struct {
-	Value string
-	Err   error
-}
-
-func (e *PartialRotationError) Error() string { return e.Err.Error() }
-func (e *PartialRotationError) Unwrap() error { return e.Err }
+//
+// A type alias of ports.RotationPartialError (ADR-109 step 2) so internal/core reads
+// this error type off ports without importing this package — the Error()/Unwrap()
+// methods live there now, since a type alias cannot carry methods declared here.
+type PartialRotationError = ports.RotationPartialError
 
 // Executor applies a new credential to an upstream system during rotation. Rotate sets
 // the credential identified by ref (e.g. a database role name) to newValue. It must
 // fail (return a non-nil error) rather than partially apply, so the caller only records
 // the new value in Keyorix once the upstream change succeeded.
-type Executor interface {
-	// Name is the operator-assigned backend name (the registry key); unique per install.
-	Name() string
-	// Type identifies the backend kind, e.g. "postgresql".
-	Type() string
-	// Rotate applies newValue to the credential named ref in the backing system.
-	Rotate(ctx context.Context, ref, newValue string) error
-}
+//
+// A type alias of ports.RotationExecutor (ADR-109 step 2) so every existing
+// implementation of this interface satisfies internal/core's ports.RotationExecutor
+// directly, with no adapter.
+type Executor = ports.RotationExecutor
 
 // GeneratingExecutor is a rotation backend whose UPSTREAM mints the new value — e.g. a
 // cloud access-key API that issues a fresh key pair — rather than accepting a
@@ -47,10 +43,10 @@ type Executor interface {
 // new value to store in Keyorix (the candidate value the caller generated is ignored
 // for such backends). A backend signals this capability by implementing the interface;
 // the rotation flow prefers GenerateUpstream over Rotate when it is present.
-type GeneratingExecutor interface {
-	Executor
-	GenerateUpstream(ctx context.Context, ref string) (string, error)
-}
+//
+// A type alias of ports.GeneratingRotationExecutor (ADR-109 step 2); see Executor's
+// doc comment above for why.
+type GeneratingExecutor = ports.GeneratingRotationExecutor
 
 // Manager holds the configured rotation executors, keyed by name.
 type Manager struct {

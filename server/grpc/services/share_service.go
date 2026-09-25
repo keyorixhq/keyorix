@@ -56,6 +56,7 @@ func (s *ShareGRPCService) ShareSecret(ctx context.Context, req *pb.ShareSecretR
 			GroupID:    uint(req.GetRecipientId()),
 			Permission: req.GetPermission(),
 			SharedBy:   user.UserID,
+			ExpiresAt:  tsToTimePtr(req.GetExpiresAt()),
 		})
 	} else {
 		record, err = s.core.ShareSecret(ctx, &core.ShareSecretRequest{
@@ -64,6 +65,7 @@ func (s *ShareGRPCService) ShareSecret(ctx context.Context, req *pb.ShareSecretR
 			IsGroup:     false,
 			Permission:  req.GetPermission(),
 			SharedBy:    user.UserID,
+			ExpiresAt:   tsToTimePtr(req.GetExpiresAt()),
 		})
 	}
 	if err != nil {
@@ -213,9 +215,11 @@ func (s *ShareGRPCService) UpdateSharePermission(ctx context.Context, req *pb.Up
 	}
 
 	record, err := s.core.UpdateSharePermission(ctx, &core.UpdateShareRequest{
-		ShareID:    uint(req.GetShareId()),
-		Permission: req.GetPermission(),
-		UpdatedBy:  user.UserID,
+		ShareID:     uint(req.GetShareId()),
+		Permission:  req.GetPermission(),
+		UpdatedBy:   user.UserID,
+		ExpiresAt:   tsToTimePtr(req.GetExpiresAt()),
+		ClearExpiry: req.GetClearExpiry(),
 	})
 	if err != nil {
 		return nil, mapShareError(err)
@@ -274,6 +278,17 @@ func mapShareError(err error) error {
 		return status.Error(codes.NotFound, "share or secret not found")
 	case strings.Contains(msg, "not authorized"), strings.Contains(msg, "permission denied"):
 		return status.Error(codes.PermissionDenied, "not authorized for this share")
+	case strings.Contains(msg, "expiry must be in the future"):
+		// Matches REST's 400 ValidationError for the identical core error
+		// (shares_crud.go) — otherwise this fell into the default Internal bucket,
+		// a transport-dependent error-class divergence for a plain validation
+		// failure. NOTE: core's other expiry error, "cannot update an expired
+		// share record" (UpdateSharePermission on an already-expired share), is
+		// deliberately left in the default Internal bucket below — REST's own
+		// handler (shares_crud.go) does not special-case that message either, so
+		// mapping it to InvalidArgument here would create a NEW REST/gRPC
+		// divergence rather than close one.
+		return status.Error(codes.InvalidArgument, "share expiry must be in the future")
 	default:
 		return status.Error(codes.Internal, "share operation failed")
 	}
@@ -289,6 +304,7 @@ func shareRecordToProto(r *models.ShareRecord) *pb.ShareRecord {
 		Permission:  r.Permission,
 		CreatedAt:   timestamppb.New(r.CreatedAt),
 		UpdatedAt:   timestamppb.New(r.UpdatedAt),
+		ExpiresAt:   timePtrToTs(r.ExpiresAt),
 	}
 }
 

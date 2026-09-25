@@ -130,8 +130,14 @@ func (h *AuditHandler) SearchAuditLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Same redaction as GetAuditLogs (both share the audit.read gate, router.go):
+	// no IPAddress, no PrevHash/EntryHash, actor IDs resolved to usernames. This
+	// used to send result.Events raw -- see
+	// docs/findings/2026-09-25-FINDING-api-raw-model-exposure.md.
+	entries := h.toAuditLogEntries(r.Context(), result.Events)
+
 	sendSuccess(w, map[string]interface{}{
-		"events": result.Events,
+		"events": entries,
 		"total":  result.Total,
 	}, "")
 }

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '../../../test/test-utils';
 import { AuditLogPage } from '../AuditLogPage';
 import { useUIStore } from '../../../store/uiStore';
+import { XSS_PAYLOADS, assertPayloadRenderedSafely } from '../../../test/xss-payloads';
 
 const useAuditLog = vi.fn();
 const useAnomalyAlerts = vi.fn();
@@ -813,5 +814,32 @@ describe('AuditLogPage — anomaly table filtering and sorting', () => {
         const statusSpan = container.querySelector('span.text-emerald-600');
         expect(statusSpan).toHaveTextContent('Acknowledged');
         expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(2);
+    });
+});
+
+describe('AuditLogPage XSS regression (WEB track backlog item 3)', () => {
+    it.each(XSS_PAYLOADS)('renders a malicious audit description as inert text: %s', (payload) => {
+        useAuditLog.mockReturnValue({
+            data: {
+                data: [
+                    {
+                        id: 1,
+                        event_type: 'secret.read',
+                        actor: 'alice',
+                        actor_type: 'user',
+                        description: payload,
+                        timestamp: '2026-01-01T10:00:00Z',
+                    },
+                ],
+                total: 1,
+                page: 1,
+                pageSize: 100,
+                totalPages: 1,
+            },
+            isLoading: false,
+            error: null,
+        });
+        const { container } = render(<AuditLogPage />);
+        assertPayloadRenderedSafely(payload, container);
     });
 });
