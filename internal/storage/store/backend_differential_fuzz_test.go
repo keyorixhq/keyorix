@@ -2,11 +2,13 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -23,13 +25,26 @@ import (
 
 // scope + role IDs the differential drives. There is no FK from user_roles to a
 // roles table at this layer, so we assign fixed role IDs directly (the target hunts
-// engine divergence in the write/read path, not business validation).
+// engine divergence in the write/read path, not business validation). diffFixedOwnerID
+// is likewise a fixed, possibly-nonexistent value stamped on every created secret
+// node so CreateShareRecord's own ownership check (share.OwnerID must equal
+// secret.OwnerID) has something non-zero to compare — models.ValidateShareRecord
+// rejects OwnerID == 0 outright.
 const (
 	diffFixedProjectID = 1
 	diffFixedEnvID     = 1
+	diffFixedOwnerID   = 999
 )
 
 var diffRoleIDs = []uint{501, 502}
+
+// diffAuditBaseTime anchors every audit event this harness appends to a fixed,
+// non-wall-clock instant (offset by the step index) so the SAME event content —
+// including EventTime, which the tamper-evidence hash chain covers — is hashed on
+// both backends. Using time.Now() here would make every "identical" event actually
+// differ by backend-call latency, producing a chain-head mismatch that is a test
+// artifact, not a real divergence.
+var diffAuditBaseTime = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 // FuzzStorageBackendDifferential runs the SAME sequence of storage operations against
 // a SQLite backend and a PostgreSQL backend in lockstep and asserts they AGREE after
@@ -131,8 +146,17 @@ func FuzzStorageBackendDifferential(f *testing.F) {
 	sls, pls := store.NewLocalStorage(sdb), store.NewLocalStorage(pdb)
 
 	// wipe resets both backends to an identical empty state (child tables first).
+	// There is no FK enforcement anywhere in this schema (no Go-level association
+	// fields, only bare *ID columns — see the diffRoleIDs comment above), so this
+	// order is for clarity, not correctness: no DELETE here can ever fail on a
+	// foreign-key violation.
 	wipe := func(db *gorm.DB) {
-		for _, tbl := range []string{"user_roles", "secret_nodes", "environments", "users", "projects"} {
+		for _, tbl := range []string{
+			"audit_events", "share_records", "secret_acls", "secret_versions", "secret_nodes",
+			"sessions", "machine_identity_credentials", "machine_identities",
+			"user_groups", "group_roles", "groups",
+			"user_roles", "environments", "users", "projects",
+		} {
 			_ = db.Exec("DELETE FROM " + tbl).Error
 		}
 	}
@@ -159,9 +183,10 @@ func FuzzStorageBackendDifferential(f *testing.F) {
 		// real driver error instead of requiring this same archaeology again.
 		var lastSQLiteErr, lastPGErr error
 		var lastCall string
+		steps := 0                               // current step index — declared before apply so it can be captured for deterministic audit-event timestamps
 		apply := func(op, a byte) (bool, bool) { // returns (sqliteOK, pgOK)
 			name := names[int(a)%len(names)]
-			switch op % 6 {
+			switch op % 16 {
 			case 0: // CreateProject
 				_, se := sls.CreateProject(ctx, &models.Project{Name: name})
 				_, pe := pls.CreateProject(ctx, &models.Project{Name: name})
@@ -185,9 +210,9 @@ func FuzzStorageBackendDifferential(f *testing.F) {
 					t.Fatalf("BACKEND DIVERGENCE: GetProjectByName(%q) name mismatch sqlite=%q pg=%q", name, sp.Name, pp.Name)
 				}
 				return errClass(se), errClass(pe)
-			case 3: // CreateSecret (storage-layer node insert, fixed scope)
-				sn := &models.SecretNode{Name: name, ProjectID: diffFixedProjectID, EnvironmentID: diffFixedEnvID}
-				pn := &models.SecretNode{Name: name, ProjectID: diffFixedProjectID, EnvironmentID: diffFixedEnvID}
+			case 3: // CreateSecret (storage-layer node insert, fixed scope, fixed owner)
+				sn := &models.SecretNode{Name: name, ProjectID: diffFixedProjectID, EnvironmentID: diffFixedEnvID, OwnerID: diffFixedOwnerID}
+				pn := &models.SecretNode{Name: name, ProjectID: diffFixedProjectID, EnvironmentID: diffFixedEnvID, OwnerID: diffFixedOwnerID}
 				_, se := sls.CreateSecret(ctx, sn)
 				_, pe := pls.CreateSecret(ctx, pn)
 				lastSQLiteErr, lastPGErr, lastCall = se, pe, fmt.Sprintf("CreateSecret(%q)", name)
@@ -203,7 +228,7 @@ func FuzzStorageBackendDifferential(f *testing.F) {
 					t.Fatalf("BACKEND DIVERGENCE: GetSecretByName(%q) name mismatch sqlite=%q pg=%q", name, ss.Name, ps.Name)
 				}
 				return errClass(se), errClass(pe)
-			default: // AssignRole — composite-PK grant, exercises each engine's upsert path
+			case 5: // AssignRole — composite-PK grant, exercises each engine's upsert path
 				su, serr := sls.GetUserByUsername(ctx, name)
 				pu, perr := pls.GetUserByUsername(ctx, name)
 				if serr != nil || perr != nil {
@@ -216,16 +241,194 @@ func FuzzStorageBackendDifferential(f *testing.F) {
 				pe := pls.AssignRole(ctx, pu.ID, roleID, storage.Scope{})
 				lastSQLiteErr, lastPGErr, lastCall = se, pe, fmt.Sprintf("AssignRole(%q, role=%d)", name, roleID)
 				return errClass(se), errClass(pe)
+			case 6: // RemoveRole — revoke, exercises the composite-PK delete path
+				su, serr := sls.GetUserByUsername(ctx, name)
+				pu, perr := pls.GetUserByUsername(ctx, name)
+				if serr != nil || perr != nil {
+					lastSQLiteErr, lastPGErr, lastCall = serr, perr, fmt.Sprintf("RemoveRole: GetUserByUsername(%q)", name)
+					return errClass(serr), errClass(perr)
+				}
+				roleID := diffRoleIDs[int(a)%len(diffRoleIDs)]
+				se := sls.RemoveRole(ctx, su.ID, roleID, storage.Scope{})
+				pe := pls.RemoveRole(ctx, pu.ID, roleID, storage.Scope{})
+				lastSQLiteErr, lastPGErr, lastCall = se, pe, fmt.Sprintf("RemoveRole(%q, role=%d)", name, roleID)
+				return errClass(se), errClass(pe)
+			case 7: // CreateSession — token is deterministic in name, so a repeat collides
+				su, serr := sls.GetUserByUsername(ctx, name)
+				pu, perr := pls.GetUserByUsername(ctx, name)
+				if serr != nil || perr != nil {
+					lastSQLiteErr, lastPGErr, lastCall = serr, perr, fmt.Sprintf("CreateSession: GetUserByUsername(%q)", name)
+					return errClass(serr), errClass(perr)
+				}
+				token := "tok-" + name
+				_, se := sls.CreateSession(ctx, &models.Session{UserID: su.ID, SessionToken: token})
+				_, pe := pls.CreateSession(ctx, &models.Session{UserID: pu.ID, SessionToken: token})
+				lastSQLiteErr, lastPGErr, lastCall = se, pe, fmt.Sprintf("CreateSession(%q)", name)
+				return errClass(se), errClass(pe)
+			case 8: // RevokeUserSessions — deletes every session for the resolved user
+				su, serr := sls.GetUserByUsername(ctx, name)
+				pu, perr := pls.GetUserByUsername(ctx, name)
+				if serr != nil || perr != nil {
+					lastSQLiteErr, lastPGErr, lastCall = serr, perr, fmt.Sprintf("RevokeUserSessions: GetUserByUsername(%q)", name)
+					return errClass(serr), errClass(perr)
+				}
+				se := sls.DeleteSessionsForUserExcept(ctx, su.ID, 0)
+				pe := pls.DeleteSessionsForUserExcept(ctx, pu.ID, 0)
+				lastSQLiteErr, lastPGErr, lastCall = se, pe, fmt.Sprintf("RevokeUserSessions(%q)", name)
+				return errClass(se), errClass(pe)
+			case 9: // CreateGroup — exercises Group's own partial folded-name unique index
+				sg := &models.Group{Name: name, NameFolded: name}
+				pg := &models.Group{Name: name, NameFolded: name}
+				_, se := sls.CreateGroup(ctx, sg)
+				_, pe := pls.CreateGroup(ctx, pg)
+				lastSQLiteErr, lastPGErr, lastCall = se, pe, fmt.Sprintf("CreateGroup(%q)", name)
+				return errClass(se), errClass(pe)
+			case 10: // AddUserToGroup — resolves both by name independently per backend
+				su, serr := sls.GetUserByUsername(ctx, name)
+				pu, perr := pls.GetUserByUsername(ctx, name)
+				if serr != nil || perr != nil {
+					lastSQLiteErr, lastPGErr, lastCall = serr, perr, fmt.Sprintf("AddUserToGroup: GetUserByUsername(%q)", name)
+					return errClass(serr), errClass(perr)
+				}
+				sgID, sgErr := diffGroupIDByName(sdb, name)
+				pgID, pgErr := diffGroupIDByName(pdb, name)
+				if (sgErr == nil) != (pgErr == nil) {
+					lastSQLiteErr, lastPGErr, lastCall = sgErr, pgErr, fmt.Sprintf("AddUserToGroup: resolve group(%q)", name)
+					return sgErr == nil, pgErr == nil
+				}
+				if sgErr != nil || pgErr != nil {
+					// group absent on both — nothing to join; agree on resolvability.
+					return true, true
+				}
+				se := sls.AddUserToGroup(ctx, su.ID, sgID, diffFixedProjectID)
+				pe := pls.AddUserToGroup(ctx, pu.ID, pgID, diffFixedProjectID)
+				lastSQLiteErr, lastPGErr, lastCall = se, pe, fmt.Sprintf("AddUserToGroup(%q)", name)
+				return errClass(se), errClass(pe)
+			case 11: // AssignRoleToGroup
+				sgID, sgErr := diffGroupIDByName(sdb, name)
+				pgID, pgErr := diffGroupIDByName(pdb, name)
+				if (sgErr == nil) != (pgErr == nil) {
+					lastSQLiteErr, lastPGErr, lastCall = sgErr, pgErr, fmt.Sprintf("AssignRoleToGroup: resolve group(%q)", name)
+					return sgErr == nil, pgErr == nil
+				}
+				if sgErr != nil || pgErr != nil {
+					return true, true
+				}
+				roleID := diffRoleIDs[int(a)%len(diffRoleIDs)]
+				se := sls.AssignRoleToGroup(ctx, sgID, roleID, storage.Scope{})
+				pe := pls.AssignRoleToGroup(ctx, pgID, roleID, storage.Scope{})
+				lastSQLiteErr, lastPGErr, lastCall = se, pe, fmt.Sprintf("AssignRoleToGroup(%q, role=%d)", name, roleID)
+				return errClass(se), errClass(pe)
+			case 12: // CreateSecretVersion — version number sometimes collides (operand-derived)
+				ss, sErr := sls.GetSecretByName(ctx, name, diffFixedProjectID, diffFixedEnvID)
+				ps, pErr := pls.GetSecretByName(ctx, name, diffFixedProjectID, diffFixedEnvID)
+				if (sErr == nil) != (pErr == nil) {
+					lastSQLiteErr, lastPGErr, lastCall = sErr, pErr, fmt.Sprintf("CreateSecretVersion: GetSecretByName(%q)", name)
+					return sErr == nil, pErr == nil
+				}
+				if sErr != nil || pErr != nil {
+					return true, true
+				}
+				versionNumber := int(a)%3 + 1
+				_, se := sls.CreateSecretVersion(ctx, &models.SecretVersion{SecretNodeID: ss.ID, VersionNumber: versionNumber})
+				_, pe := pls.CreateSecretVersion(ctx, &models.SecretVersion{SecretNodeID: ps.ID, VersionNumber: versionNumber})
+				lastSQLiteErr, lastPGErr, lastCall = se, pe, fmt.Sprintf("CreateSecretVersion(%q, v=%d)", name, versionNumber)
+				return errClass(se), errClass(pe)
+			case 13: // toggle DeleteSecret/RestoreSecret depending on each backend's own current state
+				sID, sDeleted, sErr := diffSecretIDAndState(sdb, name)
+				pID, pDeleted, pErr := diffSecretIDAndState(pdb, name)
+				if (sErr == nil) != (pErr == nil) {
+					lastSQLiteErr, lastPGErr, lastCall = sErr, pErr, fmt.Sprintf("DeleteOrRestoreSecret: resolve(%q)", name)
+					return sErr == nil, pErr == nil
+				}
+				if sErr != nil || pErr != nil {
+					return true, true
+				}
+				var se, pe error
+				if sDeleted {
+					se = sls.RestoreSecret(ctx, sID)
+				} else {
+					se = sls.DeleteSecret(ctx, sID)
+				}
+				if pDeleted {
+					pe = pls.RestoreSecret(ctx, pID)
+				} else {
+					pe = pls.DeleteSecret(ctx, pID)
+				}
+				lastSQLiteErr, lastPGErr, lastCall = se, pe, fmt.Sprintf("DeleteOrRestoreSecret(%q, sqliteWasDeleted=%v, pgWasDeleted=%v)", name, sDeleted, pDeleted)
+				return errClass(se), errClass(pe)
+			case 14: // CreateMachineIdentity + a credential for it (TokenHash deterministic in name)
+				smID, smErr := diffMachineIdentityIDByName(ctx, sls, sdb, name)
+				pmID, pmErr := diffMachineIdentityIDByName(ctx, pls, pdb, name)
+				if (smErr == nil) != (pmErr == nil) {
+					lastSQLiteErr, lastPGErr, lastCall = smErr, pmErr, fmt.Sprintf("CreateMachineIdentity(%q)", name)
+					return smErr == nil, pmErr == nil
+				}
+				if smErr != nil || pmErr != nil {
+					lastSQLiteErr, lastPGErr, lastCall = smErr, pmErr, fmt.Sprintf("CreateMachineIdentity(%q)", name)
+					return errClass(smErr), errClass(pmErr)
+				}
+				hash := "cred-" + name
+				_, se := sls.CreateMachineIdentityCredential(ctx, &models.MachineIdentityCredential{MachineIdentityID: smID, TokenHash: hash})
+				_, pe := pls.CreateMachineIdentityCredential(ctx, &models.MachineIdentityCredential{MachineIdentityID: pmID, TokenHash: hash})
+				lastSQLiteErr, lastPGErr, lastCall = se, pe, fmt.Sprintf("CreateMachineIdentityCredential(%q)", name)
+				return errClass(se), errClass(pe)
+			default: // CreateShareRecord — individual share, expiry decided by operand parity
+				ss, sErr := sls.GetSecretByName(ctx, name, diffFixedProjectID, diffFixedEnvID)
+				ps, pErr := pls.GetSecretByName(ctx, name, diffFixedProjectID, diffFixedEnvID)
+				if (sErr == nil) != (pErr == nil) {
+					lastSQLiteErr, lastPGErr, lastCall = sErr, pErr, fmt.Sprintf("CreateShareRecord: GetSecretByName(%q)", name)
+					return sErr == nil, pErr == nil
+				}
+				if sErr != nil || pErr != nil {
+					return true, true
+				}
+				// share with whichever user "beta" resolves to on each backend (a fixed,
+				// separate name from the shared secret's own name, so self-sharing isn't
+				// the only path exercised) — absent on one/both is a valid, agreeing outcome.
+				su, serr := sls.GetUserByUsername(ctx, "beta")
+				pu, perr := pls.GetUserByUsername(ctx, "beta")
+				if (serr == nil) != (perr == nil) {
+					lastSQLiteErr, lastPGErr, lastCall = serr, perr, "CreateShareRecord: GetUserByUsername(beta)"
+					return serr == nil, perr == nil
+				}
+				if serr != nil || perr != nil {
+					return true, true
+				}
+				var expiresAt *time.Time
+				if a%2 == 0 {
+					t := diffAuditBaseTime.Add(time.Duration(steps) * time.Hour)
+					expiresAt = &t
+				}
+				_, se := sls.CreateShareRecord(ctx, &models.ShareRecord{SecretID: ss.ID, OwnerID: diffFixedOwnerID, RecipientID: su.ID, ExpiresAt: expiresAt})
+				_, pe := pls.CreateShareRecord(ctx, &models.ShareRecord{SecretID: ps.ID, OwnerID: diffFixedOwnerID, RecipientID: pu.ID, ExpiresAt: expiresAt})
+				lastSQLiteErr, lastPGErr, lastCall = se, pe, fmt.Sprintf("CreateShareRecord(%q)", name)
+				return errClass(se), errClass(pe)
 			}
 		}
 
 		const maxSteps = 24
-		steps := 0
 		for i := 0; i+1 < len(program) && steps < maxSteps; i += 2 {
 			sOK, pOK := apply(program[i], program[i+1])
 			if sOK != pOK {
 				t.Fatalf("BACKEND DIVERGENCE: op=%d operand=%d error-class disagreement sqliteOK=%v pgOK=%v step=%d call=%s sqliteErr=%v pgErr=%v",
-					program[i]%6, program[i+1], sOK, pOK, steps, lastCall, lastSQLiteErr, lastPGErr)
+					program[i]%16, program[i+1], sOK, pOK, steps, lastCall, lastSQLiteErr, lastPGErr)
+			}
+
+			// Audit append + chain head: runs unconditionally every step (not gated
+			// behind its own op slot) so the chain grows in lockstep on both backends by
+			// construction, regardless of which op ran — maximizing how many chances the
+			// hash-chain-linking mechanism itself gets to diverge, not just how often it's
+			// picked by the fuzzer. EventTime is anchored to diffAuditBaseTime + step, not
+			// wall-clock (time.Now() here would make the SAME logical event hash
+			// differently between the two sequential backend calls, since
+			// LogAuditEvent's hash covers EventTime — that would be a test artifact, not
+			// a real divergence).
+			eventTime := diffAuditBaseTime.Add(time.Duration(steps) * time.Second)
+			se := sls.LogAuditEvent(ctx, &models.AuditEvent{EventType: "diff.fuzz.step", EventTime: eventTime, Description: lastCall})
+			pe := pls.LogAuditEvent(ctx, &models.AuditEvent{EventType: "diff.fuzz.step", EventTime: eventTime, Description: lastCall})
+			if errClass(se) != errClass(pe) {
+				t.Fatalf("BACKEND DIVERGENCE: LogAuditEvent step=%d sqliteErr=%v pgErr=%v", steps, se, pe)
 			}
 			steps++
 		}
@@ -234,6 +437,23 @@ func FuzzStorageBackendDifferential(f *testing.F) {
 		assertSetEqual(t, "projects", projectNameSet(mustListProjects(t, sls, ctx)), projectNameSet(mustListProjects(t, pls, ctx)))
 		assertSetEqual(t, "secret_nodes", secretNameSet(sdb), secretNameSet(pdb))
 		assertSetEqual(t, "user_roles", userRoleKeySet(sdb), userRoleKeySet(pdb))
+		assertSetEqual(t, "groups", groupNameSet(sdb), groupNameSet(pdb))
+		assertSetEqual(t, "sessions", sessionTokenSet(sdb), sessionTokenSet(pdb))
+		assertSetEqual(t, "machine_identity_credentials", machineCredentialHashSet(sdb), machineCredentialHashSet(pdb))
+		assertSetEqual(t, "share_records", shareRecordKeySet(sdb), shareRecordKeySet(pdb))
+
+		// The audit chain itself: same event content appended in the same order on
+		// both backends (enforced above) must produce the same tamper-evidence chain
+		// head — a divergence here means the hash-chain-linking mechanism itself
+		// (not just table content) disagrees between engines.
+		sHead, sHeadErr := auditChainHead(sdb)
+		pHead, pHeadErr := auditChainHead(pdb)
+		if errClass(sHeadErr) != errClass(pHeadErr) {
+			t.Fatalf("BACKEND DIVERGENCE: audit chain head lookup sqliteErr=%v pgErr=%v", sHeadErr, pHeadErr)
+		}
+		if sHeadErr == nil && pHeadErr == nil && sHead != pHead {
+			t.Fatalf("BACKEND DIVERGENCE: audit chain head sqlite=%q pg=%q", sHead, pHead)
+		}
 	})
 }
 
@@ -303,4 +523,128 @@ func userRoleKeySet(db *gorm.DB) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// diffGroupIDByName resolves a group's own backend-assigned ID by its Name column
+// directly — there is no GetGroupByName on LocalStorage (only GetGroup(ctx, id)), so
+// this is test-only resolution, mirroring how the rest of this harness resolves users
+// by username before an op that needs their id.
+func diffGroupIDByName(db *gorm.DB, name string) (uint, error) {
+	var g models.Group
+	if err := db.Where("name = ?", name).First(&g).Error; err != nil {
+		return 0, err
+	}
+	return g.ID, nil
+}
+
+// diffMachineIdentityIDByName resolves-or-creates a machine identity named name in the
+// fixed project scope and returns its id. Like diffGroupIDByName, there is no
+// GetMachineIdentityByName — this file's own convention throughout is to resolve
+// name-keyed test fixtures via a direct query, then drive the real LocalStorage method
+// for the actual write under test.
+func diffMachineIdentityIDByName(ctx context.Context, ls *store.LocalStorage, db *gorm.DB, name string) (uint, error) {
+	var m models.MachineIdentity
+	err := db.Where("project_id = ? AND name = ?", diffFixedProjectID, name).First(&m).Error
+	if err == nil {
+		return m.ID, nil
+	}
+	created, cerr := ls.CreateMachineIdentity(ctx, &models.MachineIdentity{ProjectID: diffFixedProjectID, Name: name})
+	if cerr != nil {
+		return 0, cerr
+	}
+	return created.ID, nil
+}
+
+// diffSecretIDAndState resolves the secret named name in the fixed scope, INCLUDING a
+// currently-soft-deleted row (Unscoped — LocalStorage.GetSecretByName excludes deleted
+// rows by GORM's default soft-delete scoping, which is exactly what the toggle op needs
+// to see through to decide delete vs. restore).
+func diffSecretIDAndState(db *gorm.DB, name string) (id uint, deleted bool, err error) {
+	var s models.SecretNode
+	if err := db.Unscoped().Where("project_id = ? AND environment_id = ? AND name = ?", diffFixedProjectID, diffFixedEnvID, name).First(&s).Error; err != nil {
+		return 0, false, err
+	}
+	return s.ID, s.DeletedAt.Valid, nil
+}
+
+// groupNameSet is the sorted set of live (non-soft-deleted) group names.
+func groupNameSet(db *gorm.DB) []string {
+	var groups []models.Group
+	db.Find(&groups)
+	out := make([]string, 0, len(groups))
+	for _, g := range groups {
+		out = append(out, g.Name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sessionTokenSet is the sorted set of session tokens — the natural key CreateSession's
+// own unique constraint is scoped to, so this is what a genuine collision-handling
+// divergence would show up as (one backend keeping a duplicate the other rejected).
+func sessionTokenSet(db *gorm.DB) []string {
+	var sessions []models.Session
+	db.Find(&sessions)
+	out := make([]string, 0, len(sessions))
+	for _, s := range sessions {
+		out = append(out, s.SessionToken)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// machineCredentialHashSet is the sorted set of credential token hashes — the natural
+// key CreateMachineIdentityCredential's own unique constraint is scoped to.
+func machineCredentialHashSet(db *gorm.DB) []string {
+	var creds []models.MachineIdentityCredential
+	db.Find(&creds)
+	out := make([]string, 0, len(creds))
+	for _, c := range creds {
+		out = append(out, c.TokenHash)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// shareRecordKeySet is the sorted set of live shares keyed by natural identifiers
+// (secretName|recipientUsername|isGroup|hasExpiry) — ids are engine-assigned, so both
+// the secret and the recipient are resolved to their own name/username via each
+// backend's own id maps, exactly mirroring userRoleKeySet's approach.
+func shareRecordKeySet(db *gorm.DB) []string {
+	var secrets []models.SecretNode
+	db.Unscoped().Find(&secrets)
+	secretNameByID := make(map[uint]string, len(secrets))
+	for _, s := range secrets {
+		secretNameByID[s.ID] = s.Name
+	}
+	var users []models.User
+	db.Find(&users)
+	userNameByID := make(map[uint]string, len(users))
+	for _, u := range users {
+		userNameByID[u.ID] = u.Username
+	}
+	var shares []models.ShareRecord
+	db.Find(&shares)
+	out := make([]string, 0, len(shares))
+	for _, sh := range shares {
+		out = append(out, fmt.Sprintf("%s|%s|%v|%v", secretNameByID[sh.SecretID], userNameByID[sh.RecipientID], sh.IsGroup, sh.ExpiresAt != nil))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// auditChainHead returns the entry_hash of the most recently appended audit event —
+// the tamper-evidence chain's current head (ADR-029). Empty string, no error when the
+// chain is empty (both backends start empty after wipe(), so this is a valid state to
+// compare, not a lookup failure).
+func auditChainHead(db *gorm.DB) (string, error) {
+	var event models.AuditEvent
+	err := db.Order("id DESC").First(&event).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	return event.EntryHash, nil
 }
