@@ -163,7 +163,7 @@ func buildTLSConfig(cfg Config) (*tls.Config, error) {
 			return nil, fmt.Errorf("--vault-capath %q contains no usable PEM certificates", cfg.CACertDir)
 		}
 	}
-	return &tls.Config{RootCAs: pool}, nil
+	return &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}, nil
 }
 
 // appRoleLogin exchanges an AppRole role-id/secret-id pair for a client token via

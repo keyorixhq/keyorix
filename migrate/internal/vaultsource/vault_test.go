@@ -6,6 +6,7 @@ package vaultsource
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"io"
@@ -176,6 +177,33 @@ func TestClient_PrivateCA(t *testing.T) {
 			t.Fatal("resolveKVMountVersion succeeded against an untrusted self-signed server with no CA cert configured — the CA is not actually being validated")
 		}
 	})
+}
+
+// TestBuildTLSConfig_SetsMinVersionTLS12 is Semgrep #1120: a *tls.Config built with no
+// explicit MinVersion relies on Go's current client default (TLS 1.2) rather than pinning
+// it, which is exactly what that rule polices against (a silent floor drop if the runtime
+// default ever changes). Pin it directly so a regression fails this test rather than only
+// showing up as a re-opened scanner alert.
+func TestBuildTLSConfig_SetsMinVersionTLS12(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	pemBytes := encodeCertPEM(t, srv.Certificate())
+	certPath := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(certPath, pemBytes, 0o600); err != nil {
+		t.Fatalf("write CA cert: %v", err)
+	}
+
+	cfg, err := buildTLSConfig(Config{CACertPath: certPath})
+	if err != nil {
+		t.Fatalf("buildTLSConfig: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("buildTLSConfig returned nil with a CA cert configured")
+	}
+	if cfg.MinVersion != tls.VersionTLS12 {
+		t.Fatalf("MinVersion = %#x, want tls.VersionTLS12 (%#x)", cfg.MinVersion, tls.VersionTLS12)
+	}
 }
 
 // encodeCertPEM PEM-encodes a leaf certificate for use as a --vault-cacert test fixture.
