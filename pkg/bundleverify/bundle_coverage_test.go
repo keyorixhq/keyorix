@@ -12,7 +12,7 @@
 //   - safeJoin: valid path — additional branch confirmation
 //   - readNamedEntry: io.ReadAll on LimitReader via large-enough body
 //   - Sign: happy path with components that exercise MarshalCanonical sorting
-package bundle
+package bundleverify
 
 import (
 	"archive/tar"
@@ -31,7 +31,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/trust"
+	"github.com/keyorixhq/keyorix/pkg/trust"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

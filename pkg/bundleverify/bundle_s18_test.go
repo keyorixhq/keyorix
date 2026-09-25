@@ -1,6 +1,6 @@
 // bundle_s18_test.go — coverage uplift for WriteBundle (line 183) and
 // writeInstalledVersion (line 455).
-package bundle
+package bundleverify
 
 import (
 	"bytes"

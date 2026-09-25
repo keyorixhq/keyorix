@@ -1,4 +1,4 @@
-package license
+package licenseverify
 
 import (
 	"crypto/ecdsa"
@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/keyorixhq/keyorix/internal/trust"
+	"github.com/keyorixhq/keyorix/pkg/trust"
 )
 
 // TestParsePrivateKeyPEM_Valid confirms a PKCS#8-encoded ed25519 private key round-trips.

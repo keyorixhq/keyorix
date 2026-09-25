@@ -9,7 +9,7 @@
 //     already tested in bundle_extra_test.go)
 //   - BuildManifest: srcDir containing a file named "manifest.json" is refused via
 //     cleanComponentPath (reserved-name check triggered from within the walk)
-package bundle
+package bundleverify
 
 import (
 	"bytes"

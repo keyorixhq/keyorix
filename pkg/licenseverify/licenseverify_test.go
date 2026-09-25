@@ -1,11 +1,11 @@
-package license
+package licenseverify
 
 import (
 	"crypto/ed25519"
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/trust"
+	"github.com/keyorixhq/keyorix/pkg/trust"
 )
 
 // signed mints a license + a registry that trusts its key under keyID.

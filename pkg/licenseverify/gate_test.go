@@ -1,11 +1,11 @@
-package license
+package licenseverify
 
 import (
 	"crypto/ed25519"
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/trust"
+	"github.com/keyorixhq/keyorix/pkg/trust"
 )
 
 func TestGate_Nil_IsBaseline(t *testing.T) {

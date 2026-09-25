@@ -1,4 +1,4 @@
-package bundle
+package bundleverify
 
 import (
 	"bytes"
@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/fuzzutil"
-	"github.com/keyorixhq/keyorix/internal/trust"
+	"github.com/keyorixhq/keyorix/pkg/trust"
 )
 
 // FuzzBundleVerify feeds arbitrary byte streams into Verify. The goal is the
