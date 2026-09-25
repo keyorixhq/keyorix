@@ -20,12 +20,11 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -1269,68 +1268,12 @@ func TestGetProject_HappyPath_S11(t *testing.T) {
 // ── environment_catalog_proxy.go: DeleteEnvironmentProxy success ──────────────
 
 // TestDeleteEnvironmentProxy_HappyPath_S11 — delete an env with no secrets → 200.
-func TestDeleteEnvironmentProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewCatalogHandler(cs)
-	proj, err := cs.CreateProject(context.Background(), "s11delenvproxy", "")
-	require.NoError(t, err)
-	env, err := cs.CreateEnvironment(context.Background(), proj.ID, "s11delenvproxy-extra")
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodDelete, "/", nil)
-	r = withChiParamS8(r, "id", fmt.Sprintf("%d", env.ID))
-	w := httptest.NewRecorder()
-	h.DeleteEnvironmentProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListEnvironmentsProxy_WithEnvs_S11 — proxy list with some environments → 200.
-func TestListEnvironmentsProxy_WithEnvs_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewCatalogHandler(cs)
-	_, err := cs.CreateProject(context.Background(), "s11listenvproxy", "")
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListEnvironmentsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListEnvironmentsByProjectProxy_IncludeDeleted_S11 — ?include_deleted=true path.
-func TestListEnvironmentsByProjectProxy_IncludeDeleted_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewCatalogHandler(cs)
-	proj, err := cs.CreateProject(context.Background(), "s11listenvprojproxydel", "")
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, "/?include_deleted=true", nil)
-	r = withChiParamS8(r, "id", fmt.Sprintf("%d", proj.ID))
-	w := httptest.NewRecorder()
-	h.ListEnvironmentsByProjectProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestGetEnvironmentProxy_HappyPath_S11 — proxy get on an existing env → 200.
-func TestGetEnvironmentProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewCatalogHandler(cs)
-	proj, err := cs.CreateProject(context.Background(), "s11getenvproxy", "")
-	require.NoError(t, err)
-	envs, err := cs.ListEnvironmentsByProject(context.Background(), proj.ID)
-	require.NoError(t, err)
-	require.NotEmpty(t, envs)
-
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r = withChiParamS8(r, "id", fmt.Sprintf("%d", envs[0].ID))
-	w := httptest.NewRecorder()
-	h.GetEnvironmentProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── access_review_campaigns.go: ListAccessReviewCampaigns ─────────────────────
 
@@ -1352,203 +1295,42 @@ func TestListAccessReviewCampaigns_HappyPath_S11(t *testing.T) {
 // ── project_memberships_proxy.go ─────────────────────────────────────────────
 
 // TestCreateMembershipProxy_HappyPath_S11 — valid body with real user+project → 200.
-func TestCreateMembershipProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewCatalogHandler(cs)
-	proj, err := cs.CreateProject(context.Background(), "s11creatembr", "")
-	require.NoError(t, err)
-	bootstrapS11(t, cs, "creatembr11")
-	ctx := context.Background()
-	user, err := cs.GetUserByUsername(ctx, "s11creatembr11")
-	require.NoError(t, err)
-
-	body := fmt.Sprintf(`{"project_id":%d,"user_id":%d,"role":"viewer","state":"active"}`, proj.ID, user.ID)
-	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateMembershipProxy(w, r)
-	// 200 on success or 409 if already a member; either is a non-error from test perspective.
-	assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusConflict, "unexpected: %d", w.Code)
-}
 
 // TestListMembershipsProxy_HappyPath_S11 — project with members → 200.
-func TestListMembershipsProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewCatalogHandler(cs)
-	proj, err := cs.CreateProject(context.Background(), "s11listmbr", "")
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/?project_id=%d", proj.ID), nil)
-	w := httptest.NewRecorder()
-	h.ListMembershipsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListMembershipsProxy_MissingProjectID_S11 — no project_id → 400.
-func TestListMembershipsProxy_MissingProjectID_S11(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerS8(t)
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListMembershipsProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestListMembershipsProxy_BadProjectID_S11 — invalid project_id → 400.
-func TestListMembershipsProxy_BadProjectID_S11(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerS8(t)
-	r := httptest.NewRequest(http.MethodGet, "/?project_id=bad", nil)
-	w := httptest.NewRecorder()
-	h.ListMembershipsProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestListUserMembershipsProxy_HappyPath_S11 — valid user ID → 200.
-func TestListUserMembershipsProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewCatalogHandler(cs)
-	bootstrapS11(t, cs, "listusrmbr11")
-	ctx := context.Background()
-	user, err := cs.GetUserByUsername(ctx, "s11listusrmbr11")
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r = withChiParamS8(r, "userID", fmt.Sprintf("%d", user.ID))
-	w := httptest.NewRecorder()
-	h.ListUserMembershipsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListStaleInvitedMembershipsProxy_HappyPath_S11 — valid before timestamp → 200.
-func TestListStaleInvitedMembershipsProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerS8(t)
-	r := httptest.NewRequest(http.MethodGet, "/?before=2030-01-01T00:00:00Z", nil)
-	w := httptest.NewRecorder()
-	h.ListStaleInvitedMembershipsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestGetMembershipProxy_NotFound_S11 — non-existent ID → 404.
-func TestGetMembershipProxy_NotFound_S11(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerS8(t)
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r = withChiParamS8(r, "id", "99999")
-	w := httptest.NewRecorder()
-	h.GetMembershipProxy(w, r)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // ── rbac_role_grants_proxy.go ────────────────────────────────────────────────
 
 // TestListProjectRoleAssignmentsProxy_HappyPath_S11 — valid project_id → 200.
-func TestListProjectRoleAssignmentsProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewRBACHandler(cs)
-	proj, err := cs.CreateProject(context.Background(), "s11listroles", "")
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/?project_id=%d", proj.ID), nil)
-	w := httptest.NewRecorder()
-	h.ListProjectRoleAssignmentsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListGroupRoleAssignmentsProxy_HappyPath_S11 — valid groupID chi param → 200.
-func TestListGroupRoleAssignmentsProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	h := NewRBACHandler(freshCoreS11(t))
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r = withChiParamS8(r, "groupID", "1")
-	w := httptest.NewRecorder()
-	h.ListGroupRoleAssignmentsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListProjectMachineRoleAssignmentsProxy_HappyPath_S11 — valid project_id → 200.
-func TestListProjectMachineRoleAssignmentsProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewRBACHandler(cs)
-	proj, err := cs.CreateProject(context.Background(), "s11listmachroles", "")
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/?project_id=%d", proj.ID), nil)
-	w := httptest.NewRecorder()
-	h.ListProjectMachineRoleAssignmentsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── machine_identities_proxy.go ──────────────────────────────────────────────
 
 // TestListAllMachineIdentitiesProxy_HappyPath_S11 — no params needed → 200.
-func TestListAllMachineIdentitiesProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerS8(t)
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListAllMachineIdentitiesProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestCountMachineIdentitiesByClassificationProxy_HappyPath_S11 — no params needed → 200.
-func TestCountMachineIdentitiesByClassificationProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerS8(t)
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.CountMachineIdentitiesByClassificationProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestCountMachineIdentityCredentialsByClassificationProxy_HappyPath_S11 — no params → 200.
-func TestCountMachineIdentityCredentialsByClassificationProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerS8(t)
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.CountMachineIdentityCredentialsByClassificationProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListActiveMachineIdentityCredentialsProxy_HappyPath_S11 — no params → 200.
-func TestListActiveMachineIdentityCredentialsProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerS8(t)
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListActiveMachineIdentityCredentialsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── access_request_proxy.go ──────────────────────────────────────────────────
 
 // TestListAccessRequestApprovalsProxy_HappyPath_S11 — valid chi id → 200.
-func TestListAccessRequestApprovalsProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerS8(t)
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r = withChiParamS8(r, "id", "99999")
-	w := httptest.NewRecorder()
-	h.ListAccessRequestApprovalsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListAccessRequestApprovalsProxy_BadID_S11 — non-numeric chi id → 400.
-func TestListAccessRequestApprovalsProxy_BadID_S11(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerS8(t)
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r = withChiParamS8(r, "id", "bad")
-	w := httptest.NewRecorder()
-	h.ListAccessRequestApprovalsProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ── sod.go: ListSoDPolicies / ListSoDViolations happy paths ──────────────────
 
@@ -1575,39 +1357,13 @@ func TestListSoDViolations_HappyPath_S11(t *testing.T) {
 // ── sod_proxy.go: ListSoDPoliciesProxy / DeleteSoDPolicyProxy happy paths ────
 
 // TestListSoDPoliciesProxy_HappyPath_S11 — no params needed → 200.
-func TestListSoDPoliciesProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerS8(t)
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListSoDPoliciesProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestDeleteSoDPolicyProxy_NotFound_S11 — nonexistent policy → 404.
 // FIX-6 (#1645 403-for-both): no user context resolves actorID(r) to 0, not
 // admin-tier, so a nonexistent policy id gets the same denial as an
 // existing-but-foreign one, not a distinguishing 404.
-func TestDeleteSoDPolicyProxy_NotFound_S11(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS11(t))
-	r := httptest.NewRequest(http.MethodDelete, "/", nil)
-	r = withChiParamS8(r, "id", "99999")
-	w := httptest.NewRecorder()
-	h.DeleteSoDPolicyProxy(w, r)
-	assert.Equal(t, http.StatusForbidden, w.Code)
-}
 
 // TestDeleteSoDPolicyProxy_BadID_S11 — non-numeric id → 400.
-func TestDeleteSoDPolicyProxy_BadID_S11(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerS8(t)
-	r := httptest.NewRequest(http.MethodDelete, "/", nil)
-	r = withChiParamS8(r, "id", "bad")
-	w := httptest.NewRecorder()
-	h.DeleteSoDPolicyProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ── admin_jobs.go: happy-path tests ──────────────────────────────────────────
 
@@ -1689,44 +1445,12 @@ func TestRunExpiryReminders_HappyPath_S11(t *testing.T) {
 // ── webauthn_proxy.go: ListWebAuthnCredentialsProxy / CountWebAuthnCredentialsProxy ─
 
 // TestListWebAuthnCredentialsProxy_HappyPath_S11 — valid user_id → 200.
-func TestListWebAuthnCredentialsProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	h := NewAuthHandler(freshCoreS11(t), false)
-	r := httptest.NewRequest(http.MethodGet, "/?user_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListWebAuthnCredentialsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListWebAuthnCredentialsProxy_MissingUserID_S11 — missing user_id → 400.
-func TestListWebAuthnCredentialsProxy_MissingUserID_S11(t *testing.T) {
-	t.Parallel()
-	h := newAuthHandlerForTest(t)
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListWebAuthnCredentialsProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestCountWebAuthnCredentialsProxy_HappyPath_S11 — valid user_id → 200.
-func TestCountWebAuthnCredentialsProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	h := NewAuthHandler(freshCoreS11(t), false)
-	r := httptest.NewRequest(http.MethodGet, "/?user_id=1", nil)
-	w := httptest.NewRecorder()
-	h.CountWebAuthnCredentialsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestCountWebAuthnCredentialsProxy_MissingUserID_S11 — missing user_id → 400.
-func TestCountWebAuthnCredentialsProxy_MissingUserID_S11(t *testing.T) {
-	t.Parallel()
-	h := newAuthHandlerForTest(t)
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.CountWebAuthnCredentialsProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ── groups_proxy.go: success paths (AddGroupMemberProxy, RemoveGroupMemberProxy, etc.) ─
 
@@ -1740,268 +1464,42 @@ func freshGroupHandlerS11(t *testing.T) (*GroupHandler, *core.KeyorixCore) {
 }
 
 // TestAddGroupMemberProxy_HappyPath_S11 — add a real user to a real group → 200.
-func TestAddGroupMemberProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	h, cs := freshGroupHandlerS11(t)
-	ctx := context.Background()
-
-	// Create group and user.
-	grp, err := cs.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "s11addmember"})
-	require.NoError(t, err)
-	bootstrapS11(t, cs, "addmember11")
-	user, err := cs.GetUserByUsername(ctx, "s11addmember11")
-	require.NoError(t, err)
-
-	body := fmt.Sprintf(`{"user_id":%d}`, user.ID)
-	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	r = withChiParamS8(r, "id", fmt.Sprintf("%d", grp.ID))
-	r = r.WithContext(contextWithUser(r.Context(), &middleware.UserContext{UserID: user.ID, Username: user.Username}))
-	w := httptest.NewRecorder()
-	h.AddGroupMemberProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestRemoveGroupMemberProxy_HappyPath_S11 — remove an existing member → 200.
-func TestRemoveGroupMemberProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	h, cs := freshGroupHandlerS11(t)
-	ctx := context.Background()
-
-	grp, err := cs.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "s11removemember"})
-	require.NoError(t, err)
-	bootstrapS11(t, cs, "removemember11")
-	user, err := cs.GetUserByUsername(ctx, "s11removemember11")
-	require.NoError(t, err)
-	// Add member first.
-	err = cs.Storage().AddUserToGroup(ctx, user.ID, grp.ID, 0)
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodDelete, "/", nil)
-	r = withChiParamsS8(r, map[string]string{"id": fmt.Sprintf("%d", grp.ID), "userId": fmt.Sprintf("%d", user.ID)})
-	r = r.WithContext(contextWithUser(r.Context(), &middleware.UserContext{UserID: user.ID, Username: user.Username}))
-	w := httptest.NewRecorder()
-	h.RemoveGroupMemberProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListGroupMembersProxy_WithMembers_S11 — list members when group has at least one → 200 with members.
-func TestListGroupMembersProxy_WithMembers_S11(t *testing.T) {
-	t.Parallel()
-	h, cs := freshGroupHandlerS11(t)
-	ctx := context.Background()
-
-	grp, err := cs.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "s11listmembers"})
-	require.NoError(t, err)
-	bootstrapS11(t, cs, "listmembers11")
-	user, err := cs.GetUserByUsername(ctx, "s11listmembers11")
-	require.NoError(t, err)
-	err = cs.Storage().AddUserToGroup(ctx, user.ID, grp.ID, 0)
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r = withChiParamS8(r, "id", fmt.Sprintf("%d", grp.ID))
-	w := httptest.NewRecorder()
-	h.ListGroupMembersProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListGroupsProxy_WithGroups_S11 — list proxy when groups exist → loop body covered.
-func TestListGroupsProxy_WithGroups_S11(t *testing.T) {
-	t.Parallel()
-	h, cs := freshGroupHandlerS11(t)
-	ctx := context.Background()
-
-	_, err := cs.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "s11listgroups-a"})
-	require.NoError(t, err)
-	_, err = cs.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "s11listgroups-b"})
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListGroupsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestGetGroupProxy_HappyPath_S11 — get an existing group → 200.
-func TestGetGroupProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	h, cs := freshGroupHandlerS11(t)
-	ctx := context.Background()
-
-	grp, err := cs.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "s11getgroup"})
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r = withChiParamS8(r, "id", fmt.Sprintf("%d", grp.ID))
-	w := httptest.NewRecorder()
-	h.GetGroupProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestUpdateGroupProxy_HappyPath_S11 — update an existing group → 200.
 // UpdateGroupProxy now also requires caller authority
 // (requireGroupsProxyUsersWrite -> users.write), so this bootstraps a real
 // system admin (bootstrapS11, same pattern as
 // TestCreateGroup_HappyPath_WithAdmin_S11 above) and authenticates as them.
-func TestUpdateGroupProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	h, cs := freshGroupHandlerS11(t)
-	ctx := context.Background()
-	bootstrapS11(t, cs, "grpupdate11")
-	admin, err := cs.GetUserByUsername(ctx, "s11grpupdate11")
-	require.NoError(t, err)
-
-	grp, err := cs.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "s11updategroup"})
-	require.NoError(t, err)
-
-	body := `{"name":"s11updategroup-updated","description":"updated"}`
-	r := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body))
-	r = r.WithContext(contextWithUser(r.Context(), &middleware.UserContext{UserID: admin.ID, Username: admin.Username}))
-	r = withChiParamS8(r, "id", fmt.Sprintf("%d", grp.ID))
-	w := httptest.NewRecorder()
-	h.UpdateGroupProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestCreateGroupProxy_HappyPath_S11 — create a new group → 200.
 // CreateGroupProxy now also requires caller authority
 // (requireGroupsProxyUsersWrite -> users.write), so this bootstraps a real
 // system admin (bootstrapS11, same pattern as
 // TestCreateGroup_HappyPath_WithAdmin_S11 above) and authenticates as them.
-func TestCreateGroupProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	h, cs := freshGroupHandlerS11(t)
-	ctx := context.Background()
-	bootstrapS11(t, cs, "grpcreate11")
-	admin, err := cs.GetUserByUsername(ctx, "s11grpcreate11")
-	require.NoError(t, err)
-
-	body := `{"name":"s11newgroup","description":"s11 test group"}`
-	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	r = r.WithContext(contextWithUser(r.Context(), &middleware.UserContext{UserID: admin.ID, Username: admin.Username}))
-	w := httptest.NewRecorder()
-	h.CreateGroupProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListGroupMembersByIDsProxy_HappyPath_S11 — valid ids, with a member → loop body covered.
-func TestListGroupMembersByIDsProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	h, cs := freshGroupHandlerS11(t)
-	ctx := context.Background()
-	grp, err := cs.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "s11listmemberbyids"})
-	require.NoError(t, err)
-	bootstrapS11(t, cs, "listmemberbyids11")
-	user, err := cs.GetUserByUsername(ctx, "s11listmemberbyids11")
-	require.NoError(t, err)
-	err = cs.Storage().AddUserToGroup(ctx, user.ID, grp.ID, 0)
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/?ids=%d", grp.ID), nil)
-	w := httptest.NewRecorder()
-	h.ListGroupMembersByIDsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListGroupsPageProxy_WithGroups_S11 — list page when groups exist → loop body covered.
-func TestListGroupsPageProxy_WithGroups_S11(t *testing.T) {
-	t.Parallel()
-	h, cs := freshGroupHandlerS11(t)
-	ctx := context.Background()
-	_, err := cs.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "s11pagegrp-a"})
-	require.NoError(t, err)
-	_, err = cs.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "s11pagegrp-b"})
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, "/?offset=0&limit=10", nil)
-	w := httptest.NewRecorder()
-	h.ListGroupsPageProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestGetUserGroupsProxy_WithGroups_S11 — user is in groups → loop body covered.
-func TestGetUserGroupsProxy_WithGroups_S11(t *testing.T) {
-	t.Parallel()
-	h, cs := freshGroupHandlerS11(t)
-	ctx := context.Background()
-	grp, err := cs.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "s11usrgrp"})
-	require.NoError(t, err)
-	bootstrapS11(t, cs, "usrgrp11")
-	user, err := cs.GetUserByUsername(ctx, "s11usrgrp11")
-	require.NoError(t, err)
-	err = cs.Storage().AddUserToGroup(ctx, user.ID, grp.ID, 0)
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r = withChiParamS8(r, "id", fmt.Sprintf("%d", user.ID))
-	w := httptest.NewRecorder()
-	h.GetUserGroupsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── project_catalog_proxy.go: GetProjectProxy and ListProjectsProxy success ──
 
 // TestGetProjectProxy_HappyPath_S11 — get an existing project → 200.
-func TestGetProjectProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewCatalogHandler(cs)
-	proj, err := cs.CreateProject(context.Background(), "s11getprojproxy", "")
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r = withChiParamS8(r, "id", fmt.Sprintf("%d", proj.ID))
-	w := httptest.NewRecorder()
-	h.GetProjectProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListProjectsProxy_WithProjects_S11 — list proxy when projects exist → loop body covered.
-func TestListProjectsProxy_WithProjects_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewCatalogHandler(cs)
-	ctx := context.Background()
-	_, err := cs.CreateProject(ctx, "s11listprojproxy-a", "")
-	require.NoError(t, err)
-	_, err = cs.CreateProject(ctx, "s11listprojproxy-b", "")
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListProjectsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestDeleteProjectProxy_HappyPath_S11 — delete an existing project → 200.
-func TestDeleteProjectProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewCatalogHandler(cs)
-	proj, err := cs.CreateProject(context.Background(), "s11delprojproxy", "")
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodDelete, "/", nil)
-	r = withChiParamS8(r, "id", fmt.Sprintf("%d", proj.ID))
-	w := httptest.NewRecorder()
-	h.DeleteProjectProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListProjectMembersProxy_HappyPath_S11 — list members of a project → 200.
-func TestListProjectMembersProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewCatalogHandler(cs)
-	proj, err := cs.CreateProject(context.Background(), "s11listprojmemproxy", "")
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r = withChiParamS8(r, "id", fmt.Sprintf("%d", proj.ID))
-	w := httptest.NewRecorder()
-	h.ListProjectMembersProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── dynamic_secrets_proxy.go: loop body coverage ─────────────────────────────
 
@@ -2013,190 +1511,18 @@ func freshDynamicSecretHandlerS11(t *testing.T) (*DynamicSecretHandler, *core.Ke
 }
 
 // TestListDynamicSecretConfigsProxy_WithConfigs_S11 — loop body covered when configs exist.
-func TestListDynamicSecretConfigsProxy_WithConfigs_S11(t *testing.T) {
-	t.Parallel()
-	h, cs := freshDynamicSecretHandlerS11(t)
-	ctx := context.Background()
-	proj, err := cs.CreateProject(ctx, "s11dynsecproxy", "")
-	require.NoError(t, err)
-	envs, err := cs.ListEnvironmentsByProject(ctx, proj.ID)
-	require.NoError(t, err)
-	require.NotEmpty(t, envs)
-
-	// Create a config directly via storage (bypass core validation of AdminDSN).
-	_, err = cs.Storage().CreateDynamicSecretConfig(ctx, &models.DynamicSecretConfig{
-		Name:          "s11testconfig",
-		ProjectID:     proj.ID,
-		EnvironmentID: envs[0].ID,
-		BackendType:   "postgres",
-	})
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/?project_id=%d", proj.ID), nil)
-	w := httptest.NewRecorder()
-	h.ListDynamicSecretConfigsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestGetDynamicSecretLeaseProxy_HappyPath_S11 — get an existing lease → 200.
-func TestGetDynamicSecretLeaseProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	h, cs := freshDynamicSecretHandlerS11(t)
-	ctx := context.Background()
-
-	// Create a lease directly via storage.
-	leaseID := "s11-test-lease-" + fmt.Sprintf("%d", 1)
-	_, err := cs.Storage().CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
-		LeaseID:   leaseID,
-		ConfigID:  1,
-		ProjectID: 1,
-		Status:    "active",
-		IssuedAt:  time.Now(),
-		ExpiresAt: time.Now().Add(time.Hour),
-	})
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r = withChiParamS8(r, "leaseID", leaseID)
-	w := httptest.NewRecorder()
-	h.GetDynamicSecretLeaseProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListDynamicSecretLeasesProxy_WithLeases_S11 — loop body covered when leases exist.
-func TestListDynamicSecretLeasesProxy_WithLeases_S11(t *testing.T) {
-	t.Parallel()
-	h, cs := freshDynamicSecretHandlerS11(t)
-	ctx := context.Background()
-
-	// Create a config first (needed as FK).
-	cfg, err := cs.Storage().CreateDynamicSecretConfig(ctx, &models.DynamicSecretConfig{
-		Name:        "s11listleaseconfig",
-		ProjectID:   1,
-		BackendType: "postgres",
-	})
-	require.NoError(t, err)
-
-	// Create a lease for that config.
-	_, err = cs.Storage().CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
-		LeaseID:   "s11-listlease-test",
-		ConfigID:  cfg.ID,
-		Status:    "active",
-		IssuedAt:  time.Now(),
-		ExpiresAt: time.Now().Add(time.Hour),
-	})
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/?config_id=%d", cfg.ID), nil)
-	w := httptest.NewRecorder()
-	h.ListDynamicSecretLeasesProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── AccessReviewCampaign proxy: success paths & loop bodies ──────────────────
 
 // TestGetAccessReviewCampaignProxy_HappyPath_S11 — get an existing campaign → 200.
-func TestGetAccessReviewCampaignProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewCatalogHandler(cs)
-	ctx := context.Background()
-
-	campaign, err := cs.Storage().CreateAccessReviewCampaign(ctx, &models.AccessReviewCampaign{
-		ProjectID: 1,
-		Name:      "s11 Q1 review",
-		State:     "open",
-		CreatedBy: 1,
-	})
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/system/access-review-campaigns/%d", campaign.ID), nil)
-	r = withChiParamS8(r, "id", fmt.Sprintf("%d", campaign.ID))
-	w := httptest.NewRecorder()
-	h.GetAccessReviewCampaignProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListAccessReviewItemsProxy_WithItems_S11 — loop body covered when items exist.
-func TestListAccessReviewItemsProxy_WithItems_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewCatalogHandler(cs)
-	ctx := context.Background()
-
-	campaign, err := cs.Storage().CreateAccessReviewCampaign(ctx, &models.AccessReviewCampaign{
-		ProjectID: 1,
-		Name:      "s11 list items review",
-		State:     "open",
-		CreatedBy: 1,
-	})
-	require.NoError(t, err)
-
-	// Create review items for the campaign.
-	items := []*models.AccessReviewItem{
-		{
-			CampaignID:    campaign.ID,
-			PrincipalType: "user",
-			PrincipalID:   1,
-			PrincipalName: "testuser",
-			Source:        "role",
-			AccessLevel:   "read",
-			EnvironmentID: 1,
-			Decision:      "pending",
-		},
-	}
-	err = cs.Storage().CreateAccessReviewItems(ctx, items)
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/system/access-review-campaigns/%d/items", campaign.ID), nil)
-	r = withChiParamS8(r, "id", fmt.Sprintf("%d", campaign.ID))
-	w := httptest.NewRecorder()
-	h.ListAccessReviewItemsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestGetAccessReviewItemProxy_HappyPath_S11 — get an existing item → 200.
-func TestGetAccessReviewItemProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewCatalogHandler(cs)
-	ctx := context.Background()
-
-	campaign, err := cs.Storage().CreateAccessReviewCampaign(ctx, &models.AccessReviewCampaign{
-		ProjectID: 1,
-		Name:      "s11 get item review",
-		State:     "open",
-		CreatedBy: 1,
-	})
-	require.NoError(t, err)
-
-	items := []*models.AccessReviewItem{
-		{
-			CampaignID:    campaign.ID,
-			PrincipalType: "user",
-			PrincipalID:   2,
-			PrincipalName: "testuser2",
-			Source:        "direct_share",
-			AccessLevel:   "write",
-			EnvironmentID: 1,
-			Decision:      "pending",
-		},
-	}
-	err = cs.Storage().CreateAccessReviewItems(ctx, items)
-	require.NoError(t, err)
-
-	// Retrieve the created item's ID.
-	createdItems, err := cs.Storage().ListAccessReviewItems(ctx, campaign.ID)
-	require.NoError(t, err)
-	require.NotEmpty(t, createdItems)
-	itemID := createdItems[0].ID
-
-	r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/system/access-review-campaigns/items/%d", itemID), nil)
-	r = withChiParamS8(r, "itemID", fmt.Sprintf("%d", itemID))
-	w := httptest.NewRecorder()
-	h.GetAccessReviewItemProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── retention proxy: ListUsersInStateBeforeProxy loop body ───────────────────
 
@@ -2336,101 +1662,14 @@ func TestGetAccessReviewCampaignHandler_HappyPath_S11(t *testing.T) {
 // ── project_memberships_proxy.go: GetMembershipProxy and GetActiveMembershipProxy success ──
 
 // TestGetMembershipProxy_HappyPath_S11 covers the writeRemoteAPISuccess at line 142.
-func TestGetMembershipProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewCatalogHandler(cs)
-	ctx := context.Background()
-
-	// Create a membership directly via storage.
-	m, err := cs.Storage().CreateProjectMembership(ctx, &models.ProjectMembership{
-		ProjectID: 1,
-		UserID:    1,
-		Role:      "admin",
-		State:     "active",
-	})
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet,
-		fmt.Sprintf("/api/v1/system/project-memberships/%d", m.ID), nil)
-	r = withChiParamS8(r, "id", fmt.Sprintf("%d", m.ID))
-	w := httptest.NewRecorder()
-	h.GetMembershipProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestGetActiveMembershipProxy_HappyPath_S11 covers the writeRemoteAPISuccess at line 227.
-func TestGetActiveMembershipProxy_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewCatalogHandler(cs)
-	ctx := context.Background()
-
-	// Create an active membership.
-	_, err := cs.Storage().CreateProjectMembership(ctx, &models.ProjectMembership{
-		ProjectID: 2,
-		UserID:    3,
-		Role:      "viewer",
-		State:     "active",
-	})
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/project-memberships/active?project_id=2&user_id=3", nil)
-	w := httptest.NewRecorder()
-	h.GetActiveMembershipProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListUsersInStateBeforeProxy_WithUsers_S11 — loop body covered when matching users exist.
-func TestListUsersInStateBeforeProxy_WithUsers_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h, err := NewUserHandler(cs)
-	require.NoError(t, err)
-	ctx := context.Background()
-
-	// Create a user with a non-default AccountState so it appears in results.
-	// The "before" cutoff is in the future, so any user created now qualifies.
-	u := &models.User{
-		Email:        "s11retention@example.com",
-		Username:     "s11retentionuser",
-		PasswordHash: "x",
-		AccountState: "pending_first_login",
-	}
-	_, err = cs.Storage().CreateUser(ctx, u)
-	require.NoError(t, err)
-
-	future := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339Nano)
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/system/retention/users/stale?state=pending_first_login&before="+future, nil)
-	w := httptest.NewRecorder()
-	h.ListUsersInStateBeforeProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── webauthn_proxy.go: ListWebAuthnCredentialsProxy loop body ─────────────────
 
 // TestListWebAuthnCredentialsProxy_WithCredential_S11 — loop body covered when credentials exist.
-func TestListWebAuthnCredentialsProxy_WithCredential_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewAuthHandler(cs, false)
-	ctx := context.Background()
-
-	const testUserID = uint(42)
-	err := cs.Storage().CreateWebAuthnCredential(ctx, &models.WebAuthnCredential{
-		UserID:         testUserID,
-		CredentialID:   []byte("s11-test-cred-id"),
-		Name:           "s11 test key",
-		CredentialBlob: []byte(`{}`),
-	})
-	require.NoError(t, err)
-
-	r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/?user_id=%d", testUserID), nil)
-	w := httptest.NewRecorder()
-	h.ListWebAuthnCredentialsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── users_crud.go: GetUser / GetUserByEmail / GetUserByUsername success paths ──
 
@@ -2906,16 +2145,6 @@ func TestListRefGrants_CtxError_S11(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestListConnectRefGrantsProxy_CtxError_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h := NewAuthHandler(cs, false)
-	r := cancelledCtxReq(http.MethodGet, "/api/v1/system/connect-grants")
-	w := httptest.NewRecorder()
-	h.ListConnectRefGrantsProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 func TestDeploymentHygiene_CtxError_S11(t *testing.T) {
 	t.Parallel()
 	h := newSecretHandlerS4(t)
@@ -2933,43 +2162,5 @@ func TestGetLegalHold_CtxError_S11(t *testing.T) {
 	r := cancelledCtxReq(http.MethodGet, "/api/v1/legal-hold")
 	w := httptest.NewRecorder()
 	h.GetLegalHold(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestListEnvironmentsProxy_CtxError_S11(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS11(t))
-	r := cancelledCtxReq(http.MethodGet, "/api/v1/system/environments")
-	w := httptest.NewRecorder()
-	h.ListEnvironmentsProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestListGroupsProxy_CtxError_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-	r := cancelledCtxReq(http.MethodGet, "/api/v1/system/groups")
-	w := httptest.NewRecorder()
-	h.ListGroupsProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestCountDynamicSecretConfigsByClassificationProxy_CtxError_S11(t *testing.T) {
-	t.Parallel()
-	h := NewDynamicSecretHandler(freshCoreS11(t))
-	r := cancelledCtxReq(http.MethodGet, "/api/v1/system/dynamic-secrets/configs/classification-counts")
-	w := httptest.NewRecorder()
-	h.CountDynamicSecretConfigsByClassificationProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestGetActiveLegalHoldProxy_CtxError_S11(t *testing.T) {
-	t.Parallel()
-	h := NewDashboardHandler(freshCoreS11(t))
-	r := cancelledCtxReq(http.MethodGet, "/api/v1/system/legal-hold/active")
-	w := httptest.NewRecorder()
-	h.GetActiveLegalHoldProxy(w, r)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }

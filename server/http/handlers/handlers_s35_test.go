@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -189,52 +189,9 @@ func TestDeleteRole_DBError_S35(t *testing.T) {
 // CreateGroup's own storage call while leaving authority resolution intact --
 // same technique as handlers_s13_connect_dynamic_test.go's
 // block_dynamic_config_update trigger.
-func TestCreateGroupProxy_DBError_S35(t *testing.T) {
-	t.Parallel()
-
-	// Companion baseline: the IDENTICAL request minus the trigger must
-	// succeed -- isolates the 500 below to the trigger, not the new
-	// authority check or another storage bug. clientSafe() redacts the
-	// response body to a fixed generic string, so this before/after delta
-	// is the available proof.
-	baselineCS, _ := freshCoreS12WithAdmin(t)
-	baselineH, err := NewGroupHandler(baselineCS)
-	require.NoError(t, err)
-	baselineBody := bytes.NewBufferString(`{"name":"test-group-baseline","description":"test"}`)
-	baselineR := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/system/groups", baselineBody))
-	baselineW := httptest.NewRecorder()
-	baselineH.CreateGroupProxy(baselineW, baselineR)
-	require.Equal(t, http.StatusOK, baselineW.Code, "baseline (no trigger) must succeed: %s", baselineW.Body.String())
-
-	cs, db := freshCoreS12WithAdmin(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(`
-		CREATE TRIGGER block_groups_insert
-		BEFORE INSERT ON groups
-		BEGIN
-			SELECT RAISE(ABORT, 'simulated write failure: disk quota exceeded on host db-07.internal');
-		END;
-	`).Error)
-	body := bytes.NewBufferString(`{"name":"test-group","description":"test"}`)
-	r := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/system/groups", body))
-	w := httptest.NewRecorder()
-	h.CreateGroupProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
 
 // GetGroupProxy: broken DB → GetGroup returns "Data retrieval failed" (not
 // "not found") → isGroupNotFound=false → 500 (lines 132-134).
-func TestGetGroupProxy_DBError_S35(t *testing.T) {
-	t.Parallel()
-	kc := freshCoreBrokenS35(t)
-	h, err := NewGroupHandler(kc)
-	require.NoError(t, err)
-	r := withChiParamS7(httptest.NewRequest(http.MethodGet, "/api/v1/system/groups/1", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.GetGroupProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
 
 // UpdateGroupProxy: storage error → UpdateGroup fails with "Storage operation
 // failed" → isGroupNotFound=false → 500. See TestCreateGroupProxy_DBError_S35
@@ -245,43 +202,6 @@ func TestGetGroupProxy_DBError_S35(t *testing.T) {
 // this test means to exercise) -- the trigger leaves UpdateGroup's own
 // GetGroup lookup (a SELECT) and the authority check intact, and aborts only
 // the subsequent UPDATE.
-func TestUpdateGroupProxy_DBError_S35(t *testing.T) {
-	t.Parallel()
-
-	// Companion baseline: the IDENTICAL request/fixture shape minus the
-	// trigger must succeed -- isolates the 500 below to the trigger, not
-	// the new authority check or another storage bug. clientSafe() redacts
-	// the response body to a fixed generic string, so this before/after
-	// delta is the available proof.
-	baselineCS, baselineDB := freshCoreS12WithAdmin(t)
-	baselineH, err := NewGroupHandler(baselineCS)
-	require.NoError(t, err)
-	baselineGrp := &models.Group{Name: "s35-update-baseline", NameFolded: "s35-update-baseline"}
-	require.NoError(t, baselineDB.Create(baselineGrp).Error)
-	baselineBody := bytes.NewBufferString(`{"name":"updated","description":"test"}`)
-	baselineR := withUserCtx(withChiParamS7(httptest.NewRequest(http.MethodPut, "/api/v1/system/groups/1", baselineBody), "id", fmt.Sprintf("%d", baselineGrp.ID)))
-	baselineW := httptest.NewRecorder()
-	baselineH.UpdateGroupProxy(baselineW, baselineR)
-	require.Equal(t, http.StatusOK, baselineW.Code, "baseline (no trigger) must succeed: %s", baselineW.Body.String())
-
-	cs, db := freshCoreS12WithAdmin(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-	grp := &models.Group{Name: "s35-update-dberror", NameFolded: "s35-update-dberror"}
-	require.NoError(t, db.Create(grp).Error)
-	require.NoError(t, db.Exec(`
-		CREATE TRIGGER block_groups_update
-		BEFORE UPDATE ON groups
-		BEGIN
-			SELECT RAISE(ABORT, 'simulated write failure: disk quota exceeded on host db-07.internal');
-		END;
-	`).Error)
-	body := bytes.NewBufferString(`{"name":"updated","description":"test"}`)
-	r := withUserCtx(withChiParamS7(httptest.NewRequest(http.MethodPut, "/api/v1/system/groups/1", body), "id", fmt.Sprintf("%d", grp.ID)))
-	w := httptest.NewRecorder()
-	h.UpdateGroupProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
 
 // DeleteGroupProxy: storage error → DeleteGroup's soft-delete (an UPDATE)
 // fails → isGroupNotFound=false → 500 (lines 184-186). See
@@ -289,41 +209,6 @@ func TestUpdateGroupProxy_DBError_S35(t *testing.T) {
 // DB with a real group row and an UPDATE-blocking trigger on "groups" --
 // DeleteGroup's own preceding GetGroup lookup (a SELECT) and the authority
 // check both stay intact, so only the soft-delete UPDATE aborts.
-func TestDeleteGroupProxy_DBError_S35(t *testing.T) {
-	t.Parallel()
-
-	// Companion baseline: the IDENTICAL request/fixture shape minus the
-	// trigger must succeed -- isolates the 500 below to the trigger, not
-	// the new authority check or another storage bug. clientSafe() redacts
-	// the response body to a fixed generic string, so this before/after
-	// delta is the available proof.
-	baselineCS, baselineDB := freshCoreS12WithAdmin(t)
-	baselineH, err := NewGroupHandler(baselineCS)
-	require.NoError(t, err)
-	baselineGrp := &models.Group{Name: "s35-delete-baseline", NameFolded: "s35-delete-baseline"}
-	require.NoError(t, baselineDB.Create(baselineGrp).Error)
-	baselineR := withUserCtx(withChiParamS7(httptest.NewRequest(http.MethodDelete, "/api/v1/system/groups/1", nil), "id", fmt.Sprintf("%d", baselineGrp.ID)))
-	baselineW := httptest.NewRecorder()
-	baselineH.DeleteGroupProxy(baselineW, baselineR)
-	require.Equal(t, http.StatusOK, baselineW.Code, "baseline (no trigger) must succeed: %s", baselineW.Body.String())
-
-	cs, db := freshCoreS12WithAdmin(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-	grp := &models.Group{Name: "s35-delete-dberror", NameFolded: "s35-delete-dberror"}
-	require.NoError(t, db.Create(grp).Error)
-	require.NoError(t, db.Exec(`
-		CREATE TRIGGER block_groups_update_delete
-		BEFORE UPDATE ON groups
-		BEGIN
-			SELECT RAISE(ABORT, 'simulated write failure: disk quota exceeded on host db-07.internal');
-		END;
-	`).Error)
-	r := withUserCtx(withChiParamS7(httptest.NewRequest(http.MethodDelete, "/api/v1/system/groups/1", nil), "id", fmt.Sprintf("%d", grp.ID)))
-	w := httptest.NewRecorder()
-	h.DeleteGroupProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
 
 // RestoreGroupProxy: storage error → RestoreGroup result.Error → "Storage
 // operation failed" → isGroupNotFound=false → 500 (lines 203-205). See
@@ -339,70 +224,10 @@ func TestDeleteGroupProxy_DBError_S35(t *testing.T) {
 // requireGlobalAdminToReinstateAdminRoles authority check both still
 // succeed against the intact schema; only the final storage.RestoreGroup
 // UPDATE aborts.
-func TestRestoreGroupProxy_DBError_S35(t *testing.T) {
-	t.Parallel()
-
-	// Companion baseline: the IDENTICAL request/fixture shape (a genuinely
-	// soft-deleted group) minus the trigger must succeed -- isolates the
-	// 500 below to the trigger, not the new roles.assign authority check
-	// or another storage bug. clientSafe() redacts the response body to a
-	// fixed generic string, so this before/after delta is the available
-	// proof.
-	baselineCS, baselineDB := freshCoreS12WithAdmin(t)
-	baselineH, err := NewGroupHandler(baselineCS)
-	require.NoError(t, err)
-	baselineGrp := &models.Group{Name: "s35-restore-baseline", NameFolded: "s35-restore-baseline"}
-	require.NoError(t, baselineDB.Create(baselineGrp).Error)
-	require.NoError(t, baselineDB.Delete(baselineGrp).Error)
-	baselineR := withUserCtx(withChiParamS7(
-		httptest.NewRequest(http.MethodPost, "/api/v1/system/groups/1/restore", nil), "id", fmt.Sprintf("%d", baselineGrp.ID)))
-	baselineW := httptest.NewRecorder()
-	baselineH.RestoreGroupProxy(baselineW, baselineR)
-	require.Equal(t, http.StatusOK, baselineW.Code, "baseline (no trigger) must succeed: %s", baselineW.Body.String())
-
-	cs, db := freshCoreS12WithAdmin(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-	grp := &models.Group{Name: "s35-restore-dberror", NameFolded: "s35-restore-dberror"}
-	require.NoError(t, db.Create(grp).Error)
-	require.NoError(t, db.Delete(grp).Error) // soft-delete, so RestoreGroup's UPDATE matches a row
-	require.NoError(t, db.Exec(`
-		CREATE TRIGGER block_groups_update_restore
-		BEFORE UPDATE ON groups
-		BEGIN
-			SELECT RAISE(ABORT, 'simulated write failure: disk quota exceeded on host db-07.internal');
-		END;
-	`).Error)
-	r := withUserCtx(withChiParamS7(
-		httptest.NewRequest(http.MethodPost, "/api/v1/system/groups/1/restore", nil), "id", fmt.Sprintf("%d", grp.ID)))
-	w := httptest.NewRecorder()
-	h.RestoreGroupProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
 
 // ListGroupsProxy: broken DB → ListGroups fails → 500.
-func TestListGroupsProxy_DBError_S35(t *testing.T) {
-	t.Parallel()
-	kc := freshCoreBrokenS35(t)
-	h, err := NewGroupHandler(kc)
-	require.NoError(t, err)
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/system/groups", nil)
-	w := httptest.NewRecorder()
-	h.ListGroupsProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
 
 // ListGroupsPageProxy: broken DB → ListGroupsPage fails → 500.
-func TestListGroupsPageProxy_DBError_S35(t *testing.T) {
-	t.Parallel()
-	kc := freshCoreBrokenS35(t)
-	h, err := NewGroupHandler(kc)
-	require.NoError(t, err)
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/system/groups/page?offset=0&limit=10", nil)
-	w := httptest.NewRecorder()
-	h.ListGroupsPageProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
 
 // AddGroupMemberProxy: broken DB → AddUserToGroup → GetUser fails with
 // "Data retrieval failed" → isGroupNotFound=false → 500.
@@ -414,95 +239,15 @@ func TestListGroupsPageProxy_DBError_S35(t *testing.T) {
 // Mirrors TestRestoreGroupProxy_DBError_S35's SQL-trigger isolation: a
 // working admin-backed core with a trigger that blocks ONLY the targeted
 // INSERT, so the 500 is proven to come from THIS write, not the new check.
-func TestAddGroupMemberProxy_DBError_S35(t *testing.T) {
-	t.Parallel()
-	cs, db := freshCoreS12WithAdmin(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-	grp := &models.Group{Name: "s35-addmember-dberror", NameFolded: "s35-addmember-dberror"}
-	require.NoError(t, db.Create(grp).Error)
-	target := &models.User{Username: "s35-addmember-target", Email: "s35-addmember-target@example.com", AccountState: "active"}
-	require.NoError(t, db.Create(target).Error)
-	require.NoError(t, db.Exec(`
-		CREATE TRIGGER block_user_groups_insert
-		BEFORE INSERT ON user_groups
-		BEGIN
-			SELECT RAISE(ABORT, 'simulated write failure: disk quota exceeded on host db-07.internal');
-		END;
-	`).Error)
-	body := bytes.NewBufferString(fmt.Sprintf(`{"user_id":%d}`, target.ID))
-	r := withUserCtx(withChiParamS7(
-		httptest.NewRequest(http.MethodPost, "/api/v1/system/groups/1/members", body), "id", fmt.Sprintf("%d", grp.ID)))
-	w := httptest.NewRecorder()
-	h.AddGroupMemberProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
 
 // RemoveGroupMemberProxy: DB delete on user_groups fails → 500. Same
 // isolation rationale and pattern as TestAddGroupMemberProxy_DBError_S35
 // above -- a working admin-backed core with a real membership row and a
 // trigger blocking only the targeted DELETE.
-func TestRemoveGroupMemberProxy_DBError_S35(t *testing.T) {
-	t.Parallel()
-	cs, db := freshCoreS12WithAdmin(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-	grp := &models.Group{Name: "s35-removemember-dberror", NameFolded: "s35-removemember-dberror"}
-	require.NoError(t, db.Create(grp).Error)
-	target := &models.User{Username: "s35-removemember-target", Email: "s35-removemember-target@example.com", AccountState: "active"}
-	require.NoError(t, db.Create(target).Error)
-	require.NoError(t, db.Create(&models.UserGroup{UserID: target.ID, GroupID: grp.ID}).Error)
-	require.NoError(t, db.Exec(`
-		CREATE TRIGGER block_user_groups_delete
-		BEFORE DELETE ON user_groups
-		BEGIN
-			SELECT RAISE(ABORT, 'simulated write failure: disk quota exceeded on host db-07.internal');
-		END;
-	`).Error)
-	r := withUserCtx(withChiParamsMapS7(
-		httptest.NewRequest(http.MethodDelete, "/api/v1/system/groups/1/members/2", nil),
-		map[string]string{"id": fmt.Sprintf("%d", grp.ID), "userId": fmt.Sprintf("%d", target.ID)},
-	))
-	w := httptest.NewRecorder()
-	h.RemoveGroupMemberProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
 
 // ListGroupMembersProxy: broken DB → ListGroupMembers → GetGroup returns
 // "Data retrieval failed" → isGroupNotFound=false → 500.
-func TestListGroupMembersProxy_DBError_S35(t *testing.T) {
-	t.Parallel()
-	kc := freshCoreBrokenS35(t)
-	h, err := NewGroupHandler(kc)
-	require.NoError(t, err)
-	r := withChiParamS7(
-		httptest.NewRequest(http.MethodGet, "/api/v1/system/groups/1/members", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.ListGroupMembersProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
 
 // ListGroupMembersByIDsProxy: broken DB → ListGroupMembersByGroupIDs fails → 500.
-func TestListGroupMembersByIDsProxy_DBError_S35(t *testing.T) {
-	t.Parallel()
-	kc := freshCoreBrokenS35(t)
-	h, err := NewGroupHandler(kc)
-	require.NoError(t, err)
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/system/groups/members-by-ids?ids=1,2", nil)
-	w := httptest.NewRecorder()
-	h.ListGroupMembersByIDsProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
 
 // GetUserGroupsProxy: broken DB → GetUserGroups fails → 500.
-func TestGetUserGroupsProxy_DBError_S35(t *testing.T) {
-	t.Parallel()
-	kc := freshCoreBrokenS35(t)
-	h, err := NewGroupHandler(kc)
-	require.NoError(t, err)
-	r := withChiParamS7(
-		httptest.NewRequest(http.MethodGet, "/api/v1/system/users/1/groups", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.GetUserGroupsProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}

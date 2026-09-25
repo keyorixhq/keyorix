@@ -32,7 +32,6 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -565,38 +564,10 @@ func TestConnect_DeleteRefGrant_NotFound_S13(t *testing.T) {
 // ── connect_grants_proxy.go ──────────────────────────────────────────────────
 
 // ListConnectRefGrantsByConnectorProxy — empty connector param
-func TestConnectGrantsProxy_ListByConnector_EmptyConnector_S13(t *testing.T) {
-	h := newAuthHandlerForConnectGrantsS13(t)
-	// chi param "connector" is empty string
-	req := withChiParam(
-		httptest.NewRequest(http.MethodGet, "/api/v1/system/connect-grants/by-connector/", nil),
-		"connector", "",
-	)
-	w := httptest.NewRecorder()
-	h.ListConnectRefGrantsByConnectorProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ListConnectRefGrantsByConnectorProxy — valid connector → 200
-func TestConnectGrantsProxy_ListByConnector_Happy_S13(t *testing.T) {
-	h := newAuthHandlerForConnectGrantsS13(t)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodGet, "/api/v1/system/connect-grants/by-connector/vault", nil),
-		"connector", "vault",
-	)
-	w := httptest.NewRecorder()
-	h.ListConnectRefGrantsByConnectorProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ListConnectRefGrantsProxy — happy path (no grants)
-func TestConnectGrantsProxy_List_Happy_S13(t *testing.T) {
-	h := newAuthHandlerForConnectGrantsS13(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/connect-grants", nil)
-	w := httptest.NewRecorder()
-	h.ListConnectRefGrantsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── dynamic_secrets_proxy.go ──────────────────────────────────────────────────
 
@@ -610,175 +581,38 @@ func newDynamicSecretHandlerProxyS13(t *testing.T) *DynamicSecretHandler {
 // handler removed (no live caller in either topology).
 
 // GetDynamicSecretConfigProxy — bad id
-func TestDynProxy_GetConfig_BadID_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/configs/notanint", nil),
-		"id", "notanint",
-	)
-	w := httptest.NewRecorder()
-	h.GetDynamicSecretConfigProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // GetDynamicSecretConfigProxy — not found
-func TestDynProxy_GetConfig_NotFound_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/configs/99999", nil),
-		"id", "99999",
-	)
-	w := httptest.NewRecorder()
-	h.GetDynamicSecretConfigProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // GetDynamicSecretConfigProxy — happy path
-func TestDynProxy_GetConfig_Happy_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	cfgID := seedDynamicSecretConfig(t, h)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/configs/1", nil),
-		"id", uintToStrS13(cfgID),
-	)
-	w := httptest.NewRecorder()
-	h.GetDynamicSecretConfigProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ListDynamicSecretConfigsProxy — missing project_id
-func TestDynProxy_ListConfigs_MissingProjectID_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/configs", nil)
-	w := httptest.NewRecorder()
-	h.ListDynamicSecretConfigsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "project_id query parameter is required")
-}
 
 // ListDynamicSecretConfigsProxy — bad project_id
-func TestDynProxy_ListConfigs_BadProjectID_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/configs?project_id=notanint", nil)
-	w := httptest.NewRecorder()
-	h.ListDynamicSecretConfigsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ListDynamicSecretConfigsProxy — bad environment_id
-func TestDynProxy_ListConfigs_BadEnvID_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/configs?project_id=1&environment_id=notanint", nil)
-	w := httptest.NewRecorder()
-	h.ListDynamicSecretConfigsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ListDynamicSecretConfigsProxy — happy path
-func TestDynProxy_ListConfigs_Happy_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/configs?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListDynamicSecretConfigsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // GetDynamicSecretLeaseProxy — not found
-func TestDynProxy_GetLease_NotFound_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/leases/nonexistent-lease-s13", nil),
-		"leaseID", "nonexistent-lease-s13",
-	)
-	w := httptest.NewRecorder()
-	h.GetDynamicSecretLeaseProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // ListDynamicSecretLeasesProxy — missing config_id
-func TestDynProxy_ListLeases_MissingConfigID_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/leases", nil)
-	w := httptest.NewRecorder()
-	h.ListDynamicSecretLeasesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "config_id query parameter is required")
-}
 
 // ListDynamicSecretLeasesProxy — bad config_id
-func TestDynProxy_ListLeases_BadConfigID_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/leases?config_id=notanint", nil)
-	w := httptest.NewRecorder()
-	h.ListDynamicSecretLeasesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ListDynamicSecretLeasesProxy — happy path
-func TestDynProxy_ListLeases_Happy_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/leases?config_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListDynamicSecretLeasesProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // CountActiveLeasesProxy — missing config_id
-func TestDynProxy_CountActiveLeases_MissingConfigID_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/leases/active-count", nil)
-	w := httptest.NewRecorder()
-	h.CountActiveLeasesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // CountActiveLeasesProxy — bad config_id
-func TestDynProxy_CountActiveLeases_BadConfigID_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/leases/active-count?config_id=bad", nil)
-	w := httptest.NewRecorder()
-	h.CountActiveLeasesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // CountActiveLeasesProxy — happy path
-func TestDynProxy_CountActiveLeases_Happy_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/leases/active-count?config_id=1", nil)
-	w := httptest.NewRecorder()
-	h.CountActiveLeasesProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ListExpiredActiveLeasesProxy — missing before
-func TestDynProxy_ListExpiredLeases_MissingBefore_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/leases/expired", nil)
-	w := httptest.NewRecorder()
-	h.ListExpiredActiveLeasesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "before query parameter is required")
-}
 
 // ListExpiredActiveLeasesProxy — bad before (not RFC3339)
-func TestDynProxy_ListExpiredLeases_BadBefore_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/leases/expired?before=not-a-date", nil)
-	w := httptest.NewRecorder()
-	h.ListExpiredActiveLeasesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "RFC3339")
-}
 
 // ListExpiredActiveLeasesProxy — happy path (valid RFC3339)
-func TestDynProxy_ListExpiredLeases_Happy_S13(t *testing.T) {
-	h := newDynamicSecretHandlerProxyS13(t)
-	before := time.Now().UTC().Format(time.RFC3339Nano)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/leases/expired?before="+before, nil)
-	w := httptest.NewRecorder()
-	h.ListExpiredActiveLeasesProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── utility ───────────────────────────────────────────────────────────────────
 

@@ -57,174 +57,35 @@ func uintStr(n uint) string {
 
 // TestAddGroupMemberProxy_HappyPath_S23 verifies that a well-formed request
 // with both a real group and a real user succeeds with {"added":true}.
-func TestAddGroupMemberProxy_HappyPath_S23(t *testing.T) {
-	cs, db := freshCoreS12WithAdmin(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-
-	grp := &models.Group{Name: "s23-addmember-grp"}
-	created, gErr := h.coreService.Storage().CreateGroup(context.Background(), grp)
-	require.NoError(t, gErr)
-
-	user := &models.User{Username: "s23-addmember-user", Email: "s23addmember@example.com", AccountState: "active"}
-	require.NoError(t, db.Create(user).Error)
-
-	body, _ := json.Marshal(map[string]interface{}{"user_id": user.ID})
-	req := withUserCtx(withChiParam(
-		httptest.NewRequest(http.MethodPost, "/api/v1/system/groups/1/members", bytes.NewReader(body)),
-		"id", uintStr(created.ID),
-	))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.AddGroupMemberProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp["success"].(bool))
-}
 
 // ── groups_proxy.go: RemoveGroupMemberProxy happy path ───────────────────────
 
 // TestRemoveGroupMemberProxy_HappyPath_S23 verifies that removing a
 // non-existent (or existing) member silently succeeds with {"removed":true}.
 // LocalStorage.RemoveUserFromGroup is a DELETE with no not-found error.
-func TestRemoveGroupMemberProxy_HappyPath_S23(t *testing.T) {
-	cs, _ := freshCoreS12WithAdmin(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-
-	req := withUserCtx(withChiParams2_S23(
-		httptest.NewRequest(http.MethodDelete, "/api/v1/system/groups/1/members/2", nil),
-		"id", "1", "userId", "2",
-	))
-	w := httptest.NewRecorder()
-	h.RemoveGroupMemberProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp["success"].(bool))
-}
 
 // ── groups_proxy.go: RestoreGroupProxy happy path ─────────────────────────────
 
 // TestRestoreGroupProxy_HappyPath_S23 verifies the 200 branch: soft-delete a
 // group then restore it via the proxy.
-func TestRestoreGroupProxy_HappyPath_S23(t *testing.T) {
-	cs, _ := freshCoreS12WithAdmin(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-
-	// Create then soft-delete a group so RestoreGroup has something to restore.
-	grp := &models.Group{Name: "s23-restore-grp"}
-	created, gErr := h.coreService.Storage().CreateGroup(context.Background(), grp)
-	require.NoError(t, gErr)
-	require.NoError(t, h.coreService.Storage().DeleteGroup(context.Background(), created.ID))
-
-	req := withUserCtx(withChiParam(
-		httptest.NewRequest(http.MethodPost, "/api/v1/system/groups/1/restore", nil),
-		"id", uintStr(created.ID),
-	))
-	w := httptest.NewRecorder()
-	h.RestoreGroupProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp["success"].(bool))
-}
 
 // ── groups_proxy.go: ListGroupMembersProxy happy path ────────────────────────
 
 // TestListGroupMembersProxy_HappyPath_S23 verifies the 200 branch: a group
 // with no members returns an empty members array.
-func TestListGroupMembersProxy_HappyPath_S23(t *testing.T) {
-	cs := freshCoreS12(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-
-	grp := &models.Group{Name: "s23-list-members-grp"}
-	created, gErr := h.coreService.Storage().CreateGroup(context.Background(), grp)
-	require.NoError(t, gErr)
-
-	req := withChiParam(
-		httptest.NewRequest(http.MethodGet, "/api/v1/system/groups/1/members", nil),
-		"id", uintStr(created.ID),
-	)
-	w := httptest.NewRecorder()
-	h.ListGroupMembersProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp["success"].(bool))
-}
 
 // ── groups_proxy.go: ListGroupMembersByIDsProxy happy path ───────────────────
 
 // TestListGroupMembersByIDsProxy_HappyPath_S23 verifies the 200 branch:
 // a valid comma-separated ids param returns results (possibly empty).
-func TestListGroupMembersByIDsProxy_HappyPath_S23(t *testing.T) {
-	cs := freshCoreS12(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-
-	grp := &models.Group{Name: "s23-by-ids-grp"}
-	created, gErr := h.coreService.Storage().CreateGroup(context.Background(), grp)
-	require.NoError(t, gErr)
-
-	req := httptest.NewRequest(http.MethodGet,
-		fmt.Sprintf("/api/v1/system/groups/members-by-ids?ids=%d", created.ID), nil)
-	w := httptest.NewRecorder()
-	h.ListGroupMembersByIDsProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp["success"].(bool))
-}
 
 // TestListGroupMembersByIDsProxy_MultipleIDs_S23 verifies that a
 // comma-separated list with multiple valid IDs is parsed correctly.
-func TestListGroupMembersByIDsProxy_MultipleIDs_S23(t *testing.T) {
-	cs := freshCoreS12(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/groups/members-by-ids?ids=1,2,3", nil)
-	w := httptest.NewRecorder()
-	h.ListGroupMembersByIDsProxy(w, req)
-
-	// IDs 1-3 don't exist, but storage returns an empty map without error.
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── groups_proxy.go: GetUserGroupsProxy happy path ────────────────────────────
 
 // TestGetUserGroupsProxy_EmptyList_S23 verifies the 200 branch for a user
 // with no group memberships — the empty-list iteration path.
-func TestGetUserGroupsProxy_EmptyList_S23(t *testing.T) {
-	cs, db := freshCoreS12WithAdmin(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-
-	user := &models.User{Username: "s23-nogroups-user", Email: "s23ng@example.com", AccountState: "active"}
-	require.NoError(t, db.Create(user).Error)
-
-	req := withChiParam(
-		httptest.NewRequest(http.MethodGet, "/api/v1/system/users/1/groups", nil),
-		"id", uintStr(user.ID),
-	)
-	w := httptest.NewRecorder()
-	h.GetUserGroupsProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp["success"].(bool))
-}
 
 // ── dynamic_secrets.go: CreateConfig happy path ──────────────────────────────
 
@@ -590,25 +451,6 @@ func TestIsSafeConnectError_ExtraStrings_S23(t *testing.T) {
 
 // TestAddGroupMemberProxy_StorageNotFound_S23 verifies the NOT_FOUND branch
 // in AddGroupMemberProxy when the group or user doesn't exist in the DB.
-func TestAddGroupMemberProxy_StorageNotFound_S23(t *testing.T) {
-	cs := freshCoreS12(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-
-	// group ID 99999 does not exist → storage returns a not-found style error.
-	body, _ := json.Marshal(map[string]interface{}{"user_id": uint(1)})
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPost, "/api/v1/system/groups/99999/members", bytes.NewReader(body)),
-		"id", "99999",
-	)
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.AddGroupMemberProxy(w, req)
-
-	// Either 404 (not found) or 200 (GORM AddUserToGroup is a plain INSERT that
-	// may silently succeed with a FK-less schema). Accept both non-500 outcomes.
-	assert.NotEqual(t, http.StatusInternalServerError, w.Code)
-}
 
 // ── dynamic_secrets.go: RevokeAllLeases with admin and real config ────────────
 

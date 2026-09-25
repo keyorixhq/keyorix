@@ -14,9 +14,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -105,60 +105,6 @@ func TestListMachineIdentities_DBError_S30(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestListProjectsProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreBrokenS30(t))
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListProjectsProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestListProjectsWithCountsProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreBrokenS30(t))
-	req := httptest.NewRequest(http.MethodGet, "/?include_deleted=false", nil)
-	w := httptest.NewRecorder()
-	h.ListProjectsWithCountsProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestListAllMachineIdentitiesProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreBrokenS30(t))
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListAllMachineIdentitiesProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestCountMachineIdentitiesByClassificationProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreBrokenS30(t))
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.CountMachineIdentitiesByClassificationProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestListActiveMachineIdentityCredentialsProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreBrokenS30(t))
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListActiveMachineIdentityCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestCountMachineIdentityCredentialsByClassificationProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreBrokenS30(t))
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.CountMachineIdentityCredentialsByClassificationProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 // FIX-1 moved this handler's role resolution (GetRoleByName) ahead of the
 // persist step, so a broken DB connection is now hit there first, not at
 // CreateProjectMembership -- and GetRoleByName's error path (project_memberships_proxy.go)
@@ -170,27 +116,8 @@ func TestCountMachineIdentityCredentialsByClassificationProxy_DBError_S30(t *tes
 // convention FIX-1 exposed here for the first time, not a new one introduced
 // by it; refining GetRoleByName's error taxonomy is a separate, broader
 // change out of this fix's scope.
-func TestCreateMembershipProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreBrokenS30(t))
-	body := bytes.NewBufferString(`{"project_id":1,"user_id":1,"role":"viewer","state":"active"}`)
-	req := httptest.NewRequest(http.MethodPost, "/", body)
-	w := httptest.NewRecorder()
-	h.CreateMembershipProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ── DashboardHandler ──────────────────────────────────────────────────────────
-
-func TestCreateLegalHoldProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewDashboardHandler(freshCoreBrokenS30(t))
-	body := bytes.NewBufferString(`{"reason":"test hold","user_id":1,"placed_by":1}`)
-	req := httptest.NewRequest(http.MethodPost, "/", body)
-	w := httptest.NewRecorder()
-	h.CreateLegalHoldProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
 
 // ── RBACHandler ───────────────────────────────────────────────────────────────
 
@@ -209,33 +136,6 @@ func TestRBACGetGroupRoles_DBError_S30(t *testing.T) {
 	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil)), "id", "1")
 	w := httptest.NewRecorder()
 	h.GetGroupRoles(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestListProjectRoleAssignmentsProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewRBACHandler(freshCoreBrokenS30(t))
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListProjectRoleAssignmentsProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestListProjectMachineRoleAssignmentsProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewRBACHandler(freshCoreBrokenS30(t))
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListProjectMachineRoleAssignmentsProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeleteExpiredRoleGrantsProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewRBACHandler(freshCoreBrokenS30(t))
-	req := httptest.NewRequest(http.MethodPost, "/", retentionBody())
-	w := httptest.NewRecorder()
-	h.DeleteExpiredRoleGrantsProxy(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
@@ -265,15 +165,6 @@ func TestRunExpiryReminders_DBError_S30(t *testing.T) {
 
 // ── DynamicSecretHandler ──────────────────────────────────────────────────────
 
-func TestCountActiveLeasesProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h := NewDynamicSecretHandler(freshCoreBrokenS30(t))
-	req := httptest.NewRequest(http.MethodGet, "/?config_id=1", nil)
-	w := httptest.NewRecorder()
-	h.CountActiveLeasesProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 // ── GroupHandler ──────────────────────────────────────────────────────────────
 
 // TestUpdateGroupProxy_DBError_S30 exercises UpdateGroupProxy's storage-error
@@ -293,44 +184,6 @@ func TestCountActiveLeasesProxy_DBError_S30(t *testing.T) {
 // authority resolution and UpdateGroup's own GetGroup lookup (a SELECT)
 // intact -- same technique as handlers_s13_connect_dynamic_test.go's
 // block_dynamic_config_update trigger.
-func TestUpdateGroupProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-
-	// Companion baseline: the IDENTICAL request/fixture shape, minus the
-	// trigger, must succeed -- this isolates the 500 below to the trigger
-	// itself, not the new authority check or some other storage bug that
-	// would also produce a non-200. clientSafe() redacts the response body
-	// down to a fixed generic string, so asserting on the trigger's own
-	// RAISE message isn't available; this before/after delta is the
-	// alternative proof.
-	baselineCS, baselineDB := freshCoreS12WithAdmin(t)
-	baselineH, err := NewGroupHandler(baselineCS)
-	require.NoError(t, err)
-	baselineGrp := &models.Group{Name: "s30-update-baseline", NameFolded: "s30-update-baseline"}
-	require.NoError(t, baselineDB.Create(baselineGrp).Error)
-	baselineReq := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPut, "/", bytes.NewBufferString(`{"name":"x"}`)), "id", fmt.Sprintf("%d", baselineGrp.ID)))
-	baselineW := httptest.NewRecorder()
-	baselineH.UpdateGroupProxy(baselineW, baselineReq)
-	require.Equal(t, http.StatusOK, baselineW.Code, "baseline (no trigger) must succeed: %s", baselineW.Body.String())
-
-	cs, db := freshCoreS12WithAdmin(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-	grp := &models.Group{Name: "s30-update-dberror", NameFolded: "s30-update-dberror"}
-	require.NoError(t, db.Create(grp).Error)
-	require.NoError(t, db.Exec(`
-		CREATE TRIGGER block_groups_update
-		BEFORE UPDATE ON groups
-		BEGIN
-			SELECT RAISE(ABORT, 'simulated write failure: disk quota exceeded on host db-07.internal');
-		END;
-	`).Error)
-	body := bytes.NewBufferString(`{"name":"x"}`)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPut, "/", body), "id", fmt.Sprintf("%d", grp.ID)))
-	w := httptest.NewRecorder()
-	h.UpdateGroupProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
 
 func TestCreateGroup_DBError_S30(t *testing.T) {
 	t.Parallel()
@@ -345,24 +198,4 @@ func TestCreateGroup_DBError_S30(t *testing.T) {
 
 // ── ShareHandler ──────────────────────────────────────────────────────────────
 
-func TestDeleteExpiredShareRecordsProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h, err := NewShareHandler(freshCoreBrokenS30(t))
-	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/", retentionBody())
-	w := httptest.NewRecorder()
-	h.DeleteExpiredShareRecordsProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 // ── UserHandler ───────────────────────────────────────────────────────────────
-
-func TestListUsersInStateBeforeProxy_DBError_S30(t *testing.T) {
-	t.Parallel()
-	h, err := NewUserHandler(freshCoreBrokenS30(t))
-	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodGet, "/?state=pending&before=2020-01-01T00:00:00Z", nil)
-	w := httptest.NewRecorder()
-	h.ListUsersInStateBeforeProxy(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}

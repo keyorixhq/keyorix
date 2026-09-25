@@ -8,9 +8,7 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"net/http/httptest"
 	"testing"
 
@@ -300,24 +298,3 @@ func TestRevokeSessions_UsersWriteHolderCanRevokeOrdinaryTargetSessions_RealServ
 // actor after this PR's authz.go change (the bypass-role fix in
 // requireEqualOrGreaterAdminAuthority applies to every caller of that
 // function, not just the new ones added here).
-func TestUpdateUserIfActiveStateMatchesProxy_StillRefusesUsersWriteOnlyHolder_RealServer(t *testing.T) {
-	cs, db := freshCoreS12WithAdmin(t)
-	h, err := NewUserHandler(cs)
-	require.NoError(t, err)
-	ctx := t.Context()
-
-	admin, err := cs.GetUserByUsername(ctx, "testuser_s12")
-	require.NoError(t, err)
-	attackerID := seedUsersWriteOnlyActor(t, db, "s1_attacker_f5_regression", "users.write")
-
-	body, err := json.Marshal(map[string]interface{}{
-		"username": admin.Username, "email": "f5-regression@evil.example",
-	})
-	require.NoError(t, err)
-	req := withChiParams(httptest.NewRequest("PUT", "/", bytes.NewReader(body)), map[string]string{"id": machineUintToStr(admin.ID)})
-	req = req.WithContext(context.WithValue(req.Context(), middleware.GetUserContextKey(), actorCtx(attackerID, "s1_attacker_f5_regression")))
-	w := httptest.NewRecorder()
-	h.UpdateUserIfActiveStateMatchesProxy(w, req)
-
-	assert.Equal(t, 403, w.Code, "F5's own fix must still refuse a users.write-only holder targeting the admin: %s", w.Body.String())
-}

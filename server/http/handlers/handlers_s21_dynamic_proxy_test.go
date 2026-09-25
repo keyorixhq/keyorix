@@ -1,17 +1,15 @@
-// handlers_s21_dynamic_proxy_test.go — coverage sweep targeting:
-//   - dynamic_secrets.go RevokeAllLeases (bad {id} param, config not found, valid)
-//   - legal_hold_proxy.go CreateLegalHoldProxy (bad JSON, missing reason, valid)
-//   - project_memberships_proxy.go CreateMembershipProxy (bad JSON, missing fields, valid)
+// handlers_s21_dynamic_proxy_test.go — coverage sweep for
+// dynamic_secrets.go RevokeAllLeases (bad {id} param, config not found, valid).
+// Its legal_hold_proxy.go and project_memberships_proxy.go coverage was removed
+// with the ADR-108 Phase 6 /system proxy tier deletion.
 package handlers
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
@@ -113,157 +111,6 @@ func TestRevokeAllLeases_Valid_S21(t *testing.T) {
 	h.RevokeAllLeases(w, req)
 
 	// With no active leases the call should succeed (0 revoked, 0 failed).
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp["success"].(bool))
-}
-
-// ── legal_hold_proxy.go: CreateLegalHoldProxy ────────────────────────────────
-
-// TestCreateLegalHoldProxy_BadJSON_S21 verifies that malformed JSON returns 400.
-func TestCreateLegalHoldProxy_BadJSON_S21(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewDashboardHandler(cs)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/legal-hold",
-		bytes.NewBufferString("not-json"))
-	w := httptest.NewRecorder()
-	h.CreateLegalHoldProxy(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_BODY")
-}
-
-// TestCreateLegalHoldProxy_MissingReason_S21 verifies that an empty Reason
-// field returns 400 with a descriptive message.
-func TestCreateLegalHoldProxy_MissingReason_S21(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewDashboardHandler(cs)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"placed_by": uint(1),
-		// reason deliberately omitted
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/legal-hold",
-		bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateLegalHoldProxy(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "reason is required")
-}
-
-// TestCreateLegalHoldProxy_Valid_S21 verifies the happy path: a well-formed
-// hold with a reason is persisted and the created row is returned.
-// TestCreateLegalHoldProxy_Valid_S21: CreateLegalHoldProxy now routes through
-// core.KeyorixCore.PlaceLegalHold (#G79), which requires an admin-tier
-// actor — seeded here via freshCoreS12WithAdmin + withUserCtx.
-func TestCreateLegalHoldProxy_Valid_S21(t *testing.T) {
-	cs, _ := freshCoreS12WithAdmin(t)
-	h := NewDashboardHandler(cs)
-
-	hold := models.LegalHold{
-		Reason:   "litigation hold Q3",
-		PlacedBy: 1,
-		PlacedAt: time.Now(),
-		Released: false,
-	}
-	body, err := json.Marshal(hold)
-	require.NoError(t, err)
-
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/system/legal-hold",
-		bytes.NewReader(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateLegalHoldProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp["success"].(bool))
-}
-
-// ── project_memberships_proxy.go: CreateMembershipProxy ──────────────────────
-
-// TestCreateMembershipProxy_BadJSON_S21 verifies that malformed JSON returns 400.
-func TestCreateMembershipProxy_BadJSON_S21(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewCatalogHandler(cs)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/project-memberships",
-		bytes.NewBufferString("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateMembershipProxy(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_BODY")
-}
-
-// TestCreateMembershipProxy_MissingFields_S21 verifies that missing required
-// fields (project_id, user_id, role, state) each individually return 400.
-func TestCreateMembershipProxy_MissingFields_S21(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewCatalogHandler(cs)
-
-	cases := []struct {
-		name string
-		body map[string]interface{}
-	}{
-		{"missing_project_id", map[string]interface{}{"user_id": 1, "role": "member", "state": "active"}},
-		{"missing_user_id", map[string]interface{}{"project_id": 1, "role": "member", "state": "active"}},
-		{"missing_role", map[string]interface{}{"project_id": 1, "user_id": 1, "state": "active"}},
-		{"missing_state", map[string]interface{}{"project_id": 1, "user_id": 1, "role": "member"}},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			b, _ := json.Marshal(tc.body)
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/system/project-memberships",
-				bytes.NewReader(b))
-			req.Header.Set("Content-Type", "application/json")
-			w := httptest.NewRecorder()
-			h.CreateMembershipProxy(w, req)
-
-			assert.Equal(t, http.StatusBadRequest, w.Code)
-			assert.Contains(t, w.Body.String(), "INVALID_BODY")
-		})
-	}
-}
-
-// TestCreateMembershipProxy_Valid_S21 verifies the happy path: a fully-formed
-// membership wire body is persisted and the wire row is returned.
-func TestCreateMembershipProxy_Valid_S21(t *testing.T) {
-	cs, db := freshCoreS12WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "s21-pm-project"}
-	require.NoError(t, db.Create(proj).Error)
-	user := &models.User{Username: "s21-pm-user", Email: "s21pm@example.com", AccountState: "active"}
-	require.NoError(t, db.Create(user).Error)
-	// FIX-1's requireGranterHoldsRolePermissions ceiling resolves the granted
-	// role by ID, so it must exist as a real row.
-	require.NoError(t, db.Create(&models.Role{Name: "member"}).Error)
-
-	wire := membershipProxyWire{
-		ProjectID: proj.ID,
-		UserID:    user.ID,
-		Role:      "member",
-		State:     "active",
-		InvitedBy: 1,
-		InvitedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	body, err := json.Marshal(wire)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/project-memberships",
-		bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateMembershipProxy(w, req)
-
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp map[string]interface{}
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))

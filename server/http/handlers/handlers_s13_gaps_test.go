@@ -28,12 +28,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 // ── helpers.go ────────────────────────────────────────────────────────────────
@@ -373,100 +370,18 @@ func TestRestoreEnvironment_NotFound_S13(t *testing.T) {
 // TestNewEnvironmentProxyWire_DeletedAt_S13 — covers the DeletedAt.Valid branch
 // in newEnvironmentProxyWire (the else path, where DeletedAt stays nil, is
 // exercised by every other proxy test; this test exercises the Valid=true path).
-func TestNewEnvironmentProxyWire_DeletedAt_S13(t *testing.T) {
-	now := time.Now().UTC()
-	env := &models.Environment{
-		ID:        42,
-		ProjectID: 7,
-		Name:      "old-env",
-	}
-	env.DeletedAt = gorm.DeletedAt{Time: now, Valid: true}
-
-	wire := newEnvironmentProxyWire(env)
-	require.NotNil(t, wire.DeletedAt)
-	assert.Equal(t, now.Unix(), wire.DeletedAt.Unix())
-	assert.Equal(t, uint(42), wire.ID)
-	assert.Equal(t, uint(7), wire.ProjectID)
-}
 
 // TestListEnvironmentsByProjectProxy_BadParam_S13 — non-numeric project id → 400.
-func TestListEnvironmentsByProjectProxy_BadParam_S13(t *testing.T) {
-	t.Parallel()
-	h := freshCatalogHandlerS13(t)
-	r := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "notanid")
-	w := httptest.NewRecorder()
-	h.ListEnvironmentsByProjectProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.False(t, resp.Success)
-}
 
 // TestListEnvironmentsByProjectProxy_IncludeDeleted_S13 — include_deleted=true branch.
-func TestListEnvironmentsByProjectProxy_IncludeDeleted_S13(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS12(t)
-	proj, err := cs.CreateProject(context.Background(), "proxy-incl-del-s13", "")
-	require.NoError(t, err)
-
-	h := NewCatalogHandler(cs)
-	r := withChiParam(
-		httptest.NewRequest(http.MethodGet, "/?include_deleted=true", nil),
-		"id", fmt.Sprintf("%d", proj.ID),
-	)
-	w := httptest.NewRecorder()
-	h.ListEnvironmentsByProjectProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.True(t, resp.Success)
-}
 
 // TestGetEnvironmentProxy_BadParam_S13 — non-numeric id → 400.
-func TestGetEnvironmentProxy_BadParam_S13(t *testing.T) {
-	t.Parallel()
-	h := freshCatalogHandlerS13(t)
-	r := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "notanid")
-	w := httptest.NewRecorder()
-	h.GetEnvironmentProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.False(t, resp.Success)
-}
 
 // TestGetEnvironmentProxy_NotFound_S13 — valid id that doesn't exist → 404.
-func TestGetEnvironmentProxy_NotFound_S13(t *testing.T) {
-	t.Parallel()
-	h := freshCatalogHandlerS13(t)
-	r := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "99999")
-	w := httptest.NewRecorder()
-	h.GetEnvironmentProxy(w, r)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.False(t, resp.Success)
-}
 
 // TestDeleteEnvironmentProxy_BadParam_S13 — non-numeric id → 400.
-func TestDeleteEnvironmentProxy_BadParam_S13(t *testing.T) {
-	t.Parallel()
-	h := freshCatalogHandlerS13(t)
-	r := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "notanid")
-	w := httptest.NewRecorder()
-	h.DeleteEnvironmentProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.False(t, resp.Success)
-}
 
 // TestDeleteEnvironmentProxy_NotFound_S13 — valid id that doesn't exist → 404.
-func TestDeleteEnvironmentProxy_NotFound_S13(t *testing.T) {
-	t.Parallel()
-	h := freshCatalogHandlerS13(t)
-	r := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "99999")
-	w := httptest.NewRecorder()
-	h.DeleteEnvironmentProxy(w, r)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.False(t, resp.Success)
-}
 
 // ── secrets_access_list.go ────────────────────────────────────────────────────
 

@@ -8,18 +8,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/internal/identity"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -699,32 +693,6 @@ func notificationToAPIInternal(n *notificationModel) map[string]any {
 
 // ── SSO state proxy — additional branches ─────────────────────────────────────
 
-func TestCreateSSOLoginStateProxy_HappyPath_S5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	// state carries a DB-level uniqueIndex (models.SSOLoginState.State); fold in
-	// a counter (see s4UniqueCounter) so a repeat invocation against the shared
-	// sharedS4Core DB doesn't collide with its own prior insert.
-	body, _ := json.Marshal(map[string]any{
-		"state":    fmt.Sprintf("teststate-%d", s4UniqueCounter.Add(1)),
-		"nonce":    "testnonce",
-		"provider": "google",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateSSOLoginStateProxy(w, req)
-	// should succeed 200 on happy path
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestConsumeSSOLoginStateProxy_NotFound_S5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"state":"nonexistent-state"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.ConsumeSSOLoginStateProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 // ── ImpersonationHandler.End — additional branches ────────────────────────────
 
 func TestImpersonationHandler_End_NotImpersonation_S5(t *testing.T) {
@@ -831,30 +799,6 @@ func TestAuditHandler_ExportAuditLogs_HappyPathS5(t *testing.T) {
 }
 
 // ── SSOLoginState proxy wire round-trip ───────────────────────────────────────
-
-func TestSSOLoginStateProxyWireRoundTrip(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Second)
-	w := ssoLoginStateProxyWire{
-		ID:        5,
-		State:     "abc123",
-		Nonce:     "nonce1",
-		Provider:  "okta",
-		ReturnTo:  "/dashboard",
-		ExpiresAt: now.Add(time.Hour),
-		CreatedAt: now,
-	}
-	m := w.toModel()
-	require.Equal(t, uint(5), m.ID)
-	require.Equal(t, "abc123", m.State)
-	require.Equal(t, "nonce1", m.Nonce)
-	require.Equal(t, "okta", m.Provider)
-
-	w2 := newSSOLoginStateProxyWire(m)
-	assert.Equal(t, w.ID, w2.ID)
-	assert.Equal(t, w.State, w2.State)
-	assert.Equal(t, w.Nonce, w2.Nonce)
-	assert.Equal(t, w.Provider, w2.Provider)
-}
 
 // ── UserHandler.GetUser ──────────────────────────────────────────────────────
 
@@ -1427,38 +1371,9 @@ func TestSecretHandler_GetSecretValueByRef_NoResolvedSecretInContextS5(t *testin
 
 // ── access_request_proxy.go — additional paths not yet in s4 ─────────────────
 
-func TestCreateAccessRequestProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	body := `{"project_id":1,"user_id":1,"state":"pending","reason":"need access"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateAccessRequestProxy(w, req)
-	// success or DB error → 200 or 500, not 400
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestUpdateAccessRequestProxy_ValidStateApproved(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"state":"approved"}`)), "id", "9999")
-	w := httptest.NewRecorder()
-	h.UpdateAccessRequestProxy(w, req)
-	// AR-001: UpdateAccessRequestProxy re-fetches the row before applying the
-	// transition, so row 9999 not existing is now a proper 404, not a silent
-	// updated=false 200.
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 // ── setup_tokens_proxy.go ──────────────────────────────────────────────────────
 // ConsumeSetupTokenProxy tests deleted -- #1579 liveness sweep, handler removed
 // (no live caller in either topology).
-
-func TestExpireSetupTokenProxy_BadIDS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.ExpireSetupTokenProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestExpireSetupTokenProxy_HappyPath: ExpireSetupTokenProxy now requires
 // users.write (global scope) -- #ExpireSetupToken (system-proxy-target-authority
@@ -1466,188 +1381,16 @@ func TestExpireSetupTokenProxy_BadIDS5(t *testing.T) {
 // sharedS4Core, so this uses the same s4AdminActorID/seedS4AdminActor/
 // withUserCtxID pattern other s4/s5/s9 tests needing admin authority against
 // that shared core already use (e.g. TestCatalogHandler_CreateSoDPolicyProxy_HappyPath).
-func TestExpireSetupTokenProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	seedS4AdminActor(t, h.coreService)
-	req := withUserCtxID(withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "9999"), s4AdminActorID, "s4admin")
-	w := httptest.NewRecorder()
-	h.ExpireSetupTokenProxy(w, req)
-	// row 9999 not found → expired: true (success)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCountSetupTokensSinceProxy_MissingParams(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.CountSetupTokensSinceProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCountSetupTokensSinceProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/?purpose=setup&subject_email=u@example.com&since=2020-01-01T00:00:00Z", nil)
-	w := httptest.NewRecorder()
-	h.CountSetupTokensSinceProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── access_review_campaigns_proxy.go — additional paths not in s4 ────────────
 
-func TestGetAccessReviewCampaignProxy_NotFoundS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "9999")
-	w := httptest.NewRecorder()
-	h.GetAccessReviewCampaignProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestGetOpenAccessReviewCampaignProxy_HappyPathS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.GetOpenAccessReviewCampaignProxy(w, req)
-	// no open campaign → 404 or 200 with empty
-	assert.NotEqual(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestGetLatestClosedAccessReviewCampaignProxy_HappyPathS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.GetLatestClosedAccessReviewCampaignProxy(w, req)
-	// no closed campaign → 404 or 200
-	assert.NotEqual(t, http.StatusInternalServerError, w.Code)
-}
-
 // ── SoD proxy ──────────────────────────────────────────────────────────────────
-
-func TestSoDProxy_GetSoDPolicyProxy_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.GetSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestSoDProxy_GetSoDPolicyProxy_NotFound(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "9999")
-	w := httptest.NewRecorder()
-	h.GetSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestSoDProxy_ListSoDPoliciesProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListSoDPoliciesProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestSoDProxy_CreateSoDPolicyProxy_BadJSON(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestSoDProxy_DeleteSoDPolicyProxy_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.DeleteSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // FIX-6 (#1645 403-for-both): no user context resolves actorID(r) to 0, which
 // is not admin-tier, so a nonexistent policy id gets the same denial as an
 // existing-but-foreign one -- see DeleteSoDPolicyProxy's doc comment.
-func TestSoDProxy_DeleteSoDPolicyProxy_NotFound(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "9999")
-	w := httptest.NewRecorder()
-	h.DeleteSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusForbidden, w.Code)
-}
 
 // ── webauthn_proxy.go ──────────────────────────────────────────────────────────
-
-func TestWebAuthnProxy_ListWebAuthnCredentialsProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/?user_id=9999", nil)
-	w := httptest.NewRecorder()
-	h.ListWebAuthnCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestWebAuthnProxy_ListWebAuthnCredentialsProxy_MissingUserID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListWebAuthnCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestWebAuthnProxy_AdvanceWebAuthnCredentialCounterProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.AdvanceWebAuthnCredentialCounterProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestWebAuthnProxy_AdvanceWebAuthnCredentialCounterProxy_MissingFields(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"sign_count":1}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.AdvanceWebAuthnCredentialCounterProxy(w, req)
-	// missing credential_id, user_id, new_blob → 400
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestWebAuthnProxy_UpdateWebAuthnCredentialProxy_BadID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)), "id", "bad")
-	w := httptest.NewRecorder()
-	h.UpdateWebAuthnCredentialProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestWebAuthnProxy_UpdateWebAuthnCredentialProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateWebAuthnCredentialProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestWebAuthnProxy_CountWebAuthnCredentialsProxy_MissingUserID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.CountWebAuthnCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestWebAuthnProxy_CountWebAuthnCredentialsProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/?user_id=9999", nil)
-	w := httptest.NewRecorder()
-	h.CountWebAuthnCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestWebAuthnProxy_CreateWebAuthnSessionProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateWebAuthnSessionProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ── access_review_campaigns.go ─────────────────────────────────────────────────
 
@@ -1879,22 +1622,6 @@ func TestDynamicSecretHandler_SetConfigEnabled_NotFoundS5(t *testing.T) {
 
 // ── misc_remote_proxy.go — CreateUserWithRoleGrantsProxy ──────────────────────
 
-func TestCreateUserWithRoleGrantsProxy_BadJSONS5(t *testing.T) {
-	h := newUserHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateUserWithRoleGrantsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCreateUserWithRoleGrantsProxy_MissingUsername(t *testing.T) {
-	h := newUserHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"username":""}`))
-	w := httptest.NewRecorder()
-	h.CreateUserWithRoleGrantsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── RBAC — GetUserRoles additional paths ──────────────────────────────────────
 
 func TestRBACHandler_GetUserRoles_BadIDS5(t *testing.T) {
@@ -1906,22 +1633,6 @@ func TestRBACHandler_GetUserRoles_BadIDS5(t *testing.T) {
 }
 
 // ── WebAuthn proxy — ListWebAuthnCredentialsProxy additional paths ─────────────
-
-func TestWebAuthnProxy_ListWebAuthnCredentialsProxy_BadUserID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/?user_id=bad", nil)
-	w := httptest.NewRecorder()
-	h.ListWebAuthnCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestWebAuthnProxy_CountWebAuthnCredentialsProxy_BadUserID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/?user_id=bad", nil)
-	w := httptest.NewRecorder()
-	h.CountWebAuthnCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ── shares_crud — RevokeShare ─────────────────────────────────────────────────
 
@@ -2103,30 +1814,6 @@ func TestCatalogHandler_ListProjects_HappyPathS5b(t *testing.T) {
 
 // ── break_glass_proxy.go ──────────────────────────────────────────────────────
 
-func TestBreakGlassProxy_GetActivation_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.GetBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestBreakGlassProxy_GetActivation_NotFound(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "9999")
-	w := httptest.NewRecorder()
-	h.GetBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestBreakGlassProxy_ListActivations_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListBreakGlassActivationsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // ── GroupHandler — UpdateGroup ────────────────────────────────────────────────
 
 func TestGroupHandler_UpdateGroup_Unauthorized(t *testing.T) {
@@ -2147,14 +1834,6 @@ func TestGroupHandler_UpdateGroup_BadJSON(t *testing.T) {
 }
 
 // ── dynamic_secrets_proxy.go — CountDynamicSecretConfigsByClassificationProxy ──
-
-func TestDynamicSecretConfigsByClassificationProxy_HappyPath(t *testing.T) {
-	h := NewDynamicSecretHandler(newHandlerCoreS4(t))
-	req := httptest.NewRequest(http.MethodGet, "/?classification=sensitive", nil)
-	w := httptest.NewRecorder()
-	h.CountDynamicSecretConfigsByClassificationProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── users_handler.go — package-level nil-handler fallback paths ───────────────
 
@@ -2391,59 +2070,7 @@ func TestUpdateSharePermission_NotFound(t *testing.T) {
 
 // ── break_glass_proxy.go — additional coverage ────────────────────────────────
 
-func TestBreakGlassProxy_ListActivations_MissingProjectIDS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListBreakGlassActivationsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestBreakGlassProxy_ListActivations_BadProjectIDS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=notanint", nil)
-	w := httptest.NewRecorder()
-	h.ListBreakGlassActivationsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestBreakGlassProxy_RevokeActivation_BadJSON(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "id", "1")
-	w := httptest.NewRecorder()
-	h.RevokeBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── sod_proxy.go — ListSoDPoliciesProxy happy path ───────────────────────────
-
-func TestCreateSoDPolicyProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	seedS4AdminActor(t, h.coreService)
-	body := `{"name":"policy-s5","permission_a":"secrets.read","permission_b":"secrets.write"}`
-	req := withUserCtxID(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), s4AdminActorID, "s4admin")
-	w := httptest.NewRecorder()
-	h.CreateSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestGetSoDPolicyProxy_HappyPath(t *testing.T) {
-	// Create then Get
-	h := newCatalogHandlerS4(t)
-	seedS4AdminActor(t, h.coreService)
-	body := `{"name":"get-test-s5","permission_a":"audit.read","permission_b":"secrets.read"}`
-	reqCreate := withUserCtxID(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), s4AdminActorID, "s4admin")
-	wCreate := httptest.NewRecorder()
-	h.CreateSoDPolicyProxy(wCreate, reqCreate)
-	require.Equal(t, http.StatusOK, wCreate.Code)
-
-	// GetSoDPolicyProxy with an invalid ID just returns bad-request
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.GetSoDPolicyProxy(w, req)
-	// ID 1 may not exist in fresh DB, but should be 200 or 404, not 400
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
 
 // ── impersonation — End handler ───────────────────────────────────────────────
 
@@ -2467,95 +2094,16 @@ func TestWriteAuditCheckpoint_Unauthorized(t *testing.T) {
 
 // ── webauthn_proxy.go — AdvanceWebAuthnCredentialCounterProxy happy path ──────
 
-func TestAdvanceWebAuthnCredentialCounterProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"credential_id":"AQID","user_id":1,"new_blob":"AQID"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.AdvanceWebAuthnCredentialCounterProxy(w, req)
-	// credential not found → not 400
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCountWebAuthnCredentialsProxy_HappyPathS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/?user_id=1", nil)
-	w := httptest.NewRecorder()
-	h.CountWebAuthnCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestUpdateWebAuthnCredentialProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	// #1714: this route only ever disables a credential on a clone signal —
-	// disabled:true is required, or the request is rejected before any lookup.
-	body := `{"user_id":1,"credential_id":"AQID","disabled":true}`
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateWebAuthnCredentialProxy(w, req)
-	// Not a bad-request (body + ID are well-formed; the credential itself may
-	// not exist in this shared test DB, which is a 404, not a 400).
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
 // TestUpdateWebAuthnCredentialProxy_RefusesMissingCredentialID is the #G79
 // regression: UpdateWebAuthnCredentialProxy previously accepted a body with no
 // credential_id/user_id at all — since this route is an unconditional
 // full-row Save (not a partial update), that would zero those columns on the
 // existing row rather than merely leave them unset. Must now be refused,
 // matching CreateWebAuthnCredentialProxy's own validation.
-func TestUpdateWebAuthnCredentialProxy_RefusesMissingCredentialID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"name":"attacker-renamed"}`
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateWebAuthnCredentialProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code, "a body missing user_id/credential_id must be refused")
-}
-
-func TestCreateWebAuthnSessionProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"user_id":1,"token_hash":"abc123","challenge":"AQID"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateWebAuthnSessionProxy(w, req)
-	// Either success or storage error — not bad-request
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
 
 // ── sso_state_proxy.go — CreateSSOLoginStateProxy happy path ─────────────────
 
-func TestCreateSSOLoginStateProxy_HappyPathS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"state":"abc","nonce":"xyz","provider":"oidc","return_to":"/","expires_at":"2099-01-01T00:00:00Z"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateSSOLoginStateProxy(w, req)
-	// Happy path or storage — not bad-request
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
 // ── access_request_proxy.go — UpdateAccessRequestProxy happy path ────────────
-
-func TestUpdateAccessRequestProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	body := `{"state":"approved","resolved_by":1}`
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "9999")
-	w := httptest.NewRecorder()
-	h.UpdateAccessRequestProxy(w, req)
-	// 9999 not found but state is valid → not 400
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCreateAccessRequestApprovalProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	body := `{"approver_id":1}`
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "id", "1")
-	w := httptest.NewRecorder()
-	h.CreateAccessRequestApprovalProxy(w, req)
-	// No constraint violation since request 1 may not exist → not 400
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
 
 // ── audit_anomaly.go — BadID path (no core service needed for BadID) ──────────
 
@@ -2604,30 +2152,6 @@ func TestCatalogHandler_RestoreEnvironment_BadProjectIDS5(t *testing.T) {
 
 // ── connect_grants_proxy.go — ListConnectRefGrantsProxy / ListConnectRefGrantsByConnectorProxy ──
 
-func TestListConnectRefGrantsProxy_HappyPathS5b(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListConnectRefGrantsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestListConnectRefGrantsByConnectorProxy_HappyPathS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "connector", "github")
-	w := httptest.NewRecorder()
-	h.ListConnectRefGrantsByConnectorProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestListConnectRefGrantsByConnectorProxy_MissingConnectorS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListConnectRefGrantsByConnectorProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── dynamic_secrets.go — ListConfigs happy path ─────────────────────────────
 
 func TestDynamicSecretHandler_ListConfigs_HappyPathS5(t *testing.T) {
@@ -2640,42 +2164,9 @@ func TestDynamicSecretHandler_ListConfigs_HappyPathS5(t *testing.T) {
 
 // ── dynamic_secrets_proxy.go — GetDynamicSecretLeaseProxy ───────────────────
 
-func TestGetDynamicSecretLeaseProxy_NotFoundS5(t *testing.T) {
-	h := NewDynamicSecretHandler(newHandlerCoreS4(t))
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "leaseID", "nonexistent-lease-id")
-	w := httptest.NewRecorder()
-	h.GetDynamicSecretLeaseProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 // ── groups_proxy.go — newGroupProxyWire helper path ──────────────────────────
 
-func TestGroupProxy_CreateGroup_HappyPath(t *testing.T) {
-	h := newGroupHandlerS4(t)
-	body := `{"name":"test-grp-s5","description":"s5 test group"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateGroupProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestGroupProxy_GetGroup_NotFound(t *testing.T) {
-	h := newGroupHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "9999")
-	w := httptest.NewRecorder()
-	h.GetGroupProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 // ── environment_catalog_proxy.go — newEnvironmentProxyWire coverage ──────────
-
-func TestListEnvironmentsProxy_HappyPathS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListEnvironmentsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── groups_members.go — RemoveGroupMember ────────────────────────────────────
 
@@ -2725,245 +2216,9 @@ func TestListAccessReviewCampaigns_BadIDS5(t *testing.T) {
 
 // ── machine_identities_proxy.go — happy paths ────────────────────────────────
 
-func TestCreateMachineIdentityProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	body := `{"name":"test-machine","project_id":1,"identity_type":"service","state":"active"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	req = withOIDCAdminCtxS21(t, h, req)
-	w := httptest.NewRecorder()
-	h.CreateMachineIdentityProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestGetMachineIdentityProxy_HappyPath(t *testing.T) {
-	// First create one so there is something to get.
-	h := newCatalogHandlerS4(t)
-	body := `{"name":"get-machine","project_id":1,"identity_type":"service","state":"active"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	req = withOIDCAdminCtxS21(t, h, req)
-	w := httptest.NewRecorder()
-	h.CreateMachineIdentityProxy(w, req)
-	require.Equal(t, http.StatusOK, w.Code)
-
-	// Now get it (ID=1 or any created ID).
-	req2 := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w2 := httptest.NewRecorder()
-	h.GetMachineIdentityProxy(w2, req2)
-	// May be 200 (found) or 404 (ID mismatch) — never 400.
-	assert.NotEqual(t, http.StatusBadRequest, w2.Code)
-}
-
-func TestListMachineIdentitiesProxy_HappyPathS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListMachineIdentitiesProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestListAllMachineIdentitiesProxy_HappyPathS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListAllMachineIdentitiesProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCountMachineIdentitiesByClassificationProxy_HappyPathS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.CountMachineIdentitiesByClassificationProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCreateMachineIdentityCredentialProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	// First create a machine identity to own the credential.
-	bodyMI := `{"name":"cred-owner-machine","project_id":1,"identity_type":"service","state":"active"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(bodyMI))
-	req = withOIDCAdminCtxS21(t, h, req)
-	w := httptest.NewRecorder()
-	h.CreateMachineIdentityProxy(w, req)
-	require.Equal(t, http.StatusOK, w.Code)
-
-	// token_hash carries a DB-level unique constraint; fold in a counter (see
-	// s4UniqueCounter) so a repeat invocation against the shared sharedS4Core DB
-	// doesn't collide with its own prior insert.
-	tokenHash := fmt.Sprintf("deadbeefdeadbeefdeadbeefdeadbeef%d", s4UniqueCounter.Add(1))
-	body := fmt.Sprintf(`{"machine_identity_id":1,"token_hash":%q,"name":"cred1"}`, tokenHash)
-	req2 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	req2 = withOIDCAdminCtxS21(t, h, req2)
-	w2 := httptest.NewRecorder()
-	h.CreateMachineIdentityCredentialProxy(w2, req2)
-	assert.Equal(t, http.StatusOK, w2.Code)
-}
-
-func TestListActiveMachineIdentityCredentialsProxy_HappyPathS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListActiveMachineIdentityCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCountMachineIdentityCredentialsByClassificationProxy_HappyPathS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.CountMachineIdentityCredentialsByClassificationProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestListMachineIdentityCredentialsProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.ListMachineIdentityCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestGetMachineRoleIDsAtProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodGet, "/?project_id=0&environment_id=0", nil),
-		"id", "1",
-	)
-	w := httptest.NewRecorder()
-	h.GetMachineRoleIDsAtProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestGetMachineRolesProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.GetMachineRolesProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestListOIDCBindingsProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.ListOIDCBindingsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestGetOIDCBindingByIDProxy_BadIDS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.GetOIDCBindingByIDProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestGetOIDCBindingByIDProxy_NotFound(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "999999")
-	w := httptest.NewRecorder()
-	h.GetOIDCBindingByIDProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestDeleteOIDCBindingProxy_BadIDS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.DeleteOIDCBindingProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestDeleteOIDCBindingProxy_NotFound(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "999999")
-	w := httptest.NewRecorder()
-	h.DeleteOIDCBindingProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestCreateOIDCBindingProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	// First create a machine identity to bind to.
-	bodyMI := `{"name":"oidc-machine","project_id":1,"identity_type":"service","state":"active"}`
-	req0 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(bodyMI))
-	req0 = withOIDCAdminCtxS21(t, h, req0)
-	w0 := httptest.NewRecorder()
-	h.CreateMachineIdentityProxy(w0, req0)
-	require.Equal(t, http.StatusOK, w0.Code)
-
-	body := `{"machine_identity_id":1,"issuer":"https://issuer.example.com","subject":"sub-123"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateOIDCBindingProxy(w, req)
-	// 200 on first insert, 409 on duplicate — both pass the format contract.
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestGetMachineByOIDCSubjectProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?issuer=https://example.com&subject=somesub", nil)
-	w := httptest.NewRecorder()
-	h.GetMachineByOIDCSubjectProxy(w, req)
-	// Returns 404 if nothing bound — never 400 for valid params.
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
 // ── retention_proxy.go — happy paths for all Before handlers ─────────────────
 
-func TestDeleteExpiredRoleGrantsProxy_HappyPath(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	body := `{"before":"` + time.Now().Add(time.Hour).Format(time.RFC3339) + `"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.DeleteExpiredRoleGrantsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestDeleteExpiredRoleGrantsProxy_BadJSON(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.DeleteExpiredRoleGrantsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestDeleteExpiredShareRecordsProxy_HappyPath(t *testing.T) {
-	h := newShareHandlerS4(t)
-	body := `{"before":"` + time.Now().Add(time.Hour).Format(time.RFC3339) + `"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.DeleteExpiredShareRecordsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestDeleteExpiredShareRecordsProxy_BadJSON(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.DeleteExpiredShareRecordsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── sso_state_proxy.go — SSO login state happy paths ─────────────────────────
-
-func TestConsumeSSOLoginStateProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-
-	// Create a state first so it can be consumed.
-	createBody := `{"state":"consumable-state","nonce":"n1","provider":"google","return_to":"/","expires_at":"` +
-		time.Now().Add(time.Hour).Format(time.RFC3339) + `"}`
-	req0 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody))
-	w0 := httptest.NewRecorder()
-	h.CreateSSOLoginStateProxy(w0, req0)
-	require.Equal(t, http.StatusOK, w0.Code)
-
-	body := `{"state":"consumable-state"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.ConsumeSSOLoginStateProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestConsumeSSOLoginStateProxy_SecondConsumeFails is the G80 documented-
 // exception re-verification sweep's regression test for the "holds" verdict on
@@ -2972,230 +2227,22 @@ func TestConsumeSSOLoginStateProxy_HappyPath(t *testing.T) {
 // just described as such. A second consume of the SAME state must fail — a
 // second success would mean the CAS isn't real and the state row could be
 // replayed.
-func TestConsumeSSOLoginStateProxy_SecondConsumeFails(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-
-	createBody := `{"state":"single-use-state","nonce":"n1","provider":"google","return_to":"/","expires_at":"` +
-		time.Now().Add(time.Hour).Format(time.RFC3339) + `"}`
-	req0 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(createBody))
-	w0 := httptest.NewRecorder()
-	h.CreateSSOLoginStateProxy(w0, req0)
-	require.Equal(t, http.StatusOK, w0.Code)
-
-	body := `{"state":"single-use-state"}`
-	req1 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w1 := httptest.NewRecorder()
-	h.ConsumeSSOLoginStateProxy(w1, req1)
-	require.Equal(t, http.StatusOK, w1.Code, "first consume must succeed")
-
-	req2 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w2 := httptest.NewRecorder()
-	h.ConsumeSSOLoginStateProxy(w2, req2)
-	assert.NotEqual(t, http.StatusOK, w2.Code,
-		"CEILING VIOLATED: a second consume of an already-consumed state must fail — the conditional DELETE "+
-			"this handler relies on for its single-use guarantee is not actually a CAS if this succeeds")
-}
 
 // ── mfa_management_proxy.go — happy paths ────────────────────────────────────
 
-func TestGetMFASecretProxy_NotFound(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/?user_id=9999", nil)
-	w := httptest.NewRecorder()
-	h.GetMFASecretProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestGetMFASecretProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	// Create a real user rather than the old synthetic user_id:42 (never backed
-	// by an actual row).
-	created, err := h.coreService.CreateUser(t.Context(), &core.CreateUserRequest{
-		Username: "s5getmfahappy", Email: "s5getmfahappy@example.com", DisplayName: "S5 MFA Happy", Password: "Notarealpassw0rd!",
-	})
-	require.NoError(t, err)
-	// Seed a secret directly via storage so there is something to get
-	// (UpsertMFASecretProxy was deleted -- G80 liveness sweep found no live
-	// caller; see docs/g80-remediation-notes.md).
-	require.NoError(t, h.coreService.Storage().UpsertMFASecret(context.Background(), &models.MFASecret{
-		UserID:    created.ID,
-		SecretEnc: []byte("hello"),
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/?user_id=%d", created.ID), nil)
-	w := httptest.NewRecorder()
-	h.GetMFASecretProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCountUnusedMFARecoveryCodesProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/?user_id=1", nil)
-	w := httptest.NewRecorder()
-	h.CountUnusedMFARecoveryCodesProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCountUnusedMFARecoveryCodesProxy_MissingUserID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.CountUnusedMFARecoveryCodesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── login_attempts_proxy.go — additional paths ───────────────────────────────
-
-func TestRecordLoginAttemptProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.RecordLoginAttemptProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestPruneLoginAttemptsProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.PruneLoginAttemptsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ── scheduler_lock_proxy.go — additional paths ───────────────────────────────
 
 // ── misc_remote_proxy.go — CreateUserWithRoleGrantsProxy ─────────────────────
 
-func TestCreateUserWithRoleGrantsProxy_HappyPath(t *testing.T) {
-	h := newUserHandlerS5(t)
-	body := `{"username":"newuser","email":"newuser@example.com","password_hash":"$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0","is_active":true,"account_state":"active","grants":[]}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateUserWithRoleGrantsProxy(w, req)
-	// 200 on success, 409 on duplicate email — both valid outcomes.
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCreateUserWithRoleGrantsProxy_MissingFieldsS5(t *testing.T) {
-	h := newUserHandlerS5(t)
-	body := `{"username":"partial"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateUserWithRoleGrantsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── project_memberships_proxy.go — additional happy paths ────────────────────
-
-func TestCountMembershipsByUsersProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?user_ids=1,2,3", nil)
-	w := httptest.NewRecorder()
-	h.CountMembershipsByUsersProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCreateMembershipProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	// FIX-1's requireGranterHoldsRolePermissions ceiling resolves the granted
-	// role by ID, so it must exist as a real row. sharedS4Core is a
-	// process-wide singleton reused across every s4/s5/s9 test (and across
-	// `-count=N` reruns), so create idempotently rather than assume this is
-	// the row's first creation.
-	if _, err := h.coreService.Storage().GetRoleByName(context.Background(), "member"); err != nil {
-		memberName, ferr := identity.NewFoldedName("member")
-		require.NoError(t, ferr)
-		_, cerr := h.coreService.Storage().CreateRole(context.Background(), memberName, "test-only role")
-		require.NoError(t, cerr)
-	}
-	body := `{"project_id":1,"user_id":1,"role":"member","state":"active"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateMembershipProxy(w, req)
-	// 200 or 409 (duplicate active membership) — not 400.
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
 
 // ── rbac_role_grants_proxy.go — additional happy paths ───────────────────────
 
-func TestAssignRoleWithExpiryProxy_HappyPath(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	body := `{"user_id":1,"role_id":1,"project_id":0,"environment_id":0}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.AssignRoleWithExpiryProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAssignRoleToGroupWithExpiryProxy_HappyPath(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	body := `{"group_id":1,"role_id":1,"project_id":0,"environment_id":0}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.AssignRoleToGroupWithExpiryProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRemoveAllProjectRoleGrantsProxy_HappyPath(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	body := `{"user_id":1,"project_id":1}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.RemoveAllProjectRoleGrantsProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestListGroupRoleAssignmentsProxy_HappyPath(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "groupID", "1")
-	w := httptest.NewRecorder()
-	h.ListGroupRoleAssignmentsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestListProjectRoleAssignmentsProxy_HappyPath(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=1&role_ids=1", nil)
-	w := httptest.NewRecorder()
-	h.ListProjectRoleAssignmentsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestGetGroupRoleGrantsProxy_HappyPath(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "groupID", "1")
-	w := httptest.NewRecorder()
-	h.GetGroupRoleGrantsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // ── project_catalog_proxy.go — additional paths ──────────────────────────────
 
-func TestDeleteProjectProxy_NotFound(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "999999")
-	w := httptest.NewRecorder()
-	h.DeleteProjectProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestDeleteProjectIfEmptyProxy_NotFound(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "999999")
-	w := httptest.NewRecorder()
-	h.DeleteProjectIfEmptyProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 // ── environment_catalog_proxy.go — additional paths ──────────────────────────
-
-func TestDeleteEnvironmentProxy_NotFoundS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "999999")
-	w := httptest.NewRecorder()
-	h.DeleteEnvironmentProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // UpdateRiskExceptionProxy was removed (#G79) — it accepted a client-supplied
 // full row with no auth/business-logic decision (the dual-control invariant
@@ -3204,120 +2251,17 @@ func TestDeleteEnvironmentProxy_NotFoundS5(t *testing.T) {
 
 // ── groups_proxy.go — additional paths ───────────────────────────────────────
 
-func TestListGroupsProxy_HappyPathS5(t *testing.T) {
-	h := newGroupHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListGroupsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRemoveGroupMemberProxy_HappyPathS5(t *testing.T) {
-	h := newGroupHandlerS4(t)
-	req := withChiParams(httptest.NewRequest(http.MethodDelete, "/", nil), map[string]string{"id": "1", "userId": "1"})
-	w := httptest.NewRecorder()
-	h.RemoveGroupMemberProxy(w, req)
-	// Not found is acceptable — group/member might not exist.
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
 // ── invitations_proxy.go — additional paths ──────────────────────────────────
-
-func TestListInvitationsProxy_MissingParams(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListInvitationsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ── secret_dependencies_proxy.go — additional paths ──────────────────────────
 
-func TestCreateSecretDependencyExclusiveProxy_MissingFields(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	h.CreateSecretDependencyExclusiveProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCreateSecretDependencyExclusiveProxy_HappyPath(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	body := `{"project_id":1,"dependent_secret_id":1,"depends_on_secret_id":2}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateSecretDependencyExclusiveProxy(w, req)
-	// #G79: crossReferenceSecretDependencyProxy refuses (400) when the
-	// referenced secrets don't actually exist/belong to project_id.
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestGetSecretDependencyProxy_NotFound(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "999999")
-	w := httptest.NewRecorder()
-	h.GetSecretDependencyProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 // ── setup_tokens_proxy.go — additional paths ─────────────────────────────────
-
-func TestSupersedeSetupTokensProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"purpose":"invite","subject_email":"user@example.com"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.SupersedeSetupTokensProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── legal_hold_proxy.go — additional paths ───────────────────────────────────
 
-func TestCreateLegalHoldProxy_HappyPathS5(t *testing.T) {
-	h := newDashboardHandlerS5(t)
-	// This body has no "placed_by", so a successful create leaves an active hold
-	// with PlacedBy=0 in the shared sharedS4Core DB — release it afterward so it
-	// doesn't leak into later tests (e.g. TestLiftLegalHold_NoActiveHold) or
-	// persist across a `-count=N` repeat of the whole binary.
-	t.Cleanup(func() { releaseActiveLegalHoldS4(t, h) })
-	body := `{"user_id":1,"secret_id":1,"reason":"compliance review"}`
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateLegalHoldProxy(w, req)
-	// 200 or 409 already-active — not bad-request.
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestGetActiveLegalHoldProxy_HappyPathS5(t *testing.T) {
-	h := newDashboardHandlerS5(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.GetActiveLegalHoldProxy(w, req)
-	// Returns 200 {active: false} when no hold is active.
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // ── break_glass_proxy.go — additional paths ──────────────────────────────────
 
-func TestRevokeBreakGlassActivationProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	body := `{"user_id":1,"revoked_by":1,"revoked_at":"` + time.Now().Format(time.RFC3339) + `"}`
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "id", "1")
-	w := httptest.NewRecorder()
-	h.RevokeBreakGlassActivationProxy(w, req)
-	// 200 or 404 depending on existence — not bad-request.
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
 // ── misc_remote_proxy.go — LastUser*ActivityProxy ─────────────────────────────
-
-func TestLastUserActivityProxy_HappyPath(t *testing.T) {
-	h := newUserHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.LastUserSecretActivityProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── sessions_remote.go — GetSessionByToken / DeleteSessionByID ────────────────
 
@@ -3356,194 +2300,29 @@ func TestDeleteSessionByIDRemote_HappyPath(t *testing.T) {
 
 // ── dynamic_secrets_proxy.go — additional paths ───────────────────────────────
 
-func TestGetMachineIdentityCredentialByHashProxy_NotFoundS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "hash", "nonexistenthash2")
-	w := httptest.NewRecorder()
-	h.GetMachineIdentityCredentialByHashProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestGetMachineIdentityCredentialByIDProxy_NotFound(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "999999")
-	w := httptest.NewRecorder()
-	h.GetMachineIdentityCredentialByIDProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 // ── access_request_proxy.go — additional paths ────────────────────────────────
 
-func TestGetAccessRequestProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.GetAccessRequestProxy(w, req)
-	// 200 (empty result) or 404 — not bad-request.
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestListAccessRequestApprovalsProxy_HappyPathS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.ListAccessRequestApprovalsProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
 // ── access_review_campaigns_proxy.go — additional paths ──────────────────────
-
-func TestGetAccessReviewCampaignProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.GetAccessReviewCampaignProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestGetAccessReviewItemProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "itemID", "1")
-	w := httptest.NewRecorder()
-	h.GetAccessReviewItemProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
 
 // ── sod_proxy.go — additional paths ──────────────────────────────────────────
 
 // ── connect_grants_proxy.go — ListConnectRefGrantsProxy ──────────────────────
 
-func TestListConnectRefGrantsProxy_HappyPathS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/?user_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListConnectRefGrantsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // ── dynamic_secrets_proxy.go — happy paths ───────────────────────────────────
 // CreateDynamicSecretConfigProxy test deleted -- #1580 liveness sweep,
 // handler removed (no live caller in either topology).
 
-func TestGetDynamicSecretConfigProxy_HappyPath(t *testing.T) {
-	h := newDynamicSecretHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.GetDynamicSecretConfigProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestGetDynamicSecretLeaseProxy_NotFoundS5b(t *testing.T) {
-	h := newDynamicSecretHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "leaseID", "nonexistent-lease-id-2")
-	w := httptest.NewRecorder()
-	h.GetDynamicSecretLeaseProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestListExpiredActiveLeasesProxy_HappyPathS5(t *testing.T) {
-	h := newDynamicSecretHandlerS4(t)
-	// Use time.UTC so RFC3339Nano produces a "Z" suffix — no "+" needing URL-encoding.
-	before := url.QueryEscape(time.Now().UTC().Format(time.RFC3339Nano))
-	req := httptest.NewRequest(http.MethodGet, "/?before="+before, nil)
-	w := httptest.NewRecorder()
-	h.ListExpiredActiveLeasesProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // ── environment_catalog_proxy.go — uncovered paths ───────────────────────────
-
-func TestDeleteEnvironmentProxy_NotFound(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "999999")
-	w := httptest.NewRecorder()
-	h.DeleteEnvironmentProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
 
 // ── access_review_campaigns_proxy.go — happy paths ───────────────────────────
 
-func TestListAccessReviewItemsProxy_HappyPathS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.ListAccessReviewItemsProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCountPendingAccessReviewItemsProxy_HappyPathS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.CountPendingAccessReviewItemsProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
 // ── access_request_proxy.go — uncovered paths ────────────────────────────────
-
-func TestListAccessRequestsProxy_HappyPathS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListAccessRequestsProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
 
 // ── misc_remote_proxy.go — ListSharesByUserProxy (already in s5 earlier) ─────
 
-func TestListSharesByUserProxy_MissingUserID(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListSharesByUserProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── retention_proxy.go — additional happy paths ──────────────────────────────
 
-func TestListUsersInStateBeforeProxy_HappyPath(t *testing.T) {
-	h := newUserHandlerS4(t)
-	before := url.QueryEscape(time.Now().UTC().Format(time.RFC3339Nano))
-	req := httptest.NewRequest(http.MethodGet, "/?state=deleted&before="+before, nil)
-	w := httptest.NewRecorder()
-	h.ListUsersInStateBeforeProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestListUsersInStateBeforeProxy_MissingState(t *testing.T) {
-	h := newUserHandlerS4(t)
-	before := url.QueryEscape(time.Now().UTC().Format(time.RFC3339Nano))
-	req := httptest.NewRequest(http.MethodGet, "/?before="+before, nil)
-	w := httptest.NewRecorder()
-	h.ListUsersInStateBeforeProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestListUsersInStateBeforeProxy_MissingBefore(t *testing.T) {
-	h := newUserHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?state=deleted", nil)
-	w := httptest.NewRecorder()
-	h.ListUsersInStateBeforeProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── login_attempts_proxy.go — additional paths ───────────────────────────────
-
-func TestRecordLoginAttemptProxy_BadJSONS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{bad`))
-	w := httptest.NewRecorder()
-	h.RecordLoginAttemptProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestPruneLoginAttemptsProxy_BadJSONS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodDelete, "/", strings.NewReader(`{bad`))
-	w := httptest.NewRecorder()
-	h.PruneLoginAttemptsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ── groups_proxy.go — happy paths for operations needing an existing group ────
 
@@ -3555,293 +2334,26 @@ func TestPruneLoginAttemptsProxy_BadJSONS5(t *testing.T) {
 // route, so this helper seeds the shared s4 core's fixed admin actor
 // (seedS4AdminActor / s4AdminActorID) and authenticates as it, same as
 // other s4 proxy-mutation tests.
-func createGroupForTest(t *testing.T, suffix string) uint {
-	t.Helper()
-	cs := newHandlerCoreS4(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-	seedS4AdminActor(t, cs)
-	body := `{"name":"s5-grp-` + suffix + `","description":"s5 test"}`
-	req := withUserCtxID(httptest.NewRequest("POST", "/", strings.NewReader(body)), s4AdminActorID, "s4admin")
-	w := httptest.NewRecorder()
-	h.CreateGroupProxy(w, req)
-	require.Equal(t, 200, w.Code, "createGroupForTest: unexpected status %d: %s", w.Code, w.Body.String())
-	var resp struct {
-		Data struct {
-			ID uint `json:"id"`
-		} `json:"data"`
-	}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	require.NotZero(t, resp.Data.ID)
-	return resp.Data.ID
-}
-
-func TestGetGroupProxy_HappyPath(t *testing.T) {
-	id := createGroupForTest(t, "get")
-	h := newGroupHandlerS4(t)
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", strconv.FormatUint(uint64(id), 10))
-	w := httptest.NewRecorder()
-	h.GetGroupProxy(w, req)
-	assert.Equal(t, 200, w.Code)
-}
-
-func TestUpdateGroupProxy_HappyPath(t *testing.T) {
-	id := createGroupForTest(t, "update")
-	h := newGroupHandlerS4(t)
-	body := `{"name":"s5-grp-update-renamed","description":"updated"}`
-	req := withUserCtxID(withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", strconv.FormatUint(uint64(id), 10)), s4AdminActorID, "s4admin")
-	w := httptest.NewRecorder()
-	h.UpdateGroupProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestDeleteGroupProxy_HappyPath(t *testing.T) {
-	id := createGroupForTest(t, "delete")
-	h := newGroupHandlerS4(t)
-	req := withUserCtxID(withChiParam(httptest.NewRequest("DELETE", "/", nil), "id", strconv.FormatUint(uint64(id), 10)), s4AdminActorID, "s4admin")
-	w := httptest.NewRecorder()
-	h.DeleteGroupProxy(w, req)
-	assert.Equal(t, 200, w.Code)
-}
-
-func TestRestoreGroupProxy_HappyPath(t *testing.T) {
-	id := createGroupForTest(t, "restore")
-	h := newGroupHandlerS4(t)
-	// First delete the group so restore has something to work with.
-	dReq := withUserCtxID(withChiParam(httptest.NewRequest("DELETE", "/", nil), "id", strconv.FormatUint(uint64(id), 10)), s4AdminActorID, "s4admin")
-	dW := httptest.NewRecorder()
-	h.DeleteGroupProxy(dW, dReq)
-	require.Equal(t, 200, dW.Code)
-	// Now restore.
-	req := withUserCtxID(withChiParam(httptest.NewRequest("POST", "/", nil), "id", strconv.FormatUint(uint64(id), 10)), s4AdminActorID, "s4admin")
-	w := httptest.NewRecorder()
-	h.RestoreGroupProxy(w, req)
-	assert.Equal(t, 200, w.Code)
-}
-
-func TestListGroupMembersProxy_HappyPath(t *testing.T) {
-	id := createGroupForTest(t, "listmembers")
-	h := newGroupHandlerS4(t)
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", strconv.FormatUint(uint64(id), 10))
-	w := httptest.NewRecorder()
-	h.ListGroupMembersProxy(w, req)
-	assert.Equal(t, 200, w.Code)
-}
-
-func TestGetUserGroupsProxy_HappyPathS5(t *testing.T) {
-	h := newGroupHandlerS4(t)
-	// User 1 was seeded by the shared DB; getting their groups succeeds even if empty.
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.GetUserGroupsProxy(w, req)
-	assert.Equal(t, 200, w.Code)
-}
-
-func TestGetUserGroupsProxy_BadIDS5(t *testing.T) {
-	h := newGroupHandlerS4(t)
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.GetUserGroupsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestListGroupMembersByIDsProxy_HappyPathS5(t *testing.T) {
-	id := createGroupForTest(t, "memberbyids")
-	h := newGroupHandlerS4(t)
-	req := httptest.NewRequest("GET", "/?ids="+strconv.FormatUint(uint64(id), 10), nil)
-	w := httptest.NewRecorder()
-	h.ListGroupMembersByIDsProxy(w, req)
-	assert.Equal(t, 200, w.Code)
-}
 
 // ── machine_identities_proxy.go — missing happy paths ────────────────────────
 
-func TestRevokeMachineIdentityCredentialProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest("POST", "/", strings.NewReader(`{"project_id":1}`)), "id", "1")
-	w := httptest.NewRecorder()
-	h.RevokeMachineIdentityCredentialProxy(w, req)
-	// Row may not exist → 404, but not bad-request.
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestGetOIDCBindingByIDProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.GetOIDCBindingByIDProxy(w, req)
-	// May not exist → 404, but not bad-request.
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestDeleteOIDCBindingProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest("DELETE", "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.DeleteOIDCBindingProxy(w, req)
-	// May not exist → 404, but not bad-request.
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
 // ── rbac_role_grants_proxy.go — missing happy paths ──────────────────────────
-
-func TestListProjectRoleAssignmentsProxy_HappyPathS5(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	req := httptest.NewRequest("GET", "/?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListProjectRoleAssignmentsProxy(w, req)
-	assert.Equal(t, 200, w.Code)
-}
-
-func TestListProjectMachineRoleAssignmentsProxy_HappyPathS5(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	req := httptest.NewRequest("GET", "/?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListProjectMachineRoleAssignmentsProxy(w, req)
-	assert.Equal(t, 200, w.Code)
-}
-
-func TestListProjectMachineRoleAssignmentsProxy_MissingProjectIDS5(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	req := httptest.NewRequest("GET", "/", nil)
-	w := httptest.NewRecorder()
-	h.ListProjectMachineRoleAssignmentsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ── sod_proxy.go — DeleteSoDPolicyProxy happy path ───────────────────────────
 
-func TestDeleteSoDPolicyProxy_NotFoundS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest("DELETE", "/", nil), "id", "99999")
-	w := httptest.NewRecorder()
-	h.DeleteSoDPolicyProxy(w, req)
-	// No such policy, and no user context (actorID 0, not admin-tier) → 403
-	// (FIX-6, #1645 403-for-both), not the 404 that would leak existence.
-	assert.Equal(t, http.StatusForbidden, w.Code)
-}
-
 // ── setup_tokens_proxy.go — missing happy paths ───────────────────────────────
-
-func TestGetSetupTokenByHashProxy_HappyPathS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	// hash is a chi URL param, not a query param.
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "hash", "nonexistent-hash-value")
-	w := httptest.NewRecorder()
-	h.GetSetupTokenByHashProxy(w, req)
-	// Not found → 404; not bad-request.
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestExpireSetupTokenProxy_HappyPathS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest("POST", "/", nil), "id", "99999")
-	w := httptest.NewRecorder()
-	h.ExpireSetupTokenProxy(w, req)
-	// Not found → 404; not bad-request.
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCountSetupTokensSinceProxy_MissingSubjectEmailS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	since := url.QueryEscape(time.Now().UTC().Format(time.RFC3339Nano))
-	req := httptest.NewRequest("GET", "/?purpose=setup&since="+since, nil)
-	w := httptest.NewRecorder()
-	h.CountSetupTokensSinceProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ── sso_state_proxy.go — ConsumeSSOLoginStateProxy (extra paths) ─────────────
 
-func TestConsumeSSOLoginStateProxy_MissingTokenS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	// state field is required; empty state → 400.
-	body := `{}`
-	req := httptest.NewRequest("POST", "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.ConsumeSSOLoginStateProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestConsumeSSOLoginStateProxy_NonexistentStateS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	// non-empty state that doesn't exist → 404.
-	body := `{"state":"nonexistent-state-xyz"}`
-	req := httptest.NewRequest("POST", "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.ConsumeSSOLoginStateProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
 // ── webauthn_proxy.go — missing happy path for ListWebAuthnCredentialsProxy ──
-
-func TestListWebAuthnCredentialsProxy_BadUserIDFormat(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest("GET", "/?user_id=bad", nil)
-	w := httptest.NewRecorder()
-	h.ListWebAuthnCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCountWebAuthnCredentialsProxy_BadUserIDFormat(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest("GET", "/?user_id=notanint", nil)
-	w := httptest.NewRecorder()
-	h.CountWebAuthnCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ── break_glass_proxy.go — GetBreakGlassActivationProxy happy path ───────────
 
-func TestGetBreakGlassActivationProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.GetBreakGlassActivationProxy(w, req)
-	// Not found → 404; not bad-request.
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
 // ── access_review_campaigns_proxy.go — CreateAccessReviewItemsProxy ──────────
-
-func TestCreateAccessReviewItemsProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	// campaign_id is a chi URL param; items is empty slice in the body.
-	body := `{"items":[]}`
-	req := withChiParam(httptest.NewRequest("POST", "/", strings.NewReader(body)), "id", "1")
-	w := httptest.NewRecorder()
-	h.CreateAccessReviewItemsProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCreateAccessReviewItemsProxy_BadJSONS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest("POST", "/", strings.NewReader("{bad")), "id", "1")
-	w := httptest.NewRecorder()
-	h.CreateAccessReviewItemsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ── access_request_proxy.go — GetAccessRequestProxy additional paths ──────────
 
-func TestGetAccessRequestProxy_HappyPathS5b(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", "99999")
-	w := httptest.NewRecorder()
-	h.GetAccessRequestProxy(w, req)
-	// Row may not exist → 404; not 400.
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
 // ── access_request_proxy.go — ListAccessRequestApprovalsProxy happy path ──────
-
-func TestListAccessRequestApprovalsProxy_HappyPath2(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.ListAccessRequestApprovalsProxy(w, req)
-	assert.Equal(t, 200, w.Code)
-}
 
 // ── rbac.go — happy paths for functions only tested at 401 level ─────────────
 
@@ -4148,15 +2660,6 @@ func TestPkgRemoveRole_BadJSON(t *testing.T) {
 }
 
 // ── rbac_role_grants_proxy.go — missing validation path ──────────────────────
-
-func TestRemoveAllProjectRoleGrantsProxy_ZeroIDs(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	// user_id=0 → validation error: "user_id and project_id are required"
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"user_id":0,"project_id":1}`))
-	w := httptest.NewRecorder()
-	h.RemoveAllProjectRoleGrantsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ── break_glass.go — RevokeBreakGlass happy path (service returns not-found) ─
 
@@ -5262,40 +3765,6 @@ func TestDynamicSecretHandler_SetConfigEnabled_NotFound_S5(t *testing.T) {
 }
 
 // ── groups_proxy.go — additional paths ───────────────────────────────────────
-
-func TestGroupsProxy_ListGroupsProxy_HappyPath_S5(t *testing.T) {
-	h := newGroupHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListGroupsProxy(w, req)
-	// Empty DB → not 500
-	assert.NotEqual(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestGroupsProxy_GetGroupProxy_HappyPath_S5(t *testing.T) {
-	h := newGroupHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "99999")
-	w := httptest.NewRecorder()
-	h.GetGroupProxy(w, req)
-	// Not found → not 400
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestGroupsProxy_CreateGroupProxy_BadJSON_S5(t *testing.T) {
-	h := newGroupHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateGroupProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestGroupsProxy_UpdateGroupProxy_BadJSON_S5(t *testing.T) {
-	h := newGroupHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateGroupProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ── project_members.go — additional paths ────────────────────────────────────
 

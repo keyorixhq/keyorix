@@ -75,36 +75,4 @@ func TestLiftLegalHold_NoHold_S13(t *testing.T) {
 
 // ── legal_hold_proxy.go: CreateLegalHoldProxy ────────────────────────────────
 
-func TestCreateLegalHoldProxy_BadJSON_S13(t *testing.T) {
-	h := newDashboardHandlerS13(t)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/legal-hold", strings.NewReader("{bad json"))
-	w := httptest.NewRecorder()
-	h.CreateLegalHoldProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCreateLegalHoldProxy_MissingReason_S13(t *testing.T) {
-	h := newDashboardHandlerS13(t)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/legal-hold", strings.NewReader(`{"placed_by":1}`))
-	w := httptest.NewRecorder()
-	h.CreateLegalHoldProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── legal_hold_proxy.go: UpdateLegalHoldProxy ────────────────────────────────
-
-func TestUpdateLegalHoldProxy_BadID_S13(t *testing.T) {
-	h := newDashboardHandlerS13(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)), "id", "notanumber")
-	w := httptest.NewRecorder()
-	h.UpdateLegalHoldProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestUpdateLegalHoldProxy_BadJSON_S13(t *testing.T) {
-	h := newDashboardHandlerS13(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateLegalHoldProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
