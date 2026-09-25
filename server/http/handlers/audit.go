@@ -4,6 +4,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"log"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -107,20 +109,42 @@ func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) { //
 		return
 	}
 
-	// Resolve actor usernames in bulk.
-	actorNames := h.coreService.ResolveUsernames(r.Context(), events)
+	entries := h.toAuditLogEntries(r.Context(), events)
 
+	totalPages := int(total)/pageSize + 1
+	if int(total)%pageSize == 0 && total > 0 {
+		totalPages = int(total) / pageSize
+	}
+
+	sendSuccess(w, map[string]interface{}{
+		"logs":        entries,
+		"page":        page,
+		"page_size":   pageSize,
+		"total":       total,
+		"total_pages": totalPages,
+	}, "")
+}
+
+// toAuditLogEntries converts raw audit events into the UI-oriented AuditLogEntry
+// wire shape, resolving actor IDs to human-readable usernames in bulk. Shared by
+// every route that returns audit events to a plain audit.read caller
+// (GetAuditLogs, SearchAuditLogs) so they can never drift apart on what gets
+// redacted — IPAddress and the tamper-evidence hash chain (PrevHash/EntryHash)
+// are deliberately never included here; AuditExportEntry (SIEM export) is the
+// one wire shape that carries the full-fidelity fields, and it is not reachable
+// merely by holding audit.read (see ExportAuditLogs's own gate).
+func (h *AuditHandler) toAuditLogEntries(ctx context.Context, events []*models.AuditEvent) []AuditLogEntry {
+	actorNames := h.coreService.ResolveUsernames(ctx, events)
 	entries := make([]AuditLogEntry, 0, len(events))
 	for _, e := range events {
 		var uid uint
 		if e.UserID != nil {
 			uid = *e.UserID
 		}
-		actor := actorNames[uid]
 		entry := AuditLogEntry{
 			ID:          e.ID,
 			EventType:   e.EventType,
-			Actor:       actor,
+			Actor:       actorNames[uid],
 			ActorType:   actorTypeOrDefault(e.ActorType),
 			Description: e.Description,
 			Timestamp:   e.EventTime,
@@ -139,19 +163,7 @@ func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) { //
 		}
 		entries = append(entries, entry)
 	}
-
-	totalPages := int(total)/pageSize + 1
-	if int(total)%pageSize == 0 && total > 0 {
-		totalPages = int(total) / pageSize
-	}
-
-	sendSuccess(w, map[string]interface{}{
-		"logs":        entries,
-		"page":        page,
-		"page_size":   pageSize,
-		"total":       total,
-		"total_pages": totalPages,
-	}, "")
+	return entries
 }
 
 // AuditExportEntry is the full-fidelity wire shape for SIEM ingestion. Unlike

@@ -3224,7 +3224,10 @@ paths:
     get:
       tags: [Secrets]
       summary: Show a secret's recent reads
-      description: Recent access-log entries -- who read it, when, from where.
+      description: >-
+        Recent access-log entries -- who read it, when, from where. The originating
+        IP/user-agent are included only for a caller who separately holds audit.read
+        (checked globally); every other secrets.read caller sees accessor/action/time only.
       operationId: getSecretAccessLog
       security: [{bearerAuth: []}]
       parameters:
@@ -4036,7 +4039,9 @@ paths:
         Returns the secret's full access history (secret.read audit events) as
         a downloadable file. Supports JSON (default) and CSV formats via the
         `format` query parameter. Gated by secrets.read at the secret's project
-        scope.
+        scope. Each row's ip_address is populated only for a caller who
+        separately holds audit.read (checked globally), matching GET
+        .../access-log's own gate; every other row field is unconditional.
       operationId: exportSecretAccessLog
       security: [{bearerAuth: []}]
       parameters:
@@ -5689,9 +5694,11 @@ paths:
       responses:
         '200':
           description: >-
-            Envelope {data, message}. data has events[] (each: id, event_type, actor,
-            actor_type, description, timestamp, ip_address, project_id, secret_id,
-            success) and total.
+            Envelope {data, message}. data has events[] -- the same shape GET
+            /audit/logs returns (each: id, event_type, actor, actor_type,
+            description, timestamp, optional diff, and impersonation /
+            impersonated_by / acting_as when impersonated; never ip_address or
+            the tamper-evidence hash chain) -- and total.
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -7321,14 +7328,19 @@ components:
     SecretAccessLogEntry:
       type: object
       description: >-
-        One read event from a secret's access log. Mirrors a GET
-        .../access-log entry (a PascalCase raw-model response, not
-        snake_case).
+        One read event from a secret's access log (server/http/handlers/secrets_access_history.go's
+        secretAccessLogEntry -- a snake_case DTO, not the raw internal/storage/models.SecretAccessLog).
+        ip_address/user_agent are present only when the caller separately holds audit.read
+        (see the route's own description); an ordinary secrets.read-only caller never
+        sees another user's originating IP.
       properties:
-        AccessedBy: {type: string}
-        Action: {type: string}
-        IPAddress: {type: string}
-        AccessTime: {type: string}
+        id: {type: integer}
+        secret_version_id: {type: integer}
+        accessed_by: {type: string}
+        action: {type: string}
+        access_time: {type: string, format: date-time}
+        ip_address: {type: string, description: "Only present for a caller who separately holds audit.read."}
+        user_agent: {type: string, description: "Only present for a caller who separately holds audit.read."}
     SecretAccessSchedule:
       type: object
       description: A secret's temporal access-window policy (internal/storage/models.SecretAccessSchedule -- properly snake_case-tagged, unlike SecretNode).

@@ -248,6 +248,54 @@ func TestSecretAccess_MatchesOldCLIOutputShape(t *testing.T) {
 	}
 }
 
+func TestSecretAccessLog_RequiresID(t *testing.T) {
+	secretAccessLogID = 0
+	if err := secretAccessLogCmd.RunE(secretAccessLogCmd, nil); err == nil {
+		t.Fatal("expected an error when --id is omitted")
+	}
+}
+
+// TestSecretAccessLog_OmitsIPWhenServerOmitsIt is the CLI-side counterpart to
+// the server fix in docs/findings/2026-09-25-FINDING-api-raw-model-exposure.md:
+// GET /api/v1/secrets/{id}/access-log now omits ip_address/user_agent entirely
+// for a caller who doesn't separately hold audit.read (the common case). The
+// CLI must render that row without erroring or printing a stale/garbage value.
+func TestSecretAccessLog_OmitsIPWhenServerOmitsIt(t *testing.T) {
+	srv := secretOpsServer(t, secretJSONRoute(http.MethodGet, "/api/v1/secrets/1/access-log",
+		`{"data":{"access_log":[{"id":9,"secret_version_id":1,"accessed_by":"bob","action":"secret.read","access_time":"2026-01-02T00:00:00Z"}],"total":1}}`))
+	setPATCreds(t, srv)
+	secretAccessLogID = 1
+	defer func() { secretAccessLogID = 0 }()
+
+	out := captureStdout(t, func() {
+		if err := secretAccessLogCmd.RunE(secretAccessLogCmd, nil); err != nil {
+			t.Fatalf("secretAccessLogCmd: %v", err)
+		}
+	})
+	if !containsAll(out, "bob", "secret.read", "2026-01-02") {
+		t.Fatalf("output missing expected fields, got: %q", out)
+	}
+}
+
+// TestSecretAccessLog_ShowsIPWhenServerIncludesIt confirms the audit.read-holder
+// case (ip_address present) still renders correctly.
+func TestSecretAccessLog_ShowsIPWhenServerIncludesIt(t *testing.T) {
+	srv := secretOpsServer(t, secretJSONRoute(http.MethodGet, "/api/v1/secrets/1/access-log",
+		`{"data":{"access_log":[{"id":9,"secret_version_id":1,"accessed_by":"bob","action":"secret.read","access_time":"2026-01-02T00:00:00Z","ip_address":"203.0.113.5","user_agent":"curl/8.0"}],"total":1}}`))
+	setPATCreds(t, srv)
+	secretAccessLogID = 1
+	defer func() { secretAccessLogID = 0 }()
+
+	out := captureStdout(t, func() {
+		if err := secretAccessLogCmd.RunE(secretAccessLogCmd, nil); err != nil {
+			t.Fatalf("secretAccessLogCmd: %v", err)
+		}
+	})
+	if !containsAll(out, "bob", "secret.read", "203.0.113.5") {
+		t.Fatalf("output missing expected fields, got: %q", out)
+	}
+}
+
 // ── schedule ────────────────────────────────────────────────────────────────────
 
 func TestSecretSetSchedule_RejectsInvalidDay(t *testing.T) {
