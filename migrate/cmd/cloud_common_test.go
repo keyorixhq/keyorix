@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/migrate/internal/cloudentry"
@@ -70,31 +71,88 @@ func TestBuildCloudPlanEntries_SanitizesNameAndExplodesField(t *testing.T) {
 	}
 }
 
-// TestSplitIntraBatchNameCollisions_SecondOfTwoSameNameEntriesIsConflict is the "name collision"
-// case: two source items in ONE run that sanitize to the same Keyorix secret name must never
-// both silently plan as Create — plan.BuildPlan alone cannot catch this (see this function's own
-// doc comment), so the cmd layer must.
-func TestSplitIntraBatchNameCollisions_SecondOfTwoSameNameEntriesIsConflict(t *testing.T) {
+// TestSplitIntraBatchNameCollisions_LowerSourceIDWinsRegardlessOfListOrder is the "name
+// collision" case: two source items in ONE run that sanitize to the same Keyorix secret name
+// must never both silently plan as Create — plan.BuildPlan alone cannot catch this (see this
+// function's own doc comment), so the cmd layer must. The winner is the entry with the
+// lexicographically lower SourceID ("sid-1" < "sid-2"), not whichever happened to appear first
+// in the input slice — this input already has the winner appearing first, the shuffled variant
+// below proves the winner doesn't flip when the input order does.
+func TestSplitIntraBatchNameCollisions_LowerSourceIDWinsRegardlessOfListOrder(t *testing.T) {
 	entries := []plan.Entry{
-		{Name: "foo", Value: "v1", SourceID: "sid-1"},
-		{Name: "foo", Value: "v2", SourceID: "sid-2"}, // e.g. a whole secret and its own split-json field colliding
-		{Name: "bar", Value: "v3", SourceID: "sid-3"},
+		{Name: "foo", Path: "path-1", Value: "v1", SourceID: "sid-1"},
+		{Name: "foo", Path: "path-2", Value: "v2", SourceID: "sid-2"}, // e.g. a whole secret and its own split-json field colliding
+		{Name: "bar", Path: "path-3", Value: "v3", SourceID: "sid-3"},
 	}
 	unique, collided := splitIntraBatchNameCollisions(entries)
 	if len(unique) != 2 {
-		t.Fatalf("unique = %+v, want 2 (first foo + bar)", unique)
+		t.Fatalf("unique = %+v, want 2 (winning foo + bar)", unique)
 	}
 	if len(collided) != 1 {
 		t.Fatalf("collided = %+v, want 1", collided)
 	}
 	if collided[0].Entry.SourceID != "sid-2" {
-		t.Errorf("collided[0] = %+v, want the SECOND foo (sid-2) flagged, first one wins", collided[0])
+		t.Errorf("collided[0] = %+v, want sid-2 flagged (sid-1 sorts lower, so it wins)", collided[0])
 	}
 	if collided[0].Outcome != plan.Conflict {
 		t.Errorf("collided[0].Outcome = %q, want Conflict", collided[0].Outcome)
 	}
-	if collided[0].Reason == "" {
-		t.Error("collided[0] has no Reason explaining the collision")
+	reason := collided[0].Reason
+	if reason == "" {
+		t.Fatal("collided[0] has no Reason explaining the collision")
+	}
+	if !strings.Contains(reason, "sid-1") || !strings.Contains(reason, "sid-2") {
+		t.Errorf("Reason = %q, want it to name BOTH colliding source items (sid-1 and sid-2)", reason)
+	}
+	if !strings.Contains(reason, "path-1") || !strings.Contains(reason, "path-2") {
+		t.Errorf("Reason = %q, want it to name both colliding items' source paths", reason)
+	}
+}
+
+// TestSplitIntraBatchNameCollisions_WinnerIsOrderIndependent is the determinism requirement: the
+// same set of entries, reshuffled into every input order, must always produce the same winner
+// (by SourceID) and the same set of flagged conflicts — "first wins" must not depend on a
+// source's own incidental List() order (map iteration, API pagination, provider concatenation
+// order), which is not guaranteed stable across runs.
+func TestSplitIntraBatchNameCollisions_WinnerIsOrderIndependent(t *testing.T) {
+	base := []plan.Entry{
+		{Name: "foo", Path: "path-b", Value: "v-b", SourceID: "sid-b"},
+		{Name: "foo", Path: "path-a", Value: "v-a", SourceID: "sid-a"}, // lexicographically lowest -- must always win
+		{Name: "foo", Path: "path-c", Value: "v-c", SourceID: "sid-c"},
+		{Name: "bar", Path: "path-d", Value: "v-d", SourceID: "sid-d"},
+	}
+	orderings := [][]int{
+		{0, 1, 2, 3},
+		{2, 0, 3, 1},
+		{3, 2, 1, 0},
+		{1, 3, 0, 2},
+	}
+	for _, order := range orderings {
+		shuffled := make([]plan.Entry, len(order))
+		for i, idx := range order {
+			shuffled[i] = base[idx]
+		}
+		unique, collided := splitIntraBatchNameCollisions(shuffled)
+
+		var winnerSourceID string
+		for _, e := range unique {
+			if e.Name == "foo" {
+				winnerSourceID = e.SourceID
+			}
+		}
+		if winnerSourceID != "sid-a" {
+			t.Errorf("order %v: winner = %q, want sid-a (lexicographically lowest) regardless of input order", order, winnerSourceID)
+		}
+		if len(collided) != 2 {
+			t.Fatalf("order %v: collided = %+v, want 2 (sid-b and sid-c both lose to sid-a)", order, collided)
+		}
+		gotCollidedIDs := map[string]bool{}
+		for _, c := range collided {
+			gotCollidedIDs[c.Entry.SourceID] = true
+		}
+		if !gotCollidedIDs["sid-b"] || !gotCollidedIDs["sid-c"] {
+			t.Errorf("order %v: collided source-ids = %v, want {sid-b, sid-c}", order, gotCollidedIDs)
+		}
 	}
 }
 

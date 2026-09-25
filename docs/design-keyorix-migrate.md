@@ -301,12 +301,20 @@ collision-detection logic via `cmd/cloud_common.go` rather than each re-deriving
   secret with no versions at all (`GetSecretVersion` returning `NotFound`) is its own skip
   reason rather than a hard error aborting the whole run.
 - **Intra-batch name collisions** (`cmd/cloud_common.go`'s `splitIntraBatchNameCollisions`): a
-  risk `--split-json` introduces that Vault never had (KV paths are unique by construction, so
-  two Vault entries in one `Walk` can never sanitize to the same target name) — two cloud source
-  items in the SAME run landing on the same sanitized Keyorix name. `plan.BuildPlan`'s per-item,
-  independent `LookupByName` calls cannot see this (both read not-found and each plan as
-  `Create`); the cmd layer detects it before calling `BuildPlan` and reports every occurrence
-  after the first as `conflict`, never a silent double-create.
+  risk `--split-json` introduces (two cloud source items in the SAME run landing on the same
+  sanitized Keyorix name) that turned out NOT to be Vault-specific once checked directly:
+  `sanitizeSecretName` collapses both `/` and a literal `-` to the same separator, so two
+  genuinely distinct Vault paths (e.g. `a/b/c` and `a/b-c`) can sanitize to the identical name —
+  "KV paths are unique by construction" is true and says nothing about their SANITIZED names also
+  being unique. `plan.BuildPlan`'s per-item, independent `LookupByName` calls cannot see either
+  case (both read not-found and each plan as `Create`); `cmd/vault.go`'s `runVault` now runs the
+  same guard `cmd/aws.go`/`cmd/azure.go`/`cmd/gcp.go` use, before calling `BuildPlan`, reporting
+  every occurrence after the deterministic winner (see below) as `conflict`, never a silent
+  double-create. The winner is chosen by sorting candidates on `SourceID` first, not by
+  whichever happened to appear first in the source's own list/walk order — that order is not
+  guaranteed stable run to run (a source's map iteration, an API's pagination, or Vault's own
+  KV tree walk order), so a winner that depended on it would make which of two colliding items
+  gets created and which gets flagged nondeterministic for identical input, merely reordered.
 - **Binary size is opt-out, not opt-in**: each provider's SDK is large enough to matter (GCP's
   gRPC + Google API dependency tree most of all — measured +14.4MB over the Vault-only 10.0MB
   baseline binary, vs. +4.0MB for AWS and +3.2MB for Azure). All three compile in by default
