@@ -24,7 +24,9 @@ var validateCmd = &cobra.Command{
 - Encryption key validation
 - Database accessibility
 
-This performs the same validation that runs on server startup.`,
+This performs the same validation that runs on server startup.
+
+Exit codes: 0 on success, 1 on any failure (see the printed error message).`,
 	RunE: runAdminValidate,
 }
 

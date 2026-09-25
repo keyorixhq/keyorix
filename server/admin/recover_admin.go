@@ -57,7 +57,9 @@ and every WebAuthn credential (forcing re-enrollment), clears any login-
 lockout state, and revokes every existing session. It never touches any
 other account, role, project, secret, or the KEK. Every use writes an
 audit-chain event and notifies every current admin, whether or not the
-server is running.`,
+server is running.
+
+Exit codes: 0 on success, 1 on any failure (see the printed error message).`,
 	RunE: runRecoverAdmin,
 }
 

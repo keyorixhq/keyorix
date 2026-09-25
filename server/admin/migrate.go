@@ -19,7 +19,10 @@ var migrateCmd = &cobra.Command{
 	Short: "Apply pending database migrations",
 	Long: `Opens the database via the same storage factory the server uses at boot,
 which applies any pending migration as an ordinary, idempotent side effect
-of opening. Does not start a listener.`,
+of opening. Does not start a listener.
+
+Exit codes: 0 on success (including a no-op run against an already-migrated
+database), 1 on any failure (see the printed error message).`,
 	RunE: runAdminMigrate,
 }
 

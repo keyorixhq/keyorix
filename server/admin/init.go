@@ -32,7 +32,9 @@ var initCmd = &cobra.Command{
 	Long: `Initialize the files a Keyorix server needs to start: the config file,
 encryption key directories, and an empty database file. Never starts a
 listener; run 'keyorix-server' (no subcommand) or 'keyorix-server admin
-migrate' afterward.`,
+migrate' afterward.
+
+Exit codes: 0 on success, 1 on any failure (see the printed error message).`,
 	RunE: runAdminInit,
 }
 

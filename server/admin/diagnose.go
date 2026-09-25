@@ -27,7 +27,11 @@ var diagnoseCmd = &cobra.Command{
 	Short: "Run the startup checks the server would run, and report which one fails",
 	Long: `Runs, in order, the same checks server startup depends on: config parse,
 encryption key (KEK/passphrase) access, database open, and migration state
--- reporting exactly which check fails and why, without starting a listener.`,
+-- reporting exactly which check fails and why, without starting a listener.
+
+Exit codes: 0 if every check reports [ OK ] or [WARN], 1 if any check
+reports [FAIL] (see the printed error message). A [WARN] (e.g. "not yet
+migrated") does NOT fail the command -- only a [FAIL] does.`,
 	RunE: runAdminDiagnose,
 }
 
