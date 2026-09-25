@@ -70,8 +70,7 @@ func (h *DashboardHandler) CreateRiskException(w http.ResponseWriter, r *http.Re
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"exception": exc}, "Risk exception recorded")
+	sendCreated(w, map[string]interface{}{"exception": exc}, "Risk exception recorded")
 }
 
 // ApproveRiskException handles POST /api/v1/risk-exceptions/{id}/approve — dual

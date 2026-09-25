@@ -84,8 +84,7 @@ func (h *ShareHandler) ShareSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	h.sendSuccess(w, shareRecord, i18n.T("SuccessSecretShared", nil))
+	sendCreated(w, shareRecord, i18n.T("SuccessSecretShared", nil))
 }
 
 // UpdateSharePermission handles PUT /api/v1/shares/{id}

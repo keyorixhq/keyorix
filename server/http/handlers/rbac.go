@@ -185,8 +185,7 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]any{"role": role, "permissions": assignedPerms}, "Role created successfully")
+	sendCreated(w, map[string]any{"role": role, "permissions": assignedPerms}, "Role created successfully")
 }
 
 // resolveAndAuthorizePermissions resolves each named permission and checks the actor
@@ -488,8 +487,7 @@ func (h *RBACHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]any{"user_id": req.UserID, "role_id": req.RoleID, "expires_at": req.ExpiresAt}, "Role assigned successfully")
+	sendCreated(w, map[string]any{"user_id": req.UserID, "role_id": req.RoleID, "expires_at": req.ExpiresAt}, "Role assigned successfully")
 }
 
 // RemoveRole handles DELETE /api/v1/user-roles
@@ -686,8 +684,7 @@ func (h *RBACHandler) AssignPermissionToRole(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]any{"role_id": roleID, "permission_id": body.PermissionID}, "Permission assigned successfully")
+	sendCreated(w, map[string]any{"role_id": roleID, "permission_id": body.PermissionID}, "Permission assigned successfully")
 }
 
 // RemovePermissionFromRole handles DELETE /api/v1/roles/{id}/permissions/{permissionId}
@@ -805,8 +802,7 @@ func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]any{"group_id": groupID, "role_id": body.RoleID, "expires_at": body.ExpiresAt}, "Role assigned to group successfully")
+	sendCreated(w, map[string]any{"group_id": groupID, "role_id": body.RoleID, "expires_at": body.ExpiresAt}, "Role assigned to group successfully")
 }
 
 // RemoveRoleFromGroup handles DELETE /api/v1/groups/{id}/roles/{roleId}
@@ -868,8 +864,7 @@ func CreateRole(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "ValidationError", errInvalidRequestData, http.StatusBadRequest, err)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]any{"name": req.Name}, "Role created successfully")
+	sendCreated(w, map[string]any{"name": req.Name}, "Role created successfully")
 }
 
 // GetRole returns a mock 200 for IDs in the predefined stub set, 404 otherwise.
@@ -935,8 +930,7 @@ func AssignRole(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "ValidationError", errInvalidRequestData, http.StatusBadRequest, err)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]any{"user_id": req.UserID, "role_id": req.RoleID}, "Role assigned successfully")
+	sendCreated(w, map[string]any{"user_id": req.UserID, "role_id": req.RoleID}, "Role assigned successfully")
 }
 
 func RemoveRole(w http.ResponseWriter, r *http.Request) {

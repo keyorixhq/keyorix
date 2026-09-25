@@ -72,8 +72,7 @@ func (h *SecretVersionCommentHandler) CreateComment(w http.ResponseWriter, r *ht
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"comment": comment}, "Comment created successfully")
+	sendCreated(w, map[string]interface{}{"comment": comment}, "Comment created successfully")
 }
 
 // ListComments handles GET /api/v1/secrets/{id}/versions/{versionId}/comments.

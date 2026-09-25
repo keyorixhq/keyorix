@@ -78,8 +78,7 @@ func (h *SecretTemplateHandler) Create(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, tmpl, "Secret template created")
+	sendCreated(w, tmpl, "Secret template created")
 }
 
 // List handles GET /api/v1/secret-templates.
