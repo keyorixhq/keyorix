@@ -860,7 +860,15 @@ audit:
 > if no anchor had been configured. It also fails closed (reported as an
 > unauthenticated, advisory-only anchor — see `verify-audit --help`) if the file's
 > signature does not verify under the checkpoint key supplied to that same run via
-> `--checkpoint-key-file`. See `docs/design-b4-offline-audit-verify.md` §10 Q5.
+> `--checkpoint-key-file`. The same fail-closed rule applies one level up: if
+> `--anchor` is not passed and the config FILE ITSELF exists but fails to load
+> (bad YAML, a permissions problem), that is also a hard exit-3 error, never a
+> silent fallback to "no anchor" — a config file that genuinely does not exist
+> is the only case tolerated without one (e.g. a `--db`-only offline host with
+> no config at all). Every report (human and `--json`) states which source
+> served the anchor via `anchor_source`: `"flag"`, `"config
+> (audit.offline_anchor_path)"`, or `"none"`. See
+> `docs/design-b4-offline-audit-verify.md` §10 Q5.
 
 ## jit_access_expiry
 

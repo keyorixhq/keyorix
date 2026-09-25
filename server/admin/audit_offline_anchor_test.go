@@ -18,6 +18,7 @@ package admin
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/keyorixhq/keyorix/internal/auditverify"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -190,4 +192,144 @@ func TestVerifyAudit_OfflineAnchor_ExplicitFlagOverridesConfig(t *testing.T) {
 
 	err := runVerifyAudit(nil, nil)
 	require.NoError(t, err, "the explicit --anchor flag must be used, not the nonexistent configured path")
+}
+
+// writeMalformedConfig overwrites cfgPath with syntactically-valid YAML that
+// config.Load nonetheless refuses: an unrecognized top-level key, rejected by
+// its KnownFields(true) decoder (internal/config/config.go's own documented
+// reason -- this is deliberately NOT a missing file, the case this test
+// suite must distinguish from).
+func writeMalformedConfig(t *testing.T, cfgPath string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(cfgPath, []byte("this_is_not_a_real_config_field: true\n"), 0600))
+}
+
+// runVerifyAuditCapturingJSON forces --json, runs verify-audit, and decodes
+// stdout into an auditverify.Result -- used to inspect Result.AnchorSource,
+// which runVerifyAudit's return value alone does not expose.
+func runVerifyAuditCapturingJSON(t *testing.T) (*auditverify.Result, error) {
+	t.Helper()
+	verifyAuditJSON = true
+	out, runErr := captureStdout(t, func() error { return runVerifyAudit(nil, nil) })
+	var result auditverify.Result
+	require.NoError(t, json.Unmarshal([]byte(out), &result), "verify-audit --json must always emit parseable JSON, got: %s", out)
+	return &result, runErr
+}
+
+// TestVerifyAudit_OfflineAnchor_ConfigPresentButUnloadable_NoAnchorFlag_FailsClosed
+// is the fix for the gap found in review of #2084: buildVerifyAuditOptions
+// used to take a bare *config.Config that was nil both when there was no
+// config file at all AND when a config file existed but failed to load --
+// collapsing "nothing to check" and "couldn't check" into the same silent
+// "no anchor" outcome. A config file that EXISTS but is broken must never be
+// silently treated as "operator didn't configure an anchor."
+func TestVerifyAudit_OfflineAnchor_ConfigPresentButUnloadable_NoAnchorFlag_FailsClosed(t *testing.T) {
+	resetVerifyAuditAndExportFlags(t)
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "keyorix.db")
+	seedCheckpointedDB(t, dbPath)
+
+	cfgPath := filepath.Join(dir, "keyorix.yaml")
+	writeMalformedConfig(t, cfgPath)
+	configPathFlag = cfgPath
+	verifyAuditKeyFile = writeOfflineAnchorTestKeyFile(t, dir)
+	// Deliberately no --anchor and no --db: this must fail before ever
+	// reaching openVerifyAuditTarget's own (separate, pre-existing) config
+	// error, so the assertion below is on buildVerifyAuditOptions's specific
+	// fail-closed message, not just "some exit-3 error occurred."
+
+	err := runVerifyAudit(nil, nil)
+	require.Error(t, err, "a present-but-unloadable config with no --anchor must be a hard error, never a silent no-anchor run")
+	require.Contains(t, err.Error(), "audit.offline_anchor_path could not be checked")
+
+	var ece *exitCodeError
+	require.ErrorAs(t, err, &ece)
+	require.Equal(t, 3, ece.code)
+}
+
+// TestVerifyAudit_OfflineAnchor_ConfigPresentButUnloadable_ExplicitAnchorFlag_StillVerifies
+// proves the fix doesn't overcorrect: an explicit --anchor must still work
+// even when config is broken, since it doesn't depend on config at all.
+// Uses --db so openVerifyAuditTarget also never touches the broken config.
+func TestVerifyAudit_OfflineAnchor_ConfigPresentButUnloadable_ExplicitAnchorFlag_StillVerifies(t *testing.T) {
+	resetVerifyAuditAndExportFlags(t)
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "keyorix.db")
+	seedCheckpointedDB(t, dbPath)
+
+	anchorPath := filepath.Join(dir, "checkpoint-export.json")
+	cfgPath := writeOfflineAnchorTestConfig(t, dir, dbPath, "") // valid config, no offline_anchor_path yet
+	configPathFlag = cfgPath
+	exportCheckpointOutput = anchorPath
+	require.NoError(t, runExportCheckpoint(nil, nil), "export-checkpoint must succeed while config is still valid")
+
+	// Now break the config -- simulating an operator whose config developed a
+	// problem sometime after the anchor was exported.
+	writeMalformedConfig(t, cfgPath)
+
+	verifyAuditDBPath = dbPath // bypasses openVerifyAuditTarget's config dependency entirely
+	verifyAuditAnchorFile = anchorPath
+	verifyAuditKeyFile = writeOfflineAnchorTestKeyFile(t, dir)
+
+	err := runVerifyAudit(nil, nil)
+	require.NoError(t, err, "an explicit --anchor must still verify even with a broken config, reason: %v", err)
+}
+
+// TestVerifyAudit_AnchorSourceReported covers the report contract itself
+// (design §10 Q5 addendum): Result.AnchorSource must be exactly "flag",
+// "config (audit.offline_anchor_path)", or "none" depending on how the
+// anchor bundle (or lack of one) was resolved.
+func TestVerifyAudit_AnchorSourceReported(t *testing.T) {
+	t.Run("flag", func(t *testing.T) {
+		resetVerifyAuditAndExportFlags(t)
+		dir := t.TempDir()
+		dbPath := filepath.Join(dir, "keyorix.db")
+		seedCheckpointedDB(t, dbPath)
+
+		anchorPath := filepath.Join(dir, "checkpoint-export.json")
+		configPathFlag = writeOfflineAnchorTestConfig(t, dir, dbPath, "") // no offline_anchor_path set
+		exportCheckpointOutput = anchorPath
+		require.NoError(t, runExportCheckpoint(nil, nil))
+
+		verifyAuditAnchorFile = anchorPath
+		verifyAuditKeyFile = writeOfflineAnchorTestKeyFile(t, dir)
+		result, err := runVerifyAuditCapturingJSON(t)
+		require.NoError(t, err)
+		require.Equal(t, anchorSourceFlag, result.AnchorSource)
+	})
+
+	t.Run("config", func(t *testing.T) {
+		resetVerifyAuditAndExportFlags(t)
+		dir := t.TempDir()
+		dbPath := filepath.Join(dir, "keyorix.db")
+		seedCheckpointedDB(t, dbPath)
+
+		anchorPath := filepath.Join(dir, "checkpoint-export.json")
+		configPathFlag = writeOfflineAnchorTestConfig(t, dir, dbPath, anchorPath)
+		exportCheckpointOutput = anchorPath
+		require.NoError(t, runExportCheckpoint(nil, nil))
+
+		// verifyAuditAnchorFile deliberately left empty.
+		verifyAuditKeyFile = writeOfflineAnchorTestKeyFile(t, dir)
+		result, err := runVerifyAuditCapturingJSON(t)
+		require.NoError(t, err)
+		require.Equal(t, anchorSourceConfig, result.AnchorSource)
+	})
+
+	t.Run("none, no config file, --db only", func(t *testing.T) {
+		resetVerifyAuditAndExportFlags(t)
+		dir := t.TempDir()
+		dbPath := filepath.Join(dir, "keyorix.db")
+		seedCheckpointedDB(t, dbPath)
+
+		// Never written -- exercises design §10 Q2's deliberately-tolerated
+		// "no config file at all" case, distinct from the malformed-config
+		// tests above.
+		configPathFlag = filepath.Join(dir, "never-written.yaml")
+		verifyAuditDBPath = dbPath
+
+		result, err := runVerifyAuditCapturingJSON(t)
+		require.NoError(t, err, "a --db run with no config file at all must still succeed (design §10 Q2)")
+		require.Equal(t, anchorSourceNone, result.AnchorSource)
+	})
 }

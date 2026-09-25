@@ -345,6 +345,29 @@ read into memory at once.
    precedence over a simultaneously-configured (and deliberately unwritten)
    config path (`ExplicitFlagOverridesConfig`).
 
+   **Addendum (review of #2084, 2026-09-25): "no config file" and "config file
+   present but unloadable" are different states and must not collapse into
+   the same silent outcome.** The first cut of `buildVerifyAuditOptions` took
+   a bare `*config.Config`, already `nil` in both cases — so an operator who
+   genuinely set `audit.offline_anchor_path`, but whose config later developed
+   a typo, bad permissions, or any other load failure, got a **silent**
+   downgrade to a bare re-walk with no anchor and no indication why. Fixed via
+   `configLoadState` (`server/admin/audit_verify.go`): an independent
+   `os.Stat` on the resolved config path (mirroring `runAdminAudit`'s own
+   resolution) tags the `loadConfig()` result as `fileMissing` or not.
+   `resolveOfflineAnchor` then only tolerates a load failure when the file
+   was genuinely absent (§10 Q2's case); a present-but-broken config with no
+   `--anchor` passed is now a hard exit-3 error naming the load failure,
+   never a silent "none." An explicit `--anchor` still resolves regardless,
+   since it never depended on config. `Result` also gained `AnchorSource`
+   (`"flag"` / `"config (audit.offline_anchor_path)"` / `"none"`), reported in
+   both the human report and `--json`, so a run discloses which source
+   actually served its anchor rather than leaving that implicit. Tests:
+   `TestVerifyAudit_OfflineAnchor_ConfigPresentButUnloadable_NoAnchorFlag_FailsClosed`,
+   its `_ExplicitAnchorFlag_StillVerifies` counterpart (proving the fix
+   doesn't overcorrect), and `TestVerifyAudit_AnchorSourceReported`'s three
+   subtests (flag/config/none).
+
 ## Effort estimate
 
 - `internal/auditverify` package (DB access, duplicated hash/HMAC + parity
