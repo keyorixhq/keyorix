@@ -26,11 +26,8 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"authPasswordReset":                  reasonSchemaNotYetWritten, // post /auth/password-reset
 	"changePassword":                     reasonSchemaNotYetWritten, // post /api/v1/auth/change-password
 	"closeAccessReviewCampaign":          reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close
-	"cloneEnvironment":                   reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/environments/{envId}/clone
 	"createAccessRequest":                reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-requests
 	"createGlobalInvitation":             reasonSchemaNotYetWritten, // post /api/v1/invitations
-	"createProject":                      reasonSchemaNotYetWritten, // post /api/v1/projects
-	"createProjectEnvironment":           reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/environments
 	"createRiskException":                reasonSchemaNotYetWritten, // post /api/v1/risk-exceptions
 	"createRole":                         reasonSchemaNotYetWritten, // post /api/v1/roles
 	"createSecretAccessRequest":          reasonSchemaNotYetWritten, // post /api/v1/secret-access-requests
@@ -56,7 +53,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getLegalHold":                       reasonSchemaNotYetWritten, // get /api/v1/legal-hold
 	"getMostAccessedSecrets":             reasonSchemaNotYetWritten, // get /api/v1/secrets/usage/most-accessed
 	"getPermission":                      reasonSchemaNotYetWritten, // get /api/v1/permissions/{id}
-	"getProject":                         reasonSchemaNotYetWritten, // get /api/v1/projects/{id}
 	"getProjectAccessReview":             reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-review
 	"getProjectDrift":                    reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/drift
 	"getProjectHealth":                   reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/health
@@ -79,7 +75,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"listAccessReviewCampaigns":          reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-review/campaigns
 	"listAnomalyAlerts":                  reasonSchemaNotYetWritten, // get /api/v1/audit/anomalies
 	"listAuditLogs":                      reasonSchemaNotYetWritten, // get /api/v1/audit/logs
-	"listEnvironments":                   reasonSchemaNotYetWritten, // get /api/v1/environments
 	"listNotifications":                  reasonSchemaNotYetWritten, // get /api/v1/notifications
 	"listPermissions":                    reasonSchemaNotYetWritten, // get /api/v1/permissions
 	"listProjectMembers":                 reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/members
@@ -119,7 +114,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"transitionMachineIdentity":          reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/machine-identities/{machineId}
 	"transitionMembership":               reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/memberships/{membershipId}
 	"updateAuthProfile":                  reasonSchemaNotYetWritten, // put /api/v1/auth/profile
-	"updateProject":                      reasonSchemaNotYetWritten, // put /api/v1/projects/{id}
 	"updateProjectMember":                reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/members/{userId}
 	"updateRole":                         reasonSchemaNotYetWritten, // put /api/v1/roles/{id}
 	"updateRotationPolicy":               reasonSchemaNotYetWritten, // put /api/v1/rotation-policies/{id}
@@ -251,6 +245,14 @@ var exercisingTests = map[string][]string{
 	"listProjects":          {"TestContractPR2_ListProjects"},
 	"machineTokenHygiene":   {"TestContractPR2_MachineTokenHygiene"},
 	"patHygiene":            {"TestContractPR2_PATHygiene"},
+	// API-hygiene casing campaign, PR C2 (catalog: Projects/Environments) --
+	// openapi_contract_apihygiene_catalog_test.go.
+	"getProject":               {"TestContractAPIHygiene_GetProject"},
+	"createProject":            {"TestContractAPIHygiene_CreateProject"},
+	"updateProject":            {"TestContractAPIHygiene_UpdateProject"},
+	"listEnvironments":         {"TestContractAPIHygiene_ListEnvironments"},
+	"createProjectEnvironment": {"TestContractAPIHygiene_CreateProjectEnvironment"},
+	"cloneEnvironment":         {"TestContractAPIHygiene_CloneEnvironment"},
 	// docs/cli-split-inventory.md §7 PR 4 (secret core CRUD + metadata) --
 	// openapi_contract_pr4_test.go.
 	"addSecretDependency":       {"TestContractPR4_AddSecretDependency"},

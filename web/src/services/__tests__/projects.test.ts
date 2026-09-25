@@ -30,20 +30,20 @@ describe('PROJECT_ROLES', () => {
 });
 
 describe('projectsApi.list', () => {
-    it('fetches without include_deleted by default and normalizes Go-serialized fields', async () => {
+    it('fetches without include_deleted by default and normalizes project fields', async () => {
         mocked.get.mockResolvedValueOnce({
             data: {
                 data: {
                     projects: [
                         {
-                            ID: 1,
-                            Name: 'alpha',
-                            Description: 'desc',
-                            SecretCount: 3,
-                            EnvironmentCount: 2,
-                            CreatedAt: '2024-01-01',
-                            UpdatedAt: '2024-01-02',
-                            RequireMFA: true,
+                            id: 1,
+                            name: 'alpha',
+                            description: 'desc',
+                            secret_count: 3,
+                            environment_count: 2,
+                            created_at: '2024-01-01',
+                            updated_at: '2024-01-02',
+                            require_mfa: true,
                         },
                     ],
                 },
@@ -60,7 +60,7 @@ describe('projectsApi.list', () => {
                 description: 'desc',
                 secretCount: 3,
                 environmentCount: 2,
-                lastActivity: '2024-01-02', // falls back to UpdatedAt when last_activity is absent
+                lastActivity: '2024-01-02', // falls back to updated_at when last_activity is absent
                 createdAt: '2024-01-01',
                 updatedAt: '2024-01-02',
                 deleted: false,
@@ -104,9 +104,9 @@ describe('projectsApi.list', () => {
         await expect(projectsApi.list()).resolves.toEqual([]);
     });
 
-    it('prefers snake_case last_activity over the UpdatedAt fallback when both are present', async () => {
+    it('prefers last_activity over the updated_at fallback when both are present', async () => {
         mocked.get.mockResolvedValueOnce({
-            data: { data: { projects: [{ id: 1, name: 'x', last_activity: '2024-05-01', UpdatedAt: '2024-01-02' }] } },
+            data: { data: { projects: [{ id: 1, name: 'x', last_activity: '2024-05-01', updated_at: '2024-01-02' }] } },
         });
 
         const result = await projectsApi.list();
@@ -136,9 +136,9 @@ describe('projectsApi.restoreEnvironment', () => {
 });
 
 describe('projectsApi.get', () => {
-    it('unwraps data.data and normalizes Go-serialized fields', async () => {
+    it('unwraps data.data and normalizes project fields', async () => {
         mocked.get.mockResolvedValueOnce({
-            data: { data: { ID: 9, Name: 'gamma', RequireMFA: false } },
+            data: { data: { id: 9, name: 'gamma', require_mfa: false } },
         });
 
         const result = await projectsApi.get(9);
@@ -171,7 +171,7 @@ describe('projectsApi.get', () => {
 
 describe('projectsApi.create', () => {
     it('posts the payload and normalizes the created project from data.data', async () => {
-        mocked.post.mockResolvedValueOnce({ data: { data: { ID: 11, Name: 'epsilon' } } });
+        mocked.post.mockResolvedValueOnce({ data: { data: { id: 11, name: 'epsilon' } } });
         const payload = { name: 'epsilon', description: 'new project' };
 
         const result = await projectsApi.create(payload);
@@ -202,13 +202,13 @@ describe('projectsApi.delete', () => {
 });
 
 describe('projectsApi.listEnvironments', () => {
-    it('fetches without include_deleted by default and normalizes Go-serialized fields', async () => {
+    it('fetches without include_deleted by default and normalizes environment fields', async () => {
         mocked.get.mockResolvedValueOnce({
             data: {
                 data: {
                     environments: [
-                        { ID: 1, Name: 'production', ProjectID: 9, DeletedAt: null },
-                        { ID: 2, Name: 'staging', ProjectID: 9, DeletedAt: '2024-01-01' },
+                        { id: 1, name: 'production', project_id: 9, deleted_at: null },
+                        { id: 2, name: 'staging', project_id: 9, deleted_at: '2024-01-01' },
                     ],
                 },
             },

@@ -17647,8 +17647,12 @@ func (r ListProjectsResponse) StatusCode() int {
 type CreateProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON401      *Error
+	JSON201      *struct {
+		// Data A project (internal/storage/models.Project), via the handler-level projectWire type (server/http/handlers/catalog_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
+		Data *Project `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -18077,8 +18081,12 @@ func (r ListProjectEnvironmentsResponse) StatusCode() int {
 type CreateProjectEnvironmentResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON401      *Error
+	JSON201      *struct {
+		// Data A project environment (internal/storage/models.Environment), via the handler-level environmentWire type (server/http/handlers/catalog_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
+		Data *Environment `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -18100,10 +18108,14 @@ func (r CreateProjectEnvironmentResponse) StatusCode() int {
 type CloneEnvironmentResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON401      *Error
-	JSON403      *Error
-	JSON404      *Error
+	JSON200      *struct {
+		// Data The result of cloning one environment's secrets into another (internal/core.EnvCloneResult), via the handler-level envCloneResultWire type (server/http/handlers/catalog_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
+		Data *EnvCloneResult `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -27652,6 +27664,16 @@ func ParseCreateProjectResponse(rsp *http.Response) (*CreateProjectResponse, err
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			// Data A project (internal/storage/models.Project), via the handler-level projectWire type (server/http/handlers/catalog_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
+			Data *Project `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -28402,6 +28424,16 @@ func ParseCreateProjectEnvironmentResponse(rsp *http.Response) (*CreateProjectEn
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			// Data A project environment (internal/storage/models.Environment), via the handler-level environmentWire type (server/http/handlers/catalog_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
+			Data *Environment `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -28435,6 +28467,16 @@ func ParseCloneEnvironmentResponse(rsp *http.Response) (*CloneEnvironmentRespons
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			// Data The result of cloning one environment's secrets into another (internal/core.EnvCloneResult), via the handler-level envCloneResultWire type (server/http/handlers/catalog_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
+			Data *EnvCloneResult `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

@@ -474,13 +474,23 @@ type DynamicSecretLease struct {
 // DynamicSecretLeaseStatus defines model for DynamicSecretLease.Status.
 type DynamicSecretLeaseStatus string
 
-// Environment A project environment (internal/storage/models.Environment). No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, Name, CreatedAt, UpdatedAt), not snake_case. Unlike Permission/RoleWithPermissions above, ProjectID/CreatedAt/UpdatedAt do NOT case-insensitively match a snake_case tag (the underscore makes "project_id" a different string from "projectid"), so a generated client MUST use these exact capitalized property names to decode correctly.
+// EnvCloneResult The result of cloning one environment's secrets into another (internal/core.EnvCloneResult), via the handler-level envCloneResultWire type (server/http/handlers/catalog_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
+type EnvCloneResult struct {
+	DestEnv        *string   `json:"dest_env,omitempty"`
+	Errors         *[]string `json:"errors,omitempty"`
+	SecretsCloned  *int      `json:"secrets_cloned,omitempty"`
+	SecretsSkipped *int      `json:"secrets_skipped,omitempty"`
+	SourceEnv      *string   `json:"source_env,omitempty"`
+}
+
+// Environment A project environment (internal/storage/models.Environment), via the handler-level environmentWire type (server/http/handlers/catalog_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
 type Environment struct {
-	CreatedAt *time.Time `json:"CreatedAt,omitempty"`
-	ID        *int       `json:"ID,omitempty"`
-	Name      *string    `json:"Name,omitempty"`
-	ProjectID *int       `json:"ProjectID,omitempty"`
-	UpdatedAt *time.Time `json:"UpdatedAt,omitempty"`
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	DeletedAt *time.Time `json:"deleted_at"`
+	Id        *int       `json:"id,omitempty"`
+	Name      *string    `json:"name,omitempty"`
+	ProjectId *int       `json:"project_id,omitempty"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
 // ExpiringSecretEntry defines model for ExpiringSecretEntry.
@@ -668,6 +678,17 @@ type PermissionMatrixRow struct {
 
 // PermissionMatrixRowScope defines model for PermissionMatrixRow.Scope.
 type PermissionMatrixRowScope string
+
+// Project A project (internal/storage/models.Project), via the handler-level projectWire type (server/http/handlers/catalog_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
+type Project struct {
+	CreatedAt   *time.Time `json:"created_at,omitempty"`
+	DeletedAt   *time.Time `json:"deleted_at"`
+	Description *string    `json:"description,omitempty"`
+	Id          *int       `json:"id,omitempty"`
+	Name        *string    `json:"name,omitempty"`
+	RequireMfa  *bool      `json:"require_mfa,omitempty"`
+	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
+}
 
 // ProjectInvitation A project invitation (ADR-024, internal/storage/models.ProjectInvitation). No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, Email, ...), not snake_case. As with Environment above, the multi-word field names here do not case-insensitively match a snake_case tag, so a generated client must use these exact property names.
 type ProjectInvitation struct {

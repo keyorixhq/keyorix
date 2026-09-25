@@ -219,6 +219,19 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		"getUsageReport":       true,
 		"getBillingReport":     true,
 		"migrateUserToMachine": true,
+		// API-hygiene casing campaign, PR C2 (catalog: Projects/Environments):
+		// these 6 backfilled schemas for previously-schema-less routes whose
+		// handlers were sending internal/storage/models.Project/Environment (and
+		// internal/core.EnvCloneResult) straight to the wire with no json tags at
+		// all -- fixed to go through the handler-level projectWire/environmentWire/
+		// envCloneResultWire types (catalog_wire.go). Each is exercised via
+		// openapi_contract_apihygiene_catalog_test.go.
+		"getProject":               true,
+		"createProject":            true,
+		"updateProject":            true,
+		"listEnvironments":         true,
+		"createProjectEnvironment": true,
+		"cloneEnvironment":         true,
 	}
 
 	loadSpec()

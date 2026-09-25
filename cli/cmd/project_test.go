@@ -191,7 +191,7 @@ func TestRunEnvClone_MatchesOldCLIOutputShape(t *testing.T) {
 		case r.URL.Path == "/api/v1/projects/3/environments" && r.Method == http.MethodGet:
 			_, _ = fmt.Fprint(w, `{"data":{"environments":[{"id":10,"name":"staging"},{"id":11,"name":"production"}]}}`)
 		case r.URL.Path == "/api/v1/projects/3/environments/10/clone" && r.Method == http.MethodPost:
-			_, _ = fmt.Fprint(w, `{"data":{"SourceEnv":"staging","DestEnv":"production","SecretsCloned":4,"SecretsSkipped":1}}`)
+			_, _ = fmt.Fprint(w, `{"data":{"source_env":"staging","dest_env":"production","secrets_cloned":4,"secrets_skipped":1}}`)
 		default:
 			http.NotFound(w, r)
 		}

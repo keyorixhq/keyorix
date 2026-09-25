@@ -165,5 +165,5 @@ func TestCloneEnvironment_Success(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CloneEnvironment(w, req)
 	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	assert.Contains(t, w.Body.String(), `"SecretsCloned":3`)
+	assert.Contains(t, w.Body.String(), `"secrets_cloned":3`)
 }

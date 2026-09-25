@@ -896,16 +896,14 @@ func init() {
 	envCloneCmd.Flags().StringVar(&envCloneProjectFlag, "project", "", "Override the active project")
 }
 
-// envCloneResult mirrors core.EnvCloneResult's wire shape: PascalCase, untagged Go struct
-// fields (no json tags on the server type), matching RotationPolicy's documented
-// precedent (cli/cmd/rotation.go) -- the server's default encoding/json marshal emits the
-// bare Go field names verbatim.
+// envCloneResult mirrors core.EnvCloneResult's wire shape, via the handler-level
+// envCloneResultWire type (server/http/handlers/catalog_wire.go).
 type envCloneResult struct {
-	SourceEnv      string
-	DestEnv        string
-	SecretsCloned  int
-	SecretsSkipped int
-	Errors         []string
+	SourceEnv      string   `json:"source_env"`
+	DestEnv        string   `json:"dest_env"`
+	SecretsCloned  int      `json:"secrets_cloned"`
+	SecretsSkipped int      `json:"secrets_skipped"`
+	Errors         []string `json:"errors,omitempty"`
 }
 
 func runEnvClone(_ *cobra.Command, args []string) error {
