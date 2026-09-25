@@ -90,15 +90,43 @@ Methodology: `scripts/fuzzing/mapsize_of_bin.sh` (a repo-local reproduction of t
 that script's header comment), `go build -trimpath` for `GOOS=linux GOARCH=amd64`, and
 `go list -deps ./internal/core` (production files only).
 
-| Metric | Baseline (Step 0) |
-|---|---|
-| `internal/core` coverage map (`FuzzCoreOperationSequence`) | 486,874 B (~475 KiB) — matches this ADR's Context-section figure of "about 480 KB" |
-| `keyorix-server` binary, `linux/amd64`, `-trimpath` | 100,937,259 B (~96.3 MiB) |
-| `go list -deps ./internal/core` total | 872 packages |
-| ...of which cloud SDK packages (aws/azure/gcp/vault) | 131 (64 `aws-sdk-go-v2`, 33 `azure-sdk-for-go`, 34 `cloud.google.com/go`, 0 `hashicorp/vault/api` — Connect's Vault backend has no official SDK dependency today) |
-| ...of which the 6 ADR-109 integration packages | `connect` (+ `connecttypes`, which stays), `rotation`, `dynamic`, `encryption`, `notary`, `saml` — all present, tracked exactly by `internal/core/dependency_guard_test.go`'s `coreIntegrationDeps` allowlist |
+| Metric | Baseline (Step 0) | Step 1 (notary + saml) |
+|---|---|---|
+| `internal/core` coverage map (`FuzzCoreOperationSequence`) | 486,874 B (~475 KiB) — matches this ADR's Context-section figure of "about 480 KB" | 485,107 B (~473.7 KiB); **−1,767 B (−0.36%)** |
+| `keyorix-server` binary, `linux/amd64`, `-trimpath` | 100,937,259 B (~96.3 MiB) | 100,989,425 B (~96.3 MiB); flat (build noise, +0.05%) |
+| `go list -deps ./internal/core` total | 872 packages | 859 packages; **−13** |
+| ...of which cloud SDK packages (aws/azure/gcp/vault) | 131 (64 `aws-sdk-go-v2`, 33 `azure-sdk-for-go`, 34 `cloud.google.com/go`, 0 `hashicorp/vault/api` — Connect's Vault backend has no official SDK dependency today) | 131, unchanged — notary and saml carry no cloud SDK |
+| ...of which the 6 ADR-109 integration packages | `connect` (+ `connecttypes`, which stays), `rotation`, `dynamic`, `encryption`, `notary`, `saml` — all present, tracked exactly by `internal/core/dependency_guard_test.go`'s `coreIntegrationDeps` allowlist | `connect` (+ `connecttypes`), `rotation`, `dynamic`, `encryption` — notary and saml removed from the allowlist and confirmed absent from `go list -deps` |
 
 Step 0 itself does not change any of these numbers — it adds `internal/core/ports` (the target
 interface shapes, unwired) and the two dependency-guard tests (`internal/core`'s allowlist,
-`internal/core/ports`'s own must-stay-free guard) without moving any existing import. Steps 1–5
-each report a new row here as they land.
+`internal/core/ports`'s own must-stay-free guard) without moving any existing import.
+
+**Step 1** swaps `internal/core`'s direct use of `internal/notary` (`checkpointNotary
+notary.Notary`, and the free function `notary.VerifyReceipt`) and `internal/saml`
+(`SSOProvider.SAML SAMLAuthn`, whose `ParseResponse` returned `*saml.AssertionInfo`) for
+`ports.TimestampNotary` + the new `ports.VerifyReceiptFunc`, and `ports.SAMLServiceProvider` +
+`ports.SAMLAssertion`, respectively. `internal/notary.Receipt` and `internal/saml.AssertionInfo`
+become type aliases of their `ports` equivalents, so `*notary.RFC3161` and `*saml.Provider`
+satisfy the new interfaces directly with no adapter, and every existing caller/test that
+constructed or matched on the old concrete types keeps compiling unchanged. Both are wired from
+one new call site, `server/main.go`'s `DefaultIntegrations` (replacing two previously-separate,
+non-adjacent inline blocks) — the single wiring point later steps (rotation, dynamic, connect)
+extend, and the CLI/server split's server-mode core builder calls once these two integrations
+matter there too. `checkpointAnchorVerify` is wired by the same setter as its trust roots
+(`SetCheckpointAnchorRoots(roots, verify)`), since the two are only ever meaningful together;
+`CheckpointAnchorVerifiable()` now requires both, and a call with an anchor recorded but no
+verifier wired fails closed exactly as a missing trust root already did.
+
+The coverage-map and binary-size deltas are both small, and that is expected, not a shortfall:
+notary and saml are two of the smallest integrations (context table: "6–30 KB each" in isolation,
+versus 116–132 KB each for connect/rotation/dynamic/encryption), and `server/main.go` still wires
+the real `internal/notary`/`internal/saml` implementations for a full-featured server — a build
+still includes them, so the server binary is unaffected until the lean/air-gapped build (step 6)
+actually drops them via build tags. What step 1 proves is the *pattern* and the *dependency-count*
+guarantee: `internal/core`'s production import graph dropped by exactly the 13 packages
+notary+saml (and their third-party deps: `digitorus/pkcs7`, `digitorus/timestamp`,
+`crewjam/saml`, `goxmldsig`, `mattermost/xml-roundtrip-validator`, transitively) pulled in, caught
+exactly by `dependency_guard_test.go`'s exact-match allowlist shrink. Steps 2–5 each report a new
+column here as they land; the cloud-SDK-bearing steps (connect, encryption) are where the map and
+binary numbers are expected to move meaningfully.

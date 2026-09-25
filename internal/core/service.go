@@ -13,12 +13,12 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/connect"
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/license"
-	"github.com/keyorixhq/keyorix/internal/notary"
 	"github.com/keyorixhq/keyorix/internal/rotation"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/pkg/trust"
@@ -362,11 +362,17 @@ type KeyorixCore struct {
 	// checkpointNotary, when set, anchors each freshly-written audit checkpoint to
 	// an external authority (RFC 3161 TSA) for a forge-proof proof-of-existence
 	// (ADR-029). nil = no external anchoring. Set at startup via SetCheckpointNotary.
-	checkpointNotary notary.Notary
+	checkpointNotary ports.TimestampNotary
 	// checkpointAnchorRoots is the trusted TSA root pool used to VERIFY stored
 	// checkpoint anchors (the issuer trust anchor). nil = anchors cannot be verified
 	// (fail closed). Set at startup via SetCheckpointAnchorRoots.
 	checkpointAnchorRoots *x509.CertPool
+	// checkpointAnchorVerify verifies a stored anchor's receipt token against
+	// checkpointAnchorRoots (internal/notary.VerifyReceipt in production — a free
+	// function, not a TimestampNotary method, so it is wired separately). nil =
+	// anchors cannot be verified. Set at startup via SetCheckpointAnchorRoots,
+	// alongside the roots it verifies against.
+	checkpointAnchorVerify ports.VerifyReceiptFunc
 	// evidenceSignKey / evidenceSignKeyVersion sign and verify exported compliance-
 	// evidence packs (HMAC, DEK-derived, domain-separated from the checkpoint key).
 	// nil = signing unavailable (encryption disabled). Set via SetEvidenceSignKey.

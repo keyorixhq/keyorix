@@ -24,6 +24,8 @@ import (
 
 	"github.com/digitorus/pkcs7"
 	"github.com/digitorus/timestamp"
+
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 )
 
 // oidTSTInfoContentType is id-ct-TSTInfo (RFC 3161 §2.4.2) — the eContentType a
@@ -36,12 +38,10 @@ import (
 // VerifyReceipt enforces it here since the library does not.
 var oidTSTInfoContentType = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 1, 4}
 
-// Receipt is an external authority's proof over an anchored message.
-type Receipt struct {
-	Token    []byte    // opaque proof (an RFC 3161 TimeStampToken, DER)
-	Time     time.Time // the time the authority asserts the message existed at
-	Provider string    // identifies the authority, e.g. "rfc3161:https://freetsa.org/tsr"
-}
+// Receipt is an external authority's proof over an anchored message. A type
+// alias of ports.NotaryReceipt (ADR-109 step 1) so RFC3161 — unchanged below —
+// satisfies ports.TimestampNotary directly, with no adapter.
+type Receipt = ports.NotaryReceipt
 
 // Notary anchors a message with an external authority and returns a Receipt. The
 // message is the raw bytes being anchored (the backend hashes it as needed); the

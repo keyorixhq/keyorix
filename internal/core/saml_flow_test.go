@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	samlpkg "github.com/keyorixhq/keyorix/internal/saml"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -29,7 +29,7 @@ func userNotFound() error {
 // login flow is tested without a live IdP or a signed response.
 type stubSAML struct {
 	redirect, requestID string
-	info                *samlpkg.AssertionInfo
+	info                *ports.SAMLAssertion
 	parseErr            error
 
 	gotRelayState string
@@ -41,7 +41,7 @@ func (s *stubSAML) AuthnRequest(relayState string) (string, string, error) {
 	return s.redirect, s.requestID, nil
 }
 
-func (s *stubSAML) ParseResponse(_ *http.Request, ids []string) (*samlpkg.AssertionInfo, error) {
+func (s *stubSAML) ParseResponse(_ *http.Request, ids []string) (*ports.SAMLAssertion, error) {
 	s.gotRequestIDs = ids
 	if s.parseErr != nil {
 		return nil, s.parseErr
@@ -87,7 +87,7 @@ func TestBeginSAML_UnknownProvider(t *testing.T) {
 
 func TestCompleteSAML_ExistingUser(t *testing.T) {
 	t.Parallel()
-	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|123", Email: "ada@x.io", Name: "Ada"}}
+	stub := &stubSAML{info: &ports.SAMLAssertion{Subject: "corp|123", Email: "ada@x.io", Name: "Ada"}}
 	c, store := samlTestCore(stub)
 	store.On("ConsumeSSOLoginState", mock.Anything, "relay-1").Return(
 		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ReturnTo: "/home", ExpiresAt: time.Now().Add(time.Minute)}, nil)
@@ -120,7 +120,7 @@ func TestCompleteSAML_InvalidResponseRejected(t *testing.T) {
 
 func TestCompleteSAML_NoSubjectOrEmail(t *testing.T) {
 	t.Parallel()
-	stub := &stubSAML{info: &samlpkg.AssertionInfo{}}
+	stub := &stubSAML{info: &ports.SAMLAssertion{}}
 	c, store := samlTestCore(stub)
 	store.On("ConsumeSSOLoginState", mock.Anything, "relay-3").Return(
 		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ExpiresAt: time.Now().Add(time.Minute)}, nil)
@@ -132,7 +132,7 @@ func TestCompleteSAML_NoSubjectOrEmail(t *testing.T) {
 
 func TestCompleteSAML_NoAccountNoProvision(t *testing.T) {
 	t.Parallel()
-	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|999", Email: "noone@x.io"}}
+	stub := &stubSAML{info: &ports.SAMLAssertion{Subject: "corp|999", Email: "noone@x.io"}}
 	store := new(MockStorage)
 	// AutoProvision off → an unmatched identity is refused.
 	p := &SSOProvider{Name: "corp", Type: "saml", SAML: stub, AutoProvision: false}
@@ -157,7 +157,7 @@ func TestCompleteSAML_NoAccountNoProvision(t *testing.T) {
 // query for a match — the login is refused outright (AutoProvision off here).
 func TestCompleteSAML_NativeAdminTakeoverRejectedByDefault(t *testing.T) {
 	t.Parallel()
-	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|evil", Email: "admin@company.com", Name: "Mallory"}}
+	stub := &stubSAML{info: &ports.SAMLAssertion{Subject: "corp|evil", Email: "admin@company.com", Name: "Mallory"}}
 	store := new(MockStorage)
 	p := &SSOProvider{Name: "corp", Type: "saml", SAML: stub, AutoProvision: false}
 	require.False(t, p.TrustAssertedEmail, "precondition: opt-in is off by default")
@@ -184,7 +184,7 @@ func TestCompleteSAML_NativeAdminTakeoverRejectedByDefault(t *testing.T) {
 // fail closed and mint no session.
 func TestCompleteSAML_CrossProviderEmailTakeoverRejected(t *testing.T) {
 	t.Parallel()
-	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|evil", Email: "admin@x.io", Name: "Mallory"}}
+	stub := &stubSAML{info: &ports.SAMLAssertion{Subject: "corp|evil", Email: "admin@x.io", Name: "Mallory"}}
 	store := new(MockStorage)
 	p := &SSOProvider{Name: "corp", Type: "saml", SAML: stub, AutoProvision: true, TrustAssertedEmail: true}
 	c := &KeyorixCore{storage: store, now: time.Now, ssoProviders: map[string]*SSOProvider{"corp": p}}
@@ -211,7 +211,7 @@ func TestCompleteSAML_CrossProviderEmailTakeoverRejected(t *testing.T) {
 // error), CompleteSAML must return an error and mint no session.
 func TestCompleteSAML_PasswordExpiredGateError(t *testing.T) {
 	t.Parallel()
-	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|99", Email: "exp@x.io", Name: "Expired"}}
+	stub := &stubSAML{info: &ports.SAMLAssertion{Subject: "corp|99", Email: "exp@x.io", Name: "Expired"}}
 	c, store := samlTestCore(stub)
 	c.passwordPolicy = PasswordPolicy{MaxAgeDays: 1}
 	expiredUser := &models.User{ID: 99, IsActive: true, AccountState: "active", CreatedAt: time.Now().Add(-48 * time.Hour)}
@@ -240,7 +240,7 @@ func TestCompleteSAML_PasswordExpiredGateError(t *testing.T) {
 // added/mapped if reconciliation ran.
 func TestCompleteSAML_LockedAccountSkipsGroupRoleSync(t *testing.T) {
 	t.Parallel()
-	stub := &stubSAML{info: &samlpkg.AssertionInfo{
+	stub := &stubSAML{info: &ports.SAMLAssertion{
 		Subject: "corp|66", Email: "locked@x.io", Name: "Locked",
 		Groups: []string{"keyorix-admins"},
 	}}
@@ -293,7 +293,7 @@ func TestCompleteSAML_LockedAccountSkipsGroupRoleSync(t *testing.T) {
 // the attacker's own subject, never touching (or returning) the victim's.
 func TestCompleteSAML_JITProvisionDoesNotReuseUnverifiedEmailMatch(t *testing.T) {
 	t.Parallel()
-	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|evil", Email: "victim@corp.com", Name: "Mallory"}}
+	stub := &stubSAML{info: &ports.SAMLAssertion{Subject: "corp|evil", Email: "victim@corp.com", Name: "Mallory"}}
 	store := new(MockStorage)
 	p := &SSOProvider{Name: "corp", Type: "saml", SAML: stub, AutoProvision: true, DefaultRole: "system_viewer"}
 	require.False(t, p.TrustAssertedEmail, "precondition: opt-in is off by default")
@@ -329,7 +329,7 @@ func TestCompleteSAML_JITProvisionDoesNotReuseUnverifiedEmailMatch(t *testing.T)
 // linking behavior works exactly as it does for a verified OIDC email.
 func TestCompleteSAML_TrustAssertedEmailOptInLinksExistingAccount(t *testing.T) {
 	t.Parallel()
-	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|123", Email: "ada@x.io", Name: "Ada"}}
+	stub := &stubSAML{info: &ports.SAMLAssertion{Subject: "corp|123", Email: "ada@x.io", Name: "Ada"}}
 	store := new(MockStorage)
 	p := &SSOProvider{Name: "corp", Type: "saml", SAML: stub, AutoProvision: true, TrustAssertedEmail: true}
 	c := &KeyorixCore{storage: store, now: time.Now, ssoProviders: map[string]*SSOProvider{"corp": p}}
