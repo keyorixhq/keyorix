@@ -113,6 +113,16 @@ func parseJSONBytes(data []byte) ([]secretEntry, error) {
 	return entries, nil
 }
 
+// unquoteDotenvSingleQuoted reverses writeDotenv's exact escaping scheme for a
+// single-quoted value: the outer quotes are stripped, then every occurrence of the
+// close-escape-reopen sequence '\'' is folded back to a literal '. A naive "just strip
+// the first and last byte" (the previous implementation) leaves every embedded '\''
+// artifact in the value, corrupting any value containing an apostrophe on reimport
+// (FuzzDotenvRoundTrip, CLI-FUZZ target 3b).
+func unquoteDotenvSingleQuoted(inner string) string {
+	return strings.ReplaceAll(inner, `'\''`, `'`)
+}
+
 // parseDotenv reads a standard .env file: '#'-prefixed and blank lines are skipped;
 // KEY=VALUE, value may be quoted with " or '; keys with empty values are skipped.
 func parseDotenv(path string) ([]secretEntry, error) {
@@ -136,9 +146,11 @@ func parseDotenv(path string) ([]secretEntry, error) {
 		key := strings.TrimSpace(line[:idx])
 		val := strings.TrimSpace(line[idx+1:])
 		if len(val) >= 2 {
-			if (val[0] == '"' && val[len(val)-1] == '"') ||
-				(val[0] == '\'' && val[len(val)-1] == '\'') {
+			switch {
+			case val[0] == '"' && val[len(val)-1] == '"':
 				val = val[1 : len(val)-1]
+			case val[0] == '\'' && val[len(val)-1] == '\'':
+				val = unquoteDotenvSingleQuoted(val[1 : len(val)-1])
 			}
 		}
 		if key == "" || val == "" {
