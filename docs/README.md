@@ -30,7 +30,7 @@ Complete documentation for the production-ready Keyorix secret management system
 
 ### Security & Compliance
 - **[SECURITY.md](./SECURITY.md)** - Security features, encryption, and best practices
-- **[SECRET_SHARING_SECURITY.md](./SECRET_SHARING_SECURITY.md)** - Sharing security model
+- **[security/architecture.md](./security/architecture.md)** - Encryption, key management, authn/authz, transport (covers sharing's crypto model)
 - **[SECRET_SHARING_USER_GUIDE.md](./SECRET_SHARING_USER_GUIDE.md)** - User guide for sharing
 
 ### Performance & Operations
@@ -65,7 +65,7 @@ Complete documentation for the production-ready Keyorix secret management system
 
 ### For Security Teams
 1. **Security Overview**: [SECURITY.md](./SECURITY.md)
-2. **Sharing Security**: [SECRET_SHARING_SECURITY.md](./SECRET_SHARING_SECURITY.md)
+2. **Sharing Security**: [security/architecture.md](./security/architecture.md)
 3. **API Security**: [API_REFERENCE.md](./API_REFERENCE.md#authentication)
 4. **Test Results**: [COMPREHENSIVE_TEST_RESULTS.md](../COMPREHENSIVE_TEST_RESULTS.md)
 
