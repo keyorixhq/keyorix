@@ -9,6 +9,7 @@ package auditverify_test
 // LOCAL checkpoint/high-water rows were also deleted.
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -199,4 +200,88 @@ func TestDifferential_ExternalAnchor_GenesisReseed(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, auditverify.VerdictBroken, got.Verdict, "reason: %s", got.Reason)
 	require.Contains(t, got.Reason, "externally-held anchor")
+}
+
+// TestDifferential_ExternalAnchor_TamperedSignatureRejected proves a bundle
+// whose signature was corrupted after export (bit flip on write-once media,
+// a truncated/corrupted transfer, or a deliberate forgery attempt) is never
+// treated as authenticated -- even though the LOCAL checkpoint it's compared
+// against is genuinely valid under the correct key, so this isolates the
+// bundle's own signature check from TestDifferential_ForgedCheckpoint (which
+// tampers the DB's own checkpoint row, not an externally-supplied bundle).
+// "Rejected" here means: not trusted for the chain-length/head comparison,
+// and disclosed in NotProven as unauthenticated -- never silently accepted
+// as proof, and never crashes or errors out.
+func TestDifferential_ExternalAnchor_TamperedSignatureRejected(t *testing.T) {
+	t.Parallel()
+	f := newDiffFixture(t)
+	f.logEvents(10, time.Hour)
+	_, written, err := f.core.WriteAuditCheckpoint(f.ctx)
+	require.NoError(t, err)
+	require.True(t, written)
+
+	bundleData := captureAnchorBundle(t, f)
+	bundle, err := auditverify.ParseExternalAnchorBundle(bundleData)
+	require.NoError(t, err)
+	bundle.Signature = "deadbeef" + bundle.Signature[8:] // corrupt without changing length/shape
+
+	db := f.openIndependent()
+	got, err := auditverify.Verify(f.ctx, db, auditverify.Options{
+		CheckpointKey:  fixedCheckpointKey,
+		ExternalAnchor: bundle,
+	})
+	require.NoError(t, err)
+	require.Equal(t, auditverify.VerdictValid, got.Verdict,
+		"the LOCAL checkpoint is genuinely valid under the correct key; only the supplied bundle is corrupt, "+
+			"reason: %s", got.Reason)
+	require.True(t, got.ExternalAnchor.Supplied)
+	require.False(t, got.ExternalAnchor.Authenticated, "a tampered bundle signature must never authenticate")
+
+	found := false
+	for _, np := range got.NotProven {
+		if strings.Contains(np, "anchor bundle was supplied but could not be authenticated") {
+			found = true
+		}
+	}
+	require.True(t, found, "expected NotProven to disclose the tampered/unauthenticated anchor bundle, got: %v", got.NotProven)
+}
+
+// TestDifferential_ExternalAnchor_WrongVerifierKeyNeverSilentlyValid proves
+// that supplying the WRONG checkpoint-signing key (an operator mistake --
+// the wrong extracted key file, or a stale key after rotation) to a run that
+// also carries an externally-held anchor never produces a silent VALID: the
+// wrong key fails the LOCAL checkpoint's own signature exactly as
+// TestDifferential_ForgedCheckpoint's tampered-row case does (enforceCheckpoint
+// treats "fails to verify under the supplied key" as tamper evidence
+// directly -- verify.go's own doc comment on why it does not excuse this as
+// a possible key rotation), which correctly pre-empts the anchor cross-check
+// ever running (Verify only reaches it when the walk so far is not already
+// BROKEN) -- so the anchor's genuinely-valid claims are never surfaced as if
+// they had been checked and passed.
+func TestDifferential_ExternalAnchor_WrongVerifierKeyNeverSilentlyValid(t *testing.T) {
+	t.Parallel()
+	f := newDiffFixture(t)
+	f.logEvents(10, time.Hour)
+	_, written, err := f.core.WriteAuditCheckpoint(f.ctx)
+	require.NoError(t, err)
+	require.True(t, written)
+
+	bundleData := captureAnchorBundle(t, f)
+	bundle, err := auditverify.ParseExternalAnchorBundle(bundleData)
+	require.NoError(t, err)
+
+	wrongKey := bytes.Repeat([]byte{0x9}, 32)
+	require.NotEqual(t, fixedCheckpointKey, wrongKey)
+
+	db := f.openIndependent()
+	got, err := auditverify.Verify(f.ctx, db, auditverify.Options{
+		CheckpointKey:  wrongKey,
+		ExternalAnchor: bundle,
+	})
+	require.NoError(t, err)
+	require.Equal(t, auditverify.VerdictBroken, got.Verdict,
+		"a wrong signing key must never be silently accepted as if verification passed")
+	require.Contains(t, got.Reason, "checkpoint key")
+	require.False(t, got.ExternalAnchor.Authenticated,
+		"the anchor's own claims must never be reported as authenticated when the run as a whole is BROKEN")
 }
