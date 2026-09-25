@@ -5,6 +5,19 @@ All notable changes to Keyorix are documented here. This project follows
 
 ## Unreleased
 
+### Changed
+- **BREAKING: `keyorix` is now the new, thin, REST-only CLI (ADR-108 Phase 5).**
+  The old, thick CLI's **local/embedded mode — opening the database directly,
+  with no server involved — is gone from the released `keyorix` binary.**
+  Every command now talks to a running `keyorix-server` over the network;
+  `keyorix login` replaces `keyorix connect`. Host-side operations that used to
+  be `keyorix system init` / `keyorix system audit` / `keyorix system validate`
+  / `keyorix encryption ...` are now `keyorix-server admin init` / `admin
+  audit` / `admin validate` / `admin encryption ...` — see
+  [`docs/cli-migration.md`](docs/cli-migration.md) for the full old-command ->
+  new-command table. The old CLI still ships in source (`make keyorix-legacy`)
+  as a rollback for one release, and is removed entirely in Phase 6.
+
 ## v0.94.0 — 2026-09-17
 
 ### Security
