@@ -1,10 +1,5 @@
 BINARY_CLI=keyorix
 BINARY_SERVER=keyorix-server
-# The old, thick CLI (internal/cli, root `.` package) is no longer a release asset
-# (Phase 5 switch, ADR-108) -- kept in the tree, unbuilt by default, for one release as
-# a rollback and for scripts/cli-parity-check.sh / scripts/smoke-legacy.sh. Removed
-# entirely in Phase 6 alongside internal/storage/store's RemoteStorage and /system.
-BINARY_CLI_LEGACY=keyorix-legacy
 # Lightweight/air-gapped release variant (-tags lean): drops
 # aws-sdk-go-v2/service/{iam,s3} (see internal/rotation/awsiam_lean.go,
 # internal/evidencesink/objectstore_lean.go) for installs that don't use the
@@ -21,11 +16,9 @@ GIT_COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 TRUST_UPDATE_KEYS?=
 TRUST_LICENSE_KEYS?=
 # Inject the build identity into keyorix-server plus the shared internal/version package
-# (read by the server's /health + /system/info) and the legacy CLI (internal/cli.version,
-# keyorix-legacy only -- the new CLI is a separate module with its own ldflags below).
-# Commit is deterministic per source revision, so release builds stay reproducible (no
-# build date).
-VERSION_LDFLAGS=-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Commit=$(GIT_COMMIT) -X github.com/keyorixhq/keyorix/pkg/trust.updateKeysB64=$(TRUST_UPDATE_KEYS) -X github.com/keyorixhq/keyorix/pkg/trust.licenseKeysB64=$(TRUST_LICENSE_KEYS)
+# (read by the server's /health + /system/info). Commit is deterministic per source
+# revision, so release builds stay reproducible (no build date).
+VERSION_LDFLAGS=-X github.com/keyorixhq/keyorix/internal/version.Version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Commit=$(GIT_COMMIT) -X github.com/keyorixhq/keyorix/pkg/trust.updateKeysB64=$(TRUST_UPDATE_KEYS) -X github.com/keyorixhq/keyorix/pkg/trust.licenseKeysB64=$(TRUST_LICENSE_KEYS)
 LDFLAGS=-ldflags "$(VERSION_LDFLAGS)"
 # RELEASE_LDFLAGS additionally strips the symbol table + DWARF debug info (-s -w):
 # ~92MB -> ~62MB for keyorix-server. Only the `release` target uses this — build-cli/
@@ -42,7 +35,7 @@ CLI_VERSION_LDFLAGS=-X github.com/keyorixhq/keyorix/cli/internal/cliversion.Vers
 CLI_LDFLAGS=-ldflags "$(CLI_VERSION_LDFLAGS)"
 CLI_RELEASE_LDFLAGS=-ldflags "-s -w $(CLI_VERSION_LDFLAGS)"
 
-.PHONY: build build-cli build-server build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate smoke keyorix-legacy smoke-legacy check-release-assets airgap-e2e
+.PHONY: build build-cli build-server build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate smoke check-release-assets airgap-e2e
 
 # Pinned protoc-gen plugin versions (match google.golang.org/{protobuf,grpc} in go.mod).
 PROTOC_GEN_GO_VERSION=v1.36.11
@@ -80,14 +73,6 @@ build-cli:
 
 build-server:
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_SERVER) ./server
-
-# keyorix-legacy: the old, thick CLI (internal/cli, root `.` package), built under a
-# distinct name so it can never collide with or accidentally ship as $(BINARY_CLI).
-# Dev-only -- not part of `build`, `install`, or `release`. Exists for
-# scripts/smoke-legacy.sh, scripts/cli-parity-check.sh, and as the rollback path for
-# one release (Phase 5, ADR-108) until Phase 6 deletes internal/cli entirely.
-keyorix-legacy:
-	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_CLI_LEGACY) .
 
 # populate-webui-dist: builds the dashboard (web/, now an in-repo subtree —
 # ADR-070) and copies the real output into server/webui/dist/, which is
@@ -172,23 +157,7 @@ release: populate-webui-dist
 	$(MAKE) _sbom-generate
 	@cd dist && (sha256sum * > checksums.txt 2>/dev/null || shasum -a 256 * > checksums.txt)
 	@git checkout -- server/webui/dist/index.html 2>/dev/null || true
-	$(MAKE) check-release-assets
 	@echo "✅ Release binaries + SBOMs in dist/"
-
-# check-release-assets: the legacy CLI (keyorix-legacy) must NEVER be a release asset
-# (Phase 5, ADR-108 -- rollback is `make keyorix-legacy` from source, not a downloadable
-# binary). Derived from the actual dist/ output, not from re-reading this recipe's own
-# text, so a future line added here that (accidentally or not) emits a legacy-named
-# asset is caught by what it PRODUCES, not by trusting the recipe that produced it.
-check-release-assets:
-	@echo "→ Verifying dist/ contains no legacy-CLI asset"
-	@legacy="$$(ls dist/ 2>/dev/null | grep -i '$(BINARY_CLI_LEGACY)' || true)"; \
-	if [ -n "$$legacy" ]; then \
-		echo "release asset list contains a legacy-CLI binary, which must never ship:"; \
-		echo "$$legacy"; \
-		exit 1; \
-	fi
-	@echo "✅ No legacy-CLI asset in dist/"
 
 # CycloneDX SBOM per shipped binary (app mode: exactly the deps linked into that
 # binary + Go stdlib) plus one production-only frontend SBOM linked from each
@@ -257,13 +226,6 @@ _sbom-generate:
 smoke: build-cli build-server
 	@./scripts/smoke.sh
 
-# smoke-legacy: the OLD CLI's embedded-mode flow (system init, no --server, direct DB
-# access), moved out of `smoke` by the Phase 5 switch since the new CLI has no embedded
-# mode at all. Dev/CI-only, never a release gate -- kept until Phase 6 deletes
-# internal/cli. See scripts/smoke-legacy.sh's own header.
-smoke-legacy: keyorix-legacy
-	@./scripts/smoke-legacy.sh
-
 # airgap-e2e: MANUAL target only, not run in CI (needs Docker/Podman, spins up
 # real containers, takes tens of seconds waiting out a real audit-checkpoint
 # interval) -- see scripts/airgap-e2e.sh's own header for the full flow and
@@ -271,6 +233,7 @@ smoke-legacy: keyorix-legacy
 # isn't a substitute for it.
 airgap-e2e:
 	@./scripts/airgap-e2e.sh
+
 
 clean:
 	rm -rf $(BUILD_DIR) dist/

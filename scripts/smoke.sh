@@ -14,8 +14,8 @@
 # exist, this one proves they work.
 #
 # The new CLI is REST-only -- there is no embedded/local mode to smoke test here.
-# scripts/smoke-legacy.sh covers the OLD CLI's embedded-mode flow, kept separately
-# until Phase 6 deletes internal/cli; it is never the release gate.
+# The old CLI's embedded-mode flow (internal/cli, scripts/smoke-legacy.sh) was
+# deleted in Phase 6 (ADR-108 Decision C) along with internal/cli itself.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
