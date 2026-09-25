@@ -37,8 +37,12 @@ const backupFormatVersion = 1
 
 // backupManifest is the archive's MANIFEST.json -- everything admin restore
 // needs to validate an archive before touching disk: what backend it is for,
-// which files it contains, and a checksum for each so a corrupted or
-// tampered artifact is caught before it overwrites anything.
+// which files it contains, and a checksum for each so a corrupted artifact
+// is caught before it overwrites anything. A plain checksum like this is
+// integrity, not authenticity: anyone who can edit the archive can
+// recompute it to match, so it does not by itself prove the archive was not
+// tampered with -- see restore.go's verifyRestoredAudit for the step that
+// actually can.
 type backupManifest struct {
 	FormatVersion int               `json:"format_version"`
 	CreatedAt     time.Time         `json:"created_at"`
@@ -49,7 +53,8 @@ type backupManifest struct {
 
 // backupFileEntry describes one file bundled into the archive: where it came
 // from (also where restore writes it back to, by default), its tar member
-// name, and enough to verify it wasn't corrupted or tampered with in transit.
+// name, and enough to verify it wasn't corrupted in transit (see
+// backupManifest's own doc comment on what a checksum does not prove).
 type backupFileEntry struct {
 	OriginalPath string `json:"original_path"`
 	TarName      string `json:"tar_name"`
