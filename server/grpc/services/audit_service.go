@@ -184,7 +184,10 @@ func (s *AuditGRPCService) GetAuditLogs(ctx context.Context, req *pb.GetAuditLog
 	if err := authorizeGlobal(ctx, s.core, actor, permAuditRead); err != nil {
 		return nil, err
 	}
-	page, pageSize := normalizePage(req.GetPage(), req.GetPageSize())
+	// REST's GetAuditLogs (audit.go) defaults page_size to 50, not the 20 every
+	// other list handler uses — match it so an identical unspecified-page_size
+	// request doesn't return a different-sized page depending on transport.
+	page, pageSize := normalizePageWithDefault(req.GetPage(), req.GetPageSize(), 50)
 
 	filter := &corestorage.AuditFilter{
 		Action:    optString(req.EventType),
@@ -225,7 +228,9 @@ func (s *AuditGRPCService) GetRBACAuditLogs(ctx context.Context, req *pb.GetRBAC
 	if err := authorizeGlobal(ctx, s.core, actor, permAuditRead); err != nil {
 		return nil, err
 	}
-	page, pageSize := normalizePage(req.GetPage(), req.GetPageSize())
+	// REST's GetRBACAuditLogs (audit.go) also defaults page_size to 50 — see
+	// GetAuditLogs above.
+	page, pageSize := normalizePageWithDefault(req.GetPage(), req.GetPageSize(), 50)
 
 	entries, total, err := s.core.ListRBACAuditLogs(ctx, page, pageSize)
 	if err != nil {
