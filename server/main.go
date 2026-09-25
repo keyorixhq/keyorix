@@ -850,89 +850,6 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		}
 	}
 
-	// Wire backend rotation executors (ADR-047) — upstream systems whose credentials the
-	// auto-rotation flow can rotate in place. Admin DSNs come from the environment, never
-	// the config file.
-	if len(cfg.AutoRotation.Backends) > 0 {
-		var execs []rotation.Executor
-		for _, b := range cfg.AutoRotation.Backends {
-			switch b.Type {
-			case "postgresql":
-				// Fail closed: a backend runs privileged DDL with an admin DSN, so an
-				// explicit allow-list is required — refuse to register an unbounded one.
-				if len(b.AllowedRefs) == 0 {
-					log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
-					continue
-				}
-				dsn := b.GetDSN()
-				if dsn == "" {
-					log.Printf("Rotation backend %q has no admin DSN (%s unset) — rotations will fail", b.Name, b.DSNEnv)
-				}
-				execs = append(execs, rotation.NewPostgresExecutor(b.Name, dsn, b.AllowedRefs))
-			case "mysql":
-				if len(b.AllowedRefs) == 0 {
-					log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
-					continue
-				}
-				dsn := b.GetDSN()
-				if dsn == "" {
-					log.Printf("Rotation backend %q has no admin DSN (%s unset) — rotations will fail", b.Name, b.DSNEnv)
-				}
-				execs = append(execs, rotation.NewMySQLExecutor(b.Name, dsn, b.AllowedRefs))
-			case "mongodb":
-				if len(b.AllowedRefs) == 0 {
-					log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
-					continue
-				}
-				dsn := b.GetDSN()
-				if dsn == "" {
-					log.Printf("Rotation backend %q has no admin DSN (%s unset) — rotations will fail", b.Name, b.DSNEnv)
-				}
-				execs = append(execs, rotation.NewMongoExecutor(b.Name, dsn, b.AllowedRefs))
-			case "redis":
-				if len(b.AllowedRefs) == 0 {
-					log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
-					continue
-				}
-				dsn := b.GetDSN()
-				if dsn == "" {
-					log.Printf("Rotation backend %q has no admin DSN (%s unset) — rotations will fail", b.Name, b.DSNEnv)
-				}
-				execs = append(execs, rotation.NewRedisExecutor(b.Name, dsn, b.AllowedRefs))
-			case "aws-iam":
-				// Generate-upstream backend: AWS mints the new key; credentials come from
-				// the ambient AWS chain (no DSN). Still fail-closed on allowed_refs.
-				if len(b.AllowedRefs) == 0 {
-					log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
-					continue
-				}
-				execs = append(execs, rotation.NewAWSIAMExecutor(b.Name, b.Region, b.AllowedRefs))
-			case "gcp-service-account":
-				// Generate-upstream backend: GCP mints the key; credentials come from
-				// Application Default Credentials (no DSN). Fail-closed on allowed_refs.
-				if len(b.AllowedRefs) == 0 {
-					log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
-					continue
-				}
-				execs = append(execs, rotation.NewGCPServiceAccountKeyExecutor(b.Name, b.AllowedRefs))
-			case "azure-app":
-				// Generate-upstream backend: Azure mints the client secret via Graph;
-				// credentials come from the ambient Azure chain (no DSN). Fail-closed.
-				if len(b.AllowedRefs) == 0 {
-					log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
-					continue
-				}
-				execs = append(execs, rotation.NewAzureAppSecretExecutor(b.Name, b.AllowedRefs))
-			default:
-				log.Printf("Rotation backend %q: unknown type %q, skipping", b.Name, b.Type)
-			}
-		}
-		if len(execs) > 0 {
-			coreService.SetRotationManager(rotation.NewManager(execs))
-			log.Printf("Backend rotation executors enabled (%d backend(s))", len(execs))
-		}
-	}
-
 	// Wire any off-box evidence targets (webhook and/or S3-compatible object store),
 	// so the scheduled evidence pack is delivered off-box in addition to (or instead
 	// of) a local dir. When both are configured the pack fans out to both.
@@ -2417,24 +2334,114 @@ func noDiscoveryCrossOriginRedirect(req *http.Request, via []*http.Request) erro
 
 // DefaultIntegrations wires every ADR-109 integration currently moved behind
 // internal/core/ports (docs/adr-109-core-depends-on-interfaces.md) — as of step
-// 1, TimestampNotary + its receipt verifier, and SAMLServiceProvider (folded
-// into human SSO wiring alongside OIDC). It is the single point that constructs
-// the concrete implementations from config and registers them on coreService,
-// so a later ADR-109 step (rotation, dynamic, connect) only has one wiring call
-// site to extend.
+// 2: TimestampNotary + its receipt verifier, SAMLServiceProvider (folded into
+// human SSO wiring alongside OIDC), and RotationExecutorResolver. It is the
+// single point that constructs the concrete implementations from config and
+// registers them on coreService, so a later ADR-109 step (dynamic, connect)
+// only has one wiring call site to extend.
 //
 // A nil implementation means the feature is unavailable; wiring never fails
 // open (ADR-109 decision #2). A malformed config for an explicitly ENABLED
 // feature returns an error and stops boot (the ADR-082 fail-closed shape); a
-// feature left disabled, or a single misconfigured provider within an enabled
-// one, is skipped with a warning — unchanged from this wiring's pre-ADR-109
-// behavior.
+// feature left disabled, or a single misconfigured provider/backend within an
+// enabled one, is skipped with a warning — unchanged from this wiring's
+// pre-ADR-109 behavior.
 func DefaultIntegrations(cfg *config.Config, coreService *core.KeyorixCore) error {
 	if err := wireCheckpointNotary(cfg, coreService); err != nil {
 		return err
 	}
 	wireHumanSSO(cfg, coreService)
+	wireBackendRotation(cfg, coreService)
 	return nil
+}
+
+// wireBackendRotation wires the configured backend rotation executors (ADR-047)
+// — upstream systems whose credentials the auto-rotation flow can rotate in
+// place. Admin DSNs come from the environment, never the config file. A
+// backend with an unknown type, or one missing its fail-closed allowed_refs
+// allowlist, is skipped with a warning rather than failing startup — matching
+// this wiring's pre-ADR-109 behavior.
+func wireBackendRotation(cfg *config.Config, coreService *core.KeyorixCore) {
+	if len(cfg.AutoRotation.Backends) == 0 {
+		return
+	}
+	var execs []rotation.Executor
+	for _, b := range cfg.AutoRotation.Backends {
+		switch b.Type {
+		case "postgresql":
+			// Fail closed: a backend runs privileged DDL with an admin DSN, so an
+			// explicit allow-list is required — refuse to register an unbounded one.
+			if len(b.AllowedRefs) == 0 {
+				log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
+				continue
+			}
+			dsn := b.GetDSN()
+			if dsn == "" {
+				log.Printf("Rotation backend %q has no admin DSN (%s unset) — rotations will fail", b.Name, b.DSNEnv)
+			}
+			execs = append(execs, rotation.NewPostgresExecutor(b.Name, dsn, b.AllowedRefs))
+		case "mysql":
+			if len(b.AllowedRefs) == 0 {
+				log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
+				continue
+			}
+			dsn := b.GetDSN()
+			if dsn == "" {
+				log.Printf("Rotation backend %q has no admin DSN (%s unset) — rotations will fail", b.Name, b.DSNEnv)
+			}
+			execs = append(execs, rotation.NewMySQLExecutor(b.Name, dsn, b.AllowedRefs))
+		case "mongodb":
+			if len(b.AllowedRefs) == 0 {
+				log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
+				continue
+			}
+			dsn := b.GetDSN()
+			if dsn == "" {
+				log.Printf("Rotation backend %q has no admin DSN (%s unset) — rotations will fail", b.Name, b.DSNEnv)
+			}
+			execs = append(execs, rotation.NewMongoExecutor(b.Name, dsn, b.AllowedRefs))
+		case "redis":
+			if len(b.AllowedRefs) == 0 {
+				log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
+				continue
+			}
+			dsn := b.GetDSN()
+			if dsn == "" {
+				log.Printf("Rotation backend %q has no admin DSN (%s unset) — rotations will fail", b.Name, b.DSNEnv)
+			}
+			execs = append(execs, rotation.NewRedisExecutor(b.Name, dsn, b.AllowedRefs))
+		case "aws-iam":
+			// Generate-upstream backend: AWS mints the new key; credentials come from
+			// the ambient AWS chain (no DSN). Still fail-closed on allowed_refs.
+			if len(b.AllowedRefs) == 0 {
+				log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
+				continue
+			}
+			execs = append(execs, rotation.NewAWSIAMExecutor(b.Name, b.Region, b.AllowedRefs))
+		case "gcp-service-account":
+			// Generate-upstream backend: GCP mints the key; credentials come from
+			// Application Default Credentials (no DSN). Fail-closed on allowed_refs.
+			if len(b.AllowedRefs) == 0 {
+				log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
+				continue
+			}
+			execs = append(execs, rotation.NewGCPServiceAccountKeyExecutor(b.Name, b.AllowedRefs))
+		case "azure-app":
+			// Generate-upstream backend: Azure mints the client secret via Graph;
+			// credentials come from the ambient Azure chain (no DSN). Fail-closed.
+			if len(b.AllowedRefs) == 0 {
+				log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
+				continue
+			}
+			execs = append(execs, rotation.NewAzureAppSecretExecutor(b.Name, b.AllowedRefs))
+		default:
+			log.Printf("Rotation backend %q: unknown type %q, skipping", b.Name, b.Type)
+		}
+	}
+	if len(execs) > 0 {
+		coreService.SetRotationManager(rotation.NewManager(execs))
+		log.Printf("Backend rotation executors enabled (%d backend(s))", len(execs))
+	}
 }
 
 // wireCheckpointNotary wires external-notary anchoring of audit checkpoints when

@@ -1,17 +1,22 @@
-// default_integrations_test.go — ADR-109 step 1 wiring test
+// default_integrations_test.go — ADR-109 wiring test
 // (docs/adr-109-core-depends-on-interfaces.md): confirms DefaultIntegrations
-// (called from initializeCoreService) actually registers BOTH integrations
-// moved behind internal/core/ports at this step — external-notary checkpoint
-// anchoring and SAML SSO — from one config, in one call. Each integration
-// already has narrower coverage elsewhere (checkpoint_notary_startup_test.go;
-// server_s4_test.go's TestInitializeCoreService_CheckpointNotary_* and
-// TestInitializeCoreService_SSO_OIDCSuccess); this test is the ADR's own
-// "wiring test that the default server registers every integration" — SAML
-// specifically, since no prior test drove initializeCoreService with a
-// type: "saml" provider (only unit-level buildSAMLProvider/buildSSOProviders
-// tests in server_s3_test.go), and the combination of both integrations at
-// once, which is what would catch DefaultIntegrations wiring one but silently
-// skipping the other.
+// (called from initializeCoreService) actually registers EVERY integration
+// moved behind internal/core/ports so far — external-notary checkpoint
+// anchoring (step 1), SAML SSO (step 1), and backend rotation executors
+// (step 2) — from one config, in one call. Each integration already has
+// narrower coverage elsewhere (checkpoint_notary_startup_test.go;
+// server_s4_test.go's TestInitializeCoreService_CheckpointNotary_*,
+// TestInitializeCoreService_SSO_OIDCSuccess, and
+// TestInitializeCoreService_RotationBackend_PostgreSQL); this test is the
+// ADR's own "wiring test that the default server registers every
+// integration" — SAML specifically, since no prior test drove
+// initializeCoreService with a type: "saml" provider (only unit-level
+// buildSAMLProvider/buildSSOProviders tests in server_s3_test.go); the
+// rotation manager specifically, since no prior test checked
+// RotationBackendNames() actually reflects a configured backend (only that
+// initializeCoreService didn't error); and the combination of all three
+// integrations at once, which is what would catch DefaultIntegrations wiring
+// some but silently skipping another.
 package main
 
 import (
@@ -65,12 +70,14 @@ func samlIDPMetadata(t *testing.T) string {
 </EntityDescriptor>`, cert)
 }
 
-// TestDefaultIntegrations_RegistersCheckpointNotaryAndSAML confirms
-// initializeCoreService (via DefaultIntegrations) wires BOTH ADR-109 step-1
-// integrations from one config: checkpoint-notary anchoring+verification and
-// a SAML SSO provider (ports.SAMLServiceProvider, satisfied by
-// *internal/saml.Provider through the AssertionInfo/SAMLAuthn aliases).
-func TestDefaultIntegrations_RegistersCheckpointNotaryAndSAML(t *testing.T) {
+// TestDefaultIntegrations_RegistersCheckpointNotarySAMLAndRotation confirms
+// initializeCoreService (via DefaultIntegrations) wires ALL THREE ADR-109
+// integrations from one config: checkpoint-notary anchoring+verification, a
+// SAML SSO provider (ports.SAMLServiceProvider, satisfied by
+// *internal/saml.Provider through the AssertionInfo/SAMLAuthn aliases), and a
+// backend rotation executor (ports.RotationExecutorResolver, satisfied by
+// *internal/rotation.Manager through the Executor alias).
+func TestDefaultIntegrations_RegistersCheckpointNotarySAMLAndRotation(t *testing.T) {
 	initI18n(t)
 
 	caPEM := testSelfSignedCACert(t)
@@ -107,6 +114,11 @@ func TestDefaultIntegrations_RegistersCheckpointNotaryAndSAML(t *testing.T) {
 				},
 			},
 		},
+		AutoRotation: config.AutoRotationConfig{
+			Backends: []config.RotationBackendConfig{
+				{Name: "pg-prod", Type: "postgresql", AllowedRefs: []string{"prod/*"}},
+			},
+		},
 	}
 
 	svc, _, err := initializeCoreService(cfg)
@@ -125,5 +137,9 @@ func TestDefaultIntegrations_RegistersCheckpointNotaryAndSAML(t *testing.T) {
 	}
 	if md, err := svc.SAMLMetadata("corp"); err != nil || len(md) == 0 {
 		t.Errorf("expected SAMLMetadata(\"corp\") to succeed (SAML wired through ports.SAMLServiceProvider): md=%q err=%v", md, err)
+	}
+	names := svc.RotationBackendNames()
+	if len(names) != 1 || names[0] != "pg-prod" {
+		t.Errorf("expected DefaultIntegrations to register rotation backend \"pg-prod\" (ports.RotationExecutorResolver), got %v", names)
 	}
 }

@@ -11,8 +11,8 @@
 // package type to the interface here, and wires the real implementation from
 // server/main.go's DefaultIntegrations instead — see internal/core's own
 // dependency_guard_test.go, whose allowlist shrinks by one entry per
-// completed step. notary and saml are wired as of step 1; the rest are not
-// wired yet.
+// completed step. notary and saml are wired as of step 1, rotation as of
+// step 2; dynamic, connect, and encryption are not wired yet.
 //
 // This package must never import an integration package itself, or any of
 // their cloud SDKs — that would silently defeat the whole point. See
@@ -45,7 +45,10 @@ type ConnectorResolver interface {
 }
 
 // RotationExecutor applies a new credential to an upstream system during
-// rotation. Mirrors internal/rotation.Executor.
+// rotation. A type alias of internal/rotation.Executor (ADR-109 step 2) — the
+// alias lives on the internal/rotation side (see that package's doc comment)
+// so every existing rotation.Executor implementation satisfies this directly,
+// with no adapter.
 type RotationExecutor interface {
 	Name() string
 	Type() string
@@ -53,22 +56,39 @@ type RotationExecutor interface {
 }
 
 // GeneratingRotationExecutor is a RotationExecutor whose upstream mints the
-// new value itself (e.g. a cloud key API). Mirrors
-// internal/rotation.GeneratingExecutor — rotation_executor.go type-asserts a
-// resolved RotationExecutor against this to prefer GenerateUpstream over
-// Rotate when the backend supports it.
+// new value itself (e.g. a cloud key API). Mirrors (and, as of ADR-109 step 2,
+// aliased by) internal/rotation.GeneratingExecutor — rotation_executor.go
+// type-asserts a resolved RotationExecutor against this to prefer
+// GenerateUpstream over Rotate when the backend supports it.
 type GeneratingRotationExecutor interface {
 	RotationExecutor
 	GenerateUpstream(ctx context.Context, ref string) (string, error)
 }
 
 // RotationExecutorResolver resolves a configured rotation backend by name.
-// Mirrors internal/rotation.Manager, the only methods internal/core calls on
-// it (rotation_executor.go, rotation_dryrun.go, service.go).
+// Mirrors internal/rotation.Manager (a concrete type, not aliased — only the
+// element types it returns are), the only methods internal/core calls on it
+// (rotation_executor.go, rotation_dryrun.go, service.go).
 type RotationExecutorResolver interface {
 	Get(name string) (RotationExecutor, bool)
 	Names() []string
 }
+
+// RotationPartialError reports that a RotationExecutor's upstream minted a new
+// credential (Value is the value to store in Keyorix) but a follow-up step
+// failed — typically a prior, possibly compromised credential that could not
+// be deleted. A type alias of internal/rotation.PartialRotationError (ADR-109
+// step 2); its Error()/Unwrap() methods are declared here, alongside the
+// canonical type, since a type alias cannot carry methods of its own —
+// internal/rotation's own doc comment on PartialRotationError has the full
+// rationale for why Value must still be stored.
+type RotationPartialError struct {
+	Value string
+	Err   error
+}
+
+func (e *RotationPartialError) Error() string { return e.Err.Error() }
+func (e *RotationPartialError) Unwrap() error { return e.Err }
 
 // DynamicCredential is an issued, short-lived credential returned to the
 // caller once. Mirrors internal/dynamic.Credential.
