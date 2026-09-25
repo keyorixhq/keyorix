@@ -82,7 +82,9 @@ tail-truncation or a genesis re-seed — still verifies, because nothing on-box
 records how long the chain *should* be. Three independent, composable
 mechanisms close this:
 
-1. **Signed in-DB checkpoints** — an opt-in scheduler periodically writes an
+1. **Signed in-DB checkpoints** — a scheduler, **enabled by default whenever a
+   signing key is available** (encryption configured; `audit_checkpoints.disabled`
+   opts out, with a loud warning logged), periodically writes an
    `audit_checkpoints` row (`chained_events`, `head_id`, `head_hash`) with an
    HMAC-SHA256 signature keyed by a value HKDF-derived from the **KEK**
    (deliberately KEK-derived, not DEK-derived, after a real incident — #502 —
