@@ -219,6 +219,14 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		"getUsageReport":       true,
 		"getBillingReport":     true,
 		"migrateUserToMachine": true,
+		// API hygiene campaign (rbac_wire.go snake_case wire types) added
+		// response schemas for these 5 Roles/Permissions operations. Each is
+		// exercised via openapi_contract_rbac_test.go.
+		"createRole":      true,
+		"getRole":         true,
+		"updateRole":      true,
+		"listPermissions": true,
+		"getPermission":   true,
 	}
 
 	loadSpec()

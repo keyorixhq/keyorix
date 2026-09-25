@@ -32,7 +32,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"createProject":                      reasonSchemaNotYetWritten, // post /api/v1/projects
 	"createProjectEnvironment":           reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/environments
 	"createRiskException":                reasonSchemaNotYetWritten, // post /api/v1/risk-exceptions
-	"createRole":                         reasonSchemaNotYetWritten, // post /api/v1/roles
 	"createSecretAccessRequest":          reasonSchemaNotYetWritten, // post /api/v1/secret-access-requests
 	"createSoDPolicy":                    reasonSchemaNotYetWritten, // post /api/v1/sod/policies
 	"createUser":                         reasonSchemaNotYetWritten, // post /api/v1/users
@@ -55,14 +54,12 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getEncryptionConfig":                reasonSchemaNotYetWritten, // get /api/v1/system/encryption-config
 	"getLegalHold":                       reasonSchemaNotYetWritten, // get /api/v1/legal-hold
 	"getMostAccessedSecrets":             reasonSchemaNotYetWritten, // get /api/v1/secrets/usage/most-accessed
-	"getPermission":                      reasonSchemaNotYetWritten, // get /api/v1/permissions/{id}
 	"getProject":                         reasonSchemaNotYetWritten, // get /api/v1/projects/{id}
 	"getProjectAccessReview":             reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-review
 	"getProjectDrift":                    reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/drift
 	"getProjectHealth":                   reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/health
 	"getProjectHygiene":                  reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/hygiene
 	"getProjectStats":                    reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/stats
-	"getRole":                            reasonSchemaNotYetWritten, // get /api/v1/roles/{id}
 	"getRotationStatus":                  reasonSchemaNotYetWritten, // get /api/v1/rotation-policies/status
 	"getSecretAccessRequest":             reasonSchemaNotYetWritten, // get /api/v1/secret-access-requests/{requestId}
 	"getSystemInfo":                      reasonSchemaNotYetWritten, // get /api/v1/system/info
@@ -81,7 +78,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"listAuditLogs":                      reasonSchemaNotYetWritten, // get /api/v1/audit/logs
 	"listEnvironments":                   reasonSchemaNotYetWritten, // get /api/v1/environments
 	"listNotifications":                  reasonSchemaNotYetWritten, // get /api/v1/notifications
-	"listPermissions":                    reasonSchemaNotYetWritten, // get /api/v1/permissions
 	"listProjectMembers":                 reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/members
 	"listProjectMemberships":             reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/memberships
 	"listRiskExceptions":                 reasonSchemaNotYetWritten, // get /api/v1/risk-exceptions
@@ -121,7 +117,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"updateAuthProfile":                  reasonSchemaNotYetWritten, // put /api/v1/auth/profile
 	"updateProject":                      reasonSchemaNotYetWritten, // put /api/v1/projects/{id}
 	"updateProjectMember":                reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/members/{userId}
-	"updateRole":                         reasonSchemaNotYetWritten, // put /api/v1/roles/{id}
 	"updateRotationPolicy":               reasonSchemaNotYetWritten, // put /api/v1/rotation-policies/{id}
 	"updateUser":                         reasonSchemaNotYetWritten, // put /api/v1/users/{id}
 	"updateUserRoles":                    reasonSchemaNotYetWritten, // put /api/v1/users/{id}/roles
@@ -363,4 +358,11 @@ var exercisingTests = map[string][]string{
 	"getUsageReport":       {"TestContractFinishSplit_GetUsageReport"},
 	"getBillingReport":     {"TestContractFinishSplit_GetBillingReport"},
 	"migrateUserToMachine": {"TestContractFinishSplit_MigrateUserToMachine"},
+	// API hygiene campaign (rbac_wire.go snake_case wire types) --
+	// openapi_contract_rbac_test.go.
+	"createRole":      {"TestContractRBAC_CreateRole"},
+	"getRole":         {"TestContractRBAC_GetRole"},
+	"updateRole":      {"TestContractRBAC_UpdateRole"},
+	"listPermissions": {"TestContractRBAC_ListPermissions"},
+	"getPermission":   {"TestContractRBAC_GetPermission"},
 }

@@ -21,9 +21,9 @@ const (
 
 // Defines values for AccessReviewDecisionSource.
 const (
-	DirectShare AccessReviewDecisionSource = "direct_share"
-	GroupShare  AccessReviewDecisionSource = "group_share"
-	Role        AccessReviewDecisionSource = "role"
+	AccessReviewDecisionSourceDirectShare AccessReviewDecisionSource = "direct_share"
+	AccessReviewDecisionSourceGroupShare  AccessReviewDecisionSource = "group_share"
+	AccessReviewDecisionSourceRole        AccessReviewDecisionSource = "role"
 )
 
 // Defines values for BlastRadiusNodeRiskLevel.
@@ -639,13 +639,13 @@ type PATToken struct {
 	TokenPrefix      *string    `json:"token_prefix,omitempty"`
 }
 
-// Permission A permission. internal/storage/models.Permission carries no `json:` tags, so the wire keys are the bare (capitalized) Go field names, not the snake_case this file uses elsewhere -- documented as such rather than as an idealized snake_case shape it does not actually have. Single-word field names still decode correctly into a snake_case-tagged Go client: encoding/json's Unmarshal falls back to a case-insensitive match ("ID" ~ "id") when no exact tag match exists.
+// Permission A permission. Handler-level snake_case wire type (server/http/handlers/rbac_wire.go's permissionWire) -- internal/storage/models.Permission itself carries no `json:` tags and is never serialized directly.
 type Permission struct {
-	Action      *string `json:"Action,omitempty"`
-	Description *string `json:"Description,omitempty"`
-	ID          *int    `json:"ID,omitempty"`
-	Name        *string `json:"Name,omitempty"`
-	Resource    *string `json:"Resource,omitempty"`
+	Action      *string `json:"action,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Id          *int    `json:"id,omitempty"`
+	Name        *string `json:"name,omitempty"`
+	Resource    *string `json:"resource,omitempty"`
 }
 
 // PermissionMatrixRow One (user, role, permission, scope) tuple (internal/core.PermissionMatrixRow), GET /api/v1/rbac/permission-matrix.
@@ -738,19 +738,27 @@ type RBACAuditLogEntry struct {
 	TargetUserId  *int       `json:"target_user_id"`
 }
 
+// Role A role (no permission set). Handler-level snake_case wire type (server/http/handlers/rbac_wire.go's roleWire) -- internal/storage/models.Role itself carries no `json:` tags and is never serialized directly. GET /api/v1/roles/by-name is the one exception: it returns the raw (untagged, PascalCase) model as-is, deliberately not converted -- see GetRoleByName's own doc comment.
+type Role struct {
+	BypassesPermissionChecks *bool   `json:"bypasses_permission_checks,omitempty"`
+	Description              *string `json:"description,omitempty"`
+	Id                       *int    `json:"id,omitempty"`
+	Name                     *string `json:"name,omitempty"`
+}
+
 // RoleRef A minimal role reference (id, name only) -- GET /api/v1/users/{id}/roles's shape.
 type RoleRef struct {
 	Id   *int    `json:"id,omitempty"`
 	Name *string `json:"name,omitempty"`
 }
 
-// RoleWithPermissions A role with its assigned permissions (internal/core.RoleWithPermissions, embeds models.Role). Same untagged-model caveat as Permission above: wire keys are the bare Go field names (ID, Name, Description, BypassesPermissionChecks, Permissions), not snake_case.
+// RoleWithPermissions A role with its assigned permissions (internal/core.RoleWithPermissions, embeds models.Role). Handler-level snake_case wire type (server/http/handlers/rbac_wire.go's roleWithPermissionsWire).
 type RoleWithPermissions struct {
-	BypassesPermissionChecks *bool         `json:"BypassesPermissionChecks,omitempty"`
-	Description              *string       `json:"Description,omitempty"`
-	ID                       *int          `json:"ID,omitempty"`
-	Name                     *string       `json:"Name,omitempty"`
-	Permissions              *[]Permission `json:"Permissions,omitempty"`
+	BypassesPermissionChecks *bool         `json:"bypasses_permission_checks,omitempty"`
+	Description              *string       `json:"description,omitempty"`
+	Id                       *int          `json:"id,omitempty"`
+	Name                     *string       `json:"name,omitempty"`
+	Permissions              *[]Permission `json:"permissions,omitempty"`
 }
 
 // RotationDryRunCheck defines model for RotationDryRunCheck.

@@ -19194,9 +19194,17 @@ func (r ListRolesResponse) StatusCode() int {
 type CreateRoleResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON401      *Error
-	JSON409      *Error
+	JSON201      *struct {
+		Data *struct {
+			Permissions *[]Permission `json:"permissions,omitempty"`
+
+			// Role A role (no permission set). Handler-level snake_case wire type (server/http/handlers/rbac_wire.go's roleWire) -- internal/storage/models.Role itself carries no `json:` tags and is never serialized directly. GET /api/v1/roles/by-name is the one exception: it returns the raw (untagged, PascalCase) model as-is, deliberately not converted -- see GetRoleByName's own doc comment.
+			Role *Role `json:"role,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON409 *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -30346,6 +30354,20 @@ func ParseCreateRoleResponse(rsp *http.Response) (*CreateRoleResponse, error) {
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			Data *struct {
+				Permissions *[]Permission `json:"permissions,omitempty"`
+
+				// Role A role (no permission set). Handler-level snake_case wire type (server/http/handlers/rbac_wire.go's roleWire) -- internal/storage/models.Role itself carries no `json:` tags and is never serialized directly. GET /api/v1/roles/by-name is the one exception: it returns the raw (untagged, PascalCase) model as-is, deliberately not converted -- see GetRoleByName's own doc comment.
+				Role *Role `json:"role,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
