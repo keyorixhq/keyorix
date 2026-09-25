@@ -247,7 +247,7 @@
 | `status` | moved (thin CLI) | PR 0, #2019 | local/embedded status branch dropped (Finding S18-adjacent); remote-only, now also folds in `auth status` |
 | `system audit` | moved (keyorix-server admin) | B1, #2016 | folded into `admin validate`'s file-permission check |
 | `system info` | moved (thin CLI) | PR 7/10, #2069 |  |
-| `system init` | moved (keyorix-server admin) | B1, #2016 | the local-host half (create config/keys/DB) moved to `admin init`; the --server network-bootstrap half (POST /system/init, unauthenticated, bootstrap-token-gated) is NOT YET in the thin CLI -- tracked as a GAP, needs its own small PR |
+| `system init` | moved (thin CLI) | B1, #2016 (local half); PR 10 leftover, #2083 (open) (--server half) | split across two homes: the local-host half (create config/keys/DB) moved to `admin init`; the --server network-bootstrap half (POST /system/init, unauthenticated, bootstrap-token-gated) moved to the thin CLI's own `system init --server` |
 | `system role-expiry-check` | moved (thin CLI) | PR 7/10, #2069 |  |
 | `system token-expiry-check` | moved (thin CLI) | PR 7/10, #2069 |  |
 | `system validate` | moved (keyorix-server admin) | B1, #2016 |  |
