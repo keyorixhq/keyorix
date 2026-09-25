@@ -515,22 +515,36 @@ func mapSecretACLError(err error) error {
 // Unauthenticated error. The auth interceptor populates this on every
 // non-public RPC.
 // authorizeSecretScoped resolves a secret's project/environment and checks the
-// permission AT that scope — mirroring the HTTP RequireScopedPermission gate, so
-// gRPC enforces the same scoped-RBAC model as HTTP rather than the flat, global
-// permission set. Routes through the shared authorizeScopedTarget (ADR-096 §4):
-// a missing secret and a found-but-unauthorized one both deny as
-// PermissionDenied by default, with a genuine NotFound reserved for a caller
-// who holds perm at GLOBAL scope — closing the existence oracle across every
-// project/tenant boundary without silently absorbing global-scope callers'
-// legitimate "doesn't exist" answer into a denial. The downstream
-// *WithPermissionCheck core calls still enforce ownership/share on top of this.
+// permission AT that scope — mirroring the HTTP RequireScopedSecretPermission
+// gate (server/middleware/auth.go), so gRPC enforces the same scoped-RBAC model
+// as HTTP rather than the flat, global permission set. The missing-secret path
+// routes through the shared authorizeScopedTarget (ADR-096 §4): a missing
+// secret and a found-but-unauthorized one both deny as PermissionDenied by
+// default, with a genuine NotFound reserved for a caller who holds perm at
+// GLOBAL scope — closing the existence oracle across every project/tenant
+// boundary without silently absorbing global-scope callers' legitimate
+// "doesn't exist" answer into a denial. The found-secret path calls
+// AuthorizeSecretPrincipal, not the plain scope-only AuthorizePrincipal
+// authorizeScopedTarget's found branch would otherwise use: a caller can hold
+// a per-secret SecretACL grant (RBAC Phase 3) that covers perm even though
+// their own project role(s) do not, and RequireScopedSecretPermission honors
+// that over REST — using the plain scope check here denied every such
+// ACL-granted caller access to the identical secret over gRPC, for every RPC
+// that calls this function (GetSecret and siblings, and ShareService's
+// ShareSecret/ListSecretShares).
+// Machine/OIDC principals are unaffected: AuthorizeSecretPrincipal skips the
+// ACL lookup for them (SecretACL rows are user-scoped) and takes the same
+// role-based path as before.
 func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, actor *interceptors.UserContext, secretID uint, perm string) error {
 	secret, err := cs.Storage().GetSecret(ctx, secretID)
 	if err != nil {
 		return authorizeScopedTarget(ctx, cs, actor, perm, err, core.Scope{}, "secret not found")
 	}
-	scope := core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
-	return authorizeScopedTarget(ctx, cs, actor, perm, nil, scope, "")
+	allowed, err := cs.AuthorizeSecretPrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), secretID, perm)
+	if err != nil || !allowed {
+		return status.Error(codes.PermissionDenied, "insufficient permissions")
+	}
+	return enforceProjectMFA(ctx, cs, actor, secret.ProjectID)
 }
 
 // mapSecretError translates core errors into gRPC status codes.
