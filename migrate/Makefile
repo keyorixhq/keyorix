@@ -10,10 +10,17 @@ FILTERED_SPEC=$(CURDIR)/.openapi-filtered.yaml
 # cli/Makefile's comment for why this matters when invoked from a subdirectory.
 export GOWORK=off
 
-.PHONY: build test client-deps client
+.PHONY: build migrate-vault-only test client-deps client
 
 build:
 	go build -o bin/keyorix-migrate .
+
+# Vault-only build: excludes the AWS/Azure/GCP cloud sources (and their SDKs) via build tags --
+# for an air-gapped or Vault-only install that has no use for any cloud SDK's SBOM weight. See
+# docs/migrate-from-cloud.md's size table for what each provider costs; this target drops all
+# three, landing back at the pre-cloud-sources ~10MB binary size.
+migrate-vault-only:
+	go build -tags nomigrate_aws,nomigrate_azure,nomigrate_gcp -o bin/keyorix-migrate-vault-only .
 
 test:
 	go test ./...

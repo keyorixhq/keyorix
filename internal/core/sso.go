@@ -29,10 +29,10 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/oauth2"
 
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/identity"
-	samlpkg "github.com/keyorixhq/keyorix/internal/saml"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -48,13 +48,10 @@ const (
 )
 
 // SAMLAuthn is the slice of a SAML Service Provider the SSO flow needs (satisfied by
-// *saml.Provider). It is an interface so the SAML login path is unit-tested without a
-// live IdP or a signed response.
-type SAMLAuthn interface {
-	AuthnRequest(relayState string) (redirectURL, requestID string, err error)
-	ParseResponse(r *http.Request, possibleRequestIDs []string) (*samlpkg.AssertionInfo, error)
-	Metadata() ([]byte, error)
-}
+// *saml.Provider). A type alias of ports.SAMLServiceProvider (ADR-109 step 1) — kept
+// under its original name so existing callers/tests are unaffected, and so the SAML
+// login path stays unit-testable without a live IdP or a signed response.
+type SAMLAuthn = ports.SAMLServiceProvider
 
 // SSOProvider is a resolved SSO provider. Type is "oidc" (the default) or "saml"; the
 // type-specific fields (OAuth/JWKS for OIDC, SAML for SAML) are set accordingly, while

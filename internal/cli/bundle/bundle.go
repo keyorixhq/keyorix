@@ -18,7 +18,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	ilicense "github.com/keyorixhq/keyorix/internal/license"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
-	"github.com/keyorixhq/keyorix/internal/trust"
+	"github.com/keyorixhq/keyorix/pkg/trust"
 	"github.com/spf13/cobra"
 	"golang.org/x/sys/unix"
 )

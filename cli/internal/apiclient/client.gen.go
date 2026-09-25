@@ -938,6 +938,11 @@ type ClientInterface interface {
 
 	// HealthCheck request
 	HealthCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SystemInitWithBody request with any body
+	SystemInitWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	SystemInit(ctx context.Context, body SystemInitJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) BulkApproveAccessRequestsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -4638,6 +4643,30 @@ func (c *Client) AuthLogout(ctx context.Context, reqEditors ...RequestEditorFn) 
 
 func (c *Client) HealthCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewHealthCheckRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SystemInitWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSystemInitRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SystemInit(ctx context.Context, body SystemInitJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSystemInitRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -14650,6 +14679,46 @@ func NewHealthCheckRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewSystemInitRequest calls the generic SystemInit builder with application/json body
+func NewSystemInitRequest(server string, body SystemInitJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSystemInitRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewSystemInitRequestWithBody generates requests for SystemInit with any type of body
+func NewSystemInitRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/system/init")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -15541,6 +15610,11 @@ type ClientWithResponsesInterface interface {
 
 	// HealthCheckWithResponse request
 	HealthCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*HealthCheckResponse, error)
+
+	// SystemInitWithBodyWithResponse request with any body
+	SystemInitWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SystemInitResponse, error)
+
+	SystemInitWithResponse(ctx context.Context, body SystemInitJSONRequestBody, reqEditors ...RequestEditorFn) (*SystemInitResponse, error)
 }
 
 type BulkApproveAccessRequestsResponse struct {
@@ -21631,6 +21705,41 @@ func (r HealthCheckResponse) StatusCode() int {
 	return 0
 }
 
+type SystemInitResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			AlreadyInitialized *bool     `json:"already_initialized,omitempty"`
+			Environments       *[]string `json:"environments,omitempty"`
+			Project            *string   `json:"project,omitempty"`
+			User               *struct {
+				Email    *string `json:"email,omitempty"`
+				Id       *int    `json:"id,omitempty"`
+				Username *string `json:"username,omitempty"`
+			} `json:"user,omitempty"`
+		} `json:"data,omitempty"`
+		Message *string `json:"message,omitempty"`
+	}
+	JSON400 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r SystemInitResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SystemInitResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 // BulkApproveAccessRequestsWithBodyWithResponse request with arbitrary body returning *BulkApproveAccessRequestsResponse
 func (c *ClientWithResponses) BulkApproveAccessRequestsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BulkApproveAccessRequestsResponse, error) {
 	rsp, err := c.BulkApproveAccessRequestsWithBody(ctx, contentType, body, reqEditors...)
@@ -24332,6 +24441,23 @@ func (c *ClientWithResponses) HealthCheckWithResponse(ctx context.Context, reqEd
 		return nil, err
 	}
 	return ParseHealthCheckResponse(rsp)
+}
+
+// SystemInitWithBodyWithResponse request with arbitrary body returning *SystemInitResponse
+func (c *ClientWithResponses) SystemInitWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SystemInitResponse, error) {
+	rsp, err := c.SystemInitWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSystemInitResponse(rsp)
+}
+
+func (c *ClientWithResponses) SystemInitWithResponse(ctx context.Context, body SystemInitJSONRequestBody, reqEditors ...RequestEditorFn) (*SystemInitResponse, error) {
+	rsp, err := c.SystemInit(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSystemInitResponse(rsp)
 }
 
 // ParseBulkApproveAccessRequestsResponse parses an HTTP response from a BulkApproveAccessRequestsWithResponse call
@@ -34490,6 +34616,51 @@ func ParseHealthCheckResponse(rsp *http.Response) (*HealthCheckResponse, error) 
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSystemInitResponse parses an HTTP response from a SystemInitWithResponse call
+func ParseSystemInitResponse(rsp *http.Response) (*SystemInitResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SystemInitResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				AlreadyInitialized *bool     `json:"already_initialized,omitempty"`
+				Environments       *[]string `json:"environments,omitempty"`
+				Project            *string   `json:"project,omitempty"`
+				User               *struct {
+					Email    *string `json:"email,omitempty"`
+					Id       *int    `json:"id,omitempty"`
+					Username *string `json:"username,omitempty"`
+				} `json:"user,omitempty"`
+			} `json:"data,omitempty"`
+			Message *string `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	}
 

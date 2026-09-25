@@ -14,7 +14,7 @@ import (
 
 	ilicense "github.com/keyorixhq/keyorix/internal/license"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
-	"github.com/keyorixhq/keyorix/internal/trust"
+	"github.com/keyorixhq/keyorix/pkg/trust"
 	"github.com/spf13/cobra"
 )
 

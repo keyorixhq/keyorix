@@ -7,11 +7,12 @@
 // doc comment on each one for which type it mirrors and which core files
 // call it.
 //
-// Nothing in internal/core is wired against these yet. Each ADR-109 "Order
-// of work" step swaps one integration from its concrete package type to the
-// interface here, and wires the real implementation from server/main.go
-// instead — see internal/core's own dependency_guard_test.go, whose
-// allowlist shrinks by one entry per completed step.
+// Each ADR-109 "Order of work" step swaps one integration from its concrete
+// package type to the interface here, and wires the real implementation from
+// server/main.go's DefaultIntegrations instead — see internal/core's own
+// dependency_guard_test.go, whose allowlist shrinks by one entry per
+// completed step. notary and saml are wired as of step 1; the rest are not
+// wired yet.
 //
 // This package must never import an integration package itself, or any of
 // their cloud SDKs — that would silently defeat the whole point. See
@@ -20,6 +21,7 @@ package ports
 
 import (
 	"context"
+	"crypto/x509"
 	"net/http"
 	"time"
 )
@@ -121,13 +123,22 @@ type NotaryReceipt struct {
 
 // TimestampNotary anchors a message with an external timestamping authority.
 // Mirrors internal/notary.Notary — audit_checkpoint.go's checkpointNotary
-// field. internal/notary.VerifyReceipt (a free function, not a method) has
-// no SDK dependency of its own; it moves alongside this interface's wiring
-// in the step that implements it, not represented here.
+// field. Receipt verification (internal/notary.VerifyReceipt) is a separate
+// free function, not a TimestampNotary method — see VerifyReceiptFunc below.
 type TimestampNotary interface {
 	Anchor(ctx context.Context, message []byte) (*NotaryReceipt, error)
 	Provider() string
 }
+
+// VerifyReceiptFunc re-checks a TimestampNotary receipt token against a trusted
+// root pool and the original anchored message, returning the authority-asserted
+// time. Mirrors internal/notary.VerifyReceipt exactly — it stays a free function,
+// not a TimestampNotary method, since verifying a receipt depends only on the
+// configured trust roots, not on which Notary produced it (see
+// audit_checkpoint.go's VerifyCheckpointAnchor). Wired alongside TimestampNotary
+// at startup (SetCheckpointAnchorRoots); nil means stored anchors cannot be
+// locally re-verified — fails closed rather than asserting an unverifiable proof.
+type VerifyReceiptFunc func(roots *x509.CertPool, message, token []byte) (time.Time, error)
 
 // SAMLAssertion is the parsed content of a SAML response Keyorix has
 // verified. Mirrors internal/saml.AssertionInfo, the fields sso.go reads off
@@ -140,12 +151,10 @@ type SAMLAssertion struct {
 }
 
 // SAMLServiceProvider is a SAML Service Provider. Mirrors the shape
-// internal/core/sso.go's own SAMLAuthn interface already has (it predates
-// this package) — the only difference is ParseResponse returning
-// *SAMLAssertion here instead of *internal/saml.AssertionInfo, which is what
-// still forces sso.go to import internal/saml today. Once sso.go's SAML
-// login path is rewritten against *SAMLAssertion (ADR-109 step 1),
-// SAMLAuthn retires in favor of this type.
+// internal/core/sso.go's own SAMLAuthn used to have (it predates this
+// package) — ADR-109 step 1 made SAMLAuthn a type alias of this interface,
+// and internal/saml.AssertionInfo a type alias of SAMLAssertion, so
+// *internal/saml.Provider satisfies this interface directly with no adapter.
 type SAMLServiceProvider interface {
 	AuthnRequest(relayState string) (redirectURL, requestID string, err error)
 	ParseResponse(r *http.Request, possibleRequestIDs []string) (*SAMLAssertion, error)

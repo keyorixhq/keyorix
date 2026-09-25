@@ -31,6 +31,8 @@ var keptPaths = []string{
 	"/auth/login",
 	"/auth/logout",
 	"/api/v1/auth/profile",
+	// PR 10 leftovers (docs/cli-split-inventory.md §7) -- system init --server.
+	"/system/init",
 	// PR 2 (docs/cli-split-inventory.md §7) -- pat, auth (mfa/logout), machine.
 	"/api/v1/auth/mfa/stepup",
 	"/api/v1/auth/tokens",

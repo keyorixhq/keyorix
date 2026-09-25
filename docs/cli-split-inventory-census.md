@@ -36,8 +36,8 @@
 | `break-glass list` | moved (thin CLI) | PR 1, #2043 |  |
 | `break-glass revoke` | moved (thin CLI) | PR 1, #2043 |  |
 | `bundle build` | dropped | maintainer-only tooling (decision 2026-09-24) | offline release-signing tool; stays as internal tooling outside the public CLI |
-| `bundle import` | GAP (unresolved) | PR 10 leftovers, in progress | verification code is moving into pkg/bundleverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands |
-| `bundle verify` | GAP (unresolved) | PR 10 leftovers, in progress | verification code is moving into pkg/bundleverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands |
+| `bundle import` | moved (thin CLI) | PR 10, #2076 (open) | verification code moved into pkg/bundleverify (no core/storage/config/SDK imports) |
+| `bundle verify` | moved (thin CLI) | PR 10, #2076 (open) | verification code moved into pkg/bundleverify (no core/storage/config/SDK imports) |
 | `compliance controls` | moved (thin CLI) | PR 8, #2069 |  |
 | `compliance credential-trends` | moved (thin CLI) | PR 8, #2069 |  |
 | `compliance digest` | moved (thin CLI) | PR 8, #2069 |  |
@@ -95,9 +95,9 @@
 | `legal-hold lift` | moved (thin CLI) | PR 8, #2069 |  |
 | `legal-hold place` | moved (thin CLI) | PR 8, #2069 |  |
 | `legal-hold status` | moved (thin CLI) | PR 8, #2069 |  |
-| `license install` | GAP (unresolved) | PR 10 leftovers, in progress | verification code is moving into pkg/licenseverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands |
+| `license install` | moved (thin CLI) | PR 10, #2076 (open) | verification code moved into pkg/licenseverify (no core/storage/config/SDK imports) |
 | `license issue` | dropped | maintainer-only tooling (decision 2026-09-24) | offline license-signing tool; stays as internal tooling outside the public CLI |
-| `license status` | GAP (unresolved) | PR 10 leftovers, in progress | verification code is moving into pkg/licenseverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands |
+| `license status` | moved (thin CLI) | PR 10, #2076 (open) | verification code moved into pkg/licenseverify (no core/storage/config/SDK imports) |
 | `machine audit` | moved (thin CLI) | PR 2, #2030 |  |
 | `machine binding add` | moved (thin CLI) | PR 2, #2030 |  |
 | `machine binding list` | moved (thin CLI) | PR 2, #2030 |  |
@@ -169,7 +169,7 @@
 | `rotation plan` | moved (thin CLI) | PR 1, #2043 |  |
 | `rotation show` | moved (thin CLI) | PR 1, #2043 |  |
 | `rotation status` | moved (thin CLI) | PR 1, #2043 |  |
-| `run` | GAP (unresolved) | PR 10 leftovers, in progress | flips to censusMoved once that PR lands; the local/embedded fetch branch will be dropped, not ported -- Finding S18: it had zero authorization check and zero audit event, so dropping it is a security fix, not just cleanup |
+| `run` | moved (thin CLI) | PR 10, #2076 (open) | the local/embedded fetch branch was dropped, not ported -- Finding S18: it had zero authorization check and zero audit event, so dropping it is a security fix, not just cleanup |
 | `secret access` | moved (thin CLI) | PR 4/5, #2069 |  |
 | `secret access-log` | moved (thin CLI) | PR 4/5, #2069 |  |
 | `secret acl grant` | moved (thin CLI) | PR 4/5, #2069 |  |
@@ -206,7 +206,7 @@
 | `secret folder list` | moved (thin CLI) | PR 4/5, #2069 |  |
 | `secret get` | moved (thin CLI) | PR 4/5, #2069 |  |
 | `secret get-schedule` | moved (thin CLI) | PR 4/5, #2069 |  |
-| `secret import` | moved (thin CLI) | PR 4/5, #2069 | cloud/Vault `--source` import stays dropped (SBOM goal); moves to keyorix-migrate instead (separate track) |
+| `secret import` | moved out (separate tool) | #2077/#2079 | file mode stays in the thin CLI (cli/cmd/secret_import.go); the vault/aws/azure/gcp live-credential `--source` modes moved to keyorix-migrate |
 | `secret info` | moved (thin CLI) | PR 4/5, #2069 |  |
 | `secret list` | moved (thin CLI) | PR 4/5, #2069 |  |
 | `secret move` | moved (thin CLI) | PR 4/5, #2069 |  |
@@ -247,7 +247,7 @@
 | `status` | moved (thin CLI) | PR 0, #2019 | local/embedded status branch dropped (Finding S18-adjacent); remote-only, now also folds in `auth status` |
 | `system audit` | moved (keyorix-server admin) | B1, #2016 | folded into `admin validate`'s file-permission check |
 | `system info` | moved (thin CLI) | PR 7/10, #2069 |  |
-| `system init` | moved (keyorix-server admin) | B1, #2016 | the local-host half (create config/keys/DB) moved to `admin init`; the --server network-bootstrap half (POST /system/init, unauthenticated, bootstrap-token-gated) is NOT YET in the thin CLI -- tracked as a GAP, needs its own small PR |
+| `system init` | moved (thin CLI) | B1, #2016 (local half); PR 10 leftover, #2083 (open) (--server half) | split across two homes: the local-host half (create config/keys/DB) moved to `admin init`; the --server network-bootstrap half (POST /system/init, unauthenticated, bootstrap-token-gated) moved to the thin CLI's own `system init --server` |
 | `system role-expiry-check` | moved (thin CLI) | PR 7/10, #2069 |  |
 | `system token-expiry-check` | moved (thin CLI) | PR 7/10, #2069 |  |
 | `system validate` | moved (keyorix-server admin) | B1, #2016 |  |
@@ -265,10 +265,5 @@
 | `user suspend-inactive` | moved (thin CLI) | PR 6, #2049 |  |
 | `user update` | moved (thin CLI) | PR 6, #2049 |  |
 
-**5 open gap(s)** (blocks PR 14 / Phase 5 -- see TestNoGapsRemain):
+**0 open gap(s)** (blocks PR 14 / Phase 5 -- see TestNoGapsRemain):
 
-- `bundle import`: verification code is moving into pkg/bundleverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands
-- `bundle verify`: verification code is moving into pkg/bundleverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands
-- `license install`: verification code is moving into pkg/licenseverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands
-- `license status`: verification code is moving into pkg/licenseverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands
-- `run`: flips to censusMoved once that PR lands; the local/embedded fetch branch will be dropped, not ported -- Finding S18: it had zero authorization check and zero audit event, so dropping it is a security fix, not just cleanup

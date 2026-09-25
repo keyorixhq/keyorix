@@ -14,7 +14,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/keyorixhq/keyorix/internal/trust"
+	"github.com/keyorixhq/keyorix/pkg/trust"
 )
 
 // compliancePostureCore builds a bare KeyorixCore against a real (empty) sqlite DB —

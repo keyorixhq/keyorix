@@ -2188,6 +2188,16 @@ type AuthLoginJSONBody struct {
 	Username string `json:"username"`
 }
 
+// SystemInitJSONBody defines parameters for SystemInit.
+type SystemInitJSONBody struct {
+	// BootstrapToken Prefer the X-Keyorix-Bootstrap-Token header; this field is the fallback for clients that cannot set headers.
+	BootstrapToken *string             `json:"bootstrap_token,omitempty"`
+	DisplayName    *string             `json:"display_name,omitempty"`
+	Email          openapi_types.Email `json:"email"`
+	Password       string              `json:"password"`
+	Username       string              `json:"username"`
+}
+
 // BulkApproveAccessRequestsJSONRequestBody defines body for BulkApproveAccessRequests for application/json ContentType.
 type BulkApproveAccessRequestsJSONRequestBody BulkApproveAccessRequestsJSONBody
 
@@ -2421,3 +2431,6 @@ type UpdateUserRolesJSONRequestBody UpdateUserRolesJSONBody
 
 // AuthLoginJSONRequestBody defines body for AuthLogin for application/json ContentType.
 type AuthLoginJSONRequestBody AuthLoginJSONBody
+
+// SystemInitJSONRequestBody defines body for SystemInit for application/json ContentType.
+type SystemInitJSONRequestBody SystemInitJSONBody
