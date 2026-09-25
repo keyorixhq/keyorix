@@ -1,318 +1,88 @@
-# 🔒 Keyorix Security Guide
+# Security Policy
 
-Comprehensive security documentation for the Keyorix secret management system.
+Keyorix is a self-hosted secrets manager: encryption at rest, authentication
+(sessions, PAT, machine identities, OIDC, SAML SSO, TOTP MFA, WebAuthn/passkeys),
+scoped RBAC, and a tamper-evident audit trail, deployed entirely inside your own
+infrastructure. This document is the vulnerability disclosure policy and the
+index into the rest of Keyorix's security documentation — for what's actually
+implemented and how, see the linked documents below rather than this page,
+which is deliberately short.
 
-## 🛡️ **Security Status: Production Ready**
+## Reporting a vulnerability
 
-- **Encryption**: AES-256-GCM validated and operational
-- **Authentication**: Bearer token system implemented
-- **Authorization**: Role-based access control (RBAC) active
-- **Audit Logging**: Complete activity tracking
-- **Security Tests**: 100% passing
+**Preferred: [GitHub private vulnerability reporting](https://github.com/keyorixhq/keyorix/security/advisories/new)**
+on this repository — it keeps the report and any discussion private until a
+fix ships, and lets you attach a proof of concept directly.
 
-## 🔐 **Encryption**
+**Alternative:** email `security@keyorix.com`.
 
-### Data Encryption
-- **Algorithm**: AES-256-GCM (Galois/Counter Mode)
-- **Key Size**: 256-bit encryption keys
-- **Authentication**: Built-in authentication with GCM mode
-- **Key Derivation**: Secure key derivation functions
-- **Status**: ✅ Operational and tested
+Please include: the affected version/commit, a description of the issue, and
+reproduction steps or a proof of concept if you have one. Do not open a public
+GitHub issue for a suspected vulnerability.
 
-### Encryption at Rest
-```go
-// All secrets are encrypted before storage
-encryptedValue, err := encryption.Encrypt(secretValue, key)
-if err != nil {
-    return fmt.Errorf("encryption failed: %w", err)
-}
-```
+## Supported versions
 
-### Key Management
-- **DEK (Data Encryption Key)**: Used for encrypting individual secrets
-- **KEK (Key Encryption Key)**: Optional key for encrypting DEKs
-- **Key Rotation**: Supported for enhanced security
-- **Key Storage**: Secure key storage with proper permissions
+Keyorix is **pre-1.0**. No formal support period is declared yet — this is
+stated explicitly on every release, matching
+[ADR-067](adr-067-release-lifecycle-support-policy.md)'s decision to distinguish
+development tags (no declared support period, no Declaration of Conformity)
+from a future designated release (v1.0 onward: a declared multi-year,
+security-only support period, a Declaration of Conformity, a signed update
+bundle, an SBOM and VEX document — see ADR-067 for the full lifecycle design).
 
-## 🔑 **Authentication & Authorization**
+In practice, security fixes today land on the latest release only — the same
+scoping the published remediation commitment below assumes.
 
-### Authentication Methods
-1. **Bearer Token Authentication**
-   ```http
-   Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-   ```
+## Remediation timelines
 
-2. **API Key Authentication** (for service accounts)
-   ```http
-   X-API-Key: keyorix_api_key_...
-   ```
+Sized for the worst realistic month, not the best one — this is what you may
+rely on. Full rationale, including how these numbers were benchmarked against
+comparable projects, is in [ADR-104](adr-104-security-remediation-sla.md).
 
-### Role-Based Access Control (RBAC)
-```yaml
-Roles:
-  - admin: Full system access
-  - user: Standard secret management
-  - viewer: Read-only access
-  - service: API-only access
+| Class | Commitment |
+|---|---|
+| Acknowledge a report | 48 hours |
+| Initial assessment | 7 days |
+| Fix, all severities | **≤90 days** from a validated report |
+| High / Critical | **1 week advance notice** before the security release ships |
+| Advisory | A GHSA with a requested CVE, published the **same day** as the fix |
+| Supported versions | Latest release only |
+| Release cadence | Not published (see ADR-104 for why) |
 
-Permissions:
-  - secret:create
-  - secret:read
-  - secret:update
-  - secret:delete
-  - secret:share
-  - system:admin
-```
+The 90-day ceiling applies uniformly across severity — there is no public
+clock that depends on a fast, contestable severity call under time pressure.
+Most fixes ship well inside it; severity still drives internal prioritization,
+just not which published deadline applies.
 
-### Permission Matrix
-| Role | Create | Read | Update | Delete | Share | Admin |
-|------|--------|------|--------|--------|-------|-------|
-| Admin | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| User | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Viewer | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Service | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
+**CRITICAL** (for internal prioritization and the advance-notice trigger, not
+a separate published deadline — High and Critical share the same published
+treatment above): remote, unauthenticated compromise of stored secret values,
+or of the authentication boundary itself, requiring no valid credential of any
+kind and no prior account state. See ADR-104 for the full definition and
+worked examples of severe findings that do *not* clear this bar (and are
+still HIGH, with the same published commitment).
 
-## 🔍 **Audit Logging**
+This is a current operating commitment, not a CRA-declared support period —
+see "Supported versions" above for that distinct, separate axis.
 
-### Audit Events
-All security-relevant events are logged:
+## Security documentation
 
-```json
-{
-  "timestamp": "2025-10-08T16:30:00Z",
-  "event_type": "SECRET_ACCESSED",
-  "user_id": "user123",
-  "secret_id": 1,
-  "action": "read",
-  "ip_address": "192.168.1.100",
-  "user_agent": "keyorix-cli/1.0.0",
-  "success": true,
-  "details": {
-    "secret_name": "api-key",
-    "permission": "read"
-  }
-}
-```
+| Document | Covers |
+|---|---|
+| [`security/threat-model.md`](security/threat-model.md) | Assets, trust boundaries, STRIDE analysis, and stated residual risks — including open items, not only mitigated ones. |
+| [`security/architecture.md`](security/architecture.md) | How encryption, authentication, authorization, transport, process hardening, and air-gap operation actually work, with citations. |
+| [`security/hardening-guide.md`](security/hardening-guide.md) | A production configuration checklist with the exact config keys, verified against `internal/config`. |
+| [`security/testing.md`](security/testing.md) | CI gates, the fuzzing program, differential/property testing, and the machine-checked coverage ledgers. |
+| [`compliance/README.md`](compliance/README.md) | Regulatory control mappings (NIS2, DORA, ISO 27001, ENS, SOC 2) built on top of the above. |
+| [`compliance/SECURITY-FAQ.md`](compliance/SECURITY-FAQ.md) | The questions a buyer's security team typically asks during a vendor review. |
+| [`compliance/SECURITY-VERIFICATION.md`](compliance/SECURITY-VERIFICATION.md) | The security audits performed to date, issues found and fixed, and the standing CI gates. |
+| [`compliance/AUDIT-LOG-PROVISIONS.md`](compliance/AUDIT-LOG-PROVISIONS.md) / [`compliance/OFFLINE-AUDIT-VERIFICATION.md`](compliance/OFFLINE-AUDIT-VERIFICATION.md) | What's logged, how, and how to independently verify the audit tamper-evidence chain without trusting the running server. |
 
-### Tracked Events
-- Secret creation, access, modification, deletion
-- Share creation, modification, revocation
-- Authentication attempts (success/failure)
-- Permission changes
-- System configuration changes
-- API access patterns
+## Repository-level protections
 
-## 🌐 **API Security**
-
-### HTTP Security Headers
-```http
-Strict-Transport-Security: max-age=31536000; includeSubDomains
-X-Content-Type-Options: nosniff
-X-Frame-Options: DENY
-X-XSS-Protection: 1; mode=block
-Content-Security-Policy: default-src 'self'
-```
-
-### CORS Configuration
-```yaml
-cors:
-  allowed_origins: ["https://keyorix.company.com"]
-  allowed_methods: ["GET", "POST", "PUT", "DELETE"]
-  allowed_headers: ["Authorization", "Content-Type"]
-  max_age: 86400
-```
-
-### Rate Limiting
-- **Default**: 100 requests/minute per user
-- **Authentication**: 10 requests/minute per IP
-- **Burst Protection**: Configurable burst limits
-- **DDoS Protection**: Automatic IP blocking for abuse
-
-## 🔒 **Secret Sharing Security**
-
-### Permission Model
-```go
-type SharePermission string
-
-const (
-    PermissionRead  SharePermission = "read"
-    PermissionWrite SharePermission = "write"
-    PermissionAdmin SharePermission = "admin"
-)
-```
-
-### Sharing Rules
-1. **Owner Control**: Only secret owners can create shares
-2. **Permission Inheritance**: Users cannot grant permissions they don't have
-3. **Expiration**: All shares can have expiration dates
-4. **Revocation**: Shares can be revoked at any time
-5. **Audit Trail**: All sharing activities are logged
-
-### Group Sharing
-```yaml
-Groups:
-  - name: "dev-team"
-    members: ["alice", "bob", "charlie"]
-    permissions: ["secret:read", "secret:create"]
-  
-  - name: "ops-team"
-    members: ["david", "eve"]
-    permissions: ["secret:read", "secret:update", "system:monitor"]
-```
-
-## 🛡️ **Security Best Practices**
-
-### Deployment Security
-1. **TLS/HTTPS**: Always use encrypted connections in production
-2. **Firewall**: Restrict access to necessary ports only
-3. **Network Segmentation**: Deploy in secure network segments
-4. **Regular Updates**: Keep system and dependencies updated
-5. **Monitoring**: Implement security monitoring and alerting
-6. **Disable swap**: run the node/host with swap disabled (Kubernetes' default) so
-   decrypted secret memory cannot be written to disk under memory pressure. This is a
-   deployment-level control, not something the server process configures — see
-   `docs/adr-100-mlockall-removal-deployment-swap-control.md`.
-
-### Configuration Security
-```yaml
-# Production security configuration
-security:
-  encryption_enabled: true
-  auth_required: true
-  tls_enabled: true
-  audit_logging: true
-  rate_limiting: true
-  
-tls:
-  cert_file: "/path/to/cert.pem"
-  key_file: "/path/to/key.pem"
-  min_version: "1.2"
-  
-auth:
-  token_expiry: "24h"
-  refresh_token_expiry: "7d"
-  max_login_attempts: 5
-  lockout_duration: "15m"
-```
-
-### Database Security
-- **Encryption at Rest**: All sensitive data encrypted
-- **Connection Security**: Encrypted database connections
-- **Access Control**: Database-level access restrictions
-- **Backup Security**: Encrypted backups with secure storage
-
-## 🚨 **Incident Response**
-
-### Security Monitoring
-```bash
-# Monitor failed authentication attempts
-./keyorix rbac audit-logs --event-type "AUTH_FAILED" --last 24h
-
-# Check suspicious access patterns
-./keyorix rbac audit-logs --user-id "suspicious_user" --last 7d
-
-# Monitor privilege escalations
-./keyorix rbac audit-logs --event-type "PERMISSION_GRANTED" --last 24h
-```
-
-### Emergency Procedures
-1. **Compromise Detection**: Automated alerts for suspicious activity
-2. **Access Revocation**: Immediate token/session invalidation
-3. **Secret Rotation**: Emergency secret rotation procedures
-4. **System Isolation**: Network isolation capabilities
-5. **Forensic Logging**: Detailed logs for incident analysis
-
-## 🔧 **Security Configuration**
-
-### Minimal Security Configuration
-```yaml
-# keyorix-secure.yaml
-security:
-  encryption_enabled: true
-  auth_required: true
-  audit_logging: true
-  
-server:
-  tls:
-    enabled: true
-    cert_file: "server.crt"
-    key_file: "server.key"
-    
-auth:
-  token_expiry: "1h"
-  require_2fa: true
-  
-rate_limiting:
-  enabled: true
-  requests_per_minute: 60
-```
-
-### Enterprise Security Configuration
-```yaml
-# keyorix-enterprise.yaml
-security:
-  encryption_enabled: true
-  auth_required: true
-  audit_logging: true
-  compliance_mode: true
-  
-ldap:
-  enabled: true
-  server: "ldap://company.com:389"
-  base_dn: "dc=company,dc=com"
-  
-monitoring:
-  security_alerts: true
-  failed_login_threshold: 3
-  unusual_access_detection: true
-```
-
-## 📋 **Security Checklist**
-
-### Pre-Production Security Review
-- [ ] Encryption enabled and tested
-- [ ] Authentication configured
-- [ ] RBAC permissions defined
-- [ ] Audit logging enabled
-- [ ] TLS/HTTPS configured
-- [ ] Rate limiting enabled
-- [ ] Security headers configured
-- [ ] Database security hardened
-- [ ] Network security configured
-- [ ] Monitoring and alerting setup
-
-### Regular Security Maintenance
-- [ ] Review audit logs weekly
-- [ ] Rotate encryption keys quarterly
-- [ ] Update dependencies monthly
-- [ ] Review user permissions monthly
-- [ ] Test backup/recovery procedures
-- [ ] Security vulnerability scanning
-- [ ] Penetration testing annually
-
-## 🆘 **Security Support**
-
-### Reporting Security Issues
-- **Email**: security@keyorix.com
-- **PGP Key**: Available on website
-- **Response Time**: 24 hours for critical issues
-
-### Security Resources
-- **Security Guide**: This document
-- **API Security**: See [API_REFERENCE.md](./API_REFERENCE.md)
-- **Deployment Security**: See [DEPLOYMENT_GUIDE.md](../DEPLOYMENT_GUIDE.md)
-- **Audit Logs**: `./keyorix rbac audit-logs --help`
-
-## 🎯 **Security Status Summary**
-
-**Your Keyorix system is production-ready with enterprise-grade security:**
-
-✅ **Encryption**: AES-256-GCM operational  
-✅ **Authentication**: Bearer token system active  
-✅ **Authorization**: RBAC with granular permissions  
-✅ **Audit Logging**: Complete activity tracking  
-✅ **API Security**: Rate limiting and security headers  
-✅ **Secret Sharing**: Secure permission-based sharing  
-✅ **Monitoring**: Health checks and security alerts  
-
-**Ready for production deployment with confidence!** 🚀
+GitHub-native secret scanning and push protection, Dependabot security
+updates, and private vulnerability reporting are all enabled on this
+repository. Branch protection requires 11 status checks (static analysis,
+`govulncheck`, fuzz coverage, license compliance, DCO, and more — see
+[`security/testing.md`](security/testing.md)) with no bypass, including for
+maintainers.
