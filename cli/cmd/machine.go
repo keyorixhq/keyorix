@@ -269,3 +269,77 @@ func derefState(s *apiclient.MachineIdentityState) apiclient.MachineIdentityStat
 	}
 	return *s
 }
+
+// ── migrate-from-user ──────────────────────────────────────────────────────────────
+//
+// Ports `keyorix migrate user-to-machine` (docs/cli-split-inventory-census.md,
+// FINISH-SPLIT census-gaps batch): the REST-backed thin-CLI replacement for
+// internal/cli/migrate/user_to_machine.go's LOCAL-MODE-ONLY command. The old command's
+// --by flag and requireMigrationAuthority check existed only because local mode has no
+// session to attribute the action to or enforce authority through -- POST
+// /machine-identities/migrate-from-user does both itself (the bearer token IS the acting
+// identity; the route already requires roles.assign (project) AND users.write (global) via
+// router middleware, server/http/router.go). So --by is dropped, not carried forward.
+// Named "migrate-from-user", not "migrate ... user-to-machine": a top-level "migrate" verb
+// in this CLI would be confusable with the separate keyorix-migrate binary (Vault/cloud
+// import tool) -- unrelated despite the name collision, per the census entry's own note.
+
+var (
+	machineMigrateProjectName string
+	machineMigrateType        string
+	machineMigrateName        string
+	machineMigrateKeepUser    bool
+)
+
+var machineMigrateFromUserCmd = &cobra.Command{
+	Use:   "migrate-from-user <username>",
+	Short: "Convert a service-account-shaped user into a machine identity",
+	Long: "Materialise a project machine identity (ADR-023) for an existing user and,\n" +
+		"unless --keep-user is set, suspend the source user so it can no longer log in.\n" +
+		"The user is never deleted; suspension is reversible via `keyorix user reactivate`.",
+	Args:         cobra.ExactArgs(1),
+	SilenceUsage: true,
+	RunE:         runMachineMigrateFromUser,
+}
+
+func init() {
+	machineMigrateFromUserCmd.Flags().StringVar(&machineMigrateProjectName, "project", "", "Project for the new machine identity")
+	machineMigrateFromUserCmd.Flags().StringVar(&machineMigrateType, "type", "service", "Identity type: ci | k8s | service | automation | other")
+	machineMigrateFromUserCmd.Flags().StringVar(&machineMigrateName, "name", "", "Machine identity name (defaults to the username)")
+	machineMigrateFromUserCmd.Flags().BoolVar(&machineMigrateKeepUser, "keep-user", false, "Leave the source user active (default: suspend it)")
+	machineCmd.AddCommand(machineMigrateFromUserCmd)
+}
+
+func runMachineMigrateFromUser(cmd *cobra.Command, args []string) error {
+	username := args[0]
+	client, err := machineAPIClient()
+	if err != nil {
+		return err
+	}
+	_, projectID, err := resolveMachineProjectID(client, machineMigrateProjectName)
+	if err != nil {
+		return err
+	}
+
+	body := apiclient.MigrateUserToMachineJSONRequestBody{Username: username, KeepUser: &machineMigrateKeepUser}
+	if machineMigrateType != "" {
+		body.IdentityType = &machineMigrateType
+	}
+	if machineMigrateName != "" {
+		body.Name = &machineMigrateName
+	}
+	resp, err := client.MigrateUserToMachineWithResponse(context.Background(), projectID, body)
+	if err != nil {
+		return fmt.Errorf("failed to migrate user to machine identity: %w", err)
+	}
+	if resp.JSON201 == nil || resp.JSON201.Data == nil || resp.JSON201.Data.MachineIdentity == nil {
+		return apiError("migrate user to machine identity", resp.StatusCode(), resp.Body)
+	}
+	m := *resp.JSON201.Data.MachineIdentity
+	fmt.Printf("Migrated user %q to machine identity: id=%d name=%q type=%s state=%s\n",
+		username, derefInt(m.Id), derefStr(m.Name), derefStr(m.IdentityType), string(derefState(m.State)))
+	if !machineMigrateKeepUser {
+		fmt.Println("Source user suspended (login blocked). Use `keyorix user reactivate` to restore.")
+	}
+	return nil
+}

@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/rotation"
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -90,7 +90,7 @@ func (c *KeyorixCore) notifyRotationFailures(ctx context.Context, projectID uint
 // SetRotationManager wires the configured backend rotation executors (ADR-047) that
 // apply a new credential to an upstream system. nil (the default) leaves backend
 // rotation disabled — auto-rotation then only regenerates Keyorix-owned values.
-func (c *KeyorixCore) SetRotationManager(m *rotation.Manager) {
+func (c *KeyorixCore) SetRotationManager(m ports.RotationExecutorResolver) {
 	c.rotationManager = m
 }
 
@@ -416,7 +416,7 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 			fmt.Sprintf("auto-rotation: calling upstream backend %q ref %q for secret %q",
 				secret.RotationBackend, secret.RotationRef, secret.Name))
 		upstreamVal, err := c.applyBackendRotation(ctx, secret, val)
-		var partial *rotation.PartialRotationError
+		var partial *ports.RotationPartialError
 		switch {
 		case errors.As(err, &partial):
 			// The upstream minted the new credential but a prior, possibly compromised one
@@ -517,7 +517,7 @@ func (c *KeyorixCore) rotationBackendLock(backend, ref string) *sync.Mutex {
 
 // applyBackendRotation resolves the secret's named rotation executor and rotates the
 // upstream credential (ADR-047). It returns the VALUE to store in Keyorix: for a
-// generate-upstream backend (rotation.GeneratingExecutor, e.g. a cloud key API) that is
+// generate-upstream backend (ports.GeneratingRotationExecutor, e.g. a cloud key API) that is
 // the value the upstream minted; for a password-set backend it is the candidate passed
 // in (which the executor applied). Returns an error (so the caller does NOT store
 // anything) when no manager is configured, the backend is unknown, or the apply fails.
@@ -548,7 +548,7 @@ func (c *KeyorixCore) applyBackendRotation(ctx context.Context, secret *models.S
 	mu.Lock()
 	defer mu.Unlock()
 
-	if gen, ok := exec.(rotation.GeneratingExecutor); ok {
+	if gen, ok := exec.(ports.GeneratingRotationExecutor); ok {
 		return gen.GenerateUpstream(ctx, secret.RotationRef)
 	}
 	if err := exec.Rotate(ctx, secret.RotationRef, candidate); err != nil {
@@ -575,7 +575,7 @@ func (c *KeyorixCore) applyBackendRotation(ctx context.Context, secret *models.S
 // If the upstream rotation fails outright, nothing is stored and an error is returned —
 // the caller must never be told "success" while the suspected-compromised credential is
 // still live and untouched. If it only partially completes (a new credential was minted
-// but a prior one could not be removed upstream — rotation.PartialRotationError), the new
+// but a prior one could not be removed upstream — ports.RotationPartialError), the new
 // value is still stored (never orphan a freshly minted credential — a cloud key API often
 // returns key material only once) but an error is still returned, so the HTTP response is
 // never a clean "success" while a leftover credential needs manual operator removal; the
@@ -603,7 +603,7 @@ func (c *KeyorixCore) RotateSecretOnDemand(ctx context.Context, id uint, newValu
 		fmt.Sprintf("on-demand rotation: calling upstream backend %q ref %q for secret %q",
 			secret.RotationBackend, secret.RotationRef, secret.Name))
 	upstreamVal, berr := c.applyBackendRotation(ctx, secret, string(newValue))
-	var partial *rotation.PartialRotationError
+	var partial *ports.RotationPartialError
 	switch {
 	case errors.As(berr, &partial):
 		// The upstream minted the new credential but a prior, possibly compromised one

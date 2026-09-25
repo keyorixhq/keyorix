@@ -24,13 +24,17 @@ const (
 	ExportMaxRows = 10_000
 )
 
-// AccessLogExportRow is a single row in a secret access-log export.
+// AccessLogExportRow is a single row in a secret access-log export. IPAddress is
+// omitted (empty string) unless the caller separately holds audit.read -- see
+// ExportSecretAccessLog; this is the same gate AccessHistory
+// (server/http/handlers/secrets_access_history.go) applies to the JSON route this
+// export mirrors.
 type AccessLogExportRow struct {
 	EventID   uint      `json:"event_id"`
 	SecretID  uint      `json:"secret_id"`
 	UserID    *uint     `json:"user_id,omitempty"`
 	ActorType string    `json:"actor_type"`
-	IPAddress string    `json:"ip_address"`
+	IPAddress string    `json:"ip_address,omitempty"`
 	Success   bool      `json:"success"`
 	EventTime time.Time `json:"event_time"`
 }
@@ -72,6 +76,16 @@ func (k *KeyorixCore) ExportSecretAccessLog(ctx context.Context, actorKind strin
 		return nil, "", fmt.Errorf("ExportSecretAccessLog: %w", err)
 	}
 
+	// Same gate as AccessHistory's JSON route: IPAddress is metadata about the
+	// READER's own session, not the secret, so a mere secrets.read caller (already
+	// authorized above) must not see where OTHER users read this secret from.
+	// Global/unscoped, matching /api/v1/audit/*'s own gate. Fails closed: an
+	// authorization-check error is treated as "no".
+	includeIP, aerr := k.AuthorizePrincipal(ctx, actorKind, actorID, permAuditRead, Scope{})
+	if aerr != nil {
+		includeIP = false
+	}
+
 	rows := make([]AccessLogExportRow, 0, len(events))
 	for _, e := range events {
 		success := e.Success == nil || *e.Success
@@ -79,15 +93,18 @@ func (k *KeyorixCore) ExportSecretAccessLog(ctx context.Context, actorKind strin
 		if e.SecretNodeID != nil {
 			secID = *e.SecretNodeID
 		}
-		rows = append(rows, AccessLogExportRow{
+		row := AccessLogExportRow{
 			EventID:   e.ID,
 			SecretID:  secID,
 			UserID:    e.UserID,
 			ActorType: e.ActorType,
-			IPAddress: e.IPAddress,
 			Success:   success,
 			EventTime: e.EventTime,
-		})
+		}
+		if includeIP {
+			row.IPAddress = e.IPAddress
+		}
+		rows = append(rows, row)
 	}
 
 	if format == ExportFormatCSV {

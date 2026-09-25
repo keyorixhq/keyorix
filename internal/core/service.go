@@ -19,7 +19,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/license"
-	"github.com/keyorixhq/keyorix/internal/rotation"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/pkg/trust"
 )
@@ -230,7 +229,7 @@ type KeyorixCore struct {
 	connectOwnership map[string]ConnectOwnership
 	// rotationManager holds the backend rotation executors (ADR-047) that apply a new
 	// credential to an upstream system during rotation. nil = no backends configured.
-	rotationManager *rotation.Manager
+	rotationManager ports.RotationExecutorResolver
 	// rotationBackendLocks serializes applyBackendRotation calls against the SAME
 	// (backend, ref) pair — the single shared entry point BOTH the auto-rotation
 	// scheduler (rotateOneSecret) and on-demand rotation (RotateSecretOnDemand) go

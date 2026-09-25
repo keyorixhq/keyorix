@@ -938,6 +938,11 @@ jobs:
           source scripts/ci-test-legs.sh
           assert_leg_completeness
 
+      - name: Assert every leg-pinned package exists in go list and is pinned exactly once
+        run: |
+          source scripts/ci-test-legs.sh
+          assert_pinned_leg_packages_valid
+
   # Independent of test execution/coverage -- both tools statically analyze
   # source, so this runs in parallel with test-suite instead of waiting for it
   # (as it did when both lived inside one sequential build-and-test job).

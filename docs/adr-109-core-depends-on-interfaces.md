@@ -90,13 +90,13 @@ Methodology: `scripts/fuzzing/mapsize_of_bin.sh` (a repo-local reproduction of t
 that script's header comment), `go build -trimpath` for `GOOS=linux GOARCH=amd64`, and
 `go list -deps ./internal/core` (production files only).
 
-| Metric | Baseline (Step 0) | Step 1 (notary + saml) |
-|---|---|---|
-| `internal/core` coverage map (`FuzzCoreOperationSequence`) | 486,874 B (~475 KiB) — matches this ADR's Context-section figure of "about 480 KB" | 485,107 B (~473.7 KiB); **−1,767 B (−0.36%)** |
-| `keyorix-server` binary, `linux/amd64`, `-trimpath` | 100,937,259 B (~96.3 MiB) | 100,989,425 B (~96.3 MiB); flat (build noise, +0.05%) |
-| `go list -deps ./internal/core` total | 872 packages | 859 packages; **−13** |
-| ...of which cloud SDK packages (aws/azure/gcp/vault) | 131 (64 `aws-sdk-go-v2`, 33 `azure-sdk-for-go`, 34 `cloud.google.com/go`, 0 `hashicorp/vault/api` — Connect's Vault backend has no official SDK dependency today) | 131, unchanged — notary and saml carry no cloud SDK |
-| ...of which the 6 ADR-109 integration packages | `connect` (+ `connecttypes`, which stays), `rotation`, `dynamic`, `encryption`, `notary`, `saml` — all present, tracked exactly by `internal/core/dependency_guard_test.go`'s `coreIntegrationDeps` allowlist | `connect` (+ `connecttypes`), `rotation`, `dynamic`, `encryption` — notary and saml removed from the allowlist and confirmed absent from `go list -deps` |
+| Metric | Baseline (Step 0) | Step 1 (notary + saml) | Step 2 (+ rotation) |
+|---|---|---|---|
+| `internal/core` coverage map (`FuzzCoreOperationSequence`) | 486,874 B (~475 KiB) — matches this ADR's Context-section figure of "about 480 KB" | 485,107 B (~473.7 KiB); **−1,767 B (−0.36%)** | 485,109 B (~473.7 KiB); flat vs. step 1 (+2 B, noise) |
+| `keyorix-server` binary, `linux/amd64`, `-trimpath` | 100,937,259 B (~96.3 MiB) | 100,989,425 B (~96.3 MiB); flat (build noise, +0.05%) | 100,989,278 B (~96.3 MiB); flat vs. step 1 (−147 B, noise) |
+| `go list -deps ./internal/core` total | 872 packages | 859 packages; **−13** | 853 packages; **−6** |
+| ...of which cloud SDK packages (aws/azure/gcp/vault) | 131 (64 `aws-sdk-go-v2`, 33 `azure-sdk-for-go`, 34 `cloud.google.com/go`, 0 `hashicorp/vault/api` — Connect's Vault backend has no official SDK dependency today) | 131, unchanged — notary and saml carry no cloud SDK | 128; **−3** — `internal/rotation`'s `awsiam.go`/`azure.go`/`gcpsa.go` each pull one cloud SDK into core's graph today, gone once rotation is behind `ports` |
+| ...of which the 6 ADR-109 integration packages | `connect` (+ `connecttypes`, which stays), `rotation`, `dynamic`, `encryption`, `notary`, `saml` — all present, tracked exactly by `internal/core/dependency_guard_test.go`'s `coreIntegrationDeps` allowlist | `connect` (+ `connecttypes`), `rotation`, `dynamic`, `encryption` — notary and saml removed from the allowlist and confirmed absent from `go list -deps` | `connect` (+ `connecttypes`), `dynamic`, `encryption` — rotation removed too, confirmed absent |
 
 Step 0 itself does not change any of these numbers — it adds `internal/core/ports` (the target
 interface shapes, unwired) and the two dependency-guard tests (`internal/core`'s allowlist,
@@ -127,6 +127,38 @@ actually drops them via build tags. What step 1 proves is the *pattern* and the 
 guarantee: `internal/core`'s production import graph dropped by exactly the 13 packages
 notary+saml (and their third-party deps: `digitorus/pkcs7`, `digitorus/timestamp`,
 `crewjam/saml`, `goxmldsig`, `mattermost/xml-roundtrip-validator`, transitively) pulled in, caught
-exactly by `dependency_guard_test.go`'s exact-match allowlist shrink. Steps 2–5 each report a new
-column here as they land; the cloud-SDK-bearing steps (connect, encryption) are where the map and
-binary numbers are expected to move meaningfully.
+exactly by `dependency_guard_test.go`'s exact-match allowlist shrink.
+
+**Step 2** swaps `internal/core`'s direct use of `internal/rotation` for
+`ports.RotationExecutorResolver` (`rotationManager`, `SetRotationManager`) and
+`ports.RotationPartialError` (the `errors.As` check in `rotateOneSecret`/`RotateSecretOnDemand`).
+Unlike step 1, `internal/rotation.Executor` and `internal/rotation.GeneratingExecutor` are
+themselves *interfaces*, not structs — Go allows aliasing an interface type exactly like a struct
+(`type Executor = ports.RotationExecutor`), so `*rotation.Manager`'s existing `Get`/`Names`
+methods (whose signatures name `Executor`, not `ports.RotationExecutor`) satisfy
+`ports.RotationExecutorResolver` after the alias with no changes to `Manager` itself, and every
+concrete executor (Postgres/MySQL/Mongo/Redis/AWS-IAM/GCP-SA/Azure-App) keeps satisfying both
+names identically. `internal/core/rotation_executor.go`'s own `exec.(rotation.GeneratingExecutor)`
+type assertion becomes `exec.(ports.GeneratingRotationExecutor)` directly — a type assertion
+targets any interface with a compatible method set, so this needed no alias, just a qualifier
+swap. `PartialRotationError` is a struct with two methods (`Error`/`Unwrap`), so — same as step
+1's `NotaryReceipt`/`SAMLAssertion` — it aliases the other way: `ports.RotationPartialError` is
+the canonical declaration (methods included, since a type alias cannot carry methods of its own),
+and `internal/rotation.PartialRotationError` becomes a bare alias of it; every `&PartialRotationError{...}`
+literal already in `awsiam.go`/`azure.go`/`gcpsa.go` keeps compiling unchanged. All of
+`internal/core`'s existing rotation tests (`rotation_executor_test.go`,
+`rotation_executor_deps_test.go`, `rotation_executor_registry_exhaustiveness_test.go`,
+`rotation_orchestrator_lock_test.go`, `rotation_dryrun_test.go`) needed zero edits — none of them
+construct a bare `rotation.Executor`/`rotation.PartialRotationError` value in a way an alias
+doesn't cover transparently. Rotation-executor wiring (previously a large standalone block deep in
+`server/main.go`, well after the notary/SSO wiring) moves into `DefaultIntegrations` as
+`wireBackendRotation`, the third component alongside `wireCheckpointNotary`/`wireHumanSSO`.
+
+The map and binary deltas are flat again, for the same reason as step 1: `server/main.go` still
+wires the real backend executors for a full server. The dependency count, however, moves by more
+than step 1's non-cloud packages did — rotation is the first integration in this ADR whose direct
+core-facing package itself has zero cloud SDK code (`rotation.go` only pulls in `fmt`/`regexp`/
+`strings`) but whose SIBLING files in the same package (`awsiam.go`, `azure.go`, `gcpsa.go`) do,
+one cloud SDK each — so `internal/core`'s cloud-SDK dependency count drops for the first time in
+this ADR (131 → 128), ahead of the two steps (connect, encryption) expected to move it the most.
+Steps 3–5 each report a new column here as they land.
