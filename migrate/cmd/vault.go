@@ -194,12 +194,19 @@ func runVault(cmd *cobra.Command, _ []string) error {
 			SourceCreatedAt: e.CreatedAt,
 		})
 	}
-	built, err := plan.BuildPlan(ctx, tgt, planEntries)
+	// sanitizeSecretName is lossy: two distinct Vault paths can sanitize to the same Keyorix
+	// name (e.g. "a/b/c" and "a/b-c" both become "a-b-c"), so this same intra-batch collision
+	// guard cloud sources need for --split-json applies here too — plan.BuildPlan's independent
+	// per-item lookups can't see two never-yet-created entries colliding with each other; see
+	// splitIntraBatchNameCollisions's own doc comment (cmd/cloud_common.go).
+	unique, collided := splitIntraBatchNameCollisions(planEntries)
+	built, err := plan.BuildPlan(ctx, tgt, unique)
 	if err != nil {
 		return err
 	}
-	items := make([]plan.Item, 0, len(skippedItems)+len(built))
+	items := make([]plan.Item, 0, len(skippedItems)+len(collided)+len(built))
 	items = append(items, skippedItems...)
+	items = append(items, collided...)
 	items = append(items, built...)
 
 	var reportFile *os.File
@@ -233,8 +240,11 @@ func runVault(cmd *cobra.Command, _ []string) error {
 	}
 
 	results := plan.Apply(ctx, tgt, built, vaultForce)
-	allResults := make([]plan.Result, 0, len(skippedItems)+len(results))
+	allResults := make([]plan.Result, 0, len(skippedItems)+len(collided)+len(results))
 	for _, item := range skippedItems {
+		allResults = append(allResults, plan.Result{Item: item, Ran: false})
+	}
+	for _, item := range collided {
 		allResults = append(allResults, plan.Result{Item: item, Ran: false})
 	}
 	allResults = append(allResults, results...)

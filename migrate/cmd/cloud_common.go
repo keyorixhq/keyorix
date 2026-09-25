@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 
 	"github.com/keyorixhq/keyorix/migrate/internal/cloudentry"
 	"github.com/keyorixhq/keyorix/migrate/internal/plan"
@@ -38,30 +39,54 @@ func buildCloudPlanEntries(sourceKind string, entries []cloudentry.Entry, source
 	return out
 }
 
-// splitIntraBatchNameCollisions separates entries whose target Name first appears in this run
-// from later entries reusing an already-seen Name. Unlike plan.BuildPlan's Conflict (a
-// collision against a PRE-EXISTING Keyorix secret, checked one item at a time against the live
-// target), this catches two source items colliding with EACH OTHER within the same run, before
-// either has been created — plan.BuildPlan's independent per-item LookupByName calls cannot see
-// this: both would read not-found and each plan as Create, and applying both would create two
-// secrets under a request for one name (or silently overwrite, depending on the target API's own
-// uniqueness behavior). This is a real risk --split-json introduces (two distinct provider
-// secrets, or a whole secret and one of its own exploded fields, whose sanitized names coincide)
-// that vaultsource never had to guard against (KV paths are unique by construction, so this
-// exact collision cannot occur there).
+// splitIntraBatchNameCollisions separates entries whose target Name is claimed by exactly one
+// "winner" entry in this run from every other entry reusing that Name. Unlike plan.BuildPlan's
+// Conflict (a collision against a PRE-EXISTING Keyorix secret, checked one item at a time
+// against the live target), this catches two source items colliding with EACH OTHER within the
+// same run, before either has been created — plan.BuildPlan's independent per-item LookupByName
+// calls cannot see this: both would read not-found and each plan as Create, and applying both
+// would create two secrets under a request for one name (or silently overwrite, depending on the
+// target API's own uniqueness behavior). This is a real risk --split-json introduces (two
+// distinct provider secrets, or a whole secret and one of its own exploded fields, whose
+// sanitized names coincide) and, per the same-review-round Vault fix, a real risk
+// sanitizeSecretName's own lossy collapsing introduces there too (e.g. "a/b/c" and "a/b-c" both
+// sanitize to "a-b-c") — see cmd/vault.go's own call site.
+//
+// The winner is chosen deterministically: entries are considered in SourceID order, not the
+// order the caller happened to build them in. A source's own List() order (map iteration, an
+// API's pagination order, several providers' entries concatenated) is not guaranteed stable
+// across runs; if the winner depended on that incidental order, which of two colliding items
+// gets created and which gets flagged conflict would be nondeterministic run to run for
+// identical input, merely reshuffled. Sorting by SourceID first makes the winner a fixed
+// property of the two colliding entries themselves, not of how they arrived. The caller's
+// original order is preserved for the RETURNED unique/collided slices (report readability) —
+// only the winner decision itself is order-independent.
 func splitIntraBatchNameCollisions(entries []plan.Entry) (unique []plan.Entry, collided []plan.Item) {
-	seen := make(map[string]bool, len(entries))
+	sorted := make([]plan.Entry, len(entries))
+	copy(sorted, entries)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].SourceID < sorted[j].SourceID })
+
+	winner := make(map[string]plan.Entry, len(sorted))
+	for _, e := range sorted {
+		if _, seen := winner[e.Name]; !seen {
+			winner[e.Name] = e
+		}
+	}
+
 	for _, e := range entries {
-		if seen[e.Name] {
-			collided = append(collided, plan.Item{
-				Entry:   e,
-				Outcome: plan.Conflict,
-				Reason:  fmt.Sprintf("another source item earlier in this same run already maps to secret name %q — rename one side (e.g. with a --split-json field name collision)", e.Name),
-			})
+		w := winner[e.Name]
+		if e.SourceID == w.SourceID {
+			unique = append(unique, e)
 			continue
 		}
-		seen[e.Name] = true
-		unique = append(unique, e)
+		collided = append(collided, plan.Item{
+			Entry:   e,
+			Outcome: plan.Conflict,
+			Reason: fmt.Sprintf(
+				"secret name %q collides between two source items in this same run: %q (source-id %s) and %q (source-id %s) — rename one side",
+				e.Name, w.Path, w.SourceID, e.Path, e.SourceID,
+			),
+		})
 	}
 	return unique, collided
 }
