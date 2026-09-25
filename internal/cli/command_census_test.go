@@ -270,7 +270,7 @@ var commandCensus = map[string]censusEntry{
 	"secret folder list":                  {censusMoved, "PR 4/5, #2069", ""},
 	"secret get":                          {censusMoved, "PR 4/5, #2069", ""},
 	"secret get-schedule":                 {censusMoved, "PR 4/5, #2069", ""},
-	"secret import":                       {censusMoved, "PR 4/5, #2069", "cloud/Vault `--source` import stays dropped (SBOM goal); moves to keyorix-migrate instead (separate track)"},
+	"secret import":                       {censusMovedOut, "#2077/#2079", "file mode stays in the thin CLI (cli/cmd/secret_import.go); the vault/aws/azure/gcp live-credential `--source` modes moved to keyorix-migrate"},
 	"secret info":                         {censusMoved, "PR 4/5, #2069", ""},
 	"secret list":                         {censusMoved, "PR 4/5, #2069", ""},
 	"secret move":                         {censusMoved, "PR 4/5, #2069", ""},
