@@ -48,6 +48,9 @@ spec:
             # manifest readability, and because the CI chart-render assertion (Commit 3)
             # needs an actual flag value to assert agrees with the rendered RBAC binding.
             - {{ $scope.flag | quote }}
+            {{- with .Values.allowedServers }}
+            - {{ printf "-allowed-servers=%s" (join "," .) | quote }}
+            {{- end }}
           env:
             # Backs the manager's own fail-closed default (operator/cmd/main.go,
             # ADR-076): if neither -watch-namespaces nor -all-namespaces is set, it

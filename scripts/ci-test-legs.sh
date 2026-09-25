@@ -409,3 +409,68 @@ assert_leg_completeness() {
   echo "OK: every non-excluded package is covered by at least one CI test-suite leg."
   return 0
 }
+
+# assert_pinned_leg_packages_valid: for every package explicitly pinned to
+# root-1/2/3/core/storage-store (as opposed to root-4's dynamic catch-all)
+# plus the two single-package sharded targets (handlers_pkg, http_pkg),
+# assert (a) it still exists in `go list ./...` right now, and (b) among the
+# root-1/2/3/core/storage-store group, it is pinned to exactly one leg.
+#
+# This is deliberately a DIFFERENT check from assert_leg_completeness above:
+# completeness only asks whether every `go list` package is covered by
+# *something* -- a stale pinned entry for a package that no longer exists is
+# invisible to it, because removing/renaming a package just means one fewer
+# thing needs covering, not a gap. That is exactly the FINISH-SPLIT-step-2
+# class of break (#2076, 2026-09-25): PR #2076 moved internal/trust ->
+# pkg/trust; root_2_pkgs() still pinned the old path; assert_leg_completeness
+# stayed green (pkg/trust fell through to root-4's catch-all uncontested,
+# and nothing was left uncovered) while the merge_group full tier's actual
+# `go test $(pkgs_for_leg root-2)` failed outright with "no required module
+# provides package .../internal/trust" -- twice, on two separate queued
+# commits, because nothing before the merge queue could have caught it.
+#
+# Independent of test execution -- only needs `go list`, so it runs in the
+# same fast pre-test-suite job as assert_leg_completeness, on every PR, not
+# just once the merge queue actually invokes the stale pin.
+assert_pinned_leg_packages_valid() {
+  local actual failed=0
+  actual=$(go list ./... | sort -u)
+
+  local -a exclusive_lists=(root_1_pkgs root_2_pkgs root_3_pkgs core_pkgs storage_store_pkgs)
+  local list_name pkg
+  local pinned_pkg_names="" pinned_pkg_owners=""
+
+  for list_name in "${exclusive_lists[@]}"; do
+    while IFS= read -r pkg; do
+      [ -n "$pkg" ] || continue
+      if ! grep -qxF "$pkg" <<<"$actual"; then
+        echo "STALE PINNED PACKAGE: $list_name lists '$pkg', which does not exist in \`go list ./...\` (renamed or deleted?)"
+        failed=1
+      fi
+      pinned_pkg_names="${pinned_pkg_names}${pkg}"$'\n'
+      pinned_pkg_owners="${pinned_pkg_owners}${pkg} ${list_name}"$'\n'
+    done < <("$list_name")
+  done
+
+  local dupes
+  dupes=$(echo "$pinned_pkg_names" | sort | uniq -d)
+  if [ -n "$dupes" ]; then
+    while IFS= read -r pkg; do
+      [ -n "$pkg" ] || continue
+      echo "PACKAGE PINNED TO MORE THAN ONE LEG: $pkg -> $(echo "$pinned_pkg_owners" | awk -v p="$pkg" '$1==p{print $2}' | paste -sd, -)"
+      failed=1
+    done <<<"$dupes"
+  fi
+
+  local shard_target
+  for shard_target in handlers_pkg http_pkg; do
+    pkg=$("$shard_target")
+    if ! grep -qxF "$pkg" <<<"$actual"; then
+      echo "STALE PINNED PACKAGE: $shard_target lists '$pkg', which does not exist in \`go list ./...\` (renamed or deleted?)"
+      failed=1
+    fi
+  done
+
+  [ "$failed" -eq 0 ] && echo "OK: every pinned root-1/2/3/core/storage-store/handlers/http package exists in go list ./... and is pinned to exactly one leg."
+  return $failed
+}

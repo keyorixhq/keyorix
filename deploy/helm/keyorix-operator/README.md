@@ -16,6 +16,7 @@ helm install keyorix-operator deploy/helm/keyorix-operator -n keyorix-system --c
 
 | Key | Description |
 | --- | --- |
+| `allowedServers` | Trusted Keyorix base URLs a `KeyorixSecret`'s `spec.server` must match (**required to sync anything** — empty rejects every CR, fail closed) |
 | `image.repository` / `image.tag` | Operator image (tag defaults to the chart's appVersion) |
 | `imagePullSecrets` | Names of existing `docker-registry` Secrets to pull the operator image from a private/mirrored registry — see [Private registries](#private-registries) |
 | `replicas` | Manager replicas (keep at 1 unless `leaderElection` is on) |
@@ -65,21 +66,56 @@ object always exists (a Kubernetes RBAC object type, needed for manifest reusabi
 across modes), but what it's actually *bound* to is what determines real access. Do not
 deploy more than one instance watching the same namespace with different configs.
 
-## Private registries
+## Upgrading: egress NetworkPolicy
 
-For an air-gapped deployment that mirrors `keyorix-operator`'s image to a private,
-authenticated registry, create a `docker-registry` Secret in the release namespace and
-reference it via `imagePullSecrets`:
+`networkPolicy.egress.enabled` (default `true`) makes the manager's OUTBOUND
+traffic default-deny — previously it was unrestricted. Read this before your
+next `helm upgrade` on an existing install.
+
+**What the default rules allow:** DNS (UDP/TCP 53), plus TCP `443` and TCP
+`6443` to ANY destination — by port only, not by destination, since neither
+the Kubernetes API server nor a `KeyorixSecret`'s `spec.server` is a
+`podSelector`-able target. This covers the two ports a Kubernetes API server
+and an https Keyorix server overwhelmingly listen on.
+
+**Will silently stop working** if the Kubernetes API server or any
+`KeyorixSecret`'s `spec.server` listens on a different port — reconciliation
+of that CR stops with no clear error (see Troubleshooting below). This is
+separate from, and on top of, `allowedServers`: a `spec.server` not in
+`allowedServers` is rejected outright by the controller (a fast, explicit
+error in `.status`); a `spec.server` that IS allowed but listens on a
+non-standard port is instead silently dropped at the network layer.
+
+**Add an `extraRules` entry** for a non-standard port — e.g. a Keyorix server
+on `:8443`:
+
+```yaml
+networkPolicy:
+  egress:
+    extraRules:
+      - ports:
+          - protocol: TCP
+            port: 8443
+```
+
+**To turn egress restriction off entirely:**
+
+```yaml
+networkPolicy:
+  egress:
+    enabled: false
+```
+
+> ⚠️ This removes ALL egress restriction on the manager pod — a compromised
+> pod can then reach anything the cluster network permits. Prefer
+> `extraRules` over disabling this outright.
+
+**Troubleshooting:** an egress `NetworkPolicy` drops packets silently — the
+symptom is a **connection timeout**, never "connection refused". If a
+`KeyorixSecret` stops syncing right after this upgrade:
 
 ```sh
-kubectl create secret docker-registry my-registry-cred \
-  -n keyorix-system \
-  --docker-server=my-mirror.example.com \
-  --docker-username=... --docker-password=...
-
-helm install keyorix-operator deploy/helm/keyorix-operator -n keyorix-system \
-  --set image.repository=my-mirror.example.com/keyorix-operator \
-  --set 'imagePullSecrets[0].name=my-registry-cred'
+kubectl -n <namespace> describe networkpolicy <release>-keyorix-operator-metrics
 ```
 
 ## Private registries

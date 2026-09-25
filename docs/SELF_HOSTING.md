@@ -123,6 +123,15 @@ docker run --rm -v keyorix_keyorix_keys:/keys -v "$PWD":/backup alpine \
 docker compose up -d
 ```
 
+**Single-binary (local/sqlite) deployments** can use `keyorix-server admin
+backup --output <path>` / `admin restore --input <path>` instead, which
+bundle both the database and the encryption keys into one archive. The
+archive's checksums catch corruption (a bad copy, a truncated transfer, bit
+rot), not tampering -- anyone with write access to the archive can recompute
+them to match -- so `admin restore` also runs `admin verify-audit`
+automatically against the restored database and fails if it reports the
+audit chain BROKEN.
+
 ## 6. Upgrades
 
 ```sh

@@ -47,6 +47,86 @@ helm test keyorix
 | `postgresql.auth.password` | — | Required when bundled DB is enabled. |
 | `externalDatabase.*` | — | Used when `postgresql.enabled=false` (managed/HA Postgres). |
 
+## Upgrading: egress NetworkPolicy
+
+`networkPolicy.egress.enabled` (default `true`) makes every pod's OUTBOUND
+traffic default-deny — previously it was unrestricted (any pod could reach
+anything the cluster network permits). Read this before your next
+`helm upgrade` on an existing install.
+
+**What the default rules allow:**
+
+- `web`: DNS (UDP/TCP 53) + the `server` Service on its ClusterIP, port
+  `server.service.port` (default `8080`). Nothing else.
+- `postgresql` (when bundled): no egress at all — it never initiates an
+  outbound connection of its own.
+- `server`: DNS (UDP/TCP 53) + the bundled `postgresql` Service on `5432`
+  (only when `postgresql.enabled: true`). `server` gets no other egress by
+  default — see below.
+
+**Features that dial OUT from `server` and will silently stop working** the
+moment egress restriction is on, unless you add an `extraRules` entry for
+them:
+
+- SMTP (email notifications / credential rotation over SMTP)
+- Syslog/SIEM audit-event forwarding (`siem.push` in `keyorix.yaml`)
+- LDAP (identity/auth backend)
+- A checkpoint notary / TSA (RFC 3161 timestamp authority) endpoint
+- Secret-rotation backends (Vault, Azure, AWS, custom KMS) on whatever port
+  they listen on
+- Webhook notification sinks
+- `externalDatabase.host` (when `postgresql.enabled: false`), especially on a
+  non-default (non-`5432`) port
+- Any SSO/OIDC/SAML identity provider
+
+**Add an `extraRules` entry per destination** — e.g. an external Postgres on a
+non-default port, plus an SMTP relay:
+
+```yaml
+networkPolicy:
+  egress:
+    extraRules:
+      - to:
+          - ipBlock: { cidr: 10.0.5.10/32 }
+        ports:
+          - protocol: TCP
+            port: 5433
+      - to:
+          - ipBlock: { cidr: 10.0.9.0/24 }
+        ports:
+          - protocol: TCP
+            port: 587
+```
+
+(`to` accepts `ipBlock`, `podSelector`, and `namespaceSelector` — the same
+shape as a raw Kubernetes `NetworkPolicyEgressRule`.)
+
+**To turn egress restriction off entirely:**
+
+```yaml
+networkPolicy:
+  egress:
+    enabled: false
+```
+
+> ⚠️ This removes ALL egress restriction on every pod in this chart — a
+> compromised pod can then reach anything the cluster network permits,
+> including other namespaces and any cloud metadata endpoint. Prefer
+> `extraRules` over disabling this outright.
+
+**Troubleshooting:** an egress `NetworkPolicy` drops packets silently — the
+symptom is a **connection timeout**, never "connection refused" (refused
+means a packet reached the destination and got a TCP RST back; a
+NetworkPolicy drop means it never left the pod's network namespace). If a
+feature that used to work stops working right after this upgrade:
+
+```sh
+kubectl -n <namespace> describe networkpolicy <release>-keyorix-server
+```
+
+and confirm the destination/port you need is covered by an existing rule or
+your own `extraRules`.
+
 ## Production notes
 
 - **External database:** set `postgresql.enabled=false` and `externalDatabase.host`
