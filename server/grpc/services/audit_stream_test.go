@@ -76,6 +76,21 @@ func newStreamCore(t *testing.T) (*AuditGRPCService, *gorm.DB) {
 	return NewAuditService(core.NewKeyorixCore(store.NewLocalStorage(db))), db
 }
 
+// waitForStreamSlot polls until the streamKey principal has an active stream slot
+// registered via acquireStreamSlot -- the same mechanism
+// TestAuditService_StreamAuditLogs_MaxConcurrentPerPrincipal already relies on to
+// avoid a fixed time.Sleep before the stream goroutine has actually started: on a
+// loaded CI runner the goroutine may not have reached acquireStreamSlot yet, so a
+// fixed sleep either races (too short) or wastes wall-clock (padded long).
+func waitForStreamSlot(t *testing.T, svc *AuditGRPCService, streamKey string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		svc.streamCountsMu.Lock()
+		defer svc.streamCountsMu.Unlock()
+		return svc.streamCounts[streamKey] >= 1
+	}, time.Second, time.Millisecond, "stream did not register its slot in time")
+}
+
 func TestAuditService_StreamAuditLogs_PermissionDenied(t *testing.T) {
 	svc, _ := newStreamCore(t)
 	stream := &fakeAuditStream{ctx: authCtx(7, "nobody")} // ungranted user → denied
@@ -136,7 +151,7 @@ func TestAuditService_StreamAuditLogs_RevokedRoleTerminatesStream(t *testing.T) 
 
 	done := make(chan error, 1)
 	go func() { done <- svc.StreamAuditLogs(&pb.StreamAuditLogsRequest{}, stream) }()
-	time.Sleep(30 * time.Millisecond) // let the stream establish before revoking
+	waitForStreamSlot(t, svc, fmt.Sprintf("%s:%d", core.ActorTypeUser, 1))
 
 	require.NoError(t, db.Where("user_id = ? AND role_id = ?", 1, 1).Delete(&models.UserRole{}).Error)
 
@@ -168,7 +183,7 @@ func TestAuditService_StreamAuditLogs_SuspendedAccountTerminatesStream(t *testin
 
 	done := make(chan error, 1)
 	go func() { done <- svc.StreamAuditLogs(&pb.StreamAuditLogsRequest{}, stream) }()
-	time.Sleep(30 * time.Millisecond)
+	waitForStreamSlot(t, svc, fmt.Sprintf("%s:%d", core.ActorTypeUser, 1))
 
 	require.NoError(t, db.Model(&models.User{}).Where("id = ?", 1).
 		Update("account_state", "suspended").Error)
@@ -210,7 +225,7 @@ func TestAuditService_StreamAuditLogs_RevokedSessionTerminatesStream(t *testing.
 
 	done := make(chan error, 1)
 	go func() { done <- svc.StreamAuditLogs(&pb.StreamAuditLogsRequest{}, stream) }()
-	time.Sleep(30 * time.Millisecond)
+	waitForStreamSlot(t, svc, fmt.Sprintf("%s:%d", core.ActorTypeUser, 1))
 
 	// "Log out this device": the session row is deleted, but user 1's account and
 	// role grant are both left fully intact.
@@ -290,21 +305,33 @@ func TestAuditService_StreamAuditLogs_TailsNewEvents(t *testing.T) {
 
 	svc, db := newStreamCore(t)
 
-	// A pre-existing event: it's the head, so it should NOT be streamed.
+	// A pre-existing event: it's the resume cursor, so it should NOT itself be
+	// streamed. Passed explicitly as AfterId (the same deterministic-cursor
+	// pattern TestAuditService_StreamAuditLogs_ResumesFromCursor uses) rather
+	// than relying on "whatever the stream's head happened to be when it got
+	// around to reading it" -- a fixed sleep here to let the goroutine capture
+	// the head before the next event is created races under CI load: too
+	// short, and the new event lands before the head read and gets silently
+	// folded into "already caught up" instead of tailed, hanging the test's
+	// later require.Eventually until its own timeout.
 	uid := uint(1)
-	require.NoError(t, db.Create(&models.AuditEvent{
-		EventType: "role.assigned", UserID: &uid, EventTime: time.Now(),
-	}).Error)
+	e1 := &models.AuditEvent{EventType: "role.assigned", UserID: &uid, EventTime: time.Now()}
+	require.NoError(t, db.Create(e1).Error)
+	after := uint32(e1.ID)
 
 	ctx, cancel := context.WithCancel(authCtx(1, "admin", "audit.read"))
 	defer cancel()
 	stream := &fakeAuditStream{ctx: ctx}
 
+	// No wait needed before creating the next event: AfterId is now a fixed
+	// cursor, so drain() finds it on its first pass whenever the goroutine
+	// gets around to running, regardless of creation order relative to
+	// goroutine start.
 	done := make(chan error, 1)
-	go func() { done <- svc.StreamAuditLogs(&pb.StreamAuditLogsRequest{}, stream) }()
+	go func() {
+		done <- svc.StreamAuditLogs(&pb.StreamAuditLogsRequest{AfterId: &after}, stream)
+	}()
 
-	// Let the stream start and capture the head cursor, then create a new event.
-	time.Sleep(60 * time.Millisecond)
 	require.NoError(t, db.Create(&models.AuditEvent{
 		EventType: "role.removed", UserID: &uid, EventTime: time.Now(),
 	}).Error)
