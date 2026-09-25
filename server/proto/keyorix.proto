@@ -823,6 +823,8 @@ message ShareRecord {
   string permission = 6;
   google.protobuf.Timestamp created_at = 7;
   google.protobuf.Timestamp updated_at = 8;
+  // expires_at, when set, makes the share time-bound (JIT access); absent = permanent.
+  optional google.protobuf.Timestamp expires_at = 9;
 }
 
 message ShareSecretRequest {
@@ -830,6 +832,10 @@ message ShareSecretRequest {
   uint32 recipient_id = 2;
   bool is_group = 3;
   string permission = 4;
+  // expires_at, when set, makes the share time-bound (JIT access); it must be in
+  // the future. Omit for a permanent share. Mirrors REST POST .../share's
+  // optional expires_at body field.
+  optional google.protobuf.Timestamp expires_at = 5;
 }
 
 message ListSecretSharesRequest {
@@ -857,6 +863,14 @@ message ListSharesResponse {
 message UpdateSharePermissionRequest {
   uint32 share_id = 1;
   string permission = 2;
+  // expires_at, when set, sets/extends/shortens the share's expiry (must be in
+  // the future). Mutually exclusive with clear_expiry in intent; leaving both
+  // unset preserves the share's current expiry. Mirrors REST PUT
+  // /shares/{id}'s optional expires_at/clear_expiry body fields.
+  optional google.protobuf.Timestamp expires_at = 3;
+  // clear_expiry, when true, makes the share permanent regardless of its
+  // current expiry.
+  bool clear_expiry = 4;
 }
 
 message RevokeShareRequest {
