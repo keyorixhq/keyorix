@@ -297,6 +297,15 @@ func writeEncryptedJSON(w io.Writer, secrets []exportedSecret, pubKeyPath string
 // name from only the LAST '/'-delimited segment of its YAML path key, so a name like
 // "has/a/slash" would come back on reimport as just "slash" (FuzzVaultRoundTrip,
 // CLI-FUZZ target 3b) -- refused outright rather than silently truncated.
+//
+// The value node is force-quoted (DoubleQuotedStyle) rather than left as a bare plain
+// scalar: parseVault reads it back through yaml.Unmarshal into map[string]interface{},
+// and YAML's default schema retypes an unquoted value that merely LOOKS like a number,
+// bool, or null (e.g. a secret value of "00", "1e3", "true", "~") into that Go type --
+// fmt.Sprintf("%v", ...) on the retyped value then silently changes the string (found by
+// FuzzVaultRoundTrip: value "00" round-tripped as "0", octal-resolved to the int 0).
+// Force-quoting removes the ambiguity at the source instead of trying to out-guess
+// every string that YAML's scalar resolver would otherwise reinterpret.
 func writeVault(w io.Writer, secrets []exportedSecret, envID int) error {
 	for _, s := range secrets {
 		if strings.Contains(s.Name, "/") {
@@ -313,7 +322,7 @@ func writeVault(w io.Writer, secrets []exportedSecret, envID int) error {
 				Tag:  "!!map",
 				Content: []*yaml.Node{
 					{Kind: yaml.ScalarNode, Value: "value"},
-					{Kind: yaml.ScalarNode, Value: s.Value},
+					{Kind: yaml.ScalarNode, Value: s.Value, Tag: "!!str", Style: yaml.DoubleQuotedStyle},
 				},
 			},
 		)
