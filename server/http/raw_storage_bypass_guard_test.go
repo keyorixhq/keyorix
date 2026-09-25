@@ -96,6 +96,7 @@
 package http
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -103,6 +104,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -534,15 +536,48 @@ func isExportedCoreMethodName(name string) bool {
 // counterpart to track. If a handler is ever written using either, this
 // function will not see it -- tracked here as a stated, checked absence, not
 // an unstated assumption.
+// handlerStorageCallsOnce/Cache/Err memoize buildHandlerStorageCallsIndex: both
+// TestNoUnjustifiedRawStorageBypass and TestNoProxyCallsUnsafeSiblingWhenSafeExists
+// call handlerStorageCalls once per distinct handler (504 of them, per this file's
+// own doc comment) — a naive per-call re-parse of the whole handlers directory made
+// those two tests server/http's single largest cost (181.7s + 112.3s of a 1417.9s
+// package run, see reports/CI.md). Parsing the directory is deterministic and pure
+// (same files, same AST, same per-handler result every call), so hoisting it to run
+// once per test-binary process changes nothing about what either test checks.
+var (
+	handlerStorageCallsOnce  sync.Once
+	handlerStorageCallsCache map[string][]string
+	handlerStorageCallsErr   error
+)
+
 func handlerStorageCalls(t *testing.T, handlerName string) []string {
 	t.Helper()
+	handlerStorageCallsOnce.Do(func() {
+		handlerStorageCallsCache, handlerStorageCallsErr = buildHandlerStorageCallsIndex()
+	})
+	if handlerStorageCallsErr != nil {
+		// Every caller re-checks and Fatalf's itself (rather than caching a fatal
+		// inside the Once body) so a build failure is correctly attributed to
+		// whichever test is running, not silently swallowed by Once after the
+		// first caller's t.Fatalf unwinds via runtime.Goexit.
+		t.Fatalf("building handler storage-call index: %v", handlerStorageCallsErr)
+	}
+	return handlerStorageCallsCache[handlerName]
+}
+
+// buildHandlerStorageCallsIndex parses every non-test .go file in
+// server/http/handlers exactly once and maps each method's name to the
+// write-shaped-eligible storage calls found in its body (accumulating across
+// files/decls if more than one method shares a name, matching this index's prior
+// per-call behavior exactly).
+func buildHandlerStorageCallsIndex() (map[string][]string, error) {
 	dir := filepath.Join("..", "..", "server", "http", "handlers")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("reading server/http/handlers: %v", err)
+		return nil, fmt.Errorf("reading server/http/handlers: %w", err)
 	}
 	fset := token.NewFileSet()
-	var calls []string
+	index := map[string][]string{}
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -550,17 +585,20 @@ func handlerStorageCalls(t *testing.T, handlerName string) []string {
 		}
 		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
 		if err != nil {
-			t.Fatalf("parsing %s: %v", name, err)
+			return nil, fmt.Errorf("parsing %s: %w", name, err)
 		}
 		for _, decl := range f.Decls {
 			fd, ok := decl.(*ast.FuncDecl)
-			if !ok || fd.Name.Name != handlerName || fd.Recv == nil || fd.Body == nil {
+			if !ok || fd.Recv == nil || fd.Body == nil {
 				continue
 			}
-			calls = append(calls, handlerBodyStorageCalls(fd.Body)...)
+			calls := handlerBodyStorageCalls(fd.Body)
+			if len(calls) > 0 {
+				index[fd.Name.Name] = append(index[fd.Name.Name], calls...)
+			}
 		}
 	}
-	return calls
+	return index, nil
 }
 
 // handlerBodyStorageCalls recognizes the two forms documented on
