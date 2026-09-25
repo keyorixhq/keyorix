@@ -53,7 +53,7 @@ never as closed.
 | B6 | **k8s-sync / operator / ESO ↔ server** | Machine-identity token, by-reference secret reads (`GET /api/v1/secrets/value?ref=…`, ADR-059) | Same `core.Authorize` chokepoint; least-privilege namespace-scoped RBAC on the Kubernetes side (ADR-076) |
 | B7 | **Server ↔ external connectors/KMS/rotation targets** (AWS/Azure/GCP SDKs, Vault, Postgres/MySQL rotation targets) | Outbound calls carrying operator-configured credentials | Per-connector `allowed_refs` allowlist + project/environment scoping (ADR-082); SSRF/link-local guards (`internal/netutil`, `internal/core/dynamic_secrets_ssrf_test.go`) |
 | B8 | **Admin host access** (`keyorix-server admin …`) | Direct DB + key-file access, no network hop, by design | Host access IS the authority (ADR-108 decision B) — see §5.1 |
-| B9 | **Backups** | A `pg_dump` of the database plus a copy of the key-material volume | Neither half alone is useful — see §5.3 |
+| B9 | **Backups** | `keyorix-server admin backup`/`admin restore` (local/SQLite; ADR-108 §B3) or a manual `pg_dump` + key-material copy (Postgres) | Neither half alone is useful — see §5.3 |
 | B10 | **Supply chain** (CI, dependencies, release artifacts) | Third-party code entering the build; the build entering a customer's environment | CI gates enumerated in `SECURITY-VERIFICATION.md` — see §5.4 |
 
 ## 4. STRIDE per trust boundary
@@ -257,13 +257,20 @@ exactly what it is.
 
 ### 5.3 Stolen backup
 
-Today, backup is operator-driven, not a Keyorix-native artifact: a `pg_dump` of
-the database plus a `tar` of the key-material volume
-([`../SELF_HOSTING.md`](../SELF_HOSTING.md) §5). This has a direct threat-model
-consequence, stated plainly rather than left implicit:
+For local/SQLite installs, `keyorix-server admin backup`/`admin restore`
+(ADR-108 §B3) is now the supported mechanism, alongside an offline audit
+checkpoint export for drills and real disaster recovery
+([`../AIRGAP_RUNBOOK.md`](../AIRGAP_RUNBOOK.md)). For a Postgres-backed
+deployment, backup is still operator-driven: a `pg_dump` of the database plus
+a `tar` of the key-material volume
+([`../SELF_HOSTING.md`](../SELF_HOSTING.md) §5) — `admin backup` refuses
+outright rather than attempt an unsupported backend. Either way, the
+threat-model consequence is the same, stated plainly rather than left
+implicit:
 
-- **A stolen database dump alone** is encrypted ciphertext under a DEK that is
-  itself wrapped by the KEK — unreadable without the key material.
+- **A stolen database (dump or `admin backup` archive) alone** is encrypted
+  ciphertext under a DEK that is itself wrapped by the KEK — unreadable
+  without the key material.
 - **A stolen key-material volume alone** is useless without the database it
   wraps keys for.
 - **Both together, plus `KEYORIX_MASTER_PASSWORD`** (or the file/fd/stdin
@@ -272,12 +279,20 @@ consequence, stated plainly rather than left implicit:
   install, the attacker still needs the external KMS boundary, so a stolen
   backup pair alone is *not* sufficient.
 
-No dedicated backup encryption format, integrity check, or restore-time
-verification exists yet as a Keyorix feature — this is accurately described as
-an operator-owned procedure today, tracked as future work under the BACKUP
-track's ownership of `server/admin/backup*.go`/`restore*.go` (not yet present
-in the tree as of this writing). This document will be updated once that
-lands.
+`admin backup`'s archive is checksum-verified (SHA-256 per file) at restore
+time, which proves the archive wasn't **corrupted** — it does not prove the
+archive wasn't **tampered with**, since anyone who can edit the archive can
+recompute a matching checksum. That's a job for the audit hash chain instead:
+`admin restore` runs `admin verify-audit` automatically and fails closed
+(non-zero exit) if the chain reports BROKEN, and a checkpoint anchor exported
+separately (`admin audit export-checkpoint`) and held outside the host is the
+one check that constrains even a host admin who holds both the database and
+its checkpoint signing key — see `../AIRGAP_RUNBOOK.md` "Exporting an
+audit-chain anchor" and `docs/design-b4-offline-audit-verify.md` §2. No
+comparable *encryption*-format guarantee exists for the archive itself beyond
+what the wrapped DEK already provides — a stolen archive's confidentiality
+still reduces to the bullet points above, unchanged by `admin backup`
+shipping.
 
 ### 5.4 Rollback and downgrade
 
@@ -344,9 +359,13 @@ Carried forward from `security-review-2026-09.md` rather than re-litigated:
   inconsistency and, more seriously, PII (`IPAddress`) leaking via two
   specific audit/access-log routes where a sibling route already redacts it.
   Not yet closed as of this writing.
-- **No dedicated backup-artifact encryption/integrity mechanism** (§5.3) —
-  today's backup procedure is operator-driven `pg_dump` + key-volume copy,
-  not a Keyorix-native, verifiable artifact.
+- **No dedicated backup-artifact *encryption* mechanism beyond what the
+  wrapped DEK already provides** (§5.3) — `admin backup` (local/SQLite) adds
+  checksum integrity and an audit-chain-verified restore path, but a stolen
+  archive's confidentiality still reduces to the same KEK-custody analysis as
+  before the command shipped. Postgres-backed deployments still use an
+  operator-driven `pg_dump` + key-volume copy, with no Keyorix-native
+  artifact at all.
 - **On-box audit-chain enforcement can be neutralized by a DB-level actor who
   can also write `audit_checkpoints`** — deleting or overwriting the latest
   checkpoint row forces `verify` to fail closed (report invalid) until the
