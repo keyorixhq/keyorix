@@ -20,6 +20,10 @@ removed. `keyorix-migrate` is therefore its own Go module (`migrate/go.mod`), it
 own binary, built and SBOM'd separately — the same shape `cli/` and `operator/`
 already use in this repo, one more sibling, not a new pattern.
 
+(Step 3, below, delivers the AWS/Azure/GCP sources; each is additionally behind
+its own build tag so an operator who only needs a subset isn't forced to carry
+every SDK's SBOM weight — see "Step 3" for the size numbers.)
+
 ## Module boundaries (compiler-enforced, per `cli/`'s precedent)
 
 - `migrate/go.mod` has **no `replace` directive to `../`** and does not depend on
@@ -256,6 +260,79 @@ carries forward the parts worth keeping without copy-pasting blindly:
   discipline: this finding is specific to the data-read-on-delete path, not a
   claim about either file's own call paths, which this migration didn't
   trace).
+
+## Step 3: cloud sources (AWS Secrets Manager, Azure Key Vault, GCP Secret Manager)
+
+Three new packages (`migrate/internal/awssource`, `azuresource`, `gcpsource`) implement the
+exact same contract as `vaultsource`: a `List`/`Walk`-shaped method returning entries plus
+skipped items with reasons, no direct Keyorix write, and the identical dry-run/`--apply`/
+idempotency/resume/never-log-a-value guarantees documented above (`cmd/aws.go`, `cmd/azure.go`,
+`cmd/gcp.go` are the same shape as `cmd/vault.go`, sharing the mapping and intra-batch
+collision-detection logic via `cmd/cloud_common.go` rather than each re-deriving it).
+
+- **Auth**: each provider's own standard default credential chain only (AWS: env/profile/
+  IMDS/IRSA via `aws-sdk-go-v2/config.LoadDefaultConfig`; Azure: `azidentity.DefaultAzureCredential`;
+  GCP: Application Default Credentials) — never a Keyorix config field or a CLI flag, matching
+  `internal/connect`'s own three connectors' precedent. The only source-side flags are the ones
+  that pick WHAT to read (`--region`, `--vault-url`, `--gcp-project`, `--name-prefix`), never a
+  secret-bearing one.
+- **Read logic is ported, not shared**: `migrate` cannot import `internal/connect`
+  (`internal/` is forbidden by the module boundary above), so each package re-implements the
+  same hardening `internal/connect/awssm.go`/`azurekv.go`/`gcpsm.go` already apply to their
+  single-ref `GetSecret` — the empty-string-value bug class (`SecretString`/`Value` being a
+  non-nil pointer to `""` must not read as "has a value"), redirect refusal and a response-size
+  cap for the two HTTP-based providers (`migrate/internal/httpsafe`, a migrate-owned copy of
+  `hardened_client.go`'s two safeguards), and GCP's `grpc.MaxCallRecvMsgSize` cap. What's new
+  (LISTING every secret, not just resolving one ref) has no precedent to port from — connect's
+  connectors only ever read a single caller-supplied reference.
+- **`--split-json`**: a JSON-object secret value explodes into one Keyorix secret per top-level
+  key (`migrate/internal/splitjson`, shared by all three providers — the decode/sort/coerce
+  rules are identical regardless of source) instead of importing the whole string as one secret
+  (the default). A binary secret value (AWS `SecretBinary`) is skipped with a reason, never
+  base64-imported the way `internal/connect/awssm.go`'s single-ref `GetSecret` does — there is
+  no live Keyorix consumer expecting a base64 string here the way a dynamic connector's caller
+  might.
+- **Deleted/disabled/destroyed secrets are skipped, reported, never silently dropped** — the
+  same discipline as Vault's soft-deleted KV v2 leaf: AWS excludes pending-deletion secrets from
+  `ListSecrets` by default, checked again defensively from `DeletedDate` on the listed entry;
+  Azure's `SecretProperties.Attributes.Enabled` is checked before ever calling `GetSecret` (Key
+  Vault's data-plane read does not itself refuse a disabled secret); GCP's `SecretVersion.State`
+  (`DISABLED`/`DESTROYED`) is checked via `GetSecretVersion` before `AccessSecretVersion`, and a
+  secret with no versions at all (`GetSecretVersion` returning `NotFound`) is its own skip
+  reason rather than a hard error aborting the whole run.
+- **Intra-batch name collisions** (`cmd/cloud_common.go`'s `splitIntraBatchNameCollisions`): a
+  risk `--split-json` introduces (two cloud source items in the SAME run landing on the same
+  sanitized Keyorix name) that turned out NOT to be Vault-specific once checked directly:
+  `sanitizeSecretName` collapses both `/` and a literal `-` to the same separator, so two
+  genuinely distinct Vault paths (e.g. `a/b/c` and `a/b-c`) can sanitize to the identical name —
+  "KV paths are unique by construction" is true and says nothing about their SANITIZED names also
+  being unique. `plan.BuildPlan`'s per-item, independent `LookupByName` calls cannot see either
+  case (both read not-found and each plan as `Create`); `cmd/vault.go`'s `runVault` now runs the
+  same guard `cmd/aws.go`/`cmd/azure.go`/`cmd/gcp.go` use, before calling `BuildPlan`, reporting
+  every occurrence after the deterministic winner (see below) as `conflict`, never a silent
+  double-create. The winner is chosen by sorting candidates on `SourceID` first, not by
+  whichever happened to appear first in the source's own list/walk order — that order is not
+  guaranteed stable run to run (a source's map iteration, an API's pagination, or Vault's own
+  KV tree walk order), so a winner that depended on it would make which of two colliding items
+  gets created and which gets flagged nondeterministic for identical input, merely reordered.
+- **Binary size is opt-out, not opt-in**: each provider's SDK is large enough to matter (GCP's
+  gRPC + Google API dependency tree most of all — measured +14.4MB over the Vault-only 10.0MB
+  baseline binary, vs. +4.0MB for AWS and +3.2MB for Azure). All three compile in by default
+  (`nomigrate_aws`/`nomigrate_azure`/`nomigrate_gcp` build tags default OFF, i.e. the provider is
+  included), so the tool works against any source out of the box; an operator who only needs a
+  subset can drop the rest with `-tags nomigrate_gcp`, etc. See `docs/migrate-from-cloud.md`'s
+  size table.
+- **Testing**: unit tests per provider against an SDK-level fake (no live cloud account, no
+  network) covering list pagination, the empty-value bug class, the deleted/disabled/destroyed
+  case, `--split-json`, and a canary-value test (a distinctive marker used as a real secret
+  value, asserted to appear only in `Entry.Value`/`Entry.Field`, never in a `Locator` or
+  `Skipped.Reason`) — the same property Vault's canary test proves, at the unit level rather
+  than through a live integration harness, since none of the three cloud SDKs has a
+  self-hostable fake server the way Vault/OpenBao do. The resume mechanism itself needs no new
+  per-provider test: `plan.BuildPlan`/`Apply` are already source-agnostic
+  (`internal/plan/plan_test.go`), so `cmd/cloud_common_test.go` proves resume once, directly
+  against `cloudentry.Entry`-shaped input, rather than standing up a third redundant
+  Vault-shaped e2e harness per provider.
 
 ## PAT provisioning UX (confirmed — Andrei, 2026-09-25)
 

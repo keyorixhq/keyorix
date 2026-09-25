@@ -158,9 +158,9 @@ Instead of a Vault token, you can authenticate with an
 
 ## Not yet supported
 
-- AWS Secrets Manager, Azure Key Vault, and GCP Secret Manager sources (a
-  later `keyorix-migrate` release; the old `keyorix` CLI's file-mode
-  `secret import` remains available in the meantime for non-live sources).
 - `--all-versions` (importing every historical Vault version, not just the
   latest) — deferred, see above. The flag exists and returns a clear error
   rather than silently behaving like latest-only.
+
+AWS Secrets Manager, Azure Key Vault, and GCP Secret Manager sources are
+also supported — see `docs/migrate-from-cloud.md`.
