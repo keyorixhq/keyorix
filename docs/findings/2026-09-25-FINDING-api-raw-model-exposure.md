@@ -151,6 +151,49 @@ instruction.
   ones) — a partially-tagged struct's untagged fields are exactly as exposed as a
   fully-untagged one's, if the struct itself is ever raw-serialized.
 
+## Step 2 PR B update (2026-09-25): SecretNode verification — NOT low risk, correcting the Step 1 assessment
+
+Step 1 assessed `SecretNode` (2/30 fields tagged, the highest-traffic model in
+the product) as low risk on the strength of `filterspec.go`'s comment that a
+dedicated `Secret`/`SecretGetResult`/`SecretListEntry` schema exists for the
+main secret CRUD routes. That DTO **does exist and is correctly used — but
+only for the list path.** Reading `secrets_crud.go` directly (not just
+`secrets_handler.go`, which turned out to be only shared helpers with no
+handlers of its own) found the DTO is **not** used by the single-secret
+read/write routes, which is most of the write surface a client actually calls
+after the initial list:
+
+| Route | Handler | Raw field |
+|---|---|---|
+| `GET /api/v1/secrets/{id}` | `GetSecret` | `secret` (or `response["secret"]` when `?include_value=true`) |
+| `GET /api/v1/secrets/by-name` | `GetSecretByName` | `secret` |
+| `GET /api/v1/secrets/value?ref=...` | `GetSecretValueByRef` | `response["secret"]` |
+| `POST /api/v1/secrets` | `CreateSecret` | `response` (`*models.SecretNode` return of `core.CreateSecret`) |
+| `PUT /api/v1/secrets/{id}` | `UpdateSecret` | `response` (`*models.SecretNode` return of `core.UpdateSecretWithPermissionCheck`) |
+| `PATCH /api/v1/secrets/{id}/classification` | `ClassifySecret` | `secret` |
+
+Confirmed safe in the same file: `SetAutoRotate`, `RestoreSecret` (explicit
+field selection), and the whole `ListSecrets` family (`ListSecretsInScope`,
+`ListSecretsWithSharingInfo`, `ListSecretsInScopeWithSharingInfo` — all return
+`*models.SecretListResponse` / `[]*models.SecretWithSharingInfo`, both fully
+snake_case-tagged, and `ListSecrets` is the only route that correctly uses
+them).
+
+**This did not get an exhaustive pass** — `secrets_crud.go`/`secrets_list.go`
+only; the other ~15 secret-mutation files (copy, move, rollback,
+suspend/resume, schedule, tags, description, ACL, dependencies, etc.) are
+unchecked. Given 6 of 8 checked routes are unsafe, assume more are until PR C
+enumerates every caller (the same "derive the complete idiom set first, don't
+assume the first pattern found is the only one" discipline this repo's own
+CLAUDE.md calls out).
+
+**Scope consequence for PR C**: this is materially larger than the 24-route
+casing-only estimate the original inventory implied. `SecretNode` has 30
+fields (vs. the next-largest affected model's `AccessRequest` at 15) and is
+the single highest-traffic resource in the product — the single-secret
+GET/CREATE/UPDATE/CLASSIFY routes belong at the front of PR C's queue, not
+folded in incidentally at the end.
+
 ## Scope note per CENSUS-GAPS coordination
 
 Per the track brief, I did not touch or re-verify `billing report`, `usage show`, or
