@@ -54,7 +54,14 @@ echo "==> Isolated smoke test dir: $SMOKE_DIR"
 export HOME="$SMOKE_DIR"
 export KEYORIX_MASTER_PASSWORD="smoke-test-master-password-$$-${RANDOM}"
 BOOTSTRAP_TOKEN="smoke-test-bootstrap-token-$$-${RANDOM}"
-ADMIN_PASSWORD="smoke-test-admin-password-$$-${RANDOM}"
+# Must satisfy internal/core/rules.DefaultPasswordPolicy: >=16 chars, upper,
+# lower, digit, and special, and must not contain the account's username/
+# email/display name -- the plain lowercase/digit/hyphen form this used to be
+# failed "password must contain an uppercase letter" against a real bootstrap
+# call (only exercised once this script became the actual release gate; a
+# mocked/unit test never validates a real password against the policy), and
+# "Admin" in the password collided with --admin-username admin below.
+ADMIN_PASSWORD="Smoke-Test-Op3rator-Passw0rd!-$$-${RANDOM}"
 
 cd "$SMOKE_DIR"
 # admin init refuses an absolute --config path (securefiles.SecureWriteFileSync
