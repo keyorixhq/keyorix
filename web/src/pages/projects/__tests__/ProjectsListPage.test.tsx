@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within, waitFor } from '../../../test/test-utils';
 import { ProjectsListPage } from '../ProjectsListPage';
+import { XSS_PAYLOADS, assertPayloadRenderedSafely } from '../../../test/xss-payloads';
 
 const { useProjectsMock, createMutateAsync, deleteMutate, deleteResetMock, restoreMutate, navigateMock } = vi.hoisted(
     () => ({
@@ -482,5 +483,19 @@ describe('ProjectsListPage', () => {
 
         fireEvent.click(screen.getByTitle('Delete project'));
         expect(screen.getByRole('button', { name: 'Deleting…' })).toBeInTheDocument();
+    });
+});
+
+describe('ProjectsListPage XSS regression (WEB track backlog item 3)', () => {
+    it.each(XSS_PAYLOADS)('renders a malicious project name as inert text: %s', (payload) => {
+        hookState.projects = [makeProject({ id: 1, name: payload })];
+        const { container } = render(<ProjectsListPage />);
+        assertPayloadRenderedSafely(payload, container);
+    });
+
+    it.each(XSS_PAYLOADS)('renders a malicious project description as inert text: %s', (payload) => {
+        hookState.projects = [makeProject({ id: 1, name: 'proj', description: payload })];
+        const { container } = render(<ProjectsListPage />);
+        assertPayloadRenderedSafely(payload, container);
     });
 });
