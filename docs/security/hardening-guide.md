@@ -74,15 +74,32 @@ actually kept separately:
 
 ## 6. Backup and key-material custody
 
-As of this writing, backup/restore is an **operator-driven procedure**, not a
-dedicated Keyorix command (see [`../SELF_HOSTING.md`](../SELF_HOSTING.md) §5;
-`server/admin/backup*.go`/`restore*.go` are tracked as future work under a
-separate track's ownership and may land after this guide is written — check
-for their existence directly before assuming this section is current):
+For local/SQLite installs, `keyorix-server admin backup`/`admin restore`
+(ADR-108 §B3) is the supported mechanism — see
+[`../AIRGAP_RUNBOOK.md`](../AIRGAP_RUNBOOK.md) for the full drill procedure.
+For a Postgres-backed deployment, `admin backup` refuses (loudly, not
+silently) and points at the manual `pg_dump` path in
+[`../SELF_HOSTING.md`](../SELF_HOSTING.md) §5 instead — Postgres support is
+explicitly out of scope for the command today.
 
-- **Back up the database and the key-material volume together, on the same
-  schedule** — neither alone is useful (§2), and a schedule that backs them up
-  at different times can produce an inconsistent pair.
+- **A complete backup is the database plus every encryption key-material
+  file, bundled into one archive** (`admin backup --output <path>`) — neither
+  alone is useful (§2). The command takes the same exclusive database lock
+  every other `admin` subcommand does, so it refuses to run alongside a live
+  server rather than risk a torn snapshot, and it self-verifies (SQLite
+  `PRAGMA integrity_check` on a fresh connection to the snapshot) before
+  trusting the archive.
+- **`--output` must not already exist** — each backup is a distinct,
+  timestamped artifact by construction, not something a schedule can
+  accidentally overwrite.
+- **Move the archive OFF this host** — a backup that never leaves the machine
+  it was taken on protects against nothing that machine itself could lose.
+- **Export a checkpoint anchor too, held separately from the backup archive**
+  (`admin audit export-checkpoint --output <path>`) — the archive's per-file
+  checksums prove it wasn't corrupted in transit, not that it wasn't
+  tampered with; an anchor held outside this host is what actually
+  constrains a host admin who holds both the database and its checkpoint
+  signing key (`../AIRGAP_RUNBOOK.md` "Exporting an audit-chain anchor").
 - **Record `KEYORIX_MASTER_PASSWORD` (or the file/fd/stdin passphrase)
   separately from both** — required to derive the KEK that unwraps the
   backed-up DEK, and losing it makes an otherwise-perfect backup pair useless.
@@ -90,9 +107,14 @@ for their existence directly before assuming this section is current):
   equivalent to a stolen host** — see `threat-model.md` §5.3. Restrict backup
   storage access accordingly; a backup bucket with looser access control than
   the production host defeats the KMS/HSM decision in §2.
-- **Test restore, not just backup** — an untested restore procedure is
-  discovered broken during an actual incident, which is the worst possible
-  time.
+- **Test restore, not just backup, as a drill** — `admin restore` runs
+  `admin verify-audit` automatically and fails (non-zero exit) if the chain
+  reports BROKEN, but an untested restore procedure can still surface
+  operational surprises (wrong config, wrong key-file paths) that are best
+  found in a drill, not an actual incident. `admin restore
+  --overwrite-existing` moves any existing target aside
+  (`<path>.pre-restore-<timestamp>`) rather than truncating it, so a botched
+  drill still has a way back.
 
 ## 7. Process and host hardening
 
@@ -123,6 +145,26 @@ for their existence directly before assuming this section is current):
 - **Scope the machine-identity token** backing whichever delivery mechanism
   you use (operator, sync agent, ESO) to exactly the projects/environments it
   needs to read — the same PAT/machine-identity scoping principle as §4.
+- **Leave `networkPolicy.enabled` at its default (`true`)** on all three
+  charts (`keyorix`, `keyorix-operator`, `keyorix-k8s-sync`) — it scopes
+  ingress to the server/bundled-Postgres pods to same-namespace traffic only;
+  without it every pod in the cluster that can route to the Service can reach
+  them. The web UI's own ingress is deliberately left unrestricted (it's the
+  intended public entry point).
+- **`networkPolicy.egress.enabled` also defaults to `true`** — without it,
+  every pod has always had unrestricted egress (any destination the cluster
+  network permits, including cloud metadata endpoints), independent of the
+  ingress restriction above. `web` and `postgresql` get a fully static,
+  known egress surface for free (web only calls the server; postgresql never
+  calls out). `server`'s real egress surface is not static — SSO/OIDC/SAML
+  IdPs, webhook sinks, and rotation-target backends (Vault/AWS/Azure/GCP)
+  are admin-configured destinations the chart can't know ahead of time — so
+  **populate `networkPolicy.egress.extraRules`** with those destinations
+  yourself; it is empty by default, and an empty allowlist here means
+  egress restriction is providing zero defense-in-depth on the one pod
+  whose destinations actually matter. A NetworkPolicy egress drop looks like
+  a hung/timed-out call to the feature it's blocking, not a clear error, so
+  populate this before relying on it, not after something breaks.
 
 ## 9. Connectors, rotation targets, and external secret stores
 
