@@ -314,10 +314,13 @@ func TestRunAgent_LoopMode_ShutdownOnSignal(t *testing.T) {
 // in loop mode, covering the "(dry-run)" loop-log branch that the plain loop-mode
 // test above (dryRun=false) doesn't exercise.
 func TestRunAgent_LoopMode_HealthServerBindError_LogsButContinues(t *testing.T) {
-	const port = 18766
-	l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	// Same address form the health server itself binds to (main.go: Addr:
+	// fmt.Sprintf(":%d", ...), all interfaces) -- a "127.0.0.1"-only listener
+	// here does not reliably collide with that wildcard bind on every OS.
+	l, err := net.Listen("tcp", ":0")
 	require.NoError(t, err)
 	defer l.Close() //nolint:errcheck
+	port := l.Addr().(*net.TCPAddr).Port
 
 	cfg := testConfig(port)
 	fetcher := &fakeFetcher{values: map[string][]byte{"production/db-password": []byte("s3cr3t")}}
