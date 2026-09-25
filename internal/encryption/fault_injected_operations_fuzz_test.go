@@ -616,6 +616,14 @@ func FuzzFaultInjectedOperations(f *testing.F) {
 	}
 	f.Add(byte(0), byte(0), byte(0), byte(0), "", "", "")
 
+	// opKEKRotate goes through RotateKEKPassphrase's real PBKDF2 (testKEKIterations,
+	// encryption.go) -- see testFastKEKIterations' comment for why the iteration
+	// count doesn't matter to what this seam-fault harness asserts. opRewrap's
+	// PasswordKeyProvider PBKDF2 (internal/crypto) has no equivalent override and
+	// stays at the real work factor.
+	testKEKIterations = testFastKEKIterations
+	f.Cleanup(func() { testKEKIterations = 0 })
+
 	f.Fuzz(func(t *testing.T, opSel, seamSel, kindSel, shortWriteK byte, oldPassIn, newPassIn, secretVal string) {
 		// Prefixed, never just the raw fuzzed string: oracle (e) below checks
 		// these passphrases for leakage via strings.Contains against error text
@@ -1573,6 +1581,12 @@ func allFaultInjectedSeedTriples() []faultSeedTriple {
 // once. A dead seed fails here instead of silently contributing zero coverage.
 func TestFuzzFaultInjectedOperationsSeedsReachEveryOpAndSeam(t *testing.T) {
 	resetSeamHitCounts()
+
+	// See FuzzFaultInjectedOperations' matching comment: opKEKRotate's real PBKDF2
+	// is overridden to a fast work factor; opRewrap's PasswordKeyProvider PBKDF2 is
+	// not.
+	testKEKIterations = testFastKEKIterations
+	t.Cleanup(func() { testKEKIterations = 0 })
 
 	dbWorlds := fuzzworld.Worlds(t, "faultopsfuzzreachguard", ":memory:", 0)
 	for _, s := range allFaultInjectedSeedTriples() {

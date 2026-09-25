@@ -40,14 +40,27 @@ import (
 // tell its own injected crash apart from a genuine panic in the code under test.
 type rotationCrash struct{ label string }
 
+// testFastKEKIterations is the work factor these crash-consistency/fault-injection
+// fuzz targets install via testKEKIterations (encryption.go) instead of the real
+// 600k-iteration DefaultKEKIterations. What they assert — file write/rename/sync
+// crash-safety around KEK rotation/rewrap — does not depend on the iteration count,
+// only on deriveKEK/RotateKEKPassphrase/RewrapDEK being the real functions under
+// test, which this preserves exactly (same call graph, cheaper inner PBKDF2 loop).
+// Low enough to be near-instant while still exercising real PBKDF2, not degenerate
+// to a single round. The production work factor itself stays covered by
+// TestGenerateKEK_DefaultIterationsMeetsOWASPMinimum and
+// internal/crypto/keyprovider_test.go's byte-identity check, neither of which this
+// override touches.
+const testFastKEKIterations = 100
+
 // kekRotationGuardDeadline is a HANG backstop, not the shared fuzzutil 3s amplification
-// guard. A legitimate iteration seeds a KeyManager (real 600k-iteration PBKDF2), rotates the
-// KEK passphrase (more PBKDF2), then recovers by trying passphrases against the on-disk files
-// (more PBKDF2) — inherently ~1-2s, and under -fuzz coverage instrumentation on a loaded
-// continuous-fuzzing rig it brushes 3s. Its inputs are bounded (crashSel + two passphrases)
-// with no untrusted-input-driven allocation, so there is no amplification to catch on a tight
-// deadline — only a genuine hang, which this generous deadline still flags. The real PBKDF2
-// KDF stays: the KEK derivation itself is under test here. See the 2026-09-17 rig deploy note.
+// guard. Before testFastKEKIterations, a legitimate iteration's several real
+// 600k-iteration PBKDF2 calls (seed + rotate + recovery) were inherently ~1-2s, brushing
+// the shared 3s guard under coverage instrumentation on a loaded rig -- see the
+// 2026-09-17 rig deploy note. Kept generous rather than tightened now that iterations
+// are fast: this bound exists only to catch a genuine hang (its inputs are bounded,
+// with no untrusted-input-driven amplification to catch on a tight deadline), and a
+// generous hang backstop costs nothing on the happy path.
 const kekRotationGuardDeadline = 30 * time.Second
 
 // crashLabels are the durability checkpoints commitNewKEKFiles emits, in order.
@@ -69,6 +82,9 @@ func FuzzKEKRotationCrashConsistency(f *testing.F) {
 		f.Add(uint8(i), "same-pass", "same-pass")
 	}
 	f.Add(uint8(3), "\x00\x01", "\xff\xfe") // hazard window, non-UTF8 passphrases
+
+	testKEKIterations = testFastKEKIterations
+	f.Cleanup(func() { testKEKIterations = 0 })
 
 	f.Fuzz(func(t *testing.T, crashSel uint8, oldPass, newPass string) {
 		if oldPass == "" {

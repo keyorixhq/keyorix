@@ -125,6 +125,38 @@ func GenerateKEK(password string, salt []byte, iterations int) []byte {
 	return pbkdf2.Key([]byte(password), salt, iterations, 32, sha256.New)
 }
 
+// testKEKIterations, when non-zero, overrides DefaultKEKIterations for KeyManager's
+// legacy passphrase+salt derivation (deriveKEK, RotateKEKPassphrase) ONLY -- not
+// DefaultKEKIterations itself, which stays the single source of truth GenerateKEK
+// falls back to and the two conformance tests
+// (TestGenerateKEK_DefaultIterationsMeetsOWASPMinimum here, plus
+// internal/crypto/keyprovider_test.go's byte-identity check) verify against
+// crypto.PBKDF2Iterations. No production code path or config/env parsing ever
+// assigns this var -- only *_test.go files in this package do, always restored via
+// t.Cleanup/f.Cleanup before the next test runs, since go test runs top-level
+// Test/Fuzz functions sequentially (an in-flight override never overlaps a
+// production-parameter-verifying test). Exists because 3 crash-consistency/
+// fault-injection fuzz targets each run real 600k-iteration PBKDF2 several times per
+// seed to exercise KeyManager's actual rotation/rewrap code path -- see
+// kekRotationGuardDeadline's comment. What those targets assert (file
+// write/rename/sync crash-safety) does not depend on the iteration count, only on
+// deriveKEK/RotateKEKPassphrase being the real functions under test -- confirmed by
+// keymanager_sweep_crash_consistency_fuzz_test.go's staticKEKProvider, which already
+// bypasses the KDF entirely for the one crash-consistency target whose oracle
+// (DEK-file/DB durability ordering) never touches KEK derivation at all.
+var testKEKIterations int
+
+// kekIterations returns testKEKIterations when a test has set it, else
+// DefaultKEKIterations. The one indirection point deriveKEK/RotateKEKPassphrase call
+// instead of DefaultKEKIterations directly, so a test can lower the real work factor
+// without touching DefaultKEKIterations itself.
+func kekIterations() int {
+	if testKEKIterations != 0 {
+		return testKEKIterations
+	}
+	return DefaultKEKIterations
+}
+
 // GenerateRandomKey generates a cryptographically secure random key
 func GenerateRandomKey(size int) ([]byte, error) {
 	key := make([]byte, size)

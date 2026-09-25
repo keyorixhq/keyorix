@@ -81,7 +81,7 @@ func (km *KeyManager) RotateKEKPassphrase(oldPassphrase, newPassphrase string) e
 	// Derive the current KEK from the old passphrase and verify it unwraps the
 	// on-disk DEK. This confirms the passphrase is correct BEFORE modifying any
 	// file — fail closed rather than writing an unwrappable DEK on disk.
-	currentKEK := GenerateKEK(oldPassphrase, currentSalt, DefaultKEKIterations)
+	currentKEK := GenerateKEK(oldPassphrase, currentSalt, kekIterations())
 	defer wipeBytes(currentKEK)
 
 	if _, err := unwrapKey(onDisk, currentKEK); err != nil {
@@ -95,7 +95,7 @@ func (km *KeyManager) RotateKEKPassphrase(oldPassphrase, newPassphrase string) e
 	}
 
 	// Derive the new KEK from newPassphrase + newSalt.
-	newKEK := GenerateKEK(newPassphrase, newSalt, DefaultKEKIterations)
+	newKEK := GenerateKEK(newPassphrase, newSalt, kekIterations())
 	defer wipeBytes(newKEK)
 
 	// Wrap the current (unchanged) DEK with the new KEK.
