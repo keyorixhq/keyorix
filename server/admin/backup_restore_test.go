@@ -290,8 +290,8 @@ func TestWriteRestoredFile_FailureLeavesTargetUnchanged(t *testing.T) {
 	dbPath := filepath.Join(dbDir, "secrets.db")
 	require.NoError(t, os.MkdirAll(dbDir, 0750))
 	require.NoError(t, os.WriteFile(dbPath, nil, 0600)) // pre-existing empty placeholder
-	require.NoError(t, os.Chmod(dbDir, 0500))            // read+execute only: no new files can be created
-	t.Cleanup(func() { _ = os.Chmod(dbDir, 0750) })      // let t.TempDir() clean up afterward
+	require.NoError(t, os.Chmod(dbDir, 0500))           // read+execute only: no new files can be created
+	t.Cleanup(func() { _ = os.Chmod(dbDir, 0750) })     // let t.TempDir() clean up afterward
 
 	ts := "20260101T000000Z"
 
