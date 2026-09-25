@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/keyorixhq/keyorix/cli/internal/apiclient"
+	"github.com/keyorixhq/keyorix/cli/internal/cliout"
 	"github.com/keyorixhq/keyorix/cli/internal/cliversion"
 	"github.com/keyorixhq/keyorix/cli/internal/credstore"
 	"github.com/keyorixhq/keyorix/cli/internal/skew"
@@ -158,10 +159,17 @@ type apiErrorBody struct {
 // attempted (e.g. "update user"), statusCode and body come straight from the generated
 // response. Falls back to a bare status code if body isn't the expected error shape (e.g.
 // an empty body, or a transport-layer failure that never reached a handler).
+//
+// eb.Message is server-controlled text -- the server may be compromised, misconfigured, or
+// (absent a validated TLS chain) MITM'd -- and this error's .Error() text reaches the
+// operator's terminal raw via main.go's fmt.Fprintln(os.Stderr, "Error:", err). Route it
+// through cliout.SanitizeForTerminal, the same defense every other piece of free text
+// printed by this CLI goes through, so a crafted message can't inject a terminal escape
+// sequence (found by FuzzApiError, CLI-FUZZ target 2).
 func apiError(action string, statusCode int, body []byte) error {
 	var eb apiErrorBody
 	if err := json.Unmarshal(body, &eb); err == nil && eb.Message != "" {
-		return fmt.Errorf("%s failed: %s (HTTP %d)", action, eb.Message, statusCode)
+		return fmt.Errorf("%s failed: %s (HTTP %d)", action, cliout.SanitizeForTerminal(eb.Message), statusCode)
 	}
 	return fmt.Errorf("%s failed: HTTP %d", action, statusCode)
 }
