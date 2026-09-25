@@ -35,13 +35,13 @@ Every command the old, thick CLI (`internal/cli`, no longer a release asset as o
 | `auth logout` | `keyorix auth logout` | PR 2, #2030 | renamed to top-level `logout` |
 | `auth mfa stepup` | `keyorix auth mfa stepup` | PR 2, #2030 | renamed to top-level `mfa stepup` |
 | `auth status` | `keyorix auth status` | PR 0, #2019 | folded into top-level `status`, which now shows server/login state directly |
-| `billing report` | not yet available -- open gap, see docs/cli-split-inventory.md §9 | unassigned | dual-mode REST route exists (GET /admin/billing/report); not in any split PR's scope; Finding S17 (embedded mode has no userID param to authorize against) |
+| `billing report` | `keyorix billing report` | FINISH-SPLIT census-gaps | ported the REST/remote branch only (cli/cmd/billing.go); local/embedded branch dropped, not carried forward -- Finding S17 |
 | `break-glass activate` | `keyorix break-glass activate` | PR 1, #2043 |  |
 | `break-glass list` | `keyorix break-glass list` | PR 1, #2043 |  |
 | `break-glass revoke` | `keyorix break-glass revoke` | PR 1, #2043 |  |
 | `bundle build` | removed -- offline release-signing tool; stays as internal tooling outside the public CLI | maintainer-only tooling (decision 2026-09-24) | offline release-signing tool; stays as internal tooling outside the public CLI |
-| `bundle import` | not yet available -- open gap, see docs/cli-split-inventory.md §9 | PR 10 leftovers, in progress | verification code is moving into pkg/bundleverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands |
-| `bundle verify` | not yet available -- open gap, see docs/cli-split-inventory.md §9 | PR 10 leftovers, in progress | verification code is moving into pkg/bundleverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands |
+| `bundle import` | `keyorix bundle import` | PR 10, #2076 (open) | verification code moved into pkg/bundleverify (no core/storage/config/SDK imports) |
+| `bundle verify` | `keyorix bundle verify` | PR 10, #2076 (open) | verification code moved into pkg/bundleverify (no core/storage/config/SDK imports) |
 | `compliance controls` | `keyorix compliance controls` | PR 8, #2069 |  |
 | `compliance credential-trends` | `keyorix compliance credential-trends` | PR 8, #2069 |  |
 | `compliance digest` | `keyorix compliance digest` | PR 8, #2069 |  |
@@ -99,9 +99,9 @@ Every command the old, thick CLI (`internal/cli`, no longer a release asset as o
 | `legal-hold lift` | `keyorix legal-hold lift` | PR 8, #2069 |  |
 | `legal-hold place` | `keyorix legal-hold place` | PR 8, #2069 |  |
 | `legal-hold status` | `keyorix legal-hold status` | PR 8, #2069 |  |
-| `license install` | not yet available -- open gap, see docs/cli-split-inventory.md §9 | PR 10 leftovers, in progress | verification code is moving into pkg/licenseverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands |
+| `license install` | `keyorix license install` | PR 10, #2076 (open) | verification code moved into pkg/licenseverify (no core/storage/config/SDK imports) |
 | `license issue` | removed -- offline license-signing tool; stays as internal tooling outside the public CLI | maintainer-only tooling (decision 2026-09-24) | offline license-signing tool; stays as internal tooling outside the public CLI |
-| `license status` | not yet available -- open gap, see docs/cli-split-inventory.md §9 | PR 10 leftovers, in progress | verification code is moving into pkg/licenseverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands |
+| `license status` | `keyorix license status` | PR 10, #2076 (open) | verification code moved into pkg/licenseverify (no core/storage/config/SDK imports) |
 | `machine audit` | `keyorix machine audit` | PR 2, #2030 |  |
 | `machine binding add` | `keyorix machine binding add` | PR 2, #2030 |  |
 | `machine binding list` | `keyorix machine binding list` | PR 2, #2030 |  |
@@ -116,7 +116,7 @@ Every command the old, thick CLI (`internal/cli`, no longer a release asset as o
 | `machine token list` | `keyorix machine token list` | PR 2, #2030 |  |
 | `machine token revoke` | `keyorix machine token revoke` | PR 2, #2030 |  |
 | `machine token-hygiene` | `keyorix machine token-hygiene` | PR 2, #2030 |  |
-| `migrate user-to-machine` | not yet available -- open gap, see docs/cli-split-inventory.md §9 | unassigned | inventory recommends collapsing to a REST-backed thin-CLI command (route exists: POST /projects/{id}/machine-identities/migrate-from-user); not in any split PR's scope. NOT related to the separate keyorix-migrate tool (Vault/cloud import) despite the name collision |
+| `migrate user-to-machine` | `keyorix migrate user-to-machine` | FINISH-SPLIT census-gaps | collapsed to `keyorix machine migrate-from-user` (cli/cmd/machine.go), not `migrate ...` -- a top-level migrate verb would collide with the separate keyorix-migrate tool (Vault/cloud import) despite being unrelated. --by dropped: POST /machine-identities/migrate-from-user's bearer token IS the acting identity, already permission-gated by router middleware |
 | `notification channel add` | `keyorix notification channel add` | PR 7, #2069 |  |
 | `notification channel delete` | `keyorix notification channel delete` | PR 7, #2069 |  |
 | `notification channel get` | `keyorix notification channel get` | PR 7, #2069 |  |
@@ -173,7 +173,7 @@ Every command the old, thick CLI (`internal/cli`, no longer a release asset as o
 | `rotation plan` | `keyorix rotation plan` | PR 1, #2043 |  |
 | `rotation show` | `keyorix rotation show` | PR 1, #2043 |  |
 | `rotation status` | `keyorix rotation status` | PR 1, #2043 |  |
-| `run` | not yet available -- open gap, see docs/cli-split-inventory.md §9 | PR 10 leftovers, in progress | flips to censusMoved once that PR lands; the local/embedded fetch branch will be dropped, not ported -- Finding S18: it had zero authorization check and zero audit event, so dropping it is a security fix, not just cleanup |
+| `run` | `keyorix run` | PR 10, #2076 (open) | the local/embedded fetch branch was dropped, not ported -- Finding S18: it had zero authorization check and zero audit event, so dropping it is a security fix, not just cleanup |
 | `secret access` | `keyorix secret access` | PR 4/5, #2069 |  |
 | `secret access-log` | `keyorix secret access-log` | PR 4/5, #2069 |  |
 | `secret acl grant` | `keyorix secret acl grant` | PR 4/5, #2069 |  |
@@ -251,12 +251,12 @@ Every command the old, thick CLI (`internal/cli`, no longer a release asset as o
 | `status` | `keyorix status` | PR 0, #2019 | local/embedded status branch dropped (Finding S18-adjacent); remote-only, now also folds in `auth status` |
 | `system audit` | `keyorix-server admin audit` | B1, #2016 | folded into `admin validate`'s file-permission check |
 | `system info` | `keyorix system info` | PR 7/10, #2069 |  |
-| `system init` | `keyorix-server admin init` | B1, #2016 | the local-host half (create config/keys/DB) moved to `admin init`; the --server network-bootstrap half (POST /system/init, unauthenticated, bootstrap-token-gated) is NOT YET in the thin CLI -- tracked as a GAP, needs its own small PR |
+| `system init` | `keyorix system init` | B1, #2016 (local half); PR 10 leftover, #2083 (open) (--server half) | split across two homes: the local-host half (create config/keys/DB) moved to `admin init`; the --server network-bootstrap half (POST /system/init, unauthenticated, bootstrap-token-gated) moved to the thin CLI's own `system init --server` |
 | `system role-expiry-check` | `keyorix system role-expiry-check` | PR 7/10, #2069 |  |
 | `system token-expiry-check` | `keyorix system token-expiry-check` | PR 7/10, #2069 |  |
 | `system validate` | `keyorix-server admin validate` | B1, #2016 |  |
 | `trust keygen` | `keyorix trust keygen` | PR 8, #2069 |  |
-| `usage show` | not yet available -- open gap, see docs/cli-split-inventory.md §9 | unassigned | dual-mode REST route exists (GET /admin/usage); not in any split PR's scope; Finding S17 (embedded mode has no userID param to authorize against) |
+| `usage show` | `keyorix usage show` | FINISH-SPLIT census-gaps | ported the REST/remote branch only (cli/cmd/usage.go); local/embedded branch dropped, not carried forward -- Finding S17 |
 | `user create` | `keyorix user create` | PR 6, #2049 |  |
 | `user delete` | `keyorix user delete` | PR 6, #2049 |  |
 | `user force-password-reset` | `keyorix user force-password-reset` | PR 6, #2049 |  |
