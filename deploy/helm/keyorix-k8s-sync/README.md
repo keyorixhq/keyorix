@@ -128,6 +128,18 @@ kubectl -n <namespace> describe networkpolicy <release>-keyorix-k8s-sync
   indefinitely, and multiple agent replicas recovering from a shared outage
   don't all retry in lockstep.
 
+## Versioning
+
+`Chart.yaml`'s `version`/`appVersion` are release.yml-overridden at publish
+time and picks `image.tag`'s default for a local `helm install` otherwise —
+this chart's committed value must be bumped in lockstep with
+`deploy/helm/keyorix` and `deploy/helm/keyorix-operator` (all three publish
+alongside the same release tag). See
+[`deploy/helm/keyorix`'s own "Versioning" section](../keyorix/README.md#versioning)
+for the full policy — this chart was found 3 releases behind by that same
+drift (confirmed live against `ghcr.io/keyorixhq/keyorix-k8s-sync`, not
+assumed) and bumped alongside it.
+
 ## RBAC
 
 The chart creates a `ClusterRole` (`secrets`: `get`/`list`/`create`/`patch`/`delete`)
