@@ -66,6 +66,36 @@ networkPolicy:
       podSelector:
         matchLabels:
           app.kubernetes.io/name: prometheus
+  egress:
+    # Restricts the manager's OUTBOUND traffic instead of leaving it reachable to
+    # anything the cluster network permits (the default without this). Its real
+    # destinations are DNS, the in-cluster Kubernetes API server (via
+    # controller-runtime's own client, for every KeyorixSecret/Secret it
+    # reconciles), and whichever Keyorix server(s) a KeyorixSecret's spec.server
+    # names (validated at reconcile time against --allowed-servers). Neither the
+    # API server nor an admin-configured Keyorix server is a podSelector-able
+    # destination, so both are allowed by PORT only (443 and 6443 -- the two
+    # ports a Kubernetes API server and an https Keyorix server overwhelmingly
+    # listen on). If either runs on a different port, add it via extraRules
+    # below, or reconciliation will silently stop working (a NetworkPolicy drop
+    # looks like a hung/timed-out call, not a clear error).
+    enabled: true
+    # extraRules: additional egress rules (raw NetworkPolicyEgressRule entries),
+    # appended verbatim -- e.g. for an API server or Keyorix server on a
+    # non-standard port.
+    extraRules: []
+
+# allowedServers (REQUIRED to sync anything): comma-effective list of trusted Keyorix
+# base URLs (https://host, no path) a KeyorixSecret's spec.server must match --
+# wired straight to the manager's -allowed-servers flag / KEYORIX_ALLOWED_SERVERS env
+# var (operator/cmd/main.go). This is the confused-deputy control: without it every
+# KeyorixSecret CR is rejected (fail closed -- see
+# KeyorixSecretReconciler.validateServer), rather than the operator shipping a
+# CR-named token Secret's bytes to a CR-chosen, untrusted destination. Not secret
+# data itself (a base URL, not a credential), so it's an ordinary values.yaml list,
+# not something that needs an existingSecret indirection.
+#   allowedServers: ["https://keyorix.internal"]
+allowedServers: []
 
 # watchNamespaces (OPTIONAL, ADR-076): restricts this operator instance to reconciling
 # KeyorixSecret CRs (and their target Secrets) in only the listed namespaces, instead of

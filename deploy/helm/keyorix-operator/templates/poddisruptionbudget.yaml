@@ -1,0 +1,20 @@
+{{/*
+Guarded on replicas > 1: at the default of 1 replica (leaderElection off), a PDB
+here could only ever BLOCK the one voluntary eviction/drain a singleton has,
+never add real disruption tolerance. It renders once an operator has actually
+scaled out (replicas > 1, normally paired with leaderElection: true for HA
+standby -- see values.yaml).
+*/}}
+{{- if gt (int (.Values.replicas | default 1)) 1 -}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "kxop.fullname" . }}
+  labels:
+    {{- include "kxop.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "kxop.selectorLabels" . | nindent 6 }}
+{{- end -}}

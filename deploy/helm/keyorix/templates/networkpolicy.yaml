@@ -1,10 +1,33 @@
 {{/*
 NetworkPolicies scoping the server API and the bundled Postgres to same-namespace
 traffic — without them both are reachable from ANY pod in the cluster that can
-route to their Service (#137). The web UI is deliberately left unrestricted here:
-it's the intended public entry point (often via an Ingress controller whose pod
-labels vary by installation), so locking it down risks breaking legitimate access
-in ways this chart can't predict across every ingress-controller setup.
+route to their Service (#137). The web UI is deliberately left unrestricted on
+INGRESS here: it's the intended public entry point (often via an Ingress
+controller whose pod labels vary by installation), so locking down who may call
+IN risks breaking legitimate access in ways this chart can't predict across every
+ingress-controller setup.
+
+Egress (networkPolicy.egress.enabled, default true) is a separate axis: without
+it, every pod here has always had UNRESTRICTED egress — reachable to anything the
+cluster network permits, including internal services and any cloud metadata
+endpoint, regardless of the ingress restrictions above. DNS is always allowed (no
+`to` selector — see the comment on the DNS rule below for why a selector isn't
+safe to assume here) so name resolution keeps working under every CNI/DNS setup.
+
+web and postgresql have a fully static, known egress surface (web only ever calls
+the server; postgresql never calls out) and get precisely that, no more. server's
+real-world egress surface is NOT static — SSO/OIDC/SAML identity providers,
+webhook notification sinks, and secret-rotation backends (Vault/Azure/AWS/etc.)
+are all admin-configured destinations this chart cannot know ahead of time, and
+externalDatabase.host (when postgresql.enabled is false) is likewise unknown at
+render time. Restricting server to only DNS + bundled-Postgres by default would
+silently break any of those features the moment an admin turns them on — a
+NetworkPolicy drop looks like a hung/timed-out call, not a clear error. So server
+gets its known destination (bundled Postgres, when enabled) plus
+networkPolicy.egress.extraRules verbatim — empty by default, and it is this
+chart's operator's responsibility to populate it with their own SSO/webhook/
+rotation-backend/external-DB destinations before relying on egress restriction
+for defense in depth on this specific pod.
 */}}
 {{- if .Values.networkPolicy.enabled }}
 apiVersion: networking.k8s.io/v1
@@ -21,6 +44,9 @@ spec:
       app.kubernetes.io/component: server
   policyTypes:
     - Ingress
+    {{- if .Values.networkPolicy.egress.enabled }}
+    - Egress
+    {{- end }}
   ingress:
     # Same-namespace only: any pod that can route here is currently reachable
     # cluster-wide (any namespace). This bounds it to the install's own namespace
@@ -31,6 +57,70 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.server.service.port }}
+  {{- if .Values.networkPolicy.egress.enabled }}
+  egress:
+    # DNS: deliberately no `to` selector at all, so this matches ANY destination on
+    # port 53 rather than a specific podSelector. A `to.podSelector` only ever
+    # matches pod IPs — it cannot match a hostNetwork DNS pod (e.g. NodeLocalDNS),
+    # whose apparent "destination" is the node's own IP, not a pod IP a selector
+    # could ever express. Restricting DNS by selector is CNI/cluster-topology
+    # dependent in a way this chart cannot assume; leaving `to` unset trades that
+    # fragility for "any destination, port 53 only" instead.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- if .Values.postgresql.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    {{- end }}
+    {{- with .Values.networkPolicy.egress.extraRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "keyorix.web.fullname" . }}
+  labels:
+    {{- include "keyorix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: web
+  policyTypes:
+    {{- if .Values.networkPolicy.egress.enabled }}
+    - Egress
+    {{- end }}
+  {{- if .Values.networkPolicy.egress.enabled }}
+  egress:
+    # See the server NetworkPolicy above for why DNS has no `to` selector.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # web's only real destination is the server API it proxies /api, /auth,
+    # /system to (see templates/web-config.yaml's proxy_pass) — nothing else.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: server
+      ports:
+        - protocol: TCP
+          port: {{ .Values.server.service.port }}
+  {{- end }}
 ---
 {{- if .Values.postgresql.enabled }}
 apiVersion: networking.k8s.io/v1
@@ -47,6 +137,9 @@ spec:
       app.kubernetes.io/component: postgresql
   policyTypes:
     - Ingress
+    {{- if .Values.networkPolicy.egress.enabled }}
+    - Egress
+    {{- end }}
   ingress:
     # Only the server needs to reach the bundled Postgres — nothing else in the
     # cluster (any other namespace, or another pod in this one) should be able to.
@@ -58,5 +151,10 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
+  {{- if .Values.networkPolicy.egress.enabled }}
+  # postgresql never initiates any outbound connection of its own (no DNS lookups,
+  # no calling out) — egress is fully denied, no rules at all.
+  egress: []
+  {{- end }}
 {{- end }}
 {{- end }}
