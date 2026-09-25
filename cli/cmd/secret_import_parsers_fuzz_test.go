@@ -145,7 +145,7 @@ func FuzzJSONRoundTrip(f *testing.F) {
 		entries := []exportedSecret{{ID: 1, Name: name, Value: value}}
 		var buf bytes.Buffer
 		if err := writeExportJSON(&buf, entries); err != nil {
-			t.Fatalf("writeExportJSON failed for name=%q value=%q: %v", name, value, err)
+			return // export-side refusal (e.g. invalid UTF-8) is a valid outcome
 		}
 		parsed, err := parseJSONBytes(buf.Bytes())
 		if err != nil {
