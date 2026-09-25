@@ -30,7 +30,7 @@ func newMFATestCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.MFASecret{},
 		&models.MFARecoveryCode{}, &models.MFAChallenge{}, &models.Session{}, &models.AuditEvent{},
 		&models.MFAStepupToken{}, &models.MFAStepUpGrant{}))
-	hash, _ := bcrypt.GenerateFromPassword([]byte(mfaTestPassword), bcrypt.DefaultCost)
+	hash, _ := bcrypt.GenerateFromPassword([]byte(mfaTestPassword), int(bcryptCost.Load()))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", UsernameFolded: "alice", Email: "a@b.com", EmailFolded: "a@b.com",
 		PasswordHash: string(hash), AccountState: "active"}).Error)
 

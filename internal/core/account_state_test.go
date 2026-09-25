@@ -187,7 +187,7 @@ func TestLogin_BlocksSuspended(t *testing.T) {
 	store := new(MockStorage)
 	c := newAccountCore(store)
 	ctx := context.Background()
-	hash, _ := bcrypt.GenerateFromPassword([]byte("Secret#Passw0rd!"), bcrypt.DefaultCost)
+	hash, _ := bcrypt.GenerateFromPassword([]byte("Secret#Passw0rd!"), int(bcryptCost.Load()))
 	// A suspended account keeps IsActive=true (SuspendUser changes only account_state),
 	// so the state-based gate — not the IsActive gate — is what refuses the login.
 	store.On("GetUserByUsername", ctx, "bob").
@@ -207,7 +207,7 @@ func TestLogin_BlocksDeactivated(t *testing.T) {
 	store := new(MockStorage)
 	c := newAccountCore(store)
 	ctx := context.Background()
-	hash, _ := bcrypt.GenerateFromPassword([]byte("Secret#Passw0rd!"), bcrypt.DefaultCost)
+	hash, _ := bcrypt.GenerateFromPassword([]byte("Secret#Passw0rd!"), int(bcryptCost.Load()))
 	store.On("GetUserByUsername", ctx, "bob").
 		Return(&models.User{ID: 2, Username: "bob", PasswordHash: string(hash), IsActive: false, AccountState: AccountActive}, nil)
 
@@ -291,7 +291,7 @@ func TestChangePassword_ClearsRestriction(t *testing.T) {
 	store := new(MockStorage)
 	c := newAccountCore(store)
 	ctx := context.Background()
-	oldHash, _ := bcrypt.GenerateFromPassword([]byte("oldpassword"), bcrypt.DefaultCost)
+	oldHash, _ := bcrypt.GenerateFromPassword([]byte("oldpassword"), int(bcryptCost.Load()))
 	user := &models.User{ID: 1, Username: "alice", PasswordHash: string(oldHash), AccountState: AccountPasswordResetRequired}
 
 	store.On("GetUser", ctx, uint(1)).Return(user, nil)
