@@ -17,6 +17,19 @@ make build
 ./bin/keyorix-migrate --help
 ```
 
+**Air-gapped or Vault-only installs:** the default build also compiles in the
+AWS/Azure/GCP cloud sources and their SDKs (see
+`docs/migrate-from-cloud.md`'s size table). If you only need the Vault
+source — the common case for an air-gapped or on-prem environment with no
+cloud secret manager to migrate from — use `make migrate-vault-only`
+instead, which excludes all three cloud SDKs via build tags and produces a
+~10MB binary (vs. ~32MB with every source compiled in):
+
+```
+make migrate-vault-only
+./bin/keyorix-migrate-vault-only --help
+```
+
 ## 2. Create a least-privilege Keyorix token
 
 `keyorix-migrate` needs a Personal Access Token (PAT) scoped to write secrets
