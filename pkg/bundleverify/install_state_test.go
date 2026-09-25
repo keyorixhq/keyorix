@@ -222,3 +222,69 @@ func TestReconcileInstallState_BackfillsExistingInternalMarker(t *testing.T) {
 	require.Error(t, err, "the backfilled external record must now catch a post-wipe downgrade")
 	assert.True(t, errors.Is(err, ErrInstallStateReset), "got: %v", err)
 }
+
+// TestWriteFileNoFollow_OverwriteFixesMode closes the durability/mode regression the
+// coordinator flagged on #2076: writeFileNoFollow's OpenFile perm argument only applies to a
+// NEWLY created file (O_CREATE) -- overwriting a pre-existing file left at a looser mode left
+// that mode untouched, unlike internal/securefiles.SecureWriteFileSync (which this package
+// intentionally stopped importing, see the "minimal local file-safety helpers" comment above
+// writeFileNoFollow) whose Chmod+Sync this fix restores.
+func TestWriteFileNoFollow_OverwriteFixesMode(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "marker")
+	require.NoError(t, os.WriteFile(p, []byte("old-longer-content"), 0o644))
+
+	require.NoError(t, writeFileNoFollow(dir, "marker", []byte("new"), 0o600))
+
+	got, err := os.ReadFile(p)
+	require.NoError(t, err)
+	assert.Equal(t, "new", string(got))
+
+	fi, err := os.Stat(p)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm(), "mode must be fixed to 0600 on overwrite, not just on create")
+}
+
+// TestPersistedInstalledVersion_SymlinkedDestDirRefused closes the gap the coordinator flagged
+// on #2076: readFileNoFollow's O_NOFOLLOW only guards the final path component (the marker
+// filename), so a destDir that is ITSELF a pre-planted symlink to an attacker-controlled
+// directory was previously followed transparently by readInstalledVersion before this fix
+// added a verifyNoSymlink(destDir, destDir) check ahead of the read. Without the fix, this
+// would read (and a subsequent Extract would trust) whatever install-state marker sits at the
+// symlink's target rather than refusing outright.
+func TestPersistedInstalledVersion_SymlinkedDestDirRefused(t *testing.T) {
+	parent := t.TempDir()
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, installedVersionMarker), []byte("v9.9.9\n"), 0o600))
+
+	destDir := filepath.Join(parent, "dest")
+	require.NoError(t, os.Symlink(outside, destDir))
+
+	_, _, err := PersistedInstalledVersion(destDir)
+	require.Error(t, err, "a destDir that is itself a symlink must be refused, not followed")
+}
+
+// TestVerifyNoSymlink_SymlinkedIntermediateDirectoryRefused exercises the shared walkNoSymlink
+// logic behind verifyNoSymlink (the read-only sibling mkdirAllNoSymlink gained for this fix)
+// with a genuinely nested, multi-component path: an intermediate directory BETWEEN root and
+// the target -- not the target itself -- replaced by a symlink. This is the literal scenario
+// the coordinator's review asked to be covered ("add one test with a symlinked intermediate
+// directory"); today's real call sites (readInstalledVersion, readExternalInstallState) always
+// pass root==dir, so they can only ever catch the LEAF being a symlink (see
+// TestPersistedInstalledVersion_SymlinkedDestDirRefused above) -- this proves the shared walk
+// itself has full parity with mkdirAllNoSymlink's proven multi-component protection
+// (TestExtract_S25_MkdirFailsDueToSymlinkInSubdir) for any future root!=dir read caller, and
+// that unlike mkdirAllNoSymlink it never creates anything as a side effect of the check.
+func TestVerifyNoSymlink_SymlinkedIntermediateDirectoryRefused(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "sub")))
+	target := filepath.Join(root, "sub", "deeper")
+
+	err := verifyNoSymlink(root, target)
+	require.Error(t, err, "must refuse to walk through a symlinked intermediate directory")
+
+	entries, rerr := os.ReadDir(outside)
+	require.NoError(t, rerr)
+	assert.Empty(t, entries, "verifyNoSymlink is read-only and must not create anything, including through the planted symlink")
+}

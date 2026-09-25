@@ -97,6 +97,9 @@ func readExternalInstallState(destDir string) (version string, ok bool, err erro
 	} else if !fi.IsDir() {
 		return "", false, fmt.Errorf("bundle: external install-state path %q exists and is not a directory", base)
 	}
+	if err := verifyNoSymlink(base, base); err != nil {
+		return "", false, err
+	}
 	b, err := readFileNoFollow(base, name)
 	if err != nil {
 		if os.IsNotExist(err) {

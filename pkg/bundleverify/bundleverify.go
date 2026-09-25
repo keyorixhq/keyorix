@@ -517,6 +517,9 @@ func PersistedInstalledVersionAllowingReset(destDir string, acknowledgeReset boo
 // (fail closed). A missing marker in an OTHERWISE NON-EMPTY destDir is also refused rather
 // than treated as a first install — see destDirHasContent's caller below for why.
 func readInstalledVersion(destDir string) (string, bool, error) {
+	if err := verifyNoSymlink(destDir, destDir); err != nil {
+		return "", false, err
+	}
 	b, err := readFileNoFollow(destDir, installedVersionMarker)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -627,7 +630,26 @@ func removeBundleTemp(tmpPath string) {
 // already exists" — this Lstats every component and refuses the moment one is a symlink.
 // root is re-checked on every call (including when root == dir) so a pre-planted symlink AT
 // the staging root's own path is caught too, not just symlinks nested underneath it.
-func mkdirAllNoSymlink(root, dir string) error { // NOSONAR -- cognitive complexity, matches internal/bundle's original
+func mkdirAllNoSymlink(root, dir string) error {
+	return walkNoSymlink(root, dir, true)
+}
+
+// verifyNoSymlink is mkdirAllNoSymlink's read-only sibling: it walks the same root-to-dir
+// path Lstat-checking every EXISTING component for a symlink, but never creates a missing
+// one — a read-only check must not have a filesystem side effect. A missing component simply
+// ends the walk (nothing beneath a directory that doesn't exist can exist either); the
+// caller's own subsequent open/read fails with ENOENT exactly as it always did. Callers that
+// read via readFileNoFollow but don't otherwise create dir first (readInstalledVersion,
+// readExternalInstallState) call this so the "directory already verified symlink-free"
+// guarantee readFileNoFollow's #nosec comment claims is actually true on the read path too,
+// not just on the write path where mkdirAllNoSymlink already ran.
+func verifyNoSymlink(root, dir string) error {
+	return walkNoSymlink(root, dir, false)
+}
+
+// walkNoSymlink is the shared Lstat walk behind mkdirAllNoSymlink (create=true) and
+// verifyNoSymlink (create=false).
+func walkNoSymlink(root, dir string, create bool) error { // NOSONAR -- cognitive complexity, matches internal/bundle's original
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
 		return fmt.Errorf("bundle: resolve staging root: %w", err)
@@ -638,7 +660,7 @@ func mkdirAllNoSymlink(root, dir string) error { // NOSONAR -- cognitive complex
 	}
 	rel, err := filepath.Rel(rootAbs, dirAbs)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return fmt.Errorf("bundle: refusing to create directory %q outside staging root %q", dir, root)
+		return fmt.Errorf("bundle: refusing to touch directory %q outside staging root %q", dir, root)
 	}
 
 	var parts []string
@@ -662,6 +684,9 @@ func mkdirAllNoSymlink(root, dir string) error { // NOSONAR -- cognitive complex
 				return fmt.Errorf("bundle: %q exists and is not a directory", cur)
 			}
 		case os.IsNotExist(statErr):
+			if !create {
+				return nil
+			}
 			if mkErr := os.Mkdir(cur, 0o750); mkErr != nil {
 				return fmt.Errorf("bundle: mkdir %q: %w", cur, mkErr)
 			}
@@ -797,11 +822,25 @@ func compareVersions(a, b string) (int, error) {
 // silently assumed equivalent.
 
 func writeFileNoFollow(dir, name string, data []byte, perm os.FileMode) error {
-	f, err := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_TRUNC|unix.O_NOFOLLOW, perm) // #nosec G304 -- dir verified symlink-free by mkdirAllNoSymlink; O_NOFOLLOW guards the final component
+	f, err := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_TRUNC|unix.O_NOFOLLOW, perm) // #nosec G304 -- dir verified symlink-free by mkdirAllNoSymlink/verifyNoSymlink at every call site; O_NOFOLLOW guards the final component
 	if err != nil {
 		return err
 	}
+	// O_CREATE only applies perm to a newly-created file -- overwriting a pre-existing file
+	// (e.g. one left behind at a looser mode from an older version of this code) leaves its
+	// mode untouched unless Chmod is called explicitly. Sync forces the write to durable
+	// storage before Close, matching internal/securefiles.SecureWriteFileSync's original
+	// durability guarantee: a crash right after this call must not lose or truncate the
+	// record.
+	if err := f.Chmod(perm); err != nil {
+		_ = f.Close()
+		return err
+	}
 	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
 		_ = f.Close()
 		return err
 	}

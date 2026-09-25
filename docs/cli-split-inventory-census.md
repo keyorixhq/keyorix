@@ -36,8 +36,8 @@
 | `break-glass list` | moved (thin CLI) | PR 1, #2043 |  |
 | `break-glass revoke` | moved (thin CLI) | PR 1, #2043 |  |
 | `bundle build` | dropped | maintainer-only tooling (decision 2026-09-24) | offline release-signing tool; stays as internal tooling outside the public CLI |
-| `bundle import` | GAP (unresolved) | PR 10 leftovers, in progress | verification code is moving into pkg/bundleverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands |
-| `bundle verify` | GAP (unresolved) | PR 10 leftovers, in progress | verification code is moving into pkg/bundleverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands |
+| `bundle import` | moved (thin CLI) | PR 10, #2076 (open) | verification code moved into pkg/bundleverify (no core/storage/config/SDK imports) |
+| `bundle verify` | moved (thin CLI) | PR 10, #2076 (open) | verification code moved into pkg/bundleverify (no core/storage/config/SDK imports) |
 | `compliance controls` | moved (thin CLI) | PR 8, #2069 |  |
 | `compliance credential-trends` | moved (thin CLI) | PR 8, #2069 |  |
 | `compliance digest` | moved (thin CLI) | PR 8, #2069 |  |
@@ -95,9 +95,9 @@
 | `legal-hold lift` | moved (thin CLI) | PR 8, #2069 |  |
 | `legal-hold place` | moved (thin CLI) | PR 8, #2069 |  |
 | `legal-hold status` | moved (thin CLI) | PR 8, #2069 |  |
-| `license install` | GAP (unresolved) | PR 10 leftovers, in progress | verification code is moving into pkg/licenseverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands |
+| `license install` | moved (thin CLI) | PR 10, #2076 (open) | verification code moved into pkg/licenseverify (no core/storage/config/SDK imports) |
 | `license issue` | dropped | maintainer-only tooling (decision 2026-09-24) | offline license-signing tool; stays as internal tooling outside the public CLI |
-| `license status` | GAP (unresolved) | PR 10 leftovers, in progress | verification code is moving into pkg/licenseverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands |
+| `license status` | moved (thin CLI) | PR 10, #2076 (open) | verification code moved into pkg/licenseverify (no core/storage/config/SDK imports) |
 | `machine audit` | moved (thin CLI) | PR 2, #2030 |  |
 | `machine binding add` | moved (thin CLI) | PR 2, #2030 |  |
 | `machine binding list` | moved (thin CLI) | PR 2, #2030 |  |
@@ -169,7 +169,7 @@
 | `rotation plan` | moved (thin CLI) | PR 1, #2043 |  |
 | `rotation show` | moved (thin CLI) | PR 1, #2043 |  |
 | `rotation status` | moved (thin CLI) | PR 1, #2043 |  |
-| `run` | GAP (unresolved) | PR 10 leftovers, in progress | flips to censusMoved once that PR lands; the local/embedded fetch branch will be dropped, not ported -- Finding S18: it had zero authorization check and zero audit event, so dropping it is a security fix, not just cleanup |
+| `run` | moved (thin CLI) | PR 10, #2076 (open) | the local/embedded fetch branch was dropped, not ported -- Finding S18: it had zero authorization check and zero audit event, so dropping it is a security fix, not just cleanup |
 | `secret access` | moved (thin CLI) | PR 4/5, #2069 |  |
 | `secret access-log` | moved (thin CLI) | PR 4/5, #2069 |  |
 | `secret acl grant` | moved (thin CLI) | PR 4/5, #2069 |  |
@@ -265,13 +265,8 @@
 | `user suspend-inactive` | moved (thin CLI) | PR 6, #2049 |  |
 | `user update` | moved (thin CLI) | PR 6, #2049 |  |
 
-**8 open gap(s)** (blocks PR 14 / Phase 5 -- see TestNoGapsRemain):
+**3 open gap(s)** (blocks PR 14 / Phase 5 -- see TestNoGapsRemain):
 
 - `billing report`: dual-mode REST route exists (GET /admin/billing/report); not in any split PR's scope; Finding S17 (embedded mode has no userID param to authorize against)
-- `bundle import`: verification code is moving into pkg/bundleverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands
-- `bundle verify`: verification code is moving into pkg/bundleverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands
-- `license install`: verification code is moving into pkg/licenseverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands
-- `license status`: verification code is moving into pkg/licenseverify (no core/storage/config/SDK imports); flips to censusMoved once that PR lands
 - `migrate user-to-machine`: inventory recommends collapsing to a REST-backed thin-CLI command (route exists: POST /projects/{id}/machine-identities/migrate-from-user); not in any split PR's scope. NOT related to the separate keyorix-migrate tool (Vault/cloud import) despite the name collision
-- `run`: flips to censusMoved once that PR lands; the local/embedded fetch branch will be dropped, not ported -- Finding S18: it had zero authorization check and zero audit event, so dropping it is a security fix, not just cleanup
 - `usage show`: dual-mode REST route exists (GET /admin/usage); not in any split PR's scope; Finding S17 (embedded mode has no userID param to authorize against)

@@ -227,9 +227,10 @@ func TestReadInstalledVersion_S25_ReadDirError(t *testing.T) {
 	destDir := filepath.Join(parent, "notadir")
 	require.NoError(t, os.WriteFile(destDir, []byte("content"), 0o644))
 
-	// readInstalledVersion will try to read <destDir>/.keyorix-installed-version,
-	// which fails with NotExist. It then calls destDirHasContent(destDir) which
-	// calls os.ReadDir on a FILE — this returns an error that is not os.IsNotExist.
+	// readInstalledVersion now runs verifyNoSymlink(destDir, destDir) before ever reading the
+	// marker, and that walk itself refuses a destDir that exists but isn't a directory — so
+	// this errors there, never reaching the ReadDir-on-a-file path the name originally
+	// exercised.
 	_, _, err := readInstalledVersion(destDir)
 	assert.Error(t, err, "should fail when destDir is a file (ReadDir on file fails)")
 }
