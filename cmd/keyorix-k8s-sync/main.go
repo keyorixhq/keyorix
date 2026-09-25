@@ -113,6 +113,13 @@ func runAgent(cfg *k8ssync.Config, fetcher k8ssync.Fetcher, sink k8ssync.Sink, o
 	if cfg.Cleanup || cleanup {
 		engineOpts = append(engineOpts, k8ssync.WithCleanup())
 	}
+	// prune_on_revoke is config-file-only (no CLI flag, unlike cleanup above): it's a
+	// steady-state safety posture an operator sets once, not something a one-shot run
+	// typically needs to override ad hoc. See WithPruneOnRevoke's own doc comment for
+	// why this defaults to false (K8S track backlog item 3c).
+	if cfg.PruneOnRevoke {
+		engineOpts = append(engineOpts, k8ssync.WithPruneOnRevoke())
+	}
 	engine := k8ssync.NewEngine(fetcher, sink, engineOpts...)
 
 	ctx, cancel := context.WithCancel(context.Background())

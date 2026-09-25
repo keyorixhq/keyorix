@@ -41,6 +41,7 @@ helm install kx-sync deploy/helm/keyorix-k8s-sync \
 | `keyorix.projectID` | Numeric id of the Keyorix project the token's machine identity belongs to (**required**) — every `mappings[].ref` names only an environment and secret, never a project, since environment names are unique per-project, not globally |
 | `keyorix.interval` | Reconcile cadence (Go duration; default `5m`) |
 | `cleanup` | Reap orphaned owned Secrets when a mapping is removed (default `false`) |
+| `pruneOnRevoke` | Actually delete/trim a Secret when its upstream Keyorix reference is confirmed gone or access is revoked, instead of leaving the last-known value untouched (default `false` — see [Failure modes](#failure-modes)) |
 | `keyorix.tokenSecret.name` | Existing Secret holding the Keyorix token (**required**) |
 | `keyorix.tokenSecret.key` | Key within that Secret (default `token`) |
 | `mappings` | List of `{ref, namespace, name, key}` — Keyorix secret → Kubernetes Secret key |
@@ -97,6 +98,35 @@ stop working right after this upgrade:
 ```sh
 kubectl -n <namespace> describe networkpolicy <release>-keyorix-k8s-sync
 ```
+
+## Failure modes
+
+- **Keyorix unreachable, or returns a 5xx:** treated as transient. The target
+  Secret(s) affected are skipped for that pass — left completely untouched,
+  never written with a missing/partial value — and retried at the next pass
+  (see "Retry cadence" below for the backoff this now applies on repeated
+  failure).
+- **A specific secret is deleted upstream, or a token is revoked/expired:**
+  detected (Keyorix returns 401/403/404) and counted as `revoked` — visible
+  via `/status`'s `revoked` field and the
+  `keyorix_k8s_sync_secrets_total{outcome="revoked"}` metric — but by default
+  (`pruneOnRevoke: false`) the target Secret's last-known value is left
+  completely untouched, not deleted or trimmed. This matters beyond any one
+  secret: a revoked or expired agent token reads as the exact same failure on
+  *every* mapping's fetch, not just one, so with pruning on by default the
+  first reconcile pass after a routine credential rotation would delete or
+  trim every Secret the agent manages in one shot. Set `pruneOnRevoke: true`
+  to opt into actively reaping a Secret the moment its reference is confirmed
+  gone/revoked — see `pruneOnRevoke`'s own values.yaml comment for the
+  token-wide-revocation tradeoff before enabling it.
+- **Retry cadence:** the agent's default poll interval (`keyorix.interval`,
+  5m) applies as long as every pass is clean. After a pass with any failed or
+  revoked target, the next pass's delay backs off exponentially (bounded at
+  8x the configured interval) with up to ±20% jitter, resetting to the plain
+  interval the moment a pass is fully clean again — so a sustained outage or
+  revocation doesn't retry at the same cadence as healthy operation
+  indefinitely, and multiple agent replicas recovering from a shared outage
+  don't all retry in lockstep.
 
 ## RBAC
 

@@ -25,11 +25,18 @@ type Config struct {
 	// every secret lookup to this one project server-side, the fetcher would have
 	// to search across every project/environment the token can see and could
 	// return a same-named secret from the WRONG project (#Bug1). Required.
-	ProjectID  uint            `yaml:"project_id"`
-	Interval   string          `yaml:"interval"`    // Go duration (e.g. "5m"); default 5m
-	HealthPort int             `yaml:"health_port"` // probe/status HTTP port; default 8080
-	Cleanup    bool            `yaml:"cleanup"`     // reap orphaned owned Secrets; default false
-	Mappings   []SecretMapping `yaml:"mappings"`
+	ProjectID  uint   `yaml:"project_id"`
+	Interval   string `yaml:"interval"`    // Go duration (e.g. "5m"); default 5m
+	HealthPort int    `yaml:"health_port"` // probe/status HTTP port; default 8080
+	Cleanup    bool   `yaml:"cleanup"`     // reap orphaned owned Secrets; default false
+	// PruneOnRevoke gates WithPruneOnRevoke (see its own doc comment) — whether a
+	// confirmed-gone/revoked upstream reference actually removes/trims its target
+	// Secret, vs. leaving it untouched. Default false ("keep"): distinct from Cleanup
+	// above, which reaps Secrets for mappings REMOVED FROM THIS CONFIG; this instead
+	// governs mappings still IN the config whose upstream Keyorix value became
+	// inaccessible.
+	PruneOnRevoke bool            `yaml:"prune_on_revoke"`
+	Mappings      []SecretMapping `yaml:"mappings"`
 }
 
 const defaultSyncInterval = 5 * time.Minute

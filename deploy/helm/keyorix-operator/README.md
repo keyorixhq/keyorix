@@ -27,6 +27,29 @@ helm install keyorix-operator deploy/helm/keyorix-operator -n keyorix-system --c
 | `rbac.clusterScoped` | `true` for a genuinely cluster-wide instance (default `false`) — see [RBAC](#rbac) |
 | `resources`, `nodeSelector`, `tolerations`, `affinity`, `podAnnotations` | Standard pod scheduling/resourcing |
 
+## Failure modes
+
+- **Keyorix unreachable, or returns a 5xx:** treated as transient
+  (`r.fail`/`SyncError` on the `Ready` condition). The target Secret is left
+  completely untouched and retried on the next reconcile, which
+  controller-runtime backs off exponentially (bounded, per-`KeyorixSecret`)
+  after a non-nil `Reconcile` error — see [Upgrading: egress
+  NetworkPolicy](#upgrading-egress-networkpolicy) above for what "retried"
+  actually needs egress for.
+- **A referenced secret is deleted upstream, or access/the token is
+  revoked/expired:** detected (Keyorix returns 401/403/404) and always
+  surfaced distinctly on the `Ready` condition (`reason` `UpstreamSecretGone`
+  or `UpstreamAccessRevoked`), but by default (`spec.prunePolicy: Keep`) the
+  target Secret's last-known value is left completely untouched — not
+  deleted or trimmed. This matters beyond any one `KeyorixSecret`:
+  `tokenSecretRef` is commonly *shared* across several of them, so a single
+  credential rotation or revocation event reads as the identical 401 on
+  every `KeyorixSecret` that references it, not just one. Set
+  `spec.prunePolicy: Delete` per-CR to have the operator actively reap that
+  one Secret the moment its reference is confirmed gone/revoked — see the
+  field's own CRD description (and the [example](examples/keyorixsecret.yaml))
+  for the token-sharing tradeoff before enabling it.
+
 ## RBAC
 
 A `ClusterRole` grants read on `keyorixsecrets` (+ status) and

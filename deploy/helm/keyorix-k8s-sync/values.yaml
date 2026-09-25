@@ -99,6 +99,20 @@ networkPolicy:
 # same namespace with cleanup on. Enabling it grants the agent list+delete on Secrets.
 cleanup: false
 
+# pruneOnRevoke controls a DIFFERENT case than cleanup above: a mapping still IN the
+# config whose upstream Keyorix reference becomes inaccessible (the secret was deleted,
+# or the agent's own access/token was revoked). Off by default (K8S track): a revoked
+# or expired agent token reads as the SAME failure on every single mapping's fetch, not
+# just one -- with this on by default, the first reconcile pass after a routine
+# credential rotation would delete or trim every Secret this agent manages in one shot.
+# With this off, a revoked/gone reference is reported (see the "revoked" count in
+# /status and the keyorix_k8s_sync_secrets_total{outcome="revoked"} metric) but the
+# target Secret's last-known value is left completely untouched. Enable this only if
+# you want the agent to actively reap a Secret the moment Keyorix confirms it's gone or
+# access to it was cut -- and be aware a token-wide revocation will then delete
+# EVERYTHING this agent manages, not just the one secret that motivated turning it on.
+pruneOnRevoke: false
+
 # mappings: each copies one Keyorix secret ("<environment>/<name>") into one key of
 # one Kubernetes Secret. Several mappings may target the same Secret.
 #   - ref: production/db-password

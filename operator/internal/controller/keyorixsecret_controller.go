@@ -444,37 +444,46 @@ func (r *KeyorixSecretReconciler) fail(ctx context.Context, ks *secretsv1alpha1.
 	return ctrl.Result{}, cause
 }
 
-// wipeAndFailGone wipes the target Secret and records the failure on the Ready
-// condition via failGone, distinguishing a successful wipe from one that itself failed.
-// Before this, a wipeTargetSecret failure was only passed to logger.Error and otherwise
-// discarded: the CR's Ready condition would still read as an ordinary confirmed-gone
-// sync failure with no indication the stale (possibly revoked/rotated) Secret was NOT
-// actually removed — a delete-blocking admission webhook, RBAC drift, or a transient API
-// error could leave it silently mounted into every workload that references it, with
-// nothing in .status to say so.
+// wipeAndFailGone wipes the target Secret — ONLY when ks.Spec.PrunePolicy is
+// PrunePolicyDelete — and records the failure on the Ready condition via failGone,
+// distinguishing a successful wipe, a failed wipe, and a deliberately-skipped one
+// (PrunePolicyKeep, the default — see KeyorixSecretSpec.PrunePolicy for why). Before
+// PrunePolicy existed, a wipeTargetSecret failure was only passed to logger.Error and
+// otherwise discarded: the CR's Ready condition would still read as an ordinary
+// confirmed-gone sync failure with no indication the stale (possibly revoked/rotated)
+// Secret was NOT actually removed — a delete-blocking admission webhook, RBAC drift, or
+// a transient API error could leave it silently mounted into every workload that
+// references it, with nothing in .status to say so.
 func (r *KeyorixSecretReconciler) wipeAndFailGone(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, secretName, reason string, cause error) (ctrl.Result, error) {
+	pruned := ks.Spec.PrunePolicy == secretsv1alpha1.PrunePolicyDelete
 	var wipeErr error
-	if err := r.wipeTargetSecret(ctx, ks, secretName); err != nil {
-		wipeErr = err
-		log.FromContext(ctx).Error(err, "failed to wipe target Secret after upstream access was confirmed cut off")
+	if pruned {
+		if err := r.wipeTargetSecret(ctx, ks, secretName); err != nil {
+			wipeErr = err
+			log.FromContext(ctx).Error(err, "failed to wipe target Secret after upstream access was confirmed cut off")
+		}
 	}
-	return r.failGone(ctx, ks, reason, cause, wipeErr)
+	return r.failGone(ctx, ks, reason, cause, wipeErr, pruned)
 }
 
 // failGone is fail's counterpart for a confirmed access-cut upstream failure (#428): it
 // records a distinct reason ("UpstreamSecretGone" for a confirmed-gone 404/403,
 // "UpstreamAccessRevoked" for a 401 — see the ErrSecretGone/ErrUnauthorized handling in
-// Reconcile) so the CR's status makes the wipe visible and explicable, rather than
+// Reconcile) so the CR's status makes the outcome visible and explicable, rather than
 // looking like an ordinary transient sync failure.
 //
-// wipeErr, when non-nil, means wipeTargetSecret itself failed: the reason gets a
-// "WipeFailed" suffix (e.g. "UpstreamSecretGoneWipeFailed") and the message says so
-// explicitly, so a reader of .status alone can tell the stale target Secret may still be
-// sitting in the cluster with revoked/rotated data, not just that the upstream fetch
-// failed.
-func (r *KeyorixSecretReconciler) failGone(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, reason string, cause, wipeErr error) (ctrl.Result, error) {
+// pruned reflects ks.Spec.PrunePolicy at the time wipeAndFailGone ran: false (the
+// default, PrunePolicyKeep) means wipeTargetSecret was never even attempted — the
+// message says so explicitly, so a reader of .status can't mistake "left alone on
+// purpose" for "wipe attempted and silently succeeded". When pruned is true, wipeErr
+// (non-nil meaning wipeTargetSecret itself failed) still gets its own distinct
+// "WipeFailed" reason suffix and message, exactly as before PrunePolicy existed.
+func (r *KeyorixSecretReconciler) failGone(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, reason string, cause, wipeErr error, pruned bool) (ctrl.Result, error) {
 	msg := cause.Error()
-	if wipeErr != nil {
+	switch {
+	case !pruned:
+		msg = fmt.Sprintf("%s — prunePolicy is Keep (the default): the target Secret's last-known value was left untouched, not deleted. Set spec.prunePolicy: Delete to reap it automatically.", cause.Error())
+	case wipeErr != nil:
 		reason += "WipeFailed"
 		msg = fmt.Sprintf("%s — additionally, wiping the stale target Secret failed, it may still contain revoked/rotated data: %v", cause.Error(), wipeErr)
 	}
@@ -577,6 +586,21 @@ func (r *KeyorixSecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // built controller.Controller (e.g. its MaxConcurrentReconciles) without needing to
 // duplicate this exact builder chain — SetupWithManager itself just discards the
 // returned controller, matching what builder.Builder.Complete does internally.
+// setupController deliberately does NOT set WithOptions' RateLimiter (K8S track
+// backlog item 3b: "no retry storm — bounded backoff with jitter"): leaving it unset
+// keeps controller-runtime's own default, workqueue.DefaultTypedControllerRateLimiter
+// — a per-item (per KeyorixSecret NamespacedName) exponential backoff already bounded
+// at a 1000s cap. Reconcile returning a non-nil error (which it always does on a
+// confirmed-gone/revoked failure, PrunePolicy Keep or Delete — see failGone) is what
+// drives that requeue; a Keep-policy pass returning nil here instead would silently
+// defeat it. Jitter is NOT layered on top of that default, unlike
+// internal/k8ssync/runner.go's poll loop: that agent's backoff exists because ALL of
+// its mappings share ONE fixed-interval ticker, so many consecutive-failure agents (or
+// replicas) recovering from a shared Keyorix outage would otherwise retry in lockstep.
+// This controller's backoff is already per-object and independently seeded by each
+// KeyorixSecret's own failure history — normally exactly one active instance owns the
+// workqueue (leaderElection keeps standbys idle) — so there is no shared tick for
+// jitter to desynchronize.
 func (r *KeyorixSecretReconciler) setupController(mgr ctrl.Manager) (controller.Controller, error) {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&secretsv1alpha1.KeyorixSecret{}).

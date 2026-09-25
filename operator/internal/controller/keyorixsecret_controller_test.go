@@ -85,6 +85,11 @@ func newReconciler(t *testing.T, fetcher valueFetcher, objs ...client.Object) (*
 	}, c
 }
 
+// ksFixture sets PrunePolicy: Delete explicitly (NOT the real-world default, Keep —
+// see KeyorixSecretSpec.PrunePolicy) so the large pre-existing suite of
+// wipe-on-confirmed-gone/revoked tests below, all built on this fixture, keeps
+// exercising that path unchanged. TestReconcile_Keep* below use their own fixture
+// (ksFixtureKeep) to cover the actual default.
 func ksFixture() *secretsv1alpha1.KeyorixSecret {
 	return &secretsv1alpha1.KeyorixSecret{
 		ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "app", Generation: 1},
@@ -96,8 +101,20 @@ func ksFixture() *secretsv1alpha1.KeyorixSecret {
 				{SecretKey: "DB_PASSWORD", Ref: "app/production/db-password"},
 				{SecretKey: "API_KEY", Ref: "app/production/api-key"},
 			},
+			PrunePolicy: secretsv1alpha1.PrunePolicyDelete,
 		},
 	}
+}
+
+// ksFixtureKeep is ksFixture with PrunePolicy left at its zero value (""), which
+// resolves identically to the real-world default (PrunePolicyKeep) — an
+// unstructured/fake-client test object skips the CRD's own +kubebuilder:default
+// admission-time defaulting, but wipeAndFailGone's own check
+// (ks.Spec.PrunePolicy == PrunePolicyDelete) already treats "" the same as "Keep".
+func ksFixtureKeep() *secretsv1alpha1.KeyorixSecret {
+	ks := ksFixture()
+	ks.Spec.PrunePolicy = ""
+	return ks
 }
 
 func tokenSecret() *corev1.Secret {
@@ -343,6 +360,120 @@ func TestReconcile_UnauthorizedWipesTargetSecretWithDistinctReason(t *testing.T)
 	assert.Equal(t, metav1.ConditionFalse, ks.Status.Conditions[0].Status)
 	assert.Equal(t, "UpstreamAccessRevoked", ks.Status.Conditions[0].Reason,
 		"a 401 gets a status reason distinct from a confirmed-gone 404/403")
+}
+
+// K8S track backlog items 3b/3c: PrunePolicy defaults to Keep (ksFixtureKeep, the
+// real-world default — see KeyorixSecretSpec.PrunePolicy). The confirmed-gone/revoked
+// state must still be surfaced on the Ready condition, but the target Secret must be
+// left completely untouched, not wiped.
+
+func TestReconcile_Keep_UpstreamGoneLeavesTargetSecretUntouched(t *testing.T) {
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+	}}
+	r, c := newReconciler(t, fetcher, ksFixtureKeep(), tokenSecret())
+	_, err := reconcile(t, r)
+	require.NoError(t, err)
+
+	var before corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &before),
+		"precondition: the target Secret exists after a successful sync")
+
+	fetcher.goneRefs = map[string]bool{"app/production/db-password": true}
+
+	_, err = reconcile(t, r)
+	require.Error(t, err, "a confirmed-gone upstream ref still requeues with error for backoff")
+	assert.True(t, errors.Is(err, keyorix.ErrSecretGone))
+
+	var after corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &after),
+		"prunePolicy is Keep (default): the target Secret must NOT be wiped")
+	assert.Equal(t, before.Data, after.Data, "the last-known value must survive untouched")
+
+	var ks secretsv1alpha1.KeyorixSecret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &ks))
+	require.Len(t, ks.Status.Conditions, 1)
+	assert.Equal(t, metav1.ConditionFalse, ks.Status.Conditions[0].Status)
+	assert.Equal(t, "UpstreamSecretGone", ks.Status.Conditions[0].Reason,
+		"the confirmed-gone state is still surfaced distinctly, even though nothing was deleted")
+	assert.Contains(t, ks.Status.Conditions[0].Message, "prunePolicy is Keep",
+		"the message must say explicitly that the Secret was left untouched, not silently wiped")
+}
+
+func TestReconcile_Keep_UnauthorizedLeavesTargetSecretUntouched(t *testing.T) {
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+	}}
+	r, c := newReconciler(t, fetcher, ksFixtureKeep(), tokenSecret())
+	_, err := reconcile(t, r)
+	require.NoError(t, err)
+
+	fetcher.unauthorizedRefs = map[string]bool{"app/production/db-password": true}
+
+	_, err = reconcile(t, r)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, keyorix.ErrUnauthorized))
+
+	var after corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &after),
+		"prunePolicy is Keep (default): the target Secret must NOT be wiped on a 401 either")
+
+	var ks secretsv1alpha1.KeyorixSecret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &ks))
+	assert.Equal(t, "UpstreamAccessRevoked", ks.Status.Conditions[0].Reason)
+	assert.Contains(t, ks.Status.Conditions[0].Message, "prunePolicy is Keep")
+}
+
+// TestReconcile_Keep_SharedTokenRevocationDoesNotMassDeleteAllTargets is the operator
+// counterpart to k8s-sync's TestReconcile_RevokedUpstreamKeepsMultipleSecretsOnTokenWideRevoke:
+// TokenSecretRef is commonly SHARED across several KeyorixSecrets, so revoking or
+// rotating one credential reads as the identical 401 on every CR that references it, not
+// just one. With PrunePolicy at its default (Keep), reconciling every affected CR must
+// NOT delete every target Secret backed by that token in response to one credential
+// event.
+func TestReconcile_Keep_SharedTokenRevocationDoesNotMassDeleteAllTargets(t *testing.T) {
+	ksA := ksFixtureKeep()
+	ksB := ksFixtureKeep()
+	ksB.Name = "api"
+	ksB.Spec.Target = secretsv1alpha1.KeyorixSecretTarget{Name: "api-creds"}
+	ksB.Spec.Data = []secretsv1alpha1.KeyorixSecretData{
+		{SecretKey: "TOKEN", Ref: "app/production/other-token"},
+	}
+
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+		"app/production/other-token": []byte("t0k"),
+	}}
+	r, c := newReconciler(t, fetcher, ksA, ksB, tokenSecret())
+
+	req := func(name string) ctrl.Request {
+		return ctrl.Request{NamespacedName: types.NamespacedName{Name: name, Namespace: "app"}}
+	}
+	_, err := r.Reconcile(context.Background(), req("db"))
+	require.NoError(t, err)
+	_, err = r.Reconcile(context.Background(), req("api"))
+	require.NoError(t, err)
+
+	// The shared credential is now revoked -- every ref behind it fails identically.
+	fetcher.unauthorizedRefs = map[string]bool{
+		"app/production/db-password": true,
+		"app/production/api-key":     true,
+		"app/production/other-token": true,
+	}
+
+	_, errA := r.Reconcile(context.Background(), req("db"))
+	assert.True(t, errors.Is(errA, keyorix.ErrUnauthorized))
+	_, errB := r.Reconcile(context.Background(), req("api"))
+	assert.True(t, errors.Is(errB, keyorix.ErrUnauthorized))
+
+	var dbCreds, apiCreds corev1.Secret
+	assert.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &dbCreds),
+		"a shared-token revocation must not delete db-creds")
+	assert.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "api-creds", Namespace: "app"}, &apiCreds),
+		"a shared-token revocation must not delete api-creds either")
 }
 
 // deleteBlockingClient wraps a client.Client but fails every Delete call for an object

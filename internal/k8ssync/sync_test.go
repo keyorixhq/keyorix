@@ -174,16 +174,18 @@ func TestReconcile_FetchFailureSkipsWholeTarget(t *testing.T) {
 
 // TestReconcile_RevokedUpstreamRemovesStaleSecret pins #140: on a definitive
 // fetch failure (the upstream secret was deleted, or this agent's access was
-// revoked), the PREVIOUSLY-materialized Secret must be actively removed from
-// the cluster — not left at its last-known value indefinitely. The old
-// behavior (skip and retry) never converges, since the same definitive
-// failure recurs every pass; de-authorization never reached the cluster.
+// revoked) WITH prune_on_revoke enabled, the PREVIOUSLY-materialized Secret must
+// be actively removed from the cluster — not left at its last-known value
+// indefinitely. The old behavior (skip and retry) never converges, since the same
+// definitive failure recurs every pass; de-authorization never reached the
+// cluster. See TestReconcile_RevokedUpstreamKeepsSecretByDefault for the
+// K8S-track default (prune_on_revoke off): this is the opt-in path.
 func TestReconcile_RevokedUpstreamRemovesStaleSecret(t *testing.T) {
 	f := &fakeFetcher{revoked: map[string]bool{"prod/db": true}}
 	s := newFakeSink()
 	s.existing["app/creds"] = map[string][]byte{"DB_PASSWORD": []byte("stale-value")}
 	s.owned["app/creds"] = true
-	e := NewEngine(f, s)
+	e := NewEngine(f, s, WithPruneOnRevoke())
 
 	res, err := e.Reconcile(context.Background(), []SecretMapping{
 		{Ref: "prod/db", Namespace: "app", Name: "creds", Key: "DB_PASSWORD"},
@@ -219,13 +221,13 @@ func TestReconcile_TransientFetchFailureLeavesSecretUntouched(t *testing.T) {
 	assert.Equal(t, []byte("still-valid"), s.existing["app/creds"]["DB_PASSWORD"])
 }
 
-// In dry-run, a revocation is reported but not acted on.
+// In dry-run (with prune_on_revoke on), a revocation is reported but not acted on.
 func TestReconcile_RevokedUpstreamDryRunReportsButDoesNotDelete(t *testing.T) {
 	f := &fakeFetcher{revoked: map[string]bool{"prod/db": true}}
 	s := newFakeSink()
 	s.existing["app/creds"] = map[string][]byte{"DB_PASSWORD": []byte("stale-value")}
 	s.owned["app/creds"] = true
-	e := NewEngine(f, s, WithDryRun())
+	e := NewEngine(f, s, WithDryRun(), WithPruneOnRevoke())
 
 	res, err := e.Reconcile(context.Background(), []SecretMapping{
 		{Ref: "prod/db", Namespace: "app", Name: "creds", Key: "DB_PASSWORD"},
@@ -253,7 +255,7 @@ func TestReconcile_RevokedSingleKeyKeepsUnrelatedKeysInSameSecret(t *testing.T) 
 		"API_KEY":     []byte("k3y"),
 	}
 	s.owned["app/creds"] = true
-	e := NewEngine(f, s)
+	e := NewEngine(f, s, WithPruneOnRevoke())
 
 	res, err := e.Reconcile(context.Background(), []SecretMapping{
 		{Ref: "prod/db", Namespace: "app", Name: "creds", Key: "DB_PASSWORD"},
@@ -286,7 +288,7 @@ func TestReconcile_RevokedAllKeysStillDeletesSecret(t *testing.T) {
 		"API_KEY":     []byte("also-stale"),
 	}
 	s.owned["app/creds"] = true
-	e := NewEngine(f, s)
+	e := NewEngine(f, s, WithPruneOnRevoke())
 
 	res, err := e.Reconcile(context.Background(), []SecretMapping{
 		{Ref: "prod/db", Namespace: "app", Name: "creds", Key: "DB_PASSWORD"},
@@ -297,6 +299,96 @@ func TestReconcile_RevokedAllKeysStillDeletesSecret(t *testing.T) {
 	assert.Contains(t, s.deleted, "app/creds")
 	_, stillExists := s.existing["app/creds"]
 	assert.False(t, stillExists)
+}
+
+// K8S track backlog item 3c/3b: WithPruneOnRevoke is opt-in; the default engine
+// (no option) must KEEP a Secret whose upstream reference is confirmed gone/revoked,
+// not remove or trim it. This is also what closes 3b's mass-deletion risk: a
+// revoked/expired agent TOKEN reads as a 401 on every mapping's fetch, not just one,
+// so without this default every Secret the agent manages would otherwise be
+// deleted/trimmed in the very first reconcile pass after a routine credential
+// rotation — see TestReconcile_RevokedUpstreamKeepsMultipleSecretsOnTokenWideRevoke
+// below for that exact scenario with several independent targets at once.
+
+func TestReconcile_RevokedUpstreamKeepsSecretByDefault(t *testing.T) {
+	f := &fakeFetcher{revoked: map[string]bool{"prod/db": true}}
+	s := newFakeSink()
+	s.existing["app/creds"] = map[string][]byte{"DB_PASSWORD": []byte("still-here")}
+	s.owned["app/creds"] = true
+	e := NewEngine(f, s) // no WithPruneOnRevoke -- the default
+
+	res, err := e.Reconcile(context.Background(), []SecretMapping{
+		{Ref: "prod/db", Namespace: "app", Name: "creds", Key: "DB_PASSWORD"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Revoked, "the revocation is still counted/observable")
+	assert.Equal(t, 0, res.Failed, "a confirmed revocation is not a generic failure, pruned or not")
+	assert.Empty(t, s.deleted, "prune_on_revoke defaults to false: nothing is deleted")
+	assert.Equal(t, []byte("still-here"), s.existing["app/creds"]["DB_PASSWORD"],
+		"the Secret's last-known value must survive untouched")
+	require.Len(t, res.Errors, 1)
+	assert.Contains(t, res.Errors[0], "prune_on_revoke is false")
+}
+
+// A PARTIAL revoke (one of several keys mapped into the same Secret) must, by
+// default, leave the WHOLE Secret untouched -- not even trim the one revoked key.
+// Apply's Server-Side-Apply field-manager ownership prunes any key NOT present in the
+// applied data, so applying just the still-good keys would silently drop the revoked
+// key's last-known value even without an explicit Delete call -- exactly the kind of
+// partial write "default keep" is meant to prevent.
+func TestReconcile_RevokedSingleKeyByDefaultLeavesWholeSecretUntouched(t *testing.T) {
+	f := &fakeFetcher{
+		values:  map[string][]byte{"prod/api": []byte("k3y")},
+		revoked: map[string]bool{"prod/db": true},
+	}
+	s := newFakeSink()
+	s.existing["app/creds"] = map[string][]byte{
+		"DB_PASSWORD": []byte("stale-value"),
+		"API_KEY":     []byte("k3y"),
+	}
+	s.owned["app/creds"] = true
+	e := NewEngine(f, s) // no WithPruneOnRevoke
+
+	res, err := e.Reconcile(context.Background(), []SecretMapping{
+		{Ref: "prod/db", Namespace: "app", Name: "creds", Key: "DB_PASSWORD"},
+		{Ref: "prod/api", Namespace: "app", Name: "creds", Key: "API_KEY"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Revoked, "the partial revocation is still counted/observable even though nothing is deleted")
+	assert.Empty(t, s.deleted)
+	assert.Empty(t, s.applied, "nothing is (re-)applied for a target with any revoked mapping when not pruning")
+	assert.Equal(t, map[string][]byte{
+		"DB_PASSWORD": []byte("stale-value"),
+		"API_KEY":     []byte("k3y"),
+	}, s.existing["app/creds"], "the revoked key's last-known value must ALSO survive, not just the unaffected key")
+}
+
+// The scenario that motivated 3b: a revoked/expired agent TOKEN — not any one
+// secret's own access — fails EVERY mapping identically (a 401 on every request).
+// With prune_on_revoke at its default (false), a token-wide revocation must not
+// delete every Secret the agent manages in a single reconcile pass.
+func TestReconcile_RevokedUpstreamKeepsMultipleSecretsOnTokenWideRevoke(t *testing.T) {
+	f := &fakeFetcher{revoked: map[string]bool{"prod/db": true, "prod/api": true, "prod/tls": true}}
+	s := newFakeSink()
+	s.existing["app/db-creds"] = map[string][]byte{"K": []byte("v1")}
+	s.owned["app/db-creds"] = true
+	s.existing["app/api-creds"] = map[string][]byte{"K": []byte("v2")}
+	s.owned["app/api-creds"] = true
+	s.existing["web/tls"] = map[string][]byte{"K": []byte("v3")}
+	s.owned["web/tls"] = true
+	e := NewEngine(f, s) // no WithPruneOnRevoke
+
+	res, err := e.Reconcile(context.Background(), []SecretMapping{
+		{Ref: "prod/db", Namespace: "app", Name: "db-creds", Key: "K"},
+		{Ref: "prod/api", Namespace: "app", Name: "api-creds", Key: "K"},
+		{Ref: "prod/tls", Namespace: "web", Name: "tls", Key: "K"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 3, res.Revoked)
+	assert.Empty(t, s.deleted, "a token-wide revocation must not mass-delete every managed Secret by default")
+	assert.Contains(t, s.existing, "app/db-creds")
+	assert.Contains(t, s.existing, "app/api-creds")
+	assert.Contains(t, s.existing, "web/tls")
 }
 
 func TestReconcile_DryRunReportsButDoesNotWrite(t *testing.T) {

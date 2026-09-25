@@ -123,6 +123,26 @@ func (e *Engine) Reconcile(ctx context.Context, mappings []SecretMapping) (Resul
 		}
 
 		if len(revokedRefs) > 0 {
+			if !e.pruneOnRevoke {
+				// prune_on_revoke is OFF (the default — K8S track backlog item 3c):
+				// a confirmed revoke/gone is surfaced but NOT acted on — the target is
+				// skipped entirely, exactly like a transient failure, leaving any
+				// existing Secret (every key, not just the revoked one) completely
+				// untouched. Without this gate, EVERY mapping fails identically the
+				// moment the agent's own machine-identity token is revoked or expires
+				// (a 401 on every request, not just one secret's own access) — the
+				// pre-gate behavior below would then delete or trim every single
+				// Secret this agent manages in one pass, triggered by nothing more
+				// than a routine credential rotation. Applying only the still-valid
+				// keys instead of skipping outright isn't safe either: Apply's
+				// Server-Side-Apply field-manager ownership prunes any key NOT
+				// present in the applied data, so a "partial" apply would still
+				// silently drop the revoked key's last-known value. Set
+				// prune_on_revoke: true to opt into the pre-gate reap behavior below.
+				res.Revoked++
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: upstream secret gone or access revoked for %s; prune_on_revoke is false (default), target Secret left unchanged — set prune_on_revoke: true to reap it automatically", t, strings.Join(revokedRefs, ", ")))
+				continue
+			}
 			// #140 / G05: a DEFINITIVE failure for one or more mappings (the
 			// upstream secret was deleted, or this agent's access to it was
 			// revoked — 404/401/403, never a transient network/5xx error) must
@@ -256,10 +276,11 @@ func (e *Engine) cleanupOrphans(ctx context.Context, grouped map[target][]Secret
 
 // Engine reconciles Keyorix secrets into Kubernetes Secrets via a Fetcher and Sink.
 type Engine struct {
-	fetcher Fetcher
-	sink    Sink
-	dryRun  bool
-	cleanup bool
+	fetcher       Fetcher
+	sink          Sink
+	dryRun        bool
+	cleanup       bool
+	pruneOnRevoke bool
 }
 
 // Option configures an Engine.
@@ -276,6 +297,18 @@ func WithDryRun() Option {
 // so it must be opted into explicitly. Combines with WithDryRun to preview deletions.
 func WithCleanup() Option {
 	return func(e *Engine) { e.cleanup = true }
+}
+
+// WithPruneOnRevoke makes the engine actually remove/trim a target Secret when the
+// upstream Keyorix reference for one of its mappings is confirmed gone or the agent's
+// access is confirmed revoked (see the pruneOnRevoke branch in Reconcile). Off by
+// default (K8S track backlog item 3c: "deletion only if the CR/config says so,
+// default keep") — a revoked/expired agent TOKEN reads as a 401 on every single
+// mapping's fetch, not just one, so without this gate the FIRST reconcile pass after
+// a routine credential rotation would delete or trim every Secret this agent manages
+// in one shot.
+func WithPruneOnRevoke() Option {
+	return func(e *Engine) { e.pruneOnRevoke = true }
 }
 
 // NewEngine constructs an Engine over the given Fetcher and Sink.
