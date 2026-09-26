@@ -85,19 +85,13 @@ change it — confirmed live: `keyorix secret list` right after this login retur
 
 ## 4. Set a real password
 
-The thin CLI does not yet wrap `POST /api/v1/auth/change-password` (self-service password
-change) as its own command — call it directly with the session token `login` just stored
-(`~/.keyorix`/the OS credential store, depending on platform):
-
 ```bash
-export TOKEN='<the token keyorix login just stored>'
-curl -s -X POST http://localhost:8080/api/v1/auth/change-password \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"current_password": "_M2vVfCk4K*6%x4v7uKt", "new_password": "a-real-strong-password-you-choose"}'
+keyorix change-password --current-password '_M2vVfCk4K*6%x4v7uKt' --new-password 'a-real-strong-password-you-choose'
 ```
 
-Expected: `{"data":null,"message":"Password changed","success":true}`. From this point on,
-`keyorix secret list` (and everything else) works normally — confirmed live: logging in
-again with the OLD one-time password now returns `401` (it was superseded), and logging in
-with the new password succeeds with full access restored, no longer confined to the
-password-change allowlist.
+Omit either flag to be prompted for it instead (no terminal echo, and it confirms the new
+password before submitting). Expected: `Password changed. Every other active session for
+this account has been revoked.` From this point on, `keyorix secret list` (and everything
+else) works normally — confirmed live: logging in again with the OLD one-time password now
+returns `401` (it was superseded), and logging in with the new password succeeds with full
+access restored, no longer confined to the password-change allowlist.
