@@ -183,8 +183,7 @@ func (h *CatalogHandler) AddProjectMember(w http.ResponseWriter, r *http.Request
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, nil, "Member added")
+	sendCreated(w, nil, "Member added")
 }
 
 // UpdateProjectMember handles PUT /api/v1/projects/{id}/members/{userId}

@@ -23,10 +23,35 @@ spec:
       {{- include "kxop.selectorLabels" . | nindent 6 }}
   policyTypes:
     - Ingress
+    {{- if .Values.networkPolicy.egress.enabled }}
+    - Egress
+    {{- end }}
   ingress:
     - from:
         {{- toYaml .Values.networkPolicy.metricsAllowFrom | nindent 8 }}
       ports:
         - protocol: TCP
           port: {{ .Values.metricsPort | default 8080 }}
+  {{- if .Values.networkPolicy.egress.enabled }}
+  egress:
+    # DNS: no `to` selector -- see the keyorix chart's own networkpolicy.yaml for
+    # why a selector can't safely be assumed here (hostNetwork DNS setups, e.g.
+    # NodeLocalDNS, have no matchable pod IP).
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # By port only, not destination -- see values.yaml's egress comment: the
+    # Kubernetes API server and any CR-named Keyorix server are both external,
+    # non-podSelector-able destinations.
+    - ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443
+    {{- with .Values.networkPolicy.egress.extraRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
 {{- end }}

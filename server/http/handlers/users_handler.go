@@ -184,8 +184,7 @@ func createUserLegacy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := legacyAPIUser{ID: 3, Username: req.Username, Email: req.Email, DisplayName: req.DisplayName, Active: true, CreatedAt: testTimestamp2, UpdatedAt: testTimestamp2}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, u, "User created successfully")
+	sendCreated(w, u, "User created successfully")
 }
 
 func getUserLegacy(w http.ResponseWriter, r *http.Request) {

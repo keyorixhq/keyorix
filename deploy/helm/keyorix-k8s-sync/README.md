@@ -49,6 +49,55 @@ helm install kx-sync deploy/helm/keyorix-k8s-sync \
 | `serviceAccount.create` / `serviceAccount.name` | ServiceAccount control |
 | `resources`, `nodeSelector`, `tolerations`, `affinity`, `podAnnotations` | Standard pod scheduling/resourcing |
 
+## Upgrading: egress NetworkPolicy
+
+`networkPolicy.egress.enabled` (default `true`) makes the agent's OUTBOUND
+traffic default-deny — previously it was unrestricted. Read this before your
+next `helm upgrade` on an existing install.
+
+**What the default rules allow:** DNS (UDP/TCP 53), plus TCP `443` and TCP
+`6443` to ANY destination — by port only, not by destination, since neither
+the Kubernetes API server nor `keyorix.url` is a `podSelector`-able target.
+This covers the two ports a Kubernetes API server and an https Keyorix server
+overwhelmingly listen on.
+
+**Will silently stop working** if your `keyorix.url` or your cluster's API
+server listens on a different port — the agent stops reconciling with no
+clear error (see Troubleshooting below), just a growing gap since its last
+successful sync.
+
+**Add an `extraRules` entry** for a non-standard port — e.g. a Keyorix server
+on `:8443`:
+
+```yaml
+networkPolicy:
+  egress:
+    extraRules:
+      - ports:
+          - protocol: TCP
+            port: 8443
+```
+
+**To turn egress restriction off entirely:**
+
+```yaml
+networkPolicy:
+  egress:
+    enabled: false
+```
+
+> ⚠️ This removes ALL egress restriction on the agent pod — a compromised pod
+> can then reach anything the cluster network permits. Prefer `extraRules`
+> over disabling this outright.
+
+**Troubleshooting:** an egress `NetworkPolicy` drops packets silently — the
+symptom is a **connection timeout**, never "connection refused". If reconciles
+stop working right after this upgrade:
+
+```sh
+kubectl -n <namespace> describe networkpolicy <release>-keyorix-k8s-sync
+```
+
 ## RBAC
 
 The chart creates a `ClusterRole` (`secrets`: `get`/`list`/`create`/`patch`/`delete`)

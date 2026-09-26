@@ -225,6 +225,11 @@ var keptPaths = []string{
 	"/api/v1/projects/{id}/secrets/bulk-rename",
 	"/api/v1/projects/{id}/secrets/bulk-delete",
 	"/api/v1/projects/{id}/secrets/render",
+	// FINISH-SPLIT census-gaps batch (docs/cli-split-inventory-census.md) -- the last 3
+	// command-census gaps: billing report, usage show, migrate user-to-machine.
+	"/api/v1/admin/usage",
+	"/api/v1/admin/billing/report",
+	"/api/v1/projects/{id}/machine-identities/migrate-from-user",
 }
 
 func main() {

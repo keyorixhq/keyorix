@@ -58,8 +58,7 @@ func (h *DashboardHandler) PlaceLegalHold(w http.ResponseWriter, r *http.Request
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"hold": hold}, "Legal hold placed")
+	sendCreated(w, map[string]interface{}{"hold": hold}, "Legal hold placed")
 }
 
 // LiftLegalHold handles DELETE /api/v1/legal-hold — release the active hold. The

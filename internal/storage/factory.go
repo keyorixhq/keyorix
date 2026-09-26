@@ -1988,6 +1988,26 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	if err := ensureSecretNodeNameNFC(db); err != nil {
 		return err
 	}
+	// #STORAGE-FACTORY-MT006-FIRSTBOOT: unlike every sibling ensure*Index call in
+	// this block, ensureSecretNodeNameIndex previously had only its EARLY,
+	// tableExists-gated call site above (the "additive migration for existing
+	// databases" section) — no safety-net call here. On a genuinely fresh
+	// install, secret_nodes doesn't exist yet at that earlier point (it's
+	// created by the bulk AutoMigrate loop above, same as every other model
+	// this block's siblings cover), so the early call is always skipped and the
+	// MT-006 partial unique index was never created on a first boot — only from
+	// the SECOND migrateDatabase run onward (e.g. after the first restart).
+	// Confirmed directly: one CreateStorage call against a fresh schema left
+	// uniq_secret_nodes_project_env_name_active absent on both SQLite and
+	// Postgres; a second call against the same schema created it. Between
+	// first boot and first restart, core.CreateSecret's GetSecretByName
+	// check-then-act TOCTOU (the exact race this index exists to close) had no
+	// DB-level backstop at all. Added here, unconditionally, matching every
+	// other ensure*Index call in this block — idempotent, so this is a no-op
+	// on a DB that already has the index from an earlier run.
+	if err := ensureSecretNodeNameIndex(db); err != nil {
+		return err
+	}
 	if err := ensureShareRecordUniqueIndex(db); err != nil {
 		return err
 	}

@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -221,14 +222,40 @@ var dotenvPlainSafe = regexp.MustCompile(`^[A-Za-z0-9_.,:/@+-]*$`)
 // SINGLE quotes — the only POSIX-shell quoting form that suppresses ALL expansion
 // (command substitution, parameter/arithmetic expansion, globbing, tilde expansion) —
 // with only the literal single-quote character escaped via the standard
-// close-escape-reopen idiom. A KEY containing an embedded newline has no native escape
-// in the dotenv format, so it is refused outright rather than emitted raw (which would
-// let a secret named e.g. "FOO\nINJECTED=evil" inject an extra, attacker-controlled
-// KEY=VALUE line into an artifact downstream tooling treats as fully trusted).
+// close-escape-reopen idiom (parseDotenv's own quote-stripping reverses this exact
+// escape, see its doc comment). Several shapes have no lossless representation in the
+// dotenv format's line-oriented, first-'='-splits, whole-line-TrimSpace'd KEY=VALUE
+// grammar, and are refused outright rather than emitted in a form that would re-parse
+// to something else (FuzzDotenvRoundTrip, CLI-FUZZ target 3b):
+//   - A KEY containing an embedded newline (also lets a secret named e.g.
+//     "FOO\nINJECTED=evil" inject an extra, attacker-controlled KEY=VALUE line into an
+//     artifact downstream tooling treats as fully trusted).
+//   - A KEY containing '=': parseDotenv splits each line on the FIRST '=', so a name
+//     like "A=B" would come back on reimport as key "A", value "B=<original value>".
+//   - A KEY beginning with '#' once written: parseDotenv treats any line starting with
+//     '#' as a comment and silently skips it, so the entry would vanish on reimport.
+//   - A KEY with leading or trailing whitespace: parseDotenv TrimSpaces the whole line
+//     before splitting on '=', so e.g. a name of " " (with value "0") reparses the
+//     line " =0" as "=0" -- an empty key, silently dropped rather than round-tripped.
+//   - A VALUE containing an embedded newline: parseDotenv reads the file line by line,
+//     so an embedded '\n' splits one logical KEY=VALUE entry across two scanned lines
+//     no matter how the value portion is quoted.
 func writeDotenv(w io.Writer, secrets []exportedSecret) error {
 	for _, s := range secrets {
 		if strings.ContainsAny(s.Name, "\r\n") {
 			return fmt.Errorf("secret %q (id=%d) has a name containing a newline, which cannot be safely represented as a dotenv key — rename the secret before exporting to dotenv format", s.Name, s.ID)
+		}
+		if strings.Contains(s.Name, "=") {
+			return fmt.Errorf("secret %q (id=%d) has a name containing '=', which cannot be safely represented as a dotenv key (it would split into a different key/value pair on reimport) — rename the secret before exporting to dotenv format", s.Name, s.ID)
+		}
+		if s.Name != strings.TrimSpace(s.Name) {
+			return fmt.Errorf("secret %q (id=%d) has a name with leading or trailing whitespace, which is stripped by dotenv parsers on reimport — rename the secret before exporting to dotenv format", s.Name, s.ID)
+		}
+		if strings.HasPrefix(s.Name, "#") {
+			return fmt.Errorf("secret %q (id=%d) has a name starting with '#', which would be silently skipped as a comment on reimport — rename the secret before exporting to dotenv format", s.Name, s.ID)
+		}
+		if strings.Contains(s.Value, "\n") {
+			return fmt.Errorf("secret %q (id=%d) has a value containing a newline, which cannot be safely represented as a single dotenv line — export to json or vault format instead", s.Name, s.ID)
 		}
 	}
 	fmt.Fprintf(w, "# Exported by Keyorix — %s\n", time.Now().Format("2006-01-02")) //nolint:errcheck
@@ -242,7 +269,18 @@ func writeDotenv(w io.Writer, secrets []exportedSecret) error {
 	return nil
 }
 
+// writeExportJSON emits a flat {"name": "value"} object. json.Marshal requires valid
+// UTF-8 in a Go string it encodes and, for an invalid byte sequence, silently
+// substitutes the Unicode replacement character (U+FFFD) rather than erroring --
+// parseJSONBytes then reads that substitution back as a DIFFERENT value than what was
+// exported (found by FuzzJSONRoundTrip: name "\xa5" round-tripped as name "�").
+// Refuse up front instead of exporting a value JSON cannot represent losslessly.
 func writeExportJSON(w io.Writer, secrets []exportedSecret) error {
+	for _, s := range secrets {
+		if !utf8.ValidString(s.Name) || !utf8.ValidString(s.Value) {
+			return fmt.Errorf("secret %q (id=%d) has a name or value that is not valid UTF-8, which JSON cannot represent losslessly — export to dotenv format instead", s.Name, s.ID)
+		}
+	}
 	m := make(map[string]string, len(secrets))
 	for _, s := range secrets {
 		m[s.Name] = s.Value
@@ -266,7 +304,26 @@ func writeEncryptedJSON(w io.Writer, secrets []exportedSecret, pubKeyPath string
 	return err
 }
 
+// writeVault emits a Format-1 Medusa/Vault YAML export (see parseVault's doc comment).
+// A name containing '/' has no lossless representation: parseVault recovers a secret's
+// name from only the LAST '/'-delimited segment of its YAML path key, so a name like
+// "has/a/slash" would come back on reimport as just "slash" (FuzzVaultRoundTrip,
+// CLI-FUZZ target 3b) -- refused outright rather than silently truncated.
+//
+// The value node is force-quoted (DoubleQuotedStyle) rather than left as a bare plain
+// scalar: parseVault reads it back through yaml.Unmarshal into map[string]interface{},
+// and YAML's default schema retypes an unquoted value that merely LOOKS like a number,
+// bool, or null (e.g. a secret value of "00", "1e3", "true", "~") into that Go type --
+// fmt.Sprintf("%v", ...) on the retyped value then silently changes the string (found by
+// FuzzVaultRoundTrip: value "00" round-tripped as "0", octal-resolved to the int 0).
+// Force-quoting removes the ambiguity at the source instead of trying to out-guess
+// every string that YAML's scalar resolver would otherwise reinterpret.
 func writeVault(w io.Writer, secrets []exportedSecret, envID int) error {
+	for _, s := range secrets {
+		if strings.Contains(s.Name, "/") {
+			return fmt.Errorf("secret %q (id=%d) has a name containing '/', which cannot be safely represented in vault YAML export (only the last path segment survives reimport) — rename the secret before exporting to vault format", s.Name, s.ID)
+		}
+	}
 	root := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	for _, s := range secrets {
 		pathKey := fmt.Sprintf("secret/env-%d/%s", envID, s.Name)
@@ -277,7 +334,7 @@ func writeVault(w io.Writer, secrets []exportedSecret, envID int) error {
 				Tag:  "!!map",
 				Content: []*yaml.Node{
 					{Kind: yaml.ScalarNode, Value: "value"},
-					{Kind: yaml.ScalarNode, Value: s.Value},
+					{Kind: yaml.ScalarNode, Value: s.Value, Tag: "!!str", Style: yaml.DoubleQuotedStyle},
 				},
 			},
 		)

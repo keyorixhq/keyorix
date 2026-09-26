@@ -108,6 +108,9 @@ type ClientInterface interface {
 
 	UpdateAnomalyConfig(ctx context.Context, body UpdateAnomalyConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetBillingReport request
+	GetBillingReport(ctx context.Context, params *GetBillingReportParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RunRoleExpiryCheck request
 	RunRoleExpiryCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -121,6 +124,9 @@ type ClientInterface interface {
 
 	// RunTokenExpiryCheck request
 	RunTokenExpiryCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetUsageReport request
+	GetUsageReport(ctx context.Context, params *GetUsageReportParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListAlertEscalationPolicies request
 	ListAlertEscalationPolicies(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -479,6 +485,11 @@ type ClientInterface interface {
 	CreateMachineIdentityWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	CreateMachineIdentity(ctx context.Context, id int, body CreateMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MigrateUserToMachineWithBody request with any body
+	MigrateUserToMachineWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	MigrateUserToMachine(ctx context.Context, id int, body MigrateUserToMachineJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// TransitionMachineIdentityWithBody request with any body
 	TransitionMachineIdentityWithBody(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1018,6 +1029,18 @@ func (c *Client) UpdateAnomalyConfig(ctx context.Context, body UpdateAnomalyConf
 	return c.Client.Do(req)
 }
 
+func (c *Client) GetBillingReport(ctx context.Context, params *GetBillingReportParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBillingReportRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) RunRoleExpiryCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRunRoleExpiryCheckRequest(c.Server)
 	if err != nil {
@@ -1068,6 +1091,18 @@ func (c *Client) SuspendInactiveUsers(ctx context.Context, body SuspendInactiveU
 
 func (c *Client) RunTokenExpiryCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRunTokenExpiryCheckRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetUsageReport(ctx context.Context, params *GetUsageReportParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUsageReportRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -2628,6 +2663,30 @@ func (c *Client) CreateMachineIdentityWithBody(ctx context.Context, id int, cont
 
 func (c *Client) CreateMachineIdentity(ctx context.Context, id int, body CreateMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateMachineIdentityRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) MigrateUserToMachineWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMigrateUserToMachineRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) MigrateUserToMachine(ctx context.Context, id int, body MigrateUserToMachineJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMigrateUserToMachineRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4765,6 +4824,79 @@ func NewUpdateAnomalyConfigRequestWithBody(server string, contentType string, bo
 	return req, nil
 }
 
+// NewGetBillingReportRequest generates requests for GetBillingReport
+func NewGetBillingReportRequest(server string, params *GetBillingReportParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/admin/billing/report")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "from", runtime.ParamLocationQuery, params.From); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "to", runtime.ParamLocationQuery, params.To); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		if params.ProjectId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "project_id", runtime.ParamLocationQuery, *params.ProjectId); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewRunRoleExpiryCheckRequest generates requests for RunRoleExpiryCheck
 func NewRunRoleExpiryCheckRequest(server string) (*http.Request, error) {
 	var err error
@@ -4879,6 +5011,71 @@ func NewRunTokenExpiryCheckRequest(server string) (*http.Request, error) {
 	}
 
 	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetUsageReportRequest generates requests for GetUsageReport
+func NewGetUsageReportRequest(server string, params *GetUsageReportParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/admin/usage")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Days != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "days", runtime.ParamLocationQuery, *params.Days); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.ProjectId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "project_id", runtime.ParamLocationQuery, *params.ProjectId); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -9260,6 +9457,53 @@ func NewCreateMachineIdentityRequestWithBody(server string, id int, contentType 
 	}
 
 	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewMigrateUserToMachineRequest calls the generic MigrateUserToMachine builder with application/json body
+func NewMigrateUserToMachineRequest(server string, id int, body MigrateUserToMachineJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewMigrateUserToMachineRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewMigrateUserToMachineRequestWithBody generates requests for MigrateUserToMachine with any type of body
+func NewMigrateUserToMachineRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities/migrate-from-user", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -14536,6 +14780,9 @@ type ClientWithResponsesInterface interface {
 
 	UpdateAnomalyConfigWithResponse(ctx context.Context, body UpdateAnomalyConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAnomalyConfigResponse, error)
 
+	// GetBillingReportWithResponse request
+	GetBillingReportWithResponse(ctx context.Context, params *GetBillingReportParams, reqEditors ...RequestEditorFn) (*GetBillingReportResponse, error)
+
 	// RunRoleExpiryCheckWithResponse request
 	RunRoleExpiryCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RunRoleExpiryCheckResponse, error)
 
@@ -14549,6 +14796,9 @@ type ClientWithResponsesInterface interface {
 
 	// RunTokenExpiryCheckWithResponse request
 	RunTokenExpiryCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RunTokenExpiryCheckResponse, error)
+
+	// GetUsageReportWithResponse request
+	GetUsageReportWithResponse(ctx context.Context, params *GetUsageReportParams, reqEditors ...RequestEditorFn) (*GetUsageReportResponse, error)
 
 	// ListAlertEscalationPoliciesWithResponse request
 	ListAlertEscalationPoliciesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListAlertEscalationPoliciesResponse, error)
@@ -14907,6 +15157,11 @@ type ClientWithResponsesInterface interface {
 	CreateMachineIdentityWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateMachineIdentityResponse, error)
 
 	CreateMachineIdentityWithResponse(ctx context.Context, id int, body CreateMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMachineIdentityResponse, error)
+
+	// MigrateUserToMachineWithBodyWithResponse request with any body
+	MigrateUserToMachineWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MigrateUserToMachineResponse, error)
+
+	MigrateUserToMachineWithResponse(ctx context.Context, id int, body MigrateUserToMachineJSONRequestBody, reqEditors ...RequestEditorFn) (*MigrateUserToMachineResponse, error)
 
 	// TransitionMachineIdentityWithBodyWithResponse request with any body
 	TransitionMachineIdentityWithBodyWithResponse(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TransitionMachineIdentityResponse, error)
@@ -15457,6 +15712,33 @@ func (r UpdateAnomalyConfigResponse) StatusCode() int {
 	return 0
 }
 
+type GetBillingReportResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *BillingReport `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetBillingReportResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetBillingReportResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type RunRoleExpiryCheckResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -15544,6 +15826,32 @@ func (r RunTokenExpiryCheckResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r RunTokenExpiryCheckResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetUsageReportResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *UsageReport `json:"data,omitempty"`
+	}
+	JSON401 *Error
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUsageReportResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUsageReportResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -18071,6 +18379,37 @@ func (r CreateMachineIdentityResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r CreateMachineIdentityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type MigrateUserToMachineResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *struct {
+		Data *struct {
+			// MachineIdentity A project-scoped machine identity (ADR-023).
+			MachineIdentity *MachineIdentity `json:"machine_identity,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r MigrateUserToMachineResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MigrateUserToMachineResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -21461,6 +21800,15 @@ func (c *ClientWithResponses) UpdateAnomalyConfigWithResponse(ctx context.Contex
 	return ParseUpdateAnomalyConfigResponse(rsp)
 }
 
+// GetBillingReportWithResponse request returning *GetBillingReportResponse
+func (c *ClientWithResponses) GetBillingReportWithResponse(ctx context.Context, params *GetBillingReportParams, reqEditors ...RequestEditorFn) (*GetBillingReportResponse, error) {
+	rsp, err := c.GetBillingReport(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBillingReportResponse(rsp)
+}
+
 // RunRoleExpiryCheckWithResponse request returning *RunRoleExpiryCheckResponse
 func (c *ClientWithResponses) RunRoleExpiryCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RunRoleExpiryCheckResponse, error) {
 	rsp, err := c.RunRoleExpiryCheck(ctx, reqEditors...)
@@ -21503,6 +21851,15 @@ func (c *ClientWithResponses) RunTokenExpiryCheckWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseRunTokenExpiryCheckResponse(rsp)
+}
+
+// GetUsageReportWithResponse request returning *GetUsageReportResponse
+func (c *ClientWithResponses) GetUsageReportWithResponse(ctx context.Context, params *GetUsageReportParams, reqEditors ...RequestEditorFn) (*GetUsageReportResponse, error) {
+	rsp, err := c.GetUsageReport(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUsageReportResponse(rsp)
 }
 
 // ListAlertEscalationPoliciesWithResponse request returning *ListAlertEscalationPoliciesResponse
@@ -22641,6 +22998,23 @@ func (c *ClientWithResponses) CreateMachineIdentityWithResponse(ctx context.Cont
 		return nil, err
 	}
 	return ParseCreateMachineIdentityResponse(rsp)
+}
+
+// MigrateUserToMachineWithBodyWithResponse request with arbitrary body returning *MigrateUserToMachineResponse
+func (c *ClientWithResponses) MigrateUserToMachineWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MigrateUserToMachineResponse, error) {
+	rsp, err := c.MigrateUserToMachineWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMigrateUserToMachineResponse(rsp)
+}
+
+func (c *ClientWithResponses) MigrateUserToMachineWithResponse(ctx context.Context, id int, body MigrateUserToMachineJSONRequestBody, reqEditors ...RequestEditorFn) (*MigrateUserToMachineResponse, error) {
+	rsp, err := c.MigrateUserToMachine(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMigrateUserToMachineResponse(rsp)
 }
 
 // TransitionMachineIdentityWithBodyWithResponse request with arbitrary body returning *TransitionMachineIdentityResponse
@@ -24239,6 +24613,55 @@ func ParseUpdateAnomalyConfigResponse(rsp *http.Response) (*UpdateAnomalyConfigR
 	return response, nil
 }
 
+// ParseGetBillingReportResponse parses an HTTP response from a GetBillingReportWithResponse call
+func ParseGetBillingReportResponse(rsp *http.Response) (*GetBillingReportResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetBillingReportResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *BillingReport `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseRunRoleExpiryCheckResponse parses an HTTP response from a RunRoleExpiryCheckWithResponse call
 func ParseRunRoleExpiryCheckResponse(rsp *http.Response) (*RunRoleExpiryCheckResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -24359,6 +24782,48 @@ func ParseRunTokenExpiryCheckResponse(rsp *http.Response) (*RunTokenExpiryCheckR
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetUsageReportResponse parses an HTTP response from a GetUsageReportWithResponse call
+func ParseGetUsageReportResponse(rsp *http.Response) (*GetUsageReportResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUsageReportResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *UsageReport `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -28464,6 +28929,65 @@ func ParseCreateMachineIdentityResponse(rsp *http.Response) (*CreateMachineIdent
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseMigrateUserToMachineResponse parses an HTTP response from a MigrateUserToMachineWithResponse call
+func ParseMigrateUserToMachineResponse(rsp *http.Response) (*MigrateUserToMachineResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MigrateUserToMachineResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			Data *struct {
+				// MachineIdentity A project-scoped machine identity (ADR-023).
+				MachineIdentity *MachineIdentity `json:"machine_identity,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	}
 
