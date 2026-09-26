@@ -39,7 +39,7 @@ export const XSS_PAYLOADS: readonly string[] = [
     // but a visual-spoofing trick (e.g. making "evil.exe" display reversed,
     // or hiding characters) that a naive display layer could still be fooled
     // by if it tried to interpret rather than just display the string.
-    '‮evil​‌name',
+    '‮evil​‌name', // nosemgrep: generic.unicode.security.bidi.contains-bidirectional-characters -- deliberate visual-spoofing test payload, see comment above
 ] as const;
 
 export function assertPayloadRenderedSafely(payload: string, container: HTMLElement = document.body): void {

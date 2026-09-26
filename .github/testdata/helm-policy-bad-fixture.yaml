@@ -21,9 +21,9 @@ spec:
     metadata:
       labels:
         app: deliberately-bad-fixture
-    spec:
+    spec:  # nosemgrep: yaml.kubernetes.security.run-as-non-root.run-as-non-root -- deliberately-bad positive control, see file header
       containers:
         - name: bad
           image: nginx:latest
-          securityContext:
-            privileged: true
+          securityContext:  # nosemgrep: yaml.kubernetes.security.allow-privilege-escalation.allow-privilege-escalation -- deliberately-bad positive control, see file header
+            privileged: true  # nosemgrep: yaml.kubernetes.security.privileged-container.privileged-container -- deliberately-bad positive control, see file header

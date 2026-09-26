@@ -16,7 +16,7 @@ const SafeText: React.FC<{ value: string }> = ({ value }) => <div>{value}</div>;
 // Deliberately vulnerable — exists only to prove the harness catches this
 // shape. Never do this in real component code (see the WEB track backlog:
 // no dangerouslySetInnerHTML/innerHTML for user-controlled fields).
-const UnsafeHtml: React.FC<{ value: string }> = ({ value }) => <div dangerouslySetInnerHTML={{ __html: value }} />;
+const UnsafeHtml: React.FC<{ value: string }> = ({ value }) => <div dangerouslySetInnerHTML={{ __html: value }} />; // nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml -- deliberately unsafe sink, proves the harness detects it (see comment above)
 
 describe('xss-payloads harness self-test', () => {
     it('passes every payload against safe (plain JSX text) rendering', () => {
