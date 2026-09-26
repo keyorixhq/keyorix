@@ -17647,8 +17647,12 @@ func (r ListProjectsResponse) StatusCode() int {
 type CreateProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON401      *Error
+	JSON201      *struct {
+		// Data A project. Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's projectWire) -- internal/storage/models.Project itself carries no `json:` tags and is never serialized directly.
+		Data *Project `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -18077,8 +18081,12 @@ func (r ListProjectEnvironmentsResponse) StatusCode() int {
 type CreateProjectEnvironmentResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON401      *Error
+	JSON201      *struct {
+		// Data A project environment. Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's environmentWire) -- internal/storage/models.Environment itself carries no `json:` tags and is never serialized directly.
+		Data *Environment `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -27652,6 +27660,16 @@ func ParseCreateProjectResponse(rsp *http.Response) (*CreateProjectResponse, err
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			// Data A project. Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's projectWire) -- internal/storage/models.Project itself carries no `json:` tags and is never serialized directly.
+			Data *Project `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -28402,6 +28420,16 @@ func ParseCreateProjectEnvironmentResponse(rsp *http.Response) (*CreateProjectEn
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			// Data A project environment. Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's environmentWire) -- internal/storage/models.Environment itself carries no `json:` tags and is never serialized directly.
+			Data *Environment `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

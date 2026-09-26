@@ -655,6 +655,12 @@ paths:
       responses:
         '201':
           description: "Envelope {data, message='Project created'}. data is the created project object."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/Project'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
 
@@ -673,6 +679,12 @@ paths:
       responses:
         '200':
           description: "Envelope {data, message}. data is the project object."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/Project'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
@@ -699,6 +711,12 @@ paths:
       responses:
         '200':
           description: "Envelope {data, message='Project updated'}. data is the updated project object."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/Project'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
     delete:
@@ -1373,6 +1391,15 @@ paths:
       responses:
         '200':
           description: "Envelope {data, message}. data.environments is an array of environment objects."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      environments: {type: array, items: {$ref: '#/components/schemas/Environment'}}
         '401': {$ref: '#/components/responses/Error'}
 
   /api/v1/projects/{id}/environments:
@@ -1428,6 +1455,12 @@ paths:
       responses:
         '201':
           description: "Envelope {data, message='Environment created'}. data is the created environment object (project_id, name)."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/Environment'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
 
@@ -1460,11 +1493,13 @@ paths:
                 destination_environment_id: {type: integer, format: uint32}
       responses:
         '200':
-          description: >-
-            Envelope {data, message}. data is an EnvCloneResult: SourceEnv, DestEnv
-            (names), SecretsCloned, SecretsSkipped (counts), Errors (array of
-            strings) -- PascalCase, untagged Go struct fields (core.EnvCloneResult
-            has no json tags, matching RotationPolicy's documented precedent above).
+          description: "Envelope {data, message}. data is an EnvCloneResult."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/EnvCloneResult'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -7595,23 +7630,49 @@ components:
         Description: {type: string}
         BypassesPermissionChecks: {type: boolean}
         Permissions: {type: array, items: {$ref: '#/components/schemas/Permission'}}
+    Project:
+      type: object
+      description: >-
+        A project. Handler-level snake_case wire type
+        (server/http/handlers/catalog_wire.go's projectWire) --
+        internal/storage/models.Project itself carries no `json:` tags and is
+        never serialized directly.
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        description: {type: string}
+        require_mfa: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        deleted_at: {type: string, format: date-time}
     Environment:
       type: object
       description: >-
-        A project environment (internal/storage/models.Environment). No `json:`
-        tags on the model -- wire keys are the bare Go field names (ID,
-        ProjectID, Name, CreatedAt, UpdatedAt), not snake_case. Unlike
-        Permission/RoleWithPermissions above, ProjectID/CreatedAt/UpdatedAt do
-        NOT case-insensitively match a snake_case tag (the underscore makes
-        "project_id" a different string from "projectid"), so a generated
-        client MUST use these exact capitalized property names to decode
-        correctly.
+        A project environment. Handler-level snake_case wire type
+        (server/http/handlers/catalog_wire.go's environmentWire) --
+        internal/storage/models.Environment itself carries no `json:` tags and
+        is never serialized directly.
       properties:
-        ID: {type: integer}
-        ProjectID: {type: integer}
-        Name: {type: string}
-        CreatedAt: {type: string, format: date-time}
-        UpdatedAt: {type: string, format: date-time}
+        id: {type: integer}
+        project_id: {type: integer}
+        name: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        deleted_at: {type: string, format: date-time}
+    EnvCloneResult:
+      type: object
+      description: >-
+        The result of cloning one environment's secrets into another
+        (internal/core.EnvCloneResult). Handler-level snake_case wire type
+        (server/http/handlers/catalog_wire.go's envCloneResultWire) --
+        internal/core.EnvCloneResult itself carries no `json:` tags and is
+        never serialized directly.
+      properties:
+        source_env: {type: string}
+        dest_env: {type: string}
+        secrets_cloned: {type: integer}
+        secrets_skipped: {type: integer}
+        errors: {type: array, items: {type: string}}
     ProjectInvitation:
       type: object
       description: >-

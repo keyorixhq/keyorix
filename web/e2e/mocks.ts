@@ -158,11 +158,11 @@ export async function mockProjectsAndEnvironments(page: Page) {
     await page.route('**/api/v1/projects', (route) => {
         if (route.request().method() !== 'GET') return route.fallback();
         return route.fulfill(
-            json({ data: { projects: [{ ID: 1, Name: 'demo-project' }] }, success: true })
+            json({ data: { projects: [{ id: 1, name: 'demo-project' }] }, success: true })
         );
     });
     await page.route('**/api/v1/projects/1/environments*', (route) =>
-        route.fulfill(json({ data: { environments: [{ ID: 1, Name: 'production', ProjectID: 1 }] }, success: true }))
+        route.fulfill(json({ data: { environments: [{ id: 1, name: 'production', project_id: 1 }] }, success: true }))
     );
 }
 
