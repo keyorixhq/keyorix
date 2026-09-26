@@ -18108,10 +18108,14 @@ func (r CreateProjectEnvironmentResponse) StatusCode() int {
 type CloneEnvironmentResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON401      *Error
-	JSON403      *Error
-	JSON404      *Error
+	JSON200      *struct {
+		// Data The result of cloning one environment's secrets into another (internal/core.EnvCloneResult). Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's envCloneResultWire) -- internal/core.EnvCloneResult itself carries no `json:` tags and is never serialized directly.
+		Data *EnvCloneResult `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -19202,9 +19206,17 @@ func (r ListRolesResponse) StatusCode() int {
 type CreateRoleResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON401      *Error
-	JSON409      *Error
+	JSON201      *struct {
+		Data *struct {
+			Permissions *[]Permission `json:"permissions,omitempty"`
+
+			// Role A role (internal/storage/models.Role), via the handler-level roleWire type (server/http/handlers/rbac_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
+			Role *Role `json:"role,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON409 *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -28463,6 +28475,16 @@ func ParseCloneEnvironmentResponse(rsp *http.Response) (*CloneEnvironmentRespons
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			// Data The result of cloning one environment's secrets into another (internal/core.EnvCloneResult). Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's envCloneResultWire) -- internal/core.EnvCloneResult itself carries no `json:` tags and is never serialized directly.
+			Data *EnvCloneResult `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -30374,6 +30396,20 @@ func ParseCreateRoleResponse(rsp *http.Response) (*CreateRoleResponse, error) {
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			Data *struct {
+				Permissions *[]Permission `json:"permissions,omitempty"`
+
+				// Role A role (internal/storage/models.Role), via the handler-level roleWire type (server/http/handlers/rbac_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
+				Role *Role `json:"role,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

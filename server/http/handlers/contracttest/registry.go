@@ -29,7 +29,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"createAccessRequest":                reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-requests
 	"createGlobalInvitation":             reasonSchemaNotYetWritten, // post /api/v1/invitations
 	"createRiskException":                reasonSchemaNotYetWritten, // post /api/v1/risk-exceptions
-	"createRole":                         reasonSchemaNotYetWritten, // post /api/v1/roles
 	"createSecretAccessRequest":          reasonSchemaNotYetWritten, // post /api/v1/secret-access-requests
 	"createSoDPolicy":                    reasonSchemaNotYetWritten, // post /api/v1/sod/policies
 	"createUser":                         reasonSchemaNotYetWritten, // post /api/v1/users
@@ -52,13 +51,11 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getEncryptionConfig":                reasonSchemaNotYetWritten, // get /api/v1/system/encryption-config
 	"getLegalHold":                       reasonSchemaNotYetWritten, // get /api/v1/legal-hold
 	"getMostAccessedSecrets":             reasonSchemaNotYetWritten, // get /api/v1/secrets/usage/most-accessed
-	"getPermission":                      reasonSchemaNotYetWritten, // get /api/v1/permissions/{id}
 	"getProjectAccessReview":             reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-review
 	"getProjectDrift":                    reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/drift
 	"getProjectHealth":                   reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/health
 	"getProjectHygiene":                  reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/hygiene
 	"getProjectStats":                    reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/stats
-	"getRole":                            reasonSchemaNotYetWritten, // get /api/v1/roles/{id}
 	"getRotationStatus":                  reasonSchemaNotYetWritten, // get /api/v1/rotation-policies/status
 	"getSecretAccessRequest":             reasonSchemaNotYetWritten, // get /api/v1/secret-access-requests/{requestId}
 	"getSystemInfo":                      reasonSchemaNotYetWritten, // get /api/v1/system/info
@@ -67,7 +64,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getUser":                            reasonSchemaNotYetWritten, // get /api/v1/users/{id}
 	"getUserByEmail":                     reasonSchemaNotYetWritten, // get /api/v1/users/by-email
 	"getUserMembershipsForUser":          reasonSchemaNotYetWritten, // get /api/v1/users/{id}/memberships
-	"getUserRoleAssignment":              reasonSchemaNotYetWritten, // get /api/v1/user-roles/user/{userId}
 	"grantMachineRole":                   reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/machine-identities/{machineId}/roles
 	"inviteMember":                       reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/memberships
 	"liftLegalHold":                      reasonSchemaNotYetWritten, // delete /api/v1/legal-hold
@@ -76,7 +72,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"listAnomalyAlerts":                  reasonSchemaNotYetWritten, // get /api/v1/audit/anomalies
 	"listAuditLogs":                      reasonSchemaNotYetWritten, // get /api/v1/audit/logs
 	"listNotifications":                  reasonSchemaNotYetWritten, // get /api/v1/notifications
-	"listPermissions":                    reasonSchemaNotYetWritten, // get /api/v1/permissions
 	"listProjectMembers":                 reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/members
 	"listProjectMemberships":             reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/memberships
 	"listRiskExceptions":                 reasonSchemaNotYetWritten, // get /api/v1/risk-exceptions
@@ -115,7 +110,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"transitionMembership":               reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/memberships/{membershipId}
 	"updateAuthProfile":                  reasonSchemaNotYetWritten, // put /api/v1/auth/profile
 	"updateProjectMember":                reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/members/{userId}
-	"updateRole":                         reasonSchemaNotYetWritten, // put /api/v1/roles/{id}
 	"updateRotationPolicy":               reasonSchemaNotYetWritten, // put /api/v1/rotation-policies/{id}
 	"updateUser":                         reasonSchemaNotYetWritten, // put /api/v1/users/{id}
 	"updateUserRoles":                    reasonSchemaNotYetWritten, // put /api/v1/users/{id}/roles
@@ -304,6 +298,15 @@ var exercisingTests = map[string][]string{
 	"resendProjectInvitation": {"TestContractPR3_ResendProjectInvitation"},
 	"revokeProjectInvitation": {"TestContractPR3_RevokeProjectInvitation"},
 	"updateGroup":             {"TestContractPR3_UpdateGroup"},
+	// API-hygiene casing campaign, PR C3 (rbac: Roles/Permissions) --
+	// openapi_contract_apihygiene_rbac_test.go.
+	"createRole":            {"TestContractAPIHygiene_CreateRole"},
+	"getRole":               {"TestContractAPIHygiene_GetRole"},
+	"getRoleByName":         {"TestContractAPIHygiene_GetRoleByName"},
+	"updateRole":            {"TestContractAPIHygiene_UpdateRole"},
+	"listPermissions":       {"TestContractAPIHygiene_ListPermissions"},
+	"getPermission":         {"TestContractAPIHygiene_GetPermission"},
+	"getUserRoleAssignment": {"TestContractAPIHygiene_GetUserRoleAssignment"},
 	// docs/cli-split-inventory.md §7 PR 1 (dynamic-secret, rotation, breakglass) --
 	// openapi_contract_pr1_test.go.
 	"activateBreakGlass":           {"TestContractPR1_ActivateBreakGlass"},

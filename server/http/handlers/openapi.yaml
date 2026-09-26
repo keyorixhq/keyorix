@@ -5504,6 +5504,16 @@ paths:
       responses:
         '201':
           description: "Envelope `data` is `{role, permissions}` (assigned permissions)."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      role: {$ref: '#/components/schemas/Role'}
+                      permissions: {type: array, items: {$ref: '#/components/schemas/Permission'}}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
@@ -5520,6 +5530,16 @@ paths:
       responses:
         '200':
           description: "Envelope `data` is `{role, permissions}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      role: {$ref: '#/components/schemas/Role'}
+                      permissions: {type: array, items: {$ref: '#/components/schemas/Permission'}}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
     put:
@@ -5539,6 +5559,16 @@ paths:
       responses:
         '200':
           description: "Envelope `data` is `{role, permissions}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      role: {$ref: '#/components/schemas/Role'}
+                      permissions: {type: array, items: {$ref: '#/components/schemas/Permission'}}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
@@ -5552,6 +5582,32 @@ paths:
         '204': {description: Role deleted.}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/roles/by-name:
+    get:
+      tags: [Roles]
+      summary: Get role by name
+      description: >-
+        Look up a role by its exact display name. Added for callers (e.g.
+        RemoteStorage) that only have the role's name rather than its numeric
+        ID; grants no capability beyond GET /api/v1/roles (roles.read-gated,
+        same as GetRole-by-id).
+      operationId: getRoleByName
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: name, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: "Envelope `data` is the bare role object (no permissions payload)."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/Role'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
 
   /api/v1/roles/{id}/permissions:
@@ -5628,6 +5684,16 @@ paths:
       responses:
         '200':
           description: "Envelope `data` has `permissions[]` (id, name, resource, ...) and `total`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      permissions: {type: array, items: {$ref: '#/components/schemas/Permission'}}
+                      total: {type: integer}
         '401': {$ref: '#/components/responses/Error'}
 
   /api/v1/permissions/{id}:
@@ -5642,6 +5708,12 @@ paths:
       responses:
         '200':
           description: "Envelope `data` is the permission (id, name, description, resource, action)."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/Permission'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
 
@@ -5718,6 +5790,12 @@ paths:
       responses:
         '200':
           description: "Envelope `data` is the user's role assignment."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/UserRoleAssignment'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
   /api/v1/audit/logs:
@@ -7601,35 +7679,58 @@ components:
       properties:
         id: {type: integer}
         name: {type: string}
+    Role:
+      type: object
+      description: >-
+        A role (internal/storage/models.Role), via the handler-level roleWire
+        type (server/http/handlers/rbac_wire.go) -- fixed from the previous
+        bare-Go-field-name leak as part of the API-hygiene casing campaign.
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        description: {type: string}
+        bypasses_permission_checks: {type: boolean}
     Permission:
       type: object
       description: >-
-        A permission. internal/storage/models.Permission carries no `json:` tags,
-        so the wire keys are the bare (capitalized) Go field names, not the
-        snake_case this file uses elsewhere -- documented as such rather than as
-        an idealized snake_case shape it does not actually have. Single-word
-        field names still decode correctly into a snake_case-tagged Go client:
-        encoding/json's Unmarshal falls back to a case-insensitive match
-        ("ID" ~ "id") when no exact tag match exists.
+        A permission (internal/storage/models.Permission), via the
+        handler-level permissionWire type (server/http/handlers/rbac_wire.go)
+        -- fixed from the previous bare-Go-field-name leak as part of the
+        API-hygiene casing campaign.
       properties:
-        ID: {type: integer}
-        Name: {type: string}
-        Description: {type: string}
-        Resource: {type: string}
-        Action: {type: string}
+        id: {type: integer}
+        name: {type: string}
+        description: {type: string}
+        resource: {type: string}
+        action: {type: string}
     RoleWithPermissions:
       type: object
       description: >-
         A role with its assigned permissions (internal/core.RoleWithPermissions,
-        embeds models.Role). Same untagged-model caveat as Permission above: wire
-        keys are the bare Go field names (ID, Name, Description,
-        BypassesPermissionChecks, Permissions), not snake_case.
+        embeds models.Role), via the handler-level roleWithPermissionsWire type
+        (server/http/handlers/rbac_wire.go) -- fixed from the previous
+        bare-Go-field-name leak (the embedded Role's fields promoted under
+        their own untagged names) as part of the API-hygiene casing campaign.
       properties:
-        ID: {type: integer}
-        Name: {type: string}
-        Description: {type: string}
-        BypassesPermissionChecks: {type: boolean}
-        Permissions: {type: array, items: {$ref: '#/components/schemas/Permission'}}
+        id: {type: integer}
+        name: {type: string}
+        description: {type: string}
+        bypasses_permission_checks: {type: boolean}
+        permissions: {type: array, items: {$ref: '#/components/schemas/Permission'}}
+    UserRoleAssignment:
+      type: object
+      description: >-
+        A user's identity plus their assigned roles (internal/core.UserRoleAssignment),
+        via the handler-level userRoleAssignmentWire type
+        (server/http/handlers/rbac_wire.go) -- fixed from the previous
+        bare-Go-field-name leak on the nested Roles field (its own
+        UserID/Username/Email were already correctly tagged) as part of the
+        API-hygiene casing campaign.
+      properties:
+        user_id: {type: integer}
+        username: {type: string}
+        email: {type: string}
+        roles: {type: array, items: {$ref: '#/components/schemas/Role'}}
     Project:
       type: object
       description: >-

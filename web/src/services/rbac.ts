@@ -2,26 +2,28 @@ import { apiClient } from './client';
 import { ApiResponse } from '../types';
 import { Permission, Role, RoleWithPermissions, GroupRoles, GroupSharedSecret, Group } from '../types/rbac';
 
-// Normalize a role object — handles both mock (lowercase) and real DB
-// (Go-serialized uppercase) field names from the backend.
+// Normalize a role object. The server always sends snake_case now (fixed via
+// rbac_wire.go's roleWire/roleWithPermissionsWire as part of the API-hygiene
+// casing campaign); this only handles the permissions array sometimes
+// arriving as bare permission-name strings rather than full objects.
 function normalizeRole(r: any): RoleWithPermissions {
     return {
-        id: r.id ?? r.ID ?? 0,
-        name: r.name ?? r.Name ?? '',
-        description: r.description ?? r.Description ?? '',
-        permissions: (r.permissions ?? r.Permissions ?? []).map((p: any) =>
+        id: r.id ?? 0,
+        name: r.name ?? '',
+        description: r.description ?? '',
+        permissions: (r.permissions ?? []).map((p: any) =>
             typeof p === 'string'
                 ? { id: 0, name: p, description: '', resource: p.split('.')[0] ?? '', action: p.split('.')[1] ?? '' }
                 : {
-                      id: p.id ?? p.ID ?? 0,
-                      name: p.name ?? p.Name ?? '',
-                      description: p.description ?? p.Description ?? '',
-                      resource: p.resource ?? p.Resource ?? '',
-                      action: p.action ?? p.Action ?? '',
+                      id: p.id ?? 0,
+                      name: p.name ?? '',
+                      description: p.description ?? '',
+                      resource: p.resource ?? '',
+                      action: p.action ?? '',
                   }
         ),
-        created_at: r.created_at ?? r.CreatedAt ?? '',
-        updated_at: r.updated_at ?? r.UpdatedAt ?? '',
+        created_at: r.created_at ?? '',
+        updated_at: r.updated_at ?? '',
     };
 }
 

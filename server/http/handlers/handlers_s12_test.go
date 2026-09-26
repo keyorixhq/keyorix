@@ -425,8 +425,7 @@ func TestRBACHandler_ListPermissions_ResourceFilter_S12(t *testing.T) {
 	assert.GreaterOrEqual(t, len(perms), 1)
 	for _, p := range perms {
 		pm := p.(map[string]interface{})
-		// The Permission struct has no json tags so fields are capital-cased.
-		resource, _ := pm["Resource"].(string)
+		resource, _ := pm["resource"].(string)
 		assert.Equal(t, "s12secrets", resource)
 	}
 }

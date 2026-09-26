@@ -131,7 +131,7 @@ func resolveRoleIDByName(ctx context.Context, client *apiclient.ClientWithRespon
 	}
 	for _, r := range roles {
 		if r.Name != nil && strings.EqualFold(*r.Name, name) {
-			return derefInt(r.ID), nil
+			return derefInt(r.Id), nil
 		}
 	}
 	return 0, fmt.Errorf("role %q not found — run 'keyorix-next rbac list-roles' to see available roles", name)

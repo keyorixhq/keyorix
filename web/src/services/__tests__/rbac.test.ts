@@ -104,18 +104,6 @@ describe('rbacApi.getRoles', () => {
         expect(mocked.get).toHaveBeenCalledWith('/api/v1/roles');
     });
 
-    it('normalizes uppercase (Go-serialized) field names', async () => {
-        mocked.get.mockResolvedValueOnce({
-            data: {
-                data: [
-                    { ID: 2, Name: 'viewer', Description: 'Readers', Permissions: [], CreatedAt: '', UpdatedAt: '' },
-                ],
-            },
-        });
-        const roles = await rbacApi.getRoles();
-        expect(roles[0]).toMatchObject({ id: 2, name: 'viewer' });
-    });
-
     it('handles {roles: [...]} wrapper shape', async () => {
         mocked.get.mockResolvedValueOnce({
             data: {
@@ -157,7 +145,7 @@ describe('rbacApi.getRoles', () => {
         expect(roles[0].permissions[0]).toMatchObject({ name: 'adminonly', resource: 'adminonly', action: '' });
     });
 
-    it('normalizes object permissions with Go-serialized (PascalCase) fields', async () => {
+    it('normalizes object permissions with full snake_case fields', async () => {
         mocked.get.mockResolvedValueOnce({
             data: {
                 data: [
@@ -165,7 +153,7 @@ describe('rbacApi.getRoles', () => {
                         id: 1,
                         name: 'admin',
                         permissions: [
-                            { ID: 5, Name: 'secrets.read', Description: 'read', Resource: 'secrets', Action: 'read' },
+                            { id: 5, name: 'secrets.read', description: 'read', resource: 'secrets', action: 'read' },
                         ],
                         created_at: '',
                         updated_at: '',

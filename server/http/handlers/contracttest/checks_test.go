@@ -219,6 +219,21 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		"getUsageReport":       true,
 		"getBillingReport":     true,
 		"migrateUserToMachine": true,
+		// API-hygiene casing campaign, PR C3 (rbac: Roles/Permissions): these
+		// 7 backfilled schemas for previously-schema-less (or, for
+		// getRoleByName, entirely undocumented) routes whose handlers were
+		// sending internal/storage/models.Role/Permission straight to the
+		// wire with no json tags at all -- fixed to go through the
+		// handler-level roleWire/permissionWire/roleWithPermissionsWire/
+		// userRoleAssignmentWire types (rbac_wire.go). Each is exercised via
+		// openapi_contract_apihygiene_rbac_test.go.
+		"createRole":            true,
+		"getRole":               true,
+		"getRoleByName":         true,
+		"updateRole":            true,
+		"listPermissions":       true,
+		"getPermission":         true,
+		"getUserRoleAssignment": true,
 		// API hygiene campaign (catalog_wire.go snake_case wire types) added
 		// response schemas for these 6 Projects/Environments operations. Each is
 		// exercised via openapi_contract_catalog_test.go.
