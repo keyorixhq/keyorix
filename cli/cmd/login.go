@@ -38,15 +38,9 @@ func init() {
 }
 
 func runLogin(cmd *cobra.Command, args []string) error {
-	serverURL := loginServerURL
-	if serverURL == "" {
-		serverURL = os.Getenv("KEYORIX_SERVER")
-	}
-	if serverURL == "" {
-		serverURL = offerOldServerURLMigration()
-	}
-	if serverURL == "" {
-		return fmt.Errorf("no server given: pass --server or set KEYORIX_SERVER")
+	serverURL, err := resolveLoginServerURL()
+	if err != nil {
+		return err
 	}
 
 	username := loginUsername
@@ -58,13 +52,9 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		username = u
 	}
 
-	password := loginPassword
-	if password == "" {
-		p, err := promptPassword("Password: ")
-		if err != nil {
-			return fmt.Errorf("read password: %w", err)
-		}
-		password = p
+	password, err := resolveLoginPassword(cmd)
+	if err != nil {
+		return err
 	}
 
 	ctx := context.Background()
@@ -114,6 +104,46 @@ func runLogin(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Logged in to %s as %s.\n", serverURL, username)
 	return nil
+}
+
+// resolveLoginServerURL resolves the target server URL (flag > KEYORIX_SERVER > old-CLI
+// migration prompt) and warns to stderr if it is not HTTPS/loopback before this command's
+// username and password are sent to it. CLI-LOGIN-001: prior to this fix, login was the
+// one credential-transmitting command in this module that never called
+// warnIfInsecureEndpoint -- systeminit.go's `system init --server` does (see its own
+// warnIfInsecureEndpoint doc comment), and the old CLI called the equivalent
+// common.WarnIfInsecureEndpoint from every credential-persisting/transmitting call site,
+// explicitly including "auth login" (#G74) -- this closes the gap this rewrite silently
+// reopened for the single most commonly used auth command.
+func resolveLoginServerURL() (string, error) {
+	serverURL := loginServerURL
+	if serverURL == "" {
+		serverURL = os.Getenv("KEYORIX_SERVER")
+	}
+	if serverURL == "" {
+		serverURL = offerOldServerURLMigration()
+	}
+	if serverURL == "" {
+		return "", fmt.Errorf("no server given: pass --server or set KEYORIX_SERVER")
+	}
+	warnIfInsecureEndpoint(serverURL)
+	return serverURL, nil
+}
+
+// resolveLoginPassword resolves the password: the (insecure, warned) --password flag, or
+// else an interactive no-echo prompt. CLI-LOGIN-001: --password previously carried no
+// warnInsecureFlag call, unlike every sibling command with a password-bearing flag
+// (systeminit.go's --admin-password, user.go's --password).
+func resolveLoginPassword(cmd *cobra.Command) (string, error) {
+	if loginPassword != "" {
+		warnInsecureFlag(cmd, "password", "omit it to be prompted instead.")
+		return loginPassword, nil
+	}
+	p, err := promptPassword("Password: ")
+	if err != nil {
+		return "", fmt.Errorf("read password: %w", err)
+	}
+	return p, nil
 }
 
 // offerOldServerURLMigration looks for a server URL left behind by the old,
