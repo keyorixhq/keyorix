@@ -1385,6 +1385,12 @@ type SearchAuditLogsParams struct {
 // SearchAuditLogsParamsSuccess defines parameters for SearchAuditLogs.
 type SearchAuditLogsParamsSuccess string
 
+// ChangePasswordJSONBody defines parameters for ChangePassword.
+type ChangePasswordJSONBody struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
 // MfaStepUpJSONBody defines parameters for MfaStepUp.
 type MfaStepUpJSONBody struct {
 	// Code TOTP code or a recovery code
@@ -2262,6 +2268,9 @@ type SuspendInactiveUsersJSONRequestBody SuspendInactiveUsersJSONBody
 
 // CreateAlertEscalationPolicyJSONRequestBody defines body for CreateAlertEscalationPolicy for application/json ContentType.
 type CreateAlertEscalationPolicyJSONRequestBody CreateAlertEscalationPolicyJSONBody
+
+// ChangePasswordJSONRequestBody defines body for ChangePassword for application/json ContentType.
+type ChangePasswordJSONRequestBody ChangePasswordJSONBody
 
 // MfaStepUpJSONRequestBody defines body for MfaStepUp for application/json ContentType.
 type MfaStepUpJSONRequestBody MfaStepUpJSONBody
