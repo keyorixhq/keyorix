@@ -20724,7 +20724,7 @@ type ShareSecretResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON201      *struct {
-		// Data A secret-share grant. PascalCase field names because models.ShareRecord has no json struct tags.
+		// Data A secret-share grant (internal/storage/models.ShareRecord), via the handler-level shareRecordWire type (server/http/handlers/shares_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
 		Data *Share `json:"data,omitempty"`
 	}
 	JSON400 *Error
@@ -21061,7 +21061,7 @@ type UpdateSharePermissionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *struct {
-		// Data A secret-share grant. PascalCase field names because models.ShareRecord has no json struct tags.
+		// Data A secret-share grant (internal/storage/models.ShareRecord), via the handler-level shareRecordWire type (server/http/handlers/shares_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
 		Data *Share `json:"data,omitempty"`
 	}
 	JSON400 *Error
@@ -33047,7 +33047,7 @@ func ParseShareSecretResponse(rsp *http.Response) (*ShareSecretResponse, error) 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
 		var dest struct {
-			// Data A secret-share grant. PascalCase field names because models.ShareRecord has no json struct tags.
+			// Data A secret-share grant (internal/storage/models.ShareRecord), via the handler-level shareRecordWire type (server/http/handlers/shares_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
 			Data *Share `json:"data,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -33666,7 +33666,7 @@ func ParseUpdateSharePermissionResponse(rsp *http.Response) (*UpdateSharePermiss
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest struct {
-			// Data A secret-share grant. PascalCase field names because models.ShareRecord has no json struct tags.
+			// Data A secret-share grant (internal/storage/models.ShareRecord), via the handler-level shareRecordWire type (server/http/handlers/shares_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
 			Data *Share `json:"data,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

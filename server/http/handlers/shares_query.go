@@ -53,7 +53,7 @@ func (h *ShareHandler) ListSecretShares(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	h.sendSuccess(w, map[string]interface{}{"shares": shares}, "")
+	h.sendSuccess(w, map[string]interface{}{"shares": newShareRecordWireList(shares)}, "")
 }
 
 // ListShares handles GET /api/v1/shares — returns the caller's shares (received +
@@ -329,7 +329,7 @@ func (h *ShareHandler) ListGroupShares(w http.ResponseWriter, r *http.Request) {
 		shares = []*models.ShareRecord{}
 	}
 
-	h.sendSuccess(w, map[string]interface{}{"shares": shares}, "")
+	h.sendSuccess(w, map[string]interface{}{"shares": newShareRecordWireList(shares)}, "")
 }
 
 // GetSharingStatusWithIndicators handles GET /api/v1/secrets/{id}/sharing-status

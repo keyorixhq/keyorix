@@ -52,8 +52,8 @@ func TestListGroupSharesHandler(t *testing.T) {
 		shares := data["shares"].([]interface{})
 		require.Len(t, shares, 1)
 		share := shares[0].(map[string]interface{})
-		assert.Equal(t, float64(1), share["SecretID"])
-		assert.Equal(t, float64(7), share["RecipientID"])
+		assert.Equal(t, float64(1), share["secret_id"])
+		assert.Equal(t, float64(7), share["recipient_id"])
 	})
 
 	t.Run("requires a user context", func(t *testing.T) {

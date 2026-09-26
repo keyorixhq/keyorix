@@ -137,7 +137,7 @@ func TestRunShareCreate_MatchesOldCLIRemoteOutputShape(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = fmt.Fprint(w, `{"data":{"ID":42,"SecretID":5,"OwnerID":1,"RecipientID":9,"IsGroup":false,"Permission":"read","CreatedAt":"2026-01-02T00:00:00Z","ExpiresAt":null}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"id":42,"secret_id":5,"owner_id":1,"recipient_id":9,"is_group":false,"permission":"read","created_at":"2026-01-02T00:00:00Z","expires_at":null}}`)
 	}))
 	defer srv.Close()
 	setPATCreds(t, srv)
@@ -183,7 +183,7 @@ func TestRunShareList_MatchesOldCLIRemoteOutputShape(t *testing.T) {
 	defer resetShareFlags()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"data":{"shares":[{"ID":42,"SecretID":5,"OwnerID":1,"RecipientID":9,"IsGroup":false,"Permission":"write","CreatedAt":"2026-01-02T00:00:00Z","ExpiresAt":"2026-07-01T15:00:00Z"}]}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"shares":[{"id":42,"secret_id":5,"owner_id":1,"recipient_id":9,"is_group":false,"permission":"write","created_at":"2026-01-02T00:00:00Z","expires_at":"2026-07-01T15:00:00Z"}]}}`)
 	}))
 	defer srv.Close()
 	setPATCreds(t, srv)
@@ -214,7 +214,7 @@ func TestRunShareUpdate_PrintsAllEightFields(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"data":{"ID":42,"SecretID":5,"OwnerID":1,"RecipientID":9,"IsGroup":true,"Permission":"write","UpdatedAt":"2026-01-03T00:00:00Z","ExpiresAt":null}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"id":42,"secret_id":5,"owner_id":1,"recipient_id":9,"is_group":true,"permission":"write","updated_at":"2026-01-03T00:00:00Z","expires_at":null}}`)
 	}))
 	defer srv.Close()
 	setPATCreds(t, srv)
@@ -340,7 +340,7 @@ func TestRunGroupShares_MatchesOldCLIRemoteOutputShape(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"data":{"shares":[{"ID":42,"SecretID":5,"OwnerID":1,"RecipientID":3,"Permission":"read","CreatedAt":"2026-01-02T00:00:00Z"}]}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"shares":[{"id":42,"secret_id":5,"owner_id":1,"recipient_id":3,"permission":"read","created_at":"2026-01-02T00:00:00Z"}]}}`)
 	}))
 	defer srv.Close()
 	setPATCreds(t, srv)

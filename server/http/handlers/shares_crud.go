@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -49,7 +50,7 @@ func (h *ShareHandler) ShareSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var shareErr error
-	var shareRecord interface{}
+	var shareRecord *models.ShareRecord
 
 	if reqBody.IsGroup {
 		shareRecord, shareErr = h.coreService.ShareSecretWithGroup(r.Context(), &core.GroupShareSecretRequest{
@@ -84,7 +85,7 @@ func (h *ShareHandler) ShareSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sendCreated(w, shareRecord, i18n.T("SuccessSecretShared", nil))
+	sendCreated(w, newShareRecordWire(shareRecord), i18n.T("SuccessSecretShared", nil))
 }
 
 // UpdateSharePermission handles PUT /api/v1/shares/{id}
@@ -137,7 +138,7 @@ func (h *ShareHandler) UpdateSharePermission(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	h.sendSuccess(w, shareRecord, i18n.T("SuccessShareUpdated", nil))
+	h.sendSuccess(w, newShareRecordWire(shareRecord), i18n.T("SuccessShareUpdated", nil))
 }
 
 // RevokeShare handles DELETE /api/v1/shares/{id}

@@ -1165,17 +1165,17 @@ type SecretVersionDiffResult struct {
 	ToVersion   *int    `json:"to_version,omitempty"`
 }
 
-// Share A secret-share grant. PascalCase field names because models.ShareRecord has no json struct tags.
+// Share A secret-share grant (internal/storage/models.ShareRecord), via the handler-level shareRecordWire type (server/http/handlers/shares_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
 type Share struct {
-	CreatedAt   *time.Time       `json:"CreatedAt,omitempty"`
-	ExpiresAt   *time.Time       `json:"ExpiresAt"`
-	ID          *int             `json:"ID,omitempty"`
-	IsGroup     *bool            `json:"IsGroup,omitempty"`
-	OwnerID     *int             `json:"OwnerID,omitempty"`
-	Permission  *SharePermission `json:"Permission,omitempty"`
-	RecipientID *int             `json:"RecipientID,omitempty"`
-	SecretID    *int             `json:"SecretID,omitempty"`
-	UpdatedAt   *time.Time       `json:"UpdatedAt,omitempty"`
+	CreatedAt   *time.Time       `json:"created_at,omitempty"`
+	ExpiresAt   *time.Time       `json:"expires_at"`
+	Id          *int             `json:"id,omitempty"`
+	IsGroup     *bool            `json:"is_group,omitempty"`
+	OwnerId     *int             `json:"owner_id,omitempty"`
+	Permission  *SharePermission `json:"permission,omitempty"`
+	RecipientId *int             `json:"recipient_id,omitempty"`
+	SecretId    *int             `json:"secret_id,omitempty"`
+	UpdatedAt   *time.Time       `json:"updated_at,omitempty"`
 }
 
 // SharePermission defines model for Share.Permission.

@@ -61,6 +61,41 @@ func newShareUpdateWire(s *models.ShareRecord) shareUpdateWire {
 	}
 }
 
+// remoteShareRecordWire decodes the snake_case response the human-facing
+// share routes (server/http/handlers/shares_wire.go's shareRecordWire) now
+// send -- GET /api/v1/secrets/{id}/shares, GET /api/v1/groups/{id}/shares,
+// and PUT /api/v1/shares/{id}'s own response. Decoding straight into
+// models.ShareRecord (no json tags) would silently drop every multi-word
+// field (SecretID, OwnerID, RecipientID, IsGroup, ExpiresAt, CreatedAt,
+// UpdatedAt are not rescued by encoding/json's case-insensitive single-word
+// fallback) now that the server sends snake_case instead of matching
+// PascalCase. See rbac_wire.go's remoteRoleWire for the identical fix shape.
+type remoteShareRecordWire struct {
+	ID          uint       `json:"id"`
+	SecretID    uint       `json:"secret_id"`
+	OwnerID     uint       `json:"owner_id"`
+	RecipientID uint       `json:"recipient_id"`
+	IsGroup     bool       `json:"is_group"`
+	Permission  string     `json:"permission"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+func (w *remoteShareRecordWire) toModel() *models.ShareRecord {
+	return &models.ShareRecord{
+		ID:          w.ID,
+		SecretID:    w.SecretID,
+		OwnerID:     w.OwnerID,
+		RecipientID: w.RecipientID,
+		IsGroup:     w.IsGroup,
+		Permission:  w.Permission,
+		ExpiresAt:   w.ExpiresAt,
+		CreatedAt:   w.CreatedAt,
+		UpdatedAt:   w.UpdatedAt,
+	}
+}
+
 func (rs *RemoteStorage) UpdateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error) {
 	path := fmt.Sprintf("/api/v1/shares/%d", share.ID)
 	resp, err := rs.client.Put(ctx, path, newShareUpdateWire(share))
@@ -70,11 +105,11 @@ func (rs *RemoteStorage) UpdateShareRecord(ctx context.Context, share *models.Sh
 	if !resp.Success {
 		return nil, fmt.Errorf("update share record failed: %s", resp.Error.Error())
 	}
-	var result models.ShareRecord
+	var result remoteShareRecordWire
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return &result, nil
+	return result.toModel(), nil
 }
 
 // DeleteShareRecord deletes a share record via remote API.
@@ -107,12 +142,16 @@ func (rs *RemoteStorage) ListSharesBySecret(ctx context.Context, secretID uint, 
 		return nil, fmt.Errorf("list shares by secret failed: %s", resp.Error.Error())
 	}
 	var result struct {
-		Shares []*models.ShareRecord `json:"shares"`
+		Shares []remoteShareRecordWire `json:"shares"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result.Shares, nil
+	out := make([]*models.ShareRecord, 0, len(result.Shares))
+	for i := range result.Shares {
+		out = append(out, result.Shares[i].toModel())
+	}
+	return out, nil
 }
 
 // ListSharesBySecretIDs is the batch form of ListSharesBySecret. There is no bulk
@@ -211,12 +250,16 @@ func (rs *RemoteStorage) ListSharesByGroup(ctx context.Context, groupID uint, _ 
 		return nil, fmt.Errorf("list shares by group failed: %s", resp.Error.Error())
 	}
 	var result struct {
-		Shares []*models.ShareRecord `json:"shares"`
+		Shares []remoteShareRecordWire `json:"shares"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result.Shares, nil
+	out := make([]*models.ShareRecord, 0, len(result.Shares))
+	for i := range result.Shares {
+		out = append(out, result.Shares[i].toModel())
+	}
+	return out, nil
 }
 
 // ListSharedSecrets: #1511/G80 deletion pass — GET
