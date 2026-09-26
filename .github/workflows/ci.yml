@@ -153,8 +153,24 @@ jobs:
       # outcomes. Deliberately does NOT gate the `operator` job itself below,
       # which is exactly what must still run for this case.
       operator_only: ${{ steps.filter.outputs.operator_only }}
+      # True (POSITIVE match, unlike every other output above) when this run
+      # could plausibly affect whether the Docker Compose stack or the Helm
+      # chart actually boots: Dockerfile*/docker-compose*/keyorix.docker.yaml
+      # (the exact files item 1's encryption-boot-path fix and its crash-loop
+      # touched), deploy/helm/** (the chart, including its own copy of the
+      # same config shape), internal/encryption/** (the code that derives the
+      # KEK and places dek.lock -- the actual root cause, not just the config
+      # files), and server/** (broad on purpose: almost anything server-side
+      # can change whether the server boots). Gates docker-boot-smoke/
+      # helm-boot-smoke below so they don't run on every unrelated PR (a
+      # docs-only or web-only change can't affect either). Always true for a
+      # non-pull_request run (push to main, merge_group, workflow_dispatch) --
+      # there is no PR file list to check, and both jobs are fast enough
+      # (~30-60s) that running them on every push to main is the safer
+      # default over silently skipping.
+      boot_smoke_relevant: ${{ steps.filter.outputs.boot_smoke_relevant }}
     steps:
-      - name: Detect docs-only / web-only / go-unaffected / operator-only changes
+      - name: Detect docs-only / web-only / go-unaffected / operator-only / boot-smoke-relevant changes
         id: filter
         env:
           GH_TOKEN: ${{ github.token }}
@@ -165,12 +181,18 @@ jobs:
               echo "web_only=false"
               echo "go_unaffected=false"
               echo "operator_only=false"
+              echo "boot_smoke_relevant=true"
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
           changed=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
           echo "Changed files:"
           echo "$changed"
+          if [ -n "$changed" ] && echo "$changed" | grep -qE '^(Dockerfile|docker-compose|keyorix\.docker\.yaml$|deploy/helm/|internal/encryption/|server/)'; then
+            echo "boot_smoke_relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "boot_smoke_relevant=false" >> "$GITHUB_OUTPUT"
+          fi
           if [ -z "$changed" ] || echo "$changed" | grep -vE '(\.md$|^docs/)' > /dev/null; then
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
           else
@@ -1175,6 +1197,164 @@ jobs:
 
       - name: Smoke test (executes QUICK_START.md's flow end to end, the shipped binary)
         run: make smoke
+
+  # RELEASE-BLOCKERS item 5: `docker compose up -d` with the committed
+  # docker-compose.yml/keyorix.docker.yaml, UNCHANGED, actually boots the
+  # backend and answers a real request through the web/nginx proxy -- the
+  # check that would have caught the item 1 crash-loop (an absolute
+  # dek_path/salt_path in keyorix.docker.yaml hit
+  # internal/securefiles.safeRelComponents' "must be relative" rejection on
+  # every single boot) in about 15 seconds instead of shipping it invisibly.
+  # Not a required check (the coordinator decides that separately) and
+  # path-filtered via boot_smoke_relevant so it doesn't run on every
+  # unrelated PR.
+  docker-boot-smoke:
+    needs: [changes]
+    if: needs.changes.outputs.boot_smoke_relevant == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build server image (load, no push)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: server/Dockerfile
+          load: true
+          tags: keyorix-server:boot-smoke
+          cache-from: type=gha,scope=keyorix-server
+          cache-to: type=gha,mode=max,scope=keyorix-server
+
+      - name: Build web image (load, no push)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: web
+          file: web/Dockerfile
+          load: true
+          tags: keyorix-web:boot-smoke
+          cache-from: type=gha,scope=keyorix-web
+          cache-to: type=gha,mode=max,scope=keyorix-web
+
+      # keyorix.docker.yaml and docker-compose.yml are read UNCHANGED --
+      # this override file only swaps the image references (built above,
+      # not pulled from ghcr.io) and the web port (avoid colliding with
+      # anything else on the runner), the same override-file technique
+      # docs/SELF_HOSTING.md already documents for a local build.
+      - name: Bring up the stack with the committed compose file, unchanged
+        env:
+          COMPOSE_PROJECT_NAME: kx-ci-boot-smoke
+        run: |
+          printf 'KEYORIX_DB_PASSWORD=ci-boot-smoke-db-password\nKEYORIX_MASTER_PASSWORD=ci-boot-smoke-master-password\n' > .env
+          printf 'services:\n  backend:\n    image: keyorix-server:boot-smoke\n  web:\n    image: keyorix-web:boot-smoke\n    ports:\n      - "18088:80"\n' > docker-compose.override.yml
+          docker compose up -d
+
+      - name: Wait for /api/v1/version 200 through the web service (timeout 120s)
+        run: |
+          for _ in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:18088/api/v1/version || true)
+            if [ "$code" = "200" ]; then
+              echo "backend answered /api/v1/version 200"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "backend never answered /api/v1/version 200 within 120s (last HTTP code: ${code:-none})" >&2
+          exit 1
+
+      - name: Dump compose logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
+  # RELEASE-BLOCKERS item 5, Helm half: a kind cluster + `helm install` with
+  # chart defaults (readOnlyRootFilesystem: true, the bundled Postgres) must
+  # reach Ready -- the check that would have caught the second, independent
+  # defect item 1 fixed (dek.lock landing outside the one writable PVC mount
+  # for the relative dek_path/salt_path convention under readOnlyRootFilesystem).
+  helm-boot-smoke:
+    needs: [changes]
+    if: needs.changes.outputs.boot_smoke_relevant == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build server image (load, no push)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: server/Dockerfile
+          load: true
+          tags: keyorix-server:boot-smoke
+          cache-from: type=gha,scope=keyorix-server
+          cache-to: type=gha,mode=max,scope=keyorix-server
+
+      - name: Build web image (load, no push)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: web
+          file: web/Dockerfile
+          load: true
+          tags: keyorix-web:boot-smoke
+          cache-from: type=gha,scope=keyorix-web
+          cache-to: type=gha,mode=max,scope=keyorix-web
+
+      - name: Create kind cluster
+        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          cluster_name: kx-ci-boot-smoke
+
+      - name: Load images into kind
+        run: |
+          kind load docker-image keyorix-server:boot-smoke --name kx-ci-boot-smoke
+          kind load docker-image keyorix-web:boot-smoke --name kx-ci-boot-smoke
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+
+      - name: helm install with chart defaults
+        run: |
+          helm install kx deploy/helm/keyorix \
+            --set auth.masterPassword=ci-boot-smoke \
+            --set postgresql.auth.password=ci-boot-smoke \
+            --set auth.adminPassword=ci-boot-smoke \
+            --set server.image.repository=keyorix-server \
+            --set server.image.tag=boot-smoke \
+            --set server.image.pullPolicy=IfNotPresent \
+            --set web.image.repository=keyorix-web \
+            --set web.image.tag=boot-smoke \
+            --set web.image.pullPolicy=IfNotPresent
+
+      - name: Wait for the server pod to be Ready (timeout 300s)
+        run: |
+          kubectl wait --for=condition=Ready pod \
+            -l app.kubernetes.io/instance=kx,app.kubernetes.io/component=server \
+            --timeout=300s
+
+      - name: Describe pods and dump logs on failure
+        if: failure()
+        run: |
+          kubectl get pods -o wide
+          kubectl describe pods
+          kubectl logs -l app.kubernetes.io/instance=kx,app.kubernetes.io/component=server --tail=200 || true
+
+      - name: Tear down
+        if: always()
+        run: |
+          helm uninstall kx --wait --timeout 60s || true
+          kind delete cluster --name kx-ci-boot-smoke || true
 
   # The Kubernetes operator is a separate Go module (operator/) so its
   # controller-runtime/client-go dependency tree stays out of the server/CLI build.
