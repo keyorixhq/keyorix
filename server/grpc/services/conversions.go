@@ -229,15 +229,28 @@ func authorizeGlobal(ctx context.Context, cs *core.KeyorixCore, actor *intercept
 // --- Pagination ---
 
 // normalizePage applies the standard page (>=1) / page_size (1..100, default 20)
-// defaults shared by the paginated list RPCs.
+// defaults shared by most paginated list RPCs — matches the default REST's own
+// handlers use for the same resources (secrets_list.go, users_list.go,
+// shares_query.go, folders_handler.go). Audit's two RPCs default to 50 instead;
+// see normalizePageWithDefault.
 func normalizePage(page, pageSize uint32) (int, int) {
+	return normalizePageWithDefault(page, pageSize, 20)
+}
+
+// normalizePageWithDefault is normalizePage with a caller-supplied default
+// page_size (still capped at 1..100) — REST's own per-endpoint handlers don't
+// share one hard-coded default (audit.go's two handlers default to 50, every
+// other list handler defaults to 20), so the gRPC side needs the same knob to
+// avoid a transport-dependent default result-set size for an identical
+// unspecified-page_size request.
+func normalizePageWithDefault(page, pageSize uint32, def int) (int, int) {
 	p := int(page)
 	if p < 1 {
 		p = 1
 	}
 	ps := int(pageSize)
 	if ps < 1 || ps > 100 {
-		ps = 20
+		ps = def
 	}
 	return p, ps
 }
