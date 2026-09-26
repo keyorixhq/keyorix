@@ -161,7 +161,7 @@ rm -rf "$TMP_DIR"
 success "Keyorix ${LATEST} installed to ${INSTALL_DIR}/${BINARY}"
 echo ""
 echo "  Get started:"
-echo "  keyorix login --server http://your-server --username admin --password your-password" # NOSONAR -- documentation string, not a network connection
+echo "  keyorix login --server https://your-server --username admin" # NOSONAR -- documentation string, not a network connection
 echo "  keyorix secret list"
 echo ""
 echo "  Docs: https://github.com/${REPO}"
