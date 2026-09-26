@@ -52,9 +52,18 @@ export KEYORIX_BOOTSTRAP_TOKEN='choose-a-bootstrap-token'
 KEYORIX_CONFIG_PATH=./keyorix.yaml ./bin/keyorix-server &
 
 ./bin/keyorix system init --server http://localhost:8080 \
-  --admin-username admin --admin-password 'choose-an-admin-password' \
+  --admin-username admin --admin-email admin@keyorix.local \
+  --admin-password 'Correct-Horse-Battery9' \
   --bootstrap-token "$KEYORIX_BOOTSTRAP_TOKEN"
 ```
+
+Two things about this command are not obvious from `--help` alone:
+
+- **Pass `--admin-email` explicitly.** The flag's own default (`admin@localhost`)
+  fails the server's email validation (no dot after `@`), so omitting it makes
+  bootstrap fail with a confusing `Validation error: Validation error: Email`.
+- **Pick a password with an uppercase letter, a digit, and that does not contain
+  the username.** `Correct-Horse-Battery9` above satisfies all three.
 
 `system init --server` is safe to run more than once — it is idempotent, and
 reports `already_initialized` on every call after the first. It creates the
@@ -78,7 +87,7 @@ For Postgres instead of SQLite, `docker compose up -d postgres` starts one, and
 
 ```bash
 ./bin/keyorix login --server http://localhost:8080 \
-  --username admin --password 'choose-an-admin-password'
+  --username admin --password 'Correct-Horse-Battery9'
 ```
 
 Stores the session token (and server URL) at the CLI's one credential-file
@@ -125,18 +134,62 @@ Export everything in a project/environment at once — the same call the
 
 ## Sharing
 
-Shares are granted to a **user or group ID**, not an email address:
+Shares are granted to a **user or group ID**, not an email address. Before you
+can share anything, both you (the owner) and the recipient need an explicit
+role in the project the secret lives in — holding the global `admin` role from
+bootstrap is not enough:
 
 ```bash
+./bin/keyorix rbac assign-role --user admin@keyorix.local --role project_admin --project default
+./bin/keyorix rbac assign-role --user alice@keyorix.local --role project_viewer --project default
+
 ./bin/keyorix user list                       # find the recipient's ID
 ./bin/keyorix share create --secret-id 1 --recipient-id 42 --permission read
 ./bin/keyorix share create --secret-id 1 --recipient-id 7 --is-group --ttl 24h
 ./bin/keyorix share list --secret-id 1
 ```
 
+Skipping the two `rbac assign-role` lines and going straight to `share create`
+fails with a bare `HTTP 403` and no explanation — this is a known rough edge,
+tracked as a known gap below.
+
 `--ttl` (a Go duration) and `--expires` (RFC3339) are mutually exclusive; either
 makes the share time-bound, which is usually what you want for access granted
 during an incident.
+
+## Giving a machine (CI/app) access
+
+```bash
+./bin/keyorix machine create --name my-ci-app --project default --type ci
+```
+
+Issuing that machine a bearer token takes one more command
+(`keyorix machine token issue <name>`, see
+[`docs/operator/demo.md`](docs/operator/demo.md) step 5 for the full worked
+example). **Granting the machine access to a secret has no CLI command yet**
+(known gap, see below). Until it does, do it with one direct API call:
+
+```bash
+export KEYORIX_ADMIN_TOKEN='<a personal access token from: keyorix pat create --name demo>'
+curl -s -X POST http://localhost:8080/api/v1/projects/1/machine-identities/1/roles \
+  -H "Authorization: Bearer $KEYORIX_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"role_id": 9}'
+```
+
+(`role_id: 9` is `project_viewer` on a fresh install — check yours with
+`keyorix rbac list-roles`.) See [`docs/operator/demo.md`](docs/operator/demo.md)
+for the full worked example including revocation.
+
+## Known gaps
+
+- **Sharing requires an explicit project role on both owner and recipient**
+  (see "Sharing" above) — holding the global `admin` role is not enough, and
+  the failure mode (`HTTP 403`, no explanation) doesn't say so.
+- **No CLI command grants a machine identity a role on a secret/project** yet
+  (see "Giving a machine access" above) — the REST endpoint exists
+  (`POST /projects/{id}/machine-identities/{id}/roles`), only the CLI wrapper
+  is missing.
 
 ## What else is there
 

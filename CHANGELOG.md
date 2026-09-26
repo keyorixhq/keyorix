@@ -38,6 +38,20 @@ All notable changes to Keyorix are documented here. This project follows
   PascalCase keys (`ID`, `ProjectID`, `IsShared`, ...) off any of these
   routes needs to switch to the snake_case equivalents.
 
+### Known gaps
+- **Sharing a secret requires both the owner and the recipient to already hold
+  an explicit role in the secret's project** — holding the global `admin` role
+  from bootstrap is not enough, and `share create` fails with a bare `HTTP 403`
+  and no explanation if either grant is missing. Documented in
+  [`QUICK_START.md`](QUICK_START.md#sharing) and exercised by
+  `scripts/smoke.sh`; not yet fixed at the API layer.
+- **No `keyorix` command grants a machine identity a role on a project.** The
+  REST endpoint exists (`POST /api/v1/projects/{id}/machine-identities/{id}/roles`),
+  only a CLI wrapper is missing. Until it's added, grant access with a direct
+  API call — see [`QUICK_START.md`](QUICK_START.md#giving-a-machine-ciapp-access)
+  and [`docs/operator/demo.md`](docs/operator/demo.md) step 5 for the exact
+  `curl` invocation.
+
 ## v0.94.0 — 2026-09-17
 
 ### Security
