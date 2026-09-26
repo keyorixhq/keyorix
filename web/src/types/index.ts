@@ -91,13 +91,14 @@ export interface ShareFormData {
 }
 
 // SecretAccessLogEntry is one recorded read of a secret, from
-// GET /secrets/{id}/access-log (server JSON is PascalCase).
+// GET /secrets/{id}/access-log (server JSON is snake_case -- see
+// server/http/handlers/secrets_access_history.go and openapi.yaml).
 export interface SecretAccessLogEntry {
-    AccessedBy: string;
-    AccessTime: string;
-    Action: string;
-    IPAddress: string;
-    UserAgent?: string;
+    accessed_by: string;
+    access_time: string;
+    action: string;
+    ip_address: string;
+    user_agent?: string;
 }
 
 // SecretAuditEntry is one lifecycle event of a secret, from GET /secrets/{id}/audit

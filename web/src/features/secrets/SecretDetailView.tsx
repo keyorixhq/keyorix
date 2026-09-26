@@ -502,24 +502,24 @@ const RecentAccessPanel: React.FC<RecentAccessPanelProps> = ({ accessLog }) => {
             <div className="divide-y divide-gray-200 dark:divide-gray-700">
                 {accessLog.slice(0, 25).map((e) => (
                     <div
-                        key={`${e.AccessedBy}-${e.AccessTime}-${e.Action}`}
+                        key={`${e.accessed_by}-${e.access_time}-${e.action}`}
                         className="flex items-center justify-between py-2 text-sm"
                     >
                         <div className="flex items-center gap-2 min-w-0">
                             <UserIcon className="h-4 w-4 text-gray-400 shrink-0" />
                             <span className="font-medium text-gray-900 dark:text-white">
-                                {e.AccessedBy || 'unknown'}
+                                {e.accessed_by || 'unknown'}
                             </span>
                             <span className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                                {e.Action}
-                                {e.IPAddress ? ` · ${e.IPAddress}` : ''}
+                                {e.action}
+                                {e.ip_address ? ` · ${e.ip_address}` : ''}
                             </span>
                         </div>
                         <span
                             className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap"
-                            title={new Date(e.AccessTime).toLocaleString()}
+                            title={new Date(e.access_time).toLocaleString()}
                         >
-                            {relativeFromNow(e.AccessTime)}
+                            {relativeFromNow(e.access_time)}
                         </span>
                     </div>
                 ))}

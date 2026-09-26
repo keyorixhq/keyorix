@@ -16,7 +16,7 @@ let mockVersions: { EncryptedValue: string; VersionNumber: number; CreatedAt: st
 let mockVersionsLoading = false;
 let mockVersionsError: unknown = null;
 let mockAccessors: { user_id: number; username: string; permission: string; source: string }[] = [];
-let mockAccessLog: { AccessedBy: string; AccessTime: string; Action: string; IPAddress: string }[] = [];
+let mockAccessLog: { accessed_by: string; access_time: string; action: string; ip_address: string }[] = [];
 let mockAuditTrail: {
     id: number;
     event_type: string;
@@ -284,7 +284,7 @@ describe('SecretDetailView recent access', () => {
         mockVersions = [];
         mockAccessors = [];
         mockAccessLog = [
-            { AccessedBy: 'alice', AccessTime: '2026-06-18T10:00:00Z', Action: 'read', IPAddress: '10.0.0.7' },
+            { accessed_by: 'alice', access_time: '2026-06-18T10:00:00Z', action: 'read', ip_address: '10.0.0.7' },
         ];
     });
 
@@ -301,7 +301,7 @@ describe('SecretDetailView recent access', () => {
     });
 
     it('falls back to "unknown" for an empty accessor and omits the IP separator when absent', () => {
-        mockAccessLog = [{ AccessedBy: '', AccessTime: '2026-06-18T10:00:00Z', Action: 'read', IPAddress: '' }];
+        mockAccessLog = [{ accessed_by: '', access_time: '2026-06-18T10:00:00Z', action: 'read', ip_address: '' }];
         render(<SecretDetailView secret={makeSecret()} />);
         expect(screen.getByText('unknown')).toBeInTheDocument();
         expect(screen.getByText('read')).toBeInTheDocument();
@@ -316,13 +316,13 @@ describe('SecretDetailView recent access', () => {
         const oneYearAgo = new Date(Date.now() - (400 * 86_400_000 + 3_600_000)).toISOString();
         const twoYearsAgo = new Date(Date.now() - (800 * 86_400_000 + 3_600_000)).toISOString();
         mockAccessLog = [
-            { AccessedBy: 'alice', AccessTime: today, Action: 'read', IPAddress: '' },
-            { AccessedBy: 'bob', AccessTime: yesterday, Action: 'read', IPAddress: '' },
-            { AccessedBy: 'carol', AccessTime: fiveDaysAgo, Action: 'read', IPAddress: '' },
-            { AccessedBy: 'grace', AccessTime: oneMonthAgo, Action: 'read', IPAddress: '' },
-            { AccessedBy: 'frank', AccessTime: threeMonthsAgo, Action: 'read', IPAddress: '' },
-            { AccessedBy: 'dave', AccessTime: oneYearAgo, Action: 'read', IPAddress: '' },
-            { AccessedBy: 'erin', AccessTime: twoYearsAgo, Action: 'read', IPAddress: '' },
+            { accessed_by: 'alice', access_time: today, action: 'read', ip_address: '' },
+            { accessed_by: 'bob', access_time: yesterday, action: 'read', ip_address: '' },
+            { accessed_by: 'carol', access_time: fiveDaysAgo, action: 'read', ip_address: '' },
+            { accessed_by: 'grace', access_time: oneMonthAgo, action: 'read', ip_address: '' },
+            { accessed_by: 'frank', access_time: threeMonthsAgo, action: 'read', ip_address: '' },
+            { accessed_by: 'dave', access_time: oneYearAgo, action: 'read', ip_address: '' },
+            { accessed_by: 'erin', access_time: twoYearsAgo, action: 'read', ip_address: '' },
         ];
         render(<SecretDetailView secret={makeSecret()} />);
         expect(screen.getByText('today')).toBeInTheDocument();
@@ -336,10 +336,10 @@ describe('SecretDetailView recent access', () => {
 
     it('caps the list at 25 entries and shows a "showing" summary', () => {
         mockAccessLog = Array.from({ length: 26 }, (_, i) => ({
-            AccessedBy: `user${i}`,
-            AccessTime: new Date(Date.now() - i * 60_000).toISOString(),
-            Action: 'read',
-            IPAddress: '',
+            accessed_by: `user${i}`,
+            access_time: new Date(Date.now() - i * 60_000).toISOString(),
+            action: 'read',
+            ip_address: '',
         }));
         render(<SecretDetailView secret={makeSecret()} />);
         expect(screen.getByText('Showing the 25 most recent of 26.')).toBeInTheDocument();
