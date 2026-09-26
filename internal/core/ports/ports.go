@@ -12,7 +12,7 @@
 // server/main.go's DefaultIntegrations instead — see internal/core's own
 // dependency_guard_test.go, whose allowlist shrinks by one entry per
 // completed step. notary and saml are wired as of step 1, rotation as of
-// step 2; dynamic, connect, and encryption are not wired yet.
+// step 2, dynamic as of step 3; connect and encryption are not wired yet.
 //
 // This package must never import an integration package itself, or any of
 // their cloud SDKs — that would silently defeat the whole point. See
@@ -23,6 +23,8 @@ import (
 	"context"
 	"crypto/x509"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 )
 
@@ -91,16 +93,22 @@ func (e *RotationPartialError) Error() string { return e.Err.Error() }
 func (e *RotationPartialError) Unwrap() error { return e.Err }
 
 // DynamicCredential is an issued, short-lived credential returned to the
-// caller once. Mirrors internal/dynamic.Credential.
+// caller once. A type alias of internal/dynamic.Credential (ADR-109 step 3) —
+// the alias lives on the internal/dynamic side (see that package's doc
+// comment) so every backend engine's existing Issue implementation satisfies
+// DynamicBackendEngine directly, with no adapter. JSON tags are preserved
+// (rather than dropped, as a fresh struct here would) since dynamic_secrets.go's
+// IssueLease marshals a DynamicCredential to encrypt it at rest — the shape of
+// that JSON must not silently change underneath an existing encrypted blob.
 type DynamicCredential struct {
-	Username string
-	Password string
-	Fields   map[string]string
+	Username string            `json:"username,omitempty"`
+	Password string            `json:"password,omitempty"`
+	Fields   map[string]string `json:"fields,omitempty"`
 }
 
-// DynamicBackendEngine mints and revokes credentials on a target backend.
-// Mirrors internal/dynamic.CredentialEngine — the methods internal/core
-// calls (dynamic_secrets.go).
+// DynamicBackendEngine mints and revokes credentials on a target backend. A
+// type alias of internal/dynamic.CredentialEngine (ADR-109 step 3) — every
+// method here is one internal/core actually calls (dynamic_secrets.go).
 type DynamicBackendEngine interface {
 	Issue(ctx context.Context, adminDSN, creationTemplate string, ttl time.Duration) (cred DynamicCredential, roleName string, err error)
 	Revoke(ctx context.Context, adminDSN, roleName string) error
@@ -108,14 +116,79 @@ type DynamicBackendEngine interface {
 	SupportsNativeExpiry() bool
 	BackendType() string
 	IsEphemeralBackend() bool
+	// RevokeInvalidatesCredential reports whether Revoke for this adminDSN
+	// actually invalidates the credential at the provider (vs. only local
+	// Keyorix bookkeeping) — RevokeLease uses it to render an accurate audit
+	// message. See internal/dynamic.CredentialEngine's doc comment on this
+	// method for the full per-backend breakdown.
+	RevokeInvalidatesCredential(adminDSN string) bool
 }
 
-// DynamicBackendFactory builds a DynamicBackendEngine for the named backend
-// type. Mirrors the func(string) (dynamic.CredentialEngine, error) shape
-// internal/core.dynamicEngineFactory already holds (service.go,
-// SetDynamicEngineFactory) — backed by internal/dynamic.New in production.
-type DynamicBackendFactory interface {
-	Engine(backendType string) (DynamicBackendEngine, error)
+// DynamicBackendFactory resolves a DynamicBackendEngine for the named backend
+// type. A plain function type — not an interface with an Engine method — since
+// that's the exact shape internal/core.dynamicEngineFactory already holds
+// (service.go, SetDynamicEngineFactory): a closure, not an object with a
+// method, backed by internal/dynamic.New in production. Mirrors
+// ports.VerifyReceiptFunc's reasoning (ADR-109 step 1): wire the shape core
+// actually uses, not a heavier abstraction it doesn't need.
+type DynamicBackendFactory func(backendType string) (DynamicBackendEngine, error)
+
+// dsnUserinfoPattern matches the userinfo component of a URL-style connection
+// string -- scheme://user:password@host... -- as produced by postgres://,
+// mysql://, mongodb://, redis://, rediss:// DSNs. It matches greedily up to
+// the LAST '@' before the next whitespace so a password containing an
+// unescaped '@' -- or, critically, an unescaped '/' -- doesn't leave a
+// residual fragment or bypass the match entirely.
+var dsnUserinfoPattern = regexp.MustCompile(`://[^\s]*@`)
+
+// bareUserinfoPattern matches a "user:password@" credential fragment with NO
+// scheme prefix -- go-sql-driver/mysql's native DSN format
+// ("user:pass@tcp(host:3306)/db") never has a "://" scheme at all, so
+// dsnUserinfoPattern alone never matches it; the same bare shape also appears
+// in generic dial/DNS error text ("dial tcp: lookup admin:hunter2@db.internal").
+// Runs after dsnUserinfoPattern, which has already consumed and replaced every
+// scheme-prefixed occurrence.
+var bareUserinfoPattern = regexp.MustCompile(`[^\s:@/]+:[^\s@]+@`)
+
+// kvCredentialPattern matches key=value pairs whose key names a credential
+// field, case-insensitively, in the ODBC/connection-string style
+// ("Server=...;Uid=admin;Pwd=hunter2;") or a URL query string
+// ("...&password=hunter2"). The value is everything up to the next
+// delimiter (';', '&', whitespace) or end of string.
+var kvCredentialPattern = regexp.MustCompile(`(?i)\b(password|pwd|passwd|secret|token|access_key_id|access_key|secret_access_key|session_token|api_key|apikey|auth)\s*=\s*[^;&\s]+`)
+
+// redactedPlaceholder replaces any credential fragment the patterns above
+// recognize.
+const redactedPlaceholder = "***REDACTED***"
+
+// RedactSensitive strips connection-string/DSN credential fragments (URL
+// userinfo, ODBC/query-string key=value credential fields) from s. It is a
+// defense-in-depth text filter, not a parser or a guarantee. A type alias
+// target of internal/dynamic.RedactSensitive (ADR-109 step 3) — the
+// implementation lives here so internal/core can sanitize a dynamic-secrets
+// backend error before logging it (dynamic_secrets.go) without importing
+// internal/dynamic; see that package's redact.go for the full rationale and
+// its own re-export.
+func RedactSensitive(s string) string {
+	s = dsnUserinfoPattern.ReplaceAllString(s, "://"+redactedPlaceholder+"@")
+	s = bareUserinfoPattern.ReplaceAllString(s, redactedPlaceholder+"@")
+	s = kvCredentialPattern.ReplaceAllStringFunc(s, func(m string) string {
+		if idx := strings.IndexByte(m, '='); idx >= 0 {
+			return m[:idx+1] + redactedPlaceholder
+		}
+		return m
+	})
+	return s
+}
+
+// SanitizeErrorMessage returns err's Error() text with RedactSensitive
+// applied, safe to pass to log.Printf/log.Println. See RedactSensitive's doc
+// comment and internal/dynamic/redact.go for the full rationale.
+func SanitizeErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	return RedactSensitive(err.Error())
 }
 
 // EncryptionProvider performs authenticated encryption/decryption for secret

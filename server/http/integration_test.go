@@ -24,6 +24,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -79,7 +80,14 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		"ON break_glass_activations (project_id, user_id) WHERE state = 'active'").Error)
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active "+
 		"ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''").Error)
-	return core.NewKeyorixCore(store.NewLocalStorage(db))
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	// ADR-109 step 3: internal/core no longer defaults to dynamic.New internally
+	// (that would mean importing internal/dynamic from production code) — wire it
+	// explicitly here, exactly as server/main.go's DefaultIntegrations does, so
+	// this package's dynamic-secret tests still reach a real (if unreachable in
+	// this sandbox) backend rather than failing closed before ever dialing out.
+	cs.SetDynamicEngineFactory(func(bt string) (dynamic.CredentialEngine, error) { return dynamic.New(bt, false, false) })
+	return cs
 }
 
 // createTestToken seeds the system and returns a real admin session token.

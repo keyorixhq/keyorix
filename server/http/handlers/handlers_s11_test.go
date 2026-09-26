@@ -29,6 +29,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -79,6 +80,12 @@ func freshCoreS11(t *testing.T) *core.KeyorixCore {
 	require.NoError(t, err)
 	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
 	cs.SetDynamicAllowPrivateTargets(true) // tests use localhost DSNs; SSRF guard tested in dynamic_secrets_ssrf_test.go
+	// ADR-109 step 3: internal/core no longer defaults to dynamic.New internally
+	// (that would mean importing internal/dynamic from production code) — wire it
+	// explicitly here, exactly as server/main.go's DefaultIntegrations does, so
+	// the dynamic-secret handler tests below still reach a real (if unreachable)
+	// backend rather than failing closed before the handler is even exercised.
+	cs.SetDynamicEngineFactory(func(bt string) (dynamic.CredentialEngine, error) { return dynamic.New(bt, true, false) })
 	return cs
 }
 

@@ -28,6 +28,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -128,7 +129,13 @@ func freshCoreS12WithAdmin(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 	require.NoError(t, db.Create(testUser).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: testUser.ID, RoleID: adminRole.ID}).Error)
 
-	return core.NewKeyorixCore(store.NewLocalStorage(db)), db
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	// ADR-109 step 3: internal/core no longer defaults to dynamic.New internally
+	// (that would mean importing internal/dynamic from production code) — wire it
+	// explicitly here, exactly as server/main.go's DefaultIntegrations does, for
+	// the dynamic-secret handler tests in this package that use this helper.
+	cs.SetDynamicEngineFactory(func(bt string) (dynamic.CredentialEngine, error) { return dynamic.New(bt, true, false) })
+	return cs, db
 }
 
 // ── audit_export_csv.go: filter branches ─────────────────────────────────────
