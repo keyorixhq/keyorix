@@ -161,13 +161,18 @@ jobs:
       # same config shape), internal/encryption/** (the code that derives the
       # KEK and places dek.lock -- the actual root cause, not just the config
       # files), and server/** (broad on purpose: almost anything server-side
-      # can change whether the server boots). Gates docker-boot-smoke/
-      # helm-boot-smoke below so they don't run on every unrelated PR (a
-      # docs-only or web-only change can't affect either). Always true for a
-      # non-pull_request run (push to main, merge_group, workflow_dispatch) --
-      # there is no PR file list to check, and both jobs are fast enough
-      # (~30-60s) that running them on every push to main is the safer
-      # default over silently skipping.
+      # can change whether the server boots) -- OR a change to ci.yml itself
+      # (this file defines the gating logic for these jobs, so a PR touching
+      # only ci.yml, e.g. these jobs' own definitions, must not be able to
+      # skip them -- the one case that most needs to exercise them; see the
+      # filter step's own comment for how this was actually caught live, not
+      # just reasoned about). Gates docker-boot-smoke/helm-boot-smoke below
+      # so they don't run on every unrelated PR (a docs-only or web-only
+      # change can't affect either). Always true for a non-pull_request run
+      # (push to main, merge_group, workflow_dispatch) -- there is no PR
+      # file list to check, and both jobs are fast enough (~30-60s) that
+      # running them on every push to main is the safer default over
+      # silently skipping.
       boot_smoke_relevant: ${{ steps.filter.outputs.boot_smoke_relevant }}
     steps:
       - name: Detect docs-only / web-only / go-unaffected / operator-only / boot-smoke-relevant changes
@@ -188,7 +193,17 @@ jobs:
           changed=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
           echo "Changed files:"
           echo "$changed"
-          if [ -n "$changed" ] && echo "$changed" | grep -qE '^(Dockerfile|docker-compose|keyorix\.docker\.yaml$|deploy/helm/|internal/encryption/|server/)'; then
+          # A change to ci.yml itself must always run these two jobs too --
+          # same reasoning as go_unaffected's identical ci.yml special case
+          # below: this file defines the gating logic FOR these jobs, so a
+          # change to it (e.g. these jobs' own definitions) is exactly the
+          # case that must not be able to skip itself. Confirmed live: a PR
+          # touching only ci.yml (adding these jobs) evaluated the path
+          # regex against ci.yml's own path, matched nothing, and both jobs
+          # showed "skipping" -- the one PR that most needed to exercise them.
+          if echo "$changed" | grep -qx '\.github/workflows/ci\.yml'; then
+            echo "boot_smoke_relevant=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$changed" ] && echo "$changed" | grep -qE '^(Dockerfile|docker-compose|keyorix\.docker\.yaml$|deploy/helm/|internal/encryption/|server/)'; then
             echo "boot_smoke_relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "boot_smoke_relevant=false" >> "$GITHUB_OUTPUT"
