@@ -153,19 +153,11 @@ root_1_pkgs() {
   cat <<'EOF'
 github.com/keyorixhq/keyorix/internal/encryption
 github.com/keyorixhq/keyorix/server/grpc/services
-github.com/keyorixhq/keyorix/internal/cli/invite
-github.com/keyorixhq/keyorix/internal/cli/group
-github.com/keyorixhq/keyorix/internal/cli/run
 github.com/keyorixhq/keyorix/internal/crypto
 github.com/keyorixhq/keyorix/server/grpc
 github.com/keyorixhq/keyorix/internal/testhelper
-github.com/keyorixhq/keyorix/internal/cli/accessreview
-github.com/keyorixhq/keyorix/internal/cli/anomalies
-github.com/keyorixhq/keyorix/internal/cli/auth
 github.com/keyorixhq/keyorix/pkg/bundleverify
 github.com/keyorixhq/keyorix/internal/rotation
-github.com/keyorixhq/keyorix/internal/cli/license
-github.com/keyorixhq/keyorix/internal/cli/config
 github.com/keyorixhq/keyorix/cmd/validate-translations
 github.com/keyorixhq/keyorix/internal/startup
 github.com/keyorixhq/keyorix/internal/di
@@ -175,23 +167,14 @@ EOF
 
 root_2_pkgs() {
   cat <<'EOF'
-github.com/keyorixhq/keyorix/internal/cli/user
-github.com/keyorixhq/keyorix/internal/cli/encryption
 github.com/keyorixhq/keyorix/internal/storage
-github.com/keyorixhq/keyorix/internal/cli/share
 github.com/keyorixhq/keyorix/server/grpc/interceptors
-github.com/keyorixhq/keyorix/internal/cli/common
-github.com/keyorixhq/keyorix/internal/cli/hygiene
-github.com/keyorixhq/keyorix/internal/cli/sod
-github.com/keyorixhq/keyorix/internal/cli/breakglass
-github.com/keyorixhq/keyorix/internal/cli/audit
 github.com/keyorixhq/keyorix/internal/saml
 github.com/keyorixhq/keyorix/internal/i18n
 github.com/keyorixhq/keyorix/internal/notary
 github.com/keyorixhq/keyorix/internal/securefiles
 github.com/keyorixhq/keyorix/pkg/trust
 github.com/keyorixhq/keyorix/pkg/licenseverify
-github.com/keyorixhq/keyorix/internal/cli/trust
 github.com/keyorixhq/keyorix/internal/crypto/awskms
 github.com/keyorixhq/keyorix/internal/utils/safeconv
 EOF
@@ -200,18 +183,10 @@ EOF
 root_3_pkgs() {
   cat <<'EOF'
 github.com/keyorixhq/keyorix/server/tools
-github.com/keyorixhq/keyorix/internal/cli/machine
 github.com/keyorixhq/keyorix/server
-github.com/keyorixhq/keyorix/internal/cli/rbac
-github.com/keyorixhq/keyorix/internal/cli/project
-github.com/keyorixhq/keyorix/internal/cli/status
 github.com/keyorixhq/keyorix/internal/notifychan
-github.com/keyorixhq/keyorix/internal/cli/risk
-github.com/keyorixhq/keyorix/internal/cli/rotation
-github.com/keyorixhq/keyorix/internal/cli/dynamic
 github.com/keyorixhq/keyorix/internal/audit/siem
 github.com/keyorixhq/keyorix/internal/mcp
-github.com/keyorixhq/keyorix/internal/cli/bundle
 github.com/keyorixhq/keyorix/server/validation
 github.com/keyorixhq/keyorix/internal/connect
 github.com/keyorixhq/keyorix/internal/config
