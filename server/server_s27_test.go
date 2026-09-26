@@ -31,6 +31,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -169,6 +170,9 @@ func TestStartHTTPServer_S27_TLSBadCert(t *testing.T) {
 	if err == nil {
 		t.Fatal("startHTTPServer must return an error for missing TLS cert/key files")
 	}
+	if !errors.Is(err, errHTTPServerFailedToStart) {
+		t.Errorf("error must be wrapped in errHTTPServerFailedToStart (main() uses this to decide whether to exit fatally): %v", err)
+	}
 }
 
 // ── startHTTPServer: port already in use → bind failure ─────────────────────
@@ -201,6 +205,15 @@ func TestStartHTTPServer_S27_ListenerBindFailure(t *testing.T) {
 	err := startHTTPServer(ctx, cfg, coreService)
 	if err == nil {
 		t.Fatal("startHTTPServer must return an error when the port is invalid/out-of-range")
+	}
+	// RELEASE-BLOCKERS item 4: a bind failure must be wrapped in
+	// errHTTPServerFailedToStart -- main()'s caller uses errors.Is against it
+	// to exit the process fatally instead of logging and falling through to
+	// <-sigChan (which never arrives for a boot that failed this early), the
+	// bug that let `docker ps`/`kubectl get pods` show "Up"/"Running" while
+	// nothing was actually listening.
+	if !errors.Is(err, errHTTPServerFailedToStart) {
+		t.Errorf("bind failure must be wrapped in errHTTPServerFailedToStart: %v", err)
 	}
 }
 

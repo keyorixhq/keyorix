@@ -12,6 +12,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net"
 	"net/http"
@@ -1043,6 +1044,66 @@ func TestStartHTTPServer_CancelledContext(t *testing.T) {
 		_ = err
 	case <-context.Background().Done():
 		t.Fatal("startHTTPServer did not return when context was already cancelled")
+	}
+}
+
+// TestStartHTTPServer_NormalShutdown_NotFlaggedAsStartupFailure is
+// RELEASE-BLOCKERS item 4's negative control: a normal, already-successful
+// shutdown (bound, served, then ctx cancelled with no active connections —
+// server.Shutdown()'s fast, error-free path) must NOT be wrapped in
+// errHTTPServerFailedToStart. main()'s caller uses errors.Is against that
+// sentinel to decide whether to exit the process fatally — if an ordinary
+// shutdown were ever wrongly wrapped, every normal server stop would start
+// exiting non-zero instead of the intended narrow case (a startup failure
+// that leaves nothing listening).
+func TestStartHTTPServer_NormalShutdown_NotFlaggedAsStartupFailure(t *testing.T) {
+	initI18n(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("get free port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			Type:     "local",
+			Database: config.DatabaseConfig{Path: "httptest_normal_shutdown.db"},
+		},
+		Server: config.ServerConfig{
+			HTTP: config.ServerInstanceConfig{
+				Enabled: true,
+				Port:    itoa(port),
+			},
+		},
+	}
+	coreService := mustInitCoreService(t, cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- startHTTPServer(ctx, cfg, coreService)
+	}()
+
+	// Give the listener a moment to actually bind before triggering shutdown,
+	// so this exercises the real bind-then-shutdown sequence, not a
+	// pre-cancelled context racing the bind itself.
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case shutdownErr := <-done:
+		if shutdownErr != nil {
+			t.Fatalf("a clean shutdown with no active connections should not error: %v", shutdownErr)
+		}
+		if errors.Is(shutdownErr, errHTTPServerFailedToStart) {
+			t.Error("a normal shutdown must never be wrapped in errHTTPServerFailedToStart")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("startHTTPServer did not return after ctx was cancelled")
 	}
 }
 
