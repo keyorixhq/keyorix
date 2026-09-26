@@ -31,6 +31,11 @@ var keptPaths = []string{
 	"/auth/login",
 	"/auth/logout",
 	"/api/v1/auth/profile",
+	// Item 3b (RELEASE-BLOCKERS): `keyorix change-password`, so the J5
+	// lost-admin recovery flow (docs/operator/j5-lost-admin.md) needs no raw
+	// curl call to finish setting a real password after logging in with the
+	// one-time password recover-admin prints.
+	"/api/v1/auth/change-password",
 	// PR 10 leftovers (docs/cli-split-inventory.md §7) -- system init --server.
 	"/system/init",
 	// PR 2 (docs/cli-split-inventory.md §7) -- pat, auth (mfa/logout), machine.

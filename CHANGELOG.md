@@ -13,6 +13,11 @@ All notable changes to Keyorix are documented here. This project follows
   give a machine identity access to anything was a hand-crafted authenticated
   HTTP call. See [`QUICK_START.md`](QUICK_START.md#giving-a-machine-ciapp-access)
   and [`docs/operator/demo.md`](docs/operator/demo.md) step 5.
+- **`keyorix change-password`** — self-service password change
+  (`POST /auth/change-password`), so the documented lost-admin recovery flow
+  (`docs/operator/j5-lost-admin.md`) needs no raw `curl` call to finish
+  setting a real password after logging in with `recover-admin`'s printed
+  one-time password.
 
 ### Changed
 - **BREAKING: `keyorix` is now the new, thin, REST-only CLI (ADR-108 Phase 5).**
