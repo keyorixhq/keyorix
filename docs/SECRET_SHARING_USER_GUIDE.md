@@ -464,7 +464,7 @@ keyorix audit logs --secret-id 123
 
 #### Self-Service Resources
 - Check the [API Documentation](SECRET_SHARING_API.md)
-- Review [Security Considerations](SECRET_SHARING_SECURITY.md)
+- Review [Security Considerations](security/architecture.md)
 - Browse [Workflow Examples](SECRET_SHARING_WORKFLOWS.md)
 
 #### Support Channels
