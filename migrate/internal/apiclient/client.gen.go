@@ -1262,12 +1262,8 @@ func (r ListProjectsResponse) StatusCode() int {
 type CreateProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *struct {
-		// Data A project. Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's projectWire) -- internal/storage/models.Project itself carries no `json:` tags and is never serialized directly.
-		Data *Project `json:"data,omitempty"`
-	}
-	JSON400 *Error
-	JSON401 *Error
+	JSON400      *Error
+	JSON401      *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -1317,12 +1313,8 @@ func (r ListProjectEnvironmentsResponse) StatusCode() int {
 type CreateProjectEnvironmentResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *struct {
-		// Data A project environment. Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's environmentWire) -- internal/storage/models.Environment itself carries no `json:` tags and is never serialized directly.
-		Data *Environment `json:"data,omitempty"`
-	}
-	JSON400 *Error
-	JSON401 *Error
+	JSON400      *Error
+	JSON401      *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -1378,7 +1370,7 @@ type CreateSecretResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON201      *struct {
-		// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
+		// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
 		Data *Secret `json:"data,omitempty"`
 	}
 	JSON400 *Error
@@ -1406,7 +1398,7 @@ type GetSecretByNameResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *struct {
-		// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
+		// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
 		Data *Secret `json:"data,omitempty"`
 	}
 	JSON400 *Error
@@ -1489,7 +1481,7 @@ type UpdateSecretResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *struct {
-		// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
+		// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
 		Data *Secret `json:"data,omitempty"`
 	}
 	JSON400 *Error
@@ -1820,16 +1812,6 @@ func ParseCreateProjectResponse(rsp *http.Response) (*CreateProjectResponse, err
 	}
 
 	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest struct {
-			// Data A project. Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's projectWire) -- internal/storage/models.Project itself carries no `json:` tags and is never serialized directly.
-			Data *Project `json:"data,omitempty"`
-		}
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -1907,16 +1889,6 @@ func ParseCreateProjectEnvironmentResponse(rsp *http.Response) (*CreateProjectEn
 	}
 
 	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest struct {
-			// Data A project environment. Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's environmentWire) -- internal/storage/models.Environment itself carries no `json:` tags and is never serialized directly.
-			Data *Environment `json:"data,omitempty"`
-		}
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2007,7 +1979,7 @@ func ParseCreateSecretResponse(rsp *http.Response) (*CreateSecretResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
 		var dest struct {
-			// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
+			// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
 			Data *Secret `json:"data,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2057,7 +2029,7 @@ func ParseGetSecretByNameResponse(rsp *http.Response) (*GetSecretByNameResponse,
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest struct {
-			// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
+			// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
 			Data *Secret `json:"data,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2218,7 +2190,7 @@ func ParseUpdateSecretResponse(rsp *http.Response) (*UpdateSecretResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest struct {
-			// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
+			// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
 			Data *Secret `json:"data,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

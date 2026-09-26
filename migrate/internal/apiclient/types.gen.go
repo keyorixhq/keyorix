@@ -32,14 +32,13 @@ const (
 	Unclassified ListSecretsParamsClassification = "unclassified"
 )
 
-// Environment A project environment. Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's environmentWire) -- internal/storage/models.Environment itself carries no `json:` tags and is never serialized directly.
+// Environment A project environment (internal/storage/models.Environment). No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, Name, CreatedAt, UpdatedAt), not snake_case. Unlike Permission/RoleWithPermissions above, ProjectID/CreatedAt/UpdatedAt do NOT case-insensitively match a snake_case tag (the underscore makes "project_id" a different string from "projectid"), so a generated client MUST use these exact capitalized property names to decode correctly.
 type Environment struct {
-	CreatedAt *time.Time `json:"created_at,omitempty"`
-	DeletedAt *time.Time `json:"deleted_at,omitempty"`
-	Id        *int       `json:"id,omitempty"`
-	Name      *string    `json:"name,omitempty"`
-	ProjectId *int       `json:"project_id,omitempty"`
-	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	CreatedAt *time.Time `json:"CreatedAt,omitempty"`
+	ID        *int       `json:"ID,omitempty"`
+	Name      *string    `json:"Name,omitempty"`
+	ProjectID *int       `json:"ProjectID,omitempty"`
+	UpdatedAt *time.Time `json:"UpdatedAt,omitempty"`
 }
 
 // PATToken A personal access token (ADR-027/ADR-042). The raw secret is never returned except once, in the create response.
@@ -57,114 +56,94 @@ type PATToken struct {
 	TokenPrefix      *string    `json:"token_prefix,omitempty"`
 }
 
-// Project A project. Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's projectWire) -- internal/storage/models.Project itself carries no `json:` tags and is never serialized directly.
-type Project struct {
-	CreatedAt   *time.Time `json:"created_at,omitempty"`
-	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
-	Description *string    `json:"description,omitempty"`
-	Id          *int       `json:"id,omitempty"`
-	Name        *string    `json:"name,omitempty"`
-	RequireMfa  *bool      `json:"require_mfa,omitempty"`
-	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
-}
-
-// Secret A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
+// Secret A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
 type Secret struct {
-	AutoRotate     *bool      `json:"auto_rotate,omitempty"`
-	Classification *string    `json:"classification,omitempty"`
-	CreatedAt      *time.Time `json:"created_at,omitempty"`
-	CreatedBy      *string    `json:"created_by,omitempty"`
-	Description    *string    `json:"description,omitempty"`
-	EnvironmentId  *int       `json:"environment_id,omitempty"`
-	Expiration     *time.Time `json:"expiration"`
-	Id             *int       `json:"id,omitempty"`
+	AutoRotate     *bool      `json:"AutoRotate,omitempty"`
+	Classification *string    `json:"Classification,omitempty"`
+	CreatedAt      *time.Time `json:"CreatedAt,omitempty"`
+	CreatedBy      *string    `json:"CreatedBy,omitempty"`
+	Description    *string    `json:"Description,omitempty"`
+	EnvironmentID  *int       `json:"EnvironmentID,omitempty"`
+	Expiration     *time.Time `json:"Expiration"`
+	ID             *int       `json:"ID,omitempty"`
 
 	// IsSecret false = this node is a folder.
-	IsSecret               *bool      `json:"is_secret,omitempty"`
-	IsShared               *bool      `json:"is_shared,omitempty"`
-	LastRotatedAt          *time.Time `json:"last_rotated_at"`
-	MaxReads               *int       `json:"max_reads"`
-	Name                   *string    `json:"name,omitempty"`
-	OwnerId                *int       `json:"owner_id,omitempty"`
-	OwnerMachineIdentityId *int       `json:"owner_machine_identity_id,omitempty"`
-	ParentId               *int       `json:"parent_id"`
-	ProjectId              *int       `json:"project_id,omitempty"`
-	ReadCount              *int       `json:"read_count,omitempty"`
-	RotationBackend        *string    `json:"rotation_backend,omitempty"`
-	RotationCharset        *string    `json:"rotation_charset,omitempty"`
-	RotationLength         *int       `json:"rotation_length,omitempty"`
-	RotationRef            *string    `json:"rotation_ref,omitempty"`
-	Status                 *string    `json:"status,omitempty"`
-	Type                   *string    `json:"type,omitempty"`
-	UpdatedAt              *time.Time `json:"updated_at,omitempty"`
+	IsSecret               *bool      `json:"IsSecret,omitempty"`
+	IsShared               *bool      `json:"IsShared,omitempty"`
+	LastRotatedAt          *time.Time `json:"LastRotatedAt"`
+	MaxReads               *int       `json:"MaxReads"`
+	Name                   *string    `json:"Name,omitempty"`
+	OwnerID                *int       `json:"OwnerID,omitempty"`
+	OwnerMachineIdentityID *int       `json:"OwnerMachineIdentityID,omitempty"`
+	ParentID               *int       `json:"ParentID"`
+	ProjectID              *int       `json:"ProjectID,omitempty"`
+	ReadCount              *int       `json:"ReadCount,omitempty"`
+	RotationBackend        *string    `json:"RotationBackend,omitempty"`
+	RotationCharset        *string    `json:"RotationCharset,omitempty"`
+	RotationLength         *int       `json:"RotationLength,omitempty"`
+	RotationRef            *string    `json:"RotationRef,omitempty"`
+	Status                 *string    `json:"Status,omitempty"`
+	Type                   *string    `json:"Type,omitempty"`
+	UpdatedAt              *time.Time `json:"UpdatedAt,omitempty"`
 }
 
 // SecretGetResult GET /api/v1/secrets/{id}'s response `data`: the bare Secret fields directly (metadata-only), OR, when include_value=true, `{secret, value}` instead. Declared as one flat schema combining both shapes' properties (rather than oneOf) since the CLI always knows in advance which branch a given request will get -- it controls include_value.
 type SecretGetResult struct {
-	Classification *string    `json:"classification,omitempty"`
-	CreatedAt      *time.Time `json:"created_at,omitempty"`
-	CreatedBy      *string    `json:"created_by,omitempty"`
-	Description    *string    `json:"description,omitempty"`
-	EnvironmentId  *int       `json:"environment_id,omitempty"`
-	Expiration     *time.Time `json:"expiration"`
-	Id             *int       `json:"id,omitempty"`
-	IsSecret       *bool      `json:"is_secret,omitempty"`
-	IsShared       *bool      `json:"is_shared,omitempty"`
-	LastRotatedAt  *time.Time `json:"last_rotated_at"`
-	MaxReads       *int       `json:"max_reads"`
-	Name           *string    `json:"name,omitempty"`
-	OwnerId        *int       `json:"owner_id,omitempty"`
-	ParentId       *int       `json:"parent_id"`
-	ProjectId      *int       `json:"project_id,omitempty"`
-	ReadCount      *int       `json:"read_count,omitempty"`
+	Classification *string    `json:"Classification,omitempty"`
+	CreatedAt      *time.Time `json:"CreatedAt,omitempty"`
+	CreatedBy      *string    `json:"CreatedBy,omitempty"`
+	Description    *string    `json:"Description,omitempty"`
+	EnvironmentID  *int       `json:"EnvironmentID,omitempty"`
+	Expiration     *time.Time `json:"Expiration"`
+	ID             *int       `json:"ID,omitempty"`
+	IsSecret       *bool      `json:"IsSecret,omitempty"`
+	IsShared       *bool      `json:"IsShared,omitempty"`
+	LastRotatedAt  *time.Time `json:"LastRotatedAt"`
+	MaxReads       *int       `json:"MaxReads"`
+	Name           *string    `json:"Name,omitempty"`
+	OwnerID        *int       `json:"OwnerID,omitempty"`
+	ParentID       *int       `json:"ParentID"`
+	ProjectID      *int       `json:"ProjectID,omitempty"`
+	ReadCount      *int       `json:"ReadCount,omitempty"`
+	Status         *string    `json:"Status,omitempty"`
+	Type           *string    `json:"Type,omitempty"`
+	UpdatedAt      *time.Time `json:"UpdatedAt,omitempty"`
 
-	// Secret A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
-	Secret    *Secret    `json:"secret,omitempty"`
-	Status    *string    `json:"status,omitempty"`
-	Type      *string    `json:"type,omitempty"`
-	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	// Secret A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
+	Secret *Secret `json:"secret,omitempty"`
 
 	// Value The decrypted value. Present only when include_value=true.
 	Value *string `json:"value,omitempty"`
 }
 
-// SecretListEntry One row of GET /api/v1/secrets's data.secrets[], via the handler-level secretWithSharingInfoWire type (server/http/handlers/secrets_wire.go). Flat, all snake_case: the embedded secret-node fields promote using their own correct tags, and is_shared is the sharing-computed value (it correctly shadows the embedded node's raw stored one, matching Go's shallower-field-wins collision rule) -- fixed from the previous mixed-case duplicate-key leak as part of the API-hygiene casing campaign.
+// SecretListEntry One row of GET /api/v1/secrets's data.secrets[] (internal/storage/models.SecretWithSharingInfo, which anonymously embeds *SecretNode -- Go's encoding/json promotes the embedded struct's fields onto this same object). Wire keys are a genuine MIX of case conventions: SecretNode's own fields are bare capitalized (ID, Name, IsShared, ...), while SecretWithSharingInfo's own fields are snake_case (project_name, is_shared, ...) -- IsShared and is_shared are both present as DIFFERENT keys on the same object, from the two different structs.
 type SecretListEntry struct {
-	AutoRotate      *bool      `json:"auto_rotate,omitempty"`
-	Classification  *string    `json:"classification,omitempty"`
-	CreatedAt       *time.Time `json:"created_at,omitempty"`
-	CreatedBy       *string    `json:"created_by,omitempty"`
-	Description     *string    `json:"description,omitempty"`
-	EnvironmentId   *int       `json:"environment_id,omitempty"`
-	EnvironmentName *string    `json:"environment_name,omitempty"`
-	Expiration      *time.Time `json:"expiration"`
-	Id              *int       `json:"id,omitempty"`
-	IsOwnedByUser   *bool      `json:"is_owned_by_user,omitempty"`
-	IsSecret        *bool      `json:"is_secret,omitempty"`
+	Classification *string    `json:"Classification,omitempty"`
+	CreatedAt      *time.Time `json:"CreatedAt,omitempty"`
+	CreatedBy      *string    `json:"CreatedBy,omitempty"`
+	Description    *string    `json:"Description,omitempty"`
+	EnvironmentID  *int       `json:"EnvironmentID,omitempty"`
+	Expiration     *time.Time `json:"Expiration"`
+	ID             *int       `json:"ID,omitempty"`
+	IsSecret       *bool      `json:"IsSecret,omitempty"`
 
-	// IsShared Sharing-computed, not the raw stored node flag.
-	IsShared               *bool      `json:"is_shared,omitempty"`
-	LastRotatedAt          *time.Time `json:"last_rotated_at"`
-	MaxReads               *int       `json:"max_reads"`
-	Name                   *string    `json:"name,omitempty"`
-	OwnerId                *int       `json:"owner_id,omitempty"`
-	OwnerMachineIdentityId *int       `json:"owner_machine_identity_id,omitempty"`
-	OwnerUsername          *string    `json:"owner_username,omitempty"`
-	ParentId               *int       `json:"parent_id"`
-	ProjectId              *int       `json:"project_id,omitempty"`
-	ProjectName            *string    `json:"project_name,omitempty"`
-	ReadCount              *int       `json:"read_count,omitempty"`
-	RotationBackend        *string    `json:"rotation_backend,omitempty"`
-	RotationCharset        *string    `json:"rotation_charset,omitempty"`
-	RotationLength         *int       `json:"rotation_length,omitempty"`
-	RotationRef            *string    `json:"rotation_ref,omitempty"`
-	ShareCount             *int       `json:"share_count,omitempty"`
-	SharedAt               *time.Time `json:"shared_at"`
-	SharedBy               *string    `json:"shared_by,omitempty"`
-	Status                 *string    `json:"status,omitempty"`
-	Type                   *string    `json:"type,omitempty"`
-	UpdatedAt              *time.Time `json:"updated_at,omitempty"`
-	UserPermission         *string    `json:"user_permission,omitempty"`
+	// IsShared From the embedded SecretNode. SecretWithSharingInfo's own is_shared field also exists on the wire, distinct from this one -- omitted here (oapi-codegen mangles snake_case to the same Go field name, IsShared, as this property, causing a real generation collision) since no CLI command reads it.
+	IsShared        *bool      `json:"IsShared,omitempty"`
+	MaxReads        *int       `json:"MaxReads"`
+	Name            *string    `json:"Name,omitempty"`
+	OwnerID         *int       `json:"OwnerID,omitempty"`
+	ParentID        *int       `json:"ParentID"`
+	ProjectID       *int       `json:"ProjectID,omitempty"`
+	ReadCount       *int       `json:"ReadCount,omitempty"`
+	Status          *string    `json:"Status,omitempty"`
+	Type            *string    `json:"Type,omitempty"`
+	UpdatedAt       *time.Time `json:"UpdatedAt,omitempty"`
+	EnvironmentName *string    `json:"environment_name,omitempty"`
+	IsOwnedByUser   *bool      `json:"is_owned_by_user,omitempty"`
+	OwnerUsername   *string    `json:"owner_username,omitempty"`
+	ProjectName     *string    `json:"project_name,omitempty"`
+	ShareCount      *int       `json:"share_count,omitempty"`
+	UserPermission  *string    `json:"user_permission,omitempty"`
 }
 
 // Error defines model for Error.
