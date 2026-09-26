@@ -52,12 +52,12 @@ host's config (a labs/demo escape hatch -- see the config field's own doc
 comment for why this is not recommended for a real deployment).
 
 What this resets, on the target account ONLY: reactivates it if deactivated,
-clears the password (forcing a reset on next login), clears MFA enrollment
-and every WebAuthn credential (forcing re-enrollment), clears any login-
-lockout state, and revokes every existing session. It never touches any
-other account, role, project, secret, or the KEK. Every use writes an
-audit-chain event and notifies every current admin, whether or not the
-server is running.
+sets a one-time password (printed once, forcing a real reset on next login),
+clears MFA enrollment and every WebAuthn credential (forcing re-enrollment),
+clears any login-lockout state, and revokes every existing session. It never
+touches any other account, role, project, secret, or the KEK. Every use
+writes an audit-chain event and notifies every current admin, whether or not
+the server is running.
 
 Exit codes: 0 on success, 1 on any failure (see the printed error message).`,
 	RunE: runRecoverAdmin,
@@ -122,9 +122,13 @@ func runRecoverAdmin(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Recovered admin account: %s (user id %d).\n", summary.username, summary.userID)
-	fmt.Println("Reset: account state, password (reset required on next login), MFA enrollment,")
+	fmt.Println("Reset: account state, password, MFA enrollment,")
 	fmt.Printf("  %d WebAuthn credential(s), login-lockout state, %d active session(s).\n",
 		summary.webAuthnCredentialsCleared, summary.sessionsRevoked)
+	fmt.Println()
+	fmt.Println("One-time password (shown once — copy it now, it cannot be retrieved again):")
+	fmt.Printf("  %s\n", summary.oneTimePassword)
+	fmt.Printf("Log in as %q with this password; you will be required to set a new one immediately.\n", summary.username)
 	if summary.auditChainBroken {
 		fmt.Fprintf(os.Stderr, "WARNING: the audit chain was already broken before this run (first broken row: %d). "+
 			"This recovery was still performed and is recorded as a new chain segment -- see the audit log.\n",

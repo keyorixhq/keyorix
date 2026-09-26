@@ -9,6 +9,7 @@ import (
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/recoverykey"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // recoverAdminSummary reports what performRecoverAdmin actually did, for the
@@ -22,6 +23,13 @@ type recoverAdminSummary struct {
 	keyless                    bool
 	auditChainBroken           bool
 	auditChainFirstBrokenID    uint
+	// oneTimePassword is the plaintext credential just set on the recovered
+	// account, for the CLI to print exactly once. Never logged, audited, or
+	// included in the admin-notification text (recordRecoveryAuditEvent/
+	// notifyAllAdmins only ever see the summary's OTHER fields) — the same
+	// "displayed out-of-band, never persisted in clear" contract
+	// CreateUserWithOneTimePassword's OneTimePasswordResult already has.
+	oneTimePassword string
 }
 
 // performRecoverAdmin is the whole recovery act (design §3): verify the
@@ -72,12 +80,38 @@ func performRecoverAdmin(ctx context.Context, store corestorage.Storage, userIde
 
 	now := time.Now()
 
+	// A one-time password the recovered admin can actually log in with, not an
+	// empty hash: bcrypt.CompareHashAndPassword (VerifyPasswordCredentials,
+	// internal/core/auth.go) fails unconditionally against "" for every
+	// password, so clearing the hash outright left the one documented
+	// emergency-recovery path ending in the account still being locked out —
+	// found live, see the PR this comment landed with. Reuses
+	// core.GenerateInitialCredential (the same policy-compliant generator
+	// CreateUserWithOneTimePassword uses for new-user onboarding, ADR-028 Part
+	// E) and core.PasswordHashCost (the same live bcrypt work factor every
+	// other password hash in this codebase is generated with) rather than a
+	// separate generator/cost here, so this credential is indistinguishable in
+	// strength from any other the system issues.
+	otp, err := core.GenerateInitialCredential()
+	if err != nil {
+		return nil, fmt.Errorf("generate one-time password: %w", err)
+	}
+	otpHash, err := bcrypt.GenerateFromPassword([]byte(otp), core.PasswordHashCost())
+	if err != nil {
+		return nil, fmt.Errorf("hash one-time password: %w", err)
+	}
+
 	err = store.WithTransaction(ctx, func(tx corestorage.Storage) error {
 		if err := tx.SetAccountState(ctx, user.ID, core.AccountPasswordResetRequired, now); err != nil {
 			return fmt.Errorf("reactivate account: %w", err)
 		}
-		if err := tx.SetPasswordHash(ctx, user.ID, "", now); err != nil {
-			return fmt.Errorf("clear password: %w", err)
+		// password_reset_required (set above, same transaction) confines the
+		// resulting session to the password-change allowlist until a real
+		// password is chosen (internal/core/auth.go's AccountLoginBlocked/login
+		// middleware) — this OTP is deliberately NOT a normal, indefinitely
+		// reusable credential.
+		if err := tx.SetPasswordHash(ctx, user.ID, string(otpHash), now); err != nil {
+			return fmt.Errorf("set one-time password: %w", err)
 		}
 		if err := tx.SetUserMFAEnabled(ctx, user.ID, false); err != nil {
 			return fmt.Errorf("clear MFA enrollment flag: %w", err)
@@ -111,6 +145,7 @@ func performRecoverAdmin(ctx context.Context, store corestorage.Storage, userIde
 	if err != nil {
 		return nil, err
 	}
+	summary.oneTimePassword = otp
 
 	recordRecoveryAuditEvent(ctx, store, summary)
 

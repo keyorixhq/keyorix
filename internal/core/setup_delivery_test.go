@@ -307,7 +307,7 @@ func TestGenerateInitialCredential(t *testing.T) {
 	policy := DefaultPasswordPolicy()
 	seen := map[string]bool{}
 	for i := 0; i < 50; i++ {
-		pw, err := generateInitialCredential()
+		pw, err := GenerateInitialCredential()
 		require.NoError(t, err)
 		assert.Len(t, pw, otpLength)
 		require.NoError(t, policy.Validate(pw, nil), "every generated OTP must satisfy the default password policy")

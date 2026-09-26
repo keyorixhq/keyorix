@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/identity"
@@ -63,6 +64,10 @@ func newRecoverAdminTestStoreWithDSN(t *testing.T) (*storelib.LocalStorage, stri
 		&models.WebAuthnCredential{},
 		&models.AuditEvent{}, &models.AuditCheckpoint{},
 		&models.Notification{},
+		// core.ChangePassword (TestPerformRecoverAdmin_OTPActuallyLogsIn's forced
+		// password change) reads/writes password history and lists PATs when
+		// dropping the user's other sessions/credentials on a real change.
+		&models.PasswordHistory{}, &models.PersonalAccessToken{},
 	); err != nil {
 		t.Fatalf("automigrate: %v", err)
 	}
@@ -194,8 +199,14 @@ func TestPerformRecoverAdmin_HappyPath(t *testing.T) {
 	if got.AccountState != "password_reset_required" {
 		t.Errorf("AccountState = %q, want password_reset_required", got.AccountState)
 	}
-	if got.PasswordHash != "" {
-		t.Errorf("PasswordHash = %q, want empty (cleared)", got.PasswordHash)
+	if got.PasswordHash == "" {
+		t.Errorf("PasswordHash is empty -- the recovered admin has no way to log in")
+	}
+	if summary.oneTimePassword == "" {
+		t.Errorf("summary.oneTimePassword is empty -- nothing to print for the operator to log in with")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(got.PasswordHash), []byte(summary.oneTimePassword)); err != nil {
+		t.Errorf("stored PasswordHash does not match summary.oneTimePassword: %v", err)
 	}
 	if got.MFAEnabled {
 		t.Errorf("MFAEnabled = true, want false (cleared)")
@@ -237,6 +248,69 @@ func TestPerformRecoverAdmin_HappyPath(t *testing.T) {
 		t.Fatalf("ListNotifications: %v", err)
 	}
 	_ = notifications // notification fan-out is exercised by runRecoverAdmin, not performRecoverAdmin directly
+}
+
+// TestPerformRecoverAdmin_OTPActuallyLogsIn is the fix's own regression test:
+// before it, recover-admin cleared the password hash to "" and
+// VerifyPasswordCredentials's bcrypt compare against "" fails unconditionally
+// for every password — the official emergency-recovery path ended with the
+// admin still locked out, permanently. Drives the full documented sequence
+// end to end through internal/core (the real login/change-password code, not
+// a re-implementation of it): recover-admin -> log in with the printed OTP
+// -> forced password change -> log in with the new password. Also confirms
+// the OTP itself stops working once superseded, and that the account is no
+// longer confined to password_reset_required afterward.
+func TestPerformRecoverAdmin_OTPActuallyLogsIn(t *testing.T) {
+	ctx := context.Background()
+	store := newRecoverAdminTestStore(t)
+	user := seedAdminUser(t, ctx, store, "admin-otp", "admin-otp@example.com", "OldPassw0rd!")
+	rawKey := seedRecoveryKey(t, ctx, store)
+
+	summary, err := performRecoverAdmin(ctx, store, fmt.Sprintf("%d", user.ID), rawKey, false)
+	if err != nil {
+		t.Fatalf("performRecoverAdmin: %v", err)
+	}
+	if summary.oneTimePassword == "" {
+		t.Fatalf("no one-time password printed")
+	}
+
+	c := core.NewKeyorixCore(store)
+
+	// Step 1: log in with the printed OTP. This must succeed even though the
+	// account is still password_reset_required — VerifyPasswordCredentials
+	// itself does not refuse a restricted account (only the higher HTTP-layer
+	// middleware confines its session to the password-change allowlist).
+	loggedIn, err := c.VerifyPasswordCredentials(ctx, user.Username, summary.oneTimePassword)
+	if err != nil {
+		t.Fatalf("login with the printed one-time password failed: %v", err)
+	}
+	if loggedIn.ID != user.ID {
+		t.Fatalf("VerifyPasswordCredentials returned the wrong user: got %d, want %d", loggedIn.ID, user.ID)
+	}
+	if loggedIn.AccountState != "password_reset_required" {
+		t.Fatalf("AccountState = %q, want password_reset_required (still forced to change it)", loggedIn.AccountState)
+	}
+
+	// Step 2: forced password change, using the OTP as the "current" password
+	// ChangePassword itself verifies.
+	const newPassword = "Recovered-Op3rator-Passw0rd!-2026"
+	if err := c.ChangePassword(ctx, user.ID, summary.oneTimePassword, newPassword, ""); err != nil {
+		t.Fatalf("ChangePassword with the one-time password as current failed: %v", err)
+	}
+
+	// Step 3: log in with the NEW password.
+	relogged, err := c.VerifyPasswordCredentials(ctx, user.Username, newPassword)
+	if err != nil {
+		t.Fatalf("login with the new password failed: %v", err)
+	}
+	if relogged.AccountState == "password_reset_required" {
+		t.Errorf("AccountState still password_reset_required after a real password change")
+	}
+
+	// The superseded OTP must no longer work.
+	if _, err := c.VerifyPasswordCredentials(ctx, user.Username, summary.oneTimePassword); err == nil {
+		t.Errorf("the one-time password still logs in after it was superseded by a real password change")
+	}
 }
 
 func TestPerformRecoverAdmin_WrongKeyRejected(t *testing.T) {

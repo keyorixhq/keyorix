@@ -204,7 +204,7 @@ type OneTimePasswordResult struct {
 // change it on first login. The password is never emailed and never persisted in clear
 // (only its bcrypt hash). No base URL is required — there is no link.
 func (c *KeyorixCore) CreateUserWithOneTimePassword(ctx context.Context, req *CreateUserRequest, createdBy uint) (*models.User, *OneTimePasswordResult, error) {
-	otp, err := generateInitialCredential()
+	otp, err := GenerateInitialCredential()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -305,7 +305,7 @@ func randomUnusablePassword() (string, error) {
 	// But it still flows through CreateUser's password-policy check, so it must satisfy the
 	// policy (a raw base64 draw can randomly lack a required character class). Reuse the
 	// policy-compliant one-time-password generator (all four classes guaranteed).
-	return generateInitialCredential()
+	return GenerateInitialCredential()
 }
 
 // One-time-password character classes (ADR-028 Part E). Visually ambiguous characters
@@ -319,12 +319,12 @@ const (
 	otpLength  = 20
 )
 
-// generateInitialCredential returns a high-entropy credential that satisfies the default
+// GenerateInitialCredential returns a high-entropy credential that satisfies the default
 // ADR-025 password policy (length + all four character classes). It seeds one character
 // from each required class so the policy always holds regardless of the random draw,
 // fills the rest from the union, then shuffles so the seeded characters aren't in fixed
 // positions. All randomness is from crypto/rand.
-func generateInitialCredential() (string, error) {
+func GenerateInitialCredential() (string, error) {
 	classes := []string{otpLower, otpUpper, otpDigits, otpSpecial}
 	all := otpLower + otpUpper + otpDigits + otpSpecial
 

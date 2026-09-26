@@ -4,13 +4,6 @@ What to do when every admin account is locked out, password-lost, or MFA-lost, a
 still have shell access to the host running the server. Every command below was run for
 real against a fresh SQLite install while writing this page.
 
-> **Known gap (tracked, not yet fixed):** the last step below — logging back in — does
-> not currently work. `recover-admin` clears the account's password with nothing to
-> replace it, and the login endpoint has no path for an account with no password set.
-> This page documents the parts that DO work today and stops at the point where recovery
-> currently dead-ends, rather than claim a working flow that isn't there yet. See the UX
-> track's report (`reports/UX.md`, "J5" section) for the root cause and proposed fix.
-
 ## 0. Before you're locked out: generate a recovery key
 
 Do this once, ahead of time, and store the printed key somewhere offline (a password
@@ -63,27 +56,48 @@ Expected:
 
 ```
 Recovered admin account: admin (user id 1).
-Reset: account state, password (reset required on next login), MFA enrollment,
-  0 WebAuthn credential(s), login-lockout state, 1 active session(s).
+Reset: account state, password, MFA enrollment,
+  0 WebAuthn credential(s), login-lockout state, 0 active session(s).
+
+One-time password (shown once — copy it now, it cannot be retrieved again):
+  _M2vVfCk4K*6%x4v7uKt
+Log in as "admin" with this password; you will be required to set a new one immediately.
 ```
 
-This reactivates the account if it was deactivated, clears its password (forcing a reset),
-clears MFA/WebAuthn enrollment (forcing re-enrollment), clears any lockout, and revokes
-every session belonging to that account. It touches nothing else — no other user, role,
-project, or secret. Every use is written to the audit trail and notifies every current
-admin, whether or not the server happens to be running when you do this.
+This reactivates the account if it was deactivated, sets a one-time password (printed
+above, shown exactly once — copy it now), clears MFA/WebAuthn enrollment (forcing
+re-enrollment), clears any lockout, and revokes every session belonging to that account.
+It touches nothing else — no other user, role, project, or secret. Every use is written
+to the audit trail and notifies every current admin, whether or not the server happens
+to be running when you do this.
 
-## 3. Restart the server, then — this is the gap
+## 3. Restart the server, then log in with the one-time password
 
 ```bash
 keyorix-server --config ./keyorix.yaml
-keyorix login --server http://localhost:8080 --username admin --password 'anything'
+keyorix login --server http://localhost:8080 --username admin --password '_M2vVfCk4K*6%x4v7uKt'
 ```
 
-Today this always returns `401 Unauthorized`, for any password, because step 2 cleared
-the password hash and nothing sets a new one. There is currently no host-only way to
-finish the recovery — the web login page's "Forgot password?" is a different, email-based
-flow, not configured by default, and not part of this mechanism. If you hit this, you'll
-need a build with the fix from the tracked issue above, or to set the account's password
-directly via a database-level workaround (not covered here, since that isn't a documented
-or supported path).
+Expected: `Logged in to http://localhost:8080 as admin.` The account is still
+`password_reset_required`, so every OTHER endpoint returns `403` until you actually
+change it — confirmed live: `keyorix secret list` right after this login returns
+`Error: failed to list secrets: HTTP 403`.
+
+## 4. Set a real password
+
+The thin CLI does not yet wrap `POST /api/v1/auth/change-password` (self-service password
+change) as its own command — call it directly with the session token `login` just stored
+(`~/.keyorix`/the OS credential store, depending on platform):
+
+```bash
+export TOKEN='<the token keyorix login just stored>'
+curl -s -X POST http://localhost:8080/api/v1/auth/change-password \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"current_password": "_M2vVfCk4K*6%x4v7uKt", "new_password": "a-real-strong-password-you-choose"}'
+```
+
+Expected: `{"data":null,"message":"Password changed","success":true}`. From this point on,
+`keyorix secret list` (and everything else) works normally — confirmed live: logging in
+again with the OLD one-time password now returns `401` (it was superseded), and logging in
+with the new password succeeds with full access restored, no longer confined to the
+password-change allowlist.
