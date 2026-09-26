@@ -137,9 +137,7 @@ func createNodeIdentityAndAdmin(t *testing.T, c *core.KeyorixCore) (mi *models.M
 // 2026-08-25) requires /api/v1/system/* to now refuse, since the OR-arm that
 // used to let a bare node credential reach it regardless of permissions is
 // removed. Used only where a test's whole point is pinning that refusal (the
-// system-write-ceiling table, node_credential_route_classification_test.go);
-// everything else that just needs a working credential to drive RemoteStorage
-// against a real router should use createNodeToken instead.
+// system-write-ceiling table, node_credential_route_classification_test.go).
 func createBareNodeToken(t *testing.T, c *core.KeyorixCore) string {
 	t.Helper()
 	mi, admin, projectID := createNodeIdentityAndAdmin(t, c)
