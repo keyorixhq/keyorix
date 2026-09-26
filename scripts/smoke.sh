@@ -128,5 +128,30 @@ echo "$EXPORT_OUT" | grep -qF "$SECRET_VALUE" || fail \
     "secret export did not include the value that was stored -- got:
 $EXPORT_OUT"
 
+# Sharing (QUICK_START.md "Sharing" section): holding the global admin role from
+# bootstrap is NOT enough to share a secret -- both the owner and the recipient need
+# an explicit project role first, or share create 403s with no explanation. This was
+# a real, newcomer-blocking bug found live (see docs/operator/demo.md); keep this
+# step in exact correspondence with QUICK_START.md's Sharing section, like every
+# other step in this file.
+echo "==> keyorix user create (share recipient)"
+"$CLI_BIN" user create --username alice --email alice@smoke-test.local --one-time-password \
+    || fail "user create exited non-zero"
+
+echo "==> keyorix rbac assign-role (owner + recipient, both required before sharing)"
+"$CLI_BIN" rbac assign-role --user admin@smoke-test.local --role project_admin --project default \
+    || fail "rbac assign-role (owner) exited non-zero"
+"$CLI_BIN" rbac assign-role --user alice@smoke-test.local --role project_viewer --project default \
+    || fail "rbac assign-role (recipient) exited non-zero"
+
+echo "==> keyorix share create + share list"
+"$CLI_BIN" share create --secret-id 1 --recipient-id 2 --permission read \
+    || fail "share create exited non-zero -- did the rbac assign-role steps above stop matching QUICK_START.md's Sharing section?"
+SHARE_LIST_OUT="$("$CLI_BIN" share list --secret-id 1)" || fail "share list exited non-zero"
+# share list identifies the recipient by ID (2, alice), not by name.
+echo "$SHARE_LIST_OUT" | grep -qE '^1[[:space:]]+1[[:space:]]+1[[:space:]]+2[[:space:]]' || fail \
+    "share list did not show alice (recipient id 2) as the share recipient -- got:
+$SHARE_LIST_OUT"
+
 echo ""
 echo "SMOKE TEST PASSED"
