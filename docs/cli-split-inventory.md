@@ -1854,3 +1854,43 @@ to keep each under review size. Started only after the Phase 5 switch PR (§1) m
     `go test ./...` green for root, `cli/`, and `migrate/`; `check-closures.sh`,
     `check-review-coverage.sh`, `check-adr-conformance.sh` all green.
 
+- **14b-2 — RemoteStorage itself, rebased onto the merged 14b-1.** Cherry-picked 14b-2's 3
+  original commits onto the post-14b-1-merge `origin/main`. Two more modify/delete conflicts,
+  same shape as 14b-1's: `internal/storage/store/remote_{rbac,secrets,sharing}.go` +
+  `remote_wire_route_coverage_test.go` had been touched by 3 unrelated, later-merged snake_case
+  wire-format PRs (#2098/#2149/#2156) — resolved as deletions, since this commit removes the
+  whole `remote_*.go` tree regardless; `internal/core/password_remote_test.go` similarly touched
+  by an unrelated bcrypt-cost test-speed PR — same resolution.
+  - `TestRemoteStorageAllowlistEntriesStillExistAndStillReference` (the guard's own
+    staleness-in-both-directions check) failed for real after the rebase: both allowlist entries
+    (`internal/storage/factory.go`, `scripts/analysis/remote_storage_stub_rewrite.go`) were
+    already gone by the time this rebased onto 14b-1 -- `remoteStorageImporterAllowlist` set to
+    `map[string]string{}` (empty), matching the backlog's own instruction ("assert zero").
+    `TestNoNewRemoteStorageImportersOutsideAllowlist` confirmed clean against the empty
+    allowlist (zero remaining package-qualified `store.RemoteStorage`/`store.NewRemoteStorage`
+    references anywhere in the repo).
+  - `golangci-lint run ./...` (explicit, not skipped, per the lesson from 14a/14b-1) found 2
+    more real `unused` findings the rebase's own build/vet/test pass missed: `apiAuditLogsPath`
+    (a route constant only the now-deleted `remote_audit.go` ever referenced) and
+    `queryBuilder.addPage` (a method no live caller reached). Investigating `addPage` found the
+    whole `queryBuilder` type (`query.go`) had no remaining NON-test caller at all -- its doc
+    comment named exactly the 3 files this PR deletes (`remote_secrets.go`, `remote_users.go`,
+    `remote_audit.go`) as its only real consumers; every other method (`add`/`addUint`/
+    `addString`/`addBool`/`addTime`/`addTags`/`String`) was only "used" by its own dedicated
+    unit tests, not flagged individually by `unused` only because a test reference is enough to
+    suppress that linter. Deleted `query.go` and `query_escape_test.go` wholesale, and extracted
+    the `TestQueryBuilder_*` blocks out of `store_s4_test.go`/`store_max_test.go` (mixed in with
+    unrelated coverage-sweep tests in both files) rather than deleting either file.
+  - No `scripts/ci-test-legs.sh` change needed: checked (per the coordinator's own heads-up
+    about `internal/storage/remote*` after 14b-1's stale-pin CI failure) and confirmed the only
+    pin at this path is the whole-package `internal/storage/store` (still exists, unaffected --
+    deleting files inside a package that itself survives doesn't orphan a package-level pin).
+  - `go build ./...` and `golangci-lint run ./...` clean for root; `GOWORK=off golangci-lint run
+    ./...` clean for `cli/`; full `go test ./...` green for root (3483 tests, 65 packages) and
+    `cli/` (462 tests, 11 packages); `check-closures.sh` (54 verified, 1 known intermittent
+    flake on a pre-existing, already-filed CORE-owned `system_viewer` role-lookup-ordering bug
+    -- reran clean, not a regression from this PR), `check-review-coverage.sh` (80/80 packages,
+    down from 81 -- `internal/storage/store` package itself survives, just fewer distinct rows
+    since some remote_* files had their own ledger entries), `check-adr-conformance.sh` (10
+    verified) all green.
+

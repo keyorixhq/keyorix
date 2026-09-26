@@ -2158,17 +2158,6 @@ func TestListProjectSecretsForDrift_Empty(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// query.go — addUint non-nil path (currently 50%)
-// ---------------------------------------------------------------------------
-
-func TestQueryBuilder_AddUintNonNil(t *testing.T) {
-	q := newQueryBuilder()
-	v := uint(42)
-	q.addUint("id", &v)
-	assert.Equal(t, "?id=42", q.String())
-}
-
-// ---------------------------------------------------------------------------
 // classification_count — error path (countByClassification with bad table)
 // ---------------------------------------------------------------------------
 
