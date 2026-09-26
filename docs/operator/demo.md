@@ -42,9 +42,15 @@ export KEYORIX_BOOTSTRAP_TOKEN='choose-a-bootstrap-token'
 ./bin/keyorix system init --server http://localhost:8080 \
   --admin-username admin \
   --admin-email admin@keyorix.local \
-  --admin-password 'Correct-Horse-Battery9' \
   --bootstrap-token "$KEYORIX_BOOTSTRAP_TOKEN"
 ```
+
+Omitting `--admin-password` makes the CLI prompt for it interactively
+(hidden input) instead of putting it on the command line, where it would be
+visible to other local users via `ps`/`/proc` and saved in shell history.
+The rest of this page assumes you entered `Correct-Horse-Battery9` at the
+prompt — use that value (or substitute your own, and adjust the later
+steps) so the commands below still match.
 
 Expected: `Keyorix initialised successfully`, plus a seeded `default` project
 with `development`/`staging`/`production` environments (IDs 1/2/3).
@@ -61,12 +67,22 @@ spelled out here rather than left for you to discover the hard way:
   three; something like `admin-password1` will not, because it contains
   `admin`.
 
+This page uses `http://localhost:8080` throughout because it's genuinely
+local — the server and client are the same machine. Talking to a real,
+non-local server should always use `https://`; the CLI does not add TLS for
+you.
+
 ## 3. Log in and store your first secret (1 min)
 
 ```bash
-./bin/keyorix login --server http://localhost:8080 \
-  --username admin --password 'Correct-Horse-Battery9'
+./bin/keyorix login --server http://localhost:8080 --username admin
+```
 
+Enter `Correct-Horse-Battery9` (or whatever you chose in step 2) at the
+`Password:` prompt — same reasoning as above: omitting `--password` keeps it
+out of shell history and process listings.
+
+```bash
 ./bin/keyorix secret create --name my-first-secret --value "hello"
 ./bin/keyorix secret get --id 1 --show-value
 ```
@@ -182,9 +198,11 @@ there:
 
 ```bash
 KEYORIX_CONFIG_PATH=./keyorix.yaml ./keyorix-server &
-./keyorix login --server http://localhost:8080 --username admin --password 'Correct-Horse-Battery9'
+./keyorix login --server http://localhost:8080 --username admin
 ./keyorix secret get --id 1 --show-value
 ```
+
+(Enter your password at the prompt, same as step 3.)
 
 Expected: `Decrypted Value` / `hello` — the same value from step 3.
 
