@@ -236,7 +236,7 @@ func TestEncryptionService_EncryptChunked_PerChunkEncryptFailure_Error(t *testin
 // the lock file created inside it.
 func TestAcquireExclusiveKeyLock_OpenFileFailure_Error(t *testing.T) {
 	badDir := filepath.Join(t.TempDir(), "does", "not", "exist")
-	_, err := acquireExclusiveKeyLock(badDir)
+	_, err := acquireExclusiveKeyLock(badDir, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "open DEK lock file")
 }
@@ -245,7 +245,7 @@ func TestAcquireExclusiveKeyLock_OpenFileFailure_Error(t *testing.T) {
 // acquireSharedKeyLock (exclusive_lock.go:67).
 func TestAcquireSharedKeyLock_OpenFileFailure_Error(t *testing.T) {
 	badDir := filepath.Join(t.TempDir(), "does", "not", "exist")
-	_, err := acquireSharedKeyLock(badDir)
+	_, err := acquireSharedKeyLock(badDir, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "open DEK lock file")
 }
