@@ -210,9 +210,16 @@ func assertInvocationsResolve(t *testing.T, root *cobra.Command, invocations [][
 }
 
 // TestQuickStartCommandsExist is the guard described in this file's header.
+//
+// Deliberately NOT t.Parallel(): this and TestDeploymentDocsReferenceRealCommands
+// both call lookupFlag -> cmd.InheritedFlags() against the same package-level
+// rootCmd tree. cobra/pflag lazily build and cache each command's inherited-flag
+// set on first access (an unsynchronized write into the *cobra.Command's own
+// fields) -- two goroutines racing that lazy init on the same tree is a genuine
+// data race (caught by CI's `cli` job, which runs `go test -race`), not a false
+// positive to silence. These two tests are fast, doc-parsing checks with nothing
+// to gain from running concurrently with each other.
 func TestQuickStartCommandsExist(t *testing.T) {
-	t.Parallel()
-
 	invocations := quickStartInvocations(t)
 	// A doc that stopped containing commands, or an extractor that stopped
 	// matching them, would make this test silently vacuous. Both are failures.
@@ -227,9 +234,8 @@ func TestQuickStartCommandsExist(t *testing.T) {
 // TestDeploymentDocsReferenceRealCommands is decision #1's guard (Phase 5 switch,
 // ADR-108): no instruction in server/entrypoint.sh or the Helm NOTES.txt may point
 // at a `keyorix ...` command the shipped binary doesn't have.
+// Deliberately NOT t.Parallel() -- see TestQuickStartCommandsExist's comment.
 func TestDeploymentDocsReferenceRealCommands(t *testing.T) {
-	t.Parallel()
-
 	files := []string{"server/entrypoint.sh", "deploy/helm/keyorix/templates/NOTES.txt"}
 	invocations := deploymentDocInvocations(t, files)
 	if len(invocations) == 0 {

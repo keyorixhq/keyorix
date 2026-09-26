@@ -183,9 +183,16 @@ func assertAdminInvocationsResolve(t *testing.T, root *cobra.Command, invocation
 
 // TestQuickStartAdminCommandsExist checks every `./bin/keyorix-server admin ...`
 // invocation QUICK_START.md documents against the real cobra tree.
+//
+// Deliberately NOT t.Parallel(): this and TestDeploymentDocsReferenceRealAdminCommands
+// both resolve flags against the same package-level rootCmd tree via cobra's
+// InheritedFlags(), which lazily builds and caches each command's inherited-flag
+// set on first access (an unsynchronized write) -- two goroutines racing that
+// lazy init on the same tree is a genuine data race, not a false positive
+// (confirmed by the identical issue in cli/cmd/quickstart_commands_test.go,
+// caught by CI's -race jobs). These are fast, doc-parsing checks with nothing
+// to gain from running concurrently with each other.
 func TestQuickStartAdminCommandsExist(t *testing.T) {
-	t.Parallel()
-
 	invocations := quickStartAdminInvocations(t)
 	if len(invocations) == 0 {
 		t.Fatalf("extracted zero ./bin/keyorix-server admin invocations from QUICK_START.md; expected at " +
@@ -210,9 +217,8 @@ func TestQuickStartAdminCommandsExist(t *testing.T) {
 // does cost something, stated plainly: it can no longer catch the extractor itself
 // silently breaking, only a real future `keyorix-server admin ...` mention that's
 // wrong. The moment either file legitimately grows one, this starts checking it.
+// Deliberately NOT t.Parallel() -- see TestQuickStartAdminCommandsExist's comment.
 func TestDeploymentDocsReferenceRealAdminCommands(t *testing.T) {
-	t.Parallel()
-
 	files := []string{"server/entrypoint.sh", "deploy/helm/keyorix/templates/NOTES.txt"}
 	invocations := deploymentDocAdminInvocations(t, files)
 	if len(invocations) == 0 {
