@@ -36,6 +36,9 @@ jobs:
         with:
           scan-type: fs
           scan-ref: .
+          # .github/testdata holds DELIBERATELY insecure positive-control fixtures for the
+          # helm-chart-policy job (ci.yml); scanning them here would fail on purpose-built findings.
+          skip-dirs: .github/testdata
           scanners: misconfig
           format: sarif
           output: trivy-results.sarif
@@ -72,6 +75,9 @@ jobs:
         with:
           scan-type: fs
           scan-ref: .
+          # .github/testdata holds DELIBERATELY insecure positive-control fixtures for the
+          # helm-chart-policy job (ci.yml); scanning them here would fail on purpose-built findings.
+          skip-dirs: .github/testdata
           scanners: misconfig
           severity: CRITICAL,HIGH,MEDIUM
           exit-code: '1'

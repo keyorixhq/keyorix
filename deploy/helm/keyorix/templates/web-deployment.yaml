@@ -26,6 +26,26 @@ spec:
         app.kubernetes.io/component: web
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/web-config.yaml") . | sha256sum }}
+        # kube-score (helm-chart-policy CI job), each with an already-settled reason
+        # elsewhere in this file/chart, not a fresh judgment call made here:
+        #   - container-security-context-readonlyrootfilesystem: same nginx
+        #     cache/pid/temp-file need as the checkov.io/skip1 annotation above.
+        #   - container-security-context-user-group-id: fixed uid 101 to match the
+        #     nginx image's own user (see the securityContext comment below) -- same
+        #     already-reviewed tradeoff as this repo's checkov CKV_K8S_40 exclusion.
+        #   - pod-probes-identical: /health (web-config.yaml) is a static "return
+        #     200 healthy" location with no dependency check -- readiness and
+        #     liveness are tautologically identical here, so differentiating them
+        #     would add a distinct probe with zero behavioral difference.
+        #   - pod-networkpolicy: this chart's own networkpolicy.yaml already
+        #     documents WHY web's ingress is deliberately left unrestricted (the
+        #     intended public entry point, often via an Ingress controller whose
+        #     pod labels vary by installation).
+        kube-score/ignore: >-
+          container-security-context-readonlyrootfilesystem,
+          container-security-context-user-group-id,
+          pod-probes-identical,
+          pod-networkpolicy
     spec:
       automountServiceAccountToken: false
       {{- with .Values.imagePullSecrets }}

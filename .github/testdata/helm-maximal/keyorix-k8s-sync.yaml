@@ -1,0 +1,65 @@
+# "Maximal" values for the keyorix-k8s-sync chart -- see keyorix.yaml's own
+# header comment for why this exists. Exercises multiple mappings, multiple
+# target namespaces (multiple RoleBindings), cleanup (the list/delete RBAC
+# verbs), the metrics bearer token, and a networkPolicy extraRules entry.
+keyorix:
+  url: https://keyorix.example.com
+  projectID: 42
+  interval: 10m
+  tokenSecret:
+    name: keyorix-token
+    key: token
+
+healthPort: 8080
+metricsBearerToken: ci-maximal-metrics-token
+
+networkPolicy:
+  enabled: true
+  egress:
+    enabled: true
+    extraRules:
+      - ports:
+          - protocol: TCP
+            port: 8443
+
+cleanup: true
+
+mappings:
+  - ref: production/db-password
+    namespace: app
+    name: db-creds
+    key: DB_PASSWORD
+  - ref: production/api-key
+    namespace: app
+    name: api-creds
+    key: API_KEY
+  - ref: staging/db-password
+    namespace: staging
+    name: db-creds
+    key: DB_PASSWORD
+
+targetNamespaces:
+  - app
+  - staging
+
+image:
+  digest: "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+
+nodeSelector:
+  kubernetes.io/os: linux
+tolerations:
+  - key: dedicated
+    operator: Equal
+    value: keyorix
+    effect: NoSchedule
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: keyorix-k8s-sync
+          topologyKey: kubernetes.io/hostname
+podAnnotations:
+  example.com/team: platform
