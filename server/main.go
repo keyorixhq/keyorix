@@ -563,13 +563,12 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		}
 	}
 
-	// Wire every ADR-109 integration moved behind internal/core/ports so far
-	// (docs/adr-109-core-depends-on-interfaces.md) — as of step 4: external-notary
+	// Wire every ADR-109 integration that has its own wireXxx helper
+	// (docs/adr-109-core-depends-on-interfaces.md, steps 1-4): external-notary
 	// checkpoint anchoring (ADR-029), human SSO (OIDC + SAML), backend rotation,
-	// dynamic secrets, and Keyorix Connect. This is the single point that
-	// constructs the concrete implementations from config and registers them on
-	// coreService — the one remaining ADR-109 step (encryption/KMS) only has one
-	// wiring call site to extend.
+	// dynamic secrets, and Keyorix Connect. Encryption (step 5) is wired
+	// separately, above this call — see DefaultIntegrations' own doc comment
+	// for why its wiring call site was not moved here too.
 	if err := DefaultIntegrations(cfg, coreService); err != nil {
 		return nil, nil, err
 	}
@@ -2198,14 +2197,22 @@ func noDiscoveryCrossOriginRedirect(req *http.Request, via []*http.Request) erro
 	return nil
 }
 
-// DefaultIntegrations wires every ADR-109 integration currently moved behind
-// internal/core/ports (docs/adr-109-core-depends-on-interfaces.md) — as of step
-// 4: TimestampNotary + its receipt verifier, SAMLServiceProvider (folded into
-// human SSO wiring alongside OIDC), RotationExecutorResolver,
-// DynamicBackendFactory, and ConnectorResolver. It is the single point that
-// constructs the concrete implementations from config and registers them on
-// coreService, so the one remaining ADR-109 step (encryption/KMS) only has
-// one wiring call site to extend.
+// DefaultIntegrations wires every ADR-109 integration that has its own
+// wireXxx helper (docs/adr-109-core-depends-on-interfaces.md): TimestampNotary
+// + its receipt verifier, SAMLServiceProvider (folded into human SSO wiring
+// alongside OIDC), RotationExecutorResolver, DynamicBackendFactory, and
+// ConnectorResolver — steps 1 through 4. Encryption (step 5,
+// EncryptionProvider) is ALSO fully behind internal/core/ports as of step 5 —
+// coreIntegrationDeps is empty, machine-checked by
+// TestCoreIntegrationDepsAllowlistIsEmpty — but its own wiring
+// (SetSecretValueEncryptor/SetAuthEncryptor, initializeCoreService, above
+// this function's own call site) was deliberately NOT moved here: it feeds
+// audit-checkpoint and evidence-pack signing keys that are derived and wired
+// immediately after it and before DefaultIntegrations is ever called, so
+// folding it in would either reorder that dependency or require threading
+// the derived keys back out of DefaultIntegrations for no decoupling benefit
+// — ADR-109's target is internal/core's import graph, not where each
+// integration's own bootstrapping code physically lives.
 //
 // A nil implementation means the feature is unavailable; wiring never fails
 // open (ADR-109 decision #2). A malformed config for an explicitly ENABLED

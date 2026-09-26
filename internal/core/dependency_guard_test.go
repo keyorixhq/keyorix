@@ -14,15 +14,23 @@ import (
 // implementation from server/main.go deletes its own entry here.
 //
 // notary and saml were removed at step 1, rotation at step 2, dynamic at step
-// 3, connect at step 4: internal/core now depends only on ports.TimestampNotary/
-// ports.VerifyReceiptFunc, ports.SAMLServiceProvider,
+// 3, connect at step 4, encryption at step 5: internal/core now depends only on
+// ports.TimestampNotary/ports.VerifyReceiptFunc, ports.SAMLServiceProvider,
 // ports.RotationExecutorResolver/ports.RotationPartialError,
-// ports.DynamicBackendFactory/ports.DynamicBackendEngine, and
-// ports.ConnectorResolver/ports.RefHasDotSegment/ports.RefWithinPrefix, wired
-// from server/main.go's DefaultIntegrations. All five prefixes stay in the scan
-// below (see present's HasPrefix checks) so a regression back to any of them
-// is still caught by the "not on the allowlist" branch, not silently dropped
-// from the scan.
+// ports.DynamicBackendFactory/ports.DynamicBackendEngine,
+// ports.ConnectorResolver/ports.RefHasDotSegment/ports.RefWithinPrefix, and
+// ports.EncryptionProvider/ports.SecretAAD/ports.MFASecretAAD/
+// ports.DynamicSecretConfigAAD/ports.DynamicSecretLeaseAAD, wired from
+// server/main.go's DefaultIntegrations (encryption's own wiring call site,
+// SetSecretValueEncryptor/SetAuthEncryptor, predates DefaultIntegrations and
+// was not moved — see docs/adr-109-core-depends-on-interfaces.md's step 5
+// section for why). coreIntegrationDeps is EMPTY as of step 5 — every ADR-109
+// integration is now behind ports — machine-checked by
+// TestCoreIntegrationDepsAllowlistIsEmpty below, not just implied by the map
+// literal having no entries. All six prefixes stay in the scan below (see
+// present's HasPrefix checks) so a regression back to any of them is still
+// caught by the "not on the allowlist" branch, not silently dropped from the
+// scan.
 //
 // The comparison below is an EXACT match, not a ceiling: it also fails if an
 // entry is deleted from this list without the corresponding import actually
@@ -33,9 +41,25 @@ import (
 // internal/connect/connecttypes is deliberately NOT on this list — it is a
 // types-only sibling package with no SDK dependency (see the identical
 // carve-out in internal/i18n/deps_guard_test.go), and ADR-109 has no reason
-// to ever remove it from internal/core.
-var coreIntegrationDeps = map[string]bool{
-	"github.com/keyorixhq/keyorix/internal/encryption": true,
+// to ever remove it from internal/core. It still appears in go list -deps
+// after step 4/5 (reached via internal/encryption -> internal/config, not via
+// internal/connect itself, which no longer appears at all) — the exclusion
+// is keyed on the exact connecttypes import path, not on whether connect is
+// still present, so it stays correct either way.
+var coreIntegrationDeps = map[string]bool{}
+
+// TestCoreIntegrationDepsAllowlistIsEmpty asserts the ADR-109 "Definition of
+// done" claim directly (docs/adr-109-core-depends-on-interfaces.md: "go list
+// -deps ./internal/core (production) contains no cloud SDK and no integration
+// package") rather than leaving it as something a reader has to infer from
+// coreIntegrationDeps having no entries. A future edit that re-adds an entry
+// to coreIntegrationDeps (to make room for a regression, or a new integration
+// ADR-109 didn't anticipate) fails this test immediately, forcing that choice
+// to be deliberate and visible in review rather than a silent widening.
+func TestCoreIntegrationDepsAllowlistIsEmpty(t *testing.T) {
+	if len(coreIntegrationDeps) != 0 {
+		t.Errorf("coreIntegrationDeps should be empty as of ADR-109 step 5 (every integration behind ports) — got %d entries: %v", len(coreIntegrationDeps), coreIntegrationDeps)
+	}
 }
 
 // TestCoreIntegrationDepsMatchADR109Allowlist fails if internal/core's

@@ -24,7 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -41,7 +41,7 @@ func (c *KeyorixCore) encryptVersionValue(secret *models.SecretNode, value []byt
 	if c.secretValueEncryptor == nil {
 		return value, nil, nil
 	}
-	aad := encryption.SecretAAD(secret.ID, secret.ProjectID, versionNumber)
+	aad := ports.SecretAAD(secret.ID, secret.ProjectID, versionNumber)
 	ciphertext, meta, err := c.secretValueEncryptor.EncryptSecretWithAAD(value, aad)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to encrypt secret value: %w", err)
@@ -80,7 +80,7 @@ func (c *KeyorixCore) decryptVersionValue(secret *models.SecretNode, version *mo
 	if c.secretValueEncryptor == nil {
 		return nil, fmt.Errorf("secret version %d is encrypted at rest but no encryption key is available to decrypt it — refusing to return raw ciphertext (check storage.encryption / KEYORIX_MASTER_PASSWORD)", version.ID)
 	}
-	aad := encryption.SecretAAD(secret.ID, secret.ProjectID, version.VersionNumber)
+	aad := ports.SecretAAD(secret.ID, secret.ProjectID, version.VersionNumber)
 	plaintext, err := c.secretValueEncryptor.DecryptSecretWithAAD(version.EncryptedValue, aad)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt secret value: %w", err)
