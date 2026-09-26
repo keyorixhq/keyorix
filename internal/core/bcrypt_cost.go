@@ -29,6 +29,17 @@ func init() {
 	dummyBcryptHash.Store(&hash)
 }
 
+// PasswordHashCost returns the live bcrypt work factor every password hash in
+// this codebase is generated with, so a caller outside this package hashing a
+// credential of its own (e.g. server/admin/recover_admin_logic.go's one-time
+// password, which deliberately bypasses internal/core's storage-mutating
+// methods but still needs the same hash strength) stays in lockstep with it —
+// including under SetBcryptCostForTesting, rather than hardcoding a separate
+// value that could silently drift from this one.
+func PasswordHashCost() int {
+	return int(bcryptCost.Load())
+}
+
 // SetBcryptCostForTesting sets the bcrypt work factor and regenerates the
 // timing-equalization dummy hash. Call this in TestMain before any test runs;
 // do not call in production code.

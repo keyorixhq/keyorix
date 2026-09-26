@@ -103,9 +103,17 @@ identical regardless of *why* the account is inaccessible):
 
 **What it resets, on the target account only:**
 - reactivates the account if deactivated;
-- clears the password hash and sets `require_password_reset = true`, reusing
-  the existing forced-reset flag (`internal/core/account_state.go:230`) —
-  next login requires setting a new password before anything else;
+- sets a server-generated one-time password (`core.GenerateInitialCredential`,
+  the same generator `CreateUserWithOneTimePassword` uses for new-user
+  onboarding, ADR-028 Part E), printed once for the operator to relay, and
+  sets `require_password_reset = true`, reusing the existing forced-reset flag
+  (`internal/core/account_state.go:230`) — next login uses the printed
+  password, and every OTHER endpoint stays refused until a real password is
+  chosen. (An earlier revision of this mechanism cleared the password hash to
+  empty instead of setting a usable one — a real, live bug: bcrypt comparison
+  against an empty hash fails unconditionally for every password, so the
+  account could never actually log back in. Fixed once found; see the fix's
+  own commit for the trace.)
 - clears MFA enrollment (secret + recovery codes) and forces re-enrollment on
   next login, rather than leaving old MFA state that the person who *lost*
   the device can no longer satisfy anyway;
