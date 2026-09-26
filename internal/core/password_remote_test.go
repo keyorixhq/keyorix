@@ -91,7 +91,7 @@ func TestChangePassword_LocalStoragePersistsHashAndClearsRestriction(t *testing.
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.PersonalAccessToken{}, &models.PasswordHistory{}))
-	oldHash, err := bcrypt.GenerateFromPassword([]byte("oldpassword"), bcrypt.DefaultCost)
+	oldHash, err := bcrypt.GenerateFromPassword([]byte("oldpassword"), int(bcryptCost.Load()))
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.User{
 		ID: 1, Username: "carol", PasswordHash: string(oldHash), AccountState: AccountPasswordResetRequired,

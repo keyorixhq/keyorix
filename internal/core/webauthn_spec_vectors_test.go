@@ -130,7 +130,7 @@ func newWebAuthnSpecTestCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.AuditEvent{},
 		&models.MFAChallenge{}, &models.WebAuthnCredential{}, &models.WebAuthnSession{}, &models.Notification{},
 		&models.MFAStepupToken{}, &models.MFAStepUpGrant{}))
-	hash, err := bcrypt.GenerateFromPassword([]byte(webauthnTestPassword), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(webauthnTestPassword), int(bcryptCost.Load()))
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", UsernameFolded: "alice", Email: "a@b.com", EmailFolded: "a@b.com",
 		PasswordHash: string(hash), IsActive: true, AccountState: "active"}).Error)
