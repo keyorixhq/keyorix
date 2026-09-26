@@ -1222,10 +1222,17 @@ jobs:
   # every single boot) in about 15 seconds instead of shipping it invisibly.
   # Not a required check (the coordinator decides that separately) and
   # path-filtered via boot_smoke_relevant so it doesn't run on every
-  # unrelated PR.
+  # unrelated PR. Restricted to pull_request (+ workflow_dispatch for a
+  # manual run) -- coordinator review of this PR's own first CI run: an
+  # earlier version of boot_smoke_relevant defaulted to true for every
+  # non-pull_request event, which would have run this (~5-8 min of runner
+  # time) on every merge_group event too, for a job that isn't even a
+  # required check -- pure runner-capacity cost at this repo's job-count
+  # limit, not caught by the boot_smoke_relevant path filter itself (that
+  # output is real either way; this is a separate, event-level gate).
   docker-boot-smoke:
     needs: [changes]
-    if: needs.changes.outputs.boot_smoke_relevant == 'true'
+    if: (github.event_name == 'pull_request' && needs.changes.outputs.boot_smoke_relevant == 'true') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1294,9 +1301,11 @@ jobs:
   # reach Ready -- the check that would have caught the second, independent
   # defect item 1 fixed (dek.lock landing outside the one writable PVC mount
   # for the relative dek_path/salt_path convention under readOnlyRootFilesystem).
+  # Restricted to pull_request (+ workflow_dispatch) -- see docker-boot-smoke's
+  # identical comment just above for why.
   helm-boot-smoke:
     needs: [changes]
-    if: needs.changes.outputs.boot_smoke_relevant == 'true'
+    if: (github.event_name == 'pull_request' && needs.changes.outputs.boot_smoke_relevant == 'true') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
