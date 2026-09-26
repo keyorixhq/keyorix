@@ -7,11 +7,15 @@ type: application
 # (helm package --version/--app-version), so the actually-published OCI
 # chart is always correct regardless of what's committed here — but this
 # committed value still governs a local `helm install ./deploy/helm/keyorix`
-# without an explicit --set override, and had drifted 3 releases behind
-# (last bumped for v0.85.0; docker-compose.yml already tracks v0.88.0).
-version: 0.88.0
+# without an explicit --set override, and had drifted 3 releases behind twice
+# now (previously last bumped for v0.85.0 while docker-compose.yml tracked
+# v0.88.0; this bump closes the same gap again — 0.88.0 vs. the actual latest
+# published tag, 0.89.0, confirmed live against ghcr.io/keyorixhq/keyorix-server,
+# not assumed). See this chart's README "Versioning" section for the policy
+# meant to stop this recurring a third time.
+version: 0.89.0
 # The Keyorix app version this chart deploys by default (the image tag).
-appVersion: "0.88.0"
+appVersion: "0.89.0"
 home: https://github.com/keyorixhq/keyorix
 sources:
   - https://github.com/keyorixhq/keyorix

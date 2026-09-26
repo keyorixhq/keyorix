@@ -21,7 +21,7 @@ func TestUpdateOwnProfile(t *testing.T) {
 	t.Run("updates display name and email with the correct current password", func(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
-		hash, _ := bcrypt.GenerateFromPassword([]byte("Current#Passw0rd!"), bcrypt.DefaultCost)
+		hash, _ := bcrypt.GenerateFromPassword([]byte("Current#Passw0rd!"), int(bcryptCost.Load()))
 		existing := &models.User{ID: 1, Username: acctTestUser, Email: "alice@old.com", DisplayName: "Alice", PasswordHash: string(hash)}
 
 		ms.On("GetUser", ctx, uint(1)).Return(existing, nil)
@@ -39,7 +39,7 @@ func TestUpdateOwnProfile(t *testing.T) {
 	t.Run("rejects an email change without the current password", func(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
-		hash, _ := bcrypt.GenerateFromPassword([]byte("Current#Passw0rd!"), bcrypt.DefaultCost)
+		hash, _ := bcrypt.GenerateFromPassword([]byte("Current#Passw0rd!"), int(bcryptCost.Load()))
 		existing := &models.User{ID: 1, Username: acctTestUser, Email: "alice@old.com", PasswordHash: string(hash)}
 
 		ms.On("GetUser", ctx, uint(1)).Return(existing, nil)
@@ -54,7 +54,7 @@ func TestUpdateOwnProfile(t *testing.T) {
 	t.Run("rejects an email change with an incorrect current password", func(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
-		hash, _ := bcrypt.GenerateFromPassword([]byte("Current#Passw0rd!"), bcrypt.DefaultCost)
+		hash, _ := bcrypt.GenerateFromPassword([]byte("Current#Passw0rd!"), int(bcryptCost.Load()))
 		existing := &models.User{ID: 1, Username: acctTestUser, Email: "alice@old.com", PasswordHash: string(hash)}
 
 		ms.On("GetUser", ctx, uint(1)).Return(existing, nil)
@@ -69,7 +69,7 @@ func TestUpdateOwnProfile(t *testing.T) {
 	t.Run("display-name-only change needs no password", func(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
-		hash, _ := bcrypt.GenerateFromPassword([]byte("Current#Passw0rd!"), bcrypt.DefaultCost)
+		hash, _ := bcrypt.GenerateFromPassword([]byte("Current#Passw0rd!"), int(bcryptCost.Load()))
 		existing := &models.User{ID: 1, Username: acctTestUser, Email: "alice@old.com", DisplayName: "Alice", PasswordHash: string(hash)}
 
 		ms.On("GetUser", ctx, uint(1)).Return(existing, nil)
@@ -84,7 +84,7 @@ func TestUpdateOwnProfile(t *testing.T) {
 	t.Run("re-submitting the same email needs no password", func(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
-		hash, _ := bcrypt.GenerateFromPassword([]byte("Current#Passw0rd!"), bcrypt.DefaultCost)
+		hash, _ := bcrypt.GenerateFromPassword([]byte("Current#Passw0rd!"), int(bcryptCost.Load()))
 		existing := &models.User{ID: 1, Username: acctTestUser, Email: "alice@old.com", PasswordHash: string(hash)}
 
 		ms.On("GetUser", ctx, uint(1)).Return(existing, nil)
@@ -97,7 +97,7 @@ func TestUpdateOwnProfile(t *testing.T) {
 	t.Run("rejects an email already used by another user", func(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
-		hash, _ := bcrypt.GenerateFromPassword([]byte("Current#Passw0rd!"), bcrypt.DefaultCost)
+		hash, _ := bcrypt.GenerateFromPassword([]byte("Current#Passw0rd!"), int(bcryptCost.Load()))
 		existing := &models.User{ID: 1, Username: acctTestUser, Email: "alice@old.com", PasswordHash: string(hash)}
 		other := &models.User{ID: 2, Email: "taken@x.com"}
 
@@ -113,7 +113,7 @@ func TestUpdateOwnProfile(t *testing.T) {
 func TestChangePassword(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	oldHash, _ := bcrypt.GenerateFromPassword([]byte("oldpassword"), bcrypt.DefaultCost)
+	oldHash, _ := bcrypt.GenerateFromPassword([]byte("oldpassword"), int(bcryptCost.Load()))
 
 	t.Run("changes password and drops other sessions", func(t *testing.T) {
 		ms := new(MockStorage)
@@ -168,7 +168,7 @@ func TestChangePassword(t *testing.T) {
 		c := NewKeyorixCore(ms)
 		// The new password is a former one whose hash is in history.
 		const reused = "Recycled#Passw0rd!"
-		reusedHash, _ := bcrypt.GenerateFromPassword([]byte(reused), bcrypt.DefaultCost)
+		reusedHash, _ := bcrypt.GenerateFromPassword([]byte(reused), int(bcryptCost.Load()))
 		user := &models.User{ID: 1, Username: acctTestUser, PasswordHash: string(oldHash)}
 		ms.On("GetUser", ctx, uint(1)).Return(user, nil)
 		ms.On("RecentPasswordHashes", ctx, uint(1), 5).Return([]string{string(reusedHash)}, nil)
@@ -184,7 +184,7 @@ func TestChangePassword(t *testing.T) {
 		c := NewKeyorixCore(ms)
 		// A policy-compliant current password that the user tries to "change" to itself.
 		const cur = "Current#Passw0rd!"
-		curHash, _ := bcrypt.GenerateFromPassword([]byte(cur), bcrypt.DefaultCost)
+		curHash, _ := bcrypt.GenerateFromPassword([]byte(cur), int(bcryptCost.Load()))
 		user := &models.User{ID: 1, Username: acctTestUser, PasswordHash: string(curHash)}
 		ms.On("GetUser", ctx, uint(1)).Return(user, nil)
 

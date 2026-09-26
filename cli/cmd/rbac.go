@@ -86,7 +86,7 @@ func resolveRBACEnvironmentIDByName(ctx context.Context, client *apiclient.Clien
 	}
 	for _, e := range *resp.JSON200.Data.Environments {
 		if e.Name != nil && strings.EqualFold(*e.Name, name) {
-			return derefInt(e.ID), nil
+			return derefInt(e.Id), nil
 		}
 	}
 	return 0, fmt.Errorf("environment %q not found in project", name)

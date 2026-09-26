@@ -1,0 +1,29 @@
+# Positive control for the helm-chart-policy CI job. NOT rendered from any
+# chart -- a deliberately, obviously insecure Deployment (privileged
+# container, no resource limits, no securityContext) fed straight to
+# kube-score alongside the real chart renders. If a future change to this
+# job's flags/ignore-list ever makes it stop failing on this fixture, the job
+# itself is broken and would be silently passing real charts too -- see "A
+# check that always fails is as useless as one that always passes" (repo
+# CLAUDE.md). This must ALWAYS score CRITICAL findings; if kube-score is ever
+# upgraded and this stops failing, the job's own assertion step (not this
+# comment) is what catches it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deliberately-bad-fixture
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: deliberately-bad-fixture
+  template:
+    metadata:
+      labels:
+        app: deliberately-bad-fixture
+    spec:
+      containers:
+        - name: bad
+          image: nginx:latest
+          securityContext:
+            privileged: true

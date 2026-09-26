@@ -2,14 +2,15 @@ name: Trivy
 
 on:
   push:
-    branches: [main]
-    paths-ignore: ['**/*.md', 'docs/**']
+    tags: ['v*']
   pull_request:
     # See ci.yml's own comment: also covers stacked-PR review chains.
     branches: [main, 'adr082/**', 'feat/**', 'fix/**']
     paths-ignore: ['**/*.md', 'docs/**']
   schedule:
-    - cron: '17 9 * * 3'
+    # Nightly instead of weekly-plus-every-push -- runner capacity, 2026-09-26.
+    - cron: '17 9 * * *'
+  workflow_dispatch:
 
 permissions: {}
 
@@ -35,6 +36,9 @@ jobs:
         with:
           scan-type: fs
           scan-ref: .
+          # .github/testdata holds DELIBERATELY insecure positive-control fixtures for the
+          # helm-chart-policy job (ci.yml); scanning them here would fail on purpose-built findings.
+          skip-dirs: .github/testdata
           scanners: misconfig
           format: sarif
           output: trivy-results.sarif
@@ -71,6 +75,9 @@ jobs:
         with:
           scan-type: fs
           scan-ref: .
+          # .github/testdata holds DELIBERATELY insecure positive-control fixtures for the
+          # helm-chart-policy job (ci.yml); scanning them here would fail on purpose-built findings.
+          skip-dirs: .github/testdata
           scanners: misconfig
           severity: CRITICAL,HIGH,MEDIUM
           exit-code: '1'

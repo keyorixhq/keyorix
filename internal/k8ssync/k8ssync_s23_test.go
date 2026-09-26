@@ -468,8 +468,10 @@ func TestRESTSink_Get_MultipleKeys(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestReconcile_S23_RevokedUpstreamDeleteFails verifies that when the upstream
-// secret is definitively gone (ErrUpstreamGone) AND the Delete call fails, the
-// failure is counted and recorded in the result.
+// secret is definitively gone (ErrUpstreamGone), prune_on_revoke is enabled, AND the
+// Delete call itself fails, the failure is counted and recorded in the result. (Only
+// reachable with pruning on: with the default off, Delete is never attempted at all —
+// see TestReconcile_RevokedUpstreamKeepsSecretByDefault in sync_test.go.)
 func TestReconcile_S23_RevokedUpstreamDeleteFails(t *testing.T) {
 	f := &fakeFetcher{revoked: map[string]bool{"prod/gone": true}}
 	s := newFakeSink()
@@ -477,7 +479,7 @@ func TestReconcile_S23_RevokedUpstreamDeleteFails(t *testing.T) {
 	s.existing["ns/old-secret"] = map[string][]byte{"K": []byte("stale")}
 	s.deleteErr["ns/old-secret"] = true
 
-	e := NewEngine(f, s)
+	e := NewEngine(f, s, WithPruneOnRevoke())
 
 	res, err := e.Reconcile(context.Background(), []SecretMapping{
 		{Ref: "prod/gone", Namespace: "ns", Name: "old-secret", Key: "K"},

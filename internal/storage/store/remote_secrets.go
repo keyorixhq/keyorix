@@ -18,7 +18,72 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"gorm.io/gorm"
 )
+
+// remoteSecretNodeWire mirrors the handler-side secretNodeWire
+// (server/http/handlers/secrets_wire.go): the API-hygiene casing fix moved
+// every secret route from serializing models.SecretNode's bare (untagged) Go
+// field names to a real snake_case shape. models.SecretNode itself still
+// carries no json tags (and must not, per this codebase's rule against
+// tagging internal/storage/models) and encoding/json's case-insensitive
+// fallback only rescues single-word keys ("id"/"name") -- every
+// underscore-separated field (project_id, environment_id, max_reads, ...)
+// silently decoded to its zero value the moment the server switched casing.
+// Confirmed by the differential-conformance harness
+// (TestConformance_GetSecret/CreateSecret/GetSecretByName/UpdateSecret/
+// GetSecretsByIDs/ListSecrets, remote_storage_conformance*_test.go), which
+// diffs a real RemoteStorage round trip against LocalStorage's own row for
+// the identical ID -- this is what caught the gap, not a hand-rolled mock.
+type remoteSecretNodeWire struct {
+	ID                     uint        `json:"id"`
+	ParentID               *uint       `json:"parent_id,omitempty"`
+	ProjectID              uint        `json:"project_id"`
+	EnvironmentID          uint        `json:"environment_id"`
+	Name                   string      `json:"name"`
+	IsSecret               bool        `json:"is_secret"`
+	Type                   string      `json:"type"`
+	Description            string      `json:"description,omitempty"`
+	MaxReads               *int        `json:"max_reads,omitempty"`
+	ReadCount              int         `json:"read_count"`
+	Expiration             *time.Time  `json:"expiration,omitempty"`
+	Metadata               models.JSON `json:"metadata,omitempty"`
+	Classification         string      `json:"classification,omitempty"`
+	Status                 string      `json:"status"`
+	CreatedBy              string      `json:"created_by"`
+	OwnerID                uint        `json:"owner_id"`
+	OwnerMachineIdentityID uint        `json:"owner_machine_identity_id,omitempty"`
+	IsShared               bool        `json:"is_shared"`
+	CreatedAt              time.Time   `json:"created_at"`
+	UpdatedAt              time.Time   `json:"updated_at"`
+	LastRotatedAt          *time.Time  `json:"last_rotated_at,omitempty"`
+	AutoRotate             bool        `json:"auto_rotate"`
+	RotationLength         int         `json:"rotation_length,omitempty"`
+	RotationCharset        string      `json:"rotation_charset,omitempty"`
+	RotationBackend        string      `json:"rotation_backend,omitempty"`
+	RotationRef            string      `json:"rotation_ref,omitempty"`
+	CertNotAfter           *time.Time  `json:"cert_not_after,omitempty"`
+	DeletedAt              *time.Time  `json:"deleted_at,omitempty"`
+	RetentionOverrideDays  int         `json:"retention_override_days,omitempty"`
+}
+
+func (w remoteSecretNodeWire) toModel() *models.SecretNode {
+	n := &models.SecretNode{
+		ID: w.ID, ParentID: w.ParentID, ProjectID: w.ProjectID, EnvironmentID: w.EnvironmentID,
+		Name: w.Name, IsSecret: w.IsSecret, Type: w.Type, Description: w.Description,
+		MaxReads: w.MaxReads, ReadCount: w.ReadCount, Expiration: w.Expiration, Metadata: w.Metadata,
+		Classification: w.Classification, Status: w.Status, CreatedBy: w.CreatedBy, OwnerID: w.OwnerID,
+		OwnerMachineIdentityID: w.OwnerMachineIdentityID, IsShared: w.IsShared,
+		CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, LastRotatedAt: w.LastRotatedAt,
+		AutoRotate: w.AutoRotate, RotationLength: w.RotationLength, RotationCharset: w.RotationCharset,
+		RotationBackend: w.RotationBackend, RotationRef: w.RotationRef, CertNotAfter: w.CertNotAfter,
+		RetentionOverrideDays: w.RetentionOverrideDays,
+	}
+	if w.DeletedAt != nil {
+		n.DeletedAt = gorm.DeletedAt{Time: *w.DeletedAt, Valid: true}
+	}
+	return n
+}
 
 // --- Wire DTOs (#496) ---
 //
@@ -166,14 +231,15 @@ func (rs *RemoteStorage) CreateSecret(ctx context.Context, secret *models.Secret
 	if !resp.Success {
 		return nil, fmt.Errorf("create secret failed: %s", resp.Error.Error())
 	}
-	var result models.SecretNode
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
+	var wire remoteSecretNodeWire
+	if err := json.Unmarshal(resp.Data, &wire); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
+	result := wire.toModel()
 	if value != "" {
 		result.ValueStored = true
 	}
-	return &result, nil
+	return result, nil
 }
 
 // GetSecret retrieves a secret by ID via remote API.
@@ -186,11 +252,11 @@ func (rs *RemoteStorage) GetSecret(ctx context.Context, id uint) (*models.Secret
 	if !resp.Success {
 		return nil, fmt.Errorf("get secret failed: %s", resp.Error.Error())
 	}
-	var result models.SecretNode
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
+	var wire remoteSecretNodeWire
+	if err := json.Unmarshal(resp.Data, &wire); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return &result, nil
+	return wire.toModel(), nil
 }
 
 // GetSecretsByIDs is the batch form of GetSecret. There is no bulk by-ID REST
@@ -231,11 +297,11 @@ func (rs *RemoteStorage) GetSecretByName(ctx context.Context, name string, proje
 	if !resp.Success {
 		return nil, fmt.Errorf("get secret by name failed: %s", resp.Error.Error())
 	}
-	var result models.SecretNode
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
+	var wire remoteSecretNodeWire
+	if err := json.Unmarshal(resp.Data, &wire); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return &result, nil
+	return wire.toModel(), nil
 }
 
 // ClearProjectSecretOwnership proxies onto POST
@@ -273,11 +339,11 @@ func (rs *RemoteStorage) UpdateSecret(ctx context.Context, secret *models.Secret
 		// timestamp, when connected to a hub.
 		return nil, fmt.Errorf("update secret rejected by hub: %s", resp.Error.Error())
 	}
-	var result models.SecretNode
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
+	var wire remoteSecretNodeWire
+	if err := json.Unmarshal(resp.Data, &wire); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return &result, nil
+	return wire.toModel(), nil
 }
 
 // transitionSecretStatusWireRequest is TransitionSecretStatus's request body:
@@ -441,13 +507,17 @@ func (rs *RemoteStorage) ListSecrets(ctx context.Context, filter *storage.Secret
 		return nil, 0, fmt.Errorf("list secrets failed: %s", resp.Error.Error())
 	}
 	var result struct {
-		Secrets []*models.SecretNode `json:"secrets"`
-		Total   int64                `json:"total"`
+		Secrets []remoteSecretNodeWire `json:"secrets"`
+		Total   int64                  `json:"total"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, 0, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result.Secrets, result.Total, nil
+	secrets := make([]*models.SecretNode, 0, len(result.Secrets))
+	for _, w := range result.Secrets {
+		secrets = append(secrets, w.toModel())
+	}
+	return secrets, result.Total, nil
 }
 
 // ListProjectSecretsForDrift is not available in remote mode; drift detection aggregates server-side.

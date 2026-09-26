@@ -85,6 +85,13 @@ func newReconciler(t *testing.T, fetcher valueFetcher, objs ...client.Object) (*
 	}, c
 }
 
+// ksFixture sets PrunePolicy: Delete explicitly — this now MATCHES the real-world
+// default (coordinator decision, 2026-09-25 inbox item 1, restoring the secure
+// default after a brief default-Keep regression; see KeyorixSecretSpec.PrunePolicy),
+// but stays explicit rather than relying on the zero-value/effectivePrunePolicy
+// fallback so the large pre-existing suite of wipe-on-confirmed-gone/revoked tests
+// below states its precondition directly. TestReconcile_Keep* below use their own
+// fixture (ksFixtureKeep) to cover the explicit opt-out.
 func ksFixture() *secretsv1alpha1.KeyorixSecret {
 	return &secretsv1alpha1.KeyorixSecret{
 		ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "app", Generation: 1},
@@ -96,8 +103,19 @@ func ksFixture() *secretsv1alpha1.KeyorixSecret {
 				{SecretKey: "DB_PASSWORD", Ref: "app/production/db-password"},
 				{SecretKey: "API_KEY", Ref: "app/production/api-key"},
 			},
+			PrunePolicy: secretsv1alpha1.PrunePolicyDelete,
 		},
 	}
+}
+
+// ksFixtureKeep is ksFixture with PrunePolicy explicitly set to PrunePolicyKeep —
+// the opt-out (see KeyorixSecretSpec.PrunePolicy). An EMPTY PrunePolicy no longer
+// means Keep: effectivePrunePolicy treats "" the same as PrunePolicyDelete (the
+// restored default), so this fixture must set Keep explicitly to exercise that path.
+func ksFixtureKeep() *secretsv1alpha1.KeyorixSecret {
+	ks := ksFixture()
+	ks.Spec.PrunePolicy = secretsv1alpha1.PrunePolicyKeep
+	return ks
 }
 
 func tokenSecret() *corev1.Secret {
@@ -343,6 +361,333 @@ func TestReconcile_UnauthorizedWipesTargetSecretWithDistinctReason(t *testing.T)
 	assert.Equal(t, metav1.ConditionFalse, ks.Status.Conditions[0].Status)
 	assert.Equal(t, "UpstreamAccessRevoked", ks.Status.Conditions[0].Reason,
 		"a 401 gets a status reason distinct from a confirmed-gone 404/403")
+}
+
+// PrunePolicy Keep (ksFixtureKeep, an explicit opt-out — see
+// KeyorixSecretSpec.PrunePolicy for the restored Delete default). The
+// confirmed-gone/revoked state must still be surfaced on the Ready condition, but
+// the target Secret must be left completely untouched, not wiped.
+
+func TestReconcile_Keep_UpstreamGoneLeavesTargetSecretUntouched(t *testing.T) {
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+	}}
+	r, c := newReconciler(t, fetcher, ksFixtureKeep(), tokenSecret())
+	_, err := reconcile(t, r)
+	require.NoError(t, err)
+
+	var before corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &before),
+		"precondition: the target Secret exists after a successful sync")
+
+	fetcher.goneRefs = map[string]bool{"app/production/db-password": true}
+
+	_, err = reconcile(t, r)
+	require.Error(t, err, "a confirmed-gone upstream ref still requeues with error for backoff")
+	assert.True(t, errors.Is(err, keyorix.ErrSecretGone))
+
+	var after corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &after),
+		"prunePolicy is Keep: the target Secret must NOT be wiped")
+	assert.Equal(t, before.Data, after.Data, "the last-known value must survive untouched")
+
+	var ks secretsv1alpha1.KeyorixSecret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &ks))
+	require.Len(t, ks.Status.Conditions, 1)
+	assert.Equal(t, metav1.ConditionFalse, ks.Status.Conditions[0].Status)
+	assert.Equal(t, "UpstreamSecretGone", ks.Status.Conditions[0].Reason,
+		"the confirmed-gone state is still surfaced distinctly, even though nothing was deleted")
+	assert.Contains(t, ks.Status.Conditions[0].Message, "prunePolicy is Keep",
+		"the message must say explicitly that the Secret was left untouched, not silently wiped")
+}
+
+func TestReconcile_Keep_UnauthorizedLeavesTargetSecretUntouched(t *testing.T) {
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+	}}
+	r, c := newReconciler(t, fetcher, ksFixtureKeep(), tokenSecret())
+	_, err := reconcile(t, r)
+	require.NoError(t, err)
+
+	fetcher.unauthorizedRefs = map[string]bool{"app/production/db-password": true}
+
+	_, err = reconcile(t, r)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, keyorix.ErrUnauthorized))
+
+	var after corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &after),
+		"prunePolicy is Keep: the target Secret must NOT be wiped on a 401 either")
+
+	var ks secretsv1alpha1.KeyorixSecret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &ks))
+	assert.Equal(t, "UpstreamAccessRevoked", ks.Status.Conditions[0].Reason)
+	assert.Contains(t, ks.Status.Conditions[0].Message, "prunePolicy is Keep")
+}
+
+// TestReconcile_Keep_SharedTokenRevocationDoesNotMassDeleteAllTargets: with
+// PrunePolicy explicitly Keep, reconciling every CR sharing a revoked token must NOT
+// delete any target Secret — the explicit opt-out is unconditional, independent of
+// the mass-revocation circuit breaker (see TestReconcile_Delete_SharedTokenMassRevocationTripsCircuitBreaker
+// below for the PrunePolicy=Delete counterpart, where the BREAKER is what prevents
+// the mass deletion instead).
+func TestReconcile_Keep_SharedTokenRevocationDoesNotMassDeleteAllTargets(t *testing.T) {
+	ksA := ksFixtureKeep()
+	ksB := ksFixtureKeep()
+	ksB.Name = "api"
+	ksB.Spec.Target = secretsv1alpha1.KeyorixSecretTarget{Name: "api-creds"}
+	ksB.Spec.Data = []secretsv1alpha1.KeyorixSecretData{
+		{SecretKey: "TOKEN", Ref: "app/production/other-token"},
+	}
+
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+		"app/production/other-token": []byte("t0k"),
+	}}
+	r, c := newReconciler(t, fetcher, ksA, ksB, tokenSecret())
+
+	req := func(name string) ctrl.Request {
+		return ctrl.Request{NamespacedName: types.NamespacedName{Name: name, Namespace: "app"}}
+	}
+	_, err := r.Reconcile(context.Background(), req("db"))
+	require.NoError(t, err)
+	_, err = r.Reconcile(context.Background(), req("api"))
+	require.NoError(t, err)
+
+	// The shared credential is now revoked -- every ref behind it fails identically.
+	fetcher.unauthorizedRefs = map[string]bool{
+		"app/production/db-password": true,
+		"app/production/api-key":     true,
+		"app/production/other-token": true,
+	}
+
+	_, errA := r.Reconcile(context.Background(), req("db"))
+	assert.True(t, errors.Is(errA, keyorix.ErrUnauthorized))
+	_, errB := r.Reconcile(context.Background(), req("api"))
+	assert.True(t, errors.Is(errB, keyorix.ErrUnauthorized))
+
+	var dbCreds, apiCreds corev1.Secret
+	assert.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &dbCreds),
+		"a shared-token revocation must not delete db-creds")
+	assert.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "api-creds", Namespace: "app"}, &apiCreds),
+		"a shared-token revocation must not delete api-creds either")
+}
+
+// sharedTokenFixtures builds two KeyorixSecrets ("db" and "api") sharing one
+// TokenSecretRef, each with PrunePolicy Delete (the restored secure default) — the
+// setup shared by the mass-revocation circuit breaker tests below.
+func sharedTokenFixtures() (ksA, ksB *secretsv1alpha1.KeyorixSecret) {
+	ksA = ksFixture()
+	ksB = ksFixture()
+	ksB.Name = "api"
+	ksB.Spec.Target = secretsv1alpha1.KeyorixSecretTarget{Name: "api-creds"}
+	ksB.Spec.Data = []secretsv1alpha1.KeyorixSecretData{
+		{SecretKey: "TOKEN", Ref: "app/production/other-token"},
+	}
+	return ksA, ksB
+}
+
+// TestReconcile_Delete_SharedTokenMassRevocationTripsCircuitBreaker is the
+// PrunePolicy=Delete (the restored default) counterpart to
+// TestReconcile_Keep_SharedTokenRevocationDoesNotMassDeleteAllTargets: with the
+// secure default restored, it's the mass-revocation circuit breaker — not an
+// always-Keep default — that must stop a shared-token revocation from deleting
+// every target Secret backed by that token. Reconciling "db" FIRST (before "api" has
+// ever reconciled once with the revoked credential) must still be protected: the
+// breaker LIVE-PROBES peers using the same already-obtained token, rather than only
+// trusting a peer's last-persisted status, specifically so the first CR to detect a
+// mass event isn't the one unprotected case.
+func TestReconcile_Delete_SharedTokenMassRevocationTripsCircuitBreaker(t *testing.T) {
+	ksA, ksB := sharedTokenFixtures()
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+		"app/production/other-token": []byte("t0k"),
+	}}
+	r, c := newReconciler(t, fetcher, ksA, ksB, tokenSecret())
+
+	req := func(name string) ctrl.Request {
+		return ctrl.Request{NamespacedName: types.NamespacedName{Name: name, Namespace: "app"}}
+	}
+	_, err := r.Reconcile(context.Background(), req("db"))
+	require.NoError(t, err)
+	_, err = r.Reconcile(context.Background(), req("api"))
+	require.NoError(t, err)
+
+	// The shared credential is now revoked -- every ref behind it fails identically.
+	fetcher.unauthorizedRefs = map[string]bool{
+		"app/production/db-password": true,
+		"app/production/api-key":     true,
+		"app/production/other-token": true,
+	}
+
+	_, errA := r.Reconcile(context.Background(), req("db"))
+	assert.True(t, errors.Is(errA, keyorix.ErrUnauthorized))
+	_, errB := r.Reconcile(context.Background(), req("api"))
+	assert.True(t, errors.Is(errB, keyorix.ErrUnauthorized))
+
+	var dbCreds, apiCreds corev1.Secret
+	assert.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &dbCreds),
+		"mass revocation suspected: db-creds must not be wiped despite prunePolicy Delete, even though db reconciled FIRST")
+	assert.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "api-creds", Namespace: "app"}, &apiCreds),
+		"mass revocation suspected: api-creds must not be wiped either")
+
+	for _, name := range []string{"db", "api"} {
+		var ks secretsv1alpha1.KeyorixSecret
+		require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: name, Namespace: "app"}, &ks))
+		last := ks.Status.Conditions[len(ks.Status.Conditions)-1]
+		assert.Equal(t, "MassRevocationSuspected", last.Reason, "CR %q", name)
+		assert.Contains(t, last.Message, confirmPruneAnnotation, "CR %q", name)
+	}
+}
+
+// TestReconcile_Delete_SharedTokenMassRevocationProceedsWithAck confirms the
+// explicit escape hatch: a CR carrying a fresh keyorix.io/confirm-prune annotation
+// proceeds with the wipe despite the breaker's threshold being crossed.
+func TestReconcile_Delete_SharedTokenMassRevocationProceedsWithAck(t *testing.T) {
+	ksA, ksB := sharedTokenFixtures()
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	ksA.Annotations = map[string]string{confirmPruneAnnotation: now.Add(-5 * time.Minute).Format(time.RFC3339)}
+
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+		"app/production/other-token": []byte("t0k"),
+	}}
+	r, c := newReconciler(t, fetcher, ksA, ksB, tokenSecret())
+	r.now = func() time.Time { return now }
+
+	req := func(name string) ctrl.Request {
+		return ctrl.Request{NamespacedName: types.NamespacedName{Name: name, Namespace: "app"}}
+	}
+	_, err := r.Reconcile(context.Background(), req("db"))
+	require.NoError(t, err)
+	_, err = r.Reconcile(context.Background(), req("api"))
+	require.NoError(t, err)
+
+	fetcher.unauthorizedRefs = map[string]bool{
+		"app/production/db-password": true,
+		"app/production/api-key":     true,
+		"app/production/other-token": true,
+	}
+
+	_, errA := r.Reconcile(context.Background(), req("db"))
+	assert.True(t, errors.Is(errA, keyorix.ErrUnauthorized))
+
+	err = c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &corev1.Secret{})
+	assert.Error(t, err, "a fresh ack on this CR proceeds with the wipe despite the breaker's own threshold being crossed")
+
+	var ks secretsv1alpha1.KeyorixSecret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &ks))
+	last := ks.Status.Conditions[len(ks.Status.Conditions)-1]
+	assert.Equal(t, "UpstreamAccessRevoked", last.Reason, "an acked wipe still records the underlying cause, not a generic success or the Suspected reason")
+}
+
+// TestReconcile_Delete_SharedTokenMassRevocationIgnoresStaleAck confirms
+// massPruneAckWindow is enforced: an ack set long before this incident must not
+// silently authorize a NEW mass revocation.
+func TestReconcile_Delete_SharedTokenMassRevocationIgnoresStaleAck(t *testing.T) {
+	ksA, ksB := sharedTokenFixtures()
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	ksA.Annotations = map[string]string{confirmPruneAnnotation: now.Add(-2 * time.Hour).Format(time.RFC3339)} // older than massPruneAckWindow
+
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+		"app/production/other-token": []byte("t0k"),
+	}}
+	r, c := newReconciler(t, fetcher, ksA, ksB, tokenSecret())
+	r.now = func() time.Time { return now }
+
+	req := func(name string) ctrl.Request {
+		return ctrl.Request{NamespacedName: types.NamespacedName{Name: name, Namespace: "app"}}
+	}
+	_, err := r.Reconcile(context.Background(), req("db"))
+	require.NoError(t, err)
+	_, err = r.Reconcile(context.Background(), req("api"))
+	require.NoError(t, err)
+
+	fetcher.unauthorizedRefs = map[string]bool{
+		"app/production/db-password": true,
+		"app/production/api-key":     true,
+		"app/production/other-token": true,
+	}
+
+	_, errA := r.Reconcile(context.Background(), req("db"))
+	assert.True(t, errors.Is(errA, keyorix.ErrUnauthorized))
+
+	var dbCreds corev1.Secret
+	assert.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &dbCreds),
+		"a stale ack must not unblock a new mass-revocation event")
+
+	var ks secretsv1alpha1.KeyorixSecret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &ks))
+	last := ks.Status.Conditions[len(ks.Status.Conditions)-1]
+	assert.Equal(t, "MassRevocationSuspected", last.Reason)
+}
+
+// TestMassRevocationTripped pins the breaker's exact threshold boundary (more than
+// massPruneMinCount targets AND more than massPruneFraction of the group), the same
+// pure decision used by both the k8s-sync engine and this controller.
+func TestMassRevocationTripped(t *testing.T) {
+	cases := []struct {
+		name         string
+		revokedCount int
+		groupSize    int
+		want         bool
+	}{
+		{"single revocation never trips", 1, 10, false},
+		{"single revocation at 100% never trips", 1, 1, false},
+		{"exactly the fraction threshold does not trip", 2, 10, false},
+		{"just over the fraction threshold trips", 3, 10, true},
+		{"count and fraction both satisfied at small scale", 2, 2, true},
+		{"zero group never trips", 0, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, massRevocationTripped(tc.revokedCount, tc.groupSize))
+		})
+	}
+}
+
+// TestMassPruneAcked pins the ack-window boundary (present, recent, not future).
+func TestMassPruneAcked(t *testing.T) {
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		ack  string
+		want bool
+	}{
+		{"no annotation is never acked", "", false},
+		{"malformed timestamp is never acked", "not-a-timestamp", false},
+		{"just now is acked", now.Format(time.RFC3339), true},
+		{"59 minutes ago is acked", now.Add(-59 * time.Minute).Format(time.RFC3339), true},
+		{"exactly 1 hour ago is no longer acked", now.Add(-1 * time.Hour).Format(time.RFC3339), false},
+		{"in the future is not acked", now.Add(1 * time.Minute).Format(time.RFC3339), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &KeyorixSecretReconciler{now: func() time.Time { return now }}
+			ks := &secretsv1alpha1.KeyorixSecret{}
+			if tc.ack != "" {
+				ks.Annotations = map[string]string{confirmPruneAnnotation: tc.ack}
+			}
+			assert.Equal(t, tc.want, r.massPruneAcked(ks))
+		})
+	}
+}
+
+// TestEffectivePrunePolicy pins the defense-in-depth default: an EMPTY PrunePolicy
+// (a test fixture, a direct client.Create, or an object from before this default
+// existed — anything that skips the CRD's own admission-time defaulting) resolves to
+// Delete, not Keep.
+func TestEffectivePrunePolicy(t *testing.T) {
+	assert.Equal(t, secretsv1alpha1.PrunePolicyDelete, effectivePrunePolicy(""))
+	assert.Equal(t, secretsv1alpha1.PrunePolicyDelete, effectivePrunePolicy(secretsv1alpha1.PrunePolicyDelete))
+	assert.Equal(t, secretsv1alpha1.PrunePolicyKeep, effectivePrunePolicy(secretsv1alpha1.PrunePolicyKeep))
 }
 
 // deleteBlockingClient wraps a client.Client but fails every Delete call for an object
@@ -953,7 +1298,7 @@ func TestReconcile_RefusesToAdoptSecretOwnedByAnotherCR(t *testing.T) {
 // TestNewReconciler_ProducesUsableReconciler covers the constructor's happy path (the
 // error branch — crypto/rand.Read failing — isn't reasonably triggerable without
 // injecting a fake randomness source, and NewReconciler intentionally has none). It
-// checks the returned reconciler wires all four constructor args straight through, and
+// checks the returned reconciler wires the constructor args straight through, and
 // that hashKey is populated with real per-call randomness (#124: a fresh, non-empty key
 // every process start), not a fixed/zero value.
 func TestNewReconciler_ProducesUsableReconciler(t *testing.T) {
@@ -962,14 +1307,14 @@ func TestNewReconciler_ProducesUsableReconciler(t *testing.T) {
 	apiReader := fake.NewClientBuilder().WithScheme(s).Build()
 	allowed := []string{"https://keyorix.internal"}
 
-	r, err := NewReconciler(c, s, apiReader, allowed)
+	r, err := NewReconciler(c, s, apiReader, allowed, nil)
 	require.NoError(t, err)
 	require.NotNil(t, r)
 	assert.Same(t, s, r.Scheme)
 	assert.Equal(t, allowed, r.AllowedServers)
 	require.Len(t, r.hashKey, 32, "hashKey must be a full 32-byte HMAC key")
 
-	r2, err := NewReconciler(c, s, apiReader, allowed)
+	r2, err := NewReconciler(c, s, apiReader, allowed, nil)
 	require.NoError(t, err)
 	assert.NotEqual(t, r.hashKey, r2.hashKey, "each constructed reconciler gets its own fresh random key")
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
+	"github.com/keyorixhq/keyorix/internal/dynamic/dynamictest"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -28,7 +29,7 @@ const testAdminActorID = uint(1)
 // clock, and a fake credential engine in place of a real Postgres target. Seeds
 // testAdminActorID with a global "admin" role grant so CreateDynamicSecretConfig's
 // admin-authority check (#162) passes for the tests that use it.
-func newDynamicTestCore(t *testing.T) (*KeyorixCore, *gorm.DB, *dynamic.FakeEngine, time.Time) {
+func newDynamicTestCore(t *testing.T) (*KeyorixCore, *gorm.DB, *dynamictest.FakeEngine, time.Time) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -60,7 +61,7 @@ func newDynamicTestCore(t *testing.T) (*KeyorixCore, *gorm.DB, *dynamic.FakeEngi
 	// The default config in these tests is a "postgres" target, so the fake mimics a
 	// backend with DB-level expiry (VALID UNTIL) — issuing does not require the
 	// sweeper. Tests that exercise the no-native-expiry gate flip NativeExpiry off.
-	fake := &dynamic.FakeEngine{NativeExpiry: true}
+	fake := &dynamictest.FakeEngine{NativeExpiry: true}
 	fixed := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return fixed }, passwordPolicy: DefaultPasswordPolicy()}
 	c.SetAuthEncryptor(enc)
@@ -1029,6 +1030,11 @@ func TestDynamicSecrets_RealFactoryValidatesBackend(t *testing.T) {
 	require.NoError(t, db.Create(&models.Environment{ID: 2, ProjectID: 1, Name: "real-factory-env"}).Error)
 	fixed := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return fixed }, passwordPolicy: DefaultPasswordPolicy()}
+	// ADR-109 step 3: internal/core no longer defaults to dynamic.New internally
+	// (that would mean importing internal/dynamic from production code) — wire
+	// it explicitly here, exactly as server/main.go's DefaultIntegrations does,
+	// so this test still exercises the REAL factory's backend-name validation.
+	c.SetDynamicEngineFactory(func(bt string) (dynamic.CredentialEngine, error) { return dynamic.New(bt, false, false) })
 
 	for _, backend := range []string{"postgres", "mysql", "mongodb", "redis"} {
 		_, err := c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
@@ -1042,6 +1048,38 @@ func TestDynamicSecrets_RealFactoryValidatesBackend(t *testing.T) {
 		Name: "bad", ProjectID: 1, BackendType: "cassandra", AdminDSN: "x", ActorID: testAdminActorID,
 	})
 	require.Error(t, err, "an unsupported backend must be rejected at config creation")
+}
+
+// TestDynamicSecrets_NoFactoryConfigured_FailsClosed confirms ADR-109's "nil
+// implementation means the feature is unavailable, never fails open": a
+// KeyorixCore with no dynamicEngineFactory wired (SetDynamicEngineFactory
+// never called — the shape a caller gets by constructing *KeyorixCore
+// directly rather than through server/main.go's DefaultIntegrations) must
+// refuse to mint or resolve a dynamic-secret engine, not silently reach for a
+// concrete backend.
+func TestDynamicSecrets_NoFactoryConfigured_FailsClosed(t *testing.T) {
+	t.Parallel()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.DynamicSecretConfig{}, &models.AuditEvent{},
+		&models.Role{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{},
+	))
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: testAdminActorID, RoleID: 1}).Error)
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "no-factory-project"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 2, ProjectID: 1, Name: "no-factory-env"}).Error)
+	fixed := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
+	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return fixed }, passwordPolicy: DefaultPasswordPolicy()}
+	// Deliberately no SetDynamicEngineFactory call.
+
+	_, err = c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
+		Name: "pg-cfg", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		ActorID: testAdminActorID,
+	})
+	require.Error(t, err, "config creation must fail closed with no engine factory wired")
+	assert.Contains(t, err.Error(), "unavailable")
 }
 
 // A backend without DB-level expiry (MySQL/MongoDB) must not issue while the

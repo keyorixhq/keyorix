@@ -42,13 +42,13 @@ describe('rbacApi.assignRoleToGroup', () => {
 });
 
 describe('rbacApi.getGroupSharedSecrets', () => {
-    it('normalizes the server SecretNode rows (PascalCase) to id/name/type', async () => {
+    it('extracts id/name/type from the server secretNodeWire rows', async () => {
         mocked.get.mockResolvedValue({
             data: {
                 data: {
                     secrets: [
-                        { ID: 1, Name: 'alpha', Type: 'password' },
-                        { ID: 2, Name: 'beta', Type: 'token' },
+                        { id: 1, name: 'alpha', type: 'password' },
+                        { id: 2, name: 'beta', type: 'token' },
                     ],
                 },
             },

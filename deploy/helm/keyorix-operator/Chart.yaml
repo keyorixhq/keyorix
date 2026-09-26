@@ -3,9 +3,18 @@ name: keyorix-operator
 description: Keyorix Kubernetes operator — reconciles KeyorixSecret resources into native Kubernetes Secrets
 type: application
 # Chart version — tracks the Keyorix release version (published in lockstep).
-version: 0.85.0
+# release.yml's publish-chart job overrides both this and appVersion from the git tag
+# at publish time, so the actually-published OCI chart is always correct regardless of
+# what's committed here — but this committed value still governs a local
+# `helm install ./deploy/helm/keyorix-operator` without an explicit --set override.
+# Found 3 releases behind (0.85.0, while ghcr.io/keyorixhq/keyorix-operator's actual
+# latest published tag was 0.89.0 — confirmed live against the registry, not assumed)
+# and bumped alongside the same drift already caught once for deploy/helm/keyorix's own
+# Chart.yaml. Bump this whenever you bump the main chart for a release that also ships
+# an operator image — see this chart's README "Versioning" section.
+version: 0.89.0
 # The keyorix-operator image tag this chart deploys by default.
-appVersion: "0.85.0"
+appVersion: "0.89.0"
 home: https://github.com/keyorixhq/keyorix
 sources:
   - https://github.com/keyorixhq/keyorix

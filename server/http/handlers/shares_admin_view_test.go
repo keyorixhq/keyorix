@@ -62,7 +62,7 @@ func TestListSharedSecretsForUser_HandlerSelfView_HappyPath(t *testing.T) {
 	data := body["data"].(map[string]interface{})
 	secrets := data["secrets"].([]interface{})
 	require.Len(t, secrets, 1)
-	assert.Equal(t, float64(secretID), secrets[0].(map[string]interface{})["ID"])
+	assert.Equal(t, float64(secretID), secrets[0].(map[string]interface{})["id"])
 }
 
 // TestListSharedSecretsForUser_HandlerAdminViewsLowerRankedUser_NoSecretValueLeak:
@@ -87,7 +87,7 @@ func TestListSharedSecretsForUser_HandlerAdminViewsLowerRankedUser_NoSecretValue
 	data := body["data"].(map[string]interface{})
 	secrets := data["secrets"].([]interface{})
 	require.Len(t, secrets, 1)
-	assert.Equal(t, float64(secretID), secrets[0].(map[string]interface{})["ID"])
+	assert.Equal(t, float64(secretID), secrets[0].(map[string]interface{})["id"])
 
 	var event models.AuditEvent
 	require.NoError(t, db.Where("event_type = ?", string(core.ShareAuditEventSharedSecretsAdminViewed)).First(&event).Error)

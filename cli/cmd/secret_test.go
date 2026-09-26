@@ -56,9 +56,9 @@ func secretCanaryServer(t *testing.T) *httptest.Server {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/secrets":
 			w.WriteHeader(http.StatusCreated)
-			_, _ = fmt.Fprint(w, `{"data":{"ID":1,"Name":"canary-secret","Type":"generic","ProjectID":1,"EnvironmentID":1}}`)
+			_, _ = fmt.Fprint(w, `{"data":{"id":1,"name":"canary-secret","type":"generic","project_id":1,"environment_id":1}}`)
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/secrets/1":
-			_, _ = fmt.Fprint(w, `{"data":{"ID":1,"Name":"canary-secret","Type":"generic"}}`)
+			_, _ = fmt.Fprint(w, `{"data":{"id":1,"name":"canary-secret","type":"generic"}}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -129,7 +129,7 @@ func TestSecretGet_ShowValueOnlyReachesStdout(t *testing.T) {
 	const canary = "CANARY-VALUE-kx9f7a2e1b8c-do-not-log-me"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"data":{"secret":{"ID":1,"Name":"canary-secret","Type":"generic"},"value":%q}}`, canary)
+		_, _ = fmt.Fprintf(w, `{"data":{"secret":{"id":1,"name":"canary-secret","type":"generic"},"value":%q}}`, canary)
 	}))
 	defer srv.Close()
 	setPATCreds(t, srv)
@@ -159,7 +159,7 @@ func TestSecretGet_DefaultHidesValue(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotIncludeValue = r.URL.Query().Get("include_value")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"data":{"ID":1,"Name":"canary-secret","Type":"generic","Status":"active"}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"id":1,"name":"canary-secret","type":"generic","status":"active"}}`)
 	}))
 	defer srv.Close()
 	setPATCreds(t, srv)
@@ -253,7 +253,7 @@ func TestRunSecretList_EmptyPrintsNoSecretsMessage(t *testing.T) {
 func TestRunSecretList_MatchesOldCLIOutputShape(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"data":{"secrets":[{"ID":7,"Name":"db-pass","Type":"generic","Status":"active","CreatedAt":"2026-01-02T00:00:00Z"}],"total":1,"page":1,"page_size":50}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"secrets":[{"id":7,"name":"db-pass","type":"generic","status":"active","created_at":"2026-01-02T00:00:00Z"}],"total":1,"page":1,"page_size":50}}`)
 	}))
 	defer srv.Close()
 	setPATCreds(t, srv)
@@ -286,7 +286,7 @@ const secretCanaryValue = "CANARY-VALUE-kx9f7a2e1b8c-do-not-log-me"
 func TestSecretRotate_NeverLeaksTheCanaryValue(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"data":{"ID":1,"Name":"canary-secret"}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"id":1,"name":"canary-secret"}}`)
 	}))
 	defer srv.Close()
 	setPATCreds(t, srv)
@@ -319,7 +319,7 @@ func TestSecretImport_NeverLeaksTheCanaryValue(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = fmt.Fprint(w, `{"data":{"ID":1,"Name":"CANARY_KEY"}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"id":1,"name":"CANARY_KEY"}}`)
 	}))
 	defer srv.Close()
 	setPATCreds(t, srv)

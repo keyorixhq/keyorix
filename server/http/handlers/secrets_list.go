@@ -181,7 +181,7 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 			return
 		}
 		h.resolveSecretNames(r.Context(), response.Secrets)
-		h.sendSuccess(w, response, "")
+		h.sendSuccess(w, newSecretListResponseWire(response), "")
 		return
 	}
 
@@ -226,7 +226,7 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 			return
 		}
 		h.resolveSecretNames(r.Context(), response.Secrets)
-		h.sendSuccess(w, response, "")
+		h.sendSuccess(w, newSecretListResponseWire(response), "")
 		return
 	}
 
@@ -243,7 +243,7 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 			return
 		}
 		h.resolveSecretNames(r.Context(), response.Secrets)
-		h.sendSuccess(w, response, "")
+		h.sendSuccess(w, newSecretListResponseWire(response), "")
 		return
 	}
 
@@ -266,7 +266,7 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 			return
 		}
 		h.resolveSecretNames(r.Context(), response.Secrets)
-		h.sendSuccess(w, response, "")
+		h.sendSuccess(w, newSecretListResponseWire(response), "")
 		return
 	}
 
@@ -327,5 +327,5 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 		TotalPages: totalPages,
 	}
 	h.resolveSecretNames(r.Context(), response.Secrets)
-	h.sendSuccess(w, response, "")
+	h.sendSuccess(w, newSecretListResponseWire(response), "")
 }

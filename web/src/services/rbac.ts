@@ -96,9 +96,9 @@ export const rbacApi = {
         const res = await apiClient.get(`/api/v1/groups/${groupId}/shared-secrets`);
         const list = res.data?.data?.secrets ?? [];
         return (Array.isArray(list) ? list : []).map((s: any) => ({
-            id: s.id ?? s.ID ?? 0,
-            name: s.name ?? s.Name ?? '',
-            type: s.type ?? s.Type ?? '',
+            id: s.id ?? 0,
+            name: s.name ?? '',
+            type: s.type ?? '',
         }));
     },
 

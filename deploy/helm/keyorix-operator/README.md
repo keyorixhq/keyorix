@@ -27,6 +27,54 @@ helm install keyorix-operator deploy/helm/keyorix-operator -n keyorix-system --c
 | `rbac.clusterScoped` | `true` for a genuinely cluster-wide instance (default `false`) — see [RBAC](#rbac) |
 | `resources`, `nodeSelector`, `tolerations`, `affinity`, `podAnnotations` | Standard pod scheduling/resourcing |
 
+## Failure modes
+
+- **Keyorix unreachable, or returns a 5xx:** treated as transient
+  (`r.fail`/`SyncError` on the `Ready` condition). The target Secret is left
+  completely untouched and retried on the next reconcile, which
+  controller-runtime backs off exponentially (bounded, per-`KeyorixSecret`)
+  after a non-nil `Reconcile` error — see [Upgrading: egress
+  NetworkPolicy](#upgrading-egress-networkpolicy) above for what "retried"
+  actually needs egress for.
+- **A referenced secret is deleted upstream, or access/the token is
+  revoked/expired:** detected (Keyorix returns 401/403/404) and always
+  surfaced distinctly on the `Ready` condition (`reason` `UpstreamSecretGone`
+  or `UpstreamAccessRevoked`). By default (`spec.prunePolicy: Delete` — the
+  secure default) the operator actively reaps the target Secret the moment
+  its reference is confirmed gone/revoked. Set `spec.prunePolicy: Keep`
+  per-CR to opt OUT and leave the target Secret's last-known value untouched
+  instead, for deployments that prefer availability over immediate reap —
+  see the field's own CRD description.
+- **Mass-revocation circuit breaker:** `tokenSecretRef` is commonly *shared*
+  across several `KeyorixSecret`s, so a single credential rotation or
+  revocation event reads as the identical 401 (or a simultaneous 404/403) on
+  every `KeyorixSecret` that references it, not just one — with
+  `prunePolicy: Delete` on by default, an unconditional wipe would otherwise
+  delete every target Secret backed by that token, triggered by nothing more
+  than a routine credential rotation. Before wiping, the operator checks
+  every OTHER `KeyorixSecret` sharing the same `tokenSecretRef`: if more than
+  one AND more than 20% of that group are confirmed gone/revoked at once,
+  none of them are wiped — the `Ready` condition instead reads
+  `MassRevocationSuspected`, a Warning Event is emitted, and the
+  `keyorix_operator_mass_revocation_suspected_total` metric increments. A
+  single revocation is unaffected and always wipes immediately. To
+  acknowledge a suspected mass revocation you've confirmed is intentional
+  (e.g. a planned rotation) and proceed with the wipe, annotate the affected
+  CR(s) with `keyorix.io/confirm-prune=<RFC3339 timestamp>` (valid for 1 hour
+  after it's set) — see the [example](examples/keyorixsecret.yaml).
+
+## Versioning
+
+`Chart.yaml`'s `version`/`appVersion` are release.yml-overridden at publish
+time and picks `image.tag`'s default for a local `helm install` otherwise —
+this chart's committed value must be bumped in lockstep with
+`deploy/helm/keyorix` and `deploy/helm/keyorix-k8s-sync` (all three publish
+alongside the same release tag). See
+[`deploy/helm/keyorix`'s own "Versioning" section](../keyorix/README.md#versioning)
+for the full policy — this chart was found 3 releases behind by that same
+drift (confirmed live against `ghcr.io/keyorixhq/keyorix-operator`, not
+assumed) and bumped alongside it.
+
 ## RBAC
 
 A `ClusterRole` grants read on `keyorixsecrets` (+ status) and

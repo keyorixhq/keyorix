@@ -7,9 +7,9 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:     "keyorix-next",
-	Short:   "Keyorix CLI (thin, REST-only preview) -- see ADR-108",
-	Long:    `keyorix-next is the thin, network-only Keyorix CLI being built under ADR-108. It talks to a Keyorix server exclusively over the REST API; it has no local database mode. Use "keyorix" for everything not yet migrated here.`,
+	Use:     "keyorix",
+	Short:   "Keyorix CLI -- see ADR-108",
+	Long:    `keyorix is the Keyorix CLI. It talks to a Keyorix server exclusively over the REST API; it has no local database mode. Host-side operations (config/keys/database setup, encryption key rotation) are "keyorix-server admin", a separate command.`,
 	Version: cliversion.Version,
 }
 

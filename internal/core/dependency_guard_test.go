@@ -13,13 +13,15 @@ import (
 // that moves its integration behind internal/core/ports and wires the real
 // implementation from server/main.go deletes its own entry here.
 //
-// notary and saml were removed at step 1, rotation at step 2: internal/core
-// now depends only on ports.TimestampNotary/ports.VerifyReceiptFunc,
-// ports.SAMLServiceProvider, and ports.RotationExecutorResolver/
-// ports.RotationPartialError, wired from server/main.go's DefaultIntegrations.
-// All three prefixes stay in the scan below (see present's HasPrefix checks)
-// so a regression back to any of them is still caught by the "not on the
-// allowlist" branch, not silently dropped from the scan.
+// notary and saml were removed at step 1, rotation at step 2, dynamic at step
+// 3: internal/core now depends only on ports.TimestampNotary/
+// ports.VerifyReceiptFunc, ports.SAMLServiceProvider,
+// ports.RotationExecutorResolver/ports.RotationPartialError, and
+// ports.DynamicBackendFactory/ports.DynamicBackendEngine, wired from
+// server/main.go's DefaultIntegrations. All four prefixes stay in the scan
+// below (see present's HasPrefix checks) so a regression back to any of them
+// is still caught by the "not on the allowlist" branch, not silently dropped
+// from the scan.
 //
 // The comparison below is an EXACT match, not a ceiling: it also fails if an
 // entry is deleted from this list without the corresponding import actually
@@ -33,7 +35,6 @@ import (
 // to ever remove it from internal/core.
 var coreIntegrationDeps = map[string]bool{
 	"github.com/keyorixhq/keyorix/internal/connect":    true,
-	"github.com/keyorixhq/keyorix/internal/dynamic":    true,
 	"github.com/keyorixhq/keyorix/internal/encryption": true,
 }
 

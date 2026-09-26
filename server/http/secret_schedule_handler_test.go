@@ -42,7 +42,7 @@ func createScheduleTestSecret(t *testing.T, client *http.Client, baseURL, token 
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
 	require.NotNil(t, response["data"], "createScheduleTestSecret: response must contain data")
 	data := response["data"].(map[string]interface{})
-	return uint(data["ID"].(float64))
+	return uint(data["id"].(float64))
 }
 
 // scheduleTestSetup spins up a test server backed by its own isolated DB core.

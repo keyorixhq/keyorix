@@ -129,7 +129,7 @@ func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 		h.coreService.LogSecretRotatedWithProject(auditCtx, userCtx.UserID, uint(id), secret.ProjectID, userCtx.Username, secret.Name, ip, ua)
 	}) // #nosec G118
 
-	h.sendSuccess(w, secret, "Secret rotated successfully")
+	h.sendSuccess(w, newSecretNodeWire(secret), "Secret rotated successfully")
 }
 
 // RollbackSecret handles POST /api/v1/secrets/{id}/rollback — restores the secret to a
@@ -171,5 +171,5 @@ func (h *SecretHandler) RollbackSecret(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	h.sendSuccess(w, secret, fmt.Sprintf("Secret rolled back to version %d", reqBody.Version))
+	h.sendSuccess(w, newSecretNodeWire(secret), fmt.Sprintf("Secret rolled back to version %d", reqBody.Version))
 }

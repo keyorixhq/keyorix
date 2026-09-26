@@ -30,11 +30,11 @@ import (
 )
 
 // decodeFolderListResponse decodes a list-secrets HTTP response envelope.
-func decodeFolderListResponse(t *testing.T, body []byte) *models.SecretListResponse {
+func decodeFolderListResponse(t *testing.T, body []byte) *secretListResponseWire {
 	t.Helper()
 	var wrapper struct {
-		Success bool                       `json:"success"`
-		Data    *models.SecretListResponse `json:"data"`
+		Success bool                    `json:"success"`
+		Data    *secretListResponseWire `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(body, &wrapper))
 	require.NotNil(t, wrapper.Data, "response.Data must not be nil")
@@ -145,9 +145,9 @@ func TestCreateSecret_WithParentID(t *testing.T) {
 
 	assert.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
 
-	// The create response wraps a *SecretNode directly in "data".
+	// The create response wraps a secretNodeWire (snake_case) in "data".
 	var resp struct {
-		Data *models.SecretNode `json:"data"`
+		Data *secretNodeWire `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.NotNil(t, resp.Data, "expected data in response")
@@ -238,7 +238,6 @@ func TestListSecrets_ParentID(t *testing.T) {
 	resp := decodeFolderListResponse(t, w.Body.Bytes())
 	assert.Equal(t, int64(1), resp.Total, "expected exactly 1 child secret")
 	require.Len(t, resp.Secrets, 1)
-	require.NotNil(t, resp.Secrets[0].SecretNode)
 	assert.Equal(t, child.ID, resp.Secrets[0].ID)
 }
 
@@ -264,7 +263,6 @@ func TestListSecrets_FolderOnly(t *testing.T) {
 	// The fixture seeds one folder; the real secret must be excluded.
 	assert.Equal(t, int64(1), resp.Total, "expected exactly 1 folder node")
 	for _, s := range resp.Secrets {
-		require.NotNil(t, s.SecretNode)
 		assert.False(t, s.IsSecret, "folder_only=true returned a real secret (id=%d)", s.ID)
 	}
 }

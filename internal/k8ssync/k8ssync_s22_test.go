@@ -419,15 +419,17 @@ func TestReconcile_S22_CleanupListError(t *testing.T) {
 	assert.Contains(t, res.Errors[len(res.Errors)-1], "list owned")
 }
 
-// TestReconcile_S22_UpstreamGoneRemovesSecret verifies the ErrUpstreamGone branch:
-// when a fetch returns ErrUpstreamGone, the engine deletes the materialized Secret.
+// TestReconcile_S22_UpstreamGoneRemovesSecret verifies the ErrUpstreamGone branch
+// WITH prune_on_revoke enabled: when a fetch returns ErrUpstreamGone, the engine
+// deletes the materialized Secret. (With the default off, it wouldn't — see
+// TestReconcile_RevokedUpstreamKeepsSecretByDefault in sync_test.go.)
 func TestReconcile_S22_UpstreamGoneRemovesSecret(t *testing.T) {
 	f := &fakeFetcher{revoked: map[string]bool{"prod/gone": true}}
 	s := newFakeSink()
 	// Pre-populate the Secret as if it was previously materialized.
 	s.existing["ns/old-secret"] = map[string][]byte{"K": []byte("stale")}
 
-	e := NewEngine(f, s)
+	e := NewEngine(f, s, WithPruneOnRevoke())
 
 	res, err := e.Reconcile(context.Background(), []SecretMapping{
 		{Ref: "prod/gone", Namespace: "ns", Name: "old-secret", Key: "K"},

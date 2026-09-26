@@ -1,0 +1,72 @@
+# "Maximal" values for the keyorix chart: every optional feature toggled on,
+# used by the helm-chart-policy CI job so kubeconform/kube-score see the full
+# template surface (ingress, TLS, CORS, image digests, imagePullSecrets,
+# scheduling knobs, a scaled-out web replica set, and a networkPolicy
+# extraRules entry), not just the default render's narrower code paths.
+auth:
+  masterPassword: ci-maximal
+  adminUsername: admin
+  adminEmail: admin@example.com
+  adminPassword: ci-maximal-admin
+
+server:
+  image:
+    digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  keysPersistence:
+    storageClass: fast-ssd
+  nodeSelector:
+    kubernetes.io/os: linux
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: keyorix
+      effect: NoSchedule
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: server
+            topologyKey: kubernetes.io/hostname
+
+web:
+  enabled: true
+  replicas: 2
+  image:
+    digest: "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  corsAllowedOrigins:
+    - "https://app.example.com"
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+  host: keyorix.example.com
+  tls:
+    - secretName: keyorix-tls
+      hosts:
+        - keyorix.example.com
+
+postgresql:
+  enabled: true
+  auth:
+    password: ci-maximal-db
+  persistence:
+    storageClass: fast-ssd
+
+networkPolicy:
+  enabled: true
+  egress:
+    enabled: true
+    extraRules:
+      - to:
+          - ipBlock: { cidr: 10.0.9.0/24 }
+        ports:
+          - protocol: TCP
+            port: 587
+
+imagePullSecrets:
+  - name: registry-cred

@@ -16,7 +16,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/delivery"
-	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/license"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -57,8 +56,10 @@ type KeyorixCore struct {
 	// the initialised encryption.Service at server startup via SetAuthEncryptor.
 	authEncryptor *encryption.Service
 	// dynamicEngineFactory resolves a dynamic-secrets credential engine by backend
-	// type (ADR-035). nil = the real dynamic.New; overridable in tests with a fake.
-	dynamicEngineFactory func(string) (dynamic.CredentialEngine, error)
+	// type (ADR-035). nil = dynamic secrets unavailable (fail closed — see
+	// dynamicEngine). Wired at startup to internal/dynamic.New (server/main.go's
+	// DefaultIntegrations/wireDynamicSecrets); overridable in tests with a fake.
+	dynamicEngineFactory ports.DynamicBackendFactory
 	// trustRegistry resolves the embedded update/license signing-key trust registry
 	// (ADR-062/064). nil = the real trust.DefaultRegistry; overridable in tests to
 	// inject a lookup failure (#145) without mutating trust package internals.
@@ -836,9 +837,11 @@ func (c *KeyorixCore) decryptAuthSecret(ct, _ []byte, aad []byte) (string, error
 	return string(plain), nil
 }
 
-// SetDynamicEngineFactory overrides the dynamic-secrets engine factory (tests
-// inject a fake engine).
-func (c *KeyorixCore) SetDynamicEngineFactory(f func(string) (dynamic.CredentialEngine, error)) {
+// SetDynamicEngineFactory wires the dynamic-secrets engine factory (server
+// startup: internal/dynamic.New via server/main.go's DefaultIntegrations;
+// tests: a fake engine). nil (the default) leaves dynamic secrets unavailable
+// — see dynamicEngine.
+func (c *KeyorixCore) SetDynamicEngineFactory(f ports.DynamicBackendFactory) {
 	c.dynamicEngineFactory = f
 }
 
@@ -876,17 +879,21 @@ func (c *KeyorixCore) SetDynamicMaxLeaseTTL(ttl time.Duration) {
 	}
 }
 
-// dynamicEngine resolves an engine for a backend type via the factory (or the
-// real dynamic.New when none is set). c.dynamicAllowPrivateTargets is threaded
-// through to dynamic.New so an engine that dials the admin DSN itself
-// (postgres, mysql) applies the SAME private/link-local dial-time guard (or
-// the same explicit operator opt-out) enforceDynamicSecretSSRFGuard already
-// applies at config create/issue/renew time (G48).
-func (c *KeyorixCore) dynamicEngine(backendType string) (dynamic.CredentialEngine, error) {
-	if c.dynamicEngineFactory != nil {
-		return c.dynamicEngineFactory(backendType)
+// dynamicEngine resolves an engine for a backend type via the wired factory.
+// nil (no factory wired — SetDynamicEngineFactory was never called) means
+// dynamic secrets are unavailable: fails closed rather than reaching for a
+// concrete backend package internal/core does not import (ADR-109). In
+// production, server/main.go's DefaultIntegrations always wires the real
+// internal/dynamic.New-backed factory, threading c.dynamicAllowPrivateTargets/
+// c.dynamicAllowInsecureTransport through it so an engine that dials the admin
+// DSN itself (postgres, mysql) applies the SAME private/link-local dial-time
+// guard (or the same explicit operator opt-out) enforceDynamicSecretSSRFGuard
+// already applies at config create/issue/renew time (G48).
+func (c *KeyorixCore) dynamicEngine(backendType string) (ports.DynamicBackendEngine, error) {
+	if c.dynamicEngineFactory == nil {
+		return nil, fmt.Errorf("dynamic secrets are unavailable: no engine factory configured")
 	}
-	return dynamic.New(backendType, c.dynamicAllowPrivateTargets, c.dynamicAllowInsecureTransport)
+	return c.dynamicEngineFactory(backendType)
 }
 
 // SetTrustRegistryFunc overrides how the update/license signing-key trust registry

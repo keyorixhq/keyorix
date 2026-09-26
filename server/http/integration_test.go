@@ -24,6 +24,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -79,7 +80,14 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		"ON break_glass_activations (project_id, user_id) WHERE state = 'active'").Error)
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active "+
 		"ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''").Error)
-	return core.NewKeyorixCore(store.NewLocalStorage(db))
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	// ADR-109 step 3: internal/core no longer defaults to dynamic.New internally
+	// (that would mean importing internal/dynamic from production code) — wire it
+	// explicitly here, exactly as server/main.go's DefaultIntegrations does, so
+	// this package's dynamic-secret tests still reach a real (if unreachable in
+	// this sandbox) backend rather than failing closed before ever dialing out.
+	cs.SetDynamicEngineFactory(func(bt string) (dynamic.CredentialEngine, error) { return dynamic.New(bt, false, false) })
+	return cs
 }
 
 // createTestToken seeds the system and returns a real admin session token.
@@ -322,11 +330,11 @@ func TestHTTPServerIntegration(t *testing.T) {
 				t.Fatalf("expected data in response body, got nil. Full response: %v", response)
 			}
 			data := response["data"].(map[string]interface{})
-			assert.Contains(t, data, "ID")
-			assert.Equal(t, "integration-test-secret", data["Name"])
+			assert.Contains(t, data, "id")
+			assert.Equal(t, "integration-test-secret", data["name"])
 
 			// Store secret ID for later tests
-			secretID = uint(data["ID"].(float64))
+			secretID = uint(data["id"].(float64))
 		})
 
 		// Step 5: Get the created secret
@@ -350,8 +358,8 @@ func TestHTTPServerIntegration(t *testing.T) {
 				t.Fatalf("expected data in response body, got nil. Full response: %v", response)
 			}
 			data := response["data"].(map[string]interface{})
-			assert.Equal(t, float64(secretID), data["ID"])
-			assert.Equal(t, "integration-test-secret", data["Name"])
+			assert.Equal(t, float64(secretID), data["id"])
+			assert.Equal(t, "integration-test-secret", data["name"])
 		})
 
 		// Step 6: Update the secret

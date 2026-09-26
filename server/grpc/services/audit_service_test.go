@@ -230,11 +230,35 @@ func TestAuditService_GetAuditLogs_PermissionDenied(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
+// TestAuditService_GetAuditLogs_DefaultPageSizeMatchesREST pins the page_size
+// default to 50, matching REST's GetAuditLogs handler (audit.go) — every OTHER
+// list RPC in this package defaults to 20 via the shared normalizePage, but
+// audit's REST sibling has always defaulted to 50, so gRPC's GetAuditLogs must
+// match it specifically rather than inheriting the generic default. Without
+// this an identical unspecified-page_size request returned a different-sized
+// page depending on transport.
+func TestAuditService_GetAuditLogs_DefaultPageSizeMatchesREST(t *testing.T) {
+	svc := newAuditService(t)
+	resp, err := svc.GetAuditLogs(auditCtx(), &pb.GetAuditLogsRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, uint32(50), resp.GetPageSize())
+}
+
 func TestAuditService_GetRBACAuditLogs_EmptyButOK(t *testing.T) {
 	svc := newAuditService(t)
 	resp, err := svc.GetRBACAuditLogs(auditCtx(), &pb.GetRBACAuditLogsRequest{})
 	require.NoError(t, err)
 	assert.Empty(t, resp.GetLogs())
+}
+
+// TestAuditService_GetRBACAuditLogs_DefaultPageSizeMatchesREST is the
+// GetRBACAuditLogs twin of TestAuditService_GetAuditLogs_DefaultPageSizeMatchesREST
+// — REST's GetRBACAuditLogs handler (audit.go) also defaults page_size to 50.
+func TestAuditService_GetRBACAuditLogs_DefaultPageSizeMatchesREST(t *testing.T) {
+	svc := newAuditService(t)
+	resp, err := svc.GetRBACAuditLogs(auditCtx(), &pb.GetRBACAuditLogsRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, uint32(50), resp.GetPageSize())
 }
 
 func TestAuditService_GetRBACAuditLogs_ReturnsRoleChanges(t *testing.T) {

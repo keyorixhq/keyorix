@@ -1,0 +1,52 @@
+# "Maximal" values for the keyorix-operator chart -- see keyorix.yaml's own
+# header comment for why this exists. Exercises leaderElection + replicas=2
+# (renders the PodDisruptionBudget), allowedServers (the confused-deputy
+# control), the metrics bearer token, imagePullSecrets, scheduling knobs, and
+# a networkPolicy extraRules entry. Deliberately left at the DEFAULT RBAC
+# scope (namespace-scoped, watchNamespaces empty) -- the other 3 ADR-076 scope
+# paths (watchNamespaces set, rbac.clusterScoped=true, and the contradictory
+# combination) already have their own dedicated CI assertions in the
+# helm-chart job; this fixture's job is exercising the OTHER optional values,
+# not re-testing RBAC-scope resolution.
+allowedServers:
+  - https://keyorix.example.com
+  - https://keyorix-secondary.example.com
+
+replicas: 2
+leaderElection: true
+
+metricsBearerToken: ci-maximal-metrics-token
+
+networkPolicy:
+  enabled: true
+  egress:
+    enabled: true
+    extraRules:
+      - ports:
+          - protocol: TCP
+            port: 8443
+
+image:
+  digest: "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+
+imagePullSecrets:
+  - name: registry-cred
+
+nodeSelector:
+  kubernetes.io/os: linux
+tolerations:
+  - key: dedicated
+    operator: Equal
+    value: keyorix
+    effect: NoSchedule
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: keyorix-operator
+          topologyKey: kubernetes.io/hostname
+podAnnotations:
+  example.com/team: platform

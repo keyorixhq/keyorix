@@ -26,11 +26,8 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"authPasswordReset":                  reasonSchemaNotYetWritten, // post /auth/password-reset
 	"changePassword":                     reasonSchemaNotYetWritten, // post /api/v1/auth/change-password
 	"closeAccessReviewCampaign":          reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close
-	"cloneEnvironment":                   reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/environments/{envId}/clone
 	"createAccessRequest":                reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-requests
 	"createGlobalInvitation":             reasonSchemaNotYetWritten, // post /api/v1/invitations
-	"createProject":                      reasonSchemaNotYetWritten, // post /api/v1/projects
-	"createProjectEnvironment":           reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/environments
 	"createRiskException":                reasonSchemaNotYetWritten, // post /api/v1/risk-exceptions
 	"createSecretAccessRequest":          reasonSchemaNotYetWritten, // post /api/v1/secret-access-requests
 	"createSoDPolicy":                    reasonSchemaNotYetWritten, // post /api/v1/sod/policies
@@ -54,7 +51,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getEncryptionConfig":                reasonSchemaNotYetWritten, // get /api/v1/system/encryption-config
 	"getLegalHold":                       reasonSchemaNotYetWritten, // get /api/v1/legal-hold
 	"getMostAccessedSecrets":             reasonSchemaNotYetWritten, // get /api/v1/secrets/usage/most-accessed
-	"getProject":                         reasonSchemaNotYetWritten, // get /api/v1/projects/{id}
 	"getProjectAccessReview":             reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-review
 	"getProjectDrift":                    reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/drift
 	"getProjectHealth":                   reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/health
@@ -75,7 +71,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"listAccessReviewCampaigns":          reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-review/campaigns
 	"listAnomalyAlerts":                  reasonSchemaNotYetWritten, // get /api/v1/audit/anomalies
 	"listAuditLogs":                      reasonSchemaNotYetWritten, // get /api/v1/audit/logs
-	"listEnvironments":                   reasonSchemaNotYetWritten, // get /api/v1/environments
 	"listNotifications":                  reasonSchemaNotYetWritten, // get /api/v1/notifications
 	"listProjectMembers":                 reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/members
 	"listProjectMemberships":             reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/memberships
@@ -114,7 +109,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"transitionMachineIdentity":          reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/machine-identities/{machineId}
 	"transitionMembership":               reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/memberships/{membershipId}
 	"updateAuthProfile":                  reasonSchemaNotYetWritten, // put /api/v1/auth/profile
-	"updateProject":                      reasonSchemaNotYetWritten, // put /api/v1/projects/{id}
 	"updateProjectMember":                reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/members/{userId}
 	"updateRotationPolicy":               reasonSchemaNotYetWritten, // put /api/v1/rotation-policies/{id}
 	"updateUser":                         reasonSchemaNotYetWritten, // put /api/v1/users/{id}
@@ -366,4 +360,12 @@ var exercisingTests = map[string][]string{
 	"getUsageReport":       {"TestContractFinishSplit_GetUsageReport"},
 	"getBillingReport":     {"TestContractFinishSplit_GetBillingReport"},
 	"migrateUserToMachine": {"TestContractFinishSplit_MigrateUserToMachine"},
+	// API hygiene campaign (catalog_wire.go snake_case wire types) --
+	// openapi_contract_catalog_test.go.
+	"createProject":            {"TestContractCatalog_CreateProject"},
+	"getProject":               {"TestContractCatalog_GetProject"},
+	"updateProject":            {"TestContractCatalog_UpdateProject"},
+	"createProjectEnvironment": {"TestContractCatalog_CreateProjectEnvironment"},
+	"listEnvironments":         {"TestContractCatalog_ListEnvironments"},
+	"cloneEnvironment":         {"TestContractCatalog_CloneEnvironment"},
 }

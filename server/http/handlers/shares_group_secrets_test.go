@@ -52,9 +52,7 @@ func TestListGroupSharedSecretsHandler(t *testing.T) {
 		data := decodeData(t, w)
 		secrets := data["secrets"].([]interface{})
 		require.Len(t, secrets, 1, "only the live (non-expired) share surfaces")
-		// SecretNode has no JSON tags, so it serializes with Go field names (PascalCase),
-		// matching the existing /shared-secrets endpoint.
-		assert.Equal(t, "alpha", secrets[0].(map[string]interface{})["Name"])
+		assert.Equal(t, "alpha", secrets[0].(map[string]interface{})["name"])
 	})
 
 	t.Run("requires a user context", func(t *testing.T) {
