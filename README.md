@@ -149,17 +149,21 @@ See [example apps](https://github.com/keyorixhq/keyorix-go/tree/main/examples/pe
 - Role-based access control (RBAC)
 - Group-based permissions
 - Service tokens for CI/CD and automation
+- Dynamic secrets — on-demand credential generation with TTL
 
 **Audit and compliance**
 - Every access logged: who, what, when, from where
 - Two audit layers: `audit_events` and `secret_access_logs`
 - NIS2 / DORA alignment for European compliance requirements
 - Dashboard expiry alerts for secrets approaching rotation deadlines
+- ML-based access anomaly detection and alerting
 
 **Developer experience**
 - `keyorix run` — inject secrets into any process
 - `keyorix secret import` — migrate from Vault, .env files, JSON
 - `keyorix login` — single command server authentication
+- MCP server for AI-assistant integration — read-only (`keyorix_get_secret`,
+  `keyorix_list_secrets`), no write/rotate/delete tools (ADR-061)
 - Web dashboard for teams who prefer a UI
 
 ---
@@ -191,10 +195,7 @@ Security issues: security@keyorix.com
 ## Roadmap
 
 - Kubernetes service account authentication
-- Dynamic secrets — credentials generated on-demand with TTL
-- MCP server — AI assistant integration
 - Java SDK
-- Access anomaly detection (NIS2 incident detection)
 
 ---
 

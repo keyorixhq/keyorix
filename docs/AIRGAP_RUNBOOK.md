@@ -159,20 +159,16 @@ image and the real HTTP-driven flow, which takes real wall-clock time
 (tens of seconds, to wait out a checkpoint interval) and a real container
 engine CI shouldn't need for every push.
 
-**Known blocker (as of 2026-09-25):** `docker build -f server/Dockerfile .`
-currently fails on a clean checkout — `server/admin/init.go` imports
-`github.com/keyorixhq/keyorix/configs`, but `.dockerignore` excludes
-`configs/` from the build context, so the Go build inside the image fails
-with `no required module provides package .../configs`. This is a
-pre-existing regression from the PR that added `admin init`
-(`server/admin/init.go`, not owned by this track), not something introduced
-here — filed as a handoff in the BACKUP track report
-(`~/proj/prompts/reports/BACKUP.md`) rather than fixed in this PR, since
-`.dockerignore`/`init.go` are outside this track's owned paths. Until it's
-fixed, either drop `configs/` from `.dockerignore`, or pre-build the image
-yourself with a workaround and point the script at it via
-`KEYORIX_AIRGAP_E2E_IMAGE=<your-tag> ./scripts/airgap-e2e.sh` (skips the
-build step entirely).
+**Resolved (2026-09-25):** `docker build -f server/Dockerfile .` previously
+failed on a clean checkout — `server/admin/init.go` imports
+`github.com/keyorixhq/keyorix/configs`, but `.dockerignore` excluded
+`configs/` from the build context, so the Go build inside the image failed
+with `no required module provides package .../configs`. Fixed by #2108
+(`.dockerignore` now excludes `configs/*` except the two files
+`admin init` actually embeds, `embed.go` and `keyorix.yaml.tpl`) — verified
+with a clean `docker build -f server/Dockerfile .` against current `main`.
+`KEYORIX_AIRGAP_E2E_IMAGE=<your-tag> ./scripts/airgap-e2e.sh` still works if
+you'd rather pre-build the image yourself and skip the build step entirely.
 
 ## What this runbook does NOT cover
 
