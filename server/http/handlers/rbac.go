@@ -127,7 +127,7 @@ func (h *RBACHandler) ListRoles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sendSuccess(w, map[string]any{"roles": roles, "total": len(roles)}, "")
+	sendSuccess(w, map[string]any{"roles": newRoleWithPermissionsWireList(roles), "total": len(roles)}, "")
 }
 
 // CreateRole handles POST /api/v1/roles
@@ -185,7 +185,7 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sendCreated(w, map[string]any{"role": role, "permissions": assignedPerms}, "Role created successfully")
+	sendCreated(w, map[string]any{"role": newRoleWire(role), "permissions": newPermissionWireList(assignedPerms)}, "Role created successfully")
 }
 
 // resolveAndAuthorizePermissions resolves each named permission and checks the actor
@@ -242,7 +242,7 @@ func (h *RBACHandler) GetRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sendSuccess(w, map[string]any{"role": role, "permissions": perms}, "")
+	sendSuccess(w, map[string]any{"role": newRoleWire(role), "permissions": newPermissionWireList(perms)}, "")
 }
 
 // GetRoleByName handles GET /api/v1/roles/by-name?name=X — looks up a role by
@@ -284,7 +284,7 @@ func (h *RBACHandler) GetRoleByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sendSuccess(w, role, "")
+	sendSuccess(w, newRoleWire(role), "")
 }
 
 // UpdateRole handles PUT /api/v1/roles/{id}
@@ -365,7 +365,7 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 	}
 	role = updated
 
-	sendSuccess(w, map[string]any{"role": role, "permissions": perms}, "Role updated successfully")
+	sendSuccess(w, map[string]any{"role": newRoleWire(role), "permissions": newPermissionWireList(perms)}, "Role updated successfully")
 }
 
 func (h *RBACHandler) authorizeAndCollectPermissions(ctx context.Context, userCtx *middleware.UserContext, permNames []string) ([]*models.Permission, error) {
@@ -545,7 +545,7 @@ func (h *RBACHandler) GetUserRoles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sendSuccess(w, assignment, "")
+	sendSuccess(w, newUserRoleAssignmentWire(assignment), "")
 }
 
 // ListPermissions handles GET /api/v1/permissions
@@ -573,7 +573,7 @@ func (h *RBACHandler) ListPermissions(w http.ResponseWriter, r *http.Request) {
 		perms = filtered
 	}
 
-	sendSuccess(w, map[string]any{"permissions": perms, "total": len(perms)}, "")
+	sendSuccess(w, map[string]any{"permissions": newPermissionWireList(perms), "total": len(perms)}, "")
 }
 
 // GetPermission handles GET /api/v1/permissions/{id} — added for #526 as the
@@ -608,7 +608,7 @@ func (h *RBACHandler) GetPermission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sendSuccess(w, perm, "")
+	sendSuccess(w, newPermissionWire(perm), "")
 }
 
 // GetRolePermissions handles GET /api/v1/roles/{id}/permissions
@@ -634,7 +634,7 @@ func (h *RBACHandler) GetRolePermissions(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	sendSuccess(w, map[string]any{"role_id": role.ID, "role_name": role.Name, "permissions": perms}, "")
+	sendSuccess(w, map[string]any{"role_id": role.ID, "role_name": role.Name, "permissions": newPermissionWireList(perms)}, "")
 }
 
 // AssignPermissionToRole handles POST /api/v1/roles/{id}/permissions

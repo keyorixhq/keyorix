@@ -28,6 +28,34 @@ import (
 
 // --- Roles ---
 
+// remoteRoleWire mirrors the handler-side roleWire
+// (server/http/handlers/rbac_wire.go): the API-hygiene casing fix moved
+// GetRole/GetRoleByName/UpdateRole/ListRoles from serializing models.Role's
+// bare (untagged) Go field names to a real snake_case shape. Every field but
+// BypassesPermissionChecks is single-word, so encoding/json's
+// case-insensitive fallback would have rescued it either way; the
+// underscore in "bypasses_permission_checks" does NOT case-insensitively
+// match "BypassesPermissionChecks", so decoding straight into models.Role
+// (as these four methods used to) would silently zero that field on every
+// role fetched through RemoteStorage. Confirmed GetRoleByName's only
+// consumer, repo-wide, is this file (no CLI/web caller of GET
+// /api/v1/roles/by-name) before applying this fix.
+type remoteRoleWire struct {
+	ID                       uint   `json:"id"`
+	Name                     string `json:"name"`
+	Description              string `json:"description,omitempty"`
+	BypassesPermissionChecks bool   `json:"bypasses_permission_checks"`
+}
+
+func (w remoteRoleWire) toModel() *models.Role {
+	return &models.Role{
+		ID:                       w.ID,
+		Name:                     w.Name,
+		Description:              w.Description,
+		BypassesPermissionChecks: w.BypassesPermissionChecks,
+	}
+}
+
 // CreateRole creates a new role via remote API. Sends only the display form
 // and description over the wire — the hub's own handler (server/http/handlers/
 // rbac.go's RBACHandler.CreateRole) independently re-derives the folded form
@@ -66,7 +94,7 @@ func (rs *RemoteStorage) GetRole(ctx context.Context, id uint) (*models.Role, er
 		return nil, fmt.Errorf("get role failed: %s", resp.Error.Error())
 	}
 	var result struct {
-		Role *models.Role `json:"role"`
+		Role *remoteRoleWire `json:"role"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
@@ -74,7 +102,7 @@ func (rs *RemoteStorage) GetRole(ctx context.Context, id uint) (*models.Role, er
 	if result.Role == nil {
 		return nil, fmt.Errorf("GetRole: server response contained no role object")
 	}
-	return result.Role, nil
+	return result.Role.toModel(), nil
 }
 
 // GetRoleByName retrieves a role by name via remote API.
@@ -95,11 +123,11 @@ func (rs *RemoteStorage) GetRoleByName(ctx context.Context, name string) (*model
 	if !resp.Success {
 		return nil, fmt.Errorf("get role by name failed: %s", resp.Error.Error())
 	}
-	var result models.Role
+	var result remoteRoleWire
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return &result, nil
+	return result.toModel(), nil
 }
 
 // UpdateRole updates an existing role via remote API.
@@ -113,7 +141,7 @@ func (rs *RemoteStorage) UpdateRole(ctx context.Context, role *models.Role) (*mo
 		return nil, fmt.Errorf("update role failed: %s", resp.Error.Error())
 	}
 	var result struct {
-		Role *models.Role `json:"role"`
+		Role *remoteRoleWire `json:"role"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
@@ -121,7 +149,7 @@ func (rs *RemoteStorage) UpdateRole(ctx context.Context, role *models.Role) (*mo
 	if result.Role == nil {
 		return nil, fmt.Errorf("UpdateRole: server response contained no role object")
 	}
-	return result.Role, nil
+	return result.Role.toModel(), nil
 }
 
 // DeleteRole deletes a role via remote API.
@@ -146,17 +174,22 @@ func (rs *RemoteStorage) ListRoles(ctx context.Context) ([]*models.Role, error) 
 	if !resp.Success {
 		return nil, fmt.Errorf("list roles failed: %s", resp.Error.Error())
 	}
-	// The server wraps this as {"roles": [...]}. Note it projects each role
-	// through handlers.apiRole, which carries only ID and Name -- Description and
-	// the permission set come back empty. That is a server-side shape, not a bug
-	// here; a caller needing the full role must fetch it by ID.
+	// The server wraps this as {"roles": [...]}, each entry the full
+	// roleWithPermissionsWire shape (id/name/description/
+	// bypasses_permission_checks/permissions) -- this only needs the Role
+	// fields, so decoding into remoteRoleWire and ignoring the extra
+	// "permissions" key is deliberate, not a truncation.
 	var result struct {
-		Roles []*models.Role `json:"roles"`
+		Roles []remoteRoleWire `json:"roles"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result.Roles, nil
+	roles := make([]*models.Role, 0, len(result.Roles))
+	for _, w := range result.Roles {
+		roles = append(roles, w.toModel())
+	}
+	return roles, nil
 }
 
 // --- RBAC assignment ---
