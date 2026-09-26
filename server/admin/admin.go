@@ -155,7 +155,11 @@ func withUsableStorage(cfg *config.Config, fn func(store corestorage.Storage) er
 }
 
 // recordAdminAction writes an audit-chain event for a state-changing admin
-// command and prints what it did (both parts of the task-2 requirement).
+// command. description is audit-log phrasing only (e.g. "ran `keyorix-server
+// admin migrate`") -- every caller already prints its own user-facing
+// success message before calling this, so this does not print description
+// itself: doing so used to duplicate that message in a different, more
+// technical voice, sandwiched around unrelated storage-layer log lines.
 // Best-effort on the audit write: if the database isn't usable yet (e.g.
 // `admin init` running against a brand-new, not-yet-migrated database on a
 // backend the factory then fails to open for some unrelated reason), the
@@ -163,7 +167,6 @@ func withUsableStorage(cfg *config.Config, fn func(store corestorage.Storage) er
 // printed note, never a hard failure, since the primary action already
 // happened (or didn't) on its own terms before this is called.
 func recordAdminAction(cfg *config.Config, eventType, description string, success bool) {
-	fmt.Println(description)
 	err := withUsableStorage(cfg, func(st corestorage.Storage) error {
 		ok := success
 		return st.LogAuditEvent(context.Background(), &models.AuditEvent{

@@ -96,6 +96,7 @@ func runAdminInit(cmd *cobra.Command, args []string) error { // NOSONAR -- cogni
 
 	fmt.Println("\nKeyorix system initialization completed successfully.")
 	fmt.Printf("Config file: %s\n", configPath)
+	fmt.Println("Run 'keyorix-server admin encryption init' to generate encryption keys (required before the server can start)")
 	fmt.Println("Run 'keyorix-server admin validate' to check the setup")
 	fmt.Println("Run 'keyorix-server admin migrate' to create the database schema")
 	fmt.Println("Run 'keyorix-server admin audit' to check file permissions")
