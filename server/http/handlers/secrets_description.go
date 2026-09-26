@@ -47,5 +47,5 @@ func (h *SecretHandler) DescribeSecret(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, "Error", msg, status, nil)
 		return
 	}
-	h.sendSuccess(w, secret, "Description updated")
+	h.sendSuccess(w, newSecretNodeWire(secret), "Description updated")
 }

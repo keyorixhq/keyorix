@@ -5,6 +5,15 @@ metadata:
   labels:
     {{- include "keyorix.labels" . | nindent 4 }}
     app.kubernetes.io/component: server
+  annotations:
+    # kube-score (helm-chart-policy CI job): deployment-strategy/deployment-replicas
+    # both assume a horizontally-scalable Deployment -- server is pinned to exactly
+    # 1 replica with Recreate (see the replicas/strategy comments right below):
+    # RollingUpdate would briefly run 2 pods against the same ReadWriteOnce keys
+    # volume, which can't work, and >1 replica would mean 2 processes racing the
+    # same per-instance KEK. Not a compromise to relax later -- structurally
+    # required by the ReadWriteOnce ownership model.
+    kube-score/ignore: "deployment-strategy,deployment-replicas"
 spec:
   # Single instance: the keys volume is ReadWriteOnce and the KEK is per-instance.
   replicas: 1
@@ -21,6 +30,13 @@ spec:
         app.kubernetes.io/component: server
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/server-config.yaml") . | sha256sum }}
+        # kube-score: container-security-context-user-group-id wants a UID/GID >
+        # 10000; 1001 is fixed to match the server image's own "keyorix" user (see
+        # the securityContext comment below) -- same already-reviewed tradeoff as
+        # this repo's checkov CKV_K8S_40 exclusion (CLAUDE.md), applied per-object
+        # here since k8s-sync/operator's distroless UID (65532) already satisfies
+        # this check on its own and shouldn't have it silenced too.
+        kube-score/ignore: "container-security-context-user-group-id"
     spec:
       automountServiceAccountToken: false
       {{- with .Values.imagePullSecrets }}

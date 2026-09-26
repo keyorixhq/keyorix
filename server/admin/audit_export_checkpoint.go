@@ -49,7 +49,9 @@ yet, this command fails rather than fabricating one.
 
 --output must not already exist: each export is a distinct, timestamped
 artifact -- overwriting a prior export on write-once media would defeat the
-whole point.`,
+whole point.
+
+Exit codes: 0 on success, 1 on any failure (see the printed error message).`,
 	RunE: runExportCheckpoint,
 }
 

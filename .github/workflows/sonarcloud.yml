@@ -2,8 +2,14 @@ name: SonarCloud analysis
 
 on:
   push:
-    branches: [main]
-    paths-ignore: ['**/*.md', 'docs/**']
+    tags: ['v*']
+  schedule:
+    # Nightly instead of every push to main -- runner capacity, 2026-09-26.
+    # The PR-triggered scan below still runs on every PR, so new-code
+    # decoration stays current; only the main-branch baseline re-scan cadence
+    # changes, from per-merge to nightly.
+    - cron: '27 4 * * *'
+  workflow_dispatch:
   pull_request:
     # See ci.yml's own comment: also covers stacked-PR review chains. Note:
     # SonarCloud's new-code baseline comparison is tuned for a main-targeted

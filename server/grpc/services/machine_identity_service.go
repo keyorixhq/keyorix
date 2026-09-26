@@ -216,8 +216,13 @@ func (s *MachineIdentityGRPCService) RevokeMachineToken(ctx context.Context, req
 	if err := authorizeScoped(ctx, s.core, user, permRolesAssign, core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
 		return nil, err
 	}
-	// gRPC has no auth cache (the interceptor validates every request), so the returned
-	// hash needs no eviction here.
+	// core.RevokeMachineToken does not evict the HTTP positive-auth cache itself (see
+	// its doc comment); no explicit eviction call is needed here either, because
+	// middleware.serveAuthCacheHit re-validates every machine-token cache HIT against
+	// storage (CurrentMachineTokenRestriction: cred.Revoked / expiry / identity state)
+	// on every request, transport-agnostically — a revoke driven from gRPC is caught on
+	// the very next HTTP request regardless of which transport performed it. Proven
+	// non-vacuous in TestGRPCRevokeMachineToken_EvictsHTTPAuthCacheImmediately.
 	if _, err := s.core.RevokeMachineToken(ctx, uint(req.GetProjectId()), uint(req.GetMachineId()), uint(req.GetTokenId()), user.UserID); err != nil {
 		return nil, mapMachineError(err)
 	}

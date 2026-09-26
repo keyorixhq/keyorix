@@ -190,6 +190,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
+	"github.com/keyorixhq/keyorix/internal/dynamic/dynamictest"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -1282,8 +1283,8 @@ func TestScanCanaryLeaks_HookPrefixNeverMatchesCanaryFamily_Helper(t *testing.T)
 // meaningful for a real file -- and wires BOTH secret-value and auth-secret
 // encryptors (SetSecretValueEncryptor / SetAuthEncryptor), so the plaintext-at-rest
 // assertion is live for secret values, MFA secrets, and dynamic-secret DSNs/leases
-// alike, not vacuous. A fake dynamic-secret engine (dynamic.FakeEngine, the same one
-// internal/core's own tests use) is injected so lease issuance works without a real
+// alike, not vacuous. A fake dynamic-secret engine (dynamictest.FakeEngine, the same
+// one internal/core's own tests use) is injected so lease issuance works without a real
 // Postgres/MySQL target -- FakeEngine.IssueFields lets a test-chosen canary become
 // the issued credential.
 //
@@ -1347,7 +1348,7 @@ func buildCanaryWorld(tb worldBuilderTB) *canaryWorld {
 		tb.Fatalf("encryption did not activate -- plaintext-at-rest check would be vacuous")
 	}
 	c.SetAuthEncryptor(enc) // MFA secrets + dynamic-secret admin DSNs/lease credentials
-	fakeDyn := &dynamic.FakeEngine{NativeExpiry: true}
+	fakeDyn := &dynamictest.FakeEngine{NativeExpiry: true}
 	c.SetDynamicEngineFactory(func(string) (dynamic.CredentialEngine, error) { return fakeDyn, nil })
 	c.SetTokenCacheInvalidator(customMiddleware.InvalidateTokenCacheByHash)
 	ls := store.NewLocalStorage(db)

@@ -62,10 +62,10 @@ reference (encryption/KEK providers, MFA, WebAuthn, dynamic secrets, OIDC, …).
 KEYORIX_MASTER_PASSWORD=yourpassword keyorix-server
 ```
 
-**Connect the CLI:**
+**Log in with the CLI:**
 
 ```bash
-keyorix connect http://localhost:8080 --username admin --password yourpassword
+keyorix login --server http://localhost:8080 --username admin --password yourpassword
 ```
 
 **Create and use secrets:**
@@ -89,13 +89,13 @@ default: it let whoever names a secret also choose the env var it becomes.
 
 ```bash
 # From Vault (Medusa YAML export)
-keyorix secret import --file vault-export.yaml --format vault --env 1
+keyorix secret import --file vault-export.yaml --format vault --project 1 --env 1
 
 # From .env files
-keyorix secret import --file .env --format dotenv --env 1
+keyorix secret import --file .env --format dotenv --project 1 --env 1
 
 # Preview before importing
-keyorix secret import --file vault-export.yaml --format vault --env 1 --dry-run
+keyorix secret import --file vault-export.yaml --format vault --project 1 --env 1 --dry-run
 ```
 
 ---
@@ -159,7 +159,7 @@ See [example apps](https://github.com/keyorixhq/keyorix-go/tree/main/examples/pe
 **Developer experience**
 - `keyorix run` — inject secrets into any process
 - `keyorix secret import` — migrate from Vault, .env files, JSON
-- `keyorix connect` — single command server authentication
+- `keyorix login` — single command server authentication
 - Web dashboard for teams who prefer a UI
 
 ---

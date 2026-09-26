@@ -13,6 +13,19 @@ metadata:
     # digest-pinning this project's own long-lived server/web/operator/k8s-sync
     # images, and busybox:1.36 is already a specific, well-known pinned tag.
     checkov.io/skip1: CKV_K8S_43=ephemeral test-hook pod on a well-known pinned tag, not a production workload
+    # kube-score (helm-chart-policy CI job):
+    #   - container-security-context-user-group-id: uid 65534 (nobody) already
+    #     satisfies the >10000 recommendation; only the GROUP is left at its
+    #     default (0) since a plain `wget --spider` needs no group identity of
+    #     its own -- same already-reviewed tradeoff as this repo's checkov
+    #     CKV_K8S_40 exclusion.
+    #   - pod-networkpolicy: this is a `helm test` hook pod (see
+    #     helm.sh/hook above) -- created, runs one wget, and is deleted within
+    #     seconds of every `helm test` invocation. A dedicated NetworkPolicy for
+    #     a pod that exists that briefly is disproportionate to the risk it
+    #     poses; it already carries the same hardened securityContext as this
+    #     chart's long-lived containers otherwise.
+    kube-score/ignore: "container-security-context-user-group-id,pod-networkpolicy"
 spec:
   restartPolicy: Never
   automountServiceAccountToken: false
@@ -44,3 +57,4 @@ spec:
         limits:
           cpu: 100m
           memory: 32Mi
+          ephemeral-storage: 16Mi

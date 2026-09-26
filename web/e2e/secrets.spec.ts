@@ -17,7 +17,7 @@ test.describe('Secret Management', () => {
 
     test('displays the secrets list', async ({ page }) => {
         await mockSecretsList(page, [
-            { ID: 1, Name: 'test-secret', Type: 'password', environment_name: 'production', Status: 'active' },
+            { id: 1, name: 'test-secret', type: 'password', environment_name: 'production', status: 'active' },
         ]);
         await page.goto('/secrets');
 
@@ -37,11 +37,11 @@ test.describe('Secret Management', () => {
         await mockSecretsPolicy(page);
         await mockProjectsAndEnvironments(page);
         await mockSecretCreateSuccess(page, {
-            ID: 2,
-            Name: 'my-new-secret',
-            Type: 'password',
+            id: 2,
+            name: 'my-new-secret',
+            type: 'password',
             environment_name: 'production',
-            Status: 'active',
+            status: 'active',
         });
         await page.goto('/secrets');
 
@@ -55,7 +55,7 @@ test.describe('Secret Management', () => {
         // The list refetches on success — swap in a list containing the new
         // secret so we can assert the round trip actually landed.
         await mockSecretsList(page, [
-            { ID: 2, Name: 'my-new-secret', Type: 'password', environment_name: 'production', Status: 'active' },
+            { id: 2, name: 'my-new-secret', type: 'password', environment_name: 'production', status: 'active' },
         ]);
         await page.getByTestId('create-secret-submit').click();
 

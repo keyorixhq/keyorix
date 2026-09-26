@@ -153,7 +153,7 @@ func TestSecretFolderCreate_RequiresName(t *testing.T) {
 }
 
 func TestSecretFolderList_MatchesOldCLIOutputShape(t *testing.T) {
-	srv := secretOpsServer(t, secretJSONRoute(http.MethodGet, "/api/v1/folders", `{"data":[{"ID":3,"Name":"db-creds","ProjectID":1,"EnvironmentID":1}]}`))
+	srv := secretOpsServer(t, secretJSONRoute(http.MethodGet, "/api/v1/folders", `{"data":[{"id":3,"name":"db-creds","project_id":1,"environment_id":1}]}`))
 	setPATCreds(t, srv)
 
 	out := captureStdout(t, func() {
@@ -420,7 +420,7 @@ func TestSecretInfo_RequiresID(t *testing.T) {
 
 func TestSecretInfo_MatchesOldCLIOutputShape(t *testing.T) {
 	srv := secretOpsServer(t,
-		secretJSONRoute(http.MethodGet, "/api/v1/secrets/1", `{"data":{"ID":1,"Name":"db-pass","Type":"generic","Status":"active","Classification":"confidential","OwnerID":9,"CreatedBy":"alice"}}`),
+		secretJSONRoute(http.MethodGet, "/api/v1/secrets/1", `{"data":{"id":1,"name":"db-pass","type":"generic","status":"active","classification":"confidential","owner_id":9,"created_by":"alice"}}`),
 		secretJSONRoute(http.MethodGet, "/api/v1/secrets/1/tags", `{"data":{"tags":["prod","db"]}}`),
 	)
 	setPATCreds(t, srv)

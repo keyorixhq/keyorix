@@ -23,6 +23,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
+	"github.com/keyorixhq/keyorix/internal/dynamic/dynamictest"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/http/handlers/contracttest"
@@ -96,7 +97,7 @@ func TestContractPR1_ListBreakGlassActivations(t *testing.T) {
 
 // dynamicSecretFixturePR1 wires a real AuthEncryptor (so the admin DSN
 // round-trips through actual encrypt/decrypt, not a nil-encryptor shortcut)
-// and a dynamic.FakeEngine (so IssueLease/RenewLease/RevokeLease exercise the
+// and a dynamictest.FakeEngine (so IssueLease/RenewLease/RevokeLease exercise the
 // real core logic without needing a live Postgres/MySQL/cloud-IAM target) --
 // exactly the pattern internal/core/dynamic_secrets_test.go's newDynamicTestCore
 // (unexported, core package only) already established.
@@ -106,7 +107,7 @@ func dynamicSecretFixturePR1(t *testing.T) (*DynamicSecretHandler, *core.Keyorix
 	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())
 	require.NoError(t, enc.Initialize("contract-pr1-test-passphrase"))
 	cs.SetAuthEncryptor(enc)
-	fake := &dynamic.FakeEngine{NativeExpiry: true}
+	fake := &dynamictest.FakeEngine{NativeExpiry: true}
 	cs.SetDynamicEngineFactory(func(string) (dynamic.CredentialEngine, error) { return fake, nil })
 	proj := &models.Project{Name: "contract-pr1-ds-proj"}
 	require.NoError(t, db.Create(proj).Error)

@@ -41,6 +41,8 @@ helm install kx-sync deploy/helm/keyorix-k8s-sync \
 | `keyorix.projectID` | Numeric id of the Keyorix project the token's machine identity belongs to (**required**) — every `mappings[].ref` names only an environment and secret, never a project, since environment names are unique per-project, not globally |
 | `keyorix.interval` | Reconcile cadence (Go duration; default `5m`) |
 | `cleanup` | Reap orphaned owned Secrets when a mapping is removed (default `false`) |
+| `pruneOnRevoke` | Actually delete/trim a Secret when its upstream Keyorix reference is confirmed gone or access is revoked, instead of leaving the last-known value untouched (default `true` — the secure default; bounded by the mass-revocation circuit breaker, see [Failure modes](#failure-modes)) |
+| `massPruneAck` | RFC3339 timestamp acknowledging a suspected mass revocation, valid for 1 hour (default empty — see [Failure modes](#failure-modes)) |
 | `keyorix.tokenSecret.name` | Existing Secret holding the Keyorix token (**required**) |
 | `keyorix.tokenSecret.key` | Key within that Secret (default `token`) |
 | `mappings` | List of `{ref, namespace, name, key}` — Keyorix secret → Kubernetes Secret key |
@@ -97,6 +99,56 @@ stop working right after this upgrade:
 ```sh
 kubectl -n <namespace> describe networkpolicy <release>-keyorix-k8s-sync
 ```
+
+## Failure modes
+
+- **Keyorix unreachable, or returns a 5xx:** treated as transient. The target
+  Secret(s) affected are skipped for that pass — left completely untouched,
+  never written with a missing/partial value — and retried at the next pass
+  (see "Retry cadence" below for the backoff this now applies on repeated
+  failure).
+- **A specific secret is deleted upstream, or a token is revoked/expired:**
+  detected (Keyorix returns 401/403/404). By default (`pruneOnRevoke: true`
+  — the secure default) the target Secret is actively wiped/trimmed the
+  moment its reference is confirmed gone/revoked, counted as `revoked` —
+  visible via `/status`'s `revoked` field and the
+  `keyorix_k8s_sync_secrets_total{outcome="revoked"}` metric. Set
+  `pruneOnRevoke: false` to opt OUT and leave the target Secret's last-known
+  value untouched instead, for deployments that prefer availability over
+  immediate reap.
+- **Mass-revocation circuit breaker:** a revoked or expired agent token reads
+  as the exact same failure on *every* mapping's fetch, not just one — with
+  `pruneOnRevoke` on by default, an unconditional wipe would otherwise delete
+  or trim every Secret the agent manages in a single pass, triggered by
+  nothing more than a routine credential rotation. When a SINGLE reconcile
+  pass would wipe more than one target AND more than 20% of everything this
+  agent manages, none of them are wiped: the pass instead reports "MASS
+  REVOCATION SUSPECTED" — visible via `/status`'s `suspected` field and the
+  `keyorix_k8s_sync_secrets_total{outcome="mass_revocation_suspected"}`
+  metric — until acknowledged via `massPruneAck` (an RFC3339 timestamp,
+  valid for 1 hour after it's set). A single revocation is unaffected by the
+  breaker and always wipes immediately, regardless of what fraction of a
+  very small mapping set it represents.
+- **Retry cadence:** the agent's default poll interval (`keyorix.interval`,
+  5m) applies as long as every pass is clean. After a pass with any failed or
+  revoked target, the next pass's delay backs off exponentially (bounded at
+  8x the configured interval) with up to ±20% jitter, resetting to the plain
+  interval the moment a pass is fully clean again — so a sustained outage or
+  revocation doesn't retry at the same cadence as healthy operation
+  indefinitely, and multiple agent replicas recovering from a shared outage
+  don't all retry in lockstep.
+
+## Versioning
+
+`Chart.yaml`'s `version`/`appVersion` are release.yml-overridden at publish
+time and picks `image.tag`'s default for a local `helm install` otherwise —
+this chart's committed value must be bumped in lockstep with
+`deploy/helm/keyorix` and `deploy/helm/keyorix-operator` (all three publish
+alongside the same release tag). See
+[`deploy/helm/keyorix`'s own "Versioning" section](../keyorix/README.md#versioning)
+for the full policy — this chart was found 3 releases behind by that same
+drift (confirmed live against `ghcr.io/keyorixhq/keyorix-k8s-sync`, not
+assumed) and bumped alongside it.
 
 ## RBAC
 

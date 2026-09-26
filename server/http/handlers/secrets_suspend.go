@@ -39,7 +39,7 @@ func (h *SecretHandler) SuspendSecret(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	h.sendSuccess(w, secret, "Secret suspended")
+	h.sendSuccess(w, newSecretNodeWire(secret), "Secret suspended")
 }
 
 // ResumeSecret handles POST /api/v1/secrets/{id}/resume. Scoped secrets.write is
@@ -64,5 +64,5 @@ func (h *SecretHandler) ResumeSecret(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	h.sendSuccess(w, secret, "Secret resumed")
+	h.sendSuccess(w, newSecretNodeWire(secret), "Secret resumed")
 }

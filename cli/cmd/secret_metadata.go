@@ -54,11 +54,11 @@ value. Requires secrets.read at the secret's scope.`,
 			}
 			fmt.Printf("  %-14s %s\n", label, val)
 		}
-		fmt.Printf("Secret %d: %s\n", derefSecretInt(v.ID), derefStr(v.Name))
+		fmt.Printf("Secret %d: %s\n", derefSecretInt(v.Id), derefStr(v.Name))
 		line("type", derefStr(v.Type))
 		line("status", orDefaultSecret(derefStr(v.Status), "active"))
 		line("classification", orDefaultSecret(derefStr(v.Classification), "unclassified"))
-		line("owner", fmt.Sprintf("user #%d", derefSecretInt(v.OwnerID)))
+		line("owner", fmt.Sprintf("user #%d", derefSecretInt(v.OwnerId)))
 		line("shared", boolWordSecret(derefSecretBool(v.IsShared)))
 		line("created by", derefStr(v.CreatedBy))
 		if v.Expiration != nil {

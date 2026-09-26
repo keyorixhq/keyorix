@@ -1,5 +1,10 @@
 BINARY_CLI=keyorix
 BINARY_SERVER=keyorix-server
+# The old, thick CLI (internal/cli, root `.` package) is no longer a release asset
+# (Phase 5 switch, ADR-108) -- kept in the tree, unbuilt by default, for one release as
+# a rollback and for scripts/cli-parity-check.sh / scripts/smoke-legacy.sh. Removed
+# entirely in Phase 6 alongside internal/storage/store's RemoteStorage and /system.
+BINARY_CLI_LEGACY=keyorix-legacy
 # Lightweight/air-gapped release variant (-tags lean): drops
 # aws-sdk-go-v2/service/{iam,s3} (see internal/rotation/awsiam_lean.go,
 # internal/evidencesink/objectstore_lean.go) for installs that don't use the
@@ -15,9 +20,11 @@ GIT_COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 # exact value to use.
 TRUST_UPDATE_KEYS?=
 TRUST_LICENSE_KEYS?=
-# Inject the build identity into both the CLI (internal/cli.version) and the shared
-# internal/version package (read by the server's /health + /system/info). Commit is
-# deterministic per source revision, so release builds stay reproducible (no build date).
+# Inject the build identity into keyorix-server plus the shared internal/version package
+# (read by the server's /health + /system/info) and the legacy CLI (internal/cli.version,
+# keyorix-legacy only -- the new CLI is a separate module with its own ldflags below).
+# Commit is deterministic per source revision, so release builds stay reproducible (no
+# build date).
 VERSION_LDFLAGS=-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Commit=$(GIT_COMMIT) -X github.com/keyorixhq/keyorix/pkg/trust.updateKeysB64=$(TRUST_UPDATE_KEYS) -X github.com/keyorixhq/keyorix/pkg/trust.licenseKeysB64=$(TRUST_LICENSE_KEYS)
 LDFLAGS=-ldflags "$(VERSION_LDFLAGS)"
 # RELEASE_LDFLAGS additionally strips the symbol table + DWARF debug info (-s -w):
@@ -26,8 +33,16 @@ LDFLAGS=-ldflags "$(VERSION_LDFLAGS)"
 # Stripping does NOT remove pclntab, so panic stack traces still show function names;
 # only an attached debugger (dlv) loses symbols, an acceptable release-binary tradeoff.
 RELEASE_LDFLAGS=-ldflags "-s -w $(VERSION_LDFLAGS)"
+# The new CLI (cli/) is a separate Go module (ADR-108 Decision A) with its own build
+# identity package, cli/internal/cliversion -- it cannot see internal/cli.version or
+# internal/version, and must not: importing either would violate the no-server-deps
+# guarantee cli/internal/depguard enforces. No commit/trust keys: the thin CLI has no
+# air-gap update/license verification surface of its own.
+CLI_VERSION_LDFLAGS=-X github.com/keyorixhq/keyorix/cli/internal/cliversion.Version=$(VERSION)
+CLI_LDFLAGS=-ldflags "$(CLI_VERSION_LDFLAGS)"
+CLI_RELEASE_LDFLAGS=-ldflags "-s -w $(CLI_VERSION_LDFLAGS)"
 
-.PHONY: build build-cli build-server build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate smoke airgap-e2e
+.PHONY: build build-cli build-server build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate smoke keyorix-legacy smoke-legacy check-release-assets airgap-e2e
 
 # Pinned protoc-gen plugin versions (match google.golang.org/{protobuf,grpc} in go.mod).
 PROTOC_GEN_GO_VERSION=v1.36.11
@@ -56,11 +71,23 @@ proto: proto-deps
 
 build: build-cli build-server
 
+# The new, thin CLI (cli/) is a separate Go module excluded from the repo's root
+# go.work (matching operator/'s precedent -- see cli/Makefile's own header), so
+# building it from here requires cd'ing in with GOWORK=off, same as every other
+# cli/-targeting recipe below (release, _sbom-generate).
 build-cli:
-	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_CLI) .
+	(cd cli && GOWORK=off go build $(CLI_LDFLAGS) -o $(CURDIR)/$(BUILD_DIR)/$(BINARY_CLI) .)
 
 build-server:
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_SERVER) ./server
+
+# keyorix-legacy: the old, thick CLI (internal/cli, root `.` package), built under a
+# distinct name so it can never collide with or accidentally ship as $(BINARY_CLI).
+# Dev-only -- not part of `build`, `install`, or `release`. Exists for
+# scripts/smoke-legacy.sh, scripts/cli-parity-check.sh, and as the rollback path for
+# one release (Phase 5, ADR-108) until Phase 6 deletes internal/cli entirely.
+keyorix-legacy:
+	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_CLI_LEGACY) .
 
 # populate-webui-dist: builds the dashboard (web/, now an in-repo subtree —
 # ADR-070) and copies the real output into server/webui/dist/, which is
@@ -132,10 +159,10 @@ dev: install-cli
 release: populate-webui-dist
 	@echo "→ Cross-compiling $(VERSION)"
 	@mkdir -p dist
-	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_linux_amd64    .
-	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_linux_arm64    .
-	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_darwin_amd64   .
-	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_darwin_arm64   .
+	(cd cli && GOWORK=off GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build $(CLI_RELEASE_LDFLAGS) -trimpath -o $(CURDIR)/dist/$(BINARY_CLI)_linux_amd64    .)
+	(cd cli && GOWORK=off GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(CLI_RELEASE_LDFLAGS) -trimpath -o $(CURDIR)/dist/$(BINARY_CLI)_linux_arm64    .)
+	(cd cli && GOWORK=off GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(CLI_RELEASE_LDFLAGS) -trimpath -o $(CURDIR)/dist/$(BINARY_CLI)_darwin_amd64   .)
+	(cd cli && GOWORK=off GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(CLI_RELEASE_LDFLAGS) -trimpath -o $(CURDIR)/dist/$(BINARY_CLI)_darwin_arm64   .)
 	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_linux_amd64  ./server
 	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_linux_arm64  ./server
 	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_amd64 ./server
@@ -145,7 +172,23 @@ release: populate-webui-dist
 	$(MAKE) _sbom-generate
 	@cd dist && (sha256sum * > checksums.txt 2>/dev/null || shasum -a 256 * > checksums.txt)
 	@git checkout -- server/webui/dist/index.html 2>/dev/null || true
+	$(MAKE) check-release-assets
 	@echo "✅ Release binaries + SBOMs in dist/"
+
+# check-release-assets: the legacy CLI (keyorix-legacy) must NEVER be a release asset
+# (Phase 5, ADR-108 -- rollback is `make keyorix-legacy` from source, not a downloadable
+# binary). Derived from the actual dist/ output, not from re-reading this recipe's own
+# text, so a future line added here that (accidentally or not) emits a legacy-named
+# asset is caught by what it PRODUCES, not by trusting the recipe that produced it.
+check-release-assets:
+	@echo "→ Verifying dist/ contains no legacy-CLI asset"
+	@legacy="$$(ls dist/ 2>/dev/null | grep -i '$(BINARY_CLI_LEGACY)' || true)"; \
+	if [ -n "$$legacy" ]; then \
+		echo "release asset list contains a legacy-CLI binary, which must never ship:"; \
+		echo "$$legacy"; \
+		exit 1; \
+	fi
+	@echo "✅ No legacy-CLI asset in dist/"
 
 # CycloneDX SBOM per shipped binary (app mode: exactly the deps linked into that
 # binary + Go stdlib) plus one production-only frontend SBOM linked from each
@@ -178,10 +221,10 @@ _sbom-generate:
 	# (this exact trap, measured, is why the flag is absent below).
 	cd web && node scripts/build-frontend-sbom.mjs ../dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
 	@echo "→ Generating per-binary Go CycloneDX SBOMs (one per binary, not per binary family)"
-	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main .      -licenses -output dist/$(BINARY_CLI)_linux_amd64_sbom.cdx.json    .
-	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main .      -licenses -output dist/$(BINARY_CLI)_linux_arm64_sbom.cdx.json    .
-	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main .      -licenses -output dist/$(BINARY_CLI)_darwin_amd64_sbom.cdx.json   .
-	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main .      -licenses -output dist/$(BINARY_CLI)_darwin_arm64_sbom.cdx.json   .
+	(cd cli && GOWORK=off GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main . -licenses -output $(CURDIR)/dist/$(BINARY_CLI)_linux_amd64_sbom.cdx.json    .)
+	(cd cli && GOWORK=off GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main . -licenses -output $(CURDIR)/dist/$(BINARY_CLI)_linux_arm64_sbom.cdx.json    .)
+	(cd cli && GOWORK=off GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main . -licenses -output $(CURDIR)/dist/$(BINARY_CLI)_darwin_amd64_sbom.cdx.json   .)
+	(cd cli && GOWORK=off GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main . -licenses -output $(CURDIR)/dist/$(BINARY_CLI)_darwin_arm64_sbom.cdx.json   .)
 	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_linux_amd64_sbom.cdx.json  .
 	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_linux_arm64_sbom.cdx.json  .
 	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_darwin_amd64_sbom.cdx.json .
@@ -206,12 +249,20 @@ _sbom-generate:
 		dist/$(BINARY_SERVER_LEAN)_linux_amd64_sbom.cdx.json \
 		dist/$(BINARY_SERVER_LEAN)_linux_arm64_sbom.cdx.json
 
-# smoke: executes the documented QUICK_START.md flow (system init -> project
-# create -> secret create/list/get) against a freshly built binary, in an
-# isolated HOME/cwd -- see scripts/smoke.sh's own header for why this exists
-# alongside internal/cli/quickstart_commands_test.go, not instead of it.
-smoke: build-cli
+# smoke: the CI + release gate for the SHIPPED $(BINARY_CLI) binary (Phase 5, ADR-108).
+# Executes the documented QUICK_START.md flow -- keyorix-server admin init, start the
+# server, keyorix login, project create, secret create/get, secret export -- step for
+# step against a freshly built binary. See scripts/smoke.sh's own header for the exact
+# correspondence to QUICK_START.md.
+smoke: build-cli build-server
 	@./scripts/smoke.sh
+
+# smoke-legacy: the OLD CLI's embedded-mode flow (system init, no --server, direct DB
+# access), moved out of `smoke` by the Phase 5 switch since the new CLI has no embedded
+# mode at all. Dev/CI-only, never a release gate -- kept until Phase 6 deletes
+# internal/cli. See scripts/smoke-legacy.sh's own header.
+smoke-legacy: keyorix-legacy
+	@./scripts/smoke-legacy.sh
 
 # airgap-e2e: MANUAL target only, not run in CI (needs Docker/Podman, spins up
 # real containers, takes tens of seconds waiting out a real audit-checkpoint

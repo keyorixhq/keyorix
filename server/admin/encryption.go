@@ -42,7 +42,10 @@ var encryptionCmd = &cobra.Command{
 key-provider migration (ADR-108 §B3). Every state-changing command here holds
 this admin tree's exclusive database-presence lock for its whole run (refuses
 to run alongside a live server or another admin command); read-only commands
-(status, validate) do not, and say so in their own help text.`,
+(status, validate) do not, and say so in their own help text.
+
+Exit codes (every subcommand under this tree): 0 on success, 1 on any
+failure (see the printed error message).`,
 }
 
 func init() {

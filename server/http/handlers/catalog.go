@@ -138,7 +138,7 @@ func (h *CatalogHandler) GetProject(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
-	sendSuccess(w, project, "")
+	sendSuccess(w, newProjectWire(project), "")
 }
 
 // GetProjectDrift handles GET /api/v1/projects/{id}/drift — the
@@ -208,7 +208,7 @@ func (h *CatalogHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	sendCreated(w, project, "Project created")
+	sendCreated(w, newProjectWire(project), "Project created")
 }
 
 // ListEnvironments handles GET /api/v1/environments (global, for backward compat)
@@ -219,7 +219,7 @@ func (h *CatalogHandler) ListEnvironments(w http.ResponseWriter, r *http.Request
 		sendError(w, "Failed to list environments", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
-	sendSuccess(w, map[string]interface{}{"environments": environments}, "")
+	sendSuccess(w, map[string]interface{}{"environments": newEnvironmentWireList(environments)}, "")
 }
 
 // UpdateProject handles PUT /api/v1/projects/:id
@@ -272,7 +272,7 @@ func (h *CatalogHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
-	sendSuccess(w, project, "Project updated")
+	sendSuccess(w, newProjectWire(project), "Project updated")
 }
 
 // DeleteProject handles DELETE /api/v1/projects/:id
@@ -337,7 +337,7 @@ func (h *CatalogHandler) CreateProjectEnvironment(w http.ResponseWriter, r *http
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
-	sendCreated(w, env, "Environment created")
+	sendCreated(w, newEnvironmentWire(env), "Environment created")
 }
 
 // DeleteEnvironment handles DELETE /api/v1/environments/:id
@@ -386,7 +386,7 @@ func (h *CatalogHandler) ListProjectEnvironments(w http.ResponseWriter, r *http.
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
-	sendSuccess(w, map[string]interface{}{"environments": environments}, "")
+	sendSuccess(w, map[string]interface{}{"environments": newEnvironmentWireList(environments)}, "")
 }
 
 // CloneEnvironment handles POST /api/v1/projects/{id}/environments/{envId}/clone
@@ -437,7 +437,7 @@ func (h *CatalogHandler) CloneEnvironment(w http.ResponseWriter, r *http.Request
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
-	sendSuccess(w, result, "")
+	sendSuccess(w, newEnvCloneResultWire(result), "")
 }
 
 // RestoreEnvironment handles POST /api/v1/projects/{projectId}/environments/{id}/restore.

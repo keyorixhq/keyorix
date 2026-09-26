@@ -174,7 +174,9 @@ jobs:
                     # here) -- a test-only dependency (e.g. porcupine, used only by a
                     # fuzz harness itself) can never show up in this list, so it
                     # contributes 0 extra targets from this tier by construction.
-                    pkg_modules="$(go list -deps -f '{{with .Module}}{{.Path}}{{end}}' "$pkg" 2>/dev/null | sort -u)"
+                    # A package outside the root module (e.g. ./cli/..., its own go.mod) makes go list fail;
+                    # under pipefail that killed the whole step. Same guard as emit_all_in_pkg above: 0 targets.
+                    pkg_modules="$(go list -deps -f '{{with .Module}}{{.Path}}{{end}}' "$pkg" 2>/dev/null | sort -u)" || pkg_modules=""
                     [ -n "$pkg_modules" ] || continue
                     if comm -12 <(printf '%s\n' "$changed_modules") <(printf '%s\n' "$pkg_modules") | grep -q .; then
                       emit_all_in_pkg "$pkg"

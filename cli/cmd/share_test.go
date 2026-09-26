@@ -288,7 +288,7 @@ func TestRunSharedSecrets_DefaultsToCallerScopedRoute(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"data":{"secrets":[{"ID":3,"Name":"db-pass","Type":"password","ProjectID":1,"EnvironmentID":2,"CreatedBy":"alice","CreatedAt":"2026-01-02T00:00:00Z"}]}}`)
+		_, _ = fmt.Fprint(w, `{"data":{"secrets":[{"id":3,"name":"db-pass","type":"password","project_id":1,"environment_id":2,"created_by":"alice","created_at":"2026-01-02T00:00:00Z"}]}}`)
 	}))
 	defer srv.Close()
 	setPATCreds(t, srv)
