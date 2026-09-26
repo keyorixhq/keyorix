@@ -23,6 +23,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -267,6 +268,17 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		go func() {
 			defer wg.Done()
 			if err := startHTTPServer(ctx, cfg, coreService); err != nil {
+				// A startup failure (router/TLS/listener-bind, before this ever served
+				// anything) is fatal: the alternative was logging it and falling through
+				// to <-sigChan, which never arrives for a boot that failed this early --
+				// the process stayed alive indefinitely with no listener bound (RELEASE-QA
+				// finding: `docker ps`/`kubectl get pods` shows "Up"/"Running" while
+				// nothing answers). A server.Shutdown() timeout at the end of an
+				// ALREADY-intentional shutdown is not wrapped in errHTTPServerFailedToStart
+				// and keeps just logging, unchanged.
+				if errors.Is(err, errHTTPServerFailedToStart) {
+					log.Fatalf("HTTP server error: %v", err)
+				}
 				log.Printf("HTTP server error: %v", err)
 			}
 		}()
@@ -277,8 +289,11 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// Every error startGRPCServer can return is a genuine startup failure
+			// (its own graceful-shutdown path always returns nil) -- same fatal
+			// reasoning as the HTTP server above, no sentinel needed to disambiguate.
 			if err := startGRPCServer(ctx, cfg, coreService); err != nil {
-				log.Printf("gRPC server error: %v", err)
+				log.Fatalf("gRPC server error: %v", err)
 			}
 		}()
 	}
@@ -1649,11 +1664,23 @@ func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.
 	}
 }
 
+// errHTTPServerFailedToStart wraps every error startHTTPServer can return
+// BEFORE it ever starts serving (router construction, TLS config, listener
+// bind) — as opposed to server.Shutdown()'s own error return at the very
+// bottom of the function, which only happens during an already-intentional
+// shutdown. main()'s caller uses errors.Is against this to fail the process
+// fatally on a genuine startup failure while leaving a slow-shutdown timeout
+// logged only, as before (RELEASE-QA finding: a bind failure like "address
+// already in use" left the process running indefinitely with nothing bound,
+// since the only caller just log.Printf'd a non-nil return and fell through
+// to waiting on a shutdown signal that would never come).
+var errHTTPServerFailedToStart = errors.New("HTTP server failed to start")
+
 func startHTTPServer(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) error { // NOSONAR -- cognitive complexity 188, suppress go:S3776
 	// Create HTTP router
 	router, err := httpServer.NewRouter(cfg, coreService)
 	if err != nil {
-		return fmt.Errorf("failed to create HTTP router: %w", err)
+		return fmt.Errorf("%w: failed to create HTTP router: %v", errHTTPServerFailedToStart, err)
 	}
 
 	// Create HTTP server
@@ -1675,15 +1702,15 @@ func startHTTPServer(ctx context.Context, cfg *config.Config, coreService *core.
 	if cfg.Server.HTTP.TLS.Enabled {
 		tlsConfig, err := createTLSConfig(cfg)
 		if err != nil {
-			return fmt.Errorf("failed to create TLS config: %w", err)
+			return fmt.Errorf("%w: failed to create TLS config: %v", errHTTPServerFailedToStart, err)
 		}
 		server.TLSConfig = tlsConfig
 	}
 
-	// Bind the listener early so we can confirm the address before serving
+	// Bind the listener early so we can confirm the address before serving.
 	ln, err := net.Listen("tcp", server.Addr)
 	if err != nil {
-		return fmt.Errorf("failed to bind HTTP listener: %w", err)
+		return fmt.Errorf("%w: failed to bind HTTP listener: %v", errHTTPServerFailedToStart, err)
 	}
 
 	scheme := "http"
