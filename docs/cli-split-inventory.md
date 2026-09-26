@@ -1769,6 +1769,63 @@ to keep each under review size. Started only after the Phase 5 switch PR (§1) m
     still-real, coverage.
   - `go build ./...`, `go vet ./...`, and the full `go test ./...` all green; `scripts/check-closures.sh`
     and `scripts/check-adr-conformance.sh` both green.
+- **14b-1 — the old, thick CLI (`internal/cli`).** Deleted the whole tree (611 files, 110,460
+  lines), its entrypoint (`main.go`, the `keyorix-legacy` build), and the tools that existed only to
+  test/generate docs from it (`scripts/cli-parity-check.sh`, `scripts/cli-command-census.sh`,
+  `scripts/smoke-legacy.sh`). 615 files, 111,209 lines total across both commits. `Makefile`/CI's
+  `smoke-legacy` job/`docs/security-closures.tsv` (6 embedded-mode-bug rows, all surface-removed)/
+  `docs/review-coverage.tsv` (38 rows + the now-fileless root `.` package) all updated in a
+  separate, smaller commit for review. `docs/cli-migration.md` and `docs/cli-split-inventory-census.md`
+  (both generated FROM `internal/cli`) marked FROZEN rather than deleted — still the real
+  old-command -> new-command reference, just no longer regeneratable.
+- **14b-2 — RemoteStorage itself** (`internal/storage/store/remote_*.go`, `internal/storage/remote/`,
+  the factory's `"remote"` case, `scripts/analysis/remote_storage_stub_rewrite.go`). The real
+  footprint reached beyond those paths, confirmed by a repo-wide sweep for
+  `store.RemoteStorage`/`store.NewRemoteStorage`/`internal/storage/remote` imports before finalizing
+  scope (three more stray non-`remote_`-prefixed files inside `internal/storage/store` turned up
+  this way: `store_s17_remote_test.go`, `store_s21_remote_test.go`, and a mixed file,
+  `store_s28_test.go`, trimmed to keep its 17 `TestLocalStorage_S28_*` tests and drop 100+
+  RemoteStorage-only ones). Landed as 3 commits:
+  - **Storage (this track's own paths):** the bulk deletion, `internal/storage/factory.go`'s
+    `"remote"` case removed (falls into the existing `default:` "invalid storage.type" error, updated
+    to stop listing "remote" as valid), `internal/storage/store/entry.go`'s package doc + `RemoteStorage`
+    struct/constructor/`putConditionalTransition` removed (kept `LocalStorage` and everything else).
+    `gormdb.go`'s own independent `"remote"` rejection (a *different* function, still used by
+    `server/admin`/`internal/encryptionops` — untouched, no RemoteStorage dependency) needed no change.
+    One local test file (`local_failopen_stub_test.go`) used an AST-printing helper (`exprString`)
+    that had lived in a deleted remote_*.go file — restored as a small helper in its only remaining
+    caller. `docs/security-closures.tsv` (1 more surface-removed row), `docs/review-coverage.tsv`
+    (the now-gone `internal/storage/remote` package row), `docs/adr-conformance-enforced.tsv`
+    (1 surface-removed row for the RemoteStorage half of the rate-limit ADR) updated.
+  - **cross-track: CORE** (`internal/core/**`, not this track's paths — mechanically tied 1:1 to the
+    storage deletion, not a design change; checked no overlapping open CORE PR first). Removed the
+    dead `*remote.HTTPError` branch from `IsUserNotFound`/`IsSessionNotFound`/`IsSecretNotFound`/
+    `IsSecretVersionNotFound` (`internal/core/storage/errors.go`) — local-sentinel behavior
+    unchanged, verified red/green by breaking `IsUserNotFound` and confirming the new
+    `TestIsXNotFound_SentinelAndWrapped` table test catches it. Of 4 RemoteStorage-referencing test
+    files, none were pure delete-and-forget: `rate_limit_test.go` kept ~13 tests, dropped only the 1
+    RemoteStorage-only test + its helpers; `password_remote_test.go` kept its 1 LocalStorage test
+    (moved to `password_local_test.go`, file renamed since nothing "remote" was left);
+    `user_notfound_backend_test.go` same pattern (kept the local test, renamed to
+    `user_notfound_test.go`); `invitation_accept_remote_membership_test.go` was genuinely
+    100% RemoteStorage and deleted outright. `login_lockout_remote_test.go` (not in the original
+    4-file list — found via the `apiOKUser` helper it defined becoming unused once
+    `password_remote_test.go` was gone) renamed to `login_lockout_unsupported_backend_test.go` with
+    the dead helper removed; its own remaining test was already RemoteStorage-independent.
+  - **cross-track: API** (`server/http/*.go`, top-level package, not `handlers/**`). Two RemoteStorage
+    parity tests deleted outright (`user_notfound_backend_parity_test.go`, its 1 local subtest ported
+    to a new `user_notfound_local_test.go`). Two more turned up only via a build-time chain reaction
+    (`delete_environment_proxy_scope_test.go` used a helper defined in
+    `delete_project_proxy_scope_test.go`): both are `/system`-proxy authorization-ceiling tests
+    (`DeleteProjectProxy`/`DeleteEnvironmentProxy`) that merely used a real `store.RemoteStorage` as
+    a convenient authenticated HTTP test client, not testing RemoteStorage itself — deleted rather
+    than ported to a raw HTTP client, since their subject routes are the entire `/system` proxy tier
+    14c deletes next anyway. **DECISION (review):** this leaves those two specific ceiling properties
+    untested on `main` for the window between 14b-2 and 14c landing (both queued in the same session);
+    accepted rather than porting throwaway test infra for a route about to be deleted regardless.
+  - `go build ./...`, `go vet ./...`, `gofmt`, and the full `go test ./...` all green across every
+    commit; `scripts/check-closures.sh`, `scripts/check-review-coverage.sh`, and
+    `scripts/check-adr-conformance.sh` all green after the ledger updates above.
 
 - **14b-1 — the old, thick CLI (`internal/cli`).** Deleted `internal/cli` (611 files,
   110,460 lines) + root `main.go` (its entry point) + 3 legacy-only scripts
@@ -1796,4 +1853,44 @@ to keep each under review size. Started only after the Phase 5 switch PR (§1) m
     step ran golangci-lint explicitly rather than trusting `go vet`/`go test` alone); full
     `go test ./...` green for root, `cli/`, and `migrate/`; `check-closures.sh`,
     `check-review-coverage.sh`, `check-adr-conformance.sh` all green.
+
+- **14b-2 — RemoteStorage itself, rebased onto the merged 14b-1.** Cherry-picked 14b-2's 3
+  original commits onto the post-14b-1-merge `origin/main`. Two more modify/delete conflicts,
+  same shape as 14b-1's: `internal/storage/store/remote_{rbac,secrets,sharing}.go` +
+  `remote_wire_route_coverage_test.go` had been touched by 3 unrelated, later-merged snake_case
+  wire-format PRs (#2098/#2149/#2156) — resolved as deletions, since this commit removes the
+  whole `remote_*.go` tree regardless; `internal/core/password_remote_test.go` similarly touched
+  by an unrelated bcrypt-cost test-speed PR — same resolution.
+  - `TestRemoteStorageAllowlistEntriesStillExistAndStillReference` (the guard's own
+    staleness-in-both-directions check) failed for real after the rebase: both allowlist entries
+    (`internal/storage/factory.go`, `scripts/analysis/remote_storage_stub_rewrite.go`) were
+    already gone by the time this rebased onto 14b-1 -- `remoteStorageImporterAllowlist` set to
+    `map[string]string{}` (empty), matching the backlog's own instruction ("assert zero").
+    `TestNoNewRemoteStorageImportersOutsideAllowlist` confirmed clean against the empty
+    allowlist (zero remaining package-qualified `store.RemoteStorage`/`store.NewRemoteStorage`
+    references anywhere in the repo).
+  - `golangci-lint run ./...` (explicit, not skipped, per the lesson from 14a/14b-1) found 2
+    more real `unused` findings the rebase's own build/vet/test pass missed: `apiAuditLogsPath`
+    (a route constant only the now-deleted `remote_audit.go` ever referenced) and
+    `queryBuilder.addPage` (a method no live caller reached). Investigating `addPage` found the
+    whole `queryBuilder` type (`query.go`) had no remaining NON-test caller at all -- its doc
+    comment named exactly the 3 files this PR deletes (`remote_secrets.go`, `remote_users.go`,
+    `remote_audit.go`) as its only real consumers; every other method (`add`/`addUint`/
+    `addString`/`addBool`/`addTime`/`addTags`/`String`) was only "used" by its own dedicated
+    unit tests, not flagged individually by `unused` only because a test reference is enough to
+    suppress that linter. Deleted `query.go` and `query_escape_test.go` wholesale, and extracted
+    the `TestQueryBuilder_*` blocks out of `store_s4_test.go`/`store_max_test.go` (mixed in with
+    unrelated coverage-sweep tests in both files) rather than deleting either file.
+  - No `scripts/ci-test-legs.sh` change needed: checked (per the coordinator's own heads-up
+    about `internal/storage/remote*` after 14b-1's stale-pin CI failure) and confirmed the only
+    pin at this path is the whole-package `internal/storage/store` (still exists, unaffected --
+    deleting files inside a package that itself survives doesn't orphan a package-level pin).
+  - `go build ./...` and `golangci-lint run ./...` clean for root; `GOWORK=off golangci-lint run
+    ./...` clean for `cli/`; full `go test ./...` green for root (3483 tests, 65 packages) and
+    `cli/` (462 tests, 11 packages); `check-closures.sh` (54 verified, 1 known intermittent
+    flake on a pre-existing, already-filed CORE-owned `system_viewer` role-lookup-ordering bug
+    -- reran clean, not a regression from this PR), `check-review-coverage.sh` (80/80 packages,
+    down from 81 -- `internal/storage/store` package itself survives, just fewer distinct rows
+    since some remote_* files had their own ledger entries), `check-adr-conformance.sh` (10
+    verified) all green.
 

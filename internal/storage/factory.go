@@ -20,7 +20,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/keyorixhq/keyorix/internal/storage/remote"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
@@ -201,8 +200,6 @@ func NewStorageFactory() StorageFactory {
 // CreateStorage creates a storage instance based on the configuration
 func (f *DefaultStorageFactory) CreateStorage(cfg *config.Config) (storage.Storage, error) {
 	switch cfg.Storage.Type {
-	case "remote":
-		return f.createRemoteStorage(cfg)
 	case "postgres", "postgresql":
 		return f.createPostgresStorage(cfg)
 	// #1640: "sqlite" is an accepted alias for "local" (the shipped
@@ -235,16 +232,17 @@ func (f *DefaultStorageFactory) CreateStorage(cfg *config.Config) (storage.Stora
 		// fixtures that build a config.Config{} zero value, and any future
 		// caller -- must now see a loud, explicit error instead of a silent
 		// local database.
-		return nil, fmt.Errorf("storage.type is not set: no storage configuration found -- specify \"local\", \"postgres\", \"postgresql\", or \"remote\" explicitly")
+		return nil, fmt.Errorf("storage.type is not set: no storage configuration found -- specify \"local\", \"postgres\", or \"postgresql\" explicitly")
 	default:
 		// #463: defense in depth. Config.Validate() rejects an unrecognized
 		// storage.type at boot, but this factory can also be invoked directly
 		// (e.g. by tests or other code paths that don't call Validate() first)
 		// — a typo like "postgress" must never silently fall back to SQLite,
-		// since in a multi-replica HA deployment intending shared Postgres/
-		// remote storage that produces per-replica split-brain SQLite
-		// instances with no operator-visible signal.
-		return nil, fmt.Errorf("invalid storage.type %q: must be one of \"local\", \"postgres\", \"postgresql\", or \"remote\"", cfg.Storage.Type)
+		// since in a multi-replica HA deployment intending shared Postgres
+		// that produces per-replica split-brain SQLite instances with no
+		// operator-visible signal. "remote" is also caught here now:
+		// RemoteStorage was deleted entirely in ADR-108 Phase 6 step 14b-2.
+		return nil, fmt.Errorf("invalid storage.type %q: must be one of \"local\", \"postgres\", or \"postgresql\"", cfg.Storage.Type)
 	}
 }
 
@@ -451,22 +449,6 @@ func applyPoolSettings(db *gorm.DB, dbCfg *config.DatabaseConfig) error {
 }
 
 // createRemoteStorage creates a remote storage instance
-func (f *DefaultStorageFactory) createRemoteStorage(cfg *config.Config) (storage.Storage, error) {
-	if cfg.Storage.Remote == nil {
-		return nil, fmt.Errorf("remote storage configuration is required")
-	}
-
-	remoteConfig := &remote.Config{
-		BaseURL:        cfg.Storage.Remote.BaseURL,
-		APIKey:         cfg.Storage.Remote.GetAPIKey(),
-		TimeoutSeconds: cfg.Storage.Remote.TimeoutSeconds,
-		RetryAttempts:  cfg.Storage.Remote.RetryAttempts,
-		TLSVerify:      cfg.Storage.Remote.VerifyTLS(), // secure-by-default resolution
-	}
-
-	return store.NewRemoteStorage(remoteConfig)
-}
-
 // columnExists reports whether table already has column, branching on the
 // dialect like indexExists below: information_schema on Postgres, but SQLite
 // has no information_schema at all — querying it there returns a "no such

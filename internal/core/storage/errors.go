@@ -2,8 +2,6 @@ package storage
 
 import (
 	"errors"
-
-	"github.com/keyorixhq/keyorix/internal/storage/remote"
 )
 
 // ErrUserNotFound is returned (wrapped) by GetUser when the user positively does not
@@ -194,50 +192,27 @@ var ErrSecretDependencyCycle = errors.New("this secret dependency would create a
 var ErrSessionNotFound = errors.New("session not found")
 
 // IsUserNotFound reports whether err represents "this user positively does not
-// exist" under EITHER active storage backend (#504). LocalStorage wraps the
-// ErrUserNotFound sentinel above (errors.Is); RemoteStorage instead returns a
-// remote.HTTPError for every 4xx/5xx response, with its own IsNotFound()
-// helper keyed on the actual HTTP status (errors.As). Neither of those is
-// reliably detectable by matching an error's rendered text — the i18n string
-// LocalStorage happens to embed in ErrUserNotFound's wrapping message is an
-// implementation detail, not a contract, and a RemoteStorage error never
-// contained it in the first place (round 112's #501 fix gave RemoteStorage a
-// structured error but multiple internal/core call sites still matched the
-// old i18n text and so never worked against storage.type: remote, before or
-// after that fix). Callers that must distinguish "genuinely absent" from a
-// transient retrieval failure across both backends should use this instead of
-// either check alone.
+// exist" (#504). LocalStorage wraps the ErrUserNotFound sentinel above
+// (errors.Is), which is not reliably detectable by matching an error's rendered
+// text — the i18n string LocalStorage happens to embed in ErrUserNotFound's
+// wrapping message is an implementation detail, not a contract. Callers that
+// must distinguish "genuinely absent" from a transient retrieval failure should
+// use this instead of a text match.
 func IsUserNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, ErrUserNotFound) {
-		return true
-	}
-	var httpErr *remote.HTTPError
-	if errors.As(err, &httpErr) {
-		return httpErr.IsNotFound()
-	}
-	return false
+	return errors.Is(err, ErrUserNotFound)
 }
 
 // IsSessionNotFound is IsUserNotFound's session counterpart — true only for a
-// definitive "this session row does not exist" (ErrSessionNotFound, or a mapped
-// RemoteStorage 4xx/5xx not-found), false for every other error including
-// ErrRemoteUnsupported (GetSessionByID has no RemoteStorage implementation today —
-// that is "unknown," not "confirmed absent," and callers must not conflate the two).
+// definitive "this session row does not exist" (ErrSessionNotFound), false for
+// every other error.
 func IsSessionNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, ErrSessionNotFound) {
-		return true
-	}
-	var httpErr *remote.HTTPError
-	if errors.As(err, &httpErr) {
-		return httpErr.IsNotFound()
-	}
-	return false
+	return errors.Is(err, ErrSessionNotFound)
 }
 
 // ErrSecretNotFound is returned (wrapped) by GetSecret/GetSecretByName when no
@@ -257,38 +232,21 @@ var ErrSecretNotFound = errors.New("secret not found")
 var ErrSecretVersionNotFound = errors.New("secret version not found")
 
 // IsSecretNotFound is IsUserNotFound's secret counterpart — true only for a
-// definitive "this secret does not exist" (ErrSecretNotFound, or a mapped
-// RemoteStorage 4xx/5xx not-found), false for every other error.
+// definitive "this secret does not exist" (ErrSecretNotFound), false for every
+// other error.
 func IsSecretNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, ErrSecretNotFound) {
-		return true
-	}
-	var httpErr *remote.HTTPError
-	if errors.As(err, &httpErr) {
-		return httpErr.IsNotFound()
-	}
-	return false
+	return errors.Is(err, ErrSecretNotFound)
 }
 
 // IsSecretVersionNotFound is IsUserNotFound's secret-version counterpart —
-// true only for a definitive "this version does not exist" (ErrSecretVersionNotFound,
-// or a mapped RemoteStorage 4xx/5xx not-found), false for every other error —
-// including RemoteStorage's ErrRemoteUnsupported for GetLatestSecretVersion
-// (unsupported there today, per remote_secrets.go), which is "unknown," not
-// "confirmed absent," and callers must not conflate the two.
+// true only for a definitive "this version does not exist"
+// (ErrSecretVersionNotFound), false for every other error.
 func IsSecretVersionNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, ErrSecretVersionNotFound) {
-		return true
-	}
-	var httpErr *remote.HTTPError
-	if errors.As(err, &httpErr) {
-		return httpErr.IsNotFound()
-	}
-	return false
+	return errors.Is(err, ErrSecretVersionNotFound)
 }

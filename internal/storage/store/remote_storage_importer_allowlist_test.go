@@ -1,16 +1,12 @@
-// remote_storage_importer_allowlist_test.go — PR 14 prep (docs/cli-split-inventory.md §10):
-// RemoteStorage and the whole /system proxy tier it talks to are scheduled for deletion. This
-// guard keeps the blast radius from growing while that deletion is pending: it fails the build
-// the moment a NEW non-test file outside this package starts referencing store.RemoteStorage /
-// store.NewRemoteStorage, so nobody builds fresh functionality on top of a type already
-// scheduled for removal. The allowlist below is every current real reference, found by a
-// repo-wide grep (`store\.RemoteStorage\b|store\.NewRemoteStorage\b`) — deliberately package-
-// qualified: from outside package store, Go has no other syntactically valid way to name this
-// type or constructor (no dot-import is used anywhere in this repo), so this pattern has no
-// false negatives for a genuine new external caller. It also, deliberately, has no false
-// positives on the many internal/core/*.go doc comments that discuss "RemoteStorage" in prose
-// (security reasoning about storage.type: remote) without an actual package-qualified reference
-// — a bare-word sweep would flag dozens of those and drown the real signal.
+// remote_storage_importer_allowlist_test.go — post ADR-108 Phase 6 step 14b-2: RemoteStorage
+// itself (internal/storage/store/remote_*.go) and its only two production/tooling callers
+// (internal/storage/factory.go's "remote" case, scripts/analysis/remote_storage_stub_rewrite.go)
+// are now all deleted. This guard's allowlist is empty and MUST STAY empty: it fails the build
+// the moment ANY non-test file outside this package references store.RemoteStorage /
+// store.NewRemoteStorage — those identifiers no longer exist in package store at all, so a
+// match here can only mean a new file was added that still imports/names a type that no longer
+// exists (a compile error waiting to happen) or, if package store's RemoteStorage type were ever
+// reintroduced, a caller building on it without deliberately updating this guard first.
 package store
 
 import (
@@ -23,11 +19,12 @@ import (
 )
 
 // remoteStorageImporterAllowlist is every non-test file, outside this package, that references
-// store.RemoteStorage/store.NewRemoteStorage today. Must only shrink toward PR 14, never grow.
-var remoteStorageImporterAllowlist = map[string]string{
-	"internal/storage/factory.go":                     "production wiring: CreateStorage's \"remote\" case constructs store.NewRemoteStorage. Deleted in PR 14's storage/store step, alongside remote_*.go.",
-	"scripts/analysis/remote_storage_stub_rewrite.go": "one-off dev tool (//go:build ignore, never compiled by `go build ./...`) used during the G80 full-classification pass to mechanically rewrite dead RemoteStorage method bodies into stubs. Its job is done; a candidate for deletion in the same wave as remote_*.go, not before.",
-}
+// store.RemoteStorage/store.NewRemoteStorage. Empty since ADR-108 Phase 6 step 14b-2 deleted
+// both entries that used to be here (internal/storage/factory.go's "remote" case and
+// scripts/analysis/remote_storage_stub_rewrite.go) along with RemoteStorage itself -- must stay
+// empty; TestNoNewRemoteStorageImportersOutsideAllowlist below is the guard that keeps it that
+// way.
+var remoteStorageImporterAllowlist = map[string]string{}
 
 var remoteStorageQualifiedRefRe = regexp.MustCompile(`\bstore\.(NewRemoteStorage|RemoteStorage)\b`)
 
