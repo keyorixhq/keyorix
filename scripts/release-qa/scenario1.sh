@@ -139,8 +139,9 @@ else
 fi
 ADMIN_TOKEN="$(grep '^token:' "$CFG_DIR/keyorix/credentials.yaml" | awk '{print $2}')"
 [ -n "$ADMIN_TOKEN" ] || fail "could not read admin session token from credentials.yaml for the grant-role workaround"
-ROLE_ID="$(curl -fs "$SERVER_URL/api/v1/roles" -H "Authorization: Bearer $ADMIN_TOKEN" \
-    | python3 -c 'import sys,json; d=json.load(sys.stdin); print(next(r["ID"] for r in d["data"]["roles"] if r["Name"]=="project_viewer"))')" \
+curl -fs "$SERVER_URL/api/v1/roles" -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -o "$WORK_DIR/roles.json" || fail "could not fetch roles list for the grant-role workaround"
+ROLE_ID="$(python3 -c 'import sys,json; d=json.load(open(sys.argv[1])); print(next(r["ID"] for r in d["data"]["roles"] if r["Name"]=="project_viewer"))' "$WORK_DIR/roles.json")" \
     || fail "could not resolve project_viewer role id"
 GRANT_HTTP_CODE="$(curl -s -o "$WORK_DIR/grant.out" -w '%{http_code}' -X POST \
     "$SERVER_URL/api/v1/projects/1/machine-identities/1/roles" \

@@ -2,7 +2,7 @@ package k8ssync
 
 import (
 	"context"
-	"math/rand"
+	"math/rand" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- non-crypto jitter for retry backoff (see nextDelay), not a security context
 	"time"
 )
 
