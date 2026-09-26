@@ -1,0 +1,198 @@
+# Keyorix in 10 minutes
+
+A copy-paste demo script for a newcomer on a fresh machine: install, store a
+secret, give an app access to it and revoke that access, then prove a backup
+actually restores. Every command below was run for real against a fresh
+SQLite install while writing this page — the expected output shown is what
+you should actually see, not a paraphrase.
+
+A few of the steps below work around gaps that are still open in the CLI
+(tracked in the UX track's report); they're called out inline so you know
+they're deliberate, not a typo.
+
+## 0. Build (1 min)
+
+```bash
+make build
+```
+
+Produces `./bin/keyorix` (CLI) and `./bin/keyorix-server`.
+
+## 1. Initialise the host (2 min)
+
+```bash
+export KEYORIX_MASTER_PASSWORD='choose-a-strong-passphrase'
+./bin/keyorix-server admin init --config ./keyorix.yaml
+./bin/keyorix-server admin encryption init --config ./keyorix.yaml
+./bin/keyorix-server admin migrate --config ./keyorix.yaml
+```
+
+Expected: each command prints its own success banner. `admin init`'s config
+file is created at `./keyorix.yaml`; `admin encryption init` generates
+`keys/dek.key` and prints a key version; `admin migrate` reports the database
+migrated successfully.
+
+## 2. Start the server and bootstrap the admin account (2 min)
+
+```bash
+export KEYORIX_CONFIG_PATH=./keyorix.yaml
+export KEYORIX_BOOTSTRAP_TOKEN='choose-a-bootstrap-token'
+./bin/keyorix-server &
+
+./bin/keyorix system init --server http://localhost:8080 \
+  --admin-username admin \
+  --admin-email admin@keyorix.local \
+  --admin-password 'Correct-Horse-Battery9' \
+  --bootstrap-token "$KEYORIX_BOOTSTRAP_TOKEN"
+```
+
+Expected: `Keyorix initialised successfully`, plus a seeded `default` project
+with `development`/`staging`/`production` environments (IDs 1/2/3).
+
+Two things about this command are not obvious from `--help` alone, so they're
+spelled out here rather than left for you to discover the hard way:
+
+- **Pass `--admin-email` explicitly.** The flag's own default
+  (`admin@localhost`) fails the server's email validation (no dot after
+  `@`), so omitting it makes bootstrap fail with a confusing
+  `Validation error: Validation error: Email`.
+- **Pick a password with an uppercase letter, a digit, and that does not
+  contain the username.** `Correct-Horse-Battery9` above satisfies all
+  three; something like `admin-password1` will not, because it contains
+  `admin`.
+
+## 3. Log in and store your first secret (1 min)
+
+```bash
+./bin/keyorix login --server http://localhost:8080 \
+  --username admin --password 'Correct-Horse-Battery9'
+
+./bin/keyorix secret create --name my-first-secret --value "hello"
+./bin/keyorix secret get --id 1 --show-value
+```
+
+Expected: `Logged in to http://localhost:8080 as admin.`, then a created-secret
+confirmation with `ID: 1`, then `Decrypted Value` / `hello`.
+
+Open <http://localhost:8080> in a browser and log in with the same
+credentials to see the same secret in the dashboard.
+
+## 4. Share it with a teammate (2 min)
+
+```bash
+./bin/keyorix user create --username alice --email alice@keyorix.local --one-time-password
+```
+
+This prints a one-time password — relay it to alice; she'll be forced to
+change it on first login.
+
+Before you can share anything, both you (the owner) and alice (the
+recipient) need an explicit role in the project the secret lives in —
+holding the global `admin` role from bootstrap is not enough:
+
+```bash
+./bin/keyorix rbac assign-role --user admin@keyorix.local --role project_admin --project default
+./bin/keyorix rbac assign-role --user alice@keyorix.local --role project_viewer --project default
+
+./bin/keyorix share create --secret-id 1 --recipient-id 2 --permission read
+./bin/keyorix share list --secret-id 1
+```
+
+Expected: `✅ Secret shared successfully!`, then a one-row share list showing
+alice (recipient ID 2) with `read` permission.
+
+(Skipping the two `rbac assign-role` lines and going straight to
+`share create` is what QUICK_START.md's own sharing example currently shows
+— it fails with a bare `HTTP 403` and no explanation. Filed for a fix; use
+the four commands above until it lands.)
+
+## 5. Give an app access, then revoke it (2 min)
+
+```bash
+./bin/keyorix machine create --name my-ci-app --project default --type ci
+./bin/keyorix machine token issue my-ci-app --name ci-token-1 --project default --expires-in-days 30
+```
+
+Expected: a machine identity (`id=1`), then a bearer token printed once —
+copy it now.
+
+**Granting that machine access to the secret has no CLI command yet** (also
+filed). Until it does, do it with one direct API call — everything else in
+this script is the CLI, this one line is the exception:
+
+```bash
+export KEYORIX_ADMIN_TOKEN='<a personal access token from: keyorix pat create --name demo>'
+curl -s -X POST http://localhost:8080/api/v1/projects/1/machine-identities/1/roles \
+  -H "Authorization: Bearer $KEYORIX_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"role_id": 9}'
+```
+
+(`role_id: 9` is `project_viewer` on this install — check yours with
+`keyorix rbac list-roles`.)
+
+Now the app can read the secret with its own token:
+
+```bash
+export APP_TOKEN='<the machine token from machine token issue, above>'
+curl -s "http://localhost:8080/api/v1/secrets/1?include_value=true" \
+  -H "Authorization: Bearer $APP_TOKEN"
+```
+
+Expected: a JSON body ending in `"value":"hello"`.
+
+Revoke it — this is permanent and asks you to type the name back to confirm:
+
+```bash
+./bin/keyorix machine revoke my-ci-app --project default
+```
+
+Re-run the same `curl` from above: expect `401` this time — the app is
+denied immediately.
+
+## 6. Back it up, wipe it, restore it (2 min)
+
+```bash
+kill %1                                         # stop the server (job from step 2)
+./bin/keyorix-server admin backup --config ./keyorix.yaml --output ./backup1.kxbak
+```
+
+Expected: `Backup written to ./backup1.kxbak (database N bytes, 2 key file(s))`
+plus a reminder to store the archive off this host.
+
+Simulate a wiped host — a fresh directory with only the server binary, the
+same config, and the backup archive:
+
+```bash
+mkdir /tmp/keyorix-restore-demo && cd /tmp/keyorix-restore-demo
+cp /path/to/keyorix-server /path/to/keyorix.yaml /path/to/backup1.kxbak .
+
+export KEYORIX_MASTER_PASSWORD='choose-a-strong-passphrase'
+./keyorix-server admin restore --config ./keyorix.yaml --input ./backup1.kxbak
+```
+
+Expected: migrations applied, `Restored database (N bytes) and 2 key file(s)`,
+and — automatically, as part of the same command — `verify-audit on the
+restored database: VALID`. That last line is the actual proof the restore is
+trustworthy, not just present: it re-walks the tamper-evident audit hash
+chain on the restored data, not merely a file checksum.
+
+Start the server against the restored data and confirm the secret is still
+there:
+
+```bash
+KEYORIX_CONFIG_PATH=./keyorix.yaml ./keyorix-server &
+./keyorix login --server http://localhost:8080 --username admin --password 'Correct-Horse-Battery9'
+./keyorix secret get --id 1 --show-value
+```
+
+Expected: `Decrypted Value` / `hello` — the same value from step 3.
+
+## That's the demo
+
+You've installed Keyorix, stored a secret, shared it with a teammate, given
+an app access and revoked it, and proved a backup restores cleanly with its
+integrity verified. For anything past this — key rotation, Kubernetes,
+Postgres, disaster recovery of a lost admin password — see
+[`QUICK_START.md`](../../QUICK_START.md) and the other pages under
+`docs/operator/`.
