@@ -216,7 +216,14 @@ func runUserCreate(cmd *cobra.Command, _ []string) error {
 	}
 	if payload.OneTimePassword != nil {
 		otp := payload.OneTimePassword
-		fmt.Printf("One-time password for %s (relay securely — it must be changed on first login):\n  %s\n", otp.Email, otp.OTPValue) // codeql[go/clear-text-logging]
+		// Intentional one-time display to the admin who ran this command --
+		// the only channel by which a freshly issued OTP can reach them. The
+		// codeql[...] tag must be the single comment line directly above the
+		// sink (AlertSuppression.qll requires the comment's own end line ==
+		// alert line - 1; see internal/connect/vault.go for the same
+		// constraint documented at its own suppression site).
+		// codeql[go/clear-text-logging]
+		fmt.Printf("One-time password for %s (relay securely — it must be changed on first login):\n  %s\n", otp.Email, otp.OTPValue)
 	}
 	return nil
 }
