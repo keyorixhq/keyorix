@@ -42,7 +42,7 @@ CLI_VERSION_LDFLAGS=-X github.com/keyorixhq/keyorix/cli/internal/cliversion.Vers
 CLI_LDFLAGS=-ldflags "$(CLI_VERSION_LDFLAGS)"
 CLI_RELEASE_LDFLAGS=-ldflags "-s -w $(CLI_VERSION_LDFLAGS)"
 
-.PHONY: build build-cli build-server build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate smoke keyorix-legacy smoke-legacy check-release-assets
+.PHONY: build build-cli build-server build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate smoke keyorix-legacy smoke-legacy check-release-assets airgap-e2e
 
 # Pinned protoc-gen plugin versions (match google.golang.org/{protobuf,grpc} in go.mod).
 PROTOC_GEN_GO_VERSION=v1.36.11
@@ -263,6 +263,14 @@ smoke: build-cli build-server
 # internal/cli. See scripts/smoke-legacy.sh's own header.
 smoke-legacy: keyorix-legacy
 	@./scripts/smoke-legacy.sh
+
+# airgap-e2e: MANUAL target only, not run in CI (needs Docker/Podman, spins up
+# real containers, takes tens of seconds waiting out a real audit-checkpoint
+# interval) -- see scripts/airgap-e2e.sh's own header for the full flow and
+# why CI's unit/integration/fuzz layer (server/admin/backup_restore_*_test.go)
+# isn't a substitute for it.
+airgap-e2e:
+	@./scripts/airgap-e2e.sh
 
 clean:
 	rm -rf $(BUILD_DIR) dist/
