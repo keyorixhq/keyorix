@@ -84,8 +84,10 @@ func FuzzDEKRewrapCrashConsistency(f *testing.F) {
 		}
 		target := rewrapCrashLabels[int(crashSel)%len(rewrapCrashLabels)]
 
-		// t.TempDir() must run on the test goroutine, not inside Guard's goroutine.
-		dir := t.TempDir()
+		// tmpDirEnv (not t.TempDir(), see its doc comment in
+		// keymanager_crash_consistency_fuzz_test.go) must run on the test
+		// goroutine, not inside Guard's goroutine.
+		dir := tmpDirEnv(t)
 
 		// Local hang backstop with a generous deadline (see rewrapGuardDeadline) instead of
 		// fuzzutil.Guard's shared 3s, which is tuned for fast file/parse targets. An invariant

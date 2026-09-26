@@ -124,7 +124,7 @@ func FuzzDEKSweepCrashConsistency(f *testing.F) {
 			// per-iteration (per STEP 2 scope: only the DB becomes per-worker), and each
 			// world's crash+recovery run must not see file state a DIFFERENT backend's
 			// run left behind in a shared dir.
-			dir := t.TempDir()
+			dir := tmpDirEnv(t)
 
 			// Local hang backstop with a generous deadline (see sweepGuardDeadline) instead of
 			// fuzzutil.Guard's shared 3s, which is tuned for fast file/parse targets. A violation
