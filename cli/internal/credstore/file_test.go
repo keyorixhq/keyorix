@@ -24,6 +24,43 @@ func TestFileStore_SaveWritesMode0600(t *testing.T) {
 	}
 }
 
+// CLI-CREDSTORE-001 regression guard: os.OpenFile's mode argument is only applied when
+// O_CREATE actually creates a new file -- if credentials.yaml already exists (e.g. from
+// a misconfigured shared host, or an older CLI version) with wider permissions, O_TRUNC
+// reuses it as-is and Save must not silently write the token into it unprotected.
+func TestFileStore_SaveFixesPreExistingWidePermissions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "credentials.yaml")
+
+	if err := os.WriteFile(path, []byte("stale-placeholder"), 0o644); err != nil {
+		t.Fatalf("seed a pre-existing 0644 file: %v", err)
+	}
+
+	s := NewFileStore(path)
+	if err := s.Save(Credentials{ServerURL: "https://example.test", Token: "tok"}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("mode = %#o after Save on a pre-existing 0644 file, want 0600", perm)
+	}
+
+	// Load must succeed too -- the whole point of fixing the mode is that the
+	// credentials Save just wrote are actually readable back through Load's own
+	// perm-width refusal.
+	got, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load after Save-onto-pre-existing-file: %v", err)
+	}
+	if got.Token != "tok" {
+		t.Fatalf("Load().Token = %q, want %q", got.Token, "tok")
+	}
+}
+
 func TestFileStore_SaveThenLoadRoundTrips(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.yaml")

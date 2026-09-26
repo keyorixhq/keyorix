@@ -34,7 +34,15 @@ func NewFileStore(path string) *FileStore {
 }
 
 // Save writes c to the store's path at mode 0600, creating its parent directory (mode
-// 0700) if needed. The mode is set explicitly on the open call, not left to umask.
+// 0700) if needed. The mode is set explicitly on the open call AND via an explicit
+// Chmod after opening: O_CREATE's mode argument only applies when the file is newly
+// created -- if s.path already existed (e.g. left behind with wider permissions by a
+// misconfigured shared host, an older CLI version, or a manual chmod), O_TRUNC reuses
+// that existing file and keeps its existing mode, silently writing a plaintext token
+// into a file Load refuses to read back (Load enforces 0600; Save must guarantee it,
+// not just request it). Mirrors internal/securefiles.writeFile's identical fix for the
+// exact same class of bug ("O_TRUNC keeps a pre-existing file's mode ... so set the
+// intended permissions explicitly either way").
 func (s *FileStore) Save(c Credentials) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
@@ -50,6 +58,10 @@ func (s *FileStore) Save(c Credentials) error {
 		return fmt.Errorf("open credentials file: %w", err)
 	}
 	defer func() { _ = f.Close() }()
+
+	if err := f.Chmod(0600); err != nil {
+		return fmt.Errorf("chmod credentials file: %w", err)
+	}
 
 	if _, err := f.Write(data); err != nil {
 		return fmt.Errorf("write credentials: %w", err)
