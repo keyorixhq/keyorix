@@ -5,6 +5,15 @@ All notable changes to Keyorix are documented here. This project follows
 
 ## Unreleased
 
+### Added
+- **`keyorix machine grant-role` / `revoke-role` / `roles`** — grant, revoke,
+  and list a machine identity's project-scoped role grants. The REST
+  endpoints (`POST`/`DELETE .../machine-identities/{id}/roles`, and a new
+  `GET` for listing) already existed (ADR-030); previously the only way to
+  give a machine identity access to anything was a hand-crafted authenticated
+  HTTP call. See [`QUICK_START.md`](QUICK_START.md#giving-a-machine-ciapp-access)
+  and [`docs/operator/demo.md`](docs/operator/demo.md) step 5.
+
 ### Changed
 - **BREAKING: `keyorix` is now the new, thin, REST-only CLI (ADR-108 Phase 5).**
   The old, thick CLI's **local/embedded mode — opening the database directly,
@@ -47,12 +56,6 @@ All notable changes to Keyorix are documented here. This project follows
   and no explanation if either grant is missing. Documented in
   [`QUICK_START.md`](QUICK_START.md#sharing) and exercised by
   `scripts/smoke.sh`; not yet fixed at the API layer.
-- **No `keyorix` command grants a machine identity a role on a project.** The
-  REST endpoint exists (`POST /api/v1/projects/{id}/machine-identities/{id}/roles`),
-  only a CLI wrapper is missing. Until it's added, grant access with a direct
-  API call — see [`QUICK_START.md`](QUICK_START.md#giving-a-machine-ciapp-access)
-  and [`docs/operator/demo.md`](docs/operator/demo.md) step 5 for the exact
-  `curl` invocation.
 
 ## v0.94.0 — 2026-09-17
 

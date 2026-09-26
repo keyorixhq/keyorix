@@ -2231,6 +2231,31 @@ paths:
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
   /api/v1/projects/{id}/machine-identities/{machineId}/roles:
+    get:
+      tags: [MachineIdentities]
+      summary: List a machine identity's project roles
+      description: Return every project-scoped role currently granted to the machine identity.
+      operationId: listMachineRoles
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: machineId, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: "Envelope `data.roles[]` with id, name."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      roles: {type: array, items: {$ref: '#/components/schemas/RoleRef'}}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
     post:
       tags: [MachineIdentities]
       summary: Grant a project role to a machine identity

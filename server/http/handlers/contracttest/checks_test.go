@@ -105,6 +105,7 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		"issueMachineToken":             true,
 		"listExpiredPATs":               true,
 		"listMachineIdentities":         true,
+		"listMachineRoles":              true,
 		"listMachineTokens":             true,
 		"listOIDCBindings":              true,
 		"listPATs":                      true,

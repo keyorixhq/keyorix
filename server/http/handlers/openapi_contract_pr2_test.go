@@ -143,6 +143,40 @@ func TestContractPR2_ListOIDCBindings(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 }
 
+func TestContractPR2_ListMachineRoles(t *testing.T) {
+	h, db, projID := machineHandlerWithDB(t)
+	machine := &models.MachineIdentity{ProjectID: projID, Name: "svc-e", IdentityType: "service", State: "active"}
+	require.NoError(t, db.Create(machine).Error)
+	role := &models.Role{Name: "contract-pr2-machine-role", Description: "d"}
+	require.NoError(t, db.Create(role).Error)
+	require.NoError(t, db.Create(&models.MachineIdentityRole{
+		MachineIdentityID: machine.ID, RoleID: role.ID, ProjectID: projID,
+	}).Error)
+
+	req := withUserCtx(withChiParamsPR2(
+		httptest.NewRequest(http.MethodGet, "/api/v1/projects/1/machine-identities/1/roles", nil),
+		"id", machineUintToStr(projID), "machineId", machineUintToStr(machine.ID),
+	))
+	w := httptest.NewRecorder()
+	h.ListMachineRoles(w, req)
+
+	contracttest.AssertOpenAPIResponse(t, req, w)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body struct {
+		Data struct {
+			Roles []struct {
+				ID   uint   `json:"id"`
+				Name string `json:"name"`
+			} `json:"roles"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Len(t, body.Data.Roles, 1)
+	require.Equal(t, role.ID, body.Data.Roles[0].ID)
+	require.Equal(t, role.Name, body.Data.Roles[0].Name)
+}
+
 func TestContractPR2_MachineTokenHygiene(t *testing.T) {
 	cs, _ := freshCoreS12WithAdmin(t)
 	h := NewCatalogHandler(cs)

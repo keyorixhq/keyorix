@@ -166,30 +166,30 @@ during an incident.
 Issuing that machine a bearer token takes one more command
 (`keyorix machine token issue <name>`, see
 [`docs/operator/demo.md`](docs/operator/demo.md) step 5 for the full worked
-example). **Granting the machine access to a secret has no CLI command yet**
-(known gap, see below). Until it does, do it with one direct API call:
+example). Grant it access to a project with `machine grant-role`:
 
 ```bash
-export KEYORIX_ADMIN_TOKEN='<a personal access token from: keyorix pat create --name demo>'
-curl -s -X POST http://localhost:8080/api/v1/projects/1/machine-identities/1/roles \
-  -H "Authorization: Bearer $KEYORIX_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"role_id": 9}'
+./bin/keyorix machine grant-role my-ci-app --project default --role project_viewer
 ```
 
-(`role_id: 9` is `project_viewer` on a fresh install — check yours with
-`keyorix rbac list-roles`.) See [`docs/operator/demo.md`](docs/operator/demo.md)
-for the full worked example including revocation.
+The machine's token can now read secrets in that project with the granted
+role's permissions. Revoke just the role grant (leaving the machine identity
+itself intact) with `machine revoke-role`, or list what it currently holds
+with `machine roles`:
+
+```bash
+./bin/keyorix machine roles my-ci-app --project default
+./bin/keyorix machine revoke-role my-ci-app --project default --role project_viewer
+```
+
+See [`docs/operator/demo.md`](docs/operator/demo.md) for the full worked
+example including revocation.
 
 ## Known gaps
 
 - **Sharing requires an explicit project role on both owner and recipient**
   (see "Sharing" above) — holding the global `admin` role is not enough, and
   the failure mode (`HTTP 403`, no explanation) doesn't say so.
-- **No CLI command grants a machine identity a role on a secret/project** yet
-  (see "Giving a machine access" above) — the REST endpoint exists
-  (`POST /projects/{id}/machine-identities/{id}/roles`), only the CLI wrapper
-  is missing.
 
 ## What else is there
 

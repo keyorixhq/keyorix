@@ -45,6 +45,9 @@ var keptPaths = []string{
 	"/api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}",
 	"/api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings",
 	"/api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings/{bindingId}",
+	// Item 2 (RELEASE-BLOCKERS): `keyorix machine grant-role`/`revoke-role`/`roles`.
+	"/api/v1/projects/{id}/machine-identities/{machineId}/roles",
+	"/api/v1/projects/{id}/machine-identities/{machineId}/roles/{roleId}",
 	"/api/v1/machine-token-hygiene",
 	"/api/v1/machine-identities/audit",
 	"/api/v1/projects",

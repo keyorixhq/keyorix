@@ -523,6 +523,33 @@ func (h *CatalogHandler) changeMachineRole(w http.ResponseWriter, r *http.Reques
 	sendSuccess(w, nil, "Machine role "+verb)
 }
 
+// ListMachineRoles handles GET /api/v1/projects/{id}/machine-identities/{machineId}/roles.
+// Mirrors GetUserRolesForUser's response shape (data.roles[] of {id, name}) —
+// core.ListMachineRoles already verifies the machine identity belongs to the
+// given project before returning its granted roles.
+func (h *CatalogHandler) ListMachineRoles(w http.ResponseWriter, r *http.Request) {
+	projectID, machineID, _, ok := h.machineRouteCtx(w, r)
+	if !ok {
+		return
+	}
+	roles, err := h.coreService.ListMachineRoles(r.Context(), projectID, machineID)
+	if err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, errNotFound) {
+			sendError(w, "NotFound", clientSafe(err), http.StatusNotFound, nil)
+			return
+		}
+		log.Printf("Error listing machine roles for machine %d in project %d: %v", machineID, projectID, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
+		return
+	}
+	apiRoles := make([]apiRole, 0, len(roles))
+	for _, role := range roles {
+		apiRoles = append(apiRoles, apiRole{ID: role.ID, Name: role.Name})
+	}
+	sendSuccess(w, map[string]interface{}{"roles": apiRoles}, "")
+}
+
 // CreateOIDCBinding handles POST /api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings.
 // Body: {"issuer": "...", "subject": "..."} (ADR-031).
 func (h *CatalogHandler) CreateOIDCBinding(w http.ResponseWriter, r *http.Request) {
