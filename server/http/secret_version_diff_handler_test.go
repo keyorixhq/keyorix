@@ -50,8 +50,8 @@ func createIntegrationTestSecret(t *testing.T, client *http.Client, baseURL, tok
 	data, ok := response["data"].(map[string]interface{})
 	require.True(t, ok, "response.data must be an object")
 
-	id, ok := data["ID"].(float64)
-	require.True(t, ok, "response.data.ID must be a number")
+	id, ok := data["id"].(float64)
+	require.True(t, ok, "response.data.id must be a number")
 	return uint(id)
 }
 

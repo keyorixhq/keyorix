@@ -77,23 +77,23 @@ export const secretsApi = {
         const response = await apiClient.get(API_ENDPOINTS.SECRETS.LIST, { params });
         const { secrets, total, page, page_size, total_pages } = response.data.data;
         const mappedSecrets: Secret[] = (secrets ?? []).map((s: any) => ({
-            id: s.ID,
-            name: s.Name,
-            type: s.Type,
-            isShared: s.IsShared ?? false,
+            id: s.id,
+            name: s.name,
+            type: s.type,
+            isShared: s.is_shared ?? false,
             shareCount: s.share_count ?? 0,
-            lastModified: s.UpdatedAt ?? s.CreatedAt ?? '',
-            owner: s.CreatedBy ?? '',
+            lastModified: s.updated_at ?? s.created_at ?? '',
+            owner: s.created_by ?? '',
             namespace: s.namespace_name ?? s.namespace ?? 'default',
             zone: s.zone_name ?? s.zone ?? '',
             environment: s.environment_name ?? s.environment ?? 'production',
             tags: [],
             permissions: [],
             metadata: {},
-            Expiration: s.Expiration ?? null,
-            lastRotatedAt: s.LastRotatedAt ?? null,
-            classification: s.Classification ?? s.classification ?? '',
-            status: s.Status ?? s.status ?? 'active',
+            Expiration: s.expiration ?? null,
+            lastRotatedAt: s.last_rotated_at ?? null,
+            classification: s.classification ?? '',
+            status: s.status ?? 'active',
         }));
         return {
             data: mappedSecrets,
@@ -177,12 +177,11 @@ export const secretsApi = {
         return response.data.data?.audit ?? [];
     },
 
-    // description reads the secret's free-text note. The GET returns the raw model
-    // (PascalCase Description); tolerate either casing.
+    // description reads the secret's free-text note.
     async description(id: number): Promise<string> {
         const response = await apiClient.get(API_ENDPOINTS.SECRETS.GET(id));
         const s = response.data.data ?? {};
-        return s.Description ?? s.description ?? '';
+        return s.description ?? '';
     },
 
     // setDescription sets/clears the note — PATCH /secrets/{id}/description.

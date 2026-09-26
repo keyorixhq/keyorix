@@ -77,7 +77,7 @@ func createDryRunSecret(t *testing.T, env *dryRunTestEnv, name string) uint {
 	var out map[string]interface{}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
 	data := out["data"].(map[string]interface{})
-	return uint(data["ID"].(float64))
+	return uint(data["id"].(float64))
 }
 
 // postSimulate calls POST /api/v1/secrets/{id}/rotation/simulate and returns the status + body.

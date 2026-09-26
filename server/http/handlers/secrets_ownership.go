@@ -59,5 +59,5 @@ func (h *SecretHandler) TransferOwnership(w http.ResponseWriter, r *http.Request
 		}
 		return
 	}
-	h.sendSuccess(w, secret, "Secret ownership transferred")
+	h.sendSuccess(w, newSecretNodeWire(secret), "Secret ownership transferred")
 }

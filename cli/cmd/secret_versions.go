@@ -81,7 +81,7 @@ func runSecretVersions(cmd *cobra.Command, args []string) error {
 func displayVersionsTable(secret *apiclient.Secret, versions []apiclient.SecretVersion) {
 	fmt.Println("Secret Versions")
 	fmt.Println("==================")
-	fmt.Printf("Secret: %s (ID: %d)\n", derefStr(secret.Name), derefSecretInt(secret.ID))
+	fmt.Printf("Secret: %s (ID: %d)\n", derefStr(secret.Name), derefSecretInt(secret.Id))
 	fmt.Printf("Total Versions: %d\n", len(versions))
 	fmt.Println("(size/algorithm columns are omitted -- not exposed by the API)")
 	fmt.Println()
@@ -126,7 +126,7 @@ func displayVersionsJSON(secret *apiclient.Secret, versions []apiclient.SecretVe
 		TotalVersions int                `json:"total_versions"`
 		Versions      []jsonVersionEntry `json:"versions"`
 	}
-	out.Secret.ID = derefSecretInt(secret.ID)
+	out.Secret.ID = derefSecretInt(secret.Id)
 	out.Secret.Name = derefStr(secret.Name)
 	out.Secret.Type = derefStr(secret.Type)
 	out.TotalVersions = len(versions)
@@ -206,7 +206,7 @@ func runSecretDiff(_ *cobra.Command, args []string) error {
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
 			return fmt.Errorf("secret %q not found: HTTP %d", name, resp.StatusCode())
 		}
-		id = derefSecretInt(resp.JSON200.Data.ID)
+		id = derefSecretInt(resp.JSON200.Data.Id)
 	}
 
 	resp, err := client.DiffSecretVersionsWithResponse(ctx, id, fromVersion, toVersion)

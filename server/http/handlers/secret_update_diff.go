@@ -375,5 +375,5 @@ func (h *SecretHandler) updateSecretViaDiff(w http.ResponseWriter, r *http.Reque
 		h.coreService.LogSecretUpdatedWithDiff(auditCtx, uid, sID, response.ProjectID, uname, sname, ip, ua, auditDiff)
 	}) // #nosec G118
 
-	h.sendSuccess(w, response, i18n.T("SuccessSecretUpdated", nil))
+	h.sendSuccess(w, newSecretNodeWire(response), i18n.T("SuccessSecretUpdated", nil))
 }
