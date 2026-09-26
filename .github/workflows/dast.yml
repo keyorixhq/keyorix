@@ -1,9 +1,9 @@
 name: DAST
 on:
   push:
-    branches: [main]
+    tags: ['v*']
   schedule:
-    - cron: '0 3 * * 1'  # weekly Monday 3am UTC
+    - cron: '0 3 * * *'  # nightly 3am UTC (was weekly Monday-only -- runner capacity, 2026-09-26)
   workflow_dispatch:
 
 permissions: {}
