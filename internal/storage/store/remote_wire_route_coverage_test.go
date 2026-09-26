@@ -946,7 +946,7 @@ var knownUnresolvedWireCalls = map[string]wireCallExclusion{
 	// real, scoped tool enhancement (resolve the literal prefix, represent the
 	// escaped segment as a wildcard "*" the way normalizeChiPath already does
 	// for a chi {param}), just a different one than the query-string case.
-	"remote_rbac.go:519":  pathEscapeEntry("url.PathEscape(connector) path-segment concatenation"),
+	"remote_rbac.go:552":  pathEscapeEntry("url.PathEscape(connector) path-segment concatenation"),
 	"remote_users.go:988": pathEscapeEntry("url.QueryEscape(strings.Join(ids, \",\")) query-string concatenation"),
 
 	// Category: the ENTIRE path is a bare call to a locally-defined helper
