@@ -507,6 +507,17 @@ type ClientInterface interface {
 	// DeleteOIDCBinding request
 	DeleteOIDCBinding(ctx context.Context, id int, machineId int, bindingId int, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListMachineRoles request
+	ListMachineRoles(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GrantMachineRoleWithBody request with any body
+	GrantMachineRoleWithBody(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	GrantMachineRole(ctx context.Context, id int, machineId int, body GrantMachineRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RemoveMachineRole request
+	RemoveMachineRole(ctx context.Context, id int, machineId int, roleId int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListMachineTokens request
 	ListMachineTokens(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2759,6 +2770,54 @@ func (c *Client) CreateOIDCBinding(ctx context.Context, id int, machineId int, b
 
 func (c *Client) DeleteOIDCBinding(ctx context.Context, id int, machineId int, bindingId int, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteOIDCBindingRequest(c.Server, id, machineId, bindingId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListMachineRoles(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListMachineRolesRequest(c.Server, id, machineId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GrantMachineRoleWithBody(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGrantMachineRoleRequestWithBody(c.Server, id, machineId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GrantMachineRole(ctx context.Context, id int, machineId int, body GrantMachineRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGrantMachineRoleRequest(c.Server, id, machineId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RemoveMachineRole(ctx context.Context, id int, machineId int, roleId int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveMachineRoleRequest(c.Server, id, machineId, roleId)
 	if err != nil {
 		return nil, err
 	}
@@ -9720,6 +9779,149 @@ func NewDeleteOIDCBindingRequest(server string, id int, machineId int, bindingId
 	return req, nil
 }
 
+// NewListMachineRolesRequest generates requests for ListMachineRoles
+func NewListMachineRolesRequest(server string, id int, machineId int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "machineId", runtime.ParamLocationPath, machineId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities/%s/roles", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGrantMachineRoleRequest calls the generic GrantMachineRole builder with application/json body
+func NewGrantMachineRoleRequest(server string, id int, machineId int, body GrantMachineRoleJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewGrantMachineRoleRequestWithBody(server, id, machineId, "application/json", bodyReader)
+}
+
+// NewGrantMachineRoleRequestWithBody generates requests for GrantMachineRole with any type of body
+func NewGrantMachineRoleRequestWithBody(server string, id int, machineId int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "machineId", runtime.ParamLocationPath, machineId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities/%s/roles", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRemoveMachineRoleRequest generates requests for RemoveMachineRole
+func NewRemoveMachineRoleRequest(server string, id int, machineId int, roleId int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "machineId", runtime.ParamLocationPath, machineId)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "roleId", runtime.ParamLocationPath, roleId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities/%s/roles/%s", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListMachineTokensRequest generates requests for ListMachineTokens
 func NewListMachineTokensRequest(server string, id int, machineId int) (*http.Request, error) {
 	var err error
@@ -15179,6 +15381,17 @@ type ClientWithResponsesInterface interface {
 	// DeleteOIDCBindingWithResponse request
 	DeleteOIDCBindingWithResponse(ctx context.Context, id int, machineId int, bindingId int, reqEditors ...RequestEditorFn) (*DeleteOIDCBindingResponse, error)
 
+	// ListMachineRolesWithResponse request
+	ListMachineRolesWithResponse(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*ListMachineRolesResponse, error)
+
+	// GrantMachineRoleWithBodyWithResponse request with any body
+	GrantMachineRoleWithBodyWithResponse(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GrantMachineRoleResponse, error)
+
+	GrantMachineRoleWithResponse(ctx context.Context, id int, machineId int, body GrantMachineRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*GrantMachineRoleResponse, error)
+
+	// RemoveMachineRoleWithResponse request
+	RemoveMachineRoleWithResponse(ctx context.Context, id int, machineId int, roleId int, reqEditors ...RequestEditorFn) (*RemoveMachineRoleResponse, error)
+
 	// ListMachineTokensWithResponse request
 	ListMachineTokensWithResponse(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*ListMachineTokensResponse, error)
 
@@ -18532,6 +18745,88 @@ func (r DeleteOIDCBindingResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r DeleteOIDCBindingResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListMachineRolesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			Roles *[]RoleRef `json:"roles,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListMachineRolesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListMachineRolesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GrantMachineRoleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON401      *Error
+	JSON403      *Error
+	JSON404      *Error
+	JSON409      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GrantMachineRoleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GrantMachineRoleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RemoveMachineRoleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON401      *Error
+	JSON403      *Error
+	JSON404      *Error
+	JSON409      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r RemoveMachineRoleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemoveMachineRoleResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -23087,6 +23382,41 @@ func (c *ClientWithResponses) DeleteOIDCBindingWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseDeleteOIDCBindingResponse(rsp)
+}
+
+// ListMachineRolesWithResponse request returning *ListMachineRolesResponse
+func (c *ClientWithResponses) ListMachineRolesWithResponse(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*ListMachineRolesResponse, error) {
+	rsp, err := c.ListMachineRoles(ctx, id, machineId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListMachineRolesResponse(rsp)
+}
+
+// GrantMachineRoleWithBodyWithResponse request with arbitrary body returning *GrantMachineRoleResponse
+func (c *ClientWithResponses) GrantMachineRoleWithBodyWithResponse(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GrantMachineRoleResponse, error) {
+	rsp, err := c.GrantMachineRoleWithBody(ctx, id, machineId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGrantMachineRoleResponse(rsp)
+}
+
+func (c *ClientWithResponses) GrantMachineRoleWithResponse(ctx context.Context, id int, machineId int, body GrantMachineRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*GrantMachineRoleResponse, error) {
+	rsp, err := c.GrantMachineRole(ctx, id, machineId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGrantMachineRoleResponse(rsp)
+}
+
+// RemoveMachineRoleWithResponse request returning *RemoveMachineRoleResponse
+func (c *ClientWithResponses) RemoveMachineRoleWithResponse(ctx context.Context, id int, machineId int, roleId int, reqEditors ...RequestEditorFn) (*RemoveMachineRoleResponse, error) {
+	rsp, err := c.RemoveMachineRole(ctx, id, machineId, roleId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveMachineRoleResponse(rsp)
 }
 
 // ListMachineTokensWithResponse request returning *ListMachineTokensResponse
@@ -29254,6 +29584,172 @@ func ParseDeleteOIDCBindingResponse(rsp *http.Response) (*DeleteOIDCBindingRespo
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListMachineRolesResponse parses an HTTP response from a ListMachineRolesWithResponse call
+func ParseListMachineRolesResponse(rsp *http.Response) (*ListMachineRolesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListMachineRolesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				Roles *[]RoleRef `json:"roles,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGrantMachineRoleResponse parses an HTTP response from a GrantMachineRoleWithResponse call
+func ParseGrantMachineRoleResponse(rsp *http.Response) (*GrantMachineRoleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GrantMachineRoleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRemoveMachineRoleResponse parses an HTTP response from a RemoveMachineRoleWithResponse call
+func ParseRemoveMachineRoleResponse(rsp *http.Response) (*RemoveMachineRoleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemoveMachineRoleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	}
 

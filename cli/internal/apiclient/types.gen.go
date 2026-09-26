@@ -1760,6 +1760,11 @@ type CreateOIDCBindingJSONBody struct {
 	Subject string `json:"subject"`
 }
 
+// GrantMachineRoleJSONBody defines parameters for GrantMachineRole.
+type GrantMachineRoleJSONBody struct {
+	RoleId int `json:"role_id"`
+}
+
 // IssueMachineTokenJSONBody defines parameters for IssueMachineToken.
 type IssueMachineTokenJSONBody struct {
 	// Classification Data classification: public | internal | confidential | restricted
@@ -2359,6 +2364,9 @@ type TransitionMachineIdentityJSONRequestBody TransitionMachineIdentityJSONBody
 
 // CreateOIDCBindingJSONRequestBody defines body for CreateOIDCBinding for application/json ContentType.
 type CreateOIDCBindingJSONRequestBody CreateOIDCBindingJSONBody
+
+// GrantMachineRoleJSONRequestBody defines body for GrantMachineRole for application/json ContentType.
+type GrantMachineRoleJSONRequestBody GrantMachineRoleJSONBody
 
 // IssueMachineTokenJSONRequestBody defines body for IssueMachineToken for application/json ContentType.
 type IssueMachineTokenJSONRequestBody IssueMachineTokenJSONBody

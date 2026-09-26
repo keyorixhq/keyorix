@@ -132,20 +132,25 @@ the four commands above until it lands.)
 Expected: a machine identity (`id=1`), then a bearer token printed once —
 copy it now.
 
-**Granting that machine access to the secret has no CLI command yet** (also
-filed). Until it does, do it with one direct API call — everything else in
-this script is the CLI, this one line is the exception:
+Grant the machine a project role with `machine grant-role`:
 
 ```bash
-export KEYORIX_ADMIN_TOKEN='<a personal access token from: keyorix pat create --name demo>'
-curl -s -X POST http://localhost:8080/api/v1/projects/1/machine-identities/1/roles \
-  -H "Authorization: Bearer $KEYORIX_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"role_id": 9}'
+./bin/keyorix machine grant-role my-ci-app --project default --role project_viewer
 ```
 
-(`role_id: 9` is `project_viewer` on this install — check yours with
-`keyorix rbac list-roles`.)
+Expected: `Granted role 'project_viewer' to machine identity 'my-ci-app'`.
+Check what it holds with `machine roles`:
+
+```bash
+./bin/keyorix machine roles my-ci-app --project default
+```
+
+Expected:
+```
+ID    NAME
+----- ----------------
+9     project_viewer
+```
 
 Now the app can read the secret with its own token:
 
@@ -157,14 +162,22 @@ curl -s "http://localhost:8080/api/v1/secrets/1?include_value=true" \
 
 Expected: a JSON body ending in `"value":"hello"`.
 
-Revoke it — this is permanent and asks you to type the name back to confirm:
+Revoke just the role grant (the machine identity itself stays active):
+
+```bash
+./bin/keyorix machine revoke-role my-ci-app --project default --role project_viewer
+```
+
+Expected: `Revoked role 'project_viewer' from machine identity 'my-ci-app'`.
+Re-run the same `curl` from above: expect `403` this time — the app is
+denied immediately.
+
+To revoke the whole machine identity instead (irreversible — asks you to type
+the name back to confirm):
 
 ```bash
 ./bin/keyorix machine revoke my-ci-app --project default
 ```
-
-Re-run the same `curl` from above: expect `401` this time — the app is
-denied immediately.
 
 ## 6. Back it up, wipe it, restore it (2 min)
 

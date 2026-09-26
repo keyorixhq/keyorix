@@ -233,6 +233,7 @@ var exercisingTests = map[string][]string{
 	"issueMachineToken":     {"TestContractPR2_IssueMachineToken"},
 	"listExpiredPATs":       {"TestContractPR2_ListExpiredPATs"},
 	"listMachineIdentities": {"TestContractPR2_ListMachineIdentities"},
+	"listMachineRoles":      {"TestContractPR2_ListMachineRoles"},
 	"listMachineTokens":     {"TestContractPR2_ListMachineTokens"},
 	"listOIDCBindings":      {"TestContractPR2_ListOIDCBindings"},
 	"listPATs":              {"TestContractPR2_ListPATs"},

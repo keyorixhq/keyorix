@@ -182,8 +182,23 @@ func assertInvocationsResolve(t *testing.T, root *cobra.Command, invocations [][
 		// A non-empty remainder means the path did not fully resolve to a real command,
 		// not that it did -- checking only cmd/err (as this test's first version did)
 		// missed exactly this case.
+		//
+		// BUT a non-empty remainder is not automatically wrong: a leaf command with a
+		// positional argument (e.g. `machine grant-role <name|id> --role R`, mirroring
+		// `machine describe <name|id>`) legitimately leaves its positional value in
+		// `remaining` -- Find has no way to know that token isn't a missing subcommand
+		// name. Distinguish the two: if the resolved command has no subcommands of its
+		// own (nothing else remaining COULD have matched) and its own Args validator
+		// accepts the leftover tokens as positional arguments, this is a real,
+		// documented invocation, not a typo/rename.
 		cmd, remaining, err := root.Find(path)
-		if err != nil || cmd == nil || cmd == root || len(remaining) > 0 {
+		unresolved := err != nil || cmd == nil || cmd == root || len(remaining) > 0
+		if unresolved && cmd != nil && cmd != root && len(remaining) > 0 && !cmd.HasSubCommands() && cmd.Args != nil {
+			if cmd.Args(cmd, remaining) == nil {
+				unresolved = false
+			}
+		}
+		if unresolved {
 			t.Errorf("%s documents `keyorix %s`, which is not a command (cobra: %v, unresolved: %v). "+
 				"Fix the doc, or the command was renamed and the doc was not updated.",
 				source, strings.Join(path, " "), err, remaining)

@@ -343,3 +343,158 @@ func runMachineMigrateFromUser(cmd *cobra.Command, args []string) error {
 	}
 	return nil
 }
+
+// ── grant-role / revoke-role / roles ─────────────────────────────────────────
+//
+// A machine identity is otherwise permanently unable to read/write anything in
+// its project: the REST endpoints (grantMachineRole/removeMachineRole/
+// listMachineRoles, ADR-030) existed already, but no CLI command wrapped them --
+// the only way to grant one a role was a hand-crafted authenticated HTTP POST.
+// Reuses resolveRoleIDByName (rbac.go) so a role is named the same way
+// `keyorix rbac assign-role --role <name>` already accepts it.
+
+var (
+	machineGrantRoleProjectName  string
+	machineGrantRoleName         string
+	machineRevokeRoleProjectName string
+	machineRevokeRoleName        string
+	machineRolesProjectName      string
+)
+
+var machineGrantRoleCmd = &cobra.Command{
+	Use:   "grant-role <name|id>",
+	Short: "Grant a machine identity a project-scoped role",
+	Long:  "Grant a machine identity a role at its project's scope, so tokens it issues can act with that role's permissions.",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runMachineGrantRole,
+}
+
+func init() {
+	machineGrantRoleCmd.Flags().StringVar(&machineGrantRoleProjectName, "project", "", "Project name")
+	machineGrantRoleCmd.Flags().StringVar(&machineGrantRoleName, "role", "", "Role name to grant (required)")
+	machineCmd.AddCommand(machineGrantRoleCmd)
+}
+
+func runMachineGrantRole(cmd *cobra.Command, args []string) error {
+	if machineGrantRoleName == "" {
+		return fmt.Errorf("--role is required")
+	}
+	client, err := machineAPIClient()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	_, projectID, err := resolveMachineProjectID(client, machineGrantRoleProjectName)
+	if err != nil {
+		return err
+	}
+	m, err := findMachineByRef(client, projectID, args[0])
+	if err != nil {
+		return err
+	}
+	roleID, err := resolveRoleIDByName(ctx, client, machineGrantRoleName)
+	if err != nil {
+		return err
+	}
+	resp, err := client.GrantMachineRoleWithResponse(ctx, projectID, derefInt(m.Id), apiclient.GrantMachineRoleJSONRequestBody{RoleId: roleID})
+	if err != nil {
+		return fmt.Errorf("failed to grant role: %w", err)
+	}
+	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
+		return apiError("grant machine role", resp.StatusCode(), resp.Body)
+	}
+	fmt.Printf("Granted role '%s' to machine identity '%s'\n", machineGrantRoleName, derefStr(m.Name))
+	return nil
+}
+
+var machineRevokeRoleCmd = &cobra.Command{
+	Use:   "revoke-role <name|id>",
+	Short: "Remove a project-scoped role grant from a machine identity",
+	Long:  "Revoke a previously granted project-scoped role (distinct from `machine revoke`, which revokes the whole machine identity).",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runMachineRevokeRole,
+}
+
+func init() {
+	machineRevokeRoleCmd.Flags().StringVar(&machineRevokeRoleProjectName, "project", "", "Project name")
+	machineRevokeRoleCmd.Flags().StringVar(&machineRevokeRoleName, "role", "", "Role name to revoke (required)")
+	machineCmd.AddCommand(machineRevokeRoleCmd)
+}
+
+func runMachineRevokeRole(cmd *cobra.Command, args []string) error {
+	if machineRevokeRoleName == "" {
+		return fmt.Errorf("--role is required")
+	}
+	client, err := machineAPIClient()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	_, projectID, err := resolveMachineProjectID(client, machineRevokeRoleProjectName)
+	if err != nil {
+		return err
+	}
+	m, err := findMachineByRef(client, projectID, args[0])
+	if err != nil {
+		return err
+	}
+	roleID, err := resolveRoleIDByName(ctx, client, machineRevokeRoleName)
+	if err != nil {
+		return err
+	}
+	resp, err := client.RemoveMachineRoleWithResponse(ctx, projectID, derefInt(m.Id), roleID)
+	if err != nil {
+		return fmt.Errorf("failed to revoke role: %w", err)
+	}
+	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
+		return apiError("revoke machine role", resp.StatusCode(), resp.Body)
+	}
+	fmt.Printf("Revoked role '%s' from machine identity '%s'\n", machineRevokeRoleName, derefStr(m.Name))
+	return nil
+}
+
+var machineRolesCmd = &cobra.Command{
+	Use:   "roles <name|id>",
+	Short: "List a machine identity's project-scoped roles",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runMachineRoles,
+}
+
+func init() {
+	machineRolesCmd.Flags().StringVar(&machineRolesProjectName, "project", "", "Project name")
+	machineCmd.AddCommand(machineRolesCmd)
+}
+
+func runMachineRoles(cmd *cobra.Command, args []string) error {
+	client, err := machineAPIClient()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	_, projectID, err := resolveMachineProjectID(client, machineRolesProjectName)
+	if err != nil {
+		return err
+	}
+	m, err := findMachineByRef(client, projectID, args[0])
+	if err != nil {
+		return err
+	}
+	resp, err := client.ListMachineRolesWithResponse(ctx, projectID, derefInt(m.Id))
+	if err != nil {
+		return fmt.Errorf("failed to list machine roles: %w", err)
+	}
+	if resp.JSON200 == nil || resp.JSON200.Data == nil {
+		return apiError("list machine roles", resp.StatusCode(), resp.Body)
+	}
+	roles := derefRoleRefSlice(resp.JSON200.Data.Roles)
+	if len(roles) == 0 {
+		fmt.Printf("No roles granted to machine identity %q.\n", derefStr(m.Name))
+		return nil
+	}
+	fmt.Printf("%-5s %s\n", "ID", "NAME")
+	fmt.Printf("%-5s %s\n", "-----", "----------------")
+	for _, r := range roles {
+		fmt.Printf("%-5d %s\n", derefInt(r.Id), cliout.SanitizeForTerminal(derefStr(r.Name)))
+	}
+	return nil
+}

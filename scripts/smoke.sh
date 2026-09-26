@@ -153,5 +153,46 @@ echo "$SHARE_LIST_OUT" | grep -qE '^1[[:space:]]+1[[:space:]]+1[[:space:]]+2[[:s
     "share list did not show alice (recipient id 2) as the share recipient -- got:
 $SHARE_LIST_OUT"
 
+# Machine identity access (QUICK_START.md "Giving a machine access" section):
+# issue a token, confirm it's denied until granted a project role, grant it via
+# `machine grant-role`, confirm the token can now read the secret, revoke the
+# role via `machine revoke-role`, confirm the token is denied again.
+echo "==> keyorix machine create + token issue"
+# The secret created above lives in project 1 (--project 1, "default") -- the
+# machine identity must be created there too, not in "smoke-project" (project
+# 2), or its role grant scopes to the wrong project and the read stays denied.
+"$CLI_BIN" machine create --name smoke-ci-app --project default --type ci \
+    || fail "machine create exited non-zero"
+TOKEN_OUT="$("$CLI_BIN" machine token issue smoke-ci-app --name smoke-token-1 \
+    --project default --expires-in-days 30)" || fail "machine token issue exited non-zero"
+APP_TOKEN="$(echo "$TOKEN_OUT" | grep '^Token:' | awk '{print $2}')"
+[ -n "$APP_TOKEN" ] || fail "could not parse machine token from:
+$TOKEN_OUT"
+
+echo "==> machine token denied before grant-role"
+DENIED_CODE="$(curl -s -o /dev/null -w '%{http_code}' "$SERVER_URL/api/v1/secrets/1?include_value=true" \
+    -H "Authorization: Bearer $APP_TOKEN")"
+[ "$DENIED_CODE" = "403" ] || fail "expected 403 before grant-role, got $DENIED_CODE"
+
+echo "==> keyorix machine grant-role"
+"$CLI_BIN" machine grant-role smoke-ci-app --project default --role project_viewer \
+    || fail "machine grant-role exited non-zero"
+
+echo "==> machine token reads the secret after grant-role"
+READ_OUT="$(curl -s "$SERVER_URL/api/v1/secrets/1?include_value=true" \
+    -H "Authorization: Bearer $APP_TOKEN")"
+echo "$READ_OUT" | grep -qF "$SECRET_VALUE" || fail \
+    "machine token did not read the secret value after grant-role -- got:
+$READ_OUT"
+
+echo "==> keyorix machine revoke-role"
+"$CLI_BIN" machine revoke-role smoke-ci-app --project default --role project_viewer \
+    || fail "machine revoke-role exited non-zero"
+
+echo "==> machine token denied again after revoke-role"
+REVOKED_CODE="$(curl -s -o /dev/null -w '%{http_code}' "$SERVER_URL/api/v1/secrets/1?include_value=true" \
+    -H "Authorization: Bearer $APP_TOKEN")"
+[ "$REVOKED_CODE" = "403" ] || fail "expected 403 after revoke-role, got $REVOKED_CODE"
+
 echo ""
 echo "SMOKE TEST PASSED"

@@ -435,6 +435,52 @@ func TestRemoveMachineRole_NotFound_S13(t *testing.T) {
 	assert.True(t, w.Code == http.StatusNotFound || w.Code == http.StatusConflict)
 }
 
+// ── machine_identities.go: ListMachineRoles ──────────────────────────────────
+
+func TestListMachineRoles_BadProjectID_S13(t *testing.T) {
+	h := machineHandlerS13(t)
+	req := withUserCtx(withChiParams(
+		httptest.NewRequest(http.MethodGet, "/", nil),
+		map[string]string{"id": "bad", "machineId": "1"},
+	))
+	w := httptest.NewRecorder()
+	h.ListMachineRoles(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestListMachineRoles_BadMachineID_S13(t *testing.T) {
+	h, projID := machineHandlerWithProjectS13(t)
+	req := withUserCtx(withChiParams(
+		httptest.NewRequest(http.MethodGet, "/", nil),
+		map[string]string{"id": machineUintToStr(projID), "machineId": "bad"},
+	))
+	w := httptest.NewRecorder()
+	h.ListMachineRoles(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestListMachineRoles_Unauthorized_S13(t *testing.T) {
+	h, projID := machineHandlerWithProjectS13(t)
+	req := withChiParams(
+		httptest.NewRequest(http.MethodGet, "/", nil),
+		map[string]string{"id": machineUintToStr(projID), "machineId": "1"},
+	)
+	w := httptest.NewRecorder()
+	h.ListMachineRoles(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestListMachineRoles_NotFound_S13(t *testing.T) {
+	h, projID := machineHandlerWithProjectS13(t)
+	req := withUserCtx(withChiParams(
+		httptest.NewRequest(http.MethodGet, "/", nil),
+		map[string]string{"id": machineUintToStr(projID), "machineId": "9999"},
+	))
+	w := httptest.NewRecorder()
+	h.ListMachineRoles(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
 // ── machine_identities.go: CreateOIDCBinding ─────────────────────────────────
 
 func TestCreateOIDCBinding_BadProjectID_S13(t *testing.T) {
