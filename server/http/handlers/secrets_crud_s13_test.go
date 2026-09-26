@@ -405,3 +405,37 @@ func TestDeleteSecret_SuccessWithAudit_S13(t *testing.T) {
 	h.DeleteSecret(w, r)
 	assert.Equal(t, http.StatusNoContent, w.Code)
 }
+
+// withMachineCtxS13 injects a machine-identity UserContext (UserID 0, per
+// UserContext.MachineIdentityID's own doc comment) into the request.
+func withMachineCtxS13(r *http.Request, machineID uint) *http.Request {
+	uc := &middleware.UserContext{
+		MachineIdentityID: &machineID, ActorType: core.ActorTypeMachine,
+	}
+	return r.WithContext(context.WithValue(r.Context(), middleware.GetUserContextKey(), uc))
+}
+
+// TestDeleteSecret_MachineActorUsesScopedPermissionNotOwnerCheck is the direct
+// handler-level regression test for security-closures.tsv's
+// secret-delete-machine-actor-001: a machine-identity-authenticated caller
+// (UserID always 0, see UserContext.MachineIdentityID) must go through the
+// isMachine branch (plain DeleteSecret, already authorized by the route's own
+// RequireScopedSecretPermission gate) rather than DeleteSecretWithPermissionCheck,
+// whose userID==0 requirement fails a machine caller unconditionally. Replaces
+// the #1808 differential-conformance-harness proving test (TestConformance_
+// DeleteSecret, server/http/remote_storage_*_test.go) retired in ADR-108 Phase 6
+// step 14a — the harness is gone, but the fixed code path (secrets_crud.go,
+// still live and unrelated to the RemoteStorage/legacy-CLI surface Phase 6
+// deletes) still needs a proving test of its own.
+func TestDeleteSecret_MachineActorUsesScopedPermissionNotOwnerCheck(t *testing.T) {
+	h, _, secret, _ := freshSecretFixtureS13(t)
+	r := withMachineCtxS13(withChiParam(
+		httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d", secret.ID), nil),
+		"id", fmt.Sprintf("%d", secret.ID),
+	), 42)
+	w := httptest.NewRecorder()
+	h.DeleteSecret(w, r)
+	// Pre-fix, this unconditionally hit DeleteSecretWithPermissionCheck's
+	// userID==0 CheckSecretPermission guard and never returned 204.
+	assert.Equal(t, http.StatusNoContent, w.Code)
+}

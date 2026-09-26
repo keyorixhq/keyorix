@@ -633,7 +633,10 @@ var systemCeilingAllowlist = map[string]systemCeilingAllowlistEntry{
 		"WithSelfMachineGranter before calling it, so requireGranterHoldsRolePermissions' actorIsMachine branch fell " +
 		"through to its unconditional false,nil refusal. Fixed by tagging ctx before the check (same pattern as the " +
 		"transition route below); the escalation reasoning itself was already sound, only the machine-caller " +
-		"principal class was unsatisfiable.", test: "TestConformance_CreateProjectMembership"},
+		"principal class was unsatisfiable. Proving test re-pointed at the existing G3 gap probe " +
+		"(ADR-108 Phase 6 step 14a: the #1808 differential-conformance harness this used to cite is deleted) " +
+		"-- same claim, a caller holding roles.assign only on a DIFFERENT project must be refused.",
+		test: "TestG3Probe_CreateMembershipProxy_RolesAssignOnOtherProject_CreatesMembershipViaEmptyPermissionRole"},
 	"PUT /api/v1/system/project-memberships/{id}/transition": {reason: "TransitionMembershipProxy: fixed (#1546) -- fully " +
 		"delegates to core.TransitionMembership, which re-derives the state-machine LEGALITY check (canTransition) " +
 		"and reads only (projectID, membershipID, to, actorID) off the wire. F6 sweep (2026-09-22): legality is not " +
@@ -641,7 +644,11 @@ var systemCeilingAllowlist = map[string]systemCeilingAllowlistEntry{
 		"ran ONLY inside the to==MembershipActive branch; every other legal transition (active->revoked, " +
 		"provisioned->revoked, identity_verified->provisioned, ...) reached storage with a legality check but ZERO " +
 		"caller-authority check. Fixed by requiring roles.assign unconditionally before ANY transition, with the " +
-		"activate-specific role-permission ceiling layered on top for to==Active only, as before.", test: "TestConformance_TransitionProjectMembershipState"},
+		"activate-specific role-permission ceiling layered on top for to==Active only, as before. " +
+		"Proving test re-pointed at the existing G3 gap probe (ADR-108 Phase 6 step 14a: the #1808 " +
+		"differential-conformance harness this used to cite is deleted) -- proves the unconditional " +
+		"roles.assign requirement holds for a non-Active (revoked) transition specifically.",
+		test: "TestG3Probe_TransitionMembershipProxy_RolesAssignOnOtherProject_RevokesActiveMembershipInWrongProject"},
 	"PATCH /api/v1/system/webauthn/credentials/advance-counter": {reason: "AdvanceWebAuthnCredentialCounterProxy performs a " +
 		"locked compare-and-swap on a signature counter -- the anti-clone TOCTOU fix (#306/#517), not an authority " +
 		"decision; any caller reaching it can only ever advance a counter forward under a lock, never forge state.", unverified: true},

@@ -470,11 +470,19 @@ var perActorCeilingCoverage = map[string][]struct {
 }{
 	"POST /api/v1/system/groups/{id}/members": {
 		{file: "internal/core/authz_admin_ceiling_group_test.go", fn: "TestAddUserToGroup_MachineActorBlockedFromAdminGroup"},
-		{file: "server/http/remote_storage_groups_test.go", fn: "TestRemoteStorageGroup_Membership_AdminConferringGroup_DeniesNodeCredential"},
+		// The second, wire/HTTP-level entry (server/http/remote_storage_groups_test.go:
+		// TestRemoteStorageGroup_Membership_AdminConferringGroup_DeniesNodeCredential) was
+		// deleted along with the RemoteStorage differential/parity harness (ADR-108
+		// Phase 6 step 14a) -- the core-layer entry above still proves the actual
+		// machine-actor-denial ceiling directly against AddUserToGroup.
 	},
 	"PUT /api/v1/system/risk-exceptions/{id}/approve": {
 		{file: "internal/core/risk_exceptions_test.go", fn: "TestApproveRiskException_DeniesMachineActor"},
-		{file: "server/http/remote_storage_risk_exceptions_test.go", fn: "TestRemoteStorageRiskExceptions_Approve_DeniesNodeCredential"},
+		// The second, wire/HTTP-level entry (server/http/remote_storage_risk_exceptions_test.go:
+		// TestRemoteStorageRiskExceptions_Approve_DeniesNodeCredential) was deleted along
+		// with the RemoteStorage differential/parity harness (ADR-108 Phase 6 step 14a) --
+		// the core-layer entry above still proves the actual machine-actor-denial ceiling
+		// directly against ApproveRiskException.
 	},
 	"POST /api/v1/system/users/with-role-grants": {
 		// ValidateRoleGrantAuthority has no actorID==0 exemption to begin with

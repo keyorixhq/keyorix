@@ -314,8 +314,9 @@ func TestSessionCacheChokepoint_CoversEveryVulnerableCallSite(t *testing.T) {
 		// directly instead of driving the challenge/verify dance, which is not
 		// what this test is about.
 		if err != nil && sess == nil {
+			expiresAt := time.Now().Add(time.Hour)
 			s2, cerr := w.cShadow.Storage().CreateSession(ctx, &models.Session{
-				UserID: victim.ID, SessionToken: mustRandomToken(t), ExpiresAt: timePtr(time.Now().Add(time.Hour)),
+				UserID: victim.ID, SessionToken: mustRandomToken(t), ExpiresAt: &expiresAt,
 			})
 			if cerr != nil {
 				t.Fatalf("mint post-mfa session: %v", cerr)
@@ -425,8 +426,9 @@ func TestSessionCacheChokepoint_CoversEveryVulnerableCallSite(t *testing.T) {
 		// The precondition itself deleted the primed session (ActivateMFA purges
 		// sessions too) -- re-prime with a directly-minted session so THIS case
 		// isolates the setup-consume path's own effect, not ActivateMFA's.
+		expiresAt := time.Now().Add(time.Hour)
 		sess, err := w.cShadow.Storage().CreateSession(ctx, &models.Session{
-			UserID: victim.ID, SessionToken: mustRandomToken(t), ExpiresAt: timePtr(time.Now().Add(time.Hour)),
+			UserID: victim.ID, SessionToken: mustRandomToken(t), ExpiresAt: &expiresAt,
 		})
 		if err != nil {
 			t.Fatalf("mint session: %v", err)

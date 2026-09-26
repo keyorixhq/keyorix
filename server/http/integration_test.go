@@ -23,7 +23,6 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
-	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -145,32 +144,6 @@ func createBareNodeToken(t *testing.T, c *core.KeyorixCore) string {
 	t.Helper()
 	mi, admin, projectID := createNodeIdentityAndAdmin(t, c)
 	result, err := c.IssueMachineToken(context.Background(), projectID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: "test-node-token"})
-	require.NoError(t, err)
-	return result.PlainToken
-}
-
-// createNodeToken mints a node-type machine-identity bearer token holding
-// system.write at global scope — the credential /api/v1/system/* now requires
-// (ADR-085, Accepted, 2026-08-25: the prior node-credential OR-arm that let a
-// bare node credential reach /system with zero RBAC is removed; a node
-// identity is authorized the same way any other caller is, via a real role
-// grant). The role grant itself is written directly at the storage layer
-// rather than through KeyorixCore.AssignMachineRole, because that core-layer
-// method's ceiling requires scope.ProjectID to match the machine identity's
-// own project (machineInProject, internal/core/machine_token.go) and so can
-// never itself grant a machine identity a truly global-scope permission — the
-// same structural wall ADR-085 found blocking its earlier "scoped global
-// machine-identity roles" proposal. Only the node token is returned; the
-// admin session itself has no special access to the proxy tree, matching
-// production (no role, including admin, grants node status).
-func createNodeToken(t *testing.T, c *core.KeyorixCore) string {
-	t.Helper()
-	ctx := context.Background()
-	mi, admin, projectID := createNodeIdentityAndAdmin(t, c)
-	adminRole, err := c.Storage().GetRoleByName(ctx, "admin")
-	require.NoError(t, err)
-	require.NoError(t, c.Storage().AssignMachineRole(ctx, mi.ID, adminRole.ID, coreStorage.Scope{}))
-	result, err := c.IssueMachineToken(ctx, projectID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: "test-node-token"})
 	require.NoError(t, err)
 	return result.PlainToken
 }
