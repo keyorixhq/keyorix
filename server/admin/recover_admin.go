@@ -127,7 +127,15 @@ func runRecoverAdmin(cmd *cobra.Command, args []string) error {
 		summary.webAuthnCredentialsCleared, summary.sessionsRevoked)
 	fmt.Println()
 	fmt.Println("One-time password (shown once — copy it now, it cannot be retrieved again):")
-	fmt.Printf("  %s\n", summary.oneTimePassword) // codeql[go/clear-text-logging] -- intentional one-time display to the operator, same as user create OTP
+	// Intentional one-time display to the operator, same as user create OTP
+	// (cli/cmd/user.go) -- this stdout line is the only channel by which a
+	// freshly generated recovery password can reach the person recovering
+	// the account. The codeql[...] tag must be the single comment line
+	// directly above the sink (AlertSuppression.qll requires the comment's
+	// own end line == alert line - 1; see internal/connect/vault.go for the
+	// same constraint documented at its own suppression site).
+	// codeql[go/clear-text-logging]
+	fmt.Printf("  %s\n", summary.oneTimePassword)
 	fmt.Printf("Log in as %q with this password; you will be required to set a new one immediately.\n", summary.username)
 	if summary.auditChainBroken {
 		fmt.Fprintf(os.Stderr, "WARNING: the audit chain was already broken before this run (first broken row: %d). "+
