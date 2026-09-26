@@ -416,7 +416,7 @@ func (s *Service) AcquireExclusiveKeyLock() error {
 	if s.serverLock != nil {
 		return nil
 	}
-	f, err := acquireExclusiveKeyLock(s.keyManager.baseDir)
+	f, err := acquireExclusiveKeyLock(s.keyManager.baseDir, s.keyManager.dekPath)
 	if err != nil {
 		return err
 	}
@@ -445,7 +445,7 @@ func (s *Service) AcquireSharedKeyLock() error {
 	if s.serverLock != nil {
 		return nil
 	}
-	f, err := acquireSharedKeyLock(s.keyManager.baseDir)
+	f, err := acquireSharedKeyLock(s.keyManager.baseDir, s.keyManager.dekPath)
 	if err != nil {
 		return err
 	}

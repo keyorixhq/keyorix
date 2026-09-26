@@ -151,7 +151,25 @@ func NewKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase 
 // have no audit sink to wire don't need updating for an audit path that doesn't
 // apply to them.
 func newKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase string, kmsFallbackHook awskms.FallbackHook) (crypto.KeyProvider, error) {
-	primary, err := buildSingleProvider(&cfg.KeyProvider, baseDir, passphrase, cfg.SaltPath, kmsFallbackHook)
+	// Re-derive the same (baseDir, saltPath) normalizeKeyPaths already computes for
+	// the KeyManager built from this same config (NewKeyManager, above), rather than
+	// trusting cfg.SaltPath as-is: cfg is the Service's own config pointer, and
+	// nothing mutates it when NewKeyManager normalizes an absolute dek_path/salt_path
+	// into its own private fields — so cfg.SaltPath stays the ORIGINAL, possibly
+	// absolute, value forever. Passing that raw value into buildSingleProvider sends
+	// the password provider's salt write through securefiles with an absolute path,
+	// which safeRelComponents unconditionally rejects, even though the baseDir
+	// parameter here (when called from Service.buildKeyProvider) is already the
+	// normalized km.baseDir. Recomputing from (baseDir, cfg.DEKPath, cfg.SaltPath)
+	// directly — rather than requiring a live KeyManager to read normalized fields
+	// from — also fixes the exact same bug in NewKeyProviderFromConfig's other real
+	// caller, the KEK-provider migration tool, which builds a target provider with no
+	// KeyManager of its own to normalize on its behalf.
+	normBaseDir, _, normSaltPath, err := normalizeKeyPaths(baseDir, cfg.DEKPath, cfg.SaltPath)
+	if err != nil {
+		return nil, err
+	}
+	primary, err := buildSingleProvider(&cfg.KeyProvider, normBaseDir, passphrase, normSaltPath, kmsFallbackHook)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +178,7 @@ func newKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase 
 	}
 	providers := []crypto.KeyProvider{primary}
 	for i := range cfg.KeyProvider.Fallbacks {
-		fb, err := buildSingleProvider(&cfg.KeyProvider.Fallbacks[i], baseDir, passphrase, cfg.SaltPath, kmsFallbackHook)
+		fb, err := buildSingleProvider(&cfg.KeyProvider.Fallbacks[i], normBaseDir, passphrase, normSaltPath, kmsFallbackHook)
 		if err != nil {
 			return nil, fmt.Errorf("fallback provider [%d] (%s): %w", i, cfg.KeyProvider.Fallbacks[i].Type, err)
 		}
