@@ -51,9 +51,11 @@ func resolveServerAndToken(store *credstore.FileStore) (serverURL, token string,
 }
 
 // newAPIClient builds a generated client against serverURL, attaching an Authorization
-// header when token is non-empty.
+// header when token is non-empty. Always uses apiclient.NewHardenedHTTPClient (request
+// timeout, response-size cap, redirect refusal) instead of the generated client's bare
+// &http.Client{} default -- see hardened_client.go's doc comment for why.
 func newAPIClient(serverURL, token string) (*apiclient.ClientWithResponses, error) {
-	var opts []apiclient.ClientOption
+	opts := []apiclient.ClientOption{apiclient.WithHTTPClient(apiclient.NewHardenedHTTPClient())}
 	if token != "" {
 		opts = append(opts, apiclient.WithRequestEditorFn(func(_ context.Context, req *http.Request) error {
 			req.Header.Set("Authorization", "Bearer "+token)
