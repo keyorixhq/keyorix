@@ -15,8 +15,10 @@ All notable changes to Keyorix are documented here. This project follows
   / `keyorix encryption ...` are now `keyorix-server admin init` / `admin
   audit` / `admin validate` / `admin encryption ...` — see
   [`docs/cli-migration.md`](docs/cli-migration.md) for the full old-command ->
-  new-command table. The old CLI still ships in source (`make keyorix-legacy`)
-  as a rollback for one release, and is removed entirely in Phase 6.
+  new-command table. **The old CLI's source (`internal/cli`, `make
+  keyorix-legacy`) is now removed entirely (ADR-108 Phase 6)** — rollback to
+  the old CLI means checking out a commit before this removal, not a build
+  flag.
 - **BREAKING (opt-out available): the `keyorix`, `keyorix-k8s-sync`, and
   `keyorix-operator` Helm charts now default to a deny-by-default egress
   `NetworkPolicy`** on top of the existing ingress restrictions

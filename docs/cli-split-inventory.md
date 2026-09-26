@@ -1770,6 +1770,30 @@ to keep each under review size. Started only after the Phase 5 switch PR (§1) m
   - `go build ./...`, `go vet ./...`, and the full `go test ./...` all green; `scripts/check-closures.sh`
     and `scripts/check-adr-conformance.sh` both green.
 
-
-
+- **14b-1 — the old, thick CLI (`internal/cli`).** Deleted `internal/cli` (611 files,
+  110,460 lines) + root `main.go` (its entry point) + 3 legacy-only scripts
+  (`cli-command-census.sh`, `cli-parity-check.sh`, `smoke-legacy.sh`), plus the Makefile/CI/
+  docs fallout: the `keyorix-legacy` build target and `smoke-legacy` CI job (its own comment
+  pre-anticipated this removal), 38 stale `docs/review-coverage.tsv` rows (81 packages remain,
+  down from 120), 6 `docs/security-closures.tsv` rows retired as `SURFACE REMOVED`.
+  `docs/cli-migration.md` and `docs/cli-split-inventory-census.md` frozen as historical record
+  rather than deleted. CHANGELOG's switch entry updated from "removed entirely in Phase 6"
+  (forward-looking) to "now removed entirely" (done) now that it's actually landed.
+  - Rebasing this (originally built on top of 14a before 14a merged) onto the post-merge
+    `origin/main` hit real conflicts, not just mechanical ones: 10 files under
+    `internal/cli/{bundle,license,trust}` plus `command_census_test.go` had been modified by an
+    unrelated, later-merged PR (`internal/trust` → `pkg/trust` import-path rename) — resolved
+    as deletions (`git rm`) since this commit deletes the whole directory regardless of that
+    rename. The Makefile conflicted for real: `VERSION_LDFLAGS` needed the OLD CLI's
+    `internal/cli.version` symbol dropped (this commit's job) while KEEPING the already-renamed
+    `pkg/trust.updateKeysB64`/`licenseKeysB64` paths (unrelated, already-landed rename); the
+    `.PHONY` list and the `smoke`/`airgap-e2e` target block needed `keyorix-legacy`/
+    `smoke-legacy` dropped while keeping `check-release-assets`/`airgap-e2e` (added by later,
+    unrelated PRs after this branch's original divergence point).
+  - `go build ./...` clean for all 3 modules (root, `cli/`, `migrate/`); `golangci-lint run
+    ./...` clean for root and `cli/` (a real `unused` finding on 14a's own PR earlier in this
+    same session — `createNodeToken` left dead by the harness deletion — is the reason this
+    step ran golangci-lint explicitly rather than trusting `go vet`/`go test` alone); full
+    `go test ./...` green for root, `cli/`, and `migrate/`; `check-closures.sh`,
+    `check-review-coverage.sh`, `check-adr-conformance.sh` all green.
 
