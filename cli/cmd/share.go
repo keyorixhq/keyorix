@@ -219,10 +219,10 @@ func runShareCreate(cmd *cobra.Command, args []string) error {
 	}
 	s := resp.JSON201.Data
 	fmt.Printf("✅ Secret shared successfully!\n")
-	fmt.Printf("Share ID: %d\n", derefInt(s.ID))
-	fmt.Printf("Secret ID: %d\n", derefInt(s.SecretID))
-	fmt.Printf("Owner ID: %d\n", derefInt(s.OwnerID))
-	fmt.Printf("Recipient ID: %d\n", derefInt(s.RecipientID))
+	fmt.Printf("Share ID: %d\n", derefInt(s.Id))
+	fmt.Printf("Secret ID: %d\n", derefInt(s.SecretId))
+	fmt.Printf("Owner ID: %d\n", derefInt(s.OwnerId))
+	fmt.Printf("Recipient ID: %d\n", derefInt(s.RecipientId))
 	fmt.Printf("Is Group: %t\n", derefBool(s.IsGroup))
 	fmt.Printf("Permission: %s\n", derefSharePermission(s.Permission))
 	fmt.Printf("Created At: %s\n", formatShareExpiry(s.CreatedAt))
@@ -252,7 +252,7 @@ func runShareList(cmd *cobra.Command, args []string) error {
 	}
 	t := cliout.NewStdoutTable("ID", "SECRET ID", "OWNER ID", "RECIPIENT ID", "IS GROUP", "PERMISSION", "CREATED AT", "EXPIRES AT")
 	for _, s := range shares {
-		t.Row(derefInt(s.ID), derefInt(s.SecretID), derefInt(s.OwnerID), derefInt(s.RecipientID),
+		t.Row(derefInt(s.Id), derefInt(s.SecretId), derefInt(s.OwnerId), derefInt(s.RecipientId),
 			derefBool(s.IsGroup), derefSharePermission(s.Permission), formatShareExpiry(s.CreatedAt), formatShareExpiry(s.ExpiresAt))
 	}
 	return t.Flush()
@@ -291,10 +291,10 @@ func runShareUpdate(cmd *cobra.Command, args []string) error {
 	}
 	s := resp.JSON200.Data
 	fmt.Printf("Share permission updated successfully!\n")
-	fmt.Printf("Share ID: %d\n", derefInt(s.ID))
-	fmt.Printf("Secret ID: %d\n", derefInt(s.SecretID))
-	fmt.Printf("Owner ID: %d\n", derefInt(s.OwnerID))
-	fmt.Printf("Recipient ID: %d\n", derefInt(s.RecipientID))
+	fmt.Printf("Share ID: %d\n", derefInt(s.Id))
+	fmt.Printf("Secret ID: %d\n", derefInt(s.SecretId))
+	fmt.Printf("Owner ID: %d\n", derefInt(s.OwnerId))
+	fmt.Printf("Recipient ID: %d\n", derefInt(s.RecipientId))
 	fmt.Printf("Is Group: %t\n", derefBool(s.IsGroup))
 	fmt.Printf("Permission: %s\n", derefSharePermission(s.Permission))
 	fmt.Printf("Updated At: %s\n", formatShareExpiry(s.UpdatedAt))
@@ -404,7 +404,7 @@ func runGroupShares(cmd *cobra.Command, args []string) error {
 	}
 	t := cliout.NewStdoutTable("ID", "SECRET ID", "OWNER ID", "GROUP ID", "PERMISSION", "CREATED AT")
 	for _, s := range shares {
-		t.Row(derefInt(s.ID), derefInt(s.SecretID), derefInt(s.OwnerID), derefInt(s.RecipientID),
+		t.Row(derefInt(s.Id), derefInt(s.SecretId), derefInt(s.OwnerId), derefInt(s.RecipientId),
 			derefSharePermission(s.Permission), formatShareExpiry(s.CreatedAt))
 	}
 	return t.Flush()

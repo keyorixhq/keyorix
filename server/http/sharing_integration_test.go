@@ -238,10 +238,10 @@ func TestSharingHTTPIntegration(t *testing.T) {
 			require.NoError(t, err)
 
 			data := response["data"].(map[string]interface{})
-			shareID = uint(data["ID"].(float64))
-			assert.Equal(t, float64(secretID), data["SecretID"])
-			assert.Equal(t, float64(2), data["RecipientID"])
-			assert.Equal(t, "read", data["Permission"])
+			shareID = uint(data["id"].(float64))
+			assert.Equal(t, float64(secretID), data["secret_id"])
+			assert.Equal(t, float64(2), data["recipient_id"])
+			assert.Equal(t, "read", data["permission"])
 		})
 
 		// Step 3: List shares for the secret
@@ -267,8 +267,8 @@ func TestSharingHTTPIntegration(t *testing.T) {
 			require.Len(t, shares, 1)
 
 			share := shares[0].(map[string]interface{})
-			assert.Equal(t, float64(shareID), share["ID"])
-			assert.Equal(t, "read", share["Permission"])
+			assert.Equal(t, float64(shareID), share["id"])
+			assert.Equal(t, "read", share["permission"])
 		})
 
 		// Step 4: List shared secrets (from recipient's perspective)
@@ -321,7 +321,7 @@ func TestSharingHTTPIntegration(t *testing.T) {
 			require.NoError(t, err)
 
 			data := response["data"].(map[string]interface{})
-			assert.Equal(t, "write", data["Permission"])
+			assert.Equal(t, "write", data["permission"])
 		})
 
 		// Step 6: List all shares for current user
@@ -495,9 +495,9 @@ func TestSharingHTTPIntegration(t *testing.T) {
 			require.NoError(t, err)
 
 			data := response["data"].(map[string]interface{})
-			groupShareID = uint(data["ID"].(float64))
-			assert.Equal(t, true, data["IsGroup"])
-			assert.Equal(t, "read", data["Permission"])
+			groupShareID = uint(data["id"].(float64))
+			assert.Equal(t, true, data["is_group"])
+			assert.Equal(t, "read", data["permission"])
 		})
 
 		// Step 3: Update group permission
@@ -525,7 +525,7 @@ func TestSharingHTTPIntegration(t *testing.T) {
 			require.NoError(t, err)
 
 			data := response["data"].(map[string]interface{})
-			assert.Equal(t, "write", data["Permission"])
+			assert.Equal(t, "write", data["permission"])
 		})
 
 		// Step 4: Revoke group share
@@ -746,7 +746,7 @@ func TestSharingHTTPIntegration(t *testing.T) {
 			require.NoError(t, err)
 
 			data := response["data"].(map[string]interface{})
-			shareID = uint(data["ID"].(float64))
+			shareID = uint(data["id"].(float64))
 		})
 
 		// Step 3: Try to update share as recipient (should fail)
