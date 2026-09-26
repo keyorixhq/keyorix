@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"slices"
 	"strings"
@@ -1277,7 +1278,11 @@ func (c *KeyorixCore) GetReadableScopes(ctx context.Context, principalID uint, p
 		}
 		ok, aerr := c.AuthorizePrincipal(ctx, actorType, principalID, permission, scope)
 		if aerr != nil {
-			// Fail closed: skip scopes we cannot evaluate.
+			// Fail closed: skip scopes we cannot evaluate. Logged (not just silently
+			// skipped) — a persistently-failing authorization check for one scope would
+			// otherwise look identical to a caller who is legitimately ungranted there.
+			log.Printf("GetReadableScopes: authorization check failed, skipping scope (actor_type=%s principal_id=%d permission=%s project_id=%d environment_id=%d): %v",
+				actorType, principalID, permission, scope.ProjectID, scope.EnvironmentID, aerr)
 			continue
 		}
 		if ok {

@@ -563,12 +563,13 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		}
 	}
 
-	// Wire every ADR-109 integration this step has moved behind internal/core/ports
-	// (docs/adr-109-core-depends-on-interfaces.md): external-notary checkpoint
-	// anchoring (ADR-029) and human SSO (OIDC + SAML). This is the single point
-	// that constructs the concrete implementations from config and registers them
-	// on coreService — a later ADR-109 step (rotation, dynamic, connect) only has
-	// one wiring call site to extend.
+	// Wire every ADR-109 integration moved behind internal/core/ports so far
+	// (docs/adr-109-core-depends-on-interfaces.md) — as of step 4: external-notary
+	// checkpoint anchoring (ADR-029), human SSO (OIDC + SAML), backend rotation,
+	// dynamic secrets, and Keyorix Connect. This is the single point that
+	// constructs the concrete implementations from config and registers them on
+	// coreService — the one remaining ADR-109 step (encryption/KMS) only has one
+	// wiring call site to extend.
 	if err := DefaultIntegrations(cfg, coreService); err != nil {
 		return nil, nil, err
 	}
@@ -726,129 +727,6 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	}
 	if sink := notifychan.NewMulti(recipientSinks...); sink != nil {
 		coreService.SetRecipientNotificationSink(sink)
-	}
-
-	// Wire Keyorix Connect (ADR-043) read-through federation if enabled.
-	if cc := cfg.Connect; cc.Enabled && len(cc.Connectors) > 0 {
-		// ADR-082 §C: cfg.Validate() already refused to boot with a missing/invalid
-		// connector scope — unconditionally, no deployment-wide escape hatch (amended:
-		// the original connect.allow_unscoped flag let the server boot, but an unscoped
-		// connector still denied on every read via connectOwnershipSatisfied's
-		// missing-entry-denies rule, so it never restored actual usability — only
-		// deferred the failure from "boot" to "every subsequent read," with a WARN an
-		// operator could easily miss. Adding scope: to a connector takes minutes; there
-		// is nothing for this migration path to bypass.
-		var connectors []connect.Connector
-		for _, cn := range cc.Connectors {
-			switch cn.Type {
-			case "aws-secrets-manager":
-				// account_id is optional (unlike gcp-secret-manager's mandatory
-				// project_id — see internal/connect/awssm.go's doc comment for why the
-				// risk shape differs: a bare secret name never crosses AWS accounts, so
-				// the confused-deputy gap only exists for ARN-shaped refs, and even then
-				// requires the target account's own resource policy to separately grant
-				// access). cfg.Validate()'s validateConnectAWSAccountID already rejected a
-				// malformed (non-12-digit) account_id before this function is ever
-				// reached; an empty account_id is a legal, if less-hardened,
-				// configuration and boots fine, with a warning recommending it be set.
-				if cn.AccountID == "" {
-					log.Printf("Keyorix Connect: aws-secrets-manager connector %q has no account_id configured — a ref supplied as a full ARN naming a DIFFERENT AWS account will still succeed if that account's own resource policy grants cross-account access; set account_id to pin the connector to one account (a bare secret-name ref is unaffected either way -- Secrets Manager always resolves those within the caller's own account)", cn.Name)
-				}
-				connectors = append(connectors, connect.NewAWSSecretsManagerConnector(cn.Name, cn.Region, cn.AccountID, cn.AllowedRefs))
-			case "gcp-secret-manager":
-				// project_id is now a required field: unreachable via a config that
-				// passed cfg.Validate() — validateConnectGCPProjectID
-				// (internal/config/config.go) already refused to boot a
-				// gcp-secret-manager connector with an unset project_id, before this
-				// function is ever reached (see the cfg.Validate() call at the top of
-				// initializeCoreService). Fail loud rather than silently construct an
-				// unpinned connector if this is somehow reached anyway (e.g. a future
-				// caller of this loop that bypasses Validate()) — the old behavior let an
-				// unpinned connector boot with only a log warning, which is exactly the
-				// confused-deputy gap this field now closes.
-				if cn.ProjectID == "" {
-					log.Fatalf("Keyorix Connect: gcp-secret-manager connector %q has no project_id — this should have been caught by cfg.Validate()", cn.Name)
-				}
-				connectors = append(connectors, connect.NewGCPSecretManagerConnector(cn.Name, cn.ProjectID, cn.AllowedRefs))
-			case "azure-key-vault":
-				connectors = append(connectors, connect.NewAzureKeyVaultConnector(cn.Name, cn.Address, cn.AllowedRefs))
-			case "vault":
-				tokenEnv := cn.TokenEnv
-				if tokenEnv == "" {
-					tokenEnv = "VAULT_TOKEN"
-				}
-				token := os.Getenv(tokenEnv)
-				if token == "" {
-					log.Printf("Keyorix Connect: vault connector %q has no token (%s unset) — reads will fail", cn.Name, tokenEnv)
-				}
-				vc := connect.NewVaultConnector(cn.Name, cn.Address, token, cn.AllowedRefs)
-				if ttl, renewable, terr := vc.CheckTokenTTL(context.Background()); terr != nil {
-					log.Printf("Keyorix Connect: vault connector %q: token TTL check failed: %v", cn.Name, terr)
-				} else if ttl > 0 && ttl < 86400 && !renewable {
-					log.Printf("Keyorix Connect: vault connector %q: token has %d seconds remaining and is NOT renewable — replace before expiry", cn.Name, ttl)
-				} else if ttl > 0 && ttl < 86400 {
-					log.Printf("Keyorix Connect: vault connector %q: token expires in %d seconds; ensure renewal is configured", cn.Name, ttl)
-				}
-				connectors = append(connectors, vc)
-			default:
-				// #1476: unreachable via a config that passed cfg.Validate() —
-				// validateConnectTypes (internal/config/config.go) already refused
-				// to boot with a connector Type outside connect.KnownTypes, before
-				// this function is ever reached (see the cfg.Validate() call at the
-				// top of initializeCoreService). Fail loud rather than silently
-				// skip if this is somehow reached anyway (e.g. a future caller of
-				// this loop that bypasses Validate()) — the old behavior let a
-				// misconfigured connector boot invisibly, the same fail-open shape
-				// ADR-082 closed for scope. See
-				// server/connector_type_registry_test.go for the test keeping this
-				// switch's case set and connect.KnownTypes from drifting apart.
-				log.Fatalf("Keyorix Connect: connector %q has unrecognized type %q (must be one of %s) — this should have been caught by cfg.Validate()", cn.Name, cn.Type, strings.Join(connect.KnownTypes, ", "))
-			}
-		}
-		if len(connectors) > 0 {
-			mgr := connect.NewManager(connectors)
-
-			// ADR-082 branch 2: resolve each connector's tenant-scoping data (project
-			// binding for scope: project; nothing to resolve for scope: platform)
-			// BEFORE wiring the manager in, so a resolution failure blocks boot
-			// entirely rather than leaving Connect half-wired.
-			ownership, err := resolveConnectorOwnership(context.Background(), coreService.Storage(), cc.Connectors)
-			if err != nil {
-				log.Fatalf("Keyorix Connect: %v", err)
-			}
-
-			// Defense-in-depth: ownership was resolved from the FULL cc.Connectors
-			// config, but mgr was built only from connectors the type-switch above
-			// actually recognized (an unrecognized type is skipped with a WARN, not a
-			// hard failure — the `default` case above). If a connector's ownership
-			// resolved successfully but it never made it into mgr (e.g. an
-			// unrecognized type), or vice versa, that is a key-set mismatch this ADR
-			// requires to fail boot loudly rather than silently deny (a missing
-			// ownership entry, connectOwnershipSatisfied's own fallback) or silently
-			// skip ownership entirely (a connector with no check at all). No exemption
-			// of any kind (amended — the prior allow_unscoped-linked exemption is
-			// removed along with the flag): every divergence between the two sets is
-			// reported.
-			if mismatch := connectOwnershipKeySetMismatch(mgr.Names(), ownership); len(mismatch) > 0 {
-				log.Fatalf("Keyorix Connect: connector(s) present in config but whose manager/ownership resolution disagree on which connectors exist — this must never happen in a correctly-booted server; investigate before proceeding (ADR-082): %s", strings.Join(mismatch, ", "))
-			}
-
-			coreService.SetConnectManager(mgr)
-			coreService.SetConnectOwnership(ownership)
-			log.Printf("Keyorix Connect enabled (%d connector(s))", len(connectors))
-
-			// #1477/#1479: warn-only consistency check, run here because this is the
-			// only place in the system that sees both config (ownership, resolved
-			// just above) and DB rows (ConnectRefGrant, ConnectorProjectBinding)
-			// together — the create-time checks (CreateConnectRefGrant,
-			// resolveConnectorOwnership's own CreateConnectorProjectBinding call
-			// above) each structurally cannot see this:
-			// a grant/binding valid when created can still drift out of sync with a
-			// LATER config edit. Neither condition this checks is a security risk —
-			// a dead ref-grant or an orphaned binding both already fail closed/are
-			// simply unused, no over-permission — so this warns, never fails boot.
-			warnConnectConfigDrift(context.Background(), coreService.Storage(), ownership)
-		}
 	}
 
 	// Wire any off-box evidence targets (webhook and/or S3-compatible object store),
@@ -2322,11 +2200,12 @@ func noDiscoveryCrossOriginRedirect(req *http.Request, via []*http.Request) erro
 
 // DefaultIntegrations wires every ADR-109 integration currently moved behind
 // internal/core/ports (docs/adr-109-core-depends-on-interfaces.md) — as of step
-// 3: TimestampNotary + its receipt verifier, SAMLServiceProvider (folded into
-// human SSO wiring alongside OIDC), RotationExecutorResolver, and
-// DynamicBackendFactory. It is the single point that constructs the concrete
-// implementations from config and registers them on coreService, so a later
-// ADR-109 step (connect, encryption) only has one wiring call site to extend.
+// 4: TimestampNotary + its receipt verifier, SAMLServiceProvider (folded into
+// human SSO wiring alongside OIDC), RotationExecutorResolver,
+// DynamicBackendFactory, and ConnectorResolver. It is the single point that
+// constructs the concrete implementations from config and registers them on
+// coreService, so the one remaining ADR-109 step (encryption/KMS) only has
+// one wiring call site to extend.
 //
 // A nil implementation means the feature is unavailable; wiring never fails
 // open (ADR-109 decision #2). A malformed config for an explicitly ENABLED
@@ -2337,7 +2216,10 @@ func noDiscoveryCrossOriginRedirect(req *http.Request, via []*http.Request) erro
 // always wired unconditionally (there is no top-level "enabled" flag for
 // dynamic secrets — each DynamicSecretConfig opts in individually), matching
 // internal/core.dynamicEngine's pre-ADR-109 unconditional fallback to
-// internal/dynamic.New.
+// internal/dynamic.New. wireConnect calls log.Fatalf directly, rather than
+// returning an error, for the same boot-time misconfigurations the pre-ADR-109
+// inline block already treated as fatal (ADR-082) — unchanged behavior, only
+// the call site moved.
 func DefaultIntegrations(cfg *config.Config, coreService *core.KeyorixCore) error {
 	if err := wireCheckpointNotary(cfg, coreService); err != nil {
 		return err
@@ -2345,6 +2227,7 @@ func DefaultIntegrations(cfg *config.Config, coreService *core.KeyorixCore) erro
 	wireHumanSSO(cfg, coreService)
 	wireBackendRotation(cfg, coreService)
 	wireDynamicSecrets(cfg, coreService)
+	wireConnect(cfg, coreService)
 	return nil
 }
 
@@ -2537,6 +2420,139 @@ func wireDynamicSecrets(cfg *config.Config, coreService *core.KeyorixCore) {
 	coreService.SetDynamicEngineFactory(func(backendType string) (dynamic.CredentialEngine, error) {
 		return dynamic.New(backendType, allowPrivate, allowInsecure)
 	})
+}
+
+// wireConnect wires Keyorix Connect (ADR-043) read-through federation to
+// external secret stores, when enabled — the fifth DefaultIntegrations
+// component as of ADR-109 step 4 (connect behind ports). Uses
+// coreService.Storage() for the boot-time ownership resolution and drift
+// check below; core.NewKeyorixCore(store) always sets storage before
+// DefaultIntegrations is ever called, so it is available here unconditionally.
+func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) {
+	cc := cfg.Connect
+	if !cc.Enabled || len(cc.Connectors) == 0 {
+		return
+	}
+	// ADR-082 §C: cfg.Validate() already refused to boot with a missing/invalid
+	// connector scope — unconditionally, no deployment-wide escape hatch (amended:
+	// the original connect.allow_unscoped flag let the server boot, but an unscoped
+	// connector still denied on every read via connectOwnershipSatisfied's
+	// missing-entry-denies rule, so it never restored actual usability — only
+	// deferred the failure from "boot" to "every subsequent read," with a WARN an
+	// operator could easily miss. Adding scope: to a connector takes minutes; there
+	// is nothing for this migration path to bypass.
+	var connectors []connect.Connector
+	for _, cn := range cc.Connectors {
+		switch cn.Type {
+		case "aws-secrets-manager":
+			// account_id is optional (unlike gcp-secret-manager's mandatory
+			// project_id — see internal/connect/awssm.go's doc comment for why the
+			// risk shape differs: a bare secret name never crosses AWS accounts, so
+			// the confused-deputy gap only exists for ARN-shaped refs, and even then
+			// requires the target account's own resource policy to separately grant
+			// access). cfg.Validate()'s validateConnectAWSAccountID already rejected a
+			// malformed (non-12-digit) account_id before this function is ever
+			// reached; an empty account_id is a legal, if less-hardened,
+			// configuration and boots fine, with a warning recommending it be set.
+			if cn.AccountID == "" {
+				log.Printf("Keyorix Connect: aws-secrets-manager connector %q has no account_id configured — a ref supplied as a full ARN naming a DIFFERENT AWS account will still succeed if that account's own resource policy grants cross-account access; set account_id to pin the connector to one account (a bare secret-name ref is unaffected either way -- Secrets Manager always resolves those within the caller's own account)", cn.Name)
+			}
+			connectors = append(connectors, connect.NewAWSSecretsManagerConnector(cn.Name, cn.Region, cn.AccountID, cn.AllowedRefs))
+		case "gcp-secret-manager":
+			// project_id is now a required field: unreachable via a config that
+			// passed cfg.Validate() — validateConnectGCPProjectID
+			// (internal/config/config.go) already refused to boot a
+			// gcp-secret-manager connector with an unset project_id, before this
+			// function is ever reached (see the cfg.Validate() call at the top of
+			// initializeCoreService). Fail loud rather than silently construct an
+			// unpinned connector if this is somehow reached anyway (e.g. a future
+			// caller of this loop that bypasses Validate()) — the old behavior let an
+			// unpinned connector boot with only a log warning, which is exactly the
+			// confused-deputy gap this field now closes.
+			if cn.ProjectID == "" {
+				log.Fatalf("Keyorix Connect: gcp-secret-manager connector %q has no project_id — this should have been caught by cfg.Validate()", cn.Name)
+			}
+			connectors = append(connectors, connect.NewGCPSecretManagerConnector(cn.Name, cn.ProjectID, cn.AllowedRefs))
+		case "azure-key-vault":
+			connectors = append(connectors, connect.NewAzureKeyVaultConnector(cn.Name, cn.Address, cn.AllowedRefs))
+		case "vault":
+			tokenEnv := cn.TokenEnv
+			if tokenEnv == "" {
+				tokenEnv = "VAULT_TOKEN"
+			}
+			token := os.Getenv(tokenEnv)
+			if token == "" {
+				log.Printf("Keyorix Connect: vault connector %q has no token (%s unset) — reads will fail", cn.Name, tokenEnv)
+			}
+			vc := connect.NewVaultConnector(cn.Name, cn.Address, token, cn.AllowedRefs)
+			if ttl, renewable, terr := vc.CheckTokenTTL(context.Background()); terr != nil {
+				log.Printf("Keyorix Connect: vault connector %q: token TTL check failed: %v", cn.Name, terr)
+			} else if ttl > 0 && ttl < 86400 && !renewable {
+				log.Printf("Keyorix Connect: vault connector %q: token has %d seconds remaining and is NOT renewable — replace before expiry", cn.Name, ttl)
+			} else if ttl > 0 && ttl < 86400 {
+				log.Printf("Keyorix Connect: vault connector %q: token expires in %d seconds; ensure renewal is configured", cn.Name, ttl)
+			}
+			connectors = append(connectors, vc)
+		default:
+			// #1476: unreachable via a config that passed cfg.Validate() —
+			// validateConnectTypes (internal/config/config.go) already refused
+			// to boot with a connector Type outside connect.KnownTypes, before
+			// this function is ever reached (see the cfg.Validate() call at the
+			// top of initializeCoreService). Fail loud rather than silently
+			// skip if this is somehow reached anyway (e.g. a future caller of
+			// this loop that bypasses Validate()) — the old behavior let a
+			// misconfigured connector boot invisibly, the same fail-open shape
+			// ADR-082 closed for scope. See
+			// server/connector_type_registry_test.go for the test keeping this
+			// switch's case set and connect.KnownTypes from drifting apart.
+			log.Fatalf("Keyorix Connect: connector %q has unrecognized type %q (must be one of %s) — this should have been caught by cfg.Validate()", cn.Name, cn.Type, strings.Join(connect.KnownTypes, ", "))
+		}
+	}
+	if len(connectors) == 0 {
+		return
+	}
+	mgr := connect.NewManager(connectors)
+
+	// ADR-082 branch 2: resolve each connector's tenant-scoping data (project
+	// binding for scope: project; nothing to resolve for scope: platform)
+	// BEFORE wiring the manager in, so a resolution failure blocks boot
+	// entirely rather than leaving Connect half-wired.
+	ownership, err := resolveConnectorOwnership(context.Background(), coreService.Storage(), cc.Connectors)
+	if err != nil {
+		log.Fatalf("Keyorix Connect: %v", err)
+	}
+
+	// Defense-in-depth: ownership was resolved from the FULL cc.Connectors
+	// config, but mgr was built only from connectors the type-switch above
+	// actually recognized (an unrecognized type is skipped with a WARN, not a
+	// hard failure — the `default` case above). If a connector's ownership
+	// resolved successfully but it never made it into mgr (e.g. an
+	// unrecognized type), or vice versa, that is a key-set mismatch this ADR
+	// requires to fail boot loudly rather than silently deny (a missing
+	// ownership entry, connectOwnershipSatisfied's own fallback) or silently
+	// skip ownership entirely (a connector with no check at all). No exemption
+	// of any kind (amended — the prior allow_unscoped-linked exemption is
+	// removed along with the flag): every divergence between the two sets is
+	// reported.
+	if mismatch := connectOwnershipKeySetMismatch(mgr.Names(), ownership); len(mismatch) > 0 {
+		log.Fatalf("Keyorix Connect: connector(s) present in config but whose manager/ownership resolution disagree on which connectors exist — this must never happen in a correctly-booted server; investigate before proceeding (ADR-082): %s", strings.Join(mismatch, ", "))
+	}
+
+	coreService.SetConnectManager(mgr)
+	coreService.SetConnectOwnership(ownership)
+	log.Printf("Keyorix Connect enabled (%d connector(s))", len(connectors))
+
+	// #1477/#1479: warn-only consistency check, run here because this is the
+	// only place in the system that sees both config (ownership, resolved
+	// just above) and DB rows (ConnectRefGrant, ConnectorProjectBinding)
+	// together — the create-time checks (CreateConnectRefGrant,
+	// resolveConnectorOwnership's own CreateConnectorProjectBinding call
+	// above) each structurally cannot see this:
+	// a grant/binding valid when created can still drift out of sync with a
+	// LATER config edit. Neither condition this checks is a security risk —
+	// a dead ref-grant or an orphaned binding both already fail closed/are
+	// simply unused, no over-permission — so this warns, never fails boot.
+	warnConnectConfigDrift(context.Background(), coreService.Storage(), ownership)
 }
 
 // ssoCompleteURL derives the SPA completion URL (<redirect origin>/auth/sso/complete)

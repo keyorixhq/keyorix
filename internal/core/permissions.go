@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -218,7 +219,15 @@ func (c *KeyorixCore) CheckSecretPermission(ctx context.Context, secretID, userI
 	if rbacPerm := permissionLevelToRBACPerm(requiredPermission); rbacPerm != "" {
 		actorType := actorTypeFromContext(ctx)
 		scope := Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
-		if ok, aerr := c.AuthorizePrincipal(ctx, actorType, userID, rbacPerm, scope); aerr == nil && ok {
+		ok, aerr := c.AuthorizePrincipal(ctx, actorType, userID, rbacPerm, scope)
+		if aerr != nil {
+			// Falls through to the same "insufficient permissions" denial as a clean
+			// !ok would (unchanged) — but a check that failed to EVALUATE is logged,
+			// since it would otherwise be indistinguishable from a caller who is
+			// legitimately ungranted here.
+			log.Printf("CheckSecretPermission: RBAC fallback authorization check failed (actor_type=%s principal_id=%d permission=%s project_id=%d environment_id=%d): %v",
+				actorType, userID, rbacPerm, scope.ProjectID, scope.EnvironmentID, aerr)
+		} else if ok {
 			return &PermissionContext{
 				SecretID:   secretID,
 				UserID:     userID,

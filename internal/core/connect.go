@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/connect"
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -132,8 +132,11 @@ func connectAuditProjectID(owner ConnectOwnership) *uint {
 }
 
 // SetConnectManager wires the configured external-store connectors (ADR-043). nil
-// (the default) leaves Keyorix Connect disabled.
-func (c *KeyorixCore) SetConnectManager(m *connect.Manager) {
+// (the default) leaves Keyorix Connect disabled. Accepts ports.ConnectorResolver
+// (ADR-109 step 4) rather than the concrete *connect.Manager — server/main.go's
+// wireConnect passes the real *connect.Manager, which satisfies this directly
+// (internal/connect.Connector is a type alias of ports.Connector).
+func (c *KeyorixCore) SetConnectManager(m ports.ConnectorResolver) {
 	c.connectManager = m
 }
 
@@ -607,19 +610,19 @@ func connectGrantActive(g *models.ConnectRefGrant, now time.Time) bool {
 // "prod/*/db" matches prod/<env>/db. A malformed glob matches nothing.
 //
 // A ref containing a "." or ".." path segment (e.g. "myapp/../otherapp") is rejected
-// outright before either comparison: connect.RefHasDotSegment — see its doc comment —
+// outright before either comparison: ports.RefHasDotSegment — see its doc comment —
 // covers the same prefix-boundary gap this per-reference RBAC grant would otherwise
 // be vulnerable to, mirroring the guard on prefixAllowed for the coarser allowed_refs
 // check.
 func refMatches(pattern, ref string) bool {
-	if connect.RefHasDotSegment(ref) {
+	if ports.RefHasDotSegment(ref) {
 		return false
 	}
 	if !strings.ContainsAny(pattern, "*?[") {
 		if pattern == "" {
 			return true // empty pattern = connector-wide grant
 		}
-		return connect.RefWithinPrefix(pattern, ref)
+		return ports.RefWithinPrefix(pattern, ref)
 	}
 	ok, err := path.Match(pattern, ref)
 	return err == nil && ok
