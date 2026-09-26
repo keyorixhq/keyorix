@@ -29,7 +29,7 @@ func createBulkDelTestSecret(t *testing.T, client *http.Client, baseURL, token, 
 	var out map[string]interface{}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
 	data := out["data"].(map[string]interface{})
-	return uint(data["ID"].(float64))
+	return uint(data["id"].(float64))
 }
 
 func TestBulkDeleteSecrets_Success(t *testing.T) {

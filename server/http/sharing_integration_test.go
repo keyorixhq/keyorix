@@ -205,7 +205,7 @@ func TestSharingHTTPIntegration(t *testing.T) {
 			require.NoError(t, err)
 
 			data := response["data"].(map[string]interface{})
-			secretID = uint(data["ID"].(float64))
+			secretID = uint(data["id"].(float64))
 		})
 
 		// Step 2: Share the secret with another user
@@ -292,8 +292,8 @@ func TestSharingHTTPIntegration(t *testing.T) {
 			assert.Len(t, secrets, 1)
 
 			secret := secrets[0].(map[string]interface{})
-			assert.Equal(t, float64(secretID), secret["ID"])
-			assert.Equal(t, "http-sharing-test-secret", secret["Name"])
+			assert.Equal(t, float64(secretID), secret["id"])
+			assert.Equal(t, "http-sharing-test-secret", secret["name"])
 		})
 
 		// Step 5: Update share permission
@@ -465,7 +465,7 @@ func TestSharingHTTPIntegration(t *testing.T) {
 			require.NoError(t, err)
 
 			data := response["data"].(map[string]interface{})
-			secretID = uint(data["ID"].(float64))
+			secretID = uint(data["id"].(float64))
 		})
 
 		// Step 2: Share with a group
@@ -717,7 +717,7 @@ func TestSharingHTTPIntegration(t *testing.T) {
 			require.NoError(t, err)
 
 			data := response["data"].(map[string]interface{})
-			secretID = uint(data["ID"].(float64))
+			secretID = uint(data["id"].(float64))
 		})
 
 		// Step 2: Share with read-only permission
@@ -886,7 +886,7 @@ func TestSharingHTTPConcurrency(t *testing.T) {
 		require.NoError(t, err)
 
 		data := response["data"].(map[string]interface{})
-		secretID := uint(data["ID"].(float64))
+		secretID := uint(data["id"].(float64))
 
 		// Perform concurrent share operations
 		for i := 0; i < numGoroutines; i++ {

@@ -35,12 +35,30 @@ type PasswordKeyProvider struct {
 	passphrase string
 	baseDir    string
 	saltPath   string
+	// iterations overrides PBKDF2Iterations when non-zero. Only ever set by
+	// NewPasswordKeyProviderWithIterations, which only a _test.go file may call —
+	// see that constructor's doc comment and
+	// TestNewPasswordKeyProviderWithIterations_NoProductionCallers.
+	iterations int
 }
 
 // NewPasswordKeyProvider builds the default passphrase-derived provider. saltPath
 // is resolved under baseDir via the same securefiles guard as before.
 func NewPasswordKeyProvider(passphrase, baseDir, saltPath string) *PasswordKeyProvider {
 	return &PasswordKeyProvider{passphrase: passphrase, baseDir: baseDir, saltPath: saltPath}
+}
+
+// NewPasswordKeyProviderWithIterations is NewPasswordKeyProvider with an explicit
+// PBKDF2 iteration-count override, for tests that want a cheap, throwaway KEK
+// derivation instead of paying the real 600,000-iteration cost on every
+// init/rotation — the dominant cost of internal/encryption's crash-consistency and
+// fault-injection fuzz targets (each replays dozens of seeds, several of which
+// re-derive the KEK). iterations != PBKDF2Iterations produces a KEK that cannot
+// unwrap any real deployment's DEK, so this is a testing knob, not a config option:
+// TestNewPasswordKeyProviderWithIterations_NoProductionCallers fails the build the
+// moment any non-_test.go file anywhere in the repo calls this function.
+func NewPasswordKeyProviderWithIterations(passphrase, baseDir, saltPath string, iterations int) *PasswordKeyProvider {
+	return &PasswordKeyProvider{passphrase: passphrase, baseDir: baseDir, saltPath: saltPath, iterations: iterations}
 }
 
 func (p *PasswordKeyProvider) Name() string { return "password" }
@@ -54,7 +72,11 @@ func (p *PasswordKeyProvider) KEK() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return pbkdf2.Key([]byte(p.passphrase), salt, PBKDF2Iterations, KEKSize, sha256.New), nil
+	iterations := p.iterations
+	if iterations == 0 {
+		iterations = PBKDF2Iterations
+	}
+	return pbkdf2.Key([]byte(p.passphrase), salt, iterations, KEKSize, sha256.New), nil
 }
 
 // ensureSalt mirrors the historical KeyManager.ensureSaltExists exactly: read the

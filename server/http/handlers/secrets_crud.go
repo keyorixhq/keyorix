@@ -131,8 +131,7 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 		h.coreService.LogSecretCreatedWithProject(auditCtx, uid, sID, response.ProjectID, uname, sname, ip, ua)
 	}) // #nosec G118
 
-	w.WriteHeader(http.StatusCreated)
-	h.sendSuccess(w, response, i18n.T("SuccessSecretCreated", nil))
+	sendCreated(w, newSecretNodeWire(response), i18n.T("SuccessSecretCreated", nil))
 }
 
 // ClassifySecret handles PATCH /api/v1/secrets/{id}/classification — set or clear
@@ -171,7 +170,7 @@ func (h *SecretHandler) ClassifySecret(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, "Error", msg, status, nil)
 		return
 	}
-	h.sendSuccess(w, secret, "Classification updated")
+	h.sendSuccess(w, newSecretNodeWire(secret), "Classification updated")
 }
 
 // SetAutoRotate handles PATCH /api/v1/secrets/{id}/auto-rotate — toggles automated
@@ -264,7 +263,7 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 		return
 	}
 
-	var response interface{} = secret
+	var response interface{} = newSecretNodeWire(secret)
 	valueIncluded := r.URL.Query().Get("include_value") == "true" //nolint:goconst
 	if valueIncluded {
 		var value []byte
@@ -282,7 +281,7 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 			}
 			return
 		}
-		response = map[string]interface{}{"secret": secret, "value": string(value)}
+		response = map[string]interface{}{"secret": newSecretNodeWire(secret), "value": string(value)}
 	}
 
 	// AUDIT-001: emit secret.read ONLY when the value was actually returned. A
@@ -359,7 +358,7 @@ func (h *SecretHandler) GetSecretByName(w http.ResponseWriter, r *http.Request) 
 		h.coreService.LogSecretReadWithProject(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua)
 	}) // #nosec G118
 
-	h.sendSuccess(w, secret, "")
+	h.sendSuccess(w, newSecretNodeWire(secret), "")
 }
 
 // GetSecretValueByRef handles GET /api/v1/secrets/value?ref=project/environment/name —
@@ -417,7 +416,7 @@ func (h *SecretHandler) GetSecretValueByRef(w http.ResponseWriter, r *http.Reque
 		h.coreService.LogSecretReadWithProject(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua)
 	}) // #nosec G118
 
-	h.sendSuccess(w, map[string]interface{}{"secret": secret, "value": string(value)}, "")
+	h.sendSuccess(w, map[string]interface{}{"secret": newSecretNodeWire(secret), "value": string(value)}, "")
 }
 
 // RestoreSecret handles POST /api/v1/secrets/{id}/restore — clears a
@@ -543,7 +542,7 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 		h.coreService.LogSecretUpdatedWithDiff(auditCtx, uid, sID, response.ProjectID, uname, sname, ip, ua, diff)
 	}) // #nosec G118
 
-	h.sendSuccess(w, response, i18n.T("SuccessSecretUpdated", nil))
+	h.sendSuccess(w, newSecretNodeWire(response), i18n.T("SuccessSecretUpdated", nil))
 }
 
 // DeleteSecret handles DELETE /api/v1/secrets/{id}

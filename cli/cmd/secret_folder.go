@@ -78,12 +78,12 @@ func runSecretFolderCreate(cmd *cobra.Command, args []string) error {
 
 func printFolder(f *apiclient.Secret) {
 	fmt.Println("Folder created successfully!")
-	fmt.Printf("ID:          %d\n", derefSecretInt(f.ID))
+	fmt.Printf("ID:          %d\n", derefSecretInt(f.Id))
 	fmt.Printf("Name:        %s\n", derefStr(f.Name))
-	fmt.Printf("Project:     %d\n", derefSecretInt(f.ProjectID))
-	fmt.Printf("Environment: %d\n", derefSecretInt(f.EnvironmentID))
-	if f.ParentID != nil {
-		fmt.Printf("Parent ID:   %d\n", *f.ParentID)
+	fmt.Printf("Project:     %d\n", derefSecretInt(f.ProjectId))
+	fmt.Printf("Environment: %d\n", derefSecretInt(f.EnvironmentId))
+	if f.ParentId != nil {
+		fmt.Printf("Parent ID:   %d\n", *f.ParentId)
 	}
 	if f.CreatedAt != nil {
 		fmt.Printf("Created:     %s\n", f.CreatedAt.Format(time.RFC3339))
@@ -141,10 +141,10 @@ func printFolderList(folders []apiclient.Secret) {
 	fmt.Printf("%-6s  %-30s  %-10s  %-12s  %-10s\n", "------", "------------------------------", "----------", "------------", "----------")
 	for _, f := range folders {
 		parentStr := "-"
-		if f.ParentID != nil {
-			parentStr = fmt.Sprintf("%d", *f.ParentID)
+		if f.ParentId != nil {
+			parentStr = fmt.Sprintf("%d", *f.ParentId)
 		}
-		fmt.Printf("%-6d  %-30s  %-10d  %-12d  %-10s\n", derefSecretInt(f.ID), derefStr(f.Name), derefSecretInt(f.ProjectID), derefSecretInt(f.EnvironmentID), parentStr)
+		fmt.Printf("%-6d  %-30s  %-10d  %-12d  %-10s\n", derefSecretInt(f.Id), derefStr(f.Name), derefSecretInt(f.ProjectId), derefSecretInt(f.EnvironmentId), parentStr)
 	}
 }
 

@@ -102,8 +102,7 @@ func (h *GroupHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "InternalError", "Failed to create group", http.StatusInternalServerError, nil)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, groupToAPIResponse(created), "Group created successfully")
+	sendCreated(w, groupToAPIResponse(created), "Group created successfully")
 }
 
 // GetGroup handles GET /api/v1/groups/{id}

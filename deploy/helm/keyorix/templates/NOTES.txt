@@ -30,9 +30,10 @@ Keyorix has been deployed as release "{{ .Release.Name }}".
 3. Log in with the admin you configured (auth.adminUsername="{{ .Values.auth.adminUsername }}").
 {{- else }}
 
-3. No admin password was set. Initialise the first admin manually:
+3. No admin password was set. Initialise the first admin manually, over the
+   network, against the address from step 2 (e.g. the port-forwarded address):
 
-   kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "keyorix.server.fullname" . }} -- ./keyorix-server  # then `keyorix system init`
+   `keyorix system init --server http://localhost:8080`
 {{- end }}
 
 ⚠️  CRITICAL — back up the encryption keys volume

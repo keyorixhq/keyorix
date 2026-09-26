@@ -219,6 +219,15 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		"getUsageReport":       true,
 		"getBillingReport":     true,
 		"migrateUserToMachine": true,
+		// API hygiene campaign (catalog_wire.go snake_case wire types) added
+		// response schemas for these 6 Projects/Environments operations. Each is
+		// exercised via openapi_contract_catalog_test.go.
+		"createProject":            true,
+		"getProject":               true,
+		"updateProject":            true,
+		"createProjectEnvironment": true,
+		"listEnvironments":         true,
+		"cloneEnvironment":         true,
 	}
 
 	loadSpec()

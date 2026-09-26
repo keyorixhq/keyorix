@@ -322,11 +322,11 @@ func TestHTTPServerIntegration(t *testing.T) {
 				t.Fatalf("expected data in response body, got nil. Full response: %v", response)
 			}
 			data := response["data"].(map[string]interface{})
-			assert.Contains(t, data, "ID")
-			assert.Equal(t, "integration-test-secret", data["Name"])
+			assert.Contains(t, data, "id")
+			assert.Equal(t, "integration-test-secret", data["name"])
 
 			// Store secret ID for later tests
-			secretID = uint(data["ID"].(float64))
+			secretID = uint(data["id"].(float64))
 		})
 
 		// Step 5: Get the created secret
@@ -350,8 +350,8 @@ func TestHTTPServerIntegration(t *testing.T) {
 				t.Fatalf("expected data in response body, got nil. Full response: %v", response)
 			}
 			data := response["data"].(map[string]interface{})
-			assert.Equal(t, float64(secretID), data["ID"])
-			assert.Equal(t, "integration-test-secret", data["Name"])
+			assert.Equal(t, float64(secretID), data["id"])
+			assert.Equal(t, "integration-test-secret", data["name"])
 		})
 
 		// Step 6: Update the secret

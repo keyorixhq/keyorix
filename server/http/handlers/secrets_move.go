@@ -56,5 +56,5 @@ func (h *SecretHandler) MoveSecret(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, "Error", msg, status, nil)
 		return
 	}
-	h.sendSuccess(w, updated, "Secret moved")
+	h.sendSuccess(w, newSecretNodeWire(updated), "Secret moved")
 }

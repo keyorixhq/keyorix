@@ -16,13 +16,13 @@ const mock = apiClient as unknown as {
 beforeEach(() => vi.clearAllMocks());
 
 describe('environmentsApi.list', () => {
-    it('maps Go-serialized ID/Name fields to lowercase id/name', async () => {
+    it('maps the snake_case wire fields to id/name', async () => {
         mock.get.mockResolvedValueOnce({
             data: {
                 data: {
                     environments: [
-                        { ID: 1, Name: 'production' },
-                        { ID: 2, Name: 'staging' },
+                        { id: 1, name: 'production' },
+                        { id: 2, name: 'staging' },
                     ],
                 },
             },

@@ -17,6 +17,13 @@ on:
 # Declare default permissions as read only.
 permissions: read-all # NOSONAR -- githubactions:S8234: Scorecard-recommended boilerplate requires read-all at workflow level
 
+# Cancel superseded runs on the same ref (matches web-ci.yml's own convention):
+# a later push/merge on the same branch makes an in-flight run's result moot
+# before it even finishes.
+concurrency:
+  group: scorecard-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   analysis:
     name: Scorecard analysis

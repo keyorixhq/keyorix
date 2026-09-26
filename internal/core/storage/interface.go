@@ -1972,9 +1972,9 @@ type StorageStats struct {
 // ProjectWithCounts is returned by ListProjectsWithCounts, adding aggregate
 // counts so the frontend project list page can show secret/env totals.
 type ProjectWithCounts struct {
-	ID               uint   `json:"ID"`
-	Name             string `json:"Name"`
-	Description      string `json:"Description"`
+	ID               uint   `json:"id"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
 	SecretCount      int64  `json:"secret_count"`
 	EnvironmentCount int64  `json:"environment_count"`
 	LastActivity     string `json:"last_activity,omitempty"` // most recent of project update or any secret change

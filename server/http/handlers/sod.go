@@ -62,8 +62,7 @@ func (h *CatalogHandler) CreateSoDPolicy(w http.ResponseWriter, r *http.Request)
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"policy": policy}, "Policy created")
+	sendCreated(w, map[string]interface{}{"policy": policy}, "Policy created")
 }
 
 // DeleteSoDPolicy handles DELETE /api/v1/sod/policies/{id}.

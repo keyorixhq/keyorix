@@ -129,7 +129,7 @@ func fetchRunSecrets(ctx context.Context, client *apiclient.ClientWithResponses,
 	var envID int
 	for _, e := range derefEnvironmentSlice(envResp.JSON200.Data.Environments) {
 		if e.Name != nil && strings.EqualFold(*e.Name, env) {
-			envID = derefInt(e.ID)
+			envID = derefInt(e.Id)
 			break
 		}
 	}
@@ -160,7 +160,7 @@ func fetchRunSecrets(ctx context.Context, client *apiclient.ClientWithResponses,
 			return nil, fmt.Errorf("project %q/environment %q has more than %d secrets -- 'keyorix-next run' injects every secret as an env var and refuses to continue past this cap; narrow the environment or use a different injection method", project, env, maxRunInjectedSecrets)
 		}
 		for _, s := range secrets {
-			id := derefInt(s.ID)
+			id := derefInt(s.Id)
 			name := derefStr(s.Name)
 			includeValue := true
 			getResp, err := client.GetSecretWithResponse(ctx, id, &apiclient.GetSecretParams{IncludeValue: &includeValue})

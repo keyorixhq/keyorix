@@ -281,23 +281,23 @@ const normalizeMember = (m: any): ProjectMember => ({
 });
 
 const normalize = (p: any): Project => ({
-    id: p.ID ?? p.id,
-    name: p.Name ?? p.name,
-    description: p.Description ?? p.description ?? '',
-    secretCount: p.SecretCount ?? p.secret_count ?? 0,
-    environmentCount: p.EnvironmentCount ?? p.environment_count ?? 0,
-    lastActivity: p.last_activity ?? p.LastActivity ?? p.UpdatedAt ?? p.updated_at ?? '',
-    createdAt: p.CreatedAt ?? p.created_at ?? '',
-    updatedAt: p.UpdatedAt ?? p.updated_at ?? '',
+    id: p.id,
+    name: p.name,
+    description: p.description ?? '',
+    secretCount: p.secret_count ?? 0,
+    environmentCount: p.environment_count ?? 0,
+    lastActivity: p.last_activity ?? p.updated_at ?? '',
+    createdAt: p.created_at ?? '',
+    updatedAt: p.updated_at ?? '',
     deleted: p.deleted ?? false,
-    requireMfa: p.RequireMFA ?? p.require_mfa ?? false,
+    requireMfa: p.require_mfa ?? false,
 });
 
 const normalizeEnv = (e: any): ProjectEnvironment => ({
-    id: e.ID ?? e.id,
-    name: e.Name ?? e.name,
-    projectId: e.ProjectID ?? e.project_id,
-    deleted: Boolean(e.DeletedAt ?? e.deleted_at),
+    id: e.id,
+    name: e.name,
+    projectId: e.project_id,
+    deleted: Boolean(e.deleted_at),
 });
 
 export const projectsApi = {

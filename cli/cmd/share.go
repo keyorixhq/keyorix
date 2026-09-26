@@ -376,7 +376,7 @@ func runSharedSecrets(cmd *cobra.Command, args []string) error {
 	}
 	t := cliout.NewStdoutTable("ID", "NAME", "TYPE", "PROJECT", "ENVIRONMENT", "CREATED BY", "CREATED AT")
 	for _, s := range secrets {
-		t.Row(derefInt(s.ID), derefStr(s.Name), derefStr(s.Type), derefInt(s.ProjectID), derefInt(s.EnvironmentID),
+		t.Row(derefInt(s.Id), derefStr(s.Name), derefStr(s.Type), derefInt(s.ProjectId), derefInt(s.EnvironmentId),
 			derefStr(s.CreatedBy), formatShareExpiry(s.CreatedAt))
 	}
 	return t.Flush()

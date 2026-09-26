@@ -43,8 +43,8 @@ func createSecret(t *testing.T, srv *httptest.Server, token, name string) uint {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
 	data, ok := response["data"].(map[string]interface{})
 	require.True(t, ok, "createSecret: missing data field")
-	id, ok := data["ID"].(float64)
-	require.True(t, ok, "createSecret: missing ID field")
+	id, ok := data["id"].(float64)
+	require.True(t, ok, "createSecret: missing id field")
 	return uint(id)
 }
 

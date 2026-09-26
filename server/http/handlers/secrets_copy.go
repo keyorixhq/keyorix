@@ -72,5 +72,5 @@ func (h *SecretHandler) CopySecret(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, "Error", msg, status, nil)
 		return
 	}
-	h.sendSuccess(w, created, "Secret copied")
+	h.sendSuccess(w, newSecretNodeWire(created), "Secret copied")
 }
