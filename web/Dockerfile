@@ -43,7 +43,7 @@ RUN pnpm build
 # 78410 (util-linux, all in the libuuid sub-package this minimal image
 # actually installs -- nothing else from util-linux is present here).
 FROM nginx:alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5ffd29f1d3 AS production
-RUN apk update && apk add --no-cache --upgrade libuuid=2.42.3-r1
+RUN apk update && apk add --no-cache --upgrade libuuid=2.42.3-r1 libexpat=2.8.5-r0
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
 
