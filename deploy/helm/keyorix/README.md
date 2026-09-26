@@ -143,3 +143,42 @@ your own `extraRules`.
   for why an in-process lock was tried and removed) — this is now a
   deployment-level control, not something the chart or server configures for
   you.
+
+## Image pinning
+
+`server.image.digest`/`web.image.digest` (empty by default; see their own
+`values.yaml` comments) take precedence over `.tag` and pin the exact image
+content, immune to a tag being retargeted after the fact — set these for
+production. The default (tag-based, pinned to this chart's own `appVersion`,
+never `latest`) is not currently auto-populated with the real digest at
+release time: `release.yml`'s `helm package` step and `docker-publish.yml`'s
+image build+push+cosign-sign step are separate, parallel jobs on the same
+`v*` tag push with no data flow between them, so the digest
+`docker-publish.yml` captures (`steps.build.outputs.digest`) never reaches
+the packaged chart's `values.yaml`. Wiring that (with the resolved tag kept
+as an adjacent comment for auditability) needs a change to `release.yml`/
+`docker-publish.yml` themselves, not this chart — outside `deploy/helm/**`.
+
+## Versioning
+
+`version` and `appVersion` in `Chart.yaml` are release.yml-overridden at
+publish time (`helm package --version/--app-version`, derived from the `v*`
+git tag), so the OCI chart published to `ghcr.io/keyorixhq/charts/keyorix` is
+always correct regardless of what's committed. The committed value still
+matters for a LOCAL `helm install ./deploy/helm/keyorix` without an explicit
+`--set`/`--version` override — it's what picks `server.image.tag` and
+`web.image.tag`'s default (`default .Chart.AppVersion .Values.X.image.tag` in
+`_helpers.tpl`). This has drifted stale — pointing at an older image tag than
+what's actually being released — **twice** now (last confirmed 2026-09-25,
+0.88.0 committed vs. 0.89.0 actually published). **Policy: bump this chart's
+`version`/`appVersion` (and `deploy/helm/keyorix-k8s-sync` and
+`deploy/helm/keyorix-operator`'s, in lockstep, since all three publish
+alongside the main server/web images on the same release tag) as part of any
+PR that changes `deploy/helm/**` content meaningfully, and independently as
+part of cutting every release** — don't rely on remembering to do this only
+at release time. No CI check enforces this today (a machine check would need
+to compare the committed value against the actual latest published tag,
+which isn't something PR-time CI can safely query against a moving target);
+treat this section as the explicit, considered "declining to enforce
+mechanically" this repo's own engineering practice calls for when a real
+check isn't a good fit.

@@ -37,6 +37,28 @@ type KeyorixSecretData struct {
 	Ref string `json:"ref"`
 }
 
+// PrunePolicy controls what happens to a target Secret when the upstream Keyorix
+// reference it was built from is confirmed gone or access to it is confirmed revoked.
+// See KeyorixSecretSpec.PrunePolicy for the full reasoning.
+// +kubebuilder:validation:Enum=Keep;Delete
+type PrunePolicy string
+
+const (
+	// PrunePolicyKeep leaves the target Secret's last-known value untouched. The
+	// confirmed-gone/revoked state is still surfaced distinctly on the Ready
+	// condition (reason UpstreamSecretGone or UpstreamAccessRevoked) — it just
+	// isn't acted on. Not the default (see PrunePolicyDelete) — an explicit
+	// opt-in for deployments that prefer availability over immediate reap.
+	PrunePolicyKeep PrunePolicy = "Keep"
+	// PrunePolicyDelete (the default) actively removes the target Secret the
+	// moment the upstream reference is confirmed gone or access is confirmed
+	// revoked. The mass-revocation circuit breaker (see the controller package's
+	// massRevocationSuspected) bounds this default's blast radius when many
+	// KeyorixSecrets sharing one TokenSecretRef are confirmed gone/revoked at
+	// once — a shared credential rotation, not independent per-secret events.
+	PrunePolicyDelete PrunePolicy = "Delete"
+)
+
 // KeyorixSecretTarget describes the Kubernetes Secret to create/maintain.
 type KeyorixSecretTarget struct {
 	// Name of the target Secret. Defaults to the KeyorixSecret's own name. Must be a
@@ -95,6 +117,29 @@ type KeyorixSecretSpec struct {
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=50
 	Data []KeyorixSecretData `json:"data"`
+	// PrunePolicy controls what happens to the target Secret when the upstream
+	// Keyorix reference is confirmed gone (404/403) or this CR's access is confirmed
+	// revoked (401). Delete (the default, restored 2026-09-25 — coordinator inbox
+	// item 1, reversing a brief default-Keep regression) actively removes the
+	// target Secret the moment either is confirmed: a secret confirmed gone or
+	// access confirmed revoked must not stay readable in the cluster indefinitely.
+	// Keep leaves the Secret's last-known value untouched instead — the
+	// confirmed-gone/revoked state is still surfaced distinctly on the Ready
+	// condition, just not acted on — for deployments that prefer availability over
+	// immediate reap.
+	//
+	// TokenSecretRef is commonly SHARED across several KeyorixSecrets, so a single
+	// credential rotation or revocation event reads as the exact same 401 (or a
+	// simultaneous 404/403 on every one of them) at once — the mass-revocation
+	// circuit breaker (controller package: massRevocationSuspected) is what bounds
+	// that blast radius now, not the PrunePolicy default: when enough KeyorixSecrets
+	// sharing a token are confirmed gone/revoked at once, NONE of them are wiped
+	// (regardless of PrunePolicy=Delete) until acknowledged via the
+	// keyorix.io/confirm-prune annotation.
+	// +kubebuilder:validation:Enum=Keep;Delete
+	// +kubebuilder:default=Delete
+	// +optional
+	PrunePolicy PrunePolicy `json:"prunePolicy,omitempty"`
 }
 
 // KeyorixSecretStatus reports the last reconcile outcome.

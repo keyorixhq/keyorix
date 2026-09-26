@@ -295,7 +295,8 @@ func main() {
 	if len(allowed) == 0 {
 		setupLog.Info("WARNING: --allowed-servers is not set; every KeyorixSecret will be REJECTED until you configure the trusted Keyorix server URL(s)")
 	}
-	reconciler, err := controller.NewReconciler(mgr.GetClient(), mgr.GetScheme(), mgr.GetAPIReader(), allowed)
+	reconciler, err := controller.NewReconciler(mgr.GetClient(), mgr.GetScheme(), mgr.GetAPIReader(), allowed,
+		mgr.GetEventRecorder("keyorixsecret-controller"))
 	if err != nil {
 		setupLog.Error(err, "unable to initialize controller", "controller", "KeyorixSecret")
 		os.Exit(1)

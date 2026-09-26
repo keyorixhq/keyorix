@@ -19,6 +19,17 @@ data:
     interval: {{ .Values.keyorix.interval | default "5m" | quote }}
     health_port: {{ .Values.healthPort | default 8080 }}
     cleanup: {{ .Values.cleanup | default false }}
+    {{- /* NOT `| default true`: Sprig's `default` treats the Go zero value (false,
+    for a bool) as "empty" and substitutes the fallback -- with a `true` fallback,
+    that makes an explicit `pruneOnRevoke: false` override UNREACHABLE, always
+    silently rendering `true` instead. values.yaml already provides `true` as the
+    chart's own base default, so no `default` pipeline is needed here: an
+    unset/missing key still resolves to that base value through Helm's normal
+    values-merge, and an explicit override (either direction) renders as given. */}}
+    prune_on_revoke: {{ .Values.pruneOnRevoke }}
+    {{- if .Values.massPruneAck }}
+    mass_prune_ack: {{ .Values.massPruneAck | quote }}
+    {{- end }}
     mappings:
     {{- if .Values.mappings }}
       {{- toYaml .Values.mappings | nindent 6 }}
