@@ -306,12 +306,12 @@ var exercisingTests = map[string][]string{
 	"updateGroup":             {"TestContractPR3_UpdateGroup"},
 	// API-hygiene casing campaign, PR C3 (rbac: Roles/Permissions) --
 	// openapi_contract_apihygiene_rbac_test.go.
-	"createRole":       {"TestContractAPIHygiene_CreateRole"},
-	"getRole":          {"TestContractAPIHygiene_GetRole"},
-	"getRoleByName":    {"TestContractAPIHygiene_GetRoleByName"},
-	"updateRole":       {"TestContractAPIHygiene_UpdateRole"},
-	"listPermissions":  {"TestContractAPIHygiene_ListPermissions"},
-	"getPermission":    {"TestContractAPIHygiene_GetPermission"},
+	"createRole":            {"TestContractAPIHygiene_CreateRole"},
+	"getRole":               {"TestContractAPIHygiene_GetRole"},
+	"getRoleByName":         {"TestContractAPIHygiene_GetRoleByName"},
+	"updateRole":            {"TestContractAPIHygiene_UpdateRole"},
+	"listPermissions":       {"TestContractAPIHygiene_ListPermissions"},
+	"getPermission":         {"TestContractAPIHygiene_GetPermission"},
 	"getUserRoleAssignment": {"TestContractAPIHygiene_GetUserRoleAssignment"},
 	// docs/cli-split-inventory.md §7 PR 1 (dynamic-secret, rotation, breakglass) --
 	// openapi_contract_pr1_test.go.
