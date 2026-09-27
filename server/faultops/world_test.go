@@ -27,6 +27,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -228,6 +229,19 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 	real := store.NewLocalStorage(db)
 	faulty := faultstorage.NewFaultyStorage(real, spec)
 	testCore := core.NewKeyorixCore(faulty)
+
+	// credential_delivery.base_url (ADR-028): the default mode (empty Mode, no
+	// SMTP configured) resolves to delivery.New's own OutOfBandDelivery — the
+	// same real, production-supported no-network default an install gets with
+	// no credential_delivery block at all (server/main.go's initializeCoreService
+	// calls delivery.New identically) — never a stub. Wired unconditionally
+	// (not lazily like ensureEncryption): delivery.New does no key derivation or
+	// I/O, so there is no world-build-time cost to defer.
+	deliverer, err := delivery.New(delivery.Config{})
+	if err != nil {
+		t.Fatalf("delivery.New: %v", err)
+	}
+	testCore.SetCredentialDelivery(deliverer, "https://fuzz-world.invalid")
 
 	testCore.SetBootstrapToken("fault-fuzz-bootstrap")
 	ctx := context.Background()
