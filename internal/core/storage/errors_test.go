@@ -57,7 +57,6 @@ func TestSentinelErrors_distinct(t *testing.T) {
 		storage.ErrDuplicateEmail,
 		storage.ErrDuplicateProjectName,
 		storage.ErrDuplicateSecretVersion,
-		storage.ErrUnsupportedByBackend,
 		storage.ErrBreakGlassAlreadyActive,
 		storage.ErrDuplicateDynamicSecretConfig,
 		storage.ErrDuplicateReminderNotification,

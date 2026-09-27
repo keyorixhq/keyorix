@@ -244,9 +244,9 @@ func (c *KeyorixCore) RequirePasswordReset(ctx context.Context, adminID, userID 
 //
 // #454: persists via SetAccountState, not the generic UpdateUser — an admin
 // suspend/reactivate is an explicit security directive, so a backend that cannot
-// actually persist account_state (RemoteStorage, storage.type: remote) must fail this
-// call outright rather than silently succeed while the account stays unchanged. See
-// SetAccountState's doc comment on storage.Storage.
+// actually persist account_state must fail this call outright rather than silently
+// succeed while the account stays unchanged. See SetAccountState's doc comment on
+// storage.Storage.
 func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint, state, eventType string) error {
 	if userID == 0 {
 		return fmt.Errorf("user ID is required")

@@ -184,9 +184,8 @@ func (c *KeyorixCore) CheckSecretPermission(ctx context.Context, secretID, userI
 		actorTypeFromContext(ctx) != ActorTypeMachine {
 		hasACL, aerr := c.HasSecretACL(ctx, userID, secretID, aclPerm)
 		if aerr != nil {
-			// A REAL read failure (not "no grant" -- HasSecretACL already degrades
-			// storage.ErrUnsupportedByBackend to (false, nil), so aerr is non-nil only
-			// for a genuine error, e.g. a faulted GetSecretAncestors). Must propagate,
+			// A REAL read failure (not "no grant" -- e.g. a faulted
+			// GetSecretAncestors). Must propagate,
 			// not silently fall through to the RBAC fallback below as if this ACL
 			// check had simply found nothing -- mirrors AuthorizeSecret's identical
 			// HasSecretACL call (the middleware's own path, authz.go), which already

@@ -201,10 +201,7 @@ func (ls *LocalStorage) assignUserRole(ctx context.Context, userID, roleID uint,
 	// time.Time inconsistently with this driver — confirmed empirically, not
 	// just suspected — so any Go-side round trip of the value risked a
 	// false-negative byte mismatch even for the SAME row; transactional
-	// isolation avoids depending on that comparison at all.) See
-	// WithTransaction's doc comment for the caveat that RemoteStorage's
-	// implementation is a passthrough, so this narrows but doesn't eliminate
-	// the race under storage.type: remote deployments.
+	// isolation avoids depending on that comparison at all.)
 	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var existing models.UserRole
 		err := tx.Where(sqlWhereUserRoleEnv,
@@ -485,10 +482,10 @@ func (ls *LocalStorage) ListGlobalAdminAssignmentsForUpdate(ctx context.Context,
 }
 
 // RemoveGlobalAdminRoleGuarded is the atomic, single-storage-call form of
-// guardLastGlobalAdmin (#340) + RemoveRole — added for #525 so RemoteStorage can
-// proxy it as ONE HTTP round trip instead of the two separate calls
-// (ListGlobalAdminAssignmentsForUpdate then RemoveRole) RemoveUserRole previously
-// made inside a WithTransaction closure. See the Storage interface doc for the full
+// guardLastGlobalAdmin (#340) + RemoveRole — added for #525, replacing the two
+// separate calls (ListGlobalAdminAssignmentsForUpdate then RemoveRole)
+// RemoveUserRole previously made inside a WithTransaction closure. See the
+// Storage interface doc for the full
 // atomicity reasoning. Runs in its own transaction (mirroring WithTransaction's own
 // db.Transaction wrapping) so the row lock ListGlobalAdminAssignmentsForUpdate takes
 // on Postgres is actually held for the whole check-then-delete, exactly as it was

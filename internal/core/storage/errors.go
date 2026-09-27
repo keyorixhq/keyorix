@@ -45,8 +45,7 @@ var ErrRoleNotAssigned = errors.New("role not assigned")
 // ErrWouldStrandLastAdmin is returned (wrapped) by RemoveGlobalAdminRoleGuarded when
 // removing the (user, role) grant at the global scope would leave the install with
 // zero super_admin/admin/system_admin holders (#340, #525) — the storage-layer
-// sentinel for guardLastGlobalAdmin's refusal, preserved across the RemoteStorage HTTP
-// hop the same way ErrDuplicateSecretDependency/ErrSecretDependencyCycle are.
+// sentinel for guardLastGlobalAdmin's refusal.
 var ErrWouldStrandLastAdmin = errors.New("refusing to remove the last install administrator")
 
 // ErrBreakGlassNotActive is returned (wrapped) when a conditional break-glass state
@@ -107,25 +106,6 @@ var ErrDuplicateSecretVersion = errors.New("a secret version with this version n
 // above the architectural maximum regardless of what an operator configured.
 var ErrSecretValueTooLarge = errors.New("secret value exceeds the maximum allowed size")
 
-// ErrUnsupportedByBackend is returned (wrapped) by a storage.Storage implementation
-// when an operation has no meaningful implementation under the ACTIVE backend —
-// distinct from a transient failure of that backend. The original motivating case
-// (#452) was RemoteStorage's login-attempt methods (a server proxying
-// storage.type: remote had no server-side counter to proxy the call to); that gap is
-// now closed — RemoteStorage.RecordLoginAttempt/CountRecentLoginAttempts/
-// PruneLoginAttempts genuinely proxy to a real upstream endpoint (see
-// internal/storage/store/remote_login_attempts.go and
-// server/http/handlers/login_attempts_proxy.go) — but the sentinel remains in active
-// use for the structurally identical gap #454 found on account-state/login-lockout
-// mutation (RemoteStorage.UpdateLoginLockoutState — those fields have no wire
-// representation in the generic user-update endpoint at all, unlike the
-// login-attempt counter which had a natural dedicated endpoint to add). Callers that
-// treat "storage error" as "fail open" (rate_limit.go, login_lockout.go) should
-// errors.Is against this to distinguish a permanent architectural gap — worth a
-// loud, one-time operator warning — from an ordinary transient DB/network error that
-// doesn't warrant one.
-var ErrUnsupportedByBackend = errors.New("operation not supported by the active storage backend")
-
 // ErrBreakGlassAlreadyActive is returned (wrapped) by CreateBreakGlassActivation when
 // the partial unique index on (project_id, user_id) WHERE state='active' rejects the
 // insert: a concurrent activation for the same project+user already won the race and
@@ -177,9 +157,8 @@ var ErrDuplicateSecretDependency = errors.New("this secret dependency already ex
 // is evaluated in application code against the lock-consistent edge read
 // CreateSecretDependencyExclusive takes — see its doc for why that check must run in the
 // SAME storage-layer call as the write (#260), not as a separate caller-orchestrated
-// read-then-write, once a real cross-call transaction can no longer be assumed
-// (RemoteStorage.WithTransaction is a no-op passthrough). Callers translate this into a
-// clean "would create a cycle" validation error.
+// read-then-write. Callers translate this into a clean "would create a cycle"
+// validation error.
 var ErrSecretDependencyCycle = errors.New("this secret dependency would create a cycle")
 
 // ErrSessionNotFound is returned (wrapped) by GetSessionByID when the row positively

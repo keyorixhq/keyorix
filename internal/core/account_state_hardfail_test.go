@@ -2,30 +2,25 @@ package core
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"testing"
 
-	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
-// errRemoteAccountState simulates exactly what RemoteStorage.SetAccountState returns
-// in production (see internal/storage/store/remote_users.go): a hard error wrapping
-// storage.ErrUnsupportedByBackend, since account_state has no field in the wire
-// format the upstream PUT /api/v1/users/{id} handler decodes.
-var errRemoteAccountState = fmt.Errorf("account_state cannot be persisted through remote storage: "+
-	"the upstream PUT /api/v1/users/{id} endpoint does not accept this field: %w",
-	corestorage.ErrUnsupportedByBackend)
+// errAccountStatePersistFailure simulates a storage backend that cannot persist
+// account_state at all — a hard, permanent write failure, as opposed to a
+// transient one.
+var errAccountStatePersistFailure = errors.New("account_state cannot be persisted by this storage backend")
 
 // TestSuspendUser_HardFailsWhenBackendCannotPersistAccountState is the (#454)
 // regression for the "explicit security directive" half of the fix: an admin
 // suspending a user against a storage backend that can never persist account_state
-// (RemoteStorage, storage.type: remote) must see the call FAIL — never a silent
-// "success" that leaves the account state unchanged and the admin believing the
-// suspension took effect.
+// must see the call FAIL — never a silent "success" that leaves the account state
+// unchanged and the admin believing the suspension took effect.
 func TestSuspendUser_HardFailsWhenBackendCannotPersistAccountState(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
@@ -46,11 +41,11 @@ func TestSuspendUser_HardFailsWhenBackendCannotPersistAccountState(t *testing.T)
 	store.On("ListSessionTokenHashesForUser", ctx, uint(2)).Return([]string{}, nil)
 	// H-2: ListPersonalAccessTokensByUser is called before SetAccountState.
 	store.On("ListPersonalAccessTokensByUser", ctx, uint(2)).Return([]*models.PersonalAccessToken{}, nil)
-	store.On("SetAccountState", ctx, uint(2), AccountSuspended, mock.Anything).Return(errRemoteAccountState)
+	store.On("SetAccountState", ctx, uint(2), AccountSuspended, mock.Anything).Return(errAccountStatePersistFailure)
 
 	err := c.SuspendUser(ctx, 1, 2)
 	require.Error(t, err, "SuspendUser must fail, not silently succeed, when the backend can't persist account_state")
-	require.ErrorIs(t, err, corestorage.ErrUnsupportedByBackend)
+	require.ErrorIs(t, err, errAccountStatePersistFailure)
 
 	// The write must never have escalated to session/PAT revocation on a failed state
 	// change (nothing was actually suspended, so nothing should be torn down either).
@@ -73,12 +68,12 @@ func TestUpdateSCIMUser_HardFailsWhenBackendCannotPersistDeprovision(t *testing.
 	store.On("GetUser", ctx, uint(2)).Return(target, nil)
 	store.On("GetUserRoleIDsAt", ctx, uint(2), Scope{}).Return([]uint{}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(2), Scope{}).Return([]uint{}, nil)
-	store.On("SetAccountState", ctx, uint(2), AccountDeprovisioned, mock.Anything).Return(errRemoteAccountState)
+	store.On("SetAccountState", ctx, uint(2), AccountDeprovisioned, mock.Anything).Return(errAccountStatePersistFailure)
 
 	no := false
 	_, err := c.UpdateSCIMUser(ctx, 9, 2, nil, nil, &no)
 	require.Error(t, err, "a SCIM deactivation must fail, not silently succeed, when the backend can't persist account_state")
-	require.ErrorIs(t, err, corestorage.ErrUnsupportedByBackend)
+	require.ErrorIs(t, err, errAccountStatePersistFailure)
 
 	// Since SetAccountState is attempted (and fails) BEFORE the generic wire-field
 	// write, nothing should have been partially applied either.

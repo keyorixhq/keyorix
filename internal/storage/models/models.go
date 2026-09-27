@@ -221,11 +221,12 @@ type SSOLoginState struct {
 // SchedulerLockLease is a TTL-bounded distributed-mutex row backing
 // TryAcquireSchedulerLock/ReleaseSchedulerLock (#530). Unlike LocalStorage's
 // own WithSchedulerLock (a Postgres session advisory lock held for the exact
-// duration of one in-process call), this primitive exists so a
-// storage.type: remote (ADR-049) spoke can acquire the SAME single-replica
-// guarantee over two separate HTTP round trips (acquire, then release once its
-// locally-run scheduler job finishes) without ever pinning a live DB
-// connection across requests: Holder proves ownership so a stale/expired
+// duration of one in-process call), this primitive was built so a
+// storage.type: remote (ADR-049, RemoteStorage, since deleted #2162) spoke
+// could acquire the SAME single-replica guarantee over two separate HTTP
+// round trips (acquire, then release once its locally-run scheduler job
+// finishes) without ever pinning a live DB connection across requests: Holder
+// proves ownership so a stale/expired
 // holder can never release (or be mistaken for holding) a lease a newer
 // holder has since won, and ExpiresAt bounds how long a crashed or
 // network-partitioned holder can wedge the key — a fresh acquire attempt past
@@ -978,12 +979,10 @@ type SecretNode struct {
 	// ValueStored is a transient, in-process-only signal (#499): never persisted
 	// (`gorm:"-"`) and never serialized (`json:"-"`). storage.Storage.CreateSecret
 	// sets it true on the node it returns ONLY when the backend already durably
-	// stored the secret's initial value as part of that same call (RemoteStorage,
-	// when core forwarded a plaintextValue and the upstream server created
-	// version 1 atomically). core.CreateSecret checks this to decide whether its
-	// own follow-up CreateSecretVersion call is still needed (LocalStorage,
-	// where it always is) or would create a conflicting duplicate (RemoteStorage,
-	// where the value is already stored). Never carries the value itself.
+	// stored the secret's initial value as part of that same call — LocalStorage
+	// never sets it, so core.CreateSecret's own follow-up CreateSecretVersion call
+	// is always still needed against the current, LocalStorage-only backend. Never
+	// carries the value itself.
 	ValueStored bool `gorm:"-" json:"-"`
 }
 

@@ -71,10 +71,7 @@ func (ls *LocalStorage) DeleteSecretDependency(ctx context.Context, id uint) err
 // interface doc, internal/core/storage/interface.go): it runs the SAME duplicate/cycle
 // validation AddSecretDependency (internal/core/secret_dependencies.go) used to
 // orchestrate itself across ListSecretDependenciesForProjectForUpdate +
-// CreateSecretDependency, but now as ONE call wrapped in a single real DB transaction —
-// so the guarantee survives being called over HTTP by RemoteStorage's implementation
-// (remote_secret_dependencies.go), where no transaction can span two separate round
-// trips.
+// CreateSecretDependency, but now as ONE call wrapped in a single real DB transaction.
 func (ls *LocalStorage) CreateSecretDependencyExclusive(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error) { // NOSONAR -- cognitive complexity 18, suppress go:S3776
 	var created *models.SecretDependency
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

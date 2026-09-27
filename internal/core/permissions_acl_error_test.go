@@ -63,27 +63,3 @@ func TestCheckSecretPermission_ACLGrantWithWorkingRead_Succeeds(t *testing.T) {
 	require.NotNil(t, permCtx)
 	assert.Equal(t, "acl", permCtx.Source)
 }
-
-// TestCheckSecretPermission_ACLUnsupportedBackend_StillFallsThroughToRBAC
-// confirms the fix didn't touch the OTHER branch HasSecretACL/aclGrantsPermission
-// degrade to (false, nil) for: storage.ErrUnsupportedByBackend (a backend that
-// doesn't support SecretACL at all, e.g. RemoteStorage's still-unproxied ACL
-// read path) must keep falling through to the RBAC fallback exactly as
-// before — NOT start being treated as a propagated error. Reuses
-// unsupportedACLStorage (secret_acl_test.go) unchanged.
-func TestCheckSecretPermission_ACLUnsupportedBackend_StillFallsThroughToRBAC(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	c, db := newACLCore(t)
-	sid := mkACLSecret(t, db, "acl-unsupported-secret")
-
-	// Grantee 55 has no RBAC role (only the RoleID:999 placeholder) and no ACL
-	// grant is even attempted here — the backend doesn't support ACL at all.
-	c2 := newACLCoreWithStorage(c, unsupportedACLStorage{Storage: c.storage})
-
-	_, err := c2.CheckSecretPermission(ctx, sid, 55, PermissionWrite)
-	require.Error(t, err)
-	// Must be the ordinary "no grant found" denial, not a propagated read error —
-	// ErrUnsupportedByBackend must never surface as a hard failure here.
-	assert.Contains(t, err.Error(), "insufficient permissions")
-}

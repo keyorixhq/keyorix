@@ -239,17 +239,17 @@ func (c *KeyorixCore) ClassifyMachineToken(ctx context.Context, projectID, machi
 }
 
 // ClassifyMachineTokenByID sets a machine credential's data-classification label by
-// credential ID alone, with no project/machine ownership check. This is the ONLY
-// route into this mutation for a caller that has just a credential ID -- in
-// particular server/http/handlers' UpdateMachineIdentityCredentialProxy (backing a
-// RemoteStorage peer's own credential-classification path, #1714), which must not
-// call storage.UpdateMachineIdentityCredential directly since that mutates state
-// with no audit write. Unlike ClassifyMachineToken (the human-facing, project-scoped
-// API), this performs no project/machine authorization: exactly like every other
-// genuine passthrough in machine_identities_proxy.go, the CALLING server's own
-// internal/core already authorized its actor before deciding to relay this write --
-// this route makes no state-machine-legality or authorization decision, only
-// records that the classification changed (see that file's package doc).
+// credential ID alone, with no project/machine ownership check. This was the ONLY
+// route into this mutation for a caller that has just a credential ID -- originally
+// server/http/handlers' UpdateMachineIdentityCredentialProxy (#1714), since deleted
+// along with the rest of the RemoteStorage-sync proxy tree (ADR-108 Phase 6,
+// #2162/#2171), which called storage.UpdateMachineIdentityCredential via this rather
+// than directly since that mutates state with no audit write. Unlike
+// ClassifyMachineToken (the human-facing, project-scoped API), this performs no
+// project/machine authorization -- it relied on its (now-deleted) caller having
+// already authorized the actor before deciding to relay the write. No production
+// caller currently reaches this method; do not add one without also adding the
+// authorization check this function itself does not perform.
 func (c *KeyorixCore) ClassifyMachineTokenByID(ctx context.Context, credentialID uint, level string) error {
 	if !IsValidClassification(level) {
 		return fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty to clear)")

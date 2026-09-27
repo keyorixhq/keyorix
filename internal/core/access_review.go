@@ -42,16 +42,13 @@ type AccessReviewEntry struct {
 }
 
 // AccessReviewReport is the full access-review result for a project: every
-// grant (Entries) plus a signal for whether it is complete. #453: on
-// storage.type: remote, LastUserSecretActivity is unconditionally unimplemented
-// (see internal/storage/store/remote_access_activity.go), so this
-// human-facing, compliance-critical report's dormant-access signal
-// (LastUsedAt) was silently left nil for every entry with no indication
-// anything was missing — indistinguishable from "genuinely never used" for
-// the deployment's entire lifetime under that backend. Degraded +
-// DegradedReasons make that detectable, mirroring CompliancePosture.Degraded
-// (compliance_posture.go) and SecretAccessorsResult.Degraded
-// (secret_access_list.go, #417).
+// grant (Entries) plus a signal for whether it is complete. #453: when
+// LastUserSecretActivity's query fails, this human-facing, compliance-critical
+// report's dormant-access signal (LastUsedAt) must not be silently left nil
+// with no indication anything was missing — indistinguishable from "genuinely
+// never used". Degraded + DegradedReasons make that detectable, mirroring
+// CompliancePosture.Degraded (compliance_posture.go) and
+// SecretAccessorsResult.Degraded (secret_access_list.go, #417).
 type AccessReviewReport struct {
 	Entries []*AccessReviewEntry `json:"entries"`
 	// Degraded is true when the last-secret-access lookup could not be queried —

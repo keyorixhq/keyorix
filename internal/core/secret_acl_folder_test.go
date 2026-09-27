@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -227,34 +226,5 @@ func TestHasSecretACL_CycleProtection(t *testing.T) {
 	got, err := c.HasSecretACL(ctx, userID, secretID, perm)
 	require.NoError(t, err, "cycle in ancestor chain must not error")
 	assert.False(t, got, "no ACL entry anywhere means denied")
-	ms.AssertExpectations(t)
-}
-
-// TestHasSecretACL_RemoteStorageSkipsAncestorWalk verifies that when
-// GetSecretAncestors returns ErrUnsupportedByBackend (as RemoteStorage does),
-// only the node-level ACL is consulted — no ancestor walk happens — and the
-// function returns without error.
-func TestHasSecretACL_RemoteStorageSkipsAncestorWalk(t *testing.T) {
-	t.Parallel()
-	ms := new(MockStorage)
-	c := newMockACLCore(ms)
-	ctx := context.Background()
-
-	const (
-		secretID = uint(10)
-		userID   = uint(1)
-		perm     = "secrets.read"
-	)
-
-	// No ACL on the secret itself.
-	mockNoACL(ms, secretID, userID)
-	// Simulate RemoteStorage returning ErrUnsupportedByBackend (properly wrapped).
-	ms.On("GetSecretAncestors", mock.Anything, secretID).
-		Return(([]uint)(nil), fmt.Errorf("GetSecretAncestors: %w", storage.ErrUnsupportedByBackend))
-
-	// Should not error, just skip the folder walk.
-	got, err := c.HasSecretACL(ctx, userID, secretID, perm)
-	require.NoError(t, err, "wrapped ErrUnsupportedByBackend must not propagate as an error")
-	assert.False(t, got, "no ACL without ancestor walk means denied")
 	ms.AssertExpectations(t)
 }

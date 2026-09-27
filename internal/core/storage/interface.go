@@ -390,8 +390,7 @@ type Storage interface {
 	// chain). Used by HasSecretACL to walk the folder ACL inheritance path.
 	// Capped at 20 levels to guard against accidental circular ParentID
 	// references in the data. LocalStorage climbs the chain via repeated
-	// GetSecret calls; RemoteStorage returns ErrUnsupportedByBackend because
-	// folder-ACL enforcement runs server-side on the remote deployment.
+	// GetSecret calls.
 	GetSecretAncestors(ctx context.Context, nodeID uint) ([]uint, error)
 
 	// Temporal access schedule — restricts a secret's reads to a configured
@@ -876,43 +875,30 @@ type Storage interface {
 	// other field (no updated_at bump). Called on every successful login.
 	UpdateLastLogin(ctx context.Context, userID uint, loginAt time.Time) error
 	// SetAccountState persists ONLY the account_state column (plus updated_at) —
-	// narrower than the generic UpdateUser, and deliberately so (#454): RemoteStorage's
-	// wire format (core.UpdateUserRequest, decoded by the upstream server's PUT
-	// /api/v1/users/{id} handler) carries only username/email/display_name/active, so a
-	// caller going through the generic LockUserForUpdate + UpdateUser read-modify-write to
-	// change account_state succeeds against LocalStorage but silently no-ops under
-	// storage.type: remote — the field is simply absent from the request body the upstream
-	// handler decodes, so it re-persists whatever account_state was already there. An admin
+	// narrower than the generic UpdateUser, and deliberately so (#454): an admin
 	// suspend/reactivate (setAccountState) or a SCIM deprovision/reactivate (UpdateSCIMUser)
 	// is an explicit, security-relevant directive, not passive accounting — the caller must
 	// see a hard error rather than a false "success" that leaves the account state
-	// unchanged. LocalStorage performs the real column update; RemoteStorage always
-	// returns storage.ErrUnsupportedByBackend (wrapped) so the caller fails closed.
+	// unchanged if this write ever fails.
 	SetAccountState(ctx context.Context, id uint, state string, updatedAt time.Time) error
 	// SetPasswordHash persists ONLY the password_hash and password_changed_at columns
 	// (plus updated_at) — narrower than the generic UpdateUser, and deliberately so
-	// (#484, the same rationale as SetAccountState above): models.User.PasswordHash is
-	// tagged json:"-", so it never even reaches the JSON body a RemoteStorage UpdateUser
-	// call sends — there is no way to persist a password change through the remote wire
-	// protocol at all. A password change (applyNewPassword, shared by self-service
-	// ChangePassword and the setup-token consume flow) is exactly the kind of explicit
-	// security directive #454 already treats as needing fail-closed semantics for
-	// account_state: a user must never be told their password changed when it silently
-	// didn't. LocalStorage performs the real column update; RemoteStorage always returns
-	// storage.ErrUnsupportedByBackend (wrapped) so the caller fails closed. Any
-	// accompanying account_state clear (a restricted state resetting to active) is
-	// persisted separately via SetAccountState, not folded into this primitive.
+	// (#484, the same rationale as SetAccountState above). A password change
+	// (applyNewPassword, shared by self-service ChangePassword and the setup-token
+	// consume flow) is exactly the kind of explicit security directive #454 already
+	// treats as needing fail-closed semantics for account_state: a user must never be
+	// told their password changed when it silently didn't. Any accompanying
+	// account_state clear (a restricted state resetting to active) is persisted
+	// separately via SetAccountState, not folded into this primitive.
 	SetPasswordHash(ctx context.Context, id uint, hash string, changedAt time.Time) error
 	// UpdateLoginLockoutState persists ONLY the four login-lockout accounting columns
 	// (failed_login_attempts, last_failed_login_at, login_locked_until,
-	// login_lockout_count) — the same #454 rationale as SetAccountState above, since none
-	// of these fields are expressible in RemoteStorage's wire format either. Unlike
+	// login_lockout_count) — the same #454 rationale as SetAccountState above. Unlike
 	// SetAccountState, though, lockout accounting is a passive backstop counter, not an
 	// explicit security directive (mirrors #452's identical call on
-	// CountRecentLoginAttempts/RecordLoginAttempt): LocalStorage performs the real column
-	// update; RemoteStorage always returns storage.ErrUnsupportedByBackend (wrapped), and
-	// the core caller (login_lockout.go) logs a loud one-time operator warning and fails
-	// OPEN rather than blocking every login under this backend.
+	// CountRecentLoginAttempts/RecordLoginAttempt): a genuine write failure here is a
+	// best-effort, fail-open backstop degradation (see login_lockout.go), not a hard
+	// error to the caller.
 	UpdateLoginLockoutState(ctx context.Context, id uint, attempts int, lastFailedAt, lockedUntil *time.Time, lockoutCount int) error
 	DeleteUser(ctx context.Context, id uint) error
 	RestoreUser(ctx context.Context, id uint) error
@@ -1504,9 +1490,7 @@ type Storage interface {
 	// step-up token is always created and checked server-side.
 	UpsertMFAStepupToken(ctx context.Context, userID uint, expiresAt time.Time) error
 	// HasActiveMFAStepup reports whether userID has a non-expired MFA step-up
-	// record, confirming a recent second-factor verification. Intentional stub on
-	// RemoteStorage (always false, ErrUnsupportedByBackend) — the classification
-	// gate and MFA step-up token both live on the same server node.
+	// record, confirming a recent second-factor verification.
 	HasActiveMFAStepup(ctx context.Context, userID uint) (bool, error)
 
 	// CreateMFAStepUpGrant persists a new MFA step-up grant for userID. The

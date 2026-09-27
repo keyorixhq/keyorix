@@ -329,13 +329,9 @@ func displayNameFromEmail(email string) string {
 }
 
 // isUserNotFound reports whether err is the storage layer's "user not found"
-// signal under EITHER active storage backend (#504) — LocalStorage's wrapped
-// ErrUserNotFound sentinel, or RemoteStorage's HTTPError.IsNotFound(). Used to
-// fail closed on a real lookup error while treating a clean miss as "no
-// existing account". Previously matched LocalStorage's i18n error text only,
-// which never matched a RemoteStorage error (before or after round 112's #501
-// fix gave RemoteStorage a structured error type) — every call site below was
-// silently broken under storage.type: remote. See storage.IsUserNotFound.
+// signal (#504) — LocalStorage's wrapped ErrUserNotFound sentinel. Used to fail
+// closed on a real lookup error while treating a clean miss as "no existing
+// account". See storage.IsUserNotFound.
 func isUserNotFound(err error) bool {
 	return storage.IsUserNotFound(err)
 }

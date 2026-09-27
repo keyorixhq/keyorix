@@ -23,12 +23,10 @@ package core
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
-	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -162,10 +160,6 @@ func (c *KeyorixCore) ListSecretACLs(ctx context.Context, secretID uint) ([]*mod
 //
 // Returns (false, nil) when no matching grant exists or the grant doesn't cover
 // perm; only returns an error on storage failure.
-//
-// When GetSecretAncestors returns ErrUnsupportedByBackend (e.g. RemoteStorage),
-// only the direct secret grant is checked — folder inheritance is enforced
-// server-side in that deployment.
 func (c *KeyorixCore) HasSecretACL(ctx context.Context, userID, secretID uint, perm string) (bool, error) {
 	// Check the specific secret first.
 	found, err := c.aclGrantsPermission(ctx, secretID, userID, perm)
@@ -175,9 +169,6 @@ func (c *KeyorixCore) HasSecretACL(ctx context.Context, userID, secretID uint, p
 	// Walk ancestor folders for inheritance.
 	ancestors, err := c.storage.GetSecretAncestors(ctx, secretID)
 	if err != nil {
-		if errors.Is(err, storage.ErrUnsupportedByBackend) {
-			return false, nil
-		}
 		return false, err
 	}
 	for _, ancestorID := range ancestors {
@@ -198,15 +189,6 @@ func (c *KeyorixCore) aclGrantsPermission(ctx context.Context, nodeID, userID ui
 	acl, err := c.storage.GetSecretACL(ctx, nodeID, userID)
 	if err != nil {
 		if isNotFound(err) {
-			return false, nil
-		}
-		// #G13: a backend that doesn't support SecretACL at all (RemoteStorage,
-		// before this fix only DeleteSecretACLsByUserAndProject was proxied)
-		// must not turn EVERY secret-access check into a hard failure — mirrors
-		// HasSecretACL's own handling of GetSecretAncestors returning the same
-		// sentinel: "this backend doesn't support the feature" degrades to "no
-		// grant", falling through to project-scope RBAC, not a fail-closed error.
-		if errors.Is(err, storage.ErrUnsupportedByBackend) {
 			return false, nil
 		}
 		return false, err

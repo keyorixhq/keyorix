@@ -448,7 +448,6 @@ func applyPoolSettings(db *gorm.DB, dbCfg *config.DatabaseConfig) error {
 	return nil
 }
 
-// createRemoteStorage creates a remote storage instance
 // columnExists reports whether table already has column, branching on the
 // dialect like indexExists below: information_schema on Postgres, but SQLite
 // has no information_schema at all — querying it there returns a "no such
@@ -1537,10 +1536,11 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	}
 
 	// Create the scheduler-lock-lease table if missing (#530, additive). Backs
-	// TryAcquireSchedulerLock/ReleaseSchedulerLock — the TTL-bounded distributed
-	// mutex a storage.type: remote spoke's WithSchedulerLock now proxies through,
-	// independent of (and never migrated onto) the pre-existing Postgres advisory
-	// lock local WithSchedulerLock still uses for a server's OWN scheduler ticks.
+	// TryAcquireSchedulerLock/ReleaseSchedulerLock — a TTL-bounded distributed mutex
+	// originally built for a storage.type: remote spoke's WithSchedulerLock to proxy
+	// through (RemoteStorage, since deleted, #2162), independent of (and never
+	// migrated onto) the pre-existing Postgres advisory lock local WithSchedulerLock
+	// still uses for a server's OWN scheduler ticks.
 	if !schedulerLockLeaseExists {
 		if err := db.AutoMigrate(&models.SchedulerLockLease{}); err != nil {
 			return fmt.Errorf("failed to migrate scheduler_lock_leases table: %w", err)

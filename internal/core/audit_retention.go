@@ -42,11 +42,7 @@ func (c *KeyorixCore) PurgeAuditLogs(ctx context.Context, cfg AuditLogRetentionC
 	// duration, so a concurrent PlaceLegalHold's INSERT (also a write) cannot
 	// interleave between the hold check and the delete — it either committed
 	// before this transaction started (the check sees it and aborts) or blocks
-	// until this transaction finishes. NOTE: RemoteStorage.WithTransaction is a
-	// no-op passthrough (fn(rs), no real transaction) — under storage.type:
-	// remote this narrows the window (one closure instead of two independent
-	// core-layer calls) but does not eliminate it; closing it there would need
-	// a dedicated atomic proxy endpoint, out of scope for this pattern-level fix.
+	// until this transaction finishes.
 	cutoff := c.now().UTC().AddDate(0, 0, -cfg.RetentionDays)
 	var n int64
 	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {

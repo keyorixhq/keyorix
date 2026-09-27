@@ -317,8 +317,8 @@ func (c *KeyorixCore) scimUpdateUserTx(ctx context.Context, tx storage.Storage, 
 		return nil, false, storage.ErrUserNotFound
 	}
 	// Captured before mutation so we only call SetAccountState when the state actually
-	// changes (#454) — avoiding a hard failure on RemoteStorage for a plain name/email
-	// PATCH that never touches lifecycle state.
+	// changes (#454), avoiding an unnecessary write for a plain name/email PATCH that
+	// never touches lifecycle state.
 	origState := user.AccountState
 	wasActive := user.IsActive
 	if displayName != nil && *displayName != "" {
@@ -537,9 +537,7 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 		user.UpdatedAt = c.now()
 		if user.AccountState != origState {
 			// #454: persist the state transition via the narrow column-only write (not
-			// folded into the full-row write below) so it also lands under
-			// storage.type: remote, which can't express account_state in the generic
-			// UpdateUser wire format. See SetAccountState's doc comment.
+			// folded into the full-row write below). See SetAccountState's doc comment.
 			if err := tx.SetAccountState(ctx, id, user.AccountState, user.UpdatedAt); err != nil {
 				return err
 			}
@@ -616,15 +614,10 @@ const SCIMMaxPageSize = 200
 // already refuse a non-SCIM-managed target (#120). A leaked totalResults count was
 // itself a smaller instance of the same disclosure, so it's fixed here too.
 //
-// Rather than add a filter to storage.UserFilter — which would need wiring through
-// BOTH LocalStorage's query AND RemoteStorage's wire protocol plus whatever
-// server-side route it proxies to (the server can run against either backend via
-// the storage factory; the SCIM handler doesn't know or care which) — this loads
-// the already storage-agnostic full user list via ListSCIMUsers and filters/pages
-// it in Go. That's the same "load once, filter/slice in memory" shape
-// ListGroups' filtered path already uses for groups (scim_groups.go), and it
-// guarantees the scimManaged boundary holds no matter which storage backend is
-// configured, at the cost of an O(directory size) scan per page instead of a
+// Rather than add a filter to storage.UserFilter, this loads the full user list via
+// ListSCIMUsers and filters/pages it in Go. That's the same "load once, filter/slice
+// in memory" shape ListGroups' filtered path already uses for groups
+// (scim_groups.go), at the cost of an O(directory size) scan per page instead of a
 // DB-level LIMIT/OFFSET.
 func (c *KeyorixCore) ListSCIMUsersPage(ctx context.Context, startIndex, count int) ([]*models.User, int, error) {
 	if startIndex < 1 {

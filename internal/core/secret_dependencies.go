@@ -88,15 +88,12 @@ type RotationOrder struct {
 // The duplicate/cycle check and the edge write are performed by ONE atomic storage call
 // (CreateSecretDependencyExclusive, #260) rather than this method orchestrating a
 // ListSecretDependenciesForProjectForUpdate read and a separate CreateSecretDependency
-// write itself inside a WithTransaction: RemoteStorage.WithTransaction is a no-op
-// passthrough (no real transaction spans the wire), so that older two-call sequence
-// silently lost its whole atomicity guarantee under storage.type: remote — see the
-// storage.Storage interface doc (internal/core/storage/interface.go) for the full
-// reasoning. secretDependencyMu is still held for the call's duration, still serializing
-// same-process callers (SQLite, single instance) exactly as before; the storage layer's
-// own lock (Postgres FOR UPDATE on LocalStorage; whichever server ultimately owns the
-// row, on RemoteStorage) is what now also serializes across replicas/processes — the
-// same two-layer pattern login_lockout.go's recordFailedLogin and RemoveUserRole's
+// write itself inside a WithTransaction — see the storage.Storage interface doc
+// (internal/core/storage/interface.go) for the full reasoning. secretDependencyMu is
+// still held for the call's duration, still serializing same-process callers (SQLite,
+// single instance) exactly as before; the storage layer's own lock (Postgres FOR
+// UPDATE on LocalStorage) is what also serializes across replicas — the same
+// two-layer pattern login_lockout.go's recordFailedLogin and RemoveUserRole's
 // guardLastGlobalAdmin use.
 func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string, actorID, dependentID, dependsOnID uint, note string, createdByMachineID uint) (*models.SecretDependency, error) {
 	if dependentID == dependsOnID {

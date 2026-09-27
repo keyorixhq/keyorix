@@ -42,10 +42,9 @@ func (ls *LocalStorage) GetWebAuthnCredentialByCredID(ctx context.Context, crede
 // FOR UPDATE). Originally used inline in persistUpdatedCredential so a read-modify-
 // write of the advanced signature counter serialized against a concurrent write for
 // the same credential (#306) — that path now goes through
-// AdvanceWebAuthnCredentialCounter below instead (a single atomic call, required so
-// RemoteStorage — whose WithTransaction is a no-op passthrough — gets the same
-// guarantee, #517), which is this method's ONE current caller, itself always inside
-// WithTransaction. (rejectIfCloned's best-effort clone-disable was formerly cited
+// AdvanceWebAuthnCredentialCounter below instead (a single atomic call, #517), which
+// is this method's ONE current caller, itself always inside WithTransaction.
+// (rejectIfCloned's best-effort clone-disable was formerly cited
 // here as a second caller needing a locked read outside that race; it no longer
 // calls this method at all — it uses a plain, unlocked GetWebAuthnCredentialByCredID
 // + UpdateWebAuthnCredential instead, which is correct for a best-effort disable

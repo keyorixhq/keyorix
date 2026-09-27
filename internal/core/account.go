@@ -196,13 +196,8 @@ func (c *KeyorixCore) validateNewPassword(ctx context.Context, user *models.User
 //
 // #484: persists via the narrow SetPasswordHash (and, only when the account state
 // actually needs to clear a restriction, SetAccountState) rather than the generic
-// UpdateUser — RemoteStorage can never express password_hash in its wire format at
-// all (models.User.PasswordHash is json:"-"), so a caller going through the generic
-// read-modify-write succeeds against LocalStorage but silently no-ops under
-// storage.type: remote, leaving the caller told "success" while the password never
-// actually changed. Both writes run inside one transaction so a partial application
-// (hash persisted but the state clear lost, or vice versa) can't happen on backends
-// that support real transactions.
+// UpdateUser. Both writes run inside one transaction so a partial application (hash
+// persisted but the state clear lost, or vice versa) can't happen.
 func (c *KeyorixCore) applyNewPassword(ctx context.Context, user *models.User, newPassword string) error {
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), int(bcryptCost.Load()))
 	if err != nil {
@@ -213,8 +208,8 @@ func (c *KeyorixCore) applyNewPassword(ctx context.Context, user *models.User, n
 	// Compare against the NORMALIZED current state, not the raw field: an unset legacy
 	// AccountState ("") normalizes to AccountActive, exactly like newState does for a
 	// non-restricted user, so a naive raw comparison would spuriously call
-	// SetAccountState (and, on RemoteStorage, hard-fail) for every legacy-row password
-	// change even though nothing is actually changing.
+	// SetAccountState for every legacy-row password change even though nothing is
+	// actually changing.
 	stateChanged := newState != NormalizeAccountState(user.AccountState)
 
 	err = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
