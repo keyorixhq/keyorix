@@ -47,6 +47,20 @@ const (
 	ssoDefaultGroupClaim = "groups"
 )
 
+// ssoJITProvisionDetail is the structured payload stored in an
+// auth.sso_jit_provisioned event's Diff field, carrying the role actually
+// requested for the new account. ReconcileUserBaselineRoles
+// (user_baseline_role_reconcile.go) reads NonDefaultRole to tell a user who
+// never held system_viewer because the provider's own DefaultRole config
+// gave them a different baseline apart from one simply missing it due to the
+// pre-#2188 bootstrap-ordering bug — the free-text "role=%s" already in the
+// event's Description is for a human reader, not a stable machine-parseable
+// field.
+type ssoJITProvisionDetail struct {
+	Role           string `json:"role,omitempty"`
+	NonDefaultRole bool   `json:"non_default_role,omitempty"`
+}
+
 // SAMLAuthn is the slice of a SAML Service Provider the SSO flow needs (satisfied by
 // *saml.Provider). A type alias of ports.SAMLServiceProvider (ADR-109 step 1) — kept
 // under its original name so existing callers/tests are unaffected, and so the SAML
@@ -584,8 +598,10 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 	if r, rerr := c.storage.GetRoleByName(ctx, role); rerr == nil {
 		_ = c.storage.AssignRole(ctx, created.ID, r.ID, Scope{})
 	}
-	c.writeAuditEvent(ctx, EventSSOJITProvision, actorPtr(created.ID), nil,
-		fmt.Sprintf("SSO JIT-provisioned user %d via %s (externalId=%q, role=%s)", created.ID, p.Name, sub, role))
+	detail, _ := json.Marshal(ssoJITProvisionDetail{Role: role, NonDefaultRole: role != ssoDefaultRole})
+	c.writeAuditEventDiff(ctx, EventSSOJITProvision, actorPtr(created.ID), nil, nil, "",
+		fmt.Sprintf("SSO JIT-provisioned user %d via %s (externalId=%q, role=%s)", created.ID, p.Name, sub, role),
+		string(detail))
 	return created, nil
 }
 

@@ -248,6 +248,32 @@ func TestReconcileUserBaselineRoles_SkipsAdminRemovedUser(t *testing.T) {
 		"no backfill audit event must be written for a skipped, deliberately-removed user")
 }
 
+// TestReconcileUserBaselineRoles_SkipsSSOJITNonDefaultRoleUser proves the
+// third category of #2195's rework: a user JIT-provisioned via SSO whose
+// provider config sets a DefaultRole other than system_viewer must never be
+// granted system_viewer by the sweep — that user's baseline was chosen
+// deliberately by the install's own SSO config, not lost to the pre-#2188
+// bug this reconcile repairs.
+func TestReconcileUserBaselineRoles_SkipsSSOJITNonDefaultRoleUser(t *testing.T) {
+	t.Parallel()
+	c := newPreFixOrderingCore(t)
+	bootstrapWithPreFixOrdering(t, c)
+	ctx := context.Background()
+
+	p := &SSOProvider{Name: "okta", DefaultRole: "admin"}
+	jit, err := c.provisionSSOUser(ctx, p, "okta|999", "jit@example.com", true, "JIT User")
+	require.NoError(t, err)
+	require.True(t, userHasRoleName(t, c, jit.ID, "admin"), "sanity: JIT provisioning granted the configured role")
+	require.False(t, userHasRoleName(t, c, jit.ID, "system_viewer"), "sanity: JIT provisioning did not grant system_viewer")
+
+	require.NoError(t, c.ReconcileUserBaselineRoles(ctx))
+
+	assert.False(t, userHasRoleName(t, c, jit.ID, "system_viewer"),
+		"an SSO JIT user with a configured non-default DefaultRole must never be granted system_viewer by the reconcile")
+	assert.Equal(t, 0, countBaselineBackfillAuditEvents(t, c, jit.ID),
+		"no backfill audit event must be written for a skipped SSO JIT non-default-role user")
+}
+
 // TestReconcileUserBaselineRoles_RepairsPreFixOrdering_Postgres mirrors the
 // SQLite case against a real, isolated PostgreSQL schema, migrated exactly as
 // production does. Skips (does not fail) when KEYORIX_TEST_PG_DSN is unset.

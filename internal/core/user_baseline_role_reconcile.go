@@ -29,14 +29,17 @@ const userBaselineRoleReconcilePageSize = 500
 // baseline-role backfill sweep below has already run. Coordinator review on
 // #2195: running this sweep on EVERY startup silently undoes an admin's own
 // deliberate removal of system_viewer from a user (RemoveUserRole permits
-// it; nothing protected the baseline) and overrides an SSO DefaultRole
+// it; nothing protected the baseline) and would override an SSO DefaultRole
 // config that intentionally gives JIT-provisioned users a different
 // baseline role than system_viewer — both because the sweep can't tell "this
 // user was never granted the role because of the pre-#2188 bug" apart from
 // "this user was never granted the role on purpose." The marker turns the
 // repair into a single one-time pass over whatever the install looked like
 // the first time it ran on the fixed code, never touching a user's role set
-// again afterward.
+// again afterward; the SSO-JIT case additionally needs its own per-user skip
+// (usersSSOJITNonDefaultRole below) because a non-default-role JIT account
+// created DURING that one sweep would otherwise still get grafted onto by
+// it, marker or no marker.
 const userBaselineRoleBackfillMarkerKey = "baseline_role_backfill_v1"
 
 // ReconcileUserBaselineRoles grants the "system_viewer" baseline role
@@ -48,11 +51,15 @@ const userBaselineRoleBackfillMarkerKey = "baseline_role_backfill_v1"
 // reconcile is a one-shot backfill, not an ongoing invariant enforcer.
 //
 // Never touches any role other than system_viewer, and never removes or
-// modifies an existing grant. Two categories of user are left untouched even
-// on the one sweep that does run:
+// modifies an existing grant. Three categories of user are left untouched
+// even on the one sweep that does run:
 //   - a user with a role.removed audit event for system_viewer (any scope) —
 //     an admin's deliberate removal of it, which a repair sweep must not
 //     undo;
+//   - a user JIT-provisioned via SSO whose provider config sets a
+//     DefaultRole other than system_viewer (sso.go) — that user never held
+//     system_viewer because the install's own SSO config says so, not
+//     because of the pre-#2188 bug this reconcile repairs;
 //   - once the completion marker is set, EVERY user, unconditionally — a
 //     later restart must not re-litigate role state the install may have
 //     changed on purpose since the one-time repair ran.
@@ -83,6 +90,10 @@ func (c *KeyorixCore) ReconcileUserBaselineRoles(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("baseline role reconcile: list role-removal history: %w", err)
 	}
+	ssoNonDefaultFor, err := c.usersSSOJITNonDefaultRole(ctx)
+	if err != nil {
+		return fmt.Errorf("baseline role reconcile: list SSO JIT non-default-role history: %w", err)
+	}
 
 	granted := 0
 	for page := 1; ; page++ {
@@ -95,7 +106,7 @@ func (c *KeyorixCore) ReconcileUserBaselineRoles(ctx context.Context) error {
 		}
 
 		for _, u := range users {
-			if removedFor[u.ID] {
+			if removedFor[u.ID] || ssoNonDefaultFor[u.ID] {
 				continue
 			}
 			roles, rerr := c.storage.GetUserRoles(ctx, u.ID)
@@ -160,6 +171,44 @@ func (c *KeyorixCore) usersWithBaselineRoleRemoved(ctx context.Context, roleID u
 		}
 	}
 	return removed, nil
+}
+
+// usersSSOJITNonDefaultRole returns the set of user IDs JIT-provisioned via
+// SSO (sso.go's provisionSSOUser) whose provider config set a DefaultRole
+// other than system_viewer — the second category ReconcileUserBaselineRoles
+// must never touch, alongside usersWithBaselineRoleRemoved: such a user
+// never held system_viewer because the install's own SSO config says so, not
+// because of the pre-#2188 bug this reconcile repairs. Reads the structured
+// Diff (ssoJITProvisionDetail) each auth.sso_jit_provisioned event carries,
+// not the event's free-text Description — the same choice
+// usersWithBaselineRoleRemoved makes for role.removed events, for the same
+// reason: a machine-checked field, not a string a future log-message edit
+// could silently break.
+func (c *KeyorixCore) usersSSOJITNonDefaultRole(ctx context.Context) (map[uint]bool, error) {
+	skip := make(map[uint]bool)
+	for page := 1; ; page++ {
+		events, total, err := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
+			Actions:  []string{EventSSOJITProvision},
+			Page:     page,
+			PageSize: userBaselineRoleReconcilePageSize,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range events {
+			var d ssoJITProvisionDetail
+			if e.Diff == "" || json.Unmarshal([]byte(e.Diff), &d) != nil {
+				continue
+			}
+			if d.NonDefaultRole && e.UserID != nil {
+				skip[*e.UserID] = true
+			}
+		}
+		if int64(page*userBaselineRoleReconcilePageSize) >= total || len(events) < userBaselineRoleReconcilePageSize {
+			break
+		}
+	}
+	return skip, nil
 }
 
 func userHoldsRole(roles []*models.Role, roleID uint) bool {
