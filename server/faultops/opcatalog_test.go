@@ -4189,6 +4189,56 @@ var opCatalog = []operation{
 		},
 	},
 	{
+		// dashboard.go's SendComplianceDigest: sent=false when no channel is
+		// wired is a valid, successful response, not an error — batch 21.
+		Key: "REST POST /api/v1/compliance/digest/send",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/compliance/digest/send", nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// dashboard.go's VerifyComplianceEvidence: always 200, the
+		// verification RESULT (valid/invalid) is data, not an HTTP error —
+		// batch 21.
+		Key: "REST POST /api/v1/compliance/evidence/verify",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/compliance/evidence/verify", map[string]any{
+				"data_b64": "ZnV6eg==", "signature": "fuzz-invalid-signature", "filename": "keyorix-evidence-20260101T000000Z.json",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// compliance_snapshots_handler.go's TakeComplianceSnapshot — batch 21.
+		Key: "REST POST /api/v1/compliance/snapshots",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/compliance/snapshots", nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// audit.go's MigrateAuditChainEncoding: defaults to dry_run=true, no
+		// body required — batch 21.
+		Key: "REST POST /api/v1/audit/migrate-chain-encoding",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/audit/migrate-chain-encoding", nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
 		Key: "GRPC keyorix.v1.MachineIdentityService.ClassifyMachineToken",
 		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
 			machineID, err := createMachineIdentityForFuzz(ctx, w, 1)

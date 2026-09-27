@@ -246,6 +246,11 @@ var operationOverrides = map[string]overrideEntry{
 	"REST POST /api/v1/auth/tokens":                {StatusFuzzed, "opCatalog[\"CreatePAT\"] — batch 20"},
 	"REST DELETE /api/v1/auth/tokens/{id}":         {StatusFuzzed, "opCatalog[\"RevokePAT\"] — batch 20"},
 	"REST DELETE /api/v1/auth/tokens/expired":      {StatusFuzzed, "opCatalog[\"BulkRevokeExpiredPATs\"] — batch 20"},
+
+	"REST POST /api/v1/compliance/digest/send":            {StatusFuzzed, "opCatalog[\"SendComplianceDigest\"] — batch 21"},
+	"REST POST /api/v1/compliance/evidence/verify":        {StatusFuzzed, "opCatalog[\"VerifyComplianceEvidence\"] — batch 21"},
+	"REST POST /api/v1/compliance/snapshots":               {StatusFuzzed, "opCatalog[\"TakeComplianceSnapshot\"] — batch 21"},
+	"REST POST /api/v1/audit/migrate-chain-encoding":       {StatusFuzzed, "opCatalog[\"MigrateAuditChainEncoding\"] — batch 21"},
 }
 
 func statusOf(key string) overrideEntry {
