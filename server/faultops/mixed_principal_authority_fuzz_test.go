@@ -273,10 +273,6 @@ func m1LoginAs(ctx context.Context, w *faultWorld, username string) (string, err
 	return session.SessionToken, nil
 }
 
-// fuzzUserPassword matches createUserForFuzz's (opcatalog_test.go) hardcoded
-// password for every user this package creates via that helper.
-const fuzzUserPassword = "Xk7#Qm2$Lp9@Vn4!"
-
 // buildM1World seeds the two projects, fetches the seeded viewer role, and
 // creates one disposable target user -- shared scaffolding every principal
 // and op below reuses.
