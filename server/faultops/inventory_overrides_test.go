@@ -146,6 +146,23 @@ var operationOverrides = map[string]overrideEntry{
 	"GRPC keyorix.v1.MachineIdentityService.IssueMachineToken":                                           {StatusFuzzed, "opCatalog[\"GRPCIssueMachineToken\"] — batch 14"},
 	"GRPC keyorix.v1.MachineIdentityService.RevokeMachineToken":                                          {StatusFuzzed, "opCatalog[\"GRPCRevokeMachineToken\"] — batch 14"},
 	"GRPC keyorix.v1.MachineIdentityService.ClassifyMachineToken":                                        {StatusFuzzed, "opCatalog[\"GRPCClassifyMachineToken\"] — batch 14"},
+
+	"REST POST /api/v1/projects/{id}/invitations":                              {StatusFuzzed, "opCatalog[\"CreateInvitation\"] — batch 15"},
+	"REST DELETE /api/v1/projects/{id}/invitations/{invitationId}":             {StatusFuzzed, "opCatalog[\"RevokeInvitation\"] — batch 15"},
+	"REST POST /api/v1/invitations":                                           {StatusFuzzed, "opCatalog[\"CreateGlobalInvitation\"] — batch 15"},
+	"REST POST /api/v1/projects/{id}/access-requests":                         {StatusFuzzed, "opCatalog[\"CreateAccessRequest\"] — batch 15"},
+	"REST POST /api/v1/projects/{id}/access-requests/{requestId}/withdraw":    {StatusFuzzed, "opCatalog[\"WithdrawAccessRequest\"] — batch 15"},
+	"REST PUT /api/v1/projects/{id}/access-requests/{requestId}":              {StatusFuzzed, "opCatalog[\"ResolveAccessRequest\"] — batch 15"},
+	"GRPC keyorix.v1.ProjectService.CreateProject":                            {StatusFuzzed, "opCatalog[\"GRPCCreateProject\"] — batch 15"},
+	"REST DELETE /api/v1/projects/{id}":                                       {StatusFuzzed, "opCatalog[\"DeleteProject\"] — batch 15"},
+	"REST POST /api/v1/projects/{id}/restore":                                 {StatusFuzzed, "opCatalog[\"RestoreProject\"] — batch 15"},
+	"REST POST /api/v1/projects/{id}/environments":                            {StatusFuzzed, "opCatalog[\"CreateProjectEnvironment\"] — batch 15"},
+	"REST DELETE /api/v1/environments/{id}":                                   {StatusFuzzed, "opCatalog[\"DeleteEnvironment\"] — batch 15"},
+	"REST POST /api/v1/projects/{id}/environments/{envId}/clone":              {StatusFuzzed, "opCatalog[\"CloneEnvironment\"] — batch 15"},
+	"REST POST /api/v1/projects/{projectId}/environments/{id}/restore":        {StatusFuzzed, "opCatalog[\"RestoreEnvironment\"] — batch 15"},
+	"REST POST /api/v1/projects/{id}/environments/{envId}/copy-secrets":       {StatusFuzzed, "opCatalog[\"CopyEnvironmentSecrets\"] — batch 15"},
+	"GRPC keyorix.v1.RoleService.CreateRole":                                  {StatusFuzzed, "opCatalog[\"GRPCCreateRole\"] — batch 15"},
+	"GRPC keyorix.v1.UserService.CreateUser":                                  {StatusFuzzed, "opCatalog[\"GRPCCreateUser\"] — batch 15"},
 }
 
 func statusOf(key string) overrideEntry {

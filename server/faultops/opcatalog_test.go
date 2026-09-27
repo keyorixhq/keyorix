@@ -179,7 +179,7 @@ func createGroupForFuzz(ctx context.Context, w *faultWorld, name string) (uint, 
 func createUserForFuzz(ctx context.Context, w *faultWorld, username string) (uint, error) {
 	st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/users/", map[string]any{
 		"username": username, "email": username + "@example.com",
-		"password": "Xk7#Qm2$Lp9@Vn4!", "display_name": "Fuzz User " + username,
+		"password": fuzzUserPassword, "display_name": "Fuzz User " + username,
 	})
 	if err != nil {
 		return 0, err
@@ -356,6 +356,89 @@ func issueMachineTokenForFuzz(ctx context.Context, w *faultWorld, projectID, mac
 		return 0, fmt.Errorf("decoding IssueMachineToken response: %w (body=%s)", err, body)
 	}
 	return decoded.Data.ID, nil
+}
+
+// createProjectForFuzz creates a project via the real REST endpoint and
+// returns its ID.
+func createProjectForFuzz(ctx context.Context, w *faultWorld, name string) (uint, error) {
+	st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects", map[string]any{
+		"name": name,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if st/100 != 2 {
+		return 0, fmt.Errorf("setup CreateProject: HTTP %d: %s", st, body)
+	}
+	var decoded struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+		return 0, fmt.Errorf("decoding CreateProject response: %w (body=%s)", err, body)
+	}
+	return decoded.Data.ID, nil
+}
+
+// createEnvironmentForFuzz creates an environment under projectID via the real
+// REST endpoint and returns its ID.
+func createEnvironmentForFuzz(ctx context.Context, w *faultWorld, projectID uint, name string) (uint, error) {
+	st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/%d/environments", projectID), map[string]any{
+		"name": name,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if st/100 != 2 {
+		return 0, fmt.Errorf("setup CreateProjectEnvironment: HTTP %d: %s", st, body)
+	}
+	var decoded struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+		return 0, fmt.Errorf("decoding CreateProjectEnvironment response: %w (body=%s)", err, body)
+	}
+	return decoded.Data.ID, nil
+}
+
+// fuzzUserPassword is the fixed password createUserForFuzz sets on every
+// fuzz-created user — shared with loginForFuzz so a caller can authenticate as
+// one of these users after creating it.
+const fuzzUserPassword = "Xk7#Qm2$Lp9@Vn4!"
+
+// loginForFuzz logs in as username/password via the real /auth/login endpoint
+// and returns the resulting session token (the raw kx_session cookie value) —
+// setup for operations whose real caller must be a specific non-admin user
+// (e.g. ResolveAccessRequest, which forbids an admin from approving their own
+// access request).
+func loginForFuzz(ctx context.Context, w *faultWorld, username, password string) (string, error) {
+	b, err := json.Marshal(map[string]any{"username": username, "password": password})
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.httpServer.URL+"/auth/login", bytes.NewReader(b))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := w.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode/100 != 2 {
+		return "", fmt.Errorf("setup Login: HTTP %d: %s", resp.StatusCode, respBody)
+	}
+	for _, c := range resp.Cookies() {
+		if c.Name == middleware.SessionCookieName {
+			return c.Value, nil
+		}
+	}
+	return "", fmt.Errorf("Login response carried no %s cookie", middleware.SessionCookieName)
 }
 
 // opCatalog is the closed set of operations FuzzStorageFaultOperations can pick
@@ -1819,6 +1902,350 @@ var opCatalog = []operation{
 			ids := state.([2]uint)
 			_, err := pb.NewMachineIdentityServiceClient(w.grpcConn).RevokeMachineToken(w.grpcCtx, &pb.RevokeMachineTokenRequest{
 				ProjectId: 1, MachineId: uint32(ids[0]), TokenId: uint32(ids[1]),
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		// invitations.go's CreateInvitation — batch 15.
+		Key: "REST POST /api/v1/projects/{id}/invitations",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/invitations", map[string]any{
+				"email": "fuzz-b15-invitee@example.com", "role": "viewer",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// invitations.go's RevokeInvitation — batch 15.
+		Key: "REST DELETE /api/v1/projects/{id}/invitations/{invitationId}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/invitations", map[string]any{
+				"email": "fuzz-b15-revoke@example.com", "role": "viewer",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateInvitation: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					Invitation struct {
+						ID uint `json:"id"`
+					} `json:"invitation"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.Invitation.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateInvitation response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.Invitation.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			invID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/projects/1/invitations/%d", invID), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// invitations.go's CreateGlobalInvitation (ADR-024) — batch 15.
+		Key: "REST POST /api/v1/invitations",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/invitations", map[string]any{
+				"email": "fuzz-b15-global-invitee@example.com",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// invitations.go's CreateAccessRequest (self-service) — batch 15.
+		Key: "REST POST /api/v1/projects/{id}/access-requests",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/access-requests", map[string]any{
+				"suggested_role": "viewer", "reason": "fuzz",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// invitations.go's WithdrawAccessRequest (self-service; the withdrawer
+		// must be the request's own creator, which the admin caller is here) —
+		// batch 15.
+		Key: "REST POST /api/v1/projects/{id}/access-requests/{requestId}/withdraw",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/access-requests", map[string]any{
+				"suggested_role": "viewer", "reason": "fuzz withdraw",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateAccessRequest: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					AccessRequest struct {
+						ID uint `json:"id"`
+					} `json:"access_request"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.AccessRequest.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateAccessRequest response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.AccessRequest.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			reqID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/1/access-requests/%d/withdraw", reqID), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// invitations.go's ResolveAccessRequest (approve): the resolver must
+		// NOT be the request's own creator ("cannot approve their own"), so
+		// Setup logs in as a freshly created, non-admin user to create the
+		// request — batch 15.
+		Key: "REST PUT /api/v1/projects/{id}/access-requests/{requestId}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			userID, err := createUserForFuzz(ctx, w, "fuzz-b15-resolve-requester")
+			if err != nil {
+				return nil, err
+			}
+			token, err := loginForFuzz(ctx, w, "fuzz-b15-resolve-requester", fuzzUserPassword)
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSONAs(ctx, w, token, http.MethodPost, "/api/v1/projects/1/access-requests", map[string]any{
+				"suggested_role": "viewer", "reason": "fuzz resolve",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateAccessRequest (as user %d): HTTP %d: %s", userID, st, body)
+			}
+			var decoded struct {
+				Data struct {
+					AccessRequest struct {
+						ID uint `json:"id"`
+					} `json:"access_request"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.AccessRequest.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateAccessRequest response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.AccessRequest.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			reqID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/projects/1/access-requests/%d", reqID), map[string]any{
+				"action": "approve", "granted_role": "viewer",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.ProjectService.CreateProject",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			_, err := pb.NewProjectServiceClient(w.grpcConn).CreateProject(w.grpcCtx, &pb.CreateProjectRequest{
+				Name: "fuzz-b15-project-grpc-create",
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		// catalog.go's DeleteProject on a freshly created, otherwise-unused
+		// project (not project 1, which every other op's Setup assumes
+		// exists) — batch 15.
+		Key: "REST DELETE /api/v1/projects/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createProjectForFuzz(ctx, w, "fuzz-b15-project-delete")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/projects/%d", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// catalog.go's RestoreProject — batch 15.
+		Key: "REST POST /api/v1/projects/{id}/restore",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			id, err := createProjectForFuzz(ctx, w, "fuzz-b15-project-restore")
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/projects/%d", id), nil)
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup DeleteProject: HTTP %d: %s", st, body)
+			}
+			return id, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/%d/restore", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// catalog.go's CreateProjectEnvironment — batch 15.
+		Key: "REST POST /api/v1/projects/{id}/environments",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/environments", map[string]any{
+				"name": "fuzz-b15-env-create",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// catalog.go's DeleteEnvironment — batch 15.
+		Key: "REST DELETE /api/v1/environments/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createEnvironmentForFuzz(ctx, w, 1, "fuzz-b15-env-delete")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/environments/%d", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// catalog.go's CloneEnvironment: two environments in the same project
+		// — batch 15.
+		Key: "REST POST /api/v1/projects/{id}/environments/{envId}/clone",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			src, err := createEnvironmentForFuzz(ctx, w, 1, "fuzz-b15-env-clone-src")
+			if err != nil {
+				return nil, err
+			}
+			dst, err := createEnvironmentForFuzz(ctx, w, 1, "fuzz-b15-env-clone-dst")
+			if err != nil {
+				return nil, err
+			}
+			return [2]uint{src, dst}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/1/environments/%d/clone", ids[0]), map[string]any{
+				"destination_environment_id": ids[1],
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// catalog.go's RestoreEnvironment (nested under the project so the
+		// permission scope resolves; note the {projectId}/{id} param names,
+		// swapped from every other environment route) — batch 15.
+		Key: "REST POST /api/v1/projects/{projectId}/environments/{id}/restore",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			id, err := createEnvironmentForFuzz(ctx, w, 1, "fuzz-b15-env-restore")
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/environments/%d", id), nil)
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup DeleteEnvironment: HTTP %d: %s", st, body)
+			}
+			return id, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/1/environments/%d/restore", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secrets_copy_environment.go's CopyEnvironmentSecrets: two
+		// environments in the same project — batch 15.
+		Key: "REST POST /api/v1/projects/{id}/environments/{envId}/copy-secrets",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			src, err := createEnvironmentForFuzz(ctx, w, 1, "fuzz-b15-env-copy-src")
+			if err != nil {
+				return nil, err
+			}
+			dst, err := createEnvironmentForFuzz(ctx, w, 1, "fuzz-b15-env-copy-dst")
+			if err != nil {
+				return nil, err
+			}
+			return [2]uint{src, dst}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/1/environments/%d/copy-secrets", ids[0]), map[string]any{
+				"target_environment_id": ids[1],
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.RoleService.CreateRole",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			_, err := pb.NewRoleServiceClient(w.grpcConn).CreateRole(w.grpcCtx, &pb.CreateRoleRequest{
+				Name: "fuzz-b15-role-grpc-create", Description: "fuzz role", Permissions: []string{"secrets.read"},
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.UserService.CreateUser",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			pw := fuzzUserPassword
+			_, err := pb.NewUserServiceClient(w.grpcConn).CreateUser(w.grpcCtx, &pb.CreateUserRequest{
+				Username: "fuzz-b15-user-grpc-create", Email: "fuzz-b15-user-grpc-create@example.com", Password: &pw,
 			})
 			if err != nil {
 				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
