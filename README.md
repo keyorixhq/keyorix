@@ -98,6 +98,13 @@ keyorix secret import --file .env --format dotenv --project 1 --env 1
 keyorix secret import --file vault-export.yaml --format vault --project 1 --env 1 --dry-run
 ```
 
+For a **live** Vault/OpenBao instance (rather than a static export file) —
+including AWS/Azure/GCP secret managers — use `keyorix-migrate`, a separate
+release binary (`keyorix-migrate_<os>_<arch>`) that connects directly and
+imports over the Keyorix REST API. See
+[docs/migrate-from-vault.md](docs/migrate-from-vault.md) and
+[docs/migrate-from-cloud.md](docs/migrate-from-cloud.md).
+
 ---
 
 ## SDKs

@@ -10,6 +10,21 @@ writing anything. Nothing changes until you pass `--apply`.
 
 ## 1. Get `keyorix-migrate`
 
+Download the release binary for your platform from
+[the latest GitHub Release](https://github.com/keyorixhq/keyorix/releases/latest)
+(named `keyorix-migrate_<os>_<arch>`, e.g. `keyorix-migrate_linux_amd64`) and
+verify it against the release's signed `checksums.txt` — see
+[SECURITY.md](../SECURITY.md#verifying-a-release) for the full verification
+steps:
+
+```
+curl -LO https://github.com/keyorixhq/keyorix/releases/latest/download/keyorix-migrate_linux_amd64
+chmod +x keyorix-migrate_linux_amd64
+./keyorix-migrate_linux_amd64 --help
+```
+
+Or build from source:
+
 ```
 git clone https://github.com/keyorixhq/keyorix.git
 cd keyorix/migrate
