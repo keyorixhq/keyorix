@@ -119,6 +119,9 @@ var operationOverrides = map[string]overrideEntry{
 	"REST POST /api/v1/admin/jobs/token-expiry-check":      {StatusFuzzed, "opCatalog[\"RunTokenExpiryCheck\"] — batch 11"},
 	"REST POST /api/v1/admin/jobs/suspend-inactive-users":  {StatusFuzzed, "opCatalog[\"SuspendInactiveUsers\"] — batch 11"},
 	"REST POST /api/v1/admin/jobs/purge-audit-logs":        {StatusFuzzed, "opCatalog[\"PurgeAuditLogsJob\"] — batch 11"},
+
+	"REST POST /api/v1/admin/impersonate":      {StatusFuzzed, "opCatalog[\"StartImpersonation\"] — batch 12"},
+	"REST POST /api/v1/auth/end-impersonation": {StatusFuzzed, "opCatalog[\"EndImpersonation\"] — batch 12"},
 }
 
 func statusOf(key string) overrideEntry {

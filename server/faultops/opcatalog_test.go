@@ -33,6 +33,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/middleware"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -60,6 +61,14 @@ type operation struct {
 }
 
 func httpJSON(ctx context.Context, w *faultWorld, method, path string, body any) (int, []byte, error) {
+	return httpJSONAs(ctx, w, w.adminToken, method, path, body)
+}
+
+// httpJSONAs is httpJSON with an explicit bearer token, for the rare operation
+// whose real caller isn't the bootstrapped admin — e.g. EndImpersonation,
+// which authenticates with the impersonation session's own token
+// (admin_impersonation.go's End: extractBearerToken(r), never the admin's).
+func httpJSONAs(ctx context.Context, w *faultWorld, token, method, path string, body any) (int, []byte, error) {
 	var reader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -72,7 +81,7 @@ func httpJSON(ctx context.Context, w *faultWorld, method, path string, body any)
 	if err != nil {
 		return 0, nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+w.adminToken)
+	req.Header.Set("Authorization", "Bearer "+token)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -187,6 +196,41 @@ func createUserForFuzz(ctx context.Context, w *faultWorld, username string) (uin
 		return 0, fmt.Errorf("decoding CreateUser response: %w (body=%s)", err, body)
 	}
 	return decoded.Data.ID, nil
+}
+
+// startImpersonationForFuzz starts an impersonation session for targetUserID
+// via the real REST endpoint and returns the resulting session token (the raw
+// kx_session cookie value) — setup for EndImpersonation, which authenticates
+// with that token directly as a Bearer header, not the cookie (see
+// admin_impersonation.go's End: extractBearerToken(r)). impersonationResponse
+// no longer carries the token in its JSON body, so it must be read off the
+// Set-Cookie header instead.
+func startImpersonationForFuzz(ctx context.Context, w *faultWorld, targetUserID uint) (string, error) {
+	b, err := json.Marshal(map[string]any{"user_id": targetUserID})
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.httpServer.URL+"/api/v1/admin/impersonate", bytes.NewReader(b))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+w.adminToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := w.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode/100 != 2 {
+		return "", fmt.Errorf("setup StartImpersonation: HTTP %d: %s", resp.StatusCode, respBody)
+	}
+	for _, c := range resp.Cookies() {
+		if c.Name == middleware.SessionCookieName {
+			return c.Value, nil
+		}
+	}
+	return "", fmt.Errorf("StartImpersonation response carried no %s cookie", middleware.SessionCookieName)
 }
 
 // opCatalog is the closed set of operations FuzzStorageFaultOperations can pick
@@ -1161,6 +1205,46 @@ var opCatalog = []operation{
 			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/admin/jobs/purge-audit-logs", map[string]any{
 				"retention_days": 30,
 			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// admin_impersonation.go's Start: gated by users.impersonate
+		// (admin-bypass only); refuses self-impersonation and a nonexistent
+		// target — batch 12.
+		Key: "REST POST /api/v1/admin/impersonate",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createUserForFuzz(ctx, w, "fuzz-b12-impersonate-target")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			userID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/admin/impersonate", map[string]any{
+				"user_id": userID,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// admin_impersonation.go's End: authenticates via the impersonation
+		// session's OWN token (extractBearerToken), never the admin's —
+		// Setup performs a real Start to obtain that token — batch 12.
+		Key: "REST POST /api/v1/auth/end-impersonation",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			userID, err := createUserForFuzz(ctx, w, "fuzz-b12-endimp-target")
+			if err != nil {
+				return nil, err
+			}
+			return startImpersonationForFuzz(ctx, w, userID)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			token := state.(string)
+			st, body, err := httpJSONAs(ctx, w, token, http.MethodPost, "/api/v1/auth/end-impersonation", nil)
 			if err != nil {
 				return opResult{}, err
 			}
