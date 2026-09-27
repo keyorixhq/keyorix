@@ -176,6 +176,27 @@ var operationOverrides = map[string]overrideEntry{
 	"REST PUT /api/v1/projects/{id}/memberships/{membershipId}":      {StatusFuzzed, "opCatalog[\"TransitionMembership\"] — batch 16"},
 	"REST POST /api/v1/user-roles/":                                  {StatusFuzzed, "opCatalog[\"AssignRoleUserRolesRoute\"] — batch 16"},
 	"REST DELETE /api/v1/user-roles/":                                {StatusFuzzed, "opCatalog[\"RemoveRoleUserRolesRoute\"] — batch 16"},
+
+	"REST POST /api/v1/projects/{id}/secrets/bulk-delete":                     {StatusFuzzed, "opCatalog[\"BulkDeleteSecrets\"] — batch 17"},
+	"REST POST /api/v1/projects/{id}/secrets/bulk-rename":                     {StatusFuzzed, "opCatalog[\"BulkRenameSecrets\"] — batch 17"},
+	"REST POST /api/v1/projects/{id}/secrets/bulk-rotate":                     {StatusFuzzed, "opCatalog[\"BulkRotateSecrets\"] — batch 17"},
+	"REST POST /api/v1/projects/{id}/secrets/extend-expiring":                 {StatusFuzzed, "opCatalog[\"ExtendExpiringSecrets\"] — batch 17"},
+	"REST POST /api/v1/projects/{id}/secrets/reassign-owner":                  {StatusFuzzed, "opCatalog[\"ReassignOwner\"] — batch 17"},
+	"REST POST /api/v1/projects/{id}/secrets/render":                          {StatusFuzzed, "opCatalog[\"RenderTemplate\"] — batch 17"},
+	"REST POST /api/v1/projects/{id}/secrets/resume-all":                      {StatusFuzzed, "opCatalog[\"ResumeProjectSecrets\"] — batch 17"},
+	"REST POST /api/v1/projects/{id}/secrets/suspend-all":                     {StatusFuzzed, "opCatalog[\"SuspendProjectSecrets\"] — batch 17"},
+	"REST POST /api/v1/secrets/{id}/copy":                                     {StatusFuzzed, "opCatalog[\"CopySecret\"] — batch 17"},
+	"REST POST /api/v1/secrets/{id}/dependencies":                             {StatusFuzzed, "opCatalog[\"AddSecretDependency\"] — batch 17"},
+	"REST DELETE /api/v1/secrets/{id}/dependencies/{depId}":                   {StatusFuzzed, "opCatalog[\"RemoveSecretDependency\"] — batch 17"},
+	"REST POST /api/v1/secrets/{id}/move":                                     {StatusFuzzed, "opCatalog[\"MoveSecret\"] — batch 17"},
+	"REST POST /api/v1/secrets/{id}/restore":                                  {StatusFuzzed, "opCatalog[\"RestoreSecret\"] — batch 17"},
+	"REST POST /api/v1/secrets/{id}/resume":                                   {StatusFuzzed, "opCatalog[\"ResumeSecret\"] — batch 17"},
+	"REST POST /api/v1/secrets/{id}/rotation/simulate":                        {StatusFuzzed, "opCatalog[\"SimulateRotation\"] — batch 17"},
+	"REST POST /api/v1/secrets/{id}/suspend":                                  {StatusFuzzed, "opCatalog[\"SuspendSecret\"] — batch 17"},
+	"REST POST /api/v1/secrets/{id}/transfer-ownership":                       {StatusFuzzed, "opCatalog[\"TransferOwnership\"] — batch 17"},
+	"REST POST /api/v1/secrets/{id}/versions/{versionId}/comments":            {StatusFuzzed, "opCatalog[\"CreateVersionComment\"] — batch 17"},
+	"REST DELETE /api/v1/secrets/{id}/versions/{versionId}/comments/{commentId}": {StatusFuzzed, "opCatalog[\"DeleteVersionComment\"] — batch 17"},
+	"REST DELETE /api/v1/secrets/{id}/schedule":                               {StatusFuzzed, "opCatalog[\"DeleteSecretSchedule\"] — batch 17"},
 }
 
 func statusOf(key string) overrideEntry {

@@ -131,8 +131,16 @@ func createRoleForFuzz(ctx context.Context, w *faultWorld) (uint, error) {
 // UpdateSecret/DeleteSecret operations. Same "no json tags, Go default
 // capitalized names" shape as Project (models.SecretNode).
 func createSecretForFuzz(ctx context.Context, w *faultWorld) (uint, error) {
+	return createSecretNamedForFuzz(ctx, w, "fuzz-secret-setup")
+}
+
+// createSecretNamedForFuzz is createSecretForFuzz with an explicit name —
+// needed whenever a single Setup creates more than one secret in the same
+// project/environment (name is unique within that scope, so the second
+// createSecretForFuzz call would 409 "Secret with this name already exists").
+func createSecretNamedForFuzz(ctx context.Context, w *faultWorld, name string) (uint, error) {
 	st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/secrets/", map[string]any{
-		"name": "fuzz-secret-setup", "value": "fuzz-value", "project_id": 1, "environment_id": 1, "type": "generic",
+		"name": name, "value": "fuzz-value", "project_id": 1, "environment_id": 1, "type": "generic",
 	})
 	if err != nil {
 		return 0, err
@@ -485,6 +493,31 @@ func addProjectMemberForFuzz(ctx context.Context, w *faultWorld, projectID, user
 		return fmt.Errorf("setup AddProjectMember: HTTP %d: %s", st, body)
 	}
 	return nil
+}
+
+// firstSecretVersionIDForFuzz fetches secretID's version list and returns the
+// first (only, for a freshly created secret) version's ID — setup for the
+// version-comment operations, which validate versionId actually belongs to
+// secretID (versionBelongsToSecret) rather than accepting any numeric ID.
+func firstSecretVersionIDForFuzz(ctx context.Context, w *faultWorld, secretID uint) (uint, error) {
+	st, body, err := httpJSON(ctx, w, http.MethodGet, fmt.Sprintf("/api/v1/secrets/%d/versions", secretID), nil)
+	if err != nil {
+		return 0, err
+	}
+	if st/100 != 2 {
+		return 0, fmt.Errorf("setup GetSecretVersions: HTTP %d: %s", st, body)
+	}
+	var decoded struct {
+		Data struct {
+			Versions []struct {
+				ID uint `json:"ID"`
+			} `json:"versions"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil || len(decoded.Data.Versions) == 0 {
+		return 0, fmt.Errorf("decoding GetSecretVersions response: %w (body=%s)", err, body)
+	}
+	return decoded.Data.Versions[0].ID, nil
 }
 
 // opCatalog is the closed set of operations FuzzStorageFaultOperations can pick
@@ -2613,6 +2646,451 @@ var opCatalog = []operation{
 			st, body, err := httpJSON(ctx, w, http.MethodDelete, "/api/v1/user-roles/", map[string]any{
 				"user_id": ids[0], "role_id": ids[1], "project_id": 1, "environment_id": 0,
 			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secrets_bulk_delete.go's BulkDeleteSecrets — batch 17.
+		Key: "REST POST /api/v1/projects/{id}/secrets/bulk-delete",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createSecretForFuzz(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/secrets/bulk-delete", map[string]any{
+				"secret_ids": []uint{id},
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secrets_bulk_rename.go's BulkRenameSecrets — batch 17.
+		Key: "REST POST /api/v1/projects/{id}/secrets/bulk-rename",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createSecretForFuzz(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/secrets/bulk-rename", map[string]any{
+				"renames": []map[string]any{{"id": id, "new_name": "fuzz-b17-renamed"}},
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secrets_bulk_rotate.go's BulkRotateSecrets: every field optional
+		// (omitted secret_ids rotates all matches) — batch 17.
+		Key: "REST POST /api/v1/projects/{id}/secrets/bulk-rotate",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/secrets/bulk-rotate", map[string]any{})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secrets_extend_expiring.go's ExtendExpiringSecrets: empty body is
+		// valid (defaults apply) — batch 17.
+		Key: "REST POST /api/v1/projects/{id}/secrets/extend-expiring",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/secrets/extend-expiring", map[string]any{})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secrets_reassign_owner.go's ReassignOwner — batch 17.
+		Key: "REST POST /api/v1/projects/{id}/secrets/reassign-owner",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			from, err := createUserForFuzz(ctx, w, "fuzz-b17-reassign-from")
+			if err != nil {
+				return nil, err
+			}
+			to, err := createUserForFuzz(ctx, w, "fuzz-b17-reassign-to")
+			if err != nil {
+				return nil, err
+			}
+			return [2]uint{from, to}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/secrets/reassign-owner", map[string]any{
+				"from_owner_id": ids[0], "to_owner_id": ids[1],
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secrets_render.go's RenderTemplate: a literal template with no
+		// ${secret:...} references resolves trivially — batch 17.
+		Key: "REST POST /api/v1/projects/{id}/secrets/render",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/secrets/render", map[string]any{
+				"template": "fuzz literal template, no references",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// projects_suspend.go's ResumeProjectSecrets — batch 17.
+		Key: "REST POST /api/v1/projects/{id}/secrets/resume-all",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/secrets/resume-all", nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// projects_suspend.go's SuspendProjectSecrets — batch 17.
+		Key: "REST POST /api/v1/projects/{id}/secrets/suspend-all",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/secrets/suspend-all", nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secrets_copy.go's CopySecret: a second environment in the same
+		// project to copy into — batch 17.
+		Key: "REST POST /api/v1/secrets/{id}/copy",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			envID, err := createEnvironmentForFuzz(ctx, w, 1, "fuzz-b17-copy-dst-env")
+			if err != nil {
+				return nil, err
+			}
+			return [2]uint{secretID, envID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/copy", ids[0]), map[string]any{
+				"environment_id": ids[1], "name": "fuzz-b17-secret-copy",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secret_dependencies.go's AddSecretDependency: a second secret in
+		// the same project to depend on — batch 17.
+		Key: "REST POST /api/v1/secrets/{id}/dependencies",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			dependsOnID, err := createSecretNamedForFuzz(ctx, w, "fuzz-b17-dependency-target")
+			if err != nil {
+				return nil, err
+			}
+			return [2]uint{secretID, dependsOnID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/dependencies", ids[0]), map[string]any{
+				"depends_on_id": ids[1], "note": "fuzz dependency",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secret_dependencies.go's RemoveSecretDependency — batch 17.
+		Key: "REST DELETE /api/v1/secrets/{id}/dependencies/{depId}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			dependsOnID, err := createSecretNamedForFuzz(ctx, w, "fuzz-b17-dependency-target")
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/dependencies", secretID), map[string]any{
+				"depends_on_id": dependsOnID, "note": "fuzz dependency",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup AddSecretDependency: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					ID uint `json:"ID"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding AddSecretDependency response: %w (body=%s)", err, body)
+			}
+			return [2]uint{secretID, decoded.Data.ID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d/dependencies/%d", ids[0], ids[1]), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secrets_move.go's MoveSecret: parent_id 0 means root, a no-op move
+		// for a secret that already has no parent — batch 17.
+		Key: "REST POST /api/v1/secrets/{id}/move",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createSecretForFuzz(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/move", id), map[string]any{
+				"parent_id": 0,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secrets_crud.go's RestoreSecret — batch 17.
+		Key: "REST POST /api/v1/secrets/{id}/restore",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			id, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d", id), nil)
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup DeleteSecret: HTTP %d: %s", st, body)
+			}
+			return id, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/restore", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secrets_suspend.go's ResumeSecret — batch 17.
+		Key: "REST POST /api/v1/secrets/{id}/resume",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			id, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/suspend", id), nil)
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup SuspendSecret: HTTP %d: %s", st, body)
+			}
+			return id, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/resume", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// rotation_dryrun.go's SimulateRotation (read-only) — batch 17.
+		Key: "REST POST /api/v1/secrets/{id}/rotation/simulate",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createSecretForFuzz(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/rotation/simulate", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secrets_suspend.go's SuspendSecret — batch 17.
+		Key: "REST POST /api/v1/secrets/{id}/suspend",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createSecretForFuzz(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/suspend", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secrets_ownership.go's TransferOwnership: the new owner must
+		// already hold secrets.write (or secrets.manage) at the secret's
+		// scope — a plain "viewer" (secrets.read only) fails this ceiling
+		// check, so Setup grants a dedicated secrets.write role first —
+		// batch 17.
+		Key: "REST POST /api/v1/secrets/{id}/transfer-ownership",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			newOwnerID, err := createUserForFuzz(ctx, w, "fuzz-b17-transfer-newowner")
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/roles/", map[string]any{
+				"name": "fuzz-b17-writer-role", "description": "fuzz writer role", "permissions": []string{"secrets.write"},
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateRole: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					Role struct {
+						ID uint `json:"id"`
+					} `json:"role"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.Role.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateRole response: %w (body=%s)", err, body)
+			}
+			if err := assignUserRoleForFuzz(ctx, w, newOwnerID, decoded.Data.Role.ID, 1); err != nil {
+				return nil, err
+			}
+			return [2]uint{secretID, newOwnerID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/transfer-ownership", ids[0]), map[string]any{
+				"new_owner_id": ids[1],
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secret_version_comments.go's CreateComment — batch 17.
+		Key: "REST POST /api/v1/secrets/{id}/versions/{versionId}/comments",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			versionID, err := firstSecretVersionIDForFuzz(ctx, w, secretID)
+			if err != nil {
+				return nil, err
+			}
+			return [2]uint{secretID, versionID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/versions/%d/comments", ids[0], ids[1]), map[string]any{
+				"comment": "fuzz version comment",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secret_version_comments.go's DeleteComment — batch 17.
+		Key: "REST DELETE /api/v1/secrets/{id}/versions/{versionId}/comments/{commentId}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			versionID, err := firstSecretVersionIDForFuzz(ctx, w, secretID)
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/versions/%d/comments", secretID, versionID), map[string]any{
+				"comment": "fuzz version comment to delete",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateComment: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					Comment struct {
+						ID uint `json:"id"`
+					} `json:"comment"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.Comment.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateComment response: %w (body=%s)", err, body)
+			}
+			return [3]uint{secretID, versionID, decoded.Data.Comment.ID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([3]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d/versions/%d/comments/%d", ids[0], ids[1], ids[2]), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secret_schedule.go's DeleteSecretSchedule: a plain pass-through
+		// delete, no precondition that a schedule was ever set — batch 17.
+		Key: "REST DELETE /api/v1/secrets/{id}/schedule",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createSecretForFuzz(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d/schedule", id), nil)
 			if err != nil {
 				return opResult{}, err
 			}
