@@ -1,11 +1,15 @@
-# Publishes the Keyorix CLI + server release binaries when a vX.Y.Z tag is pushed.
+# Publishes the Keyorix CLI + server + keyorix-migrate release binaries when a
+# vX.Y.Z tag is pushed.
 #
 # Cross-compiles via `make release` (linux/darwin × amd64/arm64) and uploads the
-# binaries + checksums.txt to the GitHub Release for the tag. The asset names
-# (keyorix_<os>_<arch>, keyorix-server_<os>_<arch>) are exactly what install.sh
-# downloads — they are produced by the Makefile `release` target; keep the three
-# in sync. Before this workflow, release assets were built out-of-band, which is
-# how install.sh drifted from the published names.
+# binaries + checksums.txt to the GitHub Release for the tag. The CLI/server
+# asset names (keyorix_<os>_<arch>, keyorix-server_<os>_<arch>) are exactly what
+# install.sh downloads — they are produced by the Makefile `release` target;
+# keep the three in sync. Before this workflow, release assets were built
+# out-of-band, which is how install.sh drifted from the published names.
+# keyorix-migrate_<os>_<arch> is also produced here (same target) but is a
+# standalone tool a user downloads manually per docs/migrate-from-vault.md —
+# install.sh intentionally does not fetch it.
 name: release
 
 on:

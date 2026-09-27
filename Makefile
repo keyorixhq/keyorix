@@ -1,5 +1,9 @@
 BINARY_CLI=keyorix
 BINARY_SERVER=keyorix-server
+# The Vault/OpenBao migration tool (migrate/, ADR-108 "moved out, not dropped").
+# A separate Go module with its own release cadence -- see migrate/Makefile's
+# own header for why it isn't folded into keyorix-server or the CLI.
+BINARY_MIGRATE=keyorix-migrate
 # Lightweight/air-gapped release variant (-tags lean): drops
 # aws-sdk-go-v2/service/{iam,s3} (see internal/rotation/awsiam_lean.go,
 # internal/evidencesink/objectstore_lean.go) for installs that don't use the
@@ -154,6 +158,10 @@ release: populate-webui-dist
 	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_arm64 ./server
 	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build -tags lean $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER_LEAN)_linux_amd64 ./server
 	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build -tags lean $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER_LEAN)_linux_arm64 ./server
+	(cd migrate && GOWORK=off GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build -ldflags "-s -w" -trimpath -o $(CURDIR)/dist/$(BINARY_MIGRATE)_linux_amd64  .)
+	(cd migrate && GOWORK=off GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build -ldflags "-s -w" -trimpath -o $(CURDIR)/dist/$(BINARY_MIGRATE)_linux_arm64  .)
+	(cd migrate && GOWORK=off GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build -ldflags "-s -w" -trimpath -o $(CURDIR)/dist/$(BINARY_MIGRATE)_darwin_amd64 .)
+	(cd migrate && GOWORK=off GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build -ldflags "-s -w" -trimpath -o $(CURDIR)/dist/$(BINARY_MIGRATE)_darwin_arm64 .)
 	$(MAKE) _sbom-generate
 	@cd dist && (sha256sum * > checksums.txt 2>/dev/null || shasum -a 256 * > checksums.txt)
 	@git checkout -- server/webui/dist/index.html 2>/dev/null || true
@@ -202,6 +210,15 @@ _sbom-generate:
 	(cd cli && GOWORK=off GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main . -licenses -output $(CURDIR)/dist/$(BINARY_CLI)_linux_arm64_sbom.cdx.json    .); \
 	(cd cli && GOWORK=off GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main . -licenses -output $(CURDIR)/dist/$(BINARY_CLI)_darwin_amd64_sbom.cdx.json   .); \
 	(cd cli && GOWORK=off GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main . -licenses -output $(CURDIR)/dist/$(BINARY_CLI)_darwin_arm64_sbom.cdx.json   .);
+	@echo "→ Generating per-binary Go CycloneDX SBOMs for keyorix-migrate"
+	# Unlike cli/go.mod, migrate/go.mod carries no local `replace ... => ../`
+	# directive (it's a full sibling module, not a dependency-pruned leaf --
+	# docs/design-keyorix-migrate.md) -- cyclonedx-gomod never leaves migrate/
+	# to hash the repo, so the web/node_modules workaround above does not apply here.
+	(cd migrate && GOWORK=off GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main . -licenses -output $(CURDIR)/dist/$(BINARY_MIGRATE)_linux_amd64_sbom.cdx.json    .)
+	(cd migrate && GOWORK=off GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main . -licenses -output $(CURDIR)/dist/$(BINARY_MIGRATE)_linux_arm64_sbom.cdx.json    .)
+	(cd migrate && GOWORK=off GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main . -licenses -output $(CURDIR)/dist/$(BINARY_MIGRATE)_darwin_amd64_sbom.cdx.json   .)
+	(cd migrate && GOWORK=off GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main . -licenses -output $(CURDIR)/dist/$(BINARY_MIGRATE)_darwin_arm64_sbom.cdx.json   .)
 	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_linux_amd64_sbom.cdx.json  .
 	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_linux_arm64_sbom.cdx.json  .
 	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_darwin_amd64_sbom.cdx.json .
