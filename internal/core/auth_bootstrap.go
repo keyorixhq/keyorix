@@ -275,20 +275,17 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
 
-	displayName := req.DisplayName
-	if displayName == "" {
-		displayName = req.Username
-	}
-	user, err := c.CreateUser(ctx, &CreateUserRequest{
-		Username:    req.Username,
-		Email:       req.Email,
-		Password:    req.Password,
-		DisplayName: displayName,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create admin user: %w", err)
-	}
-
+	// Seed permissions and roles BEFORE creating the admin user. CreateUser
+	// itself does a best-effort auto-assign of the "system_viewer" baseline
+	// role (ADR-021, see the nested tx.WithTransaction below in this file's
+	// sibling users.go) — if the admin user is created first, that lookup
+	// runs against a database that has no roles at all yet, so it
+	// deterministically fails with "Role not found" on every single fresh
+	// install, on every backend (this is a fixed code-ordering bug, not a
+	// race: GetRoleByName is called before CreateRole ever runs for
+	// "system_viewer", regardless of backend timing). Confirmed live via a
+	// fresh docker-compose Postgres bootstrap before this fix: `user_roles`
+	// held only the "admin" grant for user 1, never "system_viewer".
 	permIDs := make(map[string]uint, len(defaultPermissions))
 	for _, def := range defaultPermissions {
 		p, err := c.storage.CreatePermission(ctx, &models.Permission{
@@ -331,6 +328,20 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 				return nil, fmt.Errorf("failed to assign permission %s to role %s: %w", name, rdef.Name, err)
 			}
 		}
+	}
+
+	displayName := req.DisplayName
+	if displayName == "" {
+		displayName = req.Username
+	}
+	user, err := c.CreateUser(ctx, &CreateUserRequest{
+		Username:    req.Username,
+		Email:       req.Email,
+		Password:    req.Password,
+		DisplayName: displayName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create admin user: %w", err)
 	}
 
 	// The first user is the install super-user: assign the admin role globally.
