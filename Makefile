@@ -38,6 +38,10 @@ RELEASE_LDFLAGS=-ldflags "-s -w $(VERSION_LDFLAGS)"
 CLI_VERSION_LDFLAGS=-X github.com/keyorixhq/keyorix/cli/internal/cliversion.Version=$(VERSION)
 CLI_LDFLAGS=-ldflags "$(CLI_VERSION_LDFLAGS)"
 CLI_RELEASE_LDFLAGS=-ldflags "-s -w $(CLI_VERSION_LDFLAGS)"
+# migrate/ (keyorix-migrate) is likewise its own Go module (ADR-108) with its own build
+# identity package, migrate/internal/migrateversion -- same isolation rule as the CLI.
+MIGRATE_VERSION_LDFLAGS=-X github.com/keyorixhq/keyorix/migrate/internal/migrateversion.Version=$(VERSION)
+MIGRATE_RELEASE_LDFLAGS=-ldflags "-s -w $(MIGRATE_VERSION_LDFLAGS)"
 
 .PHONY: build build-cli build-server build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate smoke check-release-assets airgap-e2e
 
@@ -158,10 +162,10 @@ release: populate-webui-dist
 	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_arm64 ./server
 	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build -tags lean $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER_LEAN)_linux_amd64 ./server
 	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build -tags lean $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER_LEAN)_linux_arm64 ./server
-	(cd migrate && GOWORK=off GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build -ldflags "-s -w" -trimpath -o $(CURDIR)/dist/$(BINARY_MIGRATE)_linux_amd64  .)
-	(cd migrate && GOWORK=off GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build -ldflags "-s -w" -trimpath -o $(CURDIR)/dist/$(BINARY_MIGRATE)_linux_arm64  .)
-	(cd migrate && GOWORK=off GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build -ldflags "-s -w" -trimpath -o $(CURDIR)/dist/$(BINARY_MIGRATE)_darwin_amd64 .)
-	(cd migrate && GOWORK=off GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build -ldflags "-s -w" -trimpath -o $(CURDIR)/dist/$(BINARY_MIGRATE)_darwin_arm64 .)
+	(cd migrate && GOWORK=off GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build $(MIGRATE_RELEASE_LDFLAGS) -trimpath -o $(CURDIR)/dist/$(BINARY_MIGRATE)_linux_amd64  .)
+	(cd migrate && GOWORK=off GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(MIGRATE_RELEASE_LDFLAGS) -trimpath -o $(CURDIR)/dist/$(BINARY_MIGRATE)_linux_arm64  .)
+	(cd migrate && GOWORK=off GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(MIGRATE_RELEASE_LDFLAGS) -trimpath -o $(CURDIR)/dist/$(BINARY_MIGRATE)_darwin_amd64 .)
+	(cd migrate && GOWORK=off GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(MIGRATE_RELEASE_LDFLAGS) -trimpath -o $(CURDIR)/dist/$(BINARY_MIGRATE)_darwin_arm64 .)
 	$(MAKE) _sbom-generate
 	@cd dist && (sha256sum * > checksums.txt 2>/dev/null || shasum -a 256 * > checksums.txt)
 	@git checkout -- server/webui/dist/index.html 2>/dev/null || true
