@@ -1,7 +1,10 @@
 # Build stage — the SPA is built with pnpm (the repo's package manager) on Node 22.
 # All dependencies are needed (Vite et al. are devDependencies), so this is a
-# full install, not --prod.
-FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS builder
+# full install, not --prod. Pinned to $BUILDPLATFORM: the compiled output is a
+# static JS/CSS/HTML bundle with no architecture dependence, so this stage gets
+# no benefit from running under the target arch, only the cost of QEMU
+# emulation when TARGETPLATFORM differs from the runner's own arch.
+FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS builder
 # Exact version, not just the major (docker:S8543) — reproducible builds need
 # a resolved pin, not a moving target. Corepack (bundled with node:22-alpine)
 # fetches the pnpm tarball from the npm registry and verifies it against the
