@@ -37,13 +37,19 @@ func FuzzParseLeafCertificate(f *testing.F) {
 // internal loop/recursion of their own — the invariant worth stating explicitly is
 // that composing them here introduces no NEW panic surface, not a claim about the
 // stdlib functions themselves.
+//
+// #2197 (SSRF guard differential) renamed the target to parseDSNHostsFromURL
+// (multi-host DSNs, plus a manual-authority fallback when url.Parse fails), so
+// this now fuzzes that function, which has more hand-written parsing than the
+// original and makes a better target. The Fuzz name is kept so targets.conf and any
+// saved corpus stay valid.
 func FuzzParseDSNHostFromURL(f *testing.F) {
 	f.Add("")
 	f.Add("postgres://user:pass@host:5432/db")
 	f.Add("mysql://user@[::1]:3306/db")
 	f.Fuzz(func(t *testing.T, dsn string) {
-		fuzzutil.Guard(t.Fatalf, "core.parseDSNHostFromURL", func() {
-			_, _ = parseDSNHostFromURL(dsn)
+		fuzzutil.Guard(t.Fatalf, "core.parseDSNHostsFromURL", func() {
+			_, _ = parseDSNHostsFromURL(dsn)
 		})
 	})
 }
