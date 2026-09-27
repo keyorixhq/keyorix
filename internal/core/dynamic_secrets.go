@@ -731,11 +731,72 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	return nil
 }
 
+// leaseClockRegressionTolerance bounds how far now may read EARLIER than
+// dynamicSecretsClockWatermark before checkLeaseRenewClockNotRegressed
+// refuses a lease renewal. Same value and rationale as
+// sessionRefreshClockRegressionTolerance/secretExpiryClockRegressionTolerance
+// (auth.go/versions.go, #1632): large enough not to false-positive on
+// ordinary NTP slew, small enough to still catch a deliberate/NTP-less
+// manual clock reset.
+const leaseClockRegressionTolerance = 30 * time.Second
+
+// checkLeaseRenewClockNotRegressed refuses to trust now for RenewLease's
+// !now.Before(lease.ExpiresAt) recheck if it looks EARLIER than a time this
+// process has already legitimately observed for a lease operation
+// (FUZZ-MECH M2 finding, 2026-09-27, closing the gap
+// docs/findings/2026-09-27-FINDING-dynamic-secret-lease-clock-rollback.md
+// documents). Reuses RenewLease's own "lease has expired" refusal text, not
+// a distinct message, so a caller cannot use it as an oracle confirming
+// clock manipulation had an effect -- same reasoning as
+// checkSessionRefreshClockNotRegressed (auth.go, #1653), which this mirrors.
+// On success, advances the watermark to now (never backward). Shares
+// dynamicSecretsClockWatermark with dynamicSecretsSweepCutoff below, so a
+// renewal attempt and the background sweep warm the same protection.
+// .UTC() strips any monotonic clock reading now carries -- see
+// authEffectiveNow's doc comment (auth.go) for why an unstripped comparison
+// here would never actually detect a backward wall-clock step.
+func (c *KeyorixCore) checkLeaseRenewClockNotRegressed(now time.Time) error {
+	now = now.UTC()
+	c.dynamicSecretsClockWatermarkMu.Lock()
+	defer c.dynamicSecretsClockWatermarkMu.Unlock()
+	if !c.dynamicSecretsClockWatermark.IsZero() && now.Before(c.dynamicSecretsClockWatermark.Add(-leaseClockRegressionTolerance)) {
+		return fmt.Errorf("lease has expired; issue a new lease instead")
+	}
+	if now.After(c.dynamicSecretsClockWatermark) {
+		c.dynamicSecretsClockWatermark = now
+	}
+	return nil
+}
+
+// dynamicSecretsSweepCutoff returns the later of before and this process's
+// dynamic-secrets clock watermark, so a backward host-clock step never
+// shrinks RevokeExpiredLeases' sweep window -- an already-observed-expired
+// lease stays swept even while a rollback is in effect. CLAMPs rather than
+// refuses (unlike checkLeaseRenewClockNotRegressed above): the sweep is a
+// background maintenance action with no caller to deny, so it prefers "keep
+// working" -- same shape as authEffectiveNow/rbacClockWatermark, not
+// checkSessionRefreshClockNotRegressed's refuse-outright behavior. Advances
+// the SAME watermark checkLeaseRenewClockNotRegressed reads/writes.
+func (c *KeyorixCore) dynamicSecretsSweepCutoff(before time.Time) time.Time {
+	before = before.UTC()
+	c.dynamicSecretsClockWatermarkMu.Lock()
+	defer c.dynamicSecretsClockWatermarkMu.Unlock()
+	if before.After(c.dynamicSecretsClockWatermark) {
+		c.dynamicSecretsClockWatermark = before
+		return before
+	}
+	return c.dynamicSecretsClockWatermark
+}
+
 // RevokeExpiredLeases is the auto-revoke sweep: it revokes every active (or previously
 // revoke_failed) lease past its expiry (system-actored). Returns the count revoked and a
 // non-nil error if any revoke failed, so the scheduler records the partial failure rather
 // than reporting a clean sweep while credentials remain live past their TTL.
 func (c *KeyorixCore) RevokeExpiredLeases(ctx context.Context, before time.Time) (int, error) {
+	// Clamp before FIRST: a scheduler that read a regressed host clock for
+	// its own "now" must not shrink the sweep window below what this process
+	// has already legitimately observed (FUZZ-MECH M2 finding, 2026-09-27).
+	before = c.dynamicSecretsSweepCutoff(before)
 	expired, err := c.storage.ListExpiredActiveLeases(ctx, before)
 	if err != nil {
 		return 0, err
@@ -877,6 +938,15 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 	// would push the backend credential's lifetime forward — resurrecting a
 	// credential that should be gone, violating the promised TTL — and would race the
 	// sweep that is about to revoke it. Refuse; the caller must issue a new lease.
+	//
+	// checkLeaseRenewClockNotRegressed runs FIRST: without it, a host clock
+	// stepped backward to before lease.ExpiresAt after this process already
+	// correctly observed the lease expired would make the check below pass
+	// again, resurrecting a lease this process already knows is dead
+	// (FUZZ-MECH M2 finding, 2026-09-27).
+	if err := c.checkLeaseRenewClockNotRegressed(c.now()); err != nil {
+		return time.Time{}, err
+	}
 	if !c.now().Before(lease.ExpiresAt) {
 		return time.Time{}, fmt.Errorf("lease has expired; issue a new lease instead")
 	}

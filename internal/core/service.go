@@ -493,6 +493,18 @@ type KeyorixCore struct {
 	// state).
 	authTokenClockWatermarkMu sync.Mutex
 	authTokenClockWatermark   time.Time
+	// dynamicSecretsClockWatermarkMu/dynamicSecretsClockWatermark back
+	// checkLeaseRenewClockNotRegressed and dynamicSecretsSweepCutoff
+	// (dynamic_secrets.go): the anti-rollback protection every other
+	// expiring-credential type above already has, closing the one gap
+	// EffectiveNow's own doc comment used to name as deferred (FUZZ-MECH M2,
+	// 2026-09-27, docs/findings/2026-09-27-FINDING-dynamic-secret-lease-clock-rollback.md).
+	// Shared between the two call sites (a renewal attempt and the
+	// background sweep) so either one warms the same protection, mirroring
+	// sessionRefreshWatermark/accessRequestApprovalWatermark's own
+	// same-shape sharing above.
+	dynamicSecretsClockWatermarkMu sync.Mutex
+	dynamicSecretsClockWatermark   time.Time
 }
 
 // AuditForwarder ships persisted audit events to an external sink (e.g. a SIEM).
@@ -750,11 +762,12 @@ func (c *KeyorixCore) ShareEffectiveNow() time.Time { return c.shareEffectiveNow
 // field's "For testability" doc comment above) to callers outside package
 // core that need a testable clock reading but have no dedicated watermarked
 // variant of their own -- currently the dynamic-secrets sweep scheduler's
-// RevokeExpiredLeases call (server/main.go), which itself reads c.now()
-// directly throughout dynamic_secrets.go with no watermark (#1983
-// investigation finding: unlike sessions/PATs/shares, dynamic secrets have
-// no anti-rollback watermark yet -- introducing one is a separate, larger
-// change, out of scope here).
+// RevokeExpiredLeases call (server/main.go), which passes the result as
+// RevokeExpiredLeases' `before` parameter; that call now clamps it through
+// dynamicSecretsSweepCutoff (dynamic_secrets.go), so a regressed reading
+// here no longer shrinks the sweep window (FUZZ-MECH M2 finding, 2026-09-27,
+// closed by the watermark checkLeaseRenewClockNotRegressed/
+// dynamicSecretsSweepCutoff share).
 func (c *KeyorixCore) EffectiveNow() time.Time { return c.now() }
 
 // SetClockForTesting overrides the clock behind every time-based
