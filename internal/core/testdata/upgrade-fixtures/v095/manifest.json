@@ -1,0 +1,16 @@
+{
+  "source_tag": "v0.95.0",
+  "secret_values": {
+    "1": "upgrade-fuzz-secret-value-v0.95.0-0",
+    "2": "upgrade-fuzz-secret-value-v0.95.0-1",
+    "3": "upgrade-fuzz-secret-value-v0.95.0-2",
+    "4": "upgrade-fuzz-secret-value-v0.95.0-3",
+    "5": "upgrade-fuzz-secret-value-v0.95.0-4"
+  },
+  "probe_user_id": 2,
+  "probe_project_id": 1,
+  "probe_allow_read": true,
+  "probe_allow_write": false,
+  "admin_user_id": 1,
+  "passphrase": "upgrade-fuzz-passphrase-v1"
+}
