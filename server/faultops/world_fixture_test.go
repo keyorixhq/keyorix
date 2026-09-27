@@ -8,8 +8,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 )
 
@@ -69,5 +71,24 @@ func TestWorldFixture_BreakGlass(t *testing.T) {
 
 	if _, err := w.core.ActivateBreakGlass(ctx, proj.Data.ID, 1, "fixture verification justification", ""); err != nil {
 		t.Fatalf("ActivateBreakGlass: %v", err)
+	}
+}
+
+// TestWorldFixture_DynamicSecretsEngineFactory proves the factory itself is
+// wired (core.dynamicEngine, called early inside CreateDynamicSecretConfig,
+// returns "no engine factory configured" verbatim when it is nil — see
+// internal/core/service.go — and nothing else produces that exact string).
+// It deliberately does NOT require CreateDynamicSecretConfig to fully
+// succeed: a real reachable Postgres target is PR B's concern when it wires
+// an actual dynamic-secrets operation, not this fixture-only PR's.
+func TestWorldFixture_DynamicSecretsEngineFactory(t *testing.T) {
+	w := newFaultWorld(t, nil)
+	ctx := context.Background()
+	_, err := w.core.CreateDynamicSecretConfig(ctx, &core.CreateDynamicSecretConfigRequest{
+		Name: "fixture-check", ProjectID: 1, EnvironmentID: 1, BackendType: "postgres",
+		AdminDSN: "postgres://user:pass@example.com:5432/db", ActorID: 1,
+	})
+	if err != nil && strings.Contains(err.Error(), "no engine factory configured") {
+		t.Fatalf("dynamic-secrets engine factory not wired: %v", err)
 	}
 }

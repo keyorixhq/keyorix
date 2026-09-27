@@ -29,6 +29,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/delivery"
+	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -294,6 +295,20 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 	testCore.SetBreakGlassPolicy(core.BreakGlassPolicy{
 		Enabled: true, EmergencyRole: "project_developer",
 		DefaultTTL: 4 * time.Hour, MaxTTL: 24 * time.Hour,
+	})
+
+	// Dynamic-secrets engine factory: newFaultWorld never called
+	// SetDynamicEngineFactory (nil factory), so CreateConfig fails at the gate
+	// and every op needing an existing config is unreachable transitively (13
+	// ops). The REAL factory function server/main.go's wireDynamicSecrets wires
+	// in production — dynamic.New per backend type, not a fake/stub engine —
+	// with the same safe (deny-by-default) allowPrivateNetwork/
+	// allowInsecureTransport settings production defaults to absent explicit
+	// operator opt-in. This registers only a FUNCTION (no I/O, no dial) — the
+	// actual dynamic.New call, and whatever backend connectivity it needs, only
+	// happens if/when a future operation (PR B) actually calls CreateConfig.
+	testCore.SetDynamicEngineFactory(func(backendType string) (dynamic.CredentialEngine, error) {
+		return dynamic.New(backendType, false, false)
 	})
 
 	worldPhase = time.Now()
