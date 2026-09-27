@@ -12,6 +12,7 @@ name: release-dry-run
 on:
   pull_request:
     paths:
+      - .github/workflows/release-dry-run.yml
       - Makefile
       - .github/workflows/release.yml
       - .github/workflows/docker-publish.yml
@@ -88,6 +89,14 @@ jobs:
       # signing key or GitHub Release to exercise.
       - name: Cross-compile release binaries + SBOMs (dry run)
         run: make release VERSION=v0.0.0-dryrun
+
+      # The runtime stages (apk add / nginx) run under the TARGET arch, so an
+      # arm64 build on an amd64 runner needs binfmt emulation for those steps.
+      # Same action and pin as docker-publish.yml.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
