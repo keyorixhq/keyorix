@@ -136,16 +136,54 @@ func FuzzCoreOperationSequence(f *testing.F) {
 	// (fuzzworld.Bootstrap, #1947), not an AutoMigrate-only subset.
 	worlds := fuzzworld.Worlds(f, "coreseqfuzz", ":memory:", 1)
 
-	f.Add([]byte{0, 0, 1, 0, 3, 0, 2, 0, 3, 0})
-	f.Add([]byte{0, 1, 3, 1, 1, 1, 3, 4, 2, 1, 3, 4})
-	f.Add([]byte{0, 0, 4, 0, 9, 3, 0, 0, 1, 2, 3, 2}) // create, rotate, read
+	// Every existing seed is prefixed with 0xFF (the full-set sentinel — see
+	// decodeOpSubset), so each one still exercises every operation type exactly
+	// as it did before swarm mode, byte-for-byte, from the second byte on.
+	f.Add([]byte{0xFF, 0, 0, 1, 0, 3, 0, 2, 0, 3, 0})
+	f.Add([]byte{0xFF, 0, 1, 3, 1, 1, 1, 3, 4, 2, 1, 3, 4})
+	f.Add([]byte{0xFF, 0, 0, 4, 0, 9, 3, 0, 0, 1, 2, 3, 2}) // create, rotate, read
 	f.Add([]byte{})
+	// Swarm seeds: restrict the active op set to a rare-in-practice pair so
+	// coverage-guided mutation starts exploring that pair immediately instead of
+	// having to discover a narrow op-subset byte value on its own. Bit i (1<<i)
+	// enables op i (0=create,1=grant,2=revoke,3=read,4=rotate).
+	f.Add([]byte{0b10010, 1, 0, 0, 4, 1, 2, 1}) // grant(bit1) + rotate(bit4) only
+	f.Add([]byte{0b01100, 2, 0, 0, 3, 1, 2, 1}) // revoke(bit2) + read(bit3) only
 
 	f.Fuzz(func(t *testing.T, program []byte) {
 		for _, w := range worlds {
 			runCoreSeqIteration(t, w, program, newWorld, createSecret, principals, adminRoleID, readerRoleID, adminUserID)
 		}
 	})
+}
+
+// decodeOpSubset (swarm mode) reads the FIRST byte of a raw program as an
+// enabled-operation bitmask: bit i (1<<i) enables step operation kind i (0
+// create, 1 grant, 2 revoke, 3 read, 4 rotate). Restricting a program to a
+// small subset makes coverage-guided mutation converge on a specific,
+// possibly rarely-co-occurring PAIR (or singleton) of operation kinds much
+// faster than sampling uniformly across all 5 every step — every step in a
+// swarm program is guaranteed to be one of the chosen kinds, instead of a
+// ~1/25 chance per adjacent pair under uniform selection. The sentinel 0xFF
+// and the degenerate all-zero-bits case both mean "every operation enabled",
+// so this is a strict superset of the pre-swarm behavior: any existing corpus
+// entry whose first byte happens to decode to a non-degenerate subset still
+// runs (just a narrower one), and 0xFF exactly reproduces the original
+// full-set behavior for the rest of the bytes.
+func decodeOpSubset(b byte) []int {
+	if b == 0xFF {
+		return []int{0, 1, 2, 3, 4}
+	}
+	var subset []int
+	for i := 0; i < 5; i++ {
+		if b&(1<<uint(i)) != 0 {
+			subset = append(subset, i)
+		}
+	}
+	if len(subset) == 0 {
+		return []int{0, 1, 2, 3, 4} // degenerate: no bit set -> fall back to full set
+	}
+	return subset
 }
 
 func runCoreSeqIteration(
@@ -158,6 +196,17 @@ func runCoreSeqIteration(
 	c, _, projID, envID := newWorld(t, w)
 	ctx := context.Background()
 	scope := Scope{ProjectID: projID}
+
+	// Swarm mode: the first byte of the raw program picks the enabled-operation
+	// subset for the rest of this iteration; everything after it is the
+	// original 3-bytes-per-step encoding, now read from body rather than program.
+	subsetByte := byte(0xFF)
+	body := program
+	if len(program) > 0 {
+		subsetByte = program[0]
+		body = program[1:]
+	}
+	subset := decodeOpSubset(subsetByte)
 
 	// shadow model:
 	//   canRead[userID] mirrors the REAL grant state (updated only on a nil-error
@@ -185,8 +234,14 @@ func runCoreSeqIteration(
 		}
 	}
 
+	// step's op is always a LITERAL kind (0-4), never subject to subset
+	// remapping — dispatch (below) is what the fuzzed byte stream goes
+	// through; step is also called directly, bypassing the subset entirely,
+	// for the two fixed safety-net calls at the end of this function that
+	// must always be a real create/read regardless of which subset this
+	// iteration's swarm byte selected.
 	step := func(op, a, b byte) {
-		switch op % 5 {
+		switch op {
 		case 0: // admin creates a secret
 			secretSeq++
 			val := []byte{a, b}
@@ -255,11 +310,17 @@ func runCoreSeqIteration(
 		}
 	}
 
-	// decode the program: 3 bytes per step (op, a, b), bounded.
+	// dispatch maps a fuzzed op byte through the swarm subset before calling
+	// step, so every fuzzed step is one of this iteration's enabled kinds.
+	dispatch := func(op, a, b byte) {
+		step(byte(subset[int(op)%len(subset)]), a, b)
+	}
+
+	// decode body: 3 bytes per step (op, a, b), bounded.
 	const maxSteps = 32
 	steps := 0
-	for i := 0; i+2 < len(program) && steps < maxSteps; i += 3 {
-		step(program[i], program[i+1], program[i+2])
+	for i := 0; i+2 < len(body) && steps < maxSteps; i += 3 {
+		dispatch(body[i], body[i+1], body[i+2])
 		steps++
 	}
 	// ensure at least one secret + one read exercised on short inputs

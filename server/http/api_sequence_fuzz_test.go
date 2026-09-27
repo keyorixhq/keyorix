@@ -243,11 +243,21 @@ func FuzzKeyorixHTTPAPISequence(f *testing.F) {
 	worlds := buildAPIFuzzWorlds(f, "apiseqfuzz")
 	f.Cleanup(i18n.ResetForTesting)
 
-	f.Add([]byte{0, 0, 0, 2, 0, 3, 2, 2, 3})
-	f.Add([]byte{0, 1, 1, 2, 1, 3})
-	f.Add([]byte{0}) // triggers the revocation-monotonicity probe (program[0]%4==0)
-	f.Add([]byte{1}) // triggers the mutation/audit-completeness probe (program[0]%4==1)
+	// Every existing seed is prefixed with 0xFF (the full-set sentinel — see
+	// decodeOpSubsetHTTP), so each one still exercises every operation type
+	// exactly as it did before swarm mode, byte-for-byte, from the second
+	// byte on; the probe gates below now read body[0] (the first byte AFTER
+	// the subset byte), preserving the original program[0]-based gating
+	// relationship one byte over.
+	f.Add([]byte{0xFF, 0, 0, 0, 2, 0, 3, 2, 2, 3})
+	f.Add([]byte{0xFF, 0, 1, 1, 2, 1, 3})
+	f.Add([]byte{0xFF, 0}) // body[0]=0 -- triggers the revocation-monotonicity probe (body[0]%4==0)
+	f.Add([]byte{0xFF, 1}) // body[0]=1 -- triggers the mutation/audit-completeness probe (body[0]%4==1)
 	f.Add([]byte{})
+	// Swarm seeds: restrict the active op set (0=grant,1=revoke,2=read) to a
+	// single rare-in-practice pair. Bit i (1<<i) enables op i.
+	f.Add([]byte{0b011, 0, 0, 0, 2, 0, 1, 0}) // grant(bit0) + revoke(bit1) only, no reads
+	f.Add([]byte{0b110, 1, 0, 0, 2, 1, 3, 1}) // revoke(bit1) + read(bit2) only, no grants
 
 	f.Fuzz(func(t *testing.T, program []byte) {
 		for _, w := range worlds {
@@ -256,9 +266,42 @@ func FuzzKeyorixHTTPAPISequence(f *testing.F) {
 	})
 }
 
+// decodeOpSubsetHTTP (swarm mode) reads the FIRST byte of a raw program as an
+// enabled-operation bitmask: bit i (1<<i) enables step operation kind i (0
+// grant, 1 revoke, 2 read). See core_sequence_fuzz_test.go's decodeOpSubset
+// for the full rationale (same mechanism, 3 operation kinds here instead of
+// 5). 0xFF and the degenerate all-zero-bits case both mean "every operation
+// enabled".
+func decodeOpSubsetHTTP(b byte) []int {
+	if b == 0xFF {
+		return []int{0, 1, 2}
+	}
+	var subset []int
+	for i := 0; i < 3; i++ {
+		if b&(1<<uint(i)) != 0 {
+			subset = append(subset, i)
+		}
+	}
+	if len(subset) == 0 {
+		return []int{0, 1, 2} // degenerate: no bit set -> fall back to full set
+	}
+	return subset
+}
+
 func runAPISeqIteration(t *testing.T, w *apiFuzzWorld, program []byte) {
 	t.Helper()
 	ctx := context.Background()
+
+	// Swarm mode: the first byte of the raw program picks the enabled-operation
+	// subset for the rest of this iteration; everything after it is the
+	// original 3-bytes-per-step encoding, now read from body rather than program.
+	subsetByte := byte(0xFF)
+	body := program
+	if len(program) > 0 {
+		subsetByte = program[0]
+		body = program[1:]
+	}
+	subset := decodeOpSubsetHTTP(subsetByte)
 
 	// per-iteration reset: drop fuzz-principal grants, clear the model. NO token-cache
 	// flush. middleware.InvalidateTokenCache writes a negative TOMBSTONE (it is a
@@ -470,14 +513,14 @@ func runAPISeqIteration(t *testing.T, w *apiFuzzWorld, program []byte) {
 	}
 
 	const maxSteps = 60
-	for i := 0; i+2 < len(program) && i < maxSteps*3; i += 3 {
-		switch program[i] % 3 {
+	for i := 0; i+2 < len(body) && i < maxSteps*3; i += 3 {
+		switch subset[int(body[i])%len(subset)] {
 		case 0:
-			grant(int(program[i+1]), int(program[i+2]))
+			grant(int(body[i+1]), int(body[i+2]))
 		case 1:
-			revoke(int(program[i+1]), int(program[i+2]))
+			revoke(int(body[i+1]), int(body[i+2]))
 		default:
-			read(program[i+1], program[i+2], program[i+1])
+			read(body[i+1], body[i+2], body[i+1])
 		}
 	}
 	// always exercise the two anchor paths regardless of input:
@@ -485,15 +528,18 @@ func runAPISeqIteration(t *testing.T, w *apiFuzzWorld, program []byte) {
 	read(2, 1, 3) // outsider (index 2, ungranted) reads B -> fail-closed
 
 	// Occasionally run the revocation-monotonicity probe. It mints a fresh session
-	// (bcrypt), so gate it (~1 in 4 inputs) to keep average throughput high.
-	if len(program) >= 1 && program[0]%4 == 0 {
+	// (bcrypt), so gate it (~1 in 4 inputs) to keep average throughput high. Gated
+	// on body[0] (not subject to the swarm subset — these probes are fixed
+	// safety-net checks, not part of the fuzzed op stream), mirroring the
+	// original program[0]-based gate one byte over.
+	if len(body) >= 1 && body[0]%4 == 0 {
 		revocationProbe()
 	}
 
 	// Occasionally run the mutation/audit-completeness probe (~1 in 4 inputs, disjoint
 	// from the revocation gate above). It creates + rotates + updates + deletes a fresh
 	// secret over HTTP and polls the async audit write, so it is heavier — gate it too.
-	if len(program) >= 1 && program[0]%4 == 1 {
+	if len(body) >= 1 && body[0]%4 == 1 {
 		mutationProbe()
 	}
 }
