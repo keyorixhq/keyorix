@@ -867,20 +867,35 @@ func TestProfile_WithImpersonation_S8(t *testing.T) {
 // ── auth.go: VerifyMFA ────────────────────────────────────────────────────────
 
 // TestVerifyMFA_BadJSON_S8 tests VerifyMFA with malformed body → 400.
+//
+// Uses its own distinctive RemoteAddr, not httptest.NewRequest's shared
+// default (192.0.2.1) — newAuthHandlerS8's core is the package-wide shared s4
+// DB (sharedS4CoreOnce), so every OTHER test in this package that also hits
+// one of the 8 endpoints sharing the per-IP login-throttle budget
+// (auth.go/webauthn.go's checkLoginRateLimit) via the same default RemoteAddr
+// accumulates against the SAME counter this test would otherwise read. Since
+// G1 made ConsumeSetup and BeginWebAuthnPasswordlessLogin also reserve a slot
+// (login_throttle_fuzz_test.go), that shared default-IP count can now clear
+// core.LoginMaxAttempts partway through a full package run, making this
+// test's own request 429 depending on unrelated test execution order — not
+// what BadJSON's 400 assertion is about.
 func TestVerifyMFA_BadJSON_S8(t *testing.T) {
 	h := newAuthHandlerS8(t)
 	req := httptest.NewRequest(http.MethodPost, "/auth/mfa", strings.NewReader("{bad"))
+	req.RemoteAddr = "198.51.100.201:4001"
 	w := httptest.NewRecorder()
 	h.VerifyMFA(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // TestVerifyMFA_InvalidChallenge_S8 tests VerifyMFA with an unknown challenge
-// → 401 (invalid or expired).
+// → 401 (invalid or expired). Own distinctive RemoteAddr — see
+// TestVerifyMFA_BadJSON_S8's doc for why.
 func TestVerifyMFA_InvalidChallenge_S8(t *testing.T) {
 	h := newAuthHandlerS8(t)
 	body := `{"mfa_challenge":"no-such-challenge","code":"123456"}`
 	req := httptest.NewRequest(http.MethodPost, "/auth/mfa", strings.NewReader(body))
+	req.RemoteAddr = "198.51.100.201:4002"
 	w := httptest.NewRecorder()
 	h.VerifyMFA(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
