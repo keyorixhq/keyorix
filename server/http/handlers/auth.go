@@ -48,6 +48,15 @@ func (h *AuthHandler) checkLoginRateLimit(ctx context.Context, ip string) bool {
 // budget) — LoginMaxAttempts (10/15min) has ample headroom for legitimate use
 // and a two-step MFA/WebAuthn login already spent slots on both steps before
 // this change, so this is not a meaningful behavior change for real users.
+//
+// G1 (2026-09-27): F2's fix left two call sites out of scope — ConsumeSetup and
+// BeginWebAuthnPasswordlessLogin shared checkLoginRateLimit's gate but never
+// called this function at all, so neither ever contributed to the shared
+// budget (found by FuzzLoginThrottleConcurrency, login_throttle_fuzz_test.go).
+// Both now reserve too; every one of the eight unauthenticated endpoints
+// sharing this budget (Login, RefreshToken, VerifyMFA, BeginWebAuthnLogin,
+// FinishWebAuthnLogin, BeginWebAuthnPasswordlessLogin,
+// FinishWebAuthnPasswordlessLogin, ConsumeSetup) now reserves a slot.
 func (h *AuthHandler) reserveLoginAttempt(ctx context.Context, ip string) {
 	h.coreService.RecordFailedLogin(ctx, ip)
 }
@@ -271,6 +280,15 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "TooManyRequests", "Too many requests. Try again later.", http.StatusTooManyRequests, nil)
 		return
 	}
+	// G1 (2026-09-27): reserve before the (slow) setup-token lookup + password-set —
+	// see reserveLoginAttempt's doc. This endpoint used to share checkLoginRateLimit's
+	// gate but never reserve a slot at all (unlike every sibling login-adjacent
+	// endpoint, F2/#1981), so a burst of concurrent ConsumeSetup calls from one IP
+	// never contributed to the shared budget and could never be throttled by it —
+	// an unbounded setup-token-guessing/DoS surface on an otherwise rate-limited
+	// unauthenticated endpoint. Reserved after the trivial field-presence check,
+	// matching every other call site's "not a structurally-malformed request" bar.
+	h.reserveLoginAttempt(r.Context(), ip)
 	result, err := h.coreService.CompleteSetup(r.Context(), body.Token, body.Password, r.Header.Get(hdrUserAgent), ip)
 	// The new password was accepted, but the account has MFA (TOTP) or a passkey
 	// enrolled — mirror Login's ErrMFARequired handling exactly (see Login above)

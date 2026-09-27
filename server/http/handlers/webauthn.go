@@ -279,6 +279,15 @@ func (h *AuthHandler) BeginWebAuthnPasswordlessLogin(w http.ResponseWriter, r *h
 		sendError(w, "TooManyRequests", errTooManyAttempts, http.StatusTooManyRequests, nil)
 		return
 	}
+	// G1 (2026-09-27): reserve before starting the ceremony (a storage write —
+	// creates a WebAuthnSession row and, unlike BeginWebAuthnLogin's sibling
+	// two lines up the call chain, this endpoint has no bearer challenge from a
+	// prior /auth/login call, so it's callable from a cold start by anyone) —
+	// see reserveLoginAttempt's doc. This endpoint shared checkLoginRateLimit's
+	// gate but never reserved a slot at all (F2/#1981 left it out of scope), so
+	// unlike BeginWebAuthnLogin it never contributed to the shared per-IP
+	// budget and could be called without limit.
+	h.reserveLoginAttempt(r.Context(), ip)
 	assertion, sessionToken, err := h.coreService.BeginWebAuthnPasswordlessLogin(r.Context())
 	if err != nil {
 		h.writeWebAuthnErr(w, err)
