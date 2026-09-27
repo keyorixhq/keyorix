@@ -4362,6 +4362,38 @@ var opCatalog = []operation{
 		},
 	},
 	{
+		// alert_escalation.go's Delete — batch 23.
+		Key: "REST DELETE /api/v1/alert-escalation-policies/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/alert-escalation-policies", map[string]any{
+				"name": "fuzz-b23-escalation-delete", "min_severity": "low", "escalate_after_minutes": 30,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateAlertEscalationPolicy: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					ID uint `json:"id"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateAlertEscalationPolicy response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/alert-escalation-policies/%d", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
 		Key: "GRPC keyorix.v1.MachineIdentityService.ClassifyMachineToken",
 		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
 			machineID, err := createMachineIdentityForFuzz(ctx, w, 1)
