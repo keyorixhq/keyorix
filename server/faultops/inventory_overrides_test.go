@@ -99,6 +99,26 @@ var operationOverrides = map[string]overrideEntry{
 	"GRPC keyorix.v1.SecretService.CreateSecret":     {StatusFuzzed, "opCatalog[\"GRPCCreateSecret\"] — batch 10"},
 	"GRPC keyorix.v1.SecretService.UpdateSecret":     {StatusFuzzed, "opCatalog[\"GRPCUpdateSecret\"] — batch 10"},
 	"GRPC keyorix.v1.SecretService.DeleteSecret":     {StatusFuzzed, "opCatalog[\"GRPCDeleteSecret\"] — batch 10"},
+	// Coverage batch 11 (FAULTOPS-SPEED STEP 2, wiring batch 3, 2026-09-27):
+	// ordinary secret PATCH/PUT variants (classification/description/
+	// retention/tags/schedule) plus the 11 admin-job on-demand triggers
+	// (plain no-body POSTs, no precondition beyond the bootstrapped admin).
+	"REST PATCH /api/v1/secrets/{id}/classification":       {StatusFuzzed, "opCatalog[\"ClassifySecret\"] — batch 11"},
+	"REST PATCH /api/v1/secrets/{id}/description":          {StatusFuzzed, "opCatalog[\"DescribeSecret\"] — batch 11"},
+	"REST PATCH /api/v1/secrets/{id}/retention":            {StatusFuzzed, "opCatalog[\"SetRetentionOverride\"] — batch 11"},
+	"REST PUT /api/v1/secrets/{id}/tags":                   {StatusFuzzed, "opCatalog[\"SetTags\"] — batch 11"},
+	"REST PUT /api/v1/secrets/{id}/schedule":               {StatusFuzzed, "opCatalog[\"SetSecretSchedule\"] — batch 11"},
+	"REST POST /api/v1/admin/jobs/anomaly-alerts":          {StatusFuzzed, "opCatalog[\"RunAnomalyAlerts\"] — batch 11"},
+	"REST POST /api/v1/admin/jobs/rotation-reminders":      {StatusFuzzed, "opCatalog[\"RunRotationReminders\"] — batch 11"},
+	"REST POST /api/v1/admin/jobs/expiry-reminders":        {StatusFuzzed, "opCatalog[\"RunExpiryReminders\"] — batch 11"},
+	"REST POST /api/v1/admin/jobs/compliance-digest":       {StatusFuzzed, "opCatalog[\"RunComplianceDigest\"] — batch 11"},
+	"REST POST /api/v1/admin/jobs/record-hygiene-snapshot": {StatusFuzzed, "opCatalog[\"RecordHygieneSnapshot\"] — batch 11"},
+	"REST POST /api/v1/admin/jobs/role-expiry-check":       {StatusFuzzed, "opCatalog[\"RunRoleExpiryCheck\"] — batch 11"},
+	"REST POST /api/v1/admin/jobs/check-read-quotas":       {StatusFuzzed, "opCatalog[\"RunReadQuotaCheck\"] — batch 11"},
+	"REST POST /api/v1/admin/jobs/run-alert-escalation":    {StatusFuzzed, "opCatalog[\"RunAlertEscalation\"] — batch 11"},
+	"REST POST /api/v1/admin/jobs/token-expiry-check":      {StatusFuzzed, "opCatalog[\"RunTokenExpiryCheck\"] — batch 11"},
+	"REST POST /api/v1/admin/jobs/suspend-inactive-users":  {StatusFuzzed, "opCatalog[\"SuspendInactiveUsers\"] — batch 11"},
+	"REST POST /api/v1/admin/jobs/purge-audit-logs":        {StatusFuzzed, "opCatalog[\"PurgeAuditLogsJob\"] — batch 11"},
 }
 
 func statusOf(key string) overrideEntry {

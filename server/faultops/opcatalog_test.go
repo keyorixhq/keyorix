@@ -965,6 +965,208 @@ var opCatalog = []operation{
 			return opResult{Success: true, Detail: codes.OK.String()}, nil
 		},
 	},
+	{
+		// Coverage batch 11 (FAULTOPS-SPEED STEP 2, wiring batch 3, 2026-09-27):
+		// ordinary PATCH/PUT variants of the already-wired secret resource --
+		// classification, description, retention override, tags, temporal
+		// access schedule.
+		Key: "REST PATCH /api/v1/secrets/{id}/classification",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createSecretForFuzz(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPatch, fmt.Sprintf("/api/v1/secrets/%d/classification", id), map[string]any{
+				"classification": "internal",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST PATCH /api/v1/secrets/{id}/description",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createSecretForFuzz(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPatch, fmt.Sprintf("/api/v1/secrets/%d/description", id), map[string]any{
+				"description": "fuzz b11 description",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST PATCH /api/v1/secrets/{id}/retention",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createSecretForFuzz(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPatch, fmt.Sprintf("/api/v1/secrets/%d/retention", id), map[string]any{
+				"retention_override_days": 30,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST PUT /api/v1/secrets/{id}/tags",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createSecretForFuzz(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/secrets/%d/tags", id), map[string]any{
+				"tags": []string{"fuzz", "b11"},
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST PUT /api/v1/secrets/{id}/schedule",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createSecretForFuzz(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/secrets/%d/schedule", id), map[string]any{
+				"allowed_days": "1,2,3,4,5", "start_hour": 9, "end_hour": 17, "timezone": "UTC",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// Coverage batch 11: admin job on-demand triggers (server/http/handlers/
+		// admin_jobs.go and its siblings) -- plain no-body POSTs gated on
+		// system.write, no precondition beyond the bootstrapped admin (per the
+		// STEP 1 report's own characterization of this family).
+		Key: "REST POST /api/v1/admin/jobs/anomaly-alerts",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/admin/jobs/anomaly-alerts", nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST POST /api/v1/admin/jobs/rotation-reminders",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/admin/jobs/rotation-reminders", nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST POST /api/v1/admin/jobs/expiry-reminders",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/admin/jobs/expiry-reminders", nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST POST /api/v1/admin/jobs/compliance-digest",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/admin/jobs/compliance-digest", nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST POST /api/v1/admin/jobs/record-hygiene-snapshot",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/admin/jobs/record-hygiene-snapshot", nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST POST /api/v1/admin/jobs/role-expiry-check",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/admin/jobs/role-expiry-check", nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST POST /api/v1/admin/jobs/check-read-quotas",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/admin/jobs/check-read-quotas", nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST POST /api/v1/admin/jobs/run-alert-escalation",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/admin/jobs/run-alert-escalation", nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST POST /api/v1/admin/jobs/token-expiry-check",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/admin/jobs/token-expiry-check", nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST POST /api/v1/admin/jobs/suspend-inactive-users",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/admin/jobs/suspend-inactive-users", map[string]any{
+				"inactive_days": 90,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST POST /api/v1/admin/jobs/purge-audit-logs",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/admin/jobs/purge-audit-logs", map[string]any{
+				"retention_days": 30,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
 }
 
 // runOp runs op.Setup (if any) then op.Execute against w, with no fault
