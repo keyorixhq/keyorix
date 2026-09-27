@@ -118,36 +118,9 @@ MACHINE_TOKEN="$(echo "$TOKEN_OUT" | grep -oE '[A-Za-z0-9_.\-]{24,}' | tail -1)"
 [ -n "$MACHINE_TOKEN" ] || fail "could not extract machine token from issue output:
 $TOKEN_OUT"
 
-pass "grant project_viewer role to the machine identity (WORKAROUND -- see NOTE below)"
-# NOTE (RELEASE-QA finding, HANDOFF -> CLI-RELEASE): there is no `keyorix` CLI
-# command for POST /projects/{id}/machine-identities/{machineId}/roles
-# (server/http/router.go:569, handler GrantMachineRole, documented in ADR-030 and
-# openapi.yaml) -- a freshly created machine identity has zero project roles and
-# gets a hard 403 on every secret read until one is granted, but no `keyorix
-# machine ...` subcommand (create/describe/list/reactivate/revoke/suspend/token/
-# token-hygiene/binding/audit) wraps this endpoint, and `keyorix rbac assign-role`
-# only accepts --user (a human), never a machine identity. Calling the endpoint
-# directly over HTTP (below) is the only way to complete this scenario today.
-# os.UserConfigDir(): $XDG_CONFIG_HOME (or ~/.config) on Linux, ~/Library/Application
-# Support on macOS -- cli/internal/credstore/file.go is the source of truth.
-if [ -n "${XDG_CONFIG_HOME:-}" ]; then
-    CFG_DIR="$XDG_CONFIG_HOME"
-elif [ "$(uname -s)" = "Darwin" ]; then
-    CFG_DIR="$HOME/Library/Application Support"
-else
-    CFG_DIR="$HOME/.config"
-fi
-ADMIN_TOKEN="$(grep '^token:' "$CFG_DIR/keyorix/credentials.yaml" | awk '{print $2}')"
-[ -n "$ADMIN_TOKEN" ] || fail "could not read admin session token from credentials.yaml for the grant-role workaround"
-curl -fs "$SERVER_URL/api/v1/roles" -H "Authorization: Bearer $ADMIN_TOKEN" \
-    -o "$WORK_DIR/roles.json" || fail "could not fetch roles list for the grant-role workaround"
-ROLE_ID="$(python3 -c 'import sys,json; d=json.load(open(sys.argv[1])); print(next(r["ID"] for r in d["data"]["roles"] if r["Name"]=="project_viewer"))' "$WORK_DIR/roles.json")" \
-    || fail "could not resolve project_viewer role id"
-GRANT_HTTP_CODE="$(curl -s -o "$WORK_DIR/grant.out" -w '%{http_code}' -X POST \
-    "$SERVER_URL/api/v1/projects/1/machine-identities/1/roles" \
-    -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
-    -d "{\"role_id\":$ROLE_ID}")"
-[ "$GRANT_HTTP_CODE" = "200" ] || fail "grant-machine-role workaround call failed (http $GRANT_HTTP_CODE): $(cat "$WORK_DIR/grant.out")"
+pass "keyorix machine grant-role (project_viewer)"
+"$CLI_BIN" machine grant-role qa-app --project default --role project_viewer \
+    || fail "machine grant-role exited non-zero"
 
 pass "app read: machine token can read the secret"
 APP_GET_OUT="$(KEYORIX_SERVER="$SERVER_URL" KEYORIX_TOKEN="$MACHINE_TOKEN" "$CLI_BIN" \
