@@ -72,12 +72,6 @@ func newConnectHandlerS13(t *testing.T) *ConnectHandler {
 	return NewConnectHandler(cs)
 }
 
-func newAuthHandlerForConnectGrantsS13(t *testing.T) *AuthHandler {
-	t.Helper()
-	cs, _ := freshCoreS12WithAdmin(t)
-	return NewAuthHandler(cs, false)
-}
-
 // seedDynamicSecretConfig inserts a minimal DynamicSecretConfig and returns its ID.
 func seedDynamicSecretConfig(t *testing.T, h *DynamicSecretHandler) uint {
 	t.Helper()
@@ -560,59 +554,6 @@ func TestConnect_DeleteRefGrant_NotFound_S13(t *testing.T) {
 	// Storage silently succeeds on a missing row → 200
 	assert.Equal(t, http.StatusOK, w.Code)
 }
-
-// ── connect_grants_proxy.go ──────────────────────────────────────────────────
-
-// ListConnectRefGrantsByConnectorProxy — empty connector param
-
-// ListConnectRefGrantsByConnectorProxy — valid connector → 200
-
-// ListConnectRefGrantsProxy — happy path (no grants)
-
-// ── dynamic_secrets_proxy.go ──────────────────────────────────────────────────
-
-func newDynamicSecretHandlerProxyS13(t *testing.T) *DynamicSecretHandler {
-	t.Helper()
-	cs, _ := freshCoreS12WithAdmin(t)
-	return NewDynamicSecretHandler(cs)
-}
-
-// CreateDynamicSecretConfigProxy tests deleted -- #1580 liveness sweep,
-// handler removed (no live caller in either topology).
-
-// GetDynamicSecretConfigProxy — bad id
-
-// GetDynamicSecretConfigProxy — not found
-
-// GetDynamicSecretConfigProxy — happy path
-
-// ListDynamicSecretConfigsProxy — missing project_id
-
-// ListDynamicSecretConfigsProxy — bad project_id
-
-// ListDynamicSecretConfigsProxy — bad environment_id
-
-// ListDynamicSecretConfigsProxy — happy path
-
-// GetDynamicSecretLeaseProxy — not found
-
-// ListDynamicSecretLeasesProxy — missing config_id
-
-// ListDynamicSecretLeasesProxy — bad config_id
-
-// ListDynamicSecretLeasesProxy — happy path
-
-// CountActiveLeasesProxy — missing config_id
-
-// CountActiveLeasesProxy — bad config_id
-
-// CountActiveLeasesProxy — happy path
-
-// ListExpiredActiveLeasesProxy — missing before
-
-// ListExpiredActiveLeasesProxy — bad before (not RFC3339)
-
-// ListExpiredActiveLeasesProxy — happy path (valid RFC3339)
 
 // ── utility ───────────────────────────────────────────────────────────────────
 

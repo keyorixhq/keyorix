@@ -79,53 +79,6 @@ func freshCoreS17(t *testing.T) *core.KeyorixCore {
 	return core.NewKeyorixCore(store.NewLocalStorage(db))
 }
 
-// freshCoreS17WithAdmin returns a KeyorixCore plus the underlying DB with user 1
-// wired to a system_admin role (matches withUserCtx's injected UserID=1).
-func freshCoreS17WithAdmin(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
-	t.Helper()
-	require.NoError(t, i18n.InitializeForTesting())
-	n := s17DBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_s17a_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
-	err = db.AutoMigrate(
-		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
-		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
-		&models.Project{}, &models.Environment{}, &models.SecretNode{},
-		&models.AuditEvent{}, &models.AnomalyAlert{},
-		&models.RotationPolicy{}, &models.Notification{},
-		&models.ProjectMembership{}, &models.SoDPolicy{},
-		&models.BreakGlassActivation{}, &models.AccessReviewCampaign{}, &models.AccessReviewItem{},
-		&models.LoginAttempt{},
-		&models.AccessRequest{}, &models.AccessRequestApproval{},
-		&models.WebAuthnCredential{}, &models.WebAuthnSession{},
-		&models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
-		&models.ConnectRefGrant{}, &models.Session{}, &models.SetupToken{},
-		&models.MFAChallenge{}, &models.SSOLoginState{},
-		&models.MachineIdentity{}, &models.MachineIdentityCredential{},
-		&models.MachineIdentityRole{}, &models.MachineIdentityOIDCBinding{},
-		&models.SecretDependency{}, &models.RiskException{},
-		&models.MFASecret{}, &models.MFARecoveryCode{},
-		&models.IdentityProvider{}, &models.ExternalIdentity{},
-		&models.LegalHold{}, &models.ShareRecord{},
-		&models.PersonalAccessToken{},
-		&models.ProjectInvitation{}, &models.SchedulerLockLease{},
-		&models.SecretAccessLog{},
-		&models.SystemMetadata{},
-		&models.PasswordHistory{},
-		&models.SecretVersion{},
-	)
-	require.NoError(t, err)
-
-	adminRole := &models.Role{Name: "system_admin", Description: "Administrator", BypassesPermissionChecks: true}
-	require.NoError(t, db.Create(adminRole).Error)
-	testUser := &models.User{Username: "testuser_s17", Email: "testuser_s17@example.com", AccountState: "active"}
-	require.NoError(t, db.Create(testUser).Error)
-	require.NoError(t, db.Create(&models.UserRole{UserID: testUser.ID, RoleID: adminRole.ID}).Error)
-
-	return core.NewKeyorixCore(store.NewLocalStorage(db)), db
-}
-
 // cancelledCtxReqS17 builds an *http.Request whose context is already cancelled.
 // A cancelled context causes GORM's db.WithContext to propagate the cancellation
 // before executing any query, exercising storage-error branches.

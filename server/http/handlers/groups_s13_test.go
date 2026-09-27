@@ -41,33 +41,6 @@ func newGroupHandlerWithCoreS13(t *testing.T) (*GroupHandler, *core.KeyorixCore)
 	return gh, cs
 }
 
-// newGroupHandlerWithAdminS13 returns a GroupHandler backed by a core whose
-// UserID=1 is seeded as a global admin (freshCoreS12WithAdmin). The
-// CreateGroupProxy/UpdateGroupProxy/DeleteGroupProxy/RestoreGroupProxy
-// handlers now require caller authority (users.write / roles.assign) in
-// addition to the /system route group's blanket system.write permission, so
-// tests exercising those handlers directly (bypassing the real HTTP+auth
-// middleware) need an authorized caller in the request context via
-// withUserCtx.
-func newGroupHandlerWithAdminS13(t *testing.T) *GroupHandler {
-	t.Helper()
-	cs, _ := freshCoreS12WithAdmin(t)
-	gh, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-	return gh
-}
-
-// newGroupHandlerWithCoreWithAdminS13 is the admin-backed counterpart to
-// newGroupHandlerWithCoreS13, for tests that need to both seed data via the
-// core AND call a proxy handler that now requires caller authority.
-func newGroupHandlerWithCoreWithAdminS13(t *testing.T) (*GroupHandler, *core.KeyorixCore) {
-	t.Helper()
-	cs, _ := freshCoreS12WithAdmin(t)
-	gh, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-	return gh, cs
-}
-
 // jsonBody encodes v as compact JSON into a *bytes.Reader.
 func jsonBody(t *testing.T, v interface{}) *bytes.Reader {
 	t.Helper()

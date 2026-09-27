@@ -1501,15 +1501,6 @@ func freshGroupHandlerS11(t *testing.T) (*GroupHandler, *core.KeyorixCore) {
 
 // TestListProjectMembersProxy_HappyPath_S11 — list members of a project → 200.
 
-// ── dynamic_secrets_proxy.go: loop body coverage ─────────────────────────────
-
-// freshDynamicSecretHandlerS11 creates a DynamicSecretHandler backed by fresh isolated DB.
-func freshDynamicSecretHandlerS11(t *testing.T) (*DynamicSecretHandler, *core.KeyorixCore) {
-	t.Helper()
-	cs := freshCoreS11(t)
-	return NewDynamicSecretHandler(cs), cs
-}
-
 // TestListDynamicSecretConfigsProxy_WithConfigs_S11 — loop body covered when configs exist.
 
 // TestGetDynamicSecretLeaseProxy_HappyPath_S11 — get an existing lease → 200.

@@ -16,7 +16,6 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,9 +25,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
-	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -38,81 +35,6 @@ import (
 func newCatalogHandlerS4(t *testing.T) *CatalogHandler {
 	t.Helper()
 	return NewCatalogHandler(newHandlerCoreS4(t))
-}
-
-// ensureS4TestRole idempotently creates roleName with no bundled permissions
-// in sharedS4Core -- a process-wide singleton reused across every s4/s5/s9
-// test (and across `-count=N` reruns), so a plain CreateRole call would
-// collide with the same role created by a different test. FIX-1's
-// requireGranterHoldsRolePermissions ceiling resolves a granted role by ID
-// (unlike the old name-based check it replaced), so tests that persist a
-// role grant now need the named role to exist as a real row even when the
-// caller is exempt from the ceiling itself (e.g. actorID 0).
-func ensureS4TestRole(t *testing.T, h *CatalogHandler, roleName string) {
-	t.Helper()
-	if _, err := h.coreService.Storage().GetRoleByName(context.Background(), roleName); err == nil {
-		return
-	}
-	folded, err := identity.NewFoldedName(roleName)
-	require.NoError(t, err)
-	_, err = h.coreService.Storage().CreateRole(context.Background(), folded, "test-only role")
-	require.NoError(t, err)
-}
-
-// s4UserIDSentinelFloor is a deliberately high starting ID for users this
-// helper creates -- withUserCtx and several other S4 fixtures hardcode
-// UserID:1 as a fabricated, DB-backless actor (no real row ever exists for
-// it) and rely on it holding nothing. GORM's Create respects a pre-set,
-// non-zero PK instead of autoincrementing, so an explicit high ID here
-// guarantees no collision with that convention regardless of how many (or
-// how few) other tests have touched sharedS4Core's user table before this
-// one runs.
-const s4UserIDSentinelFloor = 900000
-
-var s4UserIDSentinelCounter uint32
-
-// newS4UserWithRolesAssign creates a FRESH, dedicated user holding
-// roles.assign at projectID and returns a request context authenticated as
-// them -- F6 sweep (2026-09-22): CreateInvitationProxy now requires
-// roles.assign unconditionally (baseline-before-the-branches fix), so tests
-// exercising it need a real actor holding it. This deliberately does NOT
-// reuse withUserCtx's shared UserID:1 in sharedS4Core: granting roles.assign
-// to that widely-reused ID would leak into every other S4 test that asserts
-// UserID 1 lacks it (e.g. TestCatalog_UpdateProject_RequireMFA_Unauthorized) --
-// confirmed the hard way: this helper's first version let CreateUser
-// autoincrement, and when this test happened to be the FIRST to touch
-// sharedS4Core's user table, it silently became UserID 1 itself.
-func newS4UserWithRolesAssignCtx(t *testing.T, h *CatalogHandler, projectID uint) context.Context {
-	t.Helper()
-	ctx := context.Background()
-	st := h.coreService.Storage()
-	id := s4UserIDSentinelFloor + atomic.AddUint32(&s4UserIDSentinelCounter, 1)
-	user, err := st.CreateUser(ctx, &models.User{ID: uint(id), Username: fmt.Sprintf("s4-inv-actor-%s", t.Name()), Email: fmt.Sprintf("s4-inv-actor-%s@example.com", t.Name())})
-	require.NoError(t, err)
-	roleName, err := identity.NewFoldedName(fmt.Sprintf("s4_roles_assign_role_%d", user.ID))
-	require.NoError(t, err)
-	role, err := st.CreateRole(ctx, roleName, "test-only: roles.assign")
-	require.NoError(t, err)
-	perms, err := h.coreService.ListPermissions(ctx)
-	require.NoError(t, err)
-	var rolesAssignID uint
-	for _, p := range perms {
-		if p.Name == "roles.assign" {
-			rolesAssignID = p.ID
-			break
-		}
-	}
-	if rolesAssignID == 0 {
-		p, err := st.CreatePermission(ctx, &models.Permission{
-			Name: "roles.assign", Description: "test-only: assign and remove roles", Resource: "roles", Action: "assign",
-		})
-		require.NoError(t, err)
-		rolesAssignID = p.ID
-	}
-	require.NoError(t, h.coreService.AssignPermissionToRole(ctx, 0, role.ID, rolesAssignID, false))
-	require.NoError(t, st.AssignRole(ctx, user.ID, role.ID, corestorage.Scope{ProjectID: projectID}))
-	uc := &middleware.UserContext{UserID: user.ID, Username: user.Username, Email: user.Email}
-	return context.WithValue(context.Background(), middleware.GetUserContextKey(), uc)
 }
 
 // ── access_request_proxy.go ───────────────────────────────────────────────────
@@ -423,57 +345,6 @@ var (
 	sharedS4CoreOnce sync.Once
 	sharedS4Core     *core.KeyorixCore
 )
-
-// s4UniqueCounter mints a per-process-unique suffix for literal values (e.g.
-// SSO state tokens, WebAuthn credential IDs, credential token hashes) that a
-// handful of s4/s5/s9 tests insert into the shared sharedS4Core DB. Those
-// tests assert on a fixed-string insert succeeding; under `go test -count=N`
-// the whole binary (and sharedS4Core with it) is reused across iterations, so
-// a hardcoded literal collides with its own prior insert on repeat. Folding
-// this counter into the literal keeps each invocation's value unique without
-// touching the singleton itself. Shared across files (not per-file, unlike
-// the sN DBCounter DSN-uniqueness vars elsewhere in this package) because all
-// of s4/s5/s9 write into the SAME sharedS4Core DB, not independent ones.
-var s4UniqueCounter atomic.Int64
-
-// s4AdminActorID is a fixed, deliberately-out-of-range UserID reserved for
-// the one admin-tier actor seeded into the shared sharedS4Core DB (see
-// seedS4AdminActor below) -- chosen high enough to never collide with any
-// other s4/s5/s9 test's hardcoded actor ID.
-const s4AdminActorID uint = 900000001
-
-var seedS4AdminActorOnce sync.Once
-
-// seedS4AdminActor grants s4AdminActorID a global-admin-tier role in the
-// shared sharedS4Core DB, exactly once for the whole test binary. #1529:
-// CreateSoDPolicy/DeleteSoDPolicy now require admin-tier authority, so any
-// s4/s5/s9 test exercising CreateSoDPolicyProxy/DeleteSoDPolicyProxy against
-// the shared core needs a real admin actor in request context -- mirrors
-// sod_s13_test.go's own inline admin seed, but done once (idempotently) since
-// this DB is shared across many test functions rather than fresh per test.
-func seedS4AdminActor(t *testing.T, cs *core.KeyorixCore) {
-	t.Helper()
-	seedS4AdminActorOnce.Do(func() {
-		ctx := context.Background()
-		systemAdminName, err := identity.NewFoldedName("system_admin")
-		if err != nil {
-			panic("seedS4AdminActor: NewFoldedName: " + err.Error())
-		}
-		role, err := cs.Storage().CreateRole(ctx, systemAdminName, "shared S4 admin fixture")
-		if err != nil {
-			panic("seedS4AdminActor: CreateRole: " + err.Error())
-		}
-		// ADR-084: BypassesPermissionChecks is the structural admin-bypass flag
-		// now, not the name -- CreateRole never sets it from a request DTO, so
-		// set it here exactly as real bootstrap seeding would.
-		if err := cs.Storage().SetRoleBypassesPermissionChecks(ctx, role.ID, true); err != nil {
-			panic("seedS4AdminActor: SetRoleBypassesPermissionChecks: " + err.Error())
-		}
-		if err := cs.Storage().AssignRole(ctx, s4AdminActorID, role.ID, corestorage.Scope{}); err != nil {
-			panic("seedS4AdminActor: AssignRole: " + err.Error())
-		}
-	})
-}
 
 // newHandlerCoreS4 returns a shared *core.KeyorixCore backed by a single
 // in-memory SQLite DB whose schema is migrated exactly once per test binary.
@@ -7436,24 +7307,6 @@ func TestAcknowledgeAnomalyAlert_BadID(t *testing.T) {
 // that it routes through core.KeyorixCore.LiftLegalHold, a caller who is
 // neither the original placer nor admin-tier must be refused, and the hold
 // must remain active.
-
-// releaseActiveLegalHoldS4 marks any currently-active legal hold in the shared
-// sharedS4Core DB as released, restoring the "no active hold" invariant that
-// TestLiftLegalHold_NoActiveHold (and similar) depend on. Several happy-path
-// legal-hold proxy tests (Create/UpdateLegalHoldProxy) intentionally leave a
-// hold row behind to exercise their success path; because sharedS4Core lives
-// for the whole test binary (see sharedS4CoreOnce above), that row would
-// otherwise persist into every later test and every `-count=N` repeat.
-func releaseActiveLegalHoldS4(t *testing.T, h *DashboardHandler) {
-	t.Helper()
-	ctx := context.Background()
-	hold, err := h.coreService.Storage().GetActiveLegalHold(ctx)
-	if err != nil || hold == nil {
-		return
-	}
-	hold.Released = true
-	_ = h.coreService.Storage().UpdateLegalHold(ctx, hold)
-}
 
 // ── rbac_role_grants_proxy.go: RemoveGlobalAdminRoleGuardedProxy ──────────────
 

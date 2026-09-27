@@ -44,11 +44,6 @@ func freshCoreBrokenS30(t *testing.T) *core.KeyorixCore {
 	return core.NewKeyorixCore(store.NewLocalStorage(db))
 }
 
-// retentionBody returns a valid JSON body for retention-proxy handlers.
-func retentionBody() *bytes.Buffer {
-	return bytes.NewBufferString(`{"before":"2020-01-01T00:00:00Z"}`)
-}
-
 // ── CatalogHandler ────────────────────────────────────────────────────────────
 
 func TestListProjectMembers_DBError_S30(t *testing.T) {

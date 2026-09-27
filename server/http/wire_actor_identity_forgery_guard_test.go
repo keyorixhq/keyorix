@@ -57,10 +57,6 @@ var actorShapedFieldNames = []string{
 	"InvitedBy", "ResolvedBy", "CreatedBy", "DecidedBy", "ApproverID", "RevokedBy",
 }
 
-// handlersDir is the real server/http/handlers directory, relative to this
-// package — what every real handlerBodyText caller passes today.
-var handlersDir = filepath.Join("..", "..", "server", "http", "handlers")
-
 // actorFieldReadRe matches `body.<ActorField>` for each name above, used to
 // scan a handler's raw source text (comments included, filtered separately —
 // see actorFieldReads).
@@ -126,44 +122,6 @@ func handlerBodyText(t *testing.T, dir, handlerName string) string {
 		}
 	}
 	return out.String()
-}
-
-// actorFieldReads returns the actor-shaped field names read (not written)
-// from the wire body within the given handler's source text. A line whose
-// trimmed content starts with "//" is skipped entirely — a comment
-// mentioning "body.ResolvedBy" in prose (this file's own fix commentary does
-// exactly that, describing what USED to happen) must not itself trip the
-// guard. For each remaining match, the immediately-following non-space
-// character is inspected: a single `=` (not `==`) means the field is being
-// OVERWRITTEN before use — the fix pattern this sweep applied everywhere
-// (`body.CreatedBy = actorID(r)`) — and is not flagged; anything else (a bare
-// reference, `==`, a function argument, a struct-literal read via
-// `body.toModel()` picking it up implicitly) is flagged as a live read.
-func actorFieldReads(t *testing.T, handlerName string) []string {
-	t.Helper()
-	text := handlerBodyText(t, handlersDir, handlerName)
-	var found []string
-	seen := map[string]bool{}
-	for _, line := range strings.Split(text, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "//") {
-			continue
-		}
-		for i, re := range actorFieldReadRes {
-			name := actorShapedFieldNames[i]
-			for _, loc := range re.FindAllStringIndex(line, -1) {
-				rest := strings.TrimLeft(line[loc[1]:], " \t")
-				if strings.HasPrefix(rest, "=") && !strings.HasPrefix(rest, "==") {
-					continue // overwritten before use -- the fix pattern, not a read
-				}
-				if !seen[name] {
-					seen[name] = true
-					found = append(found, name)
-				}
-			}
-		}
-	}
-	sort.Strings(found)
-	return found
 }
 
 // TestActorFieldReadsScannerDetectsWireForgery is this guard's red-proof.

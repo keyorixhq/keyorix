@@ -36,22 +36,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/stretchr/testify/assert"
 )
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-
-// withChiParams2_S22 sets two chi URL params at once in a single route context
-// so neither call overwrites the other (each withChiParam creates a NEW context,
-// replacing the previous one — use this when two params are needed).
-func withChiParams2_S22(r *http.Request, k1, v1, k2, v2 string) *http.Request {
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add(k1, v1)
-	rctx.URLParams.Add(k2, v2)
-	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
-}
 
 // withImpersonatedUserCtx returns a UserContext where ImpersonatedBy is set,
 // to exercise the "cannot impersonate while impersonating" guard.

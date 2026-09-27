@@ -21,7 +21,6 @@ package handlers
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,7 +29,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
@@ -38,15 +36,6 @@ import (
 )
 
 // ── local helpers ─────────────────────────────────────────────────────────────
-
-// withChiParams2_S23 sets two chi URL params in a single route context so
-// neither call overwrites the other.
-func withChiParams2_S23(r *http.Request, k1, v1, k2, v2 string) *http.Request {
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add(k1, v1)
-	rctx.URLParams.Add(k2, v2)
-	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
-}
 
 // uintStr converts a uint to its decimal string representation.
 func uintStr(n uint) string {

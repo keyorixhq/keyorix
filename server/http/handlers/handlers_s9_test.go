@@ -1,55 +1,13 @@
 package handlers
 
 import (
-	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/identity"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
-
-// grantS9RolesAssignAtProject grants userID roles.assign at the given project
-// via a fresh, dedicated role (never reusing an existing role name, since
-// this file's shared newHandlerCoreS4 singleton DB is reused across many
-// tests -- see F6 sweep, 2026-09-22: requireGranterHoldsRolePermissions now
-// requires a roles.assign baseline before any role grant, independent of
-// what the grant's own role bundles).
-func grantS9RolesAssignAtProject(t *testing.T, h *CatalogHandler, userID, projectID uint) {
-	t.Helper()
-	ctx := context.Background()
-	// newHandlerCoreS4's shared singleton DB is never bootstrap-seeded (unlike
-	// createTestToken-backed fixtures), so roles.assign may not exist as a
-	// row yet -- create it idempotently rather than assuming it's present.
-	perms, err := h.coreService.ListPermissions(ctx)
-	require.NoError(t, err)
-	var rolesAssignID uint
-	for _, p := range perms {
-		if p.Name == "roles.assign" {
-			rolesAssignID = p.ID
-			break
-		}
-	}
-	if rolesAssignID == 0 {
-		p, err := h.coreService.Storage().CreatePermission(ctx, &models.Permission{
-			Name: "roles.assign", Description: "test-only: assign and remove roles", Resource: "roles", Action: "assign",
-		})
-		require.NoError(t, err)
-		rolesAssignID = p.ID
-	}
-	roleName, err := identity.NewFoldedName(fmt.Sprintf("s9_roles_assign_role_%d_%d", userID, projectID))
-	require.NoError(t, err)
-	role, err := h.coreService.Storage().CreateRole(ctx, roleName, "test-only: roles.assign")
-	require.NoError(t, err)
-	require.NoError(t, h.coreService.AssignPermissionToRole(ctx, 0, role.ID, rolesAssignID, false))
-	require.NoError(t, h.coreService.Storage().AssignRole(ctx, userID, role.ID, storage.Scope{ProjectID: projectID}))
-}
 
 // ── admin_jobs.go ─────────────────────────────────────────────────────────────
 

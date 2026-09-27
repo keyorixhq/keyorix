@@ -11,36 +11,16 @@ package handlers
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// withNodeCredentialContextS13 attaches a UserContext for user 1 (the
-// system_admin seeded by freshCoreS12WithAdmin) to req.
-// RemoveGlobalAdminRoleGuardedProxy requires roles.assign at global scope for
-// every caller (ADR-085, 2026-08-25 — the prior node-credential OR-arm that
-// let a bare node credential skip this check unconditionally is removed); a
-// caller must now hold real authority to reach the raw
-// storage.RemoveGlobalAdminRoleGuarded call these tests exercise, so they
-// present user 1, who has that authority via the adminRoleNames bypass
-// (internal/core/authz.go), instead of a permission-less node credential.
-func withNodeCredentialContextS13(req *http.Request) *http.Request {
-	uc := &middleware.UserContext{
-		UserID:    1,
-		ActorType: core.ActorTypeUser,
-	}
-	return req.WithContext(context.WithValue(req.Context(), middleware.GetUserContextKey(), uc))
-}
 
 // ── rbac.go: ListRoles ────────────────────────────────────────────────────────
 
@@ -389,16 +369,6 @@ func TestRBACHandler_GetUserRoles_BadParam_S13(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.GetUserRoles(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// ── rbac_role_grants_proxy.go ─────────────────────────────────────────────────
-
-// newRBACHandlerForProxy returns an RBACHandler backed by freshCoreS12 (full
-// migrate, no admin seed needed — proxies are auth-gated at the router level,
-// not inside the handler itself).
-func newRBACHandlerForProxy(t *testing.T) *RBACHandler {
-	t.Helper()
-	return NewRBACHandler(freshCoreS12(t))
 }
 
 // TestGetGroupRoleGrantsProxy_BadGroupID_S13 covers the bad groupID path.
