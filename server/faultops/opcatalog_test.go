@@ -520,6 +520,29 @@ func firstSecretVersionIDForFuzz(ctx context.Context, w *faultWorld, secretID ui
 	return decoded.Data.Versions[0].ID, nil
 }
 
+// createFolderForFuzz creates a folder via the real REST endpoint and returns
+// its ID.
+func createFolderForFuzz(ctx context.Context, w *faultWorld, name string) (uint, error) {
+	st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/folders/", map[string]any{
+		"name": name, "project_id": 1, "environment_id": 1,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if st/100 != 2 {
+		return 0, fmt.Errorf("setup CreateFolder: HTTP %d: %s", st, body)
+	}
+	var decoded struct {
+		Data struct {
+			ID uint `json:"ID"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+		return 0, fmt.Errorf("decoding CreateFolder response: %w (body=%s)", err, body)
+	}
+	return decoded.Data.ID, nil
+}
+
 // opCatalog is the closed set of operations FuzzStorageFaultOperations can pick
 // from — see the STEP 0 report for the running Fuzzed/Pending/Excluded count
 // across the full 309-operation inventory; this is intentionally a starting
@@ -3091,6 +3114,679 @@ var opCatalog = []operation{
 		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
 			id := state.(uint)
 			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d/schedule", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// folders_handler.go's CreateFolder — batch 18.
+		Key: "REST POST /api/v1/folders/",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/folders/", map[string]any{
+				"name": "fuzz-b18-folder-create", "project_id": 1, "environment_id": 1,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// folders_handler.go's DeleteFolder — batch 18.
+		Key: "REST DELETE /api/v1/folders/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createFolderForFuzz(ctx, w, "fuzz-b18-folder-delete")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/folders/%d", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// legal_hold.go's PlaceLegalHold — batch 18.
+		Key: "REST POST /api/v1/legal-hold",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/legal-hold", map[string]any{
+				"reason": "fuzz legal hold",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// legal_hold.go's LiftLegalHold: only the placing admin may lift —
+		// batch 18.
+		Key: "REST DELETE /api/v1/legal-hold",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/legal-hold", map[string]any{
+				"reason": "fuzz legal hold to lift",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup PlaceLegalHold: HTTP %d: %s", st, body)
+			}
+			return nil, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, "/api/v1/legal-hold", map[string]any{
+				"reason": "fuzz lift reason",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// notification_channels.go's Create — batch 18.
+		Key: "REST POST /api/v1/notification-channels",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/notification-channels", map[string]any{
+				"name": "fuzz-b18-channel-create", "type": "email", "email": "fuzz-channel@example.com",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// notification_channels.go's Delete — batch 18.
+		Key: "REST DELETE /api/v1/notification-channels/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/notification-channels", map[string]any{
+				"name": "fuzz-b18-channel-delete", "type": "email", "email": "fuzz-channel-delete@example.com",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateNotificationChannel: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					ID uint `json:"id"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateNotificationChannel response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/notification-channels/%d", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// notification_channels.go's Update — batch 18.
+		Key: "REST PUT /api/v1/notification-channels/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/notification-channels", map[string]any{
+				"name": "fuzz-b18-channel-update", "type": "email", "email": "fuzz-channel-update@example.com",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateNotificationChannel: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					ID uint `json:"id"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateNotificationChannel response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/notification-channels/%d", id), map[string]any{
+				"name": "fuzz-b18-channel-updated", "type": "email", "email": "fuzz-channel-updated@example.com",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// notification_channels.go's SetRetryPolicy — batch 18.
+		Key: "REST PUT /api/v1/notification-channels/{id}/retry-policy",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/notification-channels", map[string]any{
+				"name": "fuzz-b18-channel-retry", "type": "email", "email": "fuzz-channel-retry@example.com",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateNotificationChannel: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					ID uint `json:"id"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateNotificationChannel response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/notification-channels/%d/retry-policy", id), map[string]any{
+				"max_retries": 5, "retry_backoff_ms": 2000,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// alert_escalation.go's Create — batch 18.
+		Key: "REST POST /api/v1/alert-escalation-policies",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/alert-escalation-policies", map[string]any{
+				"name": "fuzz-b18-escalation-create", "min_severity": "low", "escalate_after_minutes": 30,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// alert_escalation.go's Update — batch 18.
+		Key: "REST PUT /api/v1/alert-escalation-policies/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/alert-escalation-policies", map[string]any{
+				"name": "fuzz-b18-escalation-update", "min_severity": "low", "escalate_after_minutes": 30,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateAlertEscalationPolicy: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					ID uint `json:"id"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateAlertEscalationPolicy response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/alert-escalation-policies/%d", id), map[string]any{
+				"name": "fuzz-b18-escalation-updated", "min_severity": "high", "escalate_after_minutes": 15,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// bulk_access_requests.go's CreateRejectionReasonTemplate — batch 18.
+		Key: "REST POST /api/v1/rejection-reason-templates",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/rejection-reason-templates", map[string]any{
+				"name": "fuzz-b18-rejection-create", "reason": "fuzz rejection reason",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// bulk_access_requests.go's DeleteRejectionReasonTemplate — batch 18.
+		Key: "REST DELETE /api/v1/rejection-reason-templates/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/rejection-reason-templates", map[string]any{
+				"name": "fuzz-b18-rejection-delete", "reason": "fuzz rejection reason",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateRejectionReasonTemplate: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					Template struct {
+						ID uint `json:"id"`
+					} `json:"template"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.Template.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateRejectionReasonTemplate response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.Template.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/rejection-reason-templates/%d", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// risk_exceptions.go's CreateRiskException — batch 18.
+		Key: "REST POST /api/v1/risk-exceptions",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/risk-exceptions", map[string]any{
+				"title": "fuzz-b18-risk-exception", "category": "other", "reference": "FUZZ-1",
+				"justification": "fuzz justification", "expires_at": time.Now().Add(72 * time.Hour).Format(time.RFC3339),
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// risk_exceptions.go's RevokeRiskException — batch 18.
+		Key: "REST DELETE /api/v1/risk-exceptions/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/risk-exceptions", map[string]any{
+				"title": "fuzz-b18-risk-exception-revoke", "category": "other", "reference": "FUZZ-2",
+				"justification": "fuzz justification", "expires_at": time.Now().Add(72 * time.Hour).Format(time.RFC3339),
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateRiskException: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					Exception struct {
+						ID uint `json:"ID"`
+					} `json:"exception"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.Exception.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateRiskException response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.Exception.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/risk-exceptions/%d", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// risk_exceptions.go's ApproveRiskException: dual control forbids the
+		// CREATOR from approving their own exception, so Setup creates it as
+		// admin, then logs in as a second, freshly created user holding a
+		// global system.write role to perform the approval — batch 18.
+		Key: "REST POST /api/v1/risk-exceptions/{id}/approve",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/risk-exceptions", map[string]any{
+				"title": "fuzz-b18-risk-exception-approve", "category": "other", "reference": "FUZZ-3",
+				"justification": "fuzz justification", "expires_at": time.Now().Add(72 * time.Hour).Format(time.RFC3339),
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateRiskException: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					Exception struct {
+						ID uint `json:"ID"`
+					} `json:"exception"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.Exception.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateRiskException response: %w (body=%s)", err, body)
+			}
+			approverID, err := createUserForFuzz(ctx, w, "fuzz-b18-risk-approver")
+			if err != nil {
+				return nil, err
+			}
+			st, body, err = httpJSON(ctx, w, http.MethodPost, "/api/v1/roles/", map[string]any{
+				"name": "fuzz-b18-syswrite-role", "description": "fuzz global admin role", "permissions": []string{"system.write"},
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateRole: HTTP %d: %s", st, body)
+			}
+			var roleDecoded struct {
+				Data struct {
+					Role struct {
+						ID uint `json:"id"`
+					} `json:"role"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &roleDecoded); err != nil || roleDecoded.Data.Role.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateRole response: %w (body=%s)", err, body)
+			}
+			if err := assignUserRoleForFuzz(ctx, w, approverID, roleDecoded.Data.Role.ID, 0); err != nil {
+				return nil, err
+			}
+			token, err := loginForFuzz(ctx, w, "fuzz-b18-risk-approver", fuzzUserPassword)
+			if err != nil {
+				return nil, err
+			}
+			return [2]any{decoded.Data.Exception.ID, token}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			args := state.([2]any)
+			id := args[0].(uint)
+			token := args[1].(string)
+			st, body, err := httpJSONAs(ctx, w, token, http.MethodPost, fmt.Sprintf("/api/v1/risk-exceptions/%d/approve", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// sod.go's CreateSoDPolicy — batch 18.
+		Key: "REST POST /api/v1/sod/policies",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/sod/policies", map[string]any{
+				"name": "fuzz-b18-sod-policy", "description": "fuzz sod policy",
+				"permission_a": "secrets.write", "permission_b": "roles.assign",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// sod.go's DeleteSoDPolicy — batch 18.
+		Key: "REST DELETE /api/v1/sod/policies/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/sod/policies", map[string]any{
+				"name": "fuzz-b18-sod-policy-delete", "description": "fuzz sod policy",
+				"permission_a": "secrets.write", "permission_b": "roles.assign",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateSoDPolicy: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					Policy struct {
+						ID uint `json:"ID"`
+					} `json:"policy"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.Policy.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateSoDPolicy response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.Policy.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/sod/policies/%d", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// rotation_policies_handler.go's Create + Update — batch 18.
+		Key: "REST PUT /api/v1/rotation-policies/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/rotation-policies/", map[string]any{
+				"name": "fuzz-b18-rotation-policy", "scope": "project", "project_id": 1, "interval_days": 30,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateRotationPolicy: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					ID uint `json:"id"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateRotationPolicy response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/rotation-policies/%d", id), map[string]any{
+				"name": "fuzz-b18-rotation-policy-updated", "interval_days": 60,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secret_templates.go's Create — batch 18.
+		Key: "REST POST /api/v1/secret-templates/",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/secret-templates/", map[string]any{
+				"name": "fuzz-b18-template-create", "description": "fuzz template",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secret_templates.go's Update — batch 18.
+		Key: "REST PUT /api/v1/secret-templates/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/secret-templates/", map[string]any{
+				"name": "fuzz-b18-template-update", "description": "fuzz template",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateSecretTemplate: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					ID uint `json:"id"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateSecretTemplate response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/secret-templates/%d", id), map[string]any{
+				"name": "fuzz-b18-template-updated", "description": "fuzz template updated",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secret_templates.go's Delete — batch 18.
+		Key: "REST DELETE /api/v1/secret-templates/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/secret-templates/", map[string]any{
+				"name": "fuzz-b18-template-delete", "description": "fuzz template",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateSecretTemplate: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					ID uint `json:"id"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateSecretTemplate response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/secret-templates/%d", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// secret_templates.go's Apply (dry-run preview, read-only) — batch 18.
+		Key: "REST POST /api/v1/secret-templates/{id}/apply",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/secret-templates/", map[string]any{
+				"name": "fuzz-b18-template-apply", "description": "fuzz template", "default_classification": "internal",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateSecretTemplate: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					ID uint `json:"id"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateSecretTemplate response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secret-templates/%d/apply", id), map[string]any{
+				"description": "fuzz applied description",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// anomaly_config.go's UpdateAnomalyConfig: empty body is valid (only
+		// ceiling checks, no floor checks) — batch 18.
+		Key: "REST PUT /api/v1/admin/anomaly-config/",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPut, "/api/v1/admin/anomaly-config/", map[string]any{})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// bulk_access_requests.go's BulkApproveAccessRequests — batch 18.
+		Key: "REST POST /api/v1/access-requests/bulk-approve",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/access-requests", map[string]any{
+				"suggested_role": "viewer", "reason": "fuzz bulk approve",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateAccessRequest: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					AccessRequest struct {
+						ID uint `json:"id"`
+					} `json:"access_request"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.AccessRequest.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateAccessRequest response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.AccessRequest.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/access-requests/bulk-approve", map[string]any{
+				"request_ids": []uint{id},
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// bulk_access_requests.go's BulkRejectAccessRequests — batch 18.
+		Key: "REST POST /api/v1/access-requests/bulk-reject",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/access-requests", map[string]any{
+				"suggested_role": "viewer", "reason": "fuzz bulk reject",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateAccessRequest: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					AccessRequest struct {
+						ID uint `json:"id"`
+					} `json:"access_request"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.AccessRequest.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateAccessRequest response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.AccessRequest.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/access-requests/bulk-reject", map[string]any{
+				"request_ids": []uint{id}, "reason": "fuzz bulk reject reason",
+			})
 			if err != nil {
 				return opResult{}, err
 			}
