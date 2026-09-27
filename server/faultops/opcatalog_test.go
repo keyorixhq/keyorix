@@ -159,6 +159,40 @@ func createSecretNamedForFuzz(ctx context.Context, w *faultWorld, name string) (
 	return decoded.Data.ID, nil
 }
 
+// addProjectMemberForFuzz adds userID to projectID as a "viewer" (seeded by
+// every BootstrapSystem call, see defaultRoles in internal/core/auth_bootstrap.go)
+// — setup for operations whose core function requires the target/recipient to
+// be a live project member (secret ACL grant, secret share) before it will
+// act, distinct from the admin-bypasses-everything path createSecretForFuzz's
+// other callers rely on.
+func addProjectMemberForFuzz(ctx context.Context, w *faultWorld, projectID, userID uint) error {
+	st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/%d/members", projectID), map[string]any{
+		"user_id": userID, "role": "viewer",
+	})
+	if err != nil {
+		return err
+	}
+	if st/100 != 2 {
+		return fmt.Errorf("setup AddProjectMember: HTTP %d: %s", st, body)
+	}
+	return nil
+}
+
+// addAdminAsProjectMemberForFuzz adds the world's own bootstrap admin
+// ("faultadmin") to projectID as a project member — setup for operations
+// whose core function checks the ACTOR's own live project membership, not
+// just an owner/permission flag (ShareSecret's requireLiveOwnerAuthority:
+// the admin globally holds the admin role via a Scope{} grant, which is NOT
+// the same thing as an explicit project_members row, and the owner-share
+// gate requires the latter).
+func addAdminAsProjectMemberForFuzz(ctx context.Context, w *faultWorld, projectID uint) error {
+	admin, err := w.faulty.GetUserByUsername(ctx, "faultadmin")
+	if err != nil {
+		return fmt.Errorf("setup GetUserByUsername(faultadmin): %w", err)
+	}
+	return addProjectMemberForFuzz(ctx, w, projectID, admin.ID)
+}
+
 // createGroupForFuzz creates a group via the ordinary (non-/system) REST
 // endpoint and returns its ID — setup for group-member operations.
 func createGroupForFuzz(ctx context.Context, w *faultWorld, name string) (uint, error) {
@@ -482,22 +516,6 @@ func permissionIDByNameForFuzz(ctx context.Context, w *faultWorld, name string) 
 		}
 	}
 	return 0, fmt.Errorf("permission %q not found (body=%s)", name, body)
-}
-
-// addProjectMemberForFuzz adds userID to projectID as a "viewer" via the real
-// REST endpoint — setup for operations that need a real, live project
-// membership to act on.
-func addProjectMemberForFuzz(ctx context.Context, w *faultWorld, projectID, userID uint) error {
-	st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/%d/members", projectID), map[string]any{
-		"user_id": userID, "role": "viewer",
-	})
-	if err != nil {
-		return err
-	}
-	if st/100 != 2 {
-		return fmt.Errorf("setup AddProjectMember: HTTP %d: %s", st, body)
-	}
-	return nil
 }
 
 // firstSecretVersionIDForFuzz fetches secretID's version list and returns the
@@ -4410,6 +4428,482 @@ var opCatalog = []operation{
 			ids := state.([2]uint)
 			_, err := pb.NewMachineIdentityServiceClient(w.grpcConn).ClassifyMachineToken(w.grpcCtx, &pb.ClassifyMachineTokenRequest{
 				ProjectId: 1, MachineId: uint32(ids[0]), TokenId: uint32(ids[1]), Classification: "internal",
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		// Coverage batch 9 (FAULTOPS-SPEED STEP 2, secret ACL/share/rotation
+		// family — highest security value per the STEP 1 plan): secret ACL
+		// grant (RBAC Phase 3, secrets.manage-gated).
+		Key: "REST POST /api/v1/secrets/{id}/acl",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			userID, err := createUserForFuzz(ctx, w, "fuzz-acl-user")
+			if err != nil {
+				return nil, err
+			}
+			if err := addProjectMemberForFuzz(ctx, w, 1, userID); err != nil {
+				return nil, err
+			}
+			return map[string]uint{"secretID": secretID, "userID": userID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			s := state.(map[string]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/acl", s["secretID"]), map[string]any{
+				"user_id": s["userID"], "permissions": []string{"secrets.read"},
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// Coverage batch 9: secret ACL revoke. Setup grants the ACL first
+		// (through the real POST), then reads it back via ListSecretACLs
+		// (the grant response itself carries no ACL id — {"granted":true} —
+		// so the id must come from a follow-up list call).
+		Key: "REST DELETE /api/v1/secrets/{id}/acl/{aclId}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			userID, err := createUserForFuzz(ctx, w, "fuzz-acl-revoke-user")
+			if err != nil {
+				return nil, err
+			}
+			if err := addProjectMemberForFuzz(ctx, w, 1, userID); err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/acl", secretID), map[string]any{
+				"user_id": userID, "permissions": []string{"secrets.read"},
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup GrantSecretACL: HTTP %d: %s", st, body)
+			}
+			gst, gbody, err := httpJSON(ctx, w, http.MethodGet, fmt.Sprintf("/api/v1/secrets/%d/acl", secretID), nil)
+			if err != nil {
+				return nil, err
+			}
+			if gst/100 != 2 {
+				return nil, fmt.Errorf("setup ListSecretACLs: HTTP %d: %s", gst, gbody)
+			}
+			var decoded struct {
+				Data []struct {
+					ID uint `json:"id"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(gbody, &decoded); err != nil || len(decoded.Data) == 0 {
+				return nil, fmt.Errorf("decoding ListSecretACLs response: %w (body=%s)", err, gbody)
+			}
+			return map[string]uint{"secretID": secretID, "aclID": decoded.Data[0].ID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			s := state.(map[string]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d/acl/%d", s["secretID"], s["aclID"]), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// Coverage batch 9: gRPC sibling of secret ACL grant — proves the RBAC
+		// Phase 3 ACL family generalizes across transports too.
+		Key: "GRPC keyorix.v1.SecretService.GrantSecretACL",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			userID, err := createUserForFuzz(ctx, w, "fuzz-acl-grpc-user")
+			if err != nil {
+				return nil, err
+			}
+			if err := addProjectMemberForFuzz(ctx, w, 1, userID); err != nil {
+				return nil, err
+			}
+			return map[string]uint{"secretID": secretID, "userID": userID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			s := state.(map[string]uint)
+			_, err := pb.NewSecretServiceClient(w.grpcConn).GrantSecretACL(w.grpcCtx, &pb.GrantSecretACLRequest{
+				SecretId: uint64(s["secretID"]), UserId: uint64(s["userID"]), Permissions: []string{"secrets.read"},
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		// Coverage batch 9: gRPC sibling of secret ACL revoke. Setup grants
+		// via the gRPC path itself (GrantSecretACLRequest's response DOES
+		// carry the new entry's id, unlike the REST grant response).
+		Key: "GRPC keyorix.v1.SecretService.RevokeSecretACL",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			userID, err := createUserForFuzz(ctx, w, "fuzz-acl-grpc-revoke-user")
+			if err != nil {
+				return nil, err
+			}
+			if err := addProjectMemberForFuzz(ctx, w, 1, userID); err != nil {
+				return nil, err
+			}
+			entry, err := pb.NewSecretServiceClient(w.grpcConn).GrantSecretACL(w.grpcCtx, &pb.GrantSecretACLRequest{
+				SecretId: uint64(secretID), UserId: uint64(userID), Permissions: []string{"secrets.read"},
+			})
+			if err != nil {
+				return nil, fmt.Errorf("setup GrantSecretACL (grpc): %w", err)
+			}
+			return map[string]uint64{"secretID": uint64(secretID), "aclID": entry.GetId()}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			s := state.(map[string]uint64)
+			_, err := pb.NewSecretServiceClient(w.grpcConn).RevokeSecretACL(w.grpcCtx, &pb.RevokeSecretACLRequest{
+				SecretId: s["secretID"], AclId: s["aclID"],
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		// Coverage batch 9: auto-rotate toggle — enables Keyorix-managed
+		// rotation (backend="" = regenerate in Keyorix only, ADR-047), no
+		// external rotation backend config needed.
+		Key: "REST PATCH /api/v1/secrets/{id}/auto-rotate",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createSecretForFuzz(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPatch, fmt.Sprintf("/api/v1/secrets/%d/auto-rotate", id), map[string]any{
+				"enabled": true,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// Coverage batch 9: gRPC sibling of auto-rotate toggle.
+		Key: "GRPC keyorix.v1.SecretService.SetSecretAutoRotate",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createSecretForFuzz(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			_, err := pb.NewSecretServiceClient(w.grpcConn).SetSecretAutoRotate(w.grpcCtx, &pb.SetSecretAutoRotateRequest{
+				Id: uint32(id), Enabled: true,
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		// Coverage batch 9: secret rotate-on-demand — RotateSecretOnDemand
+		// (#193), which also rotates any bound upstream credential.
+		Key: "REST POST /api/v1/secrets/{id}/rotate",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createSecretForFuzz(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/rotate", id), map[string]any{
+				"new_value": "fuzz-rotated-value",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// Coverage batch 9: secret rollback. Setup rotates once first (a
+		// fresh secret's only version IS its current one — RollbackSecret
+		// rejects "already the current version" — so a second version must
+		// exist before Execute can roll back to version 1).
+		Key: "REST POST /api/v1/secrets/{id}/rollback",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			id, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/rotate", id), map[string]any{
+				"new_value": "fuzz-rollback-setup-rotated",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup RotateSecret: HTTP %d: %s", st, body)
+			}
+			return id, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/rollback", id), map[string]any{
+				"version": 1,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// Coverage batch 9: share a secret with another project member. The
+		// admin (bootstrap creator) is the secret's owner, so ShareSecret's
+		// owner gate passes; the recipient must independently be a live
+		// project member (a distinct check from the owner gate).
+		Key: "REST POST /api/v1/secrets/{id}/share",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			if err := addAdminAsProjectMemberForFuzz(ctx, w, 1); err != nil {
+				return nil, err
+			}
+			userID, err := createUserForFuzz(ctx, w, "fuzz-share-recipient")
+			if err != nil {
+				return nil, err
+			}
+			if err := addProjectMemberForFuzz(ctx, w, 1, userID); err != nil {
+				return nil, err
+			}
+			return map[string]uint{"secretID": secretID, "userID": userID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			s := state.(map[string]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/share", s["secretID"]), map[string]any{
+				"recipient_id": s["userID"], "permission": "read",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// Coverage batch 9: update an existing share's permission/expiry.
+		// Setup creates the share first through the real POST, then decodes
+		// its id from the response (shareRecordWire.ID, "id").
+		Key: "REST PUT /api/v1/shares/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			if err := addAdminAsProjectMemberForFuzz(ctx, w, 1); err != nil {
+				return nil, err
+			}
+			userID, err := createUserForFuzz(ctx, w, "fuzz-share-update-recipient")
+			if err != nil {
+				return nil, err
+			}
+			if err := addProjectMemberForFuzz(ctx, w, 1, userID); err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/share", secretID), map[string]any{
+				"recipient_id": userID, "permission": "read",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup ShareSecret: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					ID uint `json:"id"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding ShareSecret response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/shares/%d", id), map[string]any{
+				"permission": "write",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// Coverage batch 9: revoke a share. Same setup shape as the update
+		// path above, distinct share so the two operations never race a
+		// shared row within one iteration.
+		Key: "REST DELETE /api/v1/shares/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			if err := addAdminAsProjectMemberForFuzz(ctx, w, 1); err != nil {
+				return nil, err
+			}
+			userID, err := createUserForFuzz(ctx, w, "fuzz-share-revoke-recipient")
+			if err != nil {
+				return nil, err
+			}
+			if err := addProjectMemberForFuzz(ctx, w, 1, userID); err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/share", secretID), map[string]any{
+				"recipient_id": userID, "permission": "read",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup ShareSecret: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					ID uint `json:"id"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding ShareSecret response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/shares/%d", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// Coverage batch 9: gRPC sibling of secret share. ShareSecretRequest's
+		// response (ShareRecord) carries its own id directly, unlike the ACL
+		// grant's REST response.
+		Key: "GRPC keyorix.v1.ShareService.ShareSecret",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			if err := addAdminAsProjectMemberForFuzz(ctx, w, 1); err != nil {
+				return nil, err
+			}
+			userID, err := createUserForFuzz(ctx, w, "fuzz-share-grpc-recipient")
+			if err != nil {
+				return nil, err
+			}
+			if err := addProjectMemberForFuzz(ctx, w, 1, userID); err != nil {
+				return nil, err
+			}
+			return map[string]uint{"secretID": secretID, "userID": userID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			s := state.(map[string]uint)
+			_, err := pb.NewShareServiceClient(w.grpcConn).ShareSecret(w.grpcCtx, &pb.ShareSecretRequest{
+				SecretId: uint32(s["secretID"]), RecipientId: uint32(s["userID"]), Permission: "read",
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		// Coverage batch 9: gRPC sibling of share update. Setup shares via
+		// the gRPC path itself so the returned ShareRecord.Id is used
+		// directly (no REST decode needed).
+		Key: "GRPC keyorix.v1.ShareService.UpdateSharePermission",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			if err := addAdminAsProjectMemberForFuzz(ctx, w, 1); err != nil {
+				return nil, err
+			}
+			userID, err := createUserForFuzz(ctx, w, "fuzz-share-grpc-update-recipient")
+			if err != nil {
+				return nil, err
+			}
+			if err := addProjectMemberForFuzz(ctx, w, 1, userID); err != nil {
+				return nil, err
+			}
+			rec, err := pb.NewShareServiceClient(w.grpcConn).ShareSecret(w.grpcCtx, &pb.ShareSecretRequest{
+				SecretId: uint32(secretID), RecipientId: uint32(userID), Permission: "read",
+			})
+			if err != nil {
+				return nil, fmt.Errorf("setup ShareSecret (grpc): %w", err)
+			}
+			return rec.GetId(), nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			shareID := state.(uint32)
+			_, err := pb.NewShareServiceClient(w.grpcConn).UpdateSharePermission(w.grpcCtx, &pb.UpdateSharePermissionRequest{
+				ShareId: shareID, Permission: "write",
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		// Coverage batch 9: gRPC sibling of share revoke.
+		Key: "GRPC keyorix.v1.ShareService.RevokeShare",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			if err := addAdminAsProjectMemberForFuzz(ctx, w, 1); err != nil {
+				return nil, err
+			}
+			userID, err := createUserForFuzz(ctx, w, "fuzz-share-grpc-revoke-recipient")
+			if err != nil {
+				return nil, err
+			}
+			if err := addProjectMemberForFuzz(ctx, w, 1, userID); err != nil {
+				return nil, err
+			}
+			rec, err := pb.NewShareServiceClient(w.grpcConn).ShareSecret(w.grpcCtx, &pb.ShareSecretRequest{
+				SecretId: uint32(secretID), RecipientId: uint32(userID), Permission: "read",
+			})
+			if err != nil {
+				return nil, fmt.Errorf("setup ShareSecret (grpc): %w", err)
+			}
+			return rec.GetId(), nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			shareID := state.(uint32)
+			_, err := pb.NewShareServiceClient(w.grpcConn).RevokeShare(w.grpcCtx, &pb.RevokeShareRequest{
+				ShareId: shareID,
 			})
 			if err != nil {
 				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
