@@ -1894,3 +1894,48 @@ to keep each under review size. Started only after the Phase 5 switch PR (§1) m
     since some remote_* files had their own ledger entries), `check-adr-conformance.sh` (10
     verified) all green.
 
+
+- **14c-1/14c-2 — the `/system` route tier itself, last** (rebased onto merged 14b-1/14b-2;
+  cherry-picked cleanly, zero conflicts). Deletes `server/http/router.go`'s 953-line `/system`
+  route block (151 routes, per §10.2's own inventory) and all 28 handler implementation files
+  (`server/http/handlers/*_proxy.go`, 9,239 lines) in 14c-1; retires ~80 files of now-dead
+  test/registry surface in 14c-2 (guard tests, G3 gap-probe files, security-ceiling walk tests
+  whose entire target population no longer exists).
+  - **Zero-callers proof, repo-wide** (per direct instruction, beyond what §10's original
+    inventory covered): `operator/` and `internal/k8ssync` — zero `/system/` references, either
+    literal or constant-built. `migrate/` and `cmd/` — zero. `keyorix-sdks` (go/java/node/python)
+    — zero. `web/src/services/system.ts` — exactly the 5 routes already confirmed live and
+    already registered OUTSIDE the deleted block (`/system/info`, `/system/metrics` — built via
+    `"/system"+pathMetrics`, missed by a first literal-string grep, confirmed by reading the
+    route registration directly — `/system/auth-config`, `/system/encryption-config`,
+    `/system/init`). `server/http/handlers/openapi.yaml` — exactly those same 5 paths
+    documented, zero stale proxy paths to remove.
+  - **The G3 `/system` authority campaign's 2 open gaps (`AddGroupMemberProxy`,
+    `RemoveGroupMemberProxy`) are moot**: both routes, and the `system_proxy_g3_gap_probes_test.go`
+    file tracking them as open findings, are deleted in 14c-2 — there is no longer a route for
+    either gap to apply to.
+  - Full verification surfaced 4 more real cross-track findings the mechanical deletion alone
+    didn't catch (all fixed in this same PR, clearly labeled):
+    - **`internal/core`** (2 allowlist guard tests failed for real): `g80_1530_machine_actor_attribution_guard_test.go`'s
+      `auditAttributionAllowlist` still listed `audit_ingest_proxy.go:IngestAuditEventProxy`
+      (deleted) — entry removed, doc comment corrected (1 direct `LogAuditEvent` caller outside
+      `emitAudit` remains, not 2). `mfa_stepup_purpose_guard_test.go`'s `mfaStepUpPurposeAllowlist`
+      still listed `mfa_stepup_proxy.go:63` (deleted) — entry removed.
+    - **`server/faultops`** (2 tests failed for real, only visible once the FULL test suite ran,
+      not just build/vet): the fault-injection `opCatalog` (`opcatalog_test.go`) had 6 REST
+      operation entries hitting now-404 `/system/*` routes (`machine-identities` create+transition,
+      `groups` create+delete, `projects` delete, `break-glass revoke`, `secret-dependencies
+      exclusive`) — each a full `Key`/`Setup`/`Execute` struct entry, removed along with the 2
+      helpers (`createMachineIdentityForFuzz`, `machineIdentityWireForFuzz`) that existed only to
+      serve them. Mirrored the same 6 keys' removal in `inventory_overrides_test.go` (the
+      hand-maintained classification file) and a stale fuzz-seed reference in
+      `fuzz_storage_fault_operations_test.go`, then regenerated
+      `inventory_registry_generated_test.go` via `REGEN_INVENTORY=1` (245 keys, down from 251) --
+      `TestOperationTableRatchet` and `TestOpCatalog_SucceedsWithNoFaultArmed` both green after.
+  - `go build ./...` and `golangci-lint run ./...` clean for root (explicit `cd <path> &&` prefix
+    used for every lint invocation this PR, after twice catching a silently-wrong-cwd false
+    "clean" result mid-session — see the report for the full incident); `GOWORK=off golangci-lint
+    run ./...` clean for `cli/`; full `go test ./...` green for root, `cli/`, and `migrate/`;
+    `check-closures.sh` (55 verified), `check-review-coverage.sh` (80/80), `check-adr-conformance.sh`
+    (10 verified), `assert_leg_completeness` (no `scripts/ci-test-legs.sh` change needed — no pin
+    named any of the deleted files/packages individually) all green.

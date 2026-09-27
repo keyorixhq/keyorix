@@ -54,6 +54,18 @@ All notable changes to Keyorix are documented here. This project follows
   PascalCase keys (`ID`, `ProjectID`, `IsShared`, ...) off any of these
   routes needs to switch to the snake_case equivalents.
 
+### Removed
+- **The `/system` server-to-server proxy route tier is gone (ADR-108 Phase 6
+  step 14c).** These 151 `...Proxy`-suffixed routes existed only to let a
+  downstream Keyorix server booted with `storage.type: remote` (ADR-049)
+  proxy requests to this server's real storage backend — with `RemoteStorage`
+  and the old CLI's embedded mode both already removed, nothing could reach
+  them. A misconfigured `storage.type: remote` now fails loudly at startup
+  instead of silently doing nothing. The 5 routes actually used by the web
+  dashboard and first-boot setup (`/system/info`, `/system/metrics`,
+  `/system/auth-config`, `/system/encryption-config`, `/system/init`) are
+  untouched — they were never part of this tier.
+
 ### Known gaps
 - **Sharing a secret requires both the owner and the recipient to already hold
   an explicit role in the secret's project** — holding the global `admin` role
