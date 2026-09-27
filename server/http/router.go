@@ -880,25 +880,6 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// new capability at that permission level. Static paths, before /{id}.
 			r.Get("/by-username", handlers.GetUserByUsername)
 			r.Get("/by-external-id", handlers.GetUserByExternalID)
-			// VerifyCredentials (#506) — the upstream half of the storage.type: remote
-			// proxy-login mechanism (internal/core/auth.go's RemoteLoginVerifier):
-			// checks a plaintext username/password against the real bcrypt hash this
-			// server holds and returns only a verdict, never the hash, so a
-			// RemoteStorage-backed "spoke" deployment (which never receives the hash
-			// at all) can authenticate a password login by proxying the ENTIRE check
-			// here rather than reimplementing it. Gated by users.write, the same
-			// permission the RemoteStorage service credential already needs for
-			// CreateUser/UnlockUser — see the handler's doc for why this is
-			// deliberately not a new, separately-provisioned permission. Static path,
-			// before /{id}.
-			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/verify-credentials", handlers.VerifyCredentials)
-			// VerifyMFACredentials (#509) — the upstream half of the storage.type:
-			// remote second-factor login proxy (internal/core/mfa.go's
-			// RemoteMFAVerifier): checks a plaintext TOTP/recovery code against the
-			// real, decrypted TOTP secret this server holds and returns only a
-			// verdict, never the secret. Same gate and reasoning as
-			// verify-credentials above. Static path, before /{id}.
-			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/verify-mfa", handlers.VerifyMFACredentials)
 			r.Get("/{id}", handlers.GetUser)
 			// Mutations need users.write, not the group-wide users.read (which the
 			// read-only system_auditor persona holds) — these were the missed
@@ -910,25 +891,6 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("users.delete")).Delete("/{id}", handlers.DeleteUser)
 			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post(pathIDRestore, handlers.RestoreUser)
 			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/{id}/unlock", handlers.UnlockUser)
-			// IssueMFAChallenge (#509) — the upstream half of the storage.type: remote
-			// second-factor login proxy (internal/core/mfa.go's RemoteMFAVerifier):
-			// mints and persists the short-lived, single-use MFA challenge on this
-			// (the hub's) LocalStorage on behalf of a RemoteStorage-backed "spoke"
-			// deployment, which has nowhere of its own to persist one. Same gate and
-			// reasoning as verify-credentials/verify-mfa above.
-			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/{id}/mfa-challenge", handlers.IssueMFAChallenge)
-			// GetActiveMFAChallenge/ConsumeMFAChallenge (#522) — the upstream half of
-			// the storage.type: remote WebAuthn-as-second-factor login proxy
-			// (internal/core/webauthn.go's BeginWebAuthnLogin/FinishWebAuthnLogin):
-			// unlike the TOTP path above, these are plain storage.Storage passthroughs
-			// on the SAME shared MFAChallenge model, not a verification proxy — a
-			// passkey assertion carries no server-held secret the way a TOTP shared
-			// secret does, so the ceremony itself still runs entirely in the calling
-			// (spoke) server's own core.KeyorixCore, exactly as it does locally. Same
-			// gate and reasoning as verify-mfa/mfa-challenge above. Static paths,
-			// before /{id}.
-			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/mfa-challenge/active", handlers.GetActiveMFAChallenge)
-			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/mfa-challenge/consume", handlers.ConsumeMFAChallenge)
 			// Admin force-logout: revoke all of a user's sessions (no state change).
 			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/{id}/revoke-sessions", handlers.RevokeSessions)
 			// Account state transitions (ADR-025).
@@ -974,14 +936,18 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission("users.impersonate")).
 			Post("/admin/impersonate", impersonationHandler.Start)
 
-		// Sessions (#508) — the server-side counterparts RemoteStorage.GetSession/
-		// DeleteSession need so a storage.type: remote deployment can validate and
-		// revoke sessions minted upstream by POST /api/v1/users/verify-credentials
-		// (#506/#508's atomic verify+mint). Deliberately NO POST "/" here — there is
-		// no generic "create a session" route; see remote_auth.go's CreateSession
-		// doc for why that would be a privilege-escalation oracle. Gated by
-		// users.write, the SAME permission verify-credentials/CreateUser/UnlockUser
-		// already require of the RemoteStorage service credential.
+		// Sessions (#508) — originally added as the server-side counterparts
+		// RemoteStorage.GetSession/DeleteSession needed so a storage.type: remote
+		// deployment could validate and revoke sessions minted upstream by the
+		// (since-removed) POST /api/v1/users/verify-credentials proxy-login route
+		// (#506/#508's atomic verify+mint). RemoteStorage itself was removed
+		// repo-wide in #2162, and the proxy-login route in the
+		// REMOTESTORAGE-SWEEP track; these two routes remain live for admin
+		// session lookup/revocation independent of that history. Deliberately NO
+		// POST "/" here — there is no generic "create a session" route; see
+		// remote_auth.go's CreateSession doc for why that would be a
+		// privilege-escalation oracle. Gated by users.write, the SAME permission
+		// CreateUser/UnlockUser already require.
 		r.Route("/sessions", func(r chi.Router) {
 			r.With(customMiddleware.RequirePermission(permUsersWrite)).Get("/{token}", handlers.GetSessionByToken)
 			r.With(customMiddleware.RequirePermission(permUsersWrite)).Delete("/{id}", handlers.DeleteSessionByID)

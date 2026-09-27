@@ -1,18 +1,20 @@
-// sessions_remote.go — server-side counterparts of RemoteStorage's session
-// lookup/deletion (#508): GET /api/v1/sessions/{token} and
-// DELETE /api/v1/sessions/{id}.
+// sessions_remote.go — originally added as the server-side counterparts of
+// RemoteStorage's session lookup/deletion (#508): GET /api/v1/sessions/{token}
+// and DELETE /api/v1/sessions/{id}. RemoteStorage itself was removed
+// repo-wide in #2162, and the proxy-login route these routes used to pair
+// with (POST /api/v1/users/verify-credentials, users_crud.go's
+// VerifyCredentials) was removed in the REMOTESTORAGE-SWEEP track; these two
+// routes remain live for admin session lookup/revocation independent of that
+// history.
 //
 // Deliberately NOT a POST /api/v1/sessions "create session" route — see
 // internal/storage/store/remote_auth.go's CreateSession doc for why a
-// generic mint-any-session wire primitive is unsafe. Session issuance under
-// storage.type: remote happens atomically with credential verification via
-// POST /api/v1/users/verify-credentials (users_crud.go's VerifyCredentials)
-// instead. These two routes only ever LOOK UP or DELETE a session that
-// already exists — a lookup requires presenting that exact session's own
-// opaque token (proof of possession, not a credential check bypass), and a
-// delete-by-ID grants no capability beyond what RevokeUserSessions
-// (POST /users/{id}/revoke-sessions) already grants the same service
-// credential today.
+// generic mint-any-session wire primitive is unsafe. These two routes only
+// ever LOOK UP or DELETE a session that already exists — a lookup requires
+// presenting that exact session's own opaque token (proof of possession, not
+// a credential check bypass), and a delete-by-ID grants no capability beyond
+// what RevokeUserSessions (POST /users/{id}/revoke-sessions) already grants
+// the same caller today.
 package handlers
 
 import (
@@ -23,13 +25,12 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-// GetSessionByToken handles GET /api/v1/sessions/{token} (#508) — the
-// server-side counterpart RemoteStorage.GetSession needs to validate a
+// GetSessionByToken handles GET /api/v1/sessions/{token} (#508) — originally
+// the server-side counterpart RemoteStorage.GetSession needed to validate a
 // session under storage.type: remote (core.ValidateSessionToken, on every
 // authenticated request via a spoke deployment) and to resolve a session's ID
 // before deleting it (core.Logout). Gated by users.write, the same
-// permission VerifyCredentials/CreateUser/UnlockUser already require of the
-// RemoteStorage service credential.
+// permission CreateUser/UnlockUser already require.
 func (h *UserHandler) GetSessionByToken(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
