@@ -5,6 +5,34 @@ All notable changes to Keyorix are documented here. This project follows
 
 ## Unreleased
 
+## v0.95.1 — 2026-09-27
+
+### Fixed
+- **Fresh-Postgres bootstrap no longer logs `"user 1 (admin) created without its baseline
+  system_viewer role: Role not found"`.** The bootstrap admin user was created before the
+  baseline RBAC role catalog was seeded — on every backend, not just Postgres — so the
+  admin silently never got the `system_viewer` grant. Roles are now seeded first. (#2188)
+
+### Added
+- **Published `keyorix-server`/`keyorix-web` Docker images now include a `linux/arm64`
+  manifest** alongside `linux/amd64`. `docker compose up` previously failed outright on
+  Apple Silicon and arm64 servers (e.g. AWS Graviton) with "no matching manifest for
+  linux/arm64/v8". (#2187)
+- **`keyorix-migrate` is now a published release binary** (linux/darwin × amd64/arm64,
+  each with its own SBOM and a `keyorix-migrate version` command), instead of requiring a
+  source build to run the Vault/OpenBao migration tool. (#2189, #2200)
+- **A CI job dry-runs the full release process** — `make release` plus a no-push
+  multi-arch Docker build — on every PR touching release-relevant files, and weekly, so a
+  release-day failure like the ones fixed above is caught before tagging. (#2185)
+
+### Documentation
+- **`.env.example` and `docs/SELF_HOSTING.md` now document `KEYORIX_BOOTSTRAP_TOKEN`**,
+  required alongside `KEYORIX_ADMIN_PASSWORD` for the first-boot admin auto-bootstrap —
+  previously, omitting it silently skipped admin creation with no visible error.
+  `server/entrypoint.sh` now logs a clear `WARN` when this happens. (#2184)
+
+## v0.95.0 — 2026-09-27
+
 ### Added
 - **`keyorix machine grant-role` / `revoke-role` / `roles`** — grant, revoke,
   and list a machine identity's project-scoped role grants. The REST
