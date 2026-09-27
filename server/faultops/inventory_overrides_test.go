@@ -271,9 +271,9 @@ var operationOverrides = map[string]overrideEntry{
 	"REST POST /api/v1/compliance/snapshots":         {StatusFuzzed, "opCatalog[\"TakeComplianceSnapshot\"] — batch 21"},
 	"REST POST /api/v1/audit/migrate-chain-encoding": {StatusFuzzed, "opCatalog[\"MigrateAuditChainEncoding\"] — batch 21"},
 
-	"REST POST /auth/password-reset":             {StatusFuzzed, "opCatalog[\"PasswordReset\"] — batch 22"},
-	"REST POST /api/v1/notifications/read-all":   {StatusFuzzed, "opCatalog[\"MarkAllRead\"] — batch 22"},
-	"REST POST /api/v1/notifications/{id}/read":  {StatusFuzzed, "opCatalog[\"MarkRead\"] — batch 22"},
+	"REST POST /auth/password-reset":            {StatusFuzzed, "opCatalog[\"PasswordReset\"] — batch 22"},
+	"REST POST /api/v1/notifications/read-all":  {StatusFuzzed, "opCatalog[\"MarkAllRead\"] — batch 22"},
+	"REST POST /api/v1/notifications/{id}/read": {StatusFuzzed, "opCatalog[\"MarkRead\"] — batch 22"},
 
 	"REST DELETE /api/v1/alert-escalation-policies/{id}": {StatusFuzzed, "opCatalog[\"DeleteAlertEscalationPolicy\"] — batch 23"},
 }
