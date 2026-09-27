@@ -3,6 +3,12 @@
 // generates it — Keyorix does not supply it) and deleting the account's prior
 // user-managed keys, then returns the new key file (JSON) for Keyorix to store.
 // Credentials come from Application Default Credentials, never from Keyorix config.
+//
+// A nogcp build (see gcpsa_nogcp.go, ADR-109 step 6) compiles this file out
+// entirely, dropping google.golang.org/api/iam from the binary.
+//
+//go:build !nogcp
+
 package rotation
 
 import (
@@ -227,4 +233,10 @@ func (g *gcpIAMClient) CreateKey(ctx context.Context, saName string) (string, st
 func (g *gcpIAMClient) DeleteKey(ctx context.Context, keyName string) error {
 	_, err := g.svc.Projects.ServiceAccounts.Keys.Delete(keyName).Context(ctx).Do()
 	return err
+}
+
+func init() {
+	registerCloudExecutor("gcp-service-account", func(p CloudExecutorParams) Executor {
+		return NewGCPServiceAccountKeyExecutor(p.Name, p.AllowedRefs)
+	})
 }

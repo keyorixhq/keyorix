@@ -19,6 +19,9 @@
 //   - Service.DecryptLargeSecret: happy path round-trip
 //   - sweepDynamicSecretLeases: skip empty CredentialEnc
 //   - GenerateKEK: positive iterations (explicit)
+//
+//go:build !noazure
+
 package encryption
 
 import (
@@ -1447,15 +1450,10 @@ func TestSweepPasswordResets_HappyPath_Persists_S25(t *testing.T) {
 	assert.Equal(t, 1, swept)
 }
 
-// ─── mockKeyProvider for testing wrong-size / error KEK ───────────────────────
-
-type mockKeyProvider struct {
-	kek []byte
-	err error
-}
-
-func (m *mockKeyProvider) KEK() ([]byte, error) { return m.kek, m.err }
-func (m *mockKeyProvider) Name() string         { return "mock" }
+// mockKeyProvider lives in g80_coverage_test.go (ADR-109 step 6): that file is
+// untagged (always compiled), while this one is //go:build !noazure — keeping
+// the shared mock there means a standalone -tags noazure build (which excludes
+// this file) still has it available for g80_coverage_test.go's own uses.
 
 // ─── unwrapKey: too-short wrapped key returns error ───────────────────────────
 

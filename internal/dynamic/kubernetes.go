@@ -41,6 +41,15 @@
 // the target ServiceAccount, plus `create`+`delete` on `secrets` in the namespace when
 // revocable is true. To stay dependency-free (no client-go) every call is a small REST
 // request over net/http, mirroring the Kubernetes sync agent's REST sink.
+//
+// Kubernetes is a legitimate air-gapped (on-prem cluster) integration (ADR-109 step
+// 6 decision) and stays registered in the noaws,noazure,nogcp profile. The nok8s tag
+// below exists for completeness — an unsupported combination must still compile —
+// not because AIR-GAPPED excludes it. This file has no cloud SDK dependency to drop
+// (see the doc note above), so nok8s only removes this backend's registration.
+//
+//go:build !nok8s
+
 package dynamic
 
 import (
@@ -530,4 +539,8 @@ func pathSegment(s string) string {
 		return "INVALID"
 	}
 	return url.PathEscape(s)
+}
+
+func init() {
+	registerCloudEngine("kubernetes", func() (CredentialEngine, error) { return &KubernetesEngine{}, nil })
 }

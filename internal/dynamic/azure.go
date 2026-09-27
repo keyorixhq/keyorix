@@ -27,6 +27,12 @@
 // scope). The token is acquired with DefaultAzureCredential (env vars, managed
 // identity, workload identity) — never from Keyorix config. This file is the only
 // place the Azure identity SDK is used by the dynamic engine.
+//
+// A noazure build (see azure_noazure.go, ADR-109 step 6) compiles this file out
+// entirely, dropping the Azure SDK from the binary.
+//
+//go:build !noazure
+
 package dynamic
 
 import (
@@ -126,4 +132,8 @@ func (m *realAzureMinter) mintToken(ctx context.Context, scopes []string) (strin
 		return "", time.Time{}, err
 	}
 	return tok.Token, tok.ExpiresOn, nil
+}
+
+func init() {
+	registerCloudEngine("azure", func() (CredentialEngine, error) { return &AzureEngine{}, nil })
 }

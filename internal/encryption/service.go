@@ -13,9 +13,6 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
-	"github.com/keyorixhq/keyorix/internal/crypto/awskms"
-	"github.com/keyorixhq/keyorix/internal/crypto/azurekms"
-	"github.com/keyorixhq/keyorix/internal/crypto/gcpkms"
 )
 
 // Service provides high-level encryption operations for the application.
@@ -112,8 +109,9 @@ func (s *Service) wireKMSAuditSink(provider crypto.KeyProvider) {
 	if !ok {
 		return
 	}
-	sinkable, ok := kp.Client().(interface{ SetAuditSink(gcpkms.AuditSink) })
-	if !ok {
+	// wireGCPKMSAuditSinkFn is nil in a nogcp build (kms_gcpkms_nogcp.go) — there
+	// is no gcp-kms client to wire in that build, so this is simply a no-op.
+	if wireGCPKMSAuditSinkFn == nil {
 		return
 	}
 	s.auditSinkMu.RLock()
@@ -122,7 +120,7 @@ func (s *Service) wireKMSAuditSink(provider crypto.KeyProvider) {
 	if sink == nil {
 		return
 	}
-	sinkable.SetAuditSink(gcpkms.AuditSink(sink))
+	wireGCPKMSAuditSinkFn(kp, sink)
 }
 
 // NewKeyProviderFromConfig builds the KEK source described by an EncryptionConfig
@@ -145,12 +143,12 @@ func NewKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase 
 // newKeyProviderFromConfig is NewKeyProviderFromConfig's implementation, with an
 // added kmsFallbackHook wired only from Service.buildKeyProvider (the live-serving
 // path) so a KMSAllowContextFallback decrypt actually firing gets recorded as more
-// than a log line — see awskms.FallbackHook and Service.auditKMSContextFallback.
+// than a log line — see KMSFallbackHook and Service.auditKMSContextFallback.
 // Kept unexported rather than added as a new exported parameter so the many
 // existing NewKeyProviderFromConfig call sites (tests, the migration CLI) that
 // have no audit sink to wire don't need updating for an audit path that doesn't
 // apply to them.
-func newKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase string, kmsFallbackHook awskms.FallbackHook) (crypto.KeyProvider, error) {
+func newKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase string, kmsFallbackHook KMSFallbackHook) (crypto.KeyProvider, error) {
 	// Re-derive the same (baseDir, saltPath) normalizeKeyPaths already computes for
 	// the KeyManager built from this same config (NewKeyManager, above), rather than
 	// trusting cfg.SaltPath as-is: cfg is the Service's own config pointer, and
@@ -202,7 +200,7 @@ func newKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase 
 // buildSingleProvider constructs a single KeyProvider from one KeyProviderConfig.
 // saltPath is the encryption config's salt file path (used by the password provider).
 // kmsFallbackHook is wired into an aws-kms provider only (see NewKeyProviderFromConfig).
-func buildSingleProvider(kp *config.KeyProviderConfig, baseDir, passphrase, saltPath string, kmsFallbackHook awskms.FallbackHook) (crypto.KeyProvider, error) {
+func buildSingleProvider(kp *config.KeyProviderConfig, baseDir, passphrase, saltPath string, kmsFallbackHook KMSFallbackHook) (crypto.KeyProvider, error) {
 	switch kp.Type {
 	case "", "password":
 		return crypto.NewPasswordKeyProvider(passphrase, baseDir, saltPath), nil
@@ -216,36 +214,18 @@ func buildSingleProvider(kp *config.KeyProviderConfig, baseDir, passphrase, salt
 		return crypto.NewShamirKeyProvider(kp.ShamirShareFiles, kp.ShamirShareEnv, kp.ShamirCommitment), nil
 	case "tpm":
 		return crypto.NewTPMKeyProvider(kp.TPMDevice, baseDir, kp.WrappedKeyPath), nil
-	case "aws-kms":
-		kmsClient, err := awskms.New(context.Background(), kp.KMSKeyID, kp.KMSEncryptionContext, kp.KMSAllowContextFallback, kmsFallbackHook)
-		if err != nil {
-			return nil, err
+	case "aws-kms", "gcp-kms", "azure-kms":
+		// Dispatches through the cloud-KMS registry (kms_registry.go, ADR-109
+		// step 6) rather than importing internal/crypto/{awskms,azurekms,gcpkms}
+		// directly here — each is registered from its own //go:build !no<x>
+		// file, so a no<x> build never links that SDK. ok=false means this
+		// build was compiled with the corresponding no<x> tag: fail closed with
+		// a clear error naming the type, never a silent no-op.
+		provider, ok, err := newCloudKMSProvider(context.Background(), kp.Type, kp, baseDir, kmsFallbackHook)
+		if !ok {
+			return nil, fmt.Errorf("encryption key_provider type %q is not available in this build (its cloud SDK was excluded at compile time) — rebuild without the matching no<provider> tag to use it", kp.Type)
 		}
-		return crypto.NewKMSKeyProvider(kmsClient, "aws-kms", baseDir, kp.WrappedKeyPath), nil
-	case "gcp-kms":
-		kmsClient, err := gcpkms.New(context.Background(), kp.KMSKeyID, kp.KMSEncryptionContext, kp.KMSAllowContextFallback)
-		if err != nil {
-			return nil, err
-		}
-		return crypto.NewKMSKeyProvider(kmsClient, "gcp-kms", baseDir, kp.WrappedKeyPath), nil
-	case "azure-kms":
-		// #123: Azure Key Vault wraps with RSA-OAEP, which has no additional-
-		// authenticated-data input, so the wrapped KEK cannot be bound to an install
-		// this way — full stop, there is no fallback-vs-strict distinction to make (there
-		// was never a bound path). Previously this only logged and silently proceeded
-		// with an unbound key, which an operator relying on log aggregation/alerting
-		// could easily miss, believing their configured context was actually enforced.
-		// A hard refusal to start is the fail-closed behavior: the operator must
-		// either drop kms_encryption_context (accepting the shared-CMK exposure
-		// consciously) or switch to a per-install key.
-		if len(kp.KMSEncryptionContext) > 0 {
-			return nil, fmt.Errorf("azure-kms: kms_encryption_context is set but unsupported (RSA-OAEP key wrap has no AAD input) — remove it, or use a per-install Key Vault key to avoid shared-key unwrap")
-		}
-		kmsClient, err := azurekms.New(context.Background(), kp.KMSKeyID)
-		if err != nil {
-			return nil, err
-		}
-		return crypto.NewKMSKeyProvider(kmsClient, "azure-kms", baseDir, kp.WrappedKeyPath), nil
+		return provider, err
 	default:
 		return nil, fmt.Errorf("unknown encryption key_provider type %q (supported: password, file, env, exec, shamir, tpm, aws-kms, gcp-kms, azure-kms)", kp.Type)
 	}

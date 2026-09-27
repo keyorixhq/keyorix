@@ -17,6 +17,12 @@
 // "gcp-secret-manager" connector with an unset project_id, and GetSecret itself
 // independently refuses every read on an empty projectID (defense in depth — it does
 // not merely trust that boot validation ran).
+//
+// A nogcp build (see gcpsm_nogcp.go, ADR-109 step 6) compiles this file out
+// entirely, dropping cloud.google.com/go/secretmanager from the binary.
+//
+//go:build !nogcp
+
 package connect
 
 import (
@@ -149,4 +155,10 @@ func (c *GCPSecretManagerConnector) GetSecret(ctx context.Context, ref string) (
 		return "", fmt.Errorf("gcp-secret-manager: secret %q has no value", ref)
 	}
 	return string(out.GetPayload().GetData()), nil
+}
+
+func init() {
+	registerCloudConnector("gcp-secret-manager", func(p ConnectorParams) Connector {
+		return NewGCPSecretManagerConnector(p.Name, p.ProjectID, p.AllowedRefs)
+	})
 }

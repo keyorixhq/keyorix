@@ -26,6 +26,18 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+// mockKeyProvider is a minimal, cloud-agnostic KeyProvider fake used by tests in
+// this file and in encryption_s25_test.go (//go:build !noazure). Deliberately
+// kept in this untagged file (ADR-109 step 6) so a standalone -tags noazure
+// build — which excludes that file but not this one — still has it available.
+type mockKeyProvider struct {
+	kek []byte
+	err error
+}
+
+func (m *mockKeyProvider) KEK() ([]byte, error) { return m.kek, m.err }
+func (m *mockKeyProvider) Name() string         { return "mock" }
+
 // skipIfRootOrWindows skips permission-based tests that don't work as root
 // (bypasses permission checks) or on Windows (chmod not enforced the same way).
 func skipIfRootOrWindows(t *testing.T) {

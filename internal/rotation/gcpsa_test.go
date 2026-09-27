@@ -1,3 +1,5 @@
+//go:build !nogcp
+
 package rotation
 
 import (

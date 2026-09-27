@@ -3,11 +3,46 @@ package rotation
 import (
 	"context"
 	"errors"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// ---------------------------------------------------------------------------
+// Fake azureTokenSource for testing azureGraphClient. azureTokenSource (see
+// azure.go) is this package's own seam over the real Azure SDK credential —
+// deliberately not azure-sdk-for-go's azcore.TokenCredential itself, so that
+// azure.go (and this file) can stay compiled unconditionally (ADR-109 step
+// 6: a noazure build still needs AzureAppSecretExecutor to exist so
+// azure_fuzz_test.go keeps compiling) without importing azure-sdk-for-go.
+// The real, SDK-backed implementation lives in azure_sdk.go (!noazure only).
+// Deliberately kept in this untagged file (not rotation_s2_test.go, which is
+// //go:build !nogcp) so a standalone -tags nogcp build — which excludes that
+// file but not this one — still has these helpers available to the other
+// azure test files that use them.
+// ---------------------------------------------------------------------------
+
+type fakeTokenCredential struct {
+	token string
+	err   error
+}
+
+func (f *fakeTokenCredential) Token(_ context.Context) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.token, nil
+}
+
+// newGraphClient builds an azureGraphClient pointing at the given test server URL.
+func newGraphClient(srv *httptest.Server, tok string) *azureGraphClient {
+	return &azureGraphClient{
+		tokenSource: &fakeTokenCredential{token: tok},
+		http:        srv.Client(),
+	}
+}
 
 type fakeAzure struct {
 	existing  []string // current password keyIds
@@ -68,21 +103,6 @@ func TestAzure_GenerateUpstream_RemovesPriorSecrets(t *testing.T) {
 	_, err := azureWith(fake, "app-").GenerateUpstream(context.Background(), "app-123")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"kid1", "kid2"}, fake.removed, "all prior secrets removed")
-}
-
-// TestAzureExecutor_ClientRealPath_CredentialError exercises the
-// azidentity.NewDefaultAzureCredential error branch inside
-// AzureAppSecretExecutor.client() when newClient is nil. Setting
-// AZURE_TOKEN_CREDENTIALS to an unrecognized value makes credential construction
-// fail deterministically, without any network I/O.
-func TestAzureExecutor_ClientRealPath_CredentialError(t *testing.T) {
-	t.Setenv("AZURE_TOKEN_CREDENTIALS", "not-a-real-credential-type")
-
-	e := NewAzureAppSecretExecutor("azure-test", nil)
-	cl, err := e.client(context.Background())
-	require.Error(t, err)
-	assert.Nil(t, cl)
-	assert.Contains(t, err.Error(), "azure-app: default credential")
 }
 
 func TestAzure_GenerateUpstream_Errors(t *testing.T) {

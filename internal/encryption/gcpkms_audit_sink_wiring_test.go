@@ -7,6 +7,9 @@
 // proves Service actually wires one for the gcp-kms provider shape, using a fake
 // client (real gcpkms.New() needs live GCP ADC credentials, unavailable in CI —
 // same constraint documented in encryption_s17_test.go).
+//
+//go:build !nogcp
+
 package encryption
 
 import (

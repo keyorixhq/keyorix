@@ -1,3 +1,5 @@
+//go:build !noazure
+
 package connect
 
 // link_local_guard_test.go — regression tests for validateConnectorAddressNotLinkLocal

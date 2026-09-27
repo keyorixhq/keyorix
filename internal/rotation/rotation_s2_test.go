@@ -1,3 +1,5 @@
+//go:build !nogcp
+
 package rotation
 
 import (
@@ -7,37 +9,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------
-// Fake azcore.TokenCredential for testing azureGraphClient
-// ---------------------------------------------------------------------------
-
-type fakeTokenCredential struct {
-	token string
-	err   error
-}
-
-func (f *fakeTokenCredential) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcore.AccessToken, error) {
-	if f.err != nil {
-		return azcore.AccessToken{}, f.err
-	}
-	return azcore.AccessToken{Token: f.token, ExpiresOn: time.Now().Add(time.Hour)}, nil
-}
-
-// newGraphClient builds an azureGraphClient pointing at the given test server URL.
-func newGraphClient(srv *httptest.Server, tok string) *azureGraphClient {
-	return &azureGraphClient{
-		cred: &fakeTokenCredential{token: tok},
-		http: srv.Client(),
-	}
-}
+// fakeTokenCredential and newGraphClient (used throughout this file and by
+// the rotation_s1x/s2x azure test files) live in azure_test.go — an
+// unconditionally-compiled file — precisely so that a standalone -tags nogcp
+// build (which excludes this file but not those) still has them available.
 
 // ---------------------------------------------------------------------------
 // azureGraphClient.token() tests
@@ -57,8 +37,8 @@ func TestAzureGraphClient_Token_Success(t *testing.T) {
 
 func TestAzureGraphClient_Token_Error(t *testing.T) {
 	c := &azureGraphClient{
-		cred: &fakeTokenCredential{err: fmt.Errorf("no credentials")},
-		http: http.DefaultClient,
+		tokenSource: &fakeTokenCredential{err: fmt.Errorf("no credentials")},
+		http:        http.DefaultClient,
 	}
 	_, err := c.token(context.Background())
 	require.Error(t, err)
@@ -128,8 +108,8 @@ func (rt *erroringRoundTripper) RoundTrip(*http.Request) (*http.Response, error)
 // must also propagate.
 func TestAzureGraphClient_Do_HTTPDoError(t *testing.T) {
 	c := &azureGraphClient{
-		cred: &fakeTokenCredential{token: "tok"},
-		http: &http.Client{Transport: &erroringRoundTripper{err: fmt.Errorf("connection refused")}},
+		tokenSource: &fakeTokenCredential{token: "tok"},
+		http:        &http.Client{Transport: &erroringRoundTripper{err: fmt.Errorf("connection refused")}},
 	}
 	err := c.do(context.Background(), http.MethodGet, "http://127.0.0.1/unreachable", nil, nil)
 	require.Error(t, err)
@@ -143,8 +123,8 @@ func TestAzureGraphClient_Do_TokenError(t *testing.T) {
 	defer srv.Close()
 
 	c := &azureGraphClient{
-		cred: &fakeTokenCredential{err: fmt.Errorf("token fetch failed")},
-		http: srv.Client(),
+		tokenSource: &fakeTokenCredential{err: fmt.Errorf("token fetch failed")},
+		http:        srv.Client(),
 	}
 	err := c.do(context.Background(), http.MethodGet, srv.URL+"/path", nil, nil)
 	require.Error(t, err)
@@ -201,8 +181,8 @@ func TestAzureGraphClient_ListPasswordKeyIDs_DirectCall(t *testing.T) {
 	// parsing logic by calling it through a custom do() with the test server URL.
 	// Instead, test the method's sub-components (parsing) by testing its error path:
 	c := &azureGraphClient{
-		cred: &fakeTokenCredential{err: fmt.Errorf("no creds")},
-		http: srv.Client(),
+		tokenSource: &fakeTokenCredential{err: fmt.Errorf("no creds")},
+		http:        srv.Client(),
 	}
 	_, err := c.ListPasswordKeyIDs(context.Background(), "app-id")
 	require.Error(t, err)
@@ -215,8 +195,8 @@ func TestAzureGraphClient_AddPassword_TokenError(t *testing.T) {
 	defer srv.Close()
 
 	c := &azureGraphClient{
-		cred: &fakeTokenCredential{err: fmt.Errorf("no creds")},
-		http: srv.Client(),
+		tokenSource: &fakeTokenCredential{err: fmt.Errorf("no creds")},
+		http:        srv.Client(),
 	}
 	_, err := c.AddPassword(context.Background(), "app-id")
 	require.Error(t, err)
@@ -229,8 +209,8 @@ func TestAzureGraphClient_RemovePassword_TokenError(t *testing.T) {
 	defer srv.Close()
 
 	c := &azureGraphClient{
-		cred: &fakeTokenCredential{err: fmt.Errorf("no creds")},
-		http: srv.Client(),
+		tokenSource: &fakeTokenCredential{err: fmt.Errorf("no creds")},
+		http:        srv.Client(),
 	}
 	err := c.RemovePassword(context.Background(), "app-id", "key-id")
 	require.Error(t, err)

@@ -1,3 +1,5 @@
+//go:build !noazure && !nogcp
+
 package connect
 
 // connect_s25_test.go — coverage blitz targeting the remaining fully- or
