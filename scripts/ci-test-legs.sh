@@ -151,7 +151,6 @@ root_base() {
 # ALSO be pinned to another, and root-4 is defined as everything else.
 root_1_pkgs() {
   cat <<'EOF'
-github.com/keyorixhq/keyorix/internal/encryption
 github.com/keyorixhq/keyorix/server/grpc/services
 github.com/keyorixhq/keyorix/internal/crypto
 github.com/keyorixhq/keyorix/server/grpc
@@ -219,12 +218,21 @@ storage_store_pkgs() {
   echo "github.com/keyorixhq/keyorix/internal/storage/store"
 }
 
+# encryption_pkgs: internal/encryption gets its own two test-name shards
+# (2026-09-27). Measured 829.5s of root-1's ~15-16 min on merge-queue run
+# 36320819069 -- one package, so no package-level rebalancing of root-1 could
+# get the matrix's longest leg under ~14 min. Same mod-2 mechanism as
+# storage-store-1/2.
+encryption_pkgs() {
+  echo "github.com/keyorixhq/keyorix/internal/encryption"
+}
+
 # root_4_pkgs: the dynamic catch-all -- every root_base() package not pinned
 # to root-1/2/3/core/storage-store above, so a newly added package always
 # lands somewhere (root-4) rather than silently running nowhere.
 root_4_pkgs() {
   local pinned
-  pinned=$(cat <(root_1_pkgs) <(root_2_pkgs) <(root_3_pkgs) <(core_pkgs) <(storage_store_pkgs) | sort -u)
+  pinned=$(cat <(root_1_pkgs) <(root_2_pkgs) <(root_3_pkgs) <(core_pkgs) <(storage_store_pkgs) <(encryption_pkgs) | sort -u)
   comm -23 <(root_base | sort -u) <(echo "$pinned")
 }
 
@@ -290,6 +298,7 @@ pkgs_for_leg() {
     core) core_pkgs ;;
     root-4) root_4_pkgs ;;
     storage-store-1|storage-store-2) storage_store_pkgs ;;
+    encryption-1|encryption-2) encryption_pkgs ;;
     handlers-1|handlers-2) handlers_pkg ;;
     http-1|http-2|http-3|http-4|http-5|http-6|http-7|http-8) http_pkg ;;
     *) echo "pkgs_for_leg: unknown leg '$1'" >&2; return 1 ;;
@@ -308,6 +317,8 @@ root-4
 core
 storage-store-1
 storage-store-2
+encryption-1
+encryption-2
 handlers-1
 handlers-2
 http-1
@@ -329,7 +340,12 @@ EOF
 run_filter_for_shard() {
   local pkg="$1" shard="$2" n="$3"
   local names selected
-  names=$(go test -list '^Test' "$pkg" | grep -v '^ok\b' | sort)
+  # '^(Test|Fuzz)', not '^Test' (2026-09-27): with -run restricted to Test*
+  # names, every sharded package's Fuzz* seed corpora (testdata/fuzz + f.Add
+  # seeds, which `go test` runs as ordinary regression tests) silently never
+  # ran in this matrix -- server/http, server/http/handlers and
+  # internal/storage/store included. fuzz-targets only checks registration.
+  names=$(go test -list '^(Test|Fuzz)' "$pkg" | grep -v '^ok\b' | sort)
   selected=$(echo "$names" | awk -v n="$n" -v s="$shard" 'NR % n == (s - 1)')
   printf '^(%s)$' "$(echo "$selected" | paste -sd '|')"
 }
@@ -411,7 +427,7 @@ assert_pinned_leg_packages_valid() {
   local actual failed=0
   actual=$(go list ./... | sort -u)
 
-  local -a exclusive_lists=(root_1_pkgs root_2_pkgs root_3_pkgs core_pkgs storage_store_pkgs)
+  local -a exclusive_lists=(root_1_pkgs root_2_pkgs root_3_pkgs core_pkgs storage_store_pkgs encryption_pkgs)
   local list_name pkg
   local pinned_pkg_names="" pinned_pkg_owners=""
 
