@@ -31,9 +31,9 @@ if [ -n "$KEYORIX_ADMIN_PASSWORD" ]; then
     ADMIN_USER="${KEYORIX_ADMIN_USERNAME:-admin}"
     ADMIN_EMAIL="${KEYORIX_ADMIN_EMAIL:-admin@keyorix.local}"
     if [ -z "$KEYORIX_BOOTSTRAP_TOKEN" ]; then
-        echo "KEYORIX_ADMIN_PASSWORD is set but KEYORIX_BOOTSTRAP_TOKEN is not — skipping"
-        echo "auto-bootstrap (the server-generated random token can't be read back here)."
-        echo "Set KEYORIX_BOOTSTRAP_TOKEN, or initialise manually: \`keyorix system init --server http://<host>:8080\`" # NOSONAR -- documentation string, not a network connection
+        echo "WARN: KEYORIX_ADMIN_PASSWORD is set but KEYORIX_BOOTSTRAP_TOKEN is not — skipping"
+        echo "WARN: auto-bootstrap (the server-generated random token can't be read back here)."
+        echo "WARN: Set KEYORIX_BOOTSTRAP_TOKEN, or initialise manually: \`keyorix system init --server http://<host>:8080\`" # NOSONAR -- documentation string, not a network connection
     else
         echo "Bootstrapping admin user '$ADMIN_USER' (idempotent)..."
         # Write the POST body (which embeds the admin password) to a private temp
