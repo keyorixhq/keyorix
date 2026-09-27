@@ -4239,6 +4239,129 @@ var opCatalog = []operation{
 		},
 	},
 	{
+		// auth.go's PasswordReset: always returns success unconditionally
+		// (email-enumeration protection — RequestPasswordReset's own error is
+		// discarded) — batch 22.
+		Key: "REST POST /auth/password-reset",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/auth/password-reset", map[string]any{
+				"email": "fuzz-b22-nonexistent@example.com",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// notifications_handler.go's MarkAllRead: a no-op batch update
+		// succeeds even with zero notifications — batch 22.
+		Key: "REST POST /api/v1/notifications/read-all",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/notifications/read-all", nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// notifications_handler.go's MarkRead: Setup transfers a secret's
+		// ownership to a fresh user, which unconditionally notifies the new
+		// owner (notifySecretOwnershipTransferred) — a more reliable trigger
+		// than notifyAccessRequested, which requires the recipient to be an
+		// approver-role ListProjectMembers row, not just any project-scoped
+		// role grant — batch 22.
+		Key: "REST POST /api/v1/notifications/{id}/read",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secretID, err := createSecretForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			newOwnerID, err := createUserForFuzz(ctx, w, "fuzz-b22-notify-newowner")
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/roles/", map[string]any{
+				"name": "fuzz-b22-writer-role", "description": "fuzz writer role", "permissions": []string{"secrets.write"},
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateRole: HTTP %d: %s", st, body)
+			}
+			var roleDecoded struct {
+				Data struct {
+					Role struct {
+						ID uint `json:"id"`
+					} `json:"role"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &roleDecoded); err != nil || roleDecoded.Data.Role.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateRole response: %w (body=%s)", err, body)
+			}
+			if err := assignUserRoleForFuzz(ctx, w, newOwnerID, roleDecoded.Data.Role.ID, 1); err != nil {
+				return nil, err
+			}
+			st, body, err = httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/transfer-ownership", secretID), map[string]any{
+				"new_owner_id": newOwnerID,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup TransferOwnership: HTTP %d: %s", st, body)
+			}
+			token, err := loginForFuzz(ctx, w, "fuzz-b22-notify-newowner", fuzzUserPassword)
+			if err != nil {
+				return nil, err
+			}
+			st, body, err = httpJSONAs(ctx, w, token, http.MethodGet, "/api/v1/notifications", nil)
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup ListNotifications: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					Notifications []struct {
+						ID uint `json:"id"`
+					} `json:"notifications"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || len(decoded.Data.Notifications) == 0 {
+				return nil, fmt.Errorf("no notification produced by TransferOwnership (body=%s)", body)
+			}
+			return [2]any{decoded.Data.Notifications[0].ID, token}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			args := state.([2]any)
+			id := args[0].(uint)
+			token := args[1].(string)
+			st, body, err := httpJSONAs(ctx, w, token, http.MethodPost, fmt.Sprintf("/api/v1/notifications/%d/read", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// users_crud.go's VerifyCredentials (the RemoteStorage hub-side
+		// counterpart to Login) — batch 22.
+		Key: "REST POST /api/v1/users/verify-credentials",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/users/verify-credentials", map[string]any{
+				"username": "faultadmin", "password": faultAdminPassword,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
 		Key: "GRPC keyorix.v1.MachineIdentityService.ClassifyMachineToken",
 		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
 			machineID, err := createMachineIdentityForFuzz(ctx, w, 1)

@@ -251,6 +251,11 @@ var operationOverrides = map[string]overrideEntry{
 	"REST POST /api/v1/compliance/evidence/verify":        {StatusFuzzed, "opCatalog[\"VerifyComplianceEvidence\"] — batch 21"},
 	"REST POST /api/v1/compliance/snapshots":               {StatusFuzzed, "opCatalog[\"TakeComplianceSnapshot\"] — batch 21"},
 	"REST POST /api/v1/audit/migrate-chain-encoding":       {StatusFuzzed, "opCatalog[\"MigrateAuditChainEncoding\"] — batch 21"},
+
+	"REST POST /auth/password-reset":                 {StatusFuzzed, "opCatalog[\"PasswordReset\"] — batch 22"},
+	"REST POST /api/v1/notifications/read-all":        {StatusFuzzed, "opCatalog[\"MarkAllRead\"] — batch 22"},
+	"REST POST /api/v1/notifications/{id}/read":       {StatusFuzzed, "opCatalog[\"MarkRead\"] — batch 22"},
+	"REST POST /api/v1/users/verify-credentials":      {StatusFuzzed, "opCatalog[\"VerifyCredentials\"] — batch 22"},
 }
 
 func statusOf(key string) overrideEntry {
