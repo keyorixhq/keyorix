@@ -190,10 +190,18 @@ _sbom-generate:
 	# (this exact trap, measured, is why the flag is absent below).
 	cd web && node scripts/build-frontend-sbom.mjs ../dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
 	@echo "→ Generating per-binary Go CycloneDX SBOMs (one per binary, not per binary family)"
-	(cd cli && GOWORK=off GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main . -licenses -output $(CURDIR)/dist/$(BINARY_CLI)_linux_amd64_sbom.cdx.json    .)
-	(cd cli && GOWORK=off GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main . -licenses -output $(CURDIR)/dist/$(BINARY_CLI)_linux_arm64_sbom.cdx.json    .)
-	(cd cli && GOWORK=off GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main . -licenses -output $(CURDIR)/dist/$(BINARY_CLI)_darwin_amd64_sbom.cdx.json   .)
-	(cd cli && GOWORK=off GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main . -licenses -output $(CURDIR)/dist/$(BINARY_CLI)_darwin_arm64_sbom.cdx.json   .)
+	# cli/go.mod replaces github.com/keyorixhq/keyorix with ../ (ADR-108 thin CLI), so
+	# cyclonedx-gomod hashes the whole repo directory as a local module. pnpm's
+	# web/node_modules holds symlinks to directories, which that hash cannot read
+	# ("is a directory"), so the v0.95.0 release job failed here. The frontend SBOM
+	# above is already written, so web/node_modules is moved aside for these four
+	# commands and always restored (trap), including on failure.
+	@set -e; aside="$(abspath $(CURDIR)/..)/.keyorix-sbom-web-node_modules.$$$$"; \
+	if [ -d web/node_modules ]; then mv web/node_modules "$$aside"; trap 'mv "'"$$aside"'" web/node_modules' EXIT; fi; \
+	(cd cli && GOWORK=off GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main . -licenses -output $(CURDIR)/dist/$(BINARY_CLI)_linux_amd64_sbom.cdx.json    .); \
+	(cd cli && GOWORK=off GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main . -licenses -output $(CURDIR)/dist/$(BINARY_CLI)_linux_arm64_sbom.cdx.json    .); \
+	(cd cli && GOWORK=off GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main . -licenses -output $(CURDIR)/dist/$(BINARY_CLI)_darwin_amd64_sbom.cdx.json   .); \
+	(cd cli && GOWORK=off GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main . -licenses -output $(CURDIR)/dist/$(BINARY_CLI)_darwin_arm64_sbom.cdx.json   .);
 	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_linux_amd64_sbom.cdx.json  .
 	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_linux_arm64_sbom.cdx.json  .
 	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_darwin_amd64_sbom.cdx.json .
