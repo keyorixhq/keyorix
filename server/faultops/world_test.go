@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/delivery"
@@ -242,6 +243,27 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 		t.Fatalf("delivery.New: %v", err)
 	}
 	testCore.SetCredentialDelivery(deliverer, "https://fuzz-world.invalid")
+
+	// WebAuthn RP (ADR-036): newFaultWorld never called SetWebAuthn, so the
+	// entire WebAuthn family (register/login/passwordless/reauth) returns
+	// ErrWebAuthnDisabled unconditionally. A real webauthn.New RP config, same
+	// shape production wires in server/main.go — a fixed test RP identity, not
+	// derived from httpServer's own ephemeral origin, matching this exact
+	// codebase's own established precedent for a webauthn.New call inside a
+	// test world (server/http/handlers/mfa_webauthn_reauth_test.go uses the
+	// identical RPID/RPOrigins): WebAuthn's origin check validates the
+	// request's Origin HEADER against RPOrigins, not the TCP port the request
+	// actually arrived on, so a fixed RP identity is real and correct as long
+	// as whatever ceremony Setup/Execute code sends a matching Origin header
+	// (PR B's concern when it wires the first WebAuthn operation — none exists
+	// in opCatalog yet, hence no request-header change here).
+	rp, err := webauthn.New(&webauthn.Config{
+		RPID: "localhost", RPDisplayName: "Keyorix", RPOrigins: []string{"https://localhost"},
+	})
+	if err != nil {
+		t.Fatalf("webauthn.New: %v", err)
+	}
+	testCore.SetWebAuthn(rp)
 
 	testCore.SetBootstrapToken("fault-fuzz-bootstrap")
 	ctx := context.Background()

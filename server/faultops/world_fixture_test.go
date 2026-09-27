@@ -19,3 +19,10 @@ func TestWorldFixture_Encryption(t *testing.T) {
 		t.Fatalf("ensureEncryption (second call): %v", err)
 	}
 }
+
+func TestWorldFixture_WebAuthn(t *testing.T) {
+	w := newFaultWorld(t, nil)
+	if !w.core.WebAuthnEnabled() {
+		t.Fatal("WebAuthnEnabled() is false after newFaultWorld — SetWebAuthn was not wired")
+	}
+}
