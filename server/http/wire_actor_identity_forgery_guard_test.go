@@ -220,4 +220,3 @@ func actorFieldReadsAgainst(t *testing.T, dir, handlerName string) []string {
 	sort.Strings(found)
 	return found
 }
-
