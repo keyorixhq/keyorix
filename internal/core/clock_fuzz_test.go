@@ -28,14 +28,14 @@
 // this, not a real timezone-dependent bug -- see the git history of this
 // file for the corrected version).
 //
-// Oracle 2 is deliberately NOT asserted for dynamic-secret leases:
-// RenewLease compares directly against bare c.now() with no watermark
-// (dynamic_secrets.go's own doc comment on the check, and the #1983
-// EffectiveNow doc comment, both say so explicitly -- introducing one was
-// scoped out of that investigation as "a separate, larger change"). This
-// harness's own run below empirically reproduces that gap as a real,
-// repeatable finding rather than asserting a property known not to hold;
-// see docs/findings/2026-09-27-FINDING-dynamic-secret-lease-clock-rollback.md.
+// Oracle 2 now ALSO covers dynamic-secret leases (credSel==2): RenewLease
+// and RevokeExpiredLeases previously compared directly against bare c.now()
+// with no watermark -- found by this fuzzer
+// (docs/findings/2026-09-27-FINDING-dynamic-secret-lease-clock-rollback.md)
+// and closed by checkLeaseRenewClockNotRegressed/dynamicSecretsSweepCutoff
+// (dynamic_secrets.go), mirroring checkSessionRefreshClockNotRegressed
+// (#1632/#1653). TestDynamicSecretLeaseRenewal_ClockRollbackWatermark below
+// is this fix's own regression test.
 package core
 
 import (
@@ -303,16 +303,19 @@ func FuzzClockJumpNeverAuthorizesExpired(f *testing.F) {
 		if !stepBackTo.Before(expiry) {
 			stepBackTo = w.t0 // guarantee a genuine backward step to before expiry
 		}
+		if credSel == 2 {
+			// The lease watermark REFUSES only beyond leaseClockRegressionTolerance
+			// (30s) -- a tolerance-based guard, not a zero-tolerance clamp like
+			// authEffectiveNow (session/PAT). A fuzzed stepBackTo within 30s of the
+			// watermark is legitimately ALLOWED by design (ordinary NTP slew), so
+			// asserting refusal there would be a false positive. Force a step back
+			// to t0 instead, guaranteeing a regression of at least the 60s
+			// credential TTL -- comfortably past the 30s tolerance regardless of
+			// how far past expiry checkTime itself landed.
+			stepBackTo = w.t0
+		}
 		w.clock.t = stepBackTo
 		reAccepted := checkAt(ctx, w, credSel)
-		if credSel == 2 {
-			// KNOWN GAP, not silently skipped -- see
-			// TestDynamicSecretLeaseRenewal_KnownGap_ClockRollback below, which
-			// deterministically demonstrates and records this exact reproduction
-			// (a fuzzed input finding the same shape here would be redundant,
-			// not additional evidence) rather than asserting it per fuzz input.
-			return
-		}
 		if reAccepted {
 			t.Errorf("credSel=%d re-authorized after a clock step BACK to %v (before its own expiry=%v), "+
 				"having already been correctly observed expired at %v -- the anti-rollback watermark failed",
@@ -321,56 +324,65 @@ func FuzzClockJumpNeverAuthorizesExpired(f *testing.F) {
 	})
 }
 
-// TestDynamicSecretLeaseRenewal_KnownGap_ClockRollback deterministically
-// demonstrates and records the one oracle FuzzClockJumpNeverAuthorizesExpired
-// deliberately does not assert for dynamic-secret leases (see that fuzzer's
-// package doc comment): RenewLease and RevokeExpiredLeases both compare
-// directly against bare c.now(), with no anti-rollback watermark (unlike
-// sessions/PATs, which authEffectiveNow protects). A host wall-clock step
-// backward after a lease has already been correctly observed expired
-// resurrects its renewability, and separately can make the background sweep
-// miss it.
-//
-// THIS TEST CURRENTLY ASSERTS THE BUGGY (gap) BEHAVIOR ON PURPOSE, so it goes
-// RED the moment a fix lands and must be updated in the SAME PR that ships
-// it (tracked: fix(security) PR adding an in-process watermark to RenewLease
-// / RevokeExpiredLeases, mirroring checkSessionRefreshClockNotRegressed
-// (#1632/#1653) -- see docs/findings/2026-09-27-FINDING-dynamic-secret-lease-clock-rollback.md).
-func TestDynamicSecretLeaseRenewal_KnownGap_ClockRollback(t *testing.T) {
+// TestDynamicSecretLeaseRenewal_ClockRollbackWatermark is the regression test
+// for the gap FuzzClockJumpNeverAuthorizesExpired found (2026-09-27,
+// docs/findings/2026-09-27-FINDING-dynamic-secret-lease-clock-rollback.md):
+// RenewLease and RevokeExpiredLeases used to compare directly against bare
+// c.now(), with no anti-rollback watermark (unlike sessions/PATs, which
+// authEffectiveNow protects). A host wall-clock step backward after a lease
+// had already been correctly observed expired used to resurrect its
+// renewability, and separately could make the background sweep miss it.
+// checkLeaseRenewClockNotRegressed/dynamicSecretsSweepCutoff
+// (dynamic_secrets.go) close both, mirroring
+// checkSessionRefreshClockNotRegressed (#1632/#1653). Red-proofed by
+// reverting this test's assertions to the pre-fix (buggy) expectation and
+// confirming they fail against the fixed code, then restoring.
+func TestDynamicSecretLeaseRenewal_ClockRollbackWatermark(t *testing.T) {
 	w := buildClockFuzzWorld(t)
 	ctx := context.Background()
 
-	// Control: the ordinary case works -- a clock that only ever advances
-	// past expiry correctly refuses renewal.
+	// Control: the ordinary case still works -- a clock that only ever
+	// advances past expiry correctly refuses renewal.
 	w.clock.t = w.leaseExpiry.Add(time.Second)
 	if _, err := w.core.RenewLease(ctx, w.leaseID, int(clockFuzzCredentialTTL.Seconds()), 1); err == nil {
 		t.Fatalf("control case failed: RenewLease succeeded past expiry with a forward-only clock")
 	}
 
-	// GAP: step the clock BACK to before expiry (simulating an operator's
-	// `date -s`, a bad NTP correction, or any other backward wall-clock
-	// adjustment -- the exact #1983 threat model). RenewLease has no memory
-	// of having already observed this lease as expired, so it renews it.
-	w.clock.t = w.leaseExpiry.Add(-time.Second)
-	if _, err := w.core.RenewLease(ctx, w.leaseID, int(clockFuzzCredentialTTL.Seconds()), 1); err != nil {
-		t.Fatalf("expected the KNOWN GAP (renewal succeeding after a clock rollback) to still reproduce, "+
-			"got a refusal instead (%v) -- if this is because a fix landed, this test must be flipped to "+
-			"assert the refusal and its doc comment updated in the SAME change", err)
+	// FIXED: step the clock BACK to t0+10s -- inside the original TTL window
+	// (so the unrelated "a renewal must actually extend the lease" check,
+	// dynamic_secrets.go's newExpiry.After(lease.ExpiresAt), does NOT ALSO
+	// refuse here and confound what's under test) but still well past
+	// leaseClockRegressionTolerance (30s) below the watermark the control
+	// call above just set (leaseExpiry+1s = t0+61s; t0+10s is 51s earlier).
+	// A SMALL rollback (a few seconds) is legitimately tolerated by design
+	// (ordinary NTP slew, same as checkSessionRefreshClockNotRegressed), so
+	// the regression must exceed that window for refusal to be the correct
+	// expectation. Simulates an operator's `date -s`, a bad NTP correction,
+	// or any other backward wall-clock adjustment -- the exact #1983 threat
+	// model.
+	w.clock.t = w.t0.Add(10 * time.Second)
+	if _, err := w.core.RenewLease(ctx, w.leaseID, int(clockFuzzCredentialTTL.Seconds()), 1); err == nil {
+		t.Fatalf("RenewLease succeeded after a clock rollback past an already-observed expiry -- " +
+			"checkLeaseRenewClockNotRegressed failed to refuse it")
 	}
 
-	// GAP, second angle: the background sweep's cutoff is also unprotected.
-	// A scheduler that read a regressed host clock for `before` misses an
-	// already-observed-expired lease entirely.
+	// FIXED, second angle: the background sweep's cutoff is now clamped.
+	// Prime the watermark to a time past this lease's expiry (exactly what a
+	// prior renewal attempt or sweep tick would have done in production),
+	// without otherwise mutating the lease, then simulate a scheduler that
+	// read a regressed host clock for its own "before" -- the watermark must
+	// clamp it back up so the sweep still finds and revokes the lease.
 	w2 := buildClockFuzzWorld(t)
-	w2.clock.t = w2.leaseExpiry.Add(time.Hour) // sweep would normally run here
-	sweepCutoffAfterRollback := w2.leaseExpiry.Add(-time.Second)
-	revoked, err := w2.core.RevokeExpiredLeases(ctx, sweepCutoffAfterRollback)
+	if err := w2.core.checkLeaseRenewClockNotRegressed(w2.leaseExpiry.Add(time.Hour)); err != nil {
+		t.Fatalf("priming the watermark: %v", err)
+	}
+	regressedBefore := w2.leaseExpiry.Add(-time.Second)
+	revoked, err := w2.core.RevokeExpiredLeases(ctx, regressedBefore)
 	if err != nil {
 		t.Fatalf("RevokeExpiredLeases: %v", err)
 	}
-	if revoked != 0 {
-		t.Fatalf("expected the KNOWN GAP (a regressed sweep cutoff missing an expired lease) to still "+
-			"reproduce (revoked=0), got revoked=%d -- if this is because a fix landed, this test must be "+
-			"flipped to assert revoked=1 and its doc comment updated in the SAME change", revoked)
+	if revoked != 1 {
+		t.Fatalf("expected dynamicSecretsSweepCutoff to clamp the regressed cutoff forward and revoke "+
+			"the expired lease, got revoked=%d", revoked)
 	}
 }
