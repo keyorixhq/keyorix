@@ -242,18 +242,65 @@ func inCIDRs(ip net.IP, cidrs []*net.IPNet) bool {
 // it carries its IPv4 target in the low 32 bits.
 var _, nat64WellKnownPrefix, _ = net.ParseCIDR("64:ff9b::/96")
 
-// embeddedIPv4 returns the IPv4 address carried by an IPv6 address that embeds one
-// in its low 32 bits — NAT64 well-known (64:ff9b::/96) or deprecated IPv4-compatible
-// (::/96, i.e. ::a.b.c.d) — or nil if ip carries no such embedded IPv4. IPv4-MAPPED
-// (::ffff:x) is intentionally not handled here: net.IPNet.Contains already folds it
-// via To4, so the caller's direct CIDR check covers it. The unspecified (::) and
-// loopback (::1) addresses fall in ::/96 but decode to 0.0.0.0 / 0.0.0.1, which the
-// caller's direct check (::1/128) and the IPv4 CIDRs handle correctly regardless.
+// nat64LocalUsePrefix96 is RFC 8215's local-use NAT64 prefix, 64:ff9b:1::/48,
+// narrowed here to the common /96 deployment shape: the same simple "last 32
+// bits are the IPv4 address" layout as the well-known prefix, which is how
+// most real local-use NAT64 deployments actually configure it in practice.
+//
+// NOT decoded: a deployment that instead uses a shorter local prefix length
+// (32/40/48/56/64) with RFC 6052 §2.2's full bit-interleaved embedding (an
+// 8-bit reserved "u" field split in among the v4 octets) for that prefix
+// length. The local prefix's actual length is an operator choice made outside
+// any protocol negotiation this package can observe, so there is no reliable
+// way to tell "which PL is in use" from the address alone; decoding only the
+// /96 shape is a deliberate, narrower scope, not a silent gap — an address
+// using the interleaved form for a shorter PL will not match this and falls
+// through undecoded, same as any other IPv6 address netutil doesn't recognise.
+var _, nat64LocalUsePrefix96, _ = net.ParseCIDR("64:ff9b:1::/96")
+
+// sixToFourPrefix is 6to4's (RFC 3056) fixed /16. A 6to4 address embeds its
+// IPv4 endpoint directly in the next 32 bits (2002:WWXX:YYZZ::/48, WWXX:YYZZ
+// being the IPv4 in hex) — unlike NAT64/IPv4-compatible, 6to4 is not
+// deprecated-and-unused: on a network path with a live 6to4 relay (e.g. the
+// anycast 192.88.99.1), a literal 6to4-encoded address actually routes back
+// down to the embedded IPv4, making it a real (if narrower, environment-
+// dependent) SSRF vector for a guard that only inspects the IPv6 bytes as-is.
+var _, sixToFourPrefix, _ = net.ParseCIDR("2002::/16")
+
+// teredoPrefix is Teredo's (RFC 4380) fixed /32. A Teredo address's low 32
+// bits carry the client's IPv4 address, but XORed with 0xFFFFFFFF (an
+// anti-middlebox obfuscation) — decoding must undo that XOR before
+// classification, or a Teredo encoding of a private/link-local IPv4 produces
+// a completely different (and typically public-looking) byte pattern that no
+// CIDR check will ever match.
+var _, teredoPrefix, _ = net.ParseCIDR("2001::/32")
+
+// embeddedIPv4 returns the IPv4 address carried by an IPv6 address that embeds
+// one — NAT64 well-known (64:ff9b::/96), NAT64 local-use (64:ff9b:1::/96, see
+// nat64LocalUsePrefix96's own doc for the scope of what that covers),
+// deprecated IPv4-compatible (::/96, i.e. ::a.b.c.d), 6to4 (2002::/16), or
+// Teredo (2001::/32, XOR-obfuscated) — or nil if ip carries no such embedded
+// IPv4. IPv4-MAPPED (::ffff:x) is intentionally not handled here:
+// net.IPNet.Contains already folds it via To4, so the caller's direct CIDR
+// check covers it. The unspecified (::) and loopback (::1) addresses fall in
+// ::/96 but decode to 0.0.0.0 / 0.0.0.1, which the caller's direct check
+// (::1/128) and the IPv4 CIDRs handle correctly regardless.
 func embeddedIPv4(ip net.IP) net.IP {
 	ip16 := ip.To16()
 	if ip16 == nil || ip.To4() != nil {
 		return nil // not IPv6, or already an IPv4 form To4 handles
 	}
+
+	if teredoPrefix.Contains(ip16) {
+		return net.IPv4(ip16[12]^0xff, ip16[13]^0xff, ip16[14]^0xff, ip16[15]^0xff)
+	}
+	if sixToFourPrefix.Contains(ip16) {
+		return net.IPv4(ip16[2], ip16[3], ip16[4], ip16[5])
+	}
+	if nat64LocalUsePrefix96.Contains(ip16) {
+		return net.IPv4(ip16[12], ip16[13], ip16[14], ip16[15])
+	}
+
 	isCompat := true // ::/96 : first 12 bytes zero
 	for _, b := range ip16[:12] {
 		if b != 0 {
@@ -265,6 +312,23 @@ func embeddedIPv4(ip net.IP) net.IP {
 		return net.IPv4(ip16[12], ip16[13], ip16[14], ip16[15])
 	}
 	return nil
+}
+
+// EmbeddedIPv4 is embeddedIPv4, exported for a caller that applies its OWN
+// private/link-local classification policy (e.g. the SIEM forwarder's and the
+// notification-channel webhook guard's isDisallowedIP/isChannelDisallowedIP,
+// which — unlike IsPrivateOrLinkLocal — intentionally permit loopback) but
+// still needs the identical NAT64 (64:ff9b::/96) / deprecated IPv4-compatible
+// (::x) decode this package already applies internally, so a legitimate
+// per-caller POLICY difference (which addresses are permitted) never turns
+// into an ENCODING gap (which representations of an address are recognised at
+// all). A caller should classify EmbeddedIPv4(ip) instead of ip whenever it is
+// non-nil, and fall back to classifying ip itself otherwise — mirroring
+// matchesCIDRsWithEmbedded's own "direct match OR embedded match" shape.
+// IPv4-mapped (::ffff:x) needs no such fallback: net.IP's own To4()/IsPrivate()/
+// IsLoopback()/IsLinkLocalUnicast() already fold that form natively.
+func EmbeddedIPv4(ip net.IP) net.IP {
+	return embeddedIPv4(ip)
 }
 
 // linkLocalCIDRs is the narrow subset of privateNetworkCIDRs that IsLinkLocal
