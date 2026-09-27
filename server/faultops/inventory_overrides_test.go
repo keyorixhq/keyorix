@@ -163,6 +163,19 @@ var operationOverrides = map[string]overrideEntry{
 	"REST POST /api/v1/projects/{id}/environments/{envId}/copy-secrets":       {StatusFuzzed, "opCatalog[\"CopyEnvironmentSecrets\"] — batch 15"},
 	"GRPC keyorix.v1.RoleService.CreateRole":                                  {StatusFuzzed, "opCatalog[\"GRPCCreateRole\"] — batch 15"},
 	"GRPC keyorix.v1.UserService.CreateUser":                                  {StatusFuzzed, "opCatalog[\"GRPCCreateUser\"] — batch 15"},
+
+	"REST POST /api/v1/groups/{id}/roles":                            {StatusFuzzed, "opCatalog[\"AssignRoleToGroup\"] — batch 16"},
+	"REST DELETE /api/v1/groups/{id}/roles/{roleId}":                 {StatusFuzzed, "opCatalog[\"RemoveRoleFromGroup\"] — batch 16"},
+	"REST POST /api/v1/roles/{id}/permissions":                       {StatusFuzzed, "opCatalog[\"AssignPermissionToRole\"] — batch 16"},
+	"REST DELETE /api/v1/roles/{id}/permissions/{permissionId}":      {StatusFuzzed, "opCatalog[\"RemovePermissionFromRole\"] — batch 16"},
+	"REST POST /api/v1/groups/{id}/restore":                          {StatusFuzzed, "opCatalog[\"RestoreGroup\"] — batch 16"},
+	"REST DELETE /api/v1/users/{id}":                                 {StatusFuzzed, "opCatalog[\"DeleteUser\"] — batch 16"},
+	"REST DELETE /api/v1/projects/{id}/members/{userId}":             {StatusFuzzed, "opCatalog[\"RemoveProjectMember\"] — batch 16"},
+	"REST PUT /api/v1/projects/{id}/members/{userId}":                {StatusFuzzed, "opCatalog[\"UpdateProjectMember\"] — batch 16"},
+	"REST POST /api/v1/projects/{id}/memberships":                    {StatusFuzzed, "opCatalog[\"InviteMember\"] — batch 16"},
+	"REST PUT /api/v1/projects/{id}/memberships/{membershipId}":      {StatusFuzzed, "opCatalog[\"TransitionMembership\"] — batch 16"},
+	"REST POST /api/v1/user-roles/":                                  {StatusFuzzed, "opCatalog[\"AssignRoleUserRolesRoute\"] — batch 16"},
+	"REST DELETE /api/v1/user-roles/":                                {StatusFuzzed, "opCatalog[\"RemoveRoleUserRolesRoute\"] — batch 16"},
 }
 
 func statusOf(key string) overrideEntry {

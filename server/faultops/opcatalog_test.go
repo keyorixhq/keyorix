@@ -441,6 +441,52 @@ func loginForFuzz(ctx context.Context, w *faultWorld, username, password string)
 	return "", fmt.Errorf("Login response carried no %s cookie", middleware.SessionCookieName)
 }
 
+// permissionIDByNameForFuzz looks up a permission's ID by name via the real
+// REST endpoint — setup for AssignPermissionToRole, which takes a numeric
+// permission_id rather than a name.
+func permissionIDByNameForFuzz(ctx context.Context, w *faultWorld, name string) (uint, error) {
+	st, body, err := httpJSON(ctx, w, http.MethodGet, "/api/v1/permissions/", nil)
+	if err != nil {
+		return 0, err
+	}
+	if st/100 != 2 {
+		return 0, fmt.Errorf("setup ListPermissions: HTTP %d: %s", st, body)
+	}
+	var decoded struct {
+		Data struct {
+			Permissions []struct {
+				ID   uint   `json:"id"`
+				Name string `json:"name"`
+			} `json:"permissions"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return 0, fmt.Errorf("decoding ListPermissions response: %w (body=%s)", err, body)
+	}
+	for _, p := range decoded.Data.Permissions {
+		if p.Name == name {
+			return p.ID, nil
+		}
+	}
+	return 0, fmt.Errorf("permission %q not found (body=%s)", name, body)
+}
+
+// addProjectMemberForFuzz adds userID to projectID as a "viewer" via the real
+// REST endpoint — setup for operations that need a real, live project
+// membership to act on.
+func addProjectMemberForFuzz(ctx context.Context, w *faultWorld, projectID, userID uint) error {
+	st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/%d/members", projectID), map[string]any{
+		"user_id": userID, "role": "viewer",
+	})
+	if err != nil {
+		return err
+	}
+	if st/100 != 2 {
+		return fmt.Errorf("setup AddProjectMember: HTTP %d: %s", st, body)
+	}
+	return nil
+}
+
 // opCatalog is the closed set of operations FuzzStorageFaultOperations can pick
 // from — see the STEP 0 report for the running Fuzzed/Pending/Excluded count
 // across the full 309-operation inventory; this is intentionally a starting
@@ -2251,6 +2297,326 @@ var opCatalog = []operation{
 				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
 			}
 			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		// rbac.go's AssignRoleToGroup — batch 16.
+		Key: "REST POST /api/v1/groups/{id}/roles",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			groupID, err := createGroupForFuzz(ctx, w, "fuzz-b16-group-role")
+			if err != nil {
+				return nil, err
+			}
+			roleID, err := createRoleForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			return [2]uint{groupID, roleID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/groups/%d/roles", ids[0]), map[string]any{
+				"role_id": ids[1], "project_id": 1,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// rbac.go's RemoveRoleFromGroup: scope comes from QUERY params, not
+		// body, unlike the grant side — batch 16.
+		Key: "REST DELETE /api/v1/groups/{id}/roles/{roleId}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			groupID, err := createGroupForFuzz(ctx, w, "fuzz-b16-group-removerole")
+			if err != nil {
+				return nil, err
+			}
+			roleID, err := createRoleForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/groups/%d/roles", groupID), map[string]any{
+				"role_id": roleID, "project_id": 1,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup AssignRoleToGroup: HTTP %d: %s", st, body)
+			}
+			return [2]uint{groupID, roleID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/groups/%d/roles/%d?project_id=1", ids[0], ids[1]), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// rbac.go's AssignPermissionToRole — batch 16.
+		Key: "REST POST /api/v1/roles/{id}/permissions",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			roleID, err := createRoleForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			permID, err := permissionIDByNameForFuzz(ctx, w, "secrets.write")
+			if err != nil {
+				return nil, err
+			}
+			return [2]uint{roleID, permID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/roles/%d/permissions", ids[0]), map[string]any{
+				"permission_id": ids[1],
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// rbac.go's RemovePermissionFromRole — batch 16.
+		Key: "REST DELETE /api/v1/roles/{id}/permissions/{permissionId}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			roleID, err := createRoleForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			permID, err := permissionIDByNameForFuzz(ctx, w, "secrets.write")
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/roles/%d/permissions", roleID), map[string]any{
+				"permission_id": permID,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup AssignPermissionToRole: HTTP %d: %s", st, body)
+			}
+			return [2]uint{roleID, permID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/roles/%d/permissions/%d", ids[0], ids[1]), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// groups_handler.go's RestoreGroup — batch 16.
+		Key: "REST POST /api/v1/groups/{id}/restore",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			groupID, err := createGroupForFuzz(ctx, w, "fuzz-b16-group-restore")
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/groups/%d", groupID), nil)
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup DeleteGroup: HTTP %d: %s", st, body)
+			}
+			return groupID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			groupID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/groups/%d/restore", groupID), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// users_crud.go's DeleteUser (REST) — batch 16.
+		Key: "REST DELETE /api/v1/users/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createUserForFuzz(ctx, w, "fuzz-b16-user-delete")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/users/%d", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// project_members.go's RemoveProjectMember — batch 16.
+		Key: "REST DELETE /api/v1/projects/{id}/members/{userId}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			userID, err := createUserForFuzz(ctx, w, "fuzz-b16-member-remove")
+			if err != nil {
+				return nil, err
+			}
+			if err := addProjectMemberForFuzz(ctx, w, 1, userID); err != nil {
+				return nil, err
+			}
+			return userID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			userID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/projects/1/members/%d", userID), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// project_members.go's UpdateProjectMember — batch 16.
+		Key: "REST PUT /api/v1/projects/{id}/members/{userId}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			userID, err := createUserForFuzz(ctx, w, "fuzz-b16-member-update")
+			if err != nil {
+				return nil, err
+			}
+			if err := addProjectMemberForFuzz(ctx, w, 1, userID); err != nil {
+				return nil, err
+			}
+			return userID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			userID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/projects/1/members/%d", userID), map[string]any{
+				"role": "viewer",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// project_memberships.go's InviteMember (the state-machine
+		// membership flow, distinct from the plain /members endpoint) —
+		// batch 16.
+		Key: "REST POST /api/v1/projects/{id}/memberships",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createUserForFuzz(ctx, w, "fuzz-b16-membership-invite")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			userID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/memberships", map[string]any{
+				"user_id": userID, "role": "viewer",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// project_memberships.go's TransitionMembership: a fresh
+		// (non-IDP-resolved) invite starts at "invited", so the only legal
+		// first move is "verify" (membershipTransitions) — batch 16.
+		Key: "REST PUT /api/v1/projects/{id}/memberships/{membershipId}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			userID, err := createUserForFuzz(ctx, w, "fuzz-b16-membership-transition")
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/memberships", map[string]any{
+				"user_id": userID, "role": "viewer",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup InviteMember: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					Membership struct {
+						ID uint `json:"id"`
+					} `json:"membership"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.Membership.ID == 0 {
+				return nil, fmt.Errorf("decoding InviteMember response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.Membership.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			membershipID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/projects/1/memberships/%d", membershipID), map[string]any{
+				"action": "verify",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// rbac.go's AssignRole (dedicated opCatalog entry for the registry
+		// key itself — assignUserRoleForFuzz already exercises this handler
+		// as a setup helper elsewhere, but that isn't a registered opCatalog
+		// key) — batch 16.
+		Key: "REST POST /api/v1/user-roles/",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			userID, err := createUserForFuzz(ctx, w, "fuzz-b16-userroles-assign")
+			if err != nil {
+				return nil, err
+			}
+			roleID, err := createRoleForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			return [2]uint{userID, roleID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/user-roles/", map[string]any{
+				"user_id": ids[0], "role_id": ids[1], "project_id": 1, "environment_id": 0,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// rbac.go's RemoveRole (dedicated opCatalog entry, same reasoning as
+		// the AssignRole entry above) — batch 16.
+		Key: "REST DELETE /api/v1/user-roles/",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			userID, err := createUserForFuzz(ctx, w, "fuzz-b16-userroles-remove")
+			if err != nil {
+				return nil, err
+			}
+			roleID, err := createRoleForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			if err := assignUserRoleForFuzz(ctx, w, userID, roleID, 1); err != nil {
+				return nil, err
+			}
+			return [2]uint{userID, roleID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, "/api/v1/user-roles/", map[string]any{
+				"user_id": ids[0], "role_id": ids[1], "project_id": 1, "environment_id": 0,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
 		},
 	},
 	{
