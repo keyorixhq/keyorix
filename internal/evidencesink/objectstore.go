@@ -1,4 +1,4 @@
-//go:build !lean
+//go:build !lean && !noaws
 
 // objectstore.go — an S3-compatible object-storage evidence target. Each scheduled
 // run uploads the pack (and, when signed, its detached HMAC signature) to a bucket,
@@ -15,9 +15,10 @@
 //
 // A `lean` build (see objectstore_lean.go) compiles this file out to drop
 // aws-sdk-go-v2/service/s3 from the binary (~2.2MB of the ~7.2MB AWS SDK
-// footprint) for the air-gapped/lightweight release variant. ObjectStoreConfig
-// itself lives in objectstore_config.go, untagged, so both variants share one
-// definition.
+// footprint) for the air-gapped/lightweight release variant. A noaws build
+// (ADR-109 step 6) does the same, via the same objectstore_lean.go stand-in —
+// see its own doc comment. ObjectStoreConfig itself lives in
+// objectstore_config.go, untagged, so both variants share one definition.
 package evidencesink
 
 import (

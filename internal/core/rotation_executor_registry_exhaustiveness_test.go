@@ -15,6 +15,19 @@
 // established pattern (enumerate by call shape via source, not by a maintained list --
 // see server/http/raw_storage_bypass_guard_test.go and
 // internal/core/csv_writer_completeness_test.go for the same idiom applied elsewhere).
+//
+// Tagged !noaws && !noazure && !nogcp (ADR-109 step 6): knownRotationExecutorConstructors
+// calls the cloud backends' own New*Executor constructors directly (by design — see
+// its own doc comment on why it deliberately bypasses rotation.LookupCloudExecutor), and
+// those constructors are whole-file-excluded from a build tagged no<x> for that
+// integration. This guard's real job — catching a newly-added backend constructor
+// that never got confirmed to sit under applyBackendRotation's lock — runs in the
+// full build, where every backend is actually added; internal/rotation's own
+// TestFullBuildRegistersEveryCloudExecutor (cloud_registry_wiring_test.go) and the
+// per-no<x> fail-closed tests cover the air-gapped build's own guarantees instead.
+//
+//go:build !noaws && !noazure && !nogcp
+
 package core
 
 import (

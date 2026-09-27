@@ -1,3 +1,5 @@
+//go:build !nogcp
+
 // coverage_test.go — tests for the concrete adapter types that wrap real cloud
 // clients (gcpIAMClient, mongoClientConn, redisClientConn) and for the
 // uncovered "success-return" branches in conn()/client() functions.

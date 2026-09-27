@@ -28,6 +28,13 @@
 // as an inline STS *session policy* (JSON) to further scope-down the assumed role.
 // AWS credentials/region for the AssumeRole call itself come from the standard chain
 // (env / instance-profile / IRSA), exactly like the KMS and S3 integrations.
+//
+// A noaws build (see awssts_noaws.go, ADR-109 step 6) compiles this file out
+// entirely, dropping aws-sdk-go-v2/service/sts (and the transitive AWS SDK
+// modules it alone pulls into this package) from the binary.
+//
+//go:build !noaws
+
 package dynamic
 
 import (
@@ -200,4 +207,8 @@ func arnAccountID(arn string) string {
 		return ""
 	}
 	return parts[4]
+}
+
+func init() {
+	registerCloudEngine("aws-sts", func() (CredentialEngine, error) { return &AWSSTSEngine{}, nil })
 }

@@ -25,6 +25,12 @@
 // (GOOGLE_APPLICATION_CREDENTIALS / workload identity) — never from Keyorix config —
 // and that ADC identity must hold roles/iam.serviceAccountTokenCreator on the target
 // service account. This file is the only place the GCP IAM-credentials SDK is used.
+//
+// A nogcp build (see gcp_nogcp.go, ADR-109 step 6) compiles this file out
+// entirely, dropping google.golang.org/api/iamcredentials from the binary.
+//
+//go:build !nogcp
+
 package dynamic
 
 import (
@@ -142,4 +148,8 @@ func (m *realGCPMinter) mintAccessToken(ctx context.Context, serviceAccount stri
 		expiry, _ = time.Parse(time.RFC3339, resp.ExpireTime)
 	}
 	return resp.AccessToken, expiry, nil
+}
+
+func init() {
+	registerCloudEngine("gcp", func() (CredentialEngine, error) { return &GCPEngine{}, nil })
 }

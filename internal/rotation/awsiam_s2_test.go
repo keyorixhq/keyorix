@@ -1,4 +1,4 @@
-//go:build !lean
+//go:build !lean && !noaws
 
 // awsiam_s2_test.go — AWSIAMExecutor.client() real-path coverage, split out of
 // rotation_s2_test.go so this file (which touches the real struct's unexported

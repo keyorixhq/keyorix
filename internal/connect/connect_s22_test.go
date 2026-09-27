@@ -1,3 +1,5 @@
+//go:build !noaws && !noazure && !nogcp
+
 package connect
 
 import (

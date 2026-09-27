@@ -3,7 +3,20 @@
 // Microsoft Graph (addPassword) and removing the app's prior secrets, then returns the
 // new client secret for Keyorix to store. Credentials come from the ambient Azure
 // identity chain (DefaultAzureCredential), never from Keyorix config. The Graph calls go
-// over net/http (no Graph SDK dependency), authenticated with an azidentity token.
+// over net/http (no Graph SDK dependency), authenticated with a bearer token obtained
+// through the azureTokenSource seam below.
+//
+// This file has NO build tag and always compiles — including in a noazure build —
+// because internal/rotation/azure_fuzz_test.go (owned by another active track; not to
+// be edited here) references AzureAppSecretExecutor directly and must keep compiling
+// under every tag combination. Dropping the actual Azure SDK from a noazure build (ADR-109
+// step 6) is achieved one level down: azureTokenSource is this package's own minimal
+// interface (not azure-sdk-for-go's azcore.TokenCredential), so this file never imports
+// azure-sdk-for-go. The real, azidentity-backed token source lives in azure_sdk.go
+// (//go:build !noazure), which is the only place that SDK is imported; azure_noazure.go
+// (//go:build noazure) supplies a stub that errors instead, and registers nothing, so a
+// noazure build's `go list -deps` carries no azure-sdk-for-go package, and
+// rotation.LookupCloudExecutor("azure-app") reports not-found (fail-closed) in that build.
 package rotation
 
 import (
@@ -16,10 +29,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
-	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 )
 
 const (
@@ -73,11 +82,14 @@ func (e *AzureAppSecretExecutor) client(ctx context.Context) (azureGraphAPI, err
 	if e.newClient != nil {
 		return e.newClient(ctx)
 	}
-	cred, err := azidentity.NewDefaultAzureCredential(nil)
-	if err != nil {
-		return nil, fmt.Errorf("azure-app: default credential: %w", err)
+	if newAzureTokenSource == nil {
+		return nil, fmt.Errorf("azure-app: no token source registered for this build (internal error)")
 	}
-	return &azureGraphClient{cred: cred, http: &http.Client{Timeout: azureHTTPTimeout}}, nil
+	ts, err := newAzureTokenSource()
+	if err != nil {
+		return nil, fmt.Errorf("azure-app: %w", err)
+	}
+	return &azureGraphClient{tokenSource: ts, http: &http.Client{Timeout: azureHTTPTimeout}}, nil
 }
 
 // GenerateUpstream rotates application `ref` (its object id): mint a fresh client secret
@@ -143,18 +155,31 @@ func (e *AzureAppSecretExecutor) GenerateUpstream(ctx context.Context, ref strin
 	return secret, nil
 }
 
-// azureGraphClient calls Microsoft Graph over net/http with an azidentity bearer token.
+// azureTokenSource mints a bearer token scoped for Microsoft Graph. This is this
+// package's own seam over the real Azure identity SDK — see azure.go's doc comment for
+// why it exists instead of using azure-sdk-for-go's azcore.TokenCredential directly.
+// newAzureTokenSource is set by exactly one of azure_sdk.go (!noazure, the real
+// azidentity-backed source) or azure_noazure.go (noazure, an always-erroring stub) —
+// whichever the build tag selects — so it is never nil.
+type azureTokenSource interface {
+	Token(ctx context.Context) (string, error)
+}
+
+var newAzureTokenSource func() (azureTokenSource, error)
+
+// azureGraphClient calls Microsoft Graph over net/http with a bearer token from
+// tokenSource.
 type azureGraphClient struct {
-	cred azcore.TokenCredential
-	http *http.Client
+	tokenSource azureTokenSource
+	http        *http.Client
 }
 
 func (c *azureGraphClient) token(ctx context.Context) (string, error) {
-	tok, err := c.cred.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{azureGraphScope}})
+	tok, err := c.tokenSource.Token(ctx)
 	if err != nil {
 		return "", fmt.Errorf("acquire graph token: %w", err)
 	}
-	return tok.Token, nil
+	return tok, nil
 }
 
 // do issues an authenticated Graph request and decodes a JSON response into out (out may

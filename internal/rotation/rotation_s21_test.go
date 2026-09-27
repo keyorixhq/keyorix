@@ -1,4 +1,4 @@
-//go:build !lean
+//go:build !lean && !noaws
 
 package rotation
 
@@ -165,8 +165,8 @@ func (f *fakeIAMCreateErrS21) DeleteAccessKey(_ context.Context, in *iam.DeleteA
 // net/http rejects with an error before any I/O occurs. No httptest server needed.
 func TestAzureGraphClient_S21_Do_BadURL(t *testing.T) {
 	c := &azureGraphClient{
-		cred: &fakeTokenCredential{token: "tok"},
-		http: http.DefaultClient,
+		tokenSource: &fakeTokenCredential{token: "tok"},
+		http:        http.DefaultClient,
 	}
 	// A URL with a space (or control char) causes http.NewRequest to fail.
 	badURL := "https://graph.microsoft.com/v1.0/applications/\x00bad"
@@ -201,8 +201,8 @@ func TestAzureGraphClient_S21_ListPasswordKeyIDs_SuccessPath(t *testing.T) {
 	// Build a client pointing at the test server and decode via do() to exercise
 	// the same struct the real ListPasswordKeyIDs uses.
 	c := &azureGraphClient{
-		cred: &fakeTokenCredential{token: "test-tok"},
-		http: srv.Client(),
+		tokenSource: &fakeTokenCredential{token: "test-tok"},
+		http:        srv.Client(),
 	}
 
 	// Call do() with the same output struct as ListPasswordKeyIDs uses, to cover
@@ -246,8 +246,8 @@ func TestAzureGraphClient_S21_ListPasswordKeyIDs_RealCall(t *testing.T) {
 
 	// Use a rewriting RoundTripper to redirect graph.microsoft.com → test server.
 	c := &azureGraphClient{
-		cred: &fakeTokenCredential{token: "tok"},
-		http: &http.Client{Transport: &rewriteTransport{target: srv.URL, inner: srv.Client().Transport}},
+		tokenSource: &fakeTokenCredential{token: "tok"},
+		http:        &http.Client{Transport: &rewriteTransport{target: srv.URL, inner: srv.Client().Transport}},
 	}
 
 	ids, err := c.ListPasswordKeyIDs(context.Background(), "test-app-id")
@@ -297,8 +297,8 @@ func TestAzureGraphClient_S21_AddPassword_Success(t *testing.T) {
 	defer srv.Close()
 
 	c := &azureGraphClient{
-		cred: &fakeTokenCredential{token: "tok"},
-		http: &http.Client{Transport: &rewriteTransport{target: srv.URL, inner: srv.Client().Transport}},
+		tokenSource: &fakeTokenCredential{token: "tok"},
+		http:        &http.Client{Transport: &rewriteTransport{target: srv.URL, inner: srv.Client().Transport}},
 	}
 
 	secret, err := c.AddPassword(context.Background(), "test-app-id")

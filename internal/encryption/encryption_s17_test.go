@@ -6,6 +6,9 @@
 // that fire before any network call (empty kms_key_id → the SDK's own guard)
 // or via the azure-kms encryption-context rejection that fires inside
 // NewKeyProviderFromConfig itself.
+//
+//go:build !noaws && !noazure && !nogcp
+
 package encryption
 
 import (

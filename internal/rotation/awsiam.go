@@ -1,5 +1,3 @@
-//go:build !lean
-
 // awsiam.go — the AWS IAM rotation executor (ADR-047), a GENERATE-upstream backend: it
 // rotates an IAM user's access key by minting a fresh key pair (the cloud generates the
 // value — Keyorix does not supply it) and removing the user's prior keys, then returns
@@ -8,7 +6,12 @@
 //
 // A `lean` build (see awsiam_lean.go) compiles this file out to drop
 // aws-sdk-go-v2/service/iam from the binary (~2.5MB of the ~7.2MB AWS SDK
-// footprint) for the air-gapped/lightweight release variant.
+// footprint) for the air-gapped/lightweight release variant. A noaws build
+// (see awsiam_noaws.go, ADR-109 step 6) does the same, and unlike lean
+// registers nothing rather than a stand-in that errors at call time.
+//
+//go:build !lean && !noaws
+
 package rotation
 
 import (
@@ -207,4 +210,10 @@ func (e *AWSIAMExecutor) deleteKey(ctx context.Context, cl iamAPI, user, keyID s
 		return fmt.Errorf("aws-iam: delete access key %s for %q: %w", keyID, user, err)
 	}
 	return nil
+}
+
+func init() {
+	registerCloudExecutor("aws-iam", func(p CloudExecutorParams) Executor {
+		return NewAWSIAMExecutor(p.Name, p.Region, p.AllowedRefs)
+	})
 }

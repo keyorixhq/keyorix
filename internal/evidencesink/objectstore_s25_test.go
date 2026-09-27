@@ -1,4 +1,4 @@
-//go:build !lean
+//go:build !lean && !noaws
 
 // objectstore_s25_test.go — NewObjectStore success-path coverage, split out of
 // evidencesink_s25_test.go so this file (which asserts a real S3-backed

@@ -1,4 +1,4 @@
-//go:build !lean
+//go:build !lean && !noaws && !nogcp
 
 package rotation
 
@@ -194,8 +194,8 @@ func TestAzureGraphClient_S22_RemovePassword_Success(t *testing.T) {
 	defer srv.Close()
 
 	c := &azureGraphClient{
-		cred: &fakeTokenCredential{token: "tok"},
-		http: &http.Client{Transport: &rewriteTransport{target: srv.URL, inner: srv.Client().Transport}},
+		tokenSource: &fakeTokenCredential{token: "tok"},
+		http:        &http.Client{Transport: &rewriteTransport{target: srv.URL, inner: srv.Client().Transport}},
 	}
 	err := c.RemovePassword(context.Background(), "test-app-id", "key-123")
 	require.NoError(t, err)
@@ -215,8 +215,8 @@ func TestAzureGraphClient_S22_Do_ServerError(t *testing.T) {
 	defer srv.Close()
 
 	c := &azureGraphClient{
-		cred: &fakeTokenCredential{token: "tok"},
-		http: srv.Client(),
+		tokenSource: &fakeTokenCredential{token: "tok"},
+		http:        srv.Client(),
 	}
 	err := c.do(context.Background(), http.MethodGet, srv.URL+"/test", nil, nil)
 	require.Error(t, err)
@@ -231,8 +231,8 @@ func TestAzureGraphClient_S22_Do_ServerError(t *testing.T) {
 // inside do() is propagated as the return error.
 func TestAzureGraphClient_S22_Do_TokenError(t *testing.T) {
 	c := &azureGraphClient{
-		cred: &fakeTokenCredential{err: errors.New("no credentials available")},
-		http: http.DefaultClient,
+		tokenSource: &fakeTokenCredential{err: errors.New("no credentials available")},
+		http:        http.DefaultClient,
 	}
 	err := c.do(context.Background(), http.MethodGet, "https://graph.microsoft.com/v1.0/test", nil, nil)
 	require.Error(t, err)

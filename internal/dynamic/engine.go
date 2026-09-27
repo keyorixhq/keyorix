@@ -38,6 +38,27 @@ type Credential = ports.DynamicCredential
 // doc comment distinct from the aliased type's declaration site.
 type CredentialEngine = ports.DynamicBackendEngine
 
+// cloudEngineCtor builds a cloud-IAM dynamic-secret engine. These backends never
+// dial an admin_dsn host themselves (see New's doc comment), so unlike the
+// database engines below a ctor takes no allow-private/allow-insecure flags.
+type cloudEngineCtor func() (CredentialEngine, error)
+
+// cloudEngines holds the cloud-IAM backends registered by the current build
+// (ADR-109 step 6): aws-sts, gcp, azure and kubernetes each register themselves
+// from an init() in their own file, guarded by that integration's //go:build
+// !no<x> tag, so a no<x> build's binary never links the corresponding SDK.
+// registerCloudEngine panics on a duplicate name — every registration happens
+// from this package's own init()s, and a collision there is a build-time
+// programming error, not a runtime condition to handle gracefully.
+var cloudEngines = map[string]cloudEngineCtor{}
+
+func registerCloudEngine(backendType string, ctor cloudEngineCtor) {
+	if _, exists := cloudEngines[backendType]; exists {
+		panic(fmt.Sprintf("dynamic: duplicate cloud engine registration for %q", backendType))
+	}
+	cloudEngines[backendType] = ctor
+}
+
 // New returns the engine for a backend type. allowPrivateNetwork mirrors
 // KeyorixCore.dynamicAllowPrivateTargets (dynamic_secrets.allow_private_network_targets):
 // when false (the default), an engine that dials the admin DSN itself
@@ -63,14 +84,11 @@ func New(backendType string, allowPrivateNetwork, allowInsecureTransport bool) (
 		return &MongoEngine{allowPrivateNetwork: allowPrivateNetwork, allowInsecureTransport: allowInsecureTransport}, nil
 	case "redis":
 		return &RedisEngine{allowPrivateNetwork: allowPrivateNetwork, allowInsecureTransport: allowInsecureTransport}, nil
-	case "aws-sts":
-		return &AWSSTSEngine{}, nil
-	case "gcp":
-		return &GCPEngine{}, nil
-	case "azure":
-		return &AzureEngine{}, nil
-	case "kubernetes":
-		return &KubernetesEngine{}, nil
+	case "aws-sts", "gcp", "azure", "kubernetes":
+		if ctor, ok := cloudEngines[backendType]; ok {
+			return ctor()
+		}
+		return nil, fmt.Errorf("dynamic-secret backend %q: not available in this build (compiled with a no<integration> tag that excludes it); rebuild without that tag to use this backend", backendType)
 	default:
 		return nil, fmt.Errorf("unsupported dynamic-secret backend %q (supported: postgres, mysql, mongodb, redis, aws-sts, gcp, azure, kubernetes)", backendType)
 	}
