@@ -1,0 +1,1 @@
+FIX-2-primitive	./internal/core	TestRemoveUserRole_RefusesLastProjectAdminAtThePrimitive	default-ci	6b512b90	-	last-admin refused at the primitive, not only at entry points

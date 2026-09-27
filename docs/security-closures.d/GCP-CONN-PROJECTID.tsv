@@ -1,0 +1,1 @@
+GCP-CONN-PROJECTID	./internal/connect	TestGCPSM_RequiresProjectID	default-ci	pending	-	unpinned gcp-secret-manager connector must refuse reads, not span any GCP project

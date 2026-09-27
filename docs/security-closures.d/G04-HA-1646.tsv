@@ -1,0 +1,1 @@
+G04-HA-1646	./internal/core	TestConcurrency_AssignUserRole_CrossReplicaPostgres_SoDBypass	pg-gated	37911f8a	1646	SoD direct-grant race across independent Postgres connections: two replicas each pass a stale pre-grant check and both write, live-reproduced; closed by WithNamedLock keyed per target principal

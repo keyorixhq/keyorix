@@ -1,0 +1,1 @@
+FIX-7-breakglass	./internal/storage/store	TestDeleteExpiredBreakGlassBefore_ReconciledRowStillRevocable	default-ci	d1b93444	-	purge must not hard-delete a row mid-reconciliation

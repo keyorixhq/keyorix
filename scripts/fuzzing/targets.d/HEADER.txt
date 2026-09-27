@@ -1,0 +1,38 @@
+# GENERATED FILE — do not edit directly.
+#
+# scripts/fuzzing/targets.conf is produced by scripts/fuzzing/gen-targets-conf.sh
+# from the per-target files in scripts/fuzzing/targets.d/. To add, retune, or
+# remove a fuzz target, edit (or add) a file under targets.d/ and re-run that
+# script — never edit this file by hand, a CI check
+# (scripts/fuzzing/gen-targets-conf.sh --check, the `fuzz-targets` job) fails
+# the build if it drifts from targets.d/.
+#
+# This file exists at all only because the external fuzz-harness rig repo
+# still reads it directly (see targets.d/README.md for the handoff to point
+# it at targets.d/ instead, once that lands).
+#
+# CI drift-guard in .github/workflows/ci.yml separately validates every
+# `func FuzzXxx` in the tree against this list: every real target must be
+# declared, and no declared target may be stale.
+# Format: <go-package-path>|<FuzzFuncName>|<go-test-fuzztime>
+#
+# Lines starting with # or blank lines are ignored.
+#
+# Durations rebalanced 2026-09-13 from live saturation data: cycle was ~22h and
+# front-loaded on targets that have long since saturated (CombineKEK/Azure at
+# +0..+1 new-interesting per run) while the notary RFC3161/PKCS#7 DoS targets —
+# the exact code the strict-DER guard (#1848) reworked, and still finding
+# coverage (VerifyReceipt +76, RFC3161Anchor +33 per run) — sat at the end on
+# 1h each, reached only ~once/day. Time is now weighted toward where coverage is
+# still growing; saturated targets drop to 1h. Cycle ~16h. Re-tune from the next
+# saturation snapshot, and raise a target's time when its package or a parsing
+# dependency changes (that reopens coverage).
+#
+# Tier-1 batch added 2026-09-15 (#1889): PAT scope/CIDR decode, SCIM token
+# strength, secret ACL/ref parsing, bundle key PEM parsing, encryption envelope
+# deserialize, and the SAML response parse path. No saturation data yet (brand
+# new); durations below are an initial security-weighted guess, not a
+# measurement — re-tune once these have run a few cycles. FuzzParseResponse
+# found a real signature-bypass on day one (an XML epilogue after the signed
+# root was silently accepted — fixed same PR, internal/saml/provider.go), so it
+# gets the largest new allocation.

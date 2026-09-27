@@ -10,7 +10,7 @@
 //	                 kind. A skeleton is a STARTING POINT: the generator picks the place (a
 //	                 function static data-flow says untrusted input actually reaches) and the
 //	                 invariant family; the engineer supplies the oracle specifics and red-proofs
-//	                 it before it is committed and gets a targets.conf row. Each skeleton carries
+//	                 it before it is committed and gets a targets.d/ file. Each skeleton carries
 //	                 an auditable header naming the source->sink path it was chosen for.
 //
 //	-root <dir>      SIGNATURE-SCAN (fallback, the original behaviour). Pure syntactic AST walk:
@@ -160,7 +160,7 @@ func runTuples(path, outDir string) {
 		fmt.Printf("wrote %s (%d/%d)\n", name, i+1, len(ts))
 	}
 	fmt.Println("\nNOTE: skeletons are emitted as .txt on purpose - review, fill the oracle, rename to")
-	fmt.Println("<pkg>_<name>_fuzz_test.go in the target package, red-proof, then add a targets.conf row.")
+	fmt.Println("<pkg>_<name>_fuzz_test.go in the target package, red-proof, then add a scripts/fuzzing/targets.d/ file.")
 }
 
 func safeIdent(s string) string {
@@ -183,7 +183,7 @@ func skeleton(t Tuple) string {
 	}
 	fmt.Fprintf(&b, "// AUTO-TARGETED by autofuzzgen (SAST-guided). NOT a finished harness - a reviewed,\n")
 	fmt.Fprintf(&b, "// red-proofed starting point. Fill the oracle, rename to a *_fuzz_test.go in package,\n")
-	fmt.Fprintf(&b, "// then add a targets.conf row. Never auto-merge.\n//\n")
+	fmt.Fprintf(&b, "// then add a scripts/fuzzing/targets.d/ file. Never auto-merge.\n//\n")
 	fmt.Fprintf(&b, "// WHY (static data-flow, %s sink):\n//   source: %s\n//   sink:   %s\n//   fuzz:   %s.%s(%s)\n//\n",
 		t.SinkKind, t.Source, t.Sink, t.Dir, t.Func, t.EntryParam)
 	fmt.Fprintf(&b, "// INVARIANT FAMILY: %s\n\n", fam)

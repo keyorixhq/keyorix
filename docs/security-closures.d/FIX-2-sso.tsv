@@ -1,0 +1,1 @@
+FIX-2-sso	./internal/core	TestReconcileSSOGroups_RefusesStrandingLastProjectAdmin	default-ci	6b512b90	-	the SSO path must not bypass the group guards

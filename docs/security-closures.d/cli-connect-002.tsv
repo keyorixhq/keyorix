@@ -1,0 +1,1 @@
+cli-connect-002	-	-	manual	76dbc529	-	SURFACE REMOVED (ADR-108 Phase 6 step 14b-1): internal/cli deleted entirely, including share create's runCreate and the embedded-vs-remote routing ambiguity this fixed. The new CLI (cli/) always talks to a configured server -- there is no local embedded DB it could silently fall back to.

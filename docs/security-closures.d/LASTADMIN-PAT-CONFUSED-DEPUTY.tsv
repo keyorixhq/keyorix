@@ -1,0 +1,1 @@
+LASTADMIN-PAT-CONFUSED-DEPUTY	./internal/core	TestGuardLastAdminDeactivation_NotFooledByActingCallersPATRestriction	default-ci	pending	-	IsGlobalAdmin's PAT short-circuit answered a third-party question it wasn't built for; guardLastAdminDeactivation and SuspendInactiveUsers now use targetHasGlobalAdminRole instead

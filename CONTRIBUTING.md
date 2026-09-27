@@ -109,9 +109,10 @@ CI round-trip into an immediate local one.
   RBAC-escalation checks), distinct from `kubeconform`'s schema-only validation
 - Go dependency license compliance (`go-licenses`) — rejects any dependency
   outside an explicit permissive-license allowlist, both Go modules
-- Fuzz-target staleness — `scripts/fuzzing/targets.conf` (the self-hosted
-  continuous-fuzzing rig's config) must exactly match every real `func FuzzXxx`
-  in the tree; adding a fuzz target without declaring it here fails CI
+- Fuzz-target staleness — `scripts/fuzzing/targets.d/` (one file per target,
+  the self-hosted continuous-fuzzing rig's config) must exactly match every
+  real `func FuzzXxx` in the tree; adding a fuzz target without declaring it
+  there fails CI
 - DCO sign-off (`git commit -s` on every commit — see above)
 
 ## Code style

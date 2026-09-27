@@ -1,0 +1,1 @@
+G39-DI-STDOUT	./internal/di	TestInitializeApp_DoesNotLeakConfigSecretsToStdout	default-ci	3410c44c	-	InitializeApp() fmt.Println'd the entire config.Config struct (DB password, metrics tokens) to stdout; re-verified 2026-09-09, and the only caller (cmd/secret) was separately deleted as dead code in PR #1659

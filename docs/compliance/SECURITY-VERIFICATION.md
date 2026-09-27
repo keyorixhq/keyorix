@@ -147,11 +147,13 @@ protection enforces this with no bypass, including for maintainers:
   BSD-2/3-Clause, ISC, MPL-2.0) was derived from the actual dependency tree,
   not assumed, and the gate was verified to genuinely fail on an injected
   AGPL-licensed test dependency before shipping.
-- **Fuzz-target staleness** — `scripts/fuzzing/targets.conf` (the config for
-  the continuous-fuzzing rig, below) must exactly match every real
-  `func FuzzXxx` that exists in the tree, in both directions: a target that
-  exists but isn't declared would otherwise silently never get fuzzed with no
-  signal anything was wrong (an identical hand-maintained list on a sibling
+- **Fuzz-target staleness** — `scripts/fuzzing/targets.d/` (one file per
+  target, the config for the continuous-fuzzing rig, below — generated into a
+  single `targets.conf` for the external rig, see `targets.d/README.md`) must
+  exactly match every real `func FuzzXxx` that exists in the tree, in both
+  directions: a target that exists but isn't declared would otherwise silently
+  never get fuzzed with no signal anything was wrong (an identical
+  hand-maintained list on a sibling
   project missed 18 of 44 real fuzz functions for months before this pattern
   was recognized and guarded against here).
 - **DCO sign-off** — every commit needs a `Signed-off-by` trailer matching its
