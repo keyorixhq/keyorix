@@ -22,6 +22,7 @@
 package http
 
 import (
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -64,7 +65,7 @@ func roleGrantShapeInBody(body string) bool {
 // references a Role-shaped field and calls storage directly to persist it.
 func persistsRoleGrantDirectly(t *testing.T, handlerName string) bool {
 	t.Helper()
-	return roleGrantShapeInBody(handlerBodyText(t, handlersDir, handlerName))
+	return roleGrantShapeInBody(roleGrantHandlerBody(t, handlerName))
 }
 
 // authorityCheckInBody reports whether body calls the escalation-by-proxy
@@ -89,7 +90,7 @@ func authorityCheckInBody(body string) bool {
 // check).
 func callsRequireAuthorityForRole(t *testing.T, handlerName string) bool {
 	t.Helper()
-	return authorityCheckInBody(handlerBodyText(t, handlersDir, handlerName))
+	return authorityCheckInBody(roleGrantHandlerBody(t, handlerName))
 }
 
 // roleGrantAuthorityAllowlist is the exhaustive, reasoned inventory of every
@@ -125,6 +126,68 @@ const minRoleGrantAuthorityPopulation = 50
 // directly via storage, that handler must call RequireAuthorityForRole/
 // RequireGranterHoldsRolePermissions, or have a reasoned entry in
 // roleGrantAuthorityAllowlist or knownUnfixedRoleGrantAuthorityGaps.
+// roleGrantHandlerBody resolves a router-registered handler's body. The shared
+// handlerBodyText only matches methods (`func (h *T) Name(`); router.go also
+// registers package-level functions (handlers.HealthCheck,
+// handlers.UpdateAnomalyConfig, ...), which it returns "" for. An empty body
+// would silently pass this guard, so this falls back to a package-level
+// function match in the same directory.
+func roleGrantHandlerBody(t *testing.T, handlerName string) string {
+	t.Helper()
+	if body := handlerBodyText(t, handlersDir, handlerName); strings.TrimSpace(body) != "" {
+		return body
+	}
+	return packageFuncBodyText(t, handlersDir, handlerName)
+}
+
+// packageFuncBodyText is handlerBodyText's brace-depth capture for a
+// receiver-less `func Name(` declaration.
+func packageFuncBodyText(t *testing.T, dir, name string) string {
+	t.Helper()
+	funcRe := regexp.MustCompile(`^func ` + regexp.QuoteMeta(name) + `\(`)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", dir, err)
+	}
+	var out strings.Builder
+	for _, e := range entries {
+		n := e.Name()
+		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, n))
+		if err != nil {
+			t.Fatalf("reading %s: %v", n, err)
+		}
+		inFunc, depth, sawOpen := false, 0, false
+		for _, line := range strings.Split(string(b), "\n") {
+			if !inFunc && funcRe.MatchString(line) {
+				inFunc, depth, sawOpen = true, 0, false
+			}
+			if inFunc {
+				depth += strings.Count(line, "{") - strings.Count(line, "}")
+				if strings.Contains(line, "{") {
+					sawOpen = true
+				}
+				out.WriteString(line)
+				out.WriteByte('\n')
+				if sawOpen && depth <= 0 {
+					inFunc = false
+				}
+			}
+		}
+	}
+	return out.String()
+}
+
+// roleGrantUnresolvableHandlers are router-registered handler names whose
+// body is not in server/http/handlers at all, with the reason each can't
+// carry the #1578/#1582 shape. Any OTHER unresolvable handler fails the guard
+// rather than passing silently.
+var roleGrantUnresolvableHandlers = map[string]string{
+	"ServeHTTP": "customMiddleware.SchedulerMetricsHandler().ServeHTTP (GET /admin/scheduler-metrics): read-only metrics in server/http/middleware, no request body",
+}
+
 func TestEveryDirectRoleGrantChecksAuthority(t *testing.T) {
 	routerPath := filepath.Join(".", "router.go")
 	actual := extractAllRouterRoutes(t, routerPath)
@@ -144,6 +207,30 @@ func TestEveryDirectRoleGrantChecksAuthority(t *testing.T) {
 			"minRoleGrantAuthorityPopulation's doc comment)", len(population), minRoleGrantAuthorityPopulation)
 	}
 	t.Logf("role-grant-authority guard: %d distinct handler(s) in population", len(population))
+
+	var unresolved []string
+	resolvedUnresolvable := map[string]bool{}
+	for _, handler := range population {
+		if strings.TrimSpace(roleGrantHandlerBody(t, handler)) != "" {
+			continue
+		}
+		if _, ok := roleGrantUnresolvableHandlers[handler]; ok {
+			resolvedUnresolvable[handler] = true
+			continue
+		}
+		unresolved = append(unresolved, handler)
+	}
+	sort.Strings(unresolved)
+	if len(unresolved) > 0 {
+		t.Errorf("could not find the body of %d router-registered handler(s) in server/http/handlers: %v\n"+
+			"An unresolved handler would pass this guard unchecked. Teach roleGrantHandlerBody where it lives, "+
+			"or add a reasoned entry to roleGrantUnresolvableHandlers.", len(unresolved), unresolved)
+	}
+	for handler := range roleGrantUnresolvableHandlers {
+		if !resolvedUnresolvable[handler] {
+			t.Errorf("roleGrantUnresolvableHandlers entry %q is stale (now resolvable or no longer registered); remove it", handler)
+		}
+	}
 
 	handlerFlagged := map[string]bool{}
 	var flagged []string
