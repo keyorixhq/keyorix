@@ -4366,20 +4366,6 @@ var opCatalog = []operation{
 		},
 	},
 	{
-		// users_crud.go's VerifyCredentials (the RemoteStorage hub-side
-		// counterpart to Login) — batch 22.
-		Key: "REST POST /api/v1/users/verify-credentials",
-		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
-			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/users/verify-credentials", map[string]any{
-				"username": "faultadmin", "password": faultAdminPassword,
-			})
-			if err != nil {
-				return opResult{}, err
-			}
-			return httpResult(st, body), nil
-		},
-	},
-	{
 		// alert_escalation.go's Delete — batch 23.
 		Key: "REST DELETE /api/v1/alert-escalation-policies/{id}",
 		Setup: func(ctx context.Context, w *faultWorld) (any, error) {

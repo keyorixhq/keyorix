@@ -1467,46 +1467,6 @@ func TestGetUserByEmail_NilHandler(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
-func TestVerifyCredentials_NilHandler(t *testing.T) {
-	saved := defaultUserHandler
-	defaultUserHandler = nil
-	defer func() { defaultUserHandler = saved }()
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	w := httptest.NewRecorder()
-	VerifyCredentials(w, req)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestIssueMFAChallenge_NilHandler(t *testing.T) {
-	saved := defaultUserHandler
-	defaultUserHandler = nil
-	defer func() { defaultUserHandler = saved }()
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	w := httptest.NewRecorder()
-	IssueMFAChallenge(w, req)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestGetActiveMFAChallenge_NilHandler(t *testing.T) {
-	saved := defaultUserHandler
-	defaultUserHandler = nil
-	defer func() { defaultUserHandler = saved }()
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	w := httptest.NewRecorder()
-	GetActiveMFAChallenge(w, req)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestConsumeMFAChallenge_NilHandler(t *testing.T) {
-	saved := defaultUserHandler
-	defaultUserHandler = nil
-	defer func() { defaultUserHandler = saved }()
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	w := httptest.NewRecorder()
-	ConsumeMFAChallenge(w, req)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 func TestUpdateUser_NilHandler(t *testing.T) {
 	saved := defaultUserHandler
 	defaultUserHandler = nil
@@ -2753,87 +2713,6 @@ func TestGetUserByExternalID_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestVerifyCredentials_Unauthorized(t *testing.T) {
-	h := newUserHandler(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	h.VerifyCredentials(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestVerifyCredentials_MissingFields(t *testing.T) {
-	h := newUserHandler(t)
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)))
-	w := httptest.NewRecorder()
-	h.VerifyCredentials(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestVerifyCredentials_WrongCredentials(t *testing.T) {
-	h := newUserHandler(t)
-	body := `{"username":"nonexistent","password":"wrong"}`
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)))
-	w := httptest.NewRecorder()
-	h.VerifyCredentials(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestIssueMFAChallenge_Unauthorized(t *testing.T) {
-	h := newUserHandler(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.IssueMFAChallenge(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestIssueMFAChallenge_BadID(t *testing.T) {
-	h := newUserHandler(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "bad"))
-	w := httptest.NewRecorder()
-	h.IssueMFAChallenge(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestVerifyMFACredentials_Unauthorized(t *testing.T) {
-	h := newUserHandler(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	h.VerifyMFACredentials(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestVerifyMFACredentials_MissingFields(t *testing.T) {
-	h := newUserHandler(t)
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)))
-	w := httptest.NewRecorder()
-	h.VerifyMFACredentials(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestGetActiveMFAChallenge_Unauthorized(t *testing.T) {
-	h := newUserHandler(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	h.GetActiveMFAChallenge(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestGetActiveMFAChallenge_MissingFields(t *testing.T) {
-	h := newUserHandler(t)
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)))
-	w := httptest.NewRecorder()
-	h.GetActiveMFAChallenge(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestConsumeMFAChallenge_Unauthorized(t *testing.T) {
-	h := newUserHandler(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	h.ConsumeMFAChallenge(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
 // ── Users handler dispatch ────────────────────────────────────────────────────
 
 func TestStaleAccountsDispatch_HappyPath(t *testing.T) {
@@ -2871,18 +2750,6 @@ func TestGetUserByExternalIDDispatch_MissingParam(t *testing.T) {
 	w := httptest.NewRecorder()
 	GetUserByExternalID(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestVerifyMFACredentialsDispatch_Unauthorized(t *testing.T) {
-	saved := defaultUserHandler
-	t.Cleanup(func() { defaultUserHandler = saved })
-	cs := newHandlerCoreS4(t)
-	_, _, err := InitCoreHandlers(cs)
-	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	VerifyMFACredentials(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 func TestRestoreUserDispatch_Unauthorized(t *testing.T) {
@@ -3624,49 +3491,6 @@ func TestPackageLevel_GetUserByExternalID_Dispatch(t *testing.T) {
 	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/users/by-external-id?external_id=ext123", nil))
 	w := httptest.NewRecorder()
 	GetUserByExternalID(w, req)
-	assert.NotEqual(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestPackageLevel_VerifyCredentials_Dispatch(t *testing.T) {
-	setDefaultUserHandlerS4(t)
-	body := `{"username":"alice","password":"wrongpw"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/verify-credentials", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	VerifyCredentials(w, req)
-	assert.NotEqual(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestPackageLevel_VerifyMFACredentials_Dispatch(t *testing.T) {
-	setDefaultUserHandlerS4(t)
-	body := `{"mfa_challenge":"ch","code":"123456"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/verify-mfa", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	VerifyMFACredentials(w, req)
-	assert.NotEqual(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestPackageLevel_IssueMFAChallenge_Dispatch(t *testing.T) {
-	setDefaultUserHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	IssueMFAChallenge(w, req)
-	assert.NotEqual(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestPackageLevel_GetActiveMFAChallenge_Dispatch(t *testing.T) {
-	setDefaultUserHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/mfa-challenge/active?user_id=1", nil)
-	w := httptest.NewRecorder()
-	GetActiveMFAChallenge(w, req)
-	assert.NotEqual(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestPackageLevel_ConsumeMFAChallenge_Dispatch(t *testing.T) {
-	setDefaultUserHandlerS4(t)
-	body := `{"mfa_challenge":"ch","code":"123456"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/mfa-challenge/consume", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	ConsumeMFAChallenge(w, req)
 	assert.NotEqual(t, http.StatusServiceUnavailable, w.Code)
 }
 
@@ -5921,7 +5745,7 @@ func TestUserRoles_GetUserMembershipsForUser_BadID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// ── users_handler.go: GetUserByUsername, GetUserByExternalID, VerifyMFACredentials ──
+// ── users_handler.go: GetUserByUsername, GetUserByExternalID ─────────────────
 
 func TestUserHandler_GetUserByUsername_HappyPath(t *testing.T) {
 	h, err := NewUserHandler(newHandlerCoreS4(t))
@@ -5950,24 +5774,6 @@ func TestUserHandler_GetUserByExternalID_HappyPath(t *testing.T) {
 	h.GetUserByExternalID(w, req)
 	// external ID not found → error
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestUserHandler_VerifyMFACredentials_Unauthorized(t *testing.T) {
-	h, err := NewUserHandler(newHandlerCoreS4(t))
-	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	h.VerifyMFACredentials(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestUserHandler_VerifyMFACredentials_BadJSON(t *testing.T) {
-	h, err := NewUserHandler(newHandlerCoreS4(t))
-	require.NoError(t, err)
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")))
-	w := httptest.NewRecorder()
-	h.VerifyMFACredentials(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestUserHandler_RestoreUser_BadIDV2(t *testing.T) {
@@ -6734,33 +6540,6 @@ func TestRBACHandler_DeleteRole_BadID(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.DeleteRole(w, req)
 	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-// ── users_crud.go: ConsumeMFAChallenge ───────────────────────────────────────
-
-func TestUserHandler_ConsumeMFAChallenge_Unauthorized(t *testing.T) {
-	h := newUserHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	h.ConsumeMFAChallenge(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestUserHandler_ConsumeMFAChallenge_BadJSON(t *testing.T) {
-	h := newUserHandlerS4(t)
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")))
-	w := httptest.NewRecorder()
-	h.ConsumeMFAChallenge(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestUserHandler_ConsumeMFAChallenge_MissingFields(t *testing.T) {
-	h := newUserHandlerS4(t)
-	body := `{"token_hash":""}`
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)))
-	w := httptest.NewRecorder()
-	h.ConsumeMFAChallenge(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // ── secrets_suspend.go: ResumeSecret ─────────────────────────────────────────
@@ -7599,25 +7378,6 @@ func TestUserHandler_GetUserByExternalID_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// ── users_crud.go: RestoreUser, GetActiveMFAChallenge ─────────────────────────
-
-func TestUserHandler_GetActiveMFAChallenge_MissingBody(t *testing.T) {
-	h := newUserHandlerS4(t)
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)))
-	w := httptest.NewRecorder()
-	h.GetActiveMFAChallenge(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestUserHandler_GetActiveMFAChallenge_NotFound(t *testing.T) {
-	h := newUserHandlerS4(t)
-	body := `{"token_hash":"nonexistent","now":"2026-07-12T00:00:00Z"}`
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)))
-	w := httptest.NewRecorder()
-	h.GetActiveMFAChallenge(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 // ── admin_impersonation.go: End handler ──────────────────────────────────────
 
 func TestImpersonationHandler_End_NoToken_S4(t *testing.T) {
@@ -8002,26 +7762,6 @@ func TestCatalogHandler_ListAccessReviewCampaigns_HappyPath(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ListAccessReviewCampaigns(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// ── users_crud.go: VerifyMFACredentials ─────────────────────────────────────
-
-// VerifyMFACredentials: checks user ctx first → 401 without it
-func TestUserHandler_VerifyMFACredentials_NoUserCtx_S4(t *testing.T) {
-	h := newUserHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.VerifyMFACredentials(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-// VerifyMFACredentials: with user ctx, bad JSON → 400
-func TestUserHandler_VerifyMFACredentials_BadJSON_S4(t *testing.T) {
-	h := newUserHandlerS4(t)
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")))
-	w := httptest.NewRecorder()
-	h.VerifyMFACredentials(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // ── scim_groups.go: GetGroup, ListGroups (additional coverage) ────────────────

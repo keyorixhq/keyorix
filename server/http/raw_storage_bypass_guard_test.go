@@ -30,17 +30,21 @@
 // 2026-08-25... holds": consuming the MFA challenge alone yields only an
 // unguessable UserID/expiry pair, real assertion/crypto verification runs
 // AFTER consume, and the route requires an already-authenticated
-// users.write-holding principal to reach at all). Added to
-// rawStorageBypassAllowlist below. No other repo-wide handler was newly
-// flagged -- the /system-scoped classification below already covers every
-// OTHER write-shaped wrapped call site that exists anywhere in the router.
+// users.write-holding principal to reach at all), and was added to
+// rawStorageBypassAllowlist below at the time. No other repo-wide handler was
+// newly flagged -- the /system-scoped classification below already covers
+// every OTHER write-shaped wrapped call site that exists anywhere in the
+// router. ConsumeMFAChallenge's own handler and route were later deleted
+// entirely (REMOTESTORAGE-SWEEP: RemoteStorage's removal in #2162 left it with
+// no remaining caller), so its allowlist entry was removed too -- see the
+// retirement note above rawStorageBypassAllowlist's declaration below.
 //
 // An overnight session (2026-08-23/24) individually triaged all 58: full results
 // in docs/g80-raw-storage-bypass-triage.md. One of the 58 (ConsumeMFAChallenge)
 // turned out to be registered OUTSIDE the /system group entirely (users.write-gated,
-// router.go:874) and is not tracked by this guard -- it stays documented purely in
-// the triage doc. The other 57 are ALL within /system and are grandfathered below,
-// split into two lists with different meanings:
+// router.go:874) and was not tracked by this guard at the time -- it stays documented
+// purely in the triage doc. The other 57 are ALL within /system and are grandfathered
+// below, split into two lists with different meanings:
 //
 //   - rawStorageBypassAllowlist: REVIEWED AND SAFE. No real gap -- either no
 //     independent ceiling exists to bypass, or a deliberate, reasoned exception.
@@ -145,10 +149,13 @@ func normalizeRouterPath(p string) string {
 // covers — ConsumeMFAChallenge (users.write-gated, router.go, outside
 // /system) — already independently triaged and verified safe
 // (docs/g80-raw-storage-bypass-triage.md line 100, "VERIFIED 2026-08-25...
-// holds"), now added to rawStorageBypassAllowlist below. The other 503
-// distinct handlers repo-wide either don't call a wrapped write-shaped
-// storage method at all, or are already covered by the existing /system
-// classification. This function drives TestNoUnjustifiedRawStorageBypass's
+// holds"), added to rawStorageBypassAllowlist below at the time (its handler
+// and route were later deleted entirely in the REMOTESTORAGE-SWEEP track,
+// once RemoteStorage's removal in #2162 left it with no remaining caller, and
+// the allowlist entry was removed with it). The other 503 distinct handlers
+// repo-wide either don't call a wrapped write-shaped storage method at all,
+// or are already covered by the existing /system classification. This
+// function drives TestNoUnjustifiedRawStorageBypass's
 // permanent repo-wide scope; it originated as the /system-scoped guard's
 // repo-wide sibling, but the /system-scoped guard itself is gone (ADR-108
 // Phase 6) — this is now the only route extractor in this package.
@@ -708,32 +715,18 @@ func isReadShapedStorageMethod(method string) bool {
 // The detailed per-entry security reasoning (escalation-delta tests, fix
 // commits, adversarial checks) is preserved in git history for this file, not
 // lost -- see the pre-Phase-6 revision if any of it is ever needed again.
-// ConsumeMFAChallenge is kept: it is NOT a /system proxy (a human-facing
-// route gated by Authentication + users.write, router.go) and is unaffected.
-var rawStorageBypassAllowlist = map[string]string{
-	// G80 Wave 1 (#1547): the one new candidate the repo-wide extension found,
-	// outside /system. VERIFIED 2026-08-25 (G80 documented-exception
-	// re-verification sweep, escalation-delta test), docs/g80-raw-storage-
-	// bypass-triage.md line 100: consuming the MFA challenge alone yields only
-	// UserID/expiry (generateSecureToken-minted, crypto/rand, unguessable) --
-	// the real assertion/crypto verification and session binding all run in
-	// FinishWebAuthnLogin/VerifyMFACredentials, AFTER consume. Atomicity
-	// confirmed at the storage layer (local_mfa.go:123-148, a genuine
-	// conditional UPDATE ... WHERE used_at IS NULL AND expires_at > ?, not a
-	// plain unconditional write). Reach: gated by the full /api/v1
-	// Authentication middleware (server/middleware/auth.go:253) PLUS
-	// users.write (router.go:300,874), both of which run BEFORE this handler
-	// -- a user mid-login holds only the ephemeral MFA-challenge secret, not
-	// a session/PAT/machine/OIDC credential, so they cannot reach this route
-	// at all. Reachable only by an already-fully-authenticated,
-	// users.write-holding principal (machine-only in the intended hub-spoke
-	// design), not human-mid-login-reachable despite the name suggesting
-	// otherwise.
-	"ConsumeMFAChallenge": "holds: consume alone yields only an unguessable UserID/expiry pair; real crypto/" +
-		"assertion verification runs downstream in FinishWebAuthnLogin/VerifyMFACredentials; storage-layer " +
-		"atomicity confirmed (local_mfa.go:123-148, conditional UPDATE); gated by full Authentication middleware " +
-		"+ users.write, both running before this handler, so a mid-login (unauthenticated) caller cannot reach it.",
-}
+// ConsumeMFAChallenge's entry (added by G80 Wave 1 / #1547, VERIFIED
+// 2026-08-25 -- consuming the MFA challenge alone yields only an unguessable
+// UserID/expiry pair, real assertion/crypto verification runs downstream in
+// FinishWebAuthnLogin/VerifyMFACredentials, AFTER consume) was retired too,
+// for a different reason than the Phase 6 batch above: its handler and route
+// were deleted entirely in the REMOTESTORAGE-SWEEP track once RemoteStorage's
+// removal in #2162 left the whole storage.type: remote WebAuthn-as-2FA proxy
+// with no remaining caller. That verdict is not being overturned by the
+// deletion -- the route was safe when it existed, and is now simply gone. See
+// git history for this file for the entry's full reasoning if ever needed
+// again.
+var rawStorageBypassAllowlist = map[string]string{}
 
 // knownUnfixedRawStorageBypasses retired both its entries (CreateMembershipProxy,
 // IngestAuditEventProxy) with the ADR-108 Phase 6 /system proxy tier deletion --

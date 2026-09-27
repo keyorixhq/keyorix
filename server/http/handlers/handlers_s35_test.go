@@ -53,20 +53,6 @@ func TestGetUser_ZeroID_S35(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-// IssueMFAChallenge: broken DB → storage.CreateMFAChallenge fails → 500
-// (lines 469-472).
-func TestIssueMFAChallenge_DBError_S35(t *testing.T) {
-	t.Parallel()
-	kc := freshCoreBrokenS35(t)
-	h, err := NewUserHandler(kc)
-	require.NoError(t, err)
-	r := withUserCtxS7(withChiParamS7(
-		httptest.NewRequest(http.MethodPost, "/api/v1/users/1/mfa-challenge", nil), "id", "1"))
-	w := httptest.NewRecorder()
-	h.IssueMFAChallenge(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 // RestoreUser: id=0 → core.RestoreUser returns "Validation error: user ID is
 // required" (no "not found") → 500 (lines 746-747).
 func TestRestoreUser_ZeroID_S35(t *testing.T) {

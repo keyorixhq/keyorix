@@ -42,63 +42,10 @@ type LoginRequest struct {
 	IPAddress string
 }
 
-// RemoteLoginVerifier is implemented by storage backends that cannot themselves
-// supply a real password hash for VerifyPasswordCredentials to compare against
-// (#506): models.User.PasswordHash is deliberately `json:"-"` and NEVER crosses
-// the wire, so RemoteStorage's GetUserByUsername always comes back with an
-// empty hash, and a bcrypt compare against it would fail unconditionally — every
-// password login was permanently broken under storage.type: remote before this.
-//
-// The fix is a proxy-login channel: the upstream server (the one actually
-// backed by LocalStorage, which HAS the real hash) performs the credential
-// check itself and returns only a verdict, never the hash. RemoteStorage
-// implements this interface by forwarding to a POST
-// /api/v1/users/verify-credentials endpoint, whose handler calls the
-// UPSTREAM's own core.Login — the SAME function the direct LocalStorage path
-// uses, not a parallel reimplementation of the bcrypt compare or of session
-// minting. Critically, this means the ENTIRE check is delegated — password
-// compare AND the per-account lockout gate/accounting AND the account-active/
-// account-state checks — not just a bare boolean. Splitting the lockout
-// accounting out and leaving it client-side would be a silent regression:
-// login_lockout.go's UpdateLoginLockoutState is a permanent, unconditional
-// stub under RemoteStorage (#454 — the wire format has no columns for it), so
-// a client-side-only lockout gate can never actually persist a trip and would
-// leave storage.type: remote with NO per-account brute-force backstop at all
-// (only the separate, coarser per-IP rate limiter, #452). Proxying the whole
-// check to the upstream's real, LocalStorage-persisted accounting is the only
-// way this deployment shape can enforce it.
-//
-// #508 — session minting is ATOMIC with verification, not a second, separate
-// step: VerifyLoginCredentials returns the upstream-minted *models.Session in
-// the SAME call that proved the password correct, exactly when the account
-// needs no MFA/WebAuthn second factor (mirroring Login's own gate below). A
-// nil session with a nil error means the account requires MFA/WebAuthn — the
-// upstream deliberately withheld a session for that case, just as Login does
-// for the direct LocalStorage path. There is deliberately NO separate,
-// independently-callable "create a session for this user_id" wire primitive:
-// that would let anyone holding the RemoteStorage service credential mint a
-// session for an arbitrary user without ever proving that user's actual
-// credentials (a confused-deputy / privilege-escalation oracle). Tying
-// issuance inseparably to a specific, just-completed verification — the same
-// pattern OAuth/OIDC token-exchange flows use — is what makes this safe.
-type RemoteLoginVerifier interface {
-	VerifyLoginCredentials(ctx context.Context, username, password, userAgent, ipAddress string) (*models.User, *models.Session, error)
-}
-
 // VerifyPasswordCredentials resolves "is this username/password combination
 // valid", enforcing the per-account lockout gate and the account-active/
 // account-state checks Login has always required — extracted out of Login
 // (#506) as the single source of truth for the LOCAL bcrypt-backed check.
-//
-// This never delegates to RemoteLoginVerifier (see Login below for that
-// dispatch): under storage.type: remote, calling this directly always fails
-// closed (RemoteStorage.GetUserByUsername's decoded user always has an empty
-// PasswordHash, so the bcrypt compare below can never succeed) — exactly the
-// same fail-closed behavior storage.type: remote password login had before
-// #506. The only supported entry point for a proxied, storage.type: remote
-// login is Login itself, which mints (or, via the proxy, receives) a session
-// atomically with verification (#508) — a capability this function
-// deliberately does not have, since it returns no session.
 func (c *KeyorixCore) VerifyPasswordCredentials(ctx context.Context, username, password string) (*models.User, error) {
 	user, err := c.storage.GetUserByUsername(ctx, username)
 	if err != nil {
@@ -154,32 +101,7 @@ func (c *KeyorixCore) VerifyPasswordCredentials(ctx context.Context, username, p
 }
 
 // Login validates credentials, creates a session, and returns (session, user, error).
-//
-// #508: under storage.type: remote (c.storage implements RemoteLoginVerifier),
-// verification and session minting happen as ONE atomic upstream call —
-// VerifyLoginCredentials returns the upstream-minted session directly,
-// mirroring the MFA gate below exactly (a nil session means the upstream
-// itself withheld one because the account needs a second factor). Login never
-// separately asks the upstream to "create a session for this user" after the
-// fact — see RemoteLoginVerifier's doc for why that split would be unsafe.
 func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, error) {
-	if verifier, ok := c.storage.(RemoteLoginVerifier); ok {
-		user, session, err := verifier.VerifyLoginCredentials(ctx, req.Username, req.Password, req.UserAgent, req.IPAddress)
-		if err != nil {
-			return nil, nil, err
-		}
-		if user.MFAEnabled || user.WebAuthnEnabled {
-			return nil, user, ErrMFARequired
-		}
-		if session == nil {
-			// Defensive, should not happen: the upstream reported no MFA/WebAuthn gate
-			// but withheld a session anyway. Fail closed rather than let the caller
-			// proceed with no usable session.
-			return nil, nil, fmt.Errorf("failed to create session: upstream did not return one")
-		}
-		return session, user, nil
-	}
-
 	user, err := c.VerifyPasswordCredentials(ctx, req.Username, req.Password)
 	if err != nil {
 		return nil, nil, err
@@ -300,11 +222,11 @@ func (c *KeyorixCore) Logout(ctx context.Context, token string) error {
 // storage.type: remote "spoke" deployment can validate/revoke sessions that
 // were minted upstream — the upstream server remains the sole source of truth
 // for session validity, exactly as it already is for the user record and
-// password hash (#505/#506). Unlike VerifyLoginCredentials, this performs NO
-// credential check of its own: it only ever returns a session for a caller who
-// already presents that session's own opaque token (a lookup, not a mint), so
-// it cannot be used to obtain access to an account without already holding one
-// of its live session tokens.
+// password hash (#505/#506). This performs NO credential check of its own: it
+// only ever returns a session for a caller who already presents that
+// session's own opaque token (a lookup, not a mint), so it cannot be used to
+// obtain access to an account without already holding one of its live session
+// tokens.
 func (c *KeyorixCore) GetSessionForRemoteProxy(ctx context.Context, token string) (*models.Session, error) {
 	return c.storage.GetSession(ctx, token)
 }
@@ -312,8 +234,8 @@ func (c *KeyorixCore) GetSessionForRemoteProxy(ctx context.Context, token string
 // DeleteSessionForRemoteProxy deletes a session by its numeric ID — the
 // server-side counterpart RemoteStorage.DeleteSession (#508) needs so Logout
 // (and any other session-invalidation path) works end-to-end under
-// storage.type: remote. Gated the same way VerifyLoginCredentials/CreateUser/
-// UnlockUser already are (users.write on the RemoteStorage service credential,
+// storage.type: remote. Gated the same way CreateUser/UnlockUser already are
+// (users.write on the RemoteStorage service credential,
 // server/http/router.go) — not a new, wider trust boundary: that credential
 // can already force-logout an arbitrary user's every session via
 // RevokeUserSessions (POST /users/{id}/revoke-sessions), so deleting a single

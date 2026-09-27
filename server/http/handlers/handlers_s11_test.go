@@ -1523,24 +1523,6 @@ func freshGroupHandlerS11(t *testing.T) (*GroupHandler, *core.KeyorixCore) {
 
 // ── users_roles.go: GetUserRolesForUser and GetUserPermissionsForUser loop bodies ──
 
-// ── users_crud.go: VerifyCredentials success path ────────────────────────────
-
-// TestVerifyCredentials_HappyPath_S11 — valid creds → success response (covers lines 411-439).
-func TestVerifyCredentials_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	bootstrapS11(t, cs, "verifycreds")
-	h, err := NewUserHandler(cs)
-	require.NoError(t, err)
-
-	body := `{"username":"s11verifycreds","password":"Kx#Vr9$Mn2!Zp4@Qw"}`
-	r := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/users/verify-credentials", strings.NewReader(body)))
-	r.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.VerifyCredentials(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // ── rbac.go: GetRole success path ───────────────────────────────────────────
 
 // TestRBACGetRole_HappyPath_S11 — get a real role by ID → 200 (covers sendSuccess at line 239).

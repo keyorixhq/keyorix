@@ -124,19 +124,12 @@ func userToAPIResponse(u *models.User) map[string]interface{} {
 	// mfa_enabled (#524): this endpoint already surfaces the identical
 	// admin-level lockout-accounting fields just above (users.read/users.write
 	// trust boundary — not a lower-trust caller, and MFAEnabled is not
-	// sensitive the way PasswordHash is; VerifyCredentials's proxy response
-	// already sends it at the SAME trust tier, see auth #506/#509). Without it
-	// here, RemoteStorage's GetUser (internal/storage/store/remote_users.go)
-	// decoded every user's MFAEnabled as the Go zero value (false) regardless
-	// of the upstream's real state under storage.type: remote — silently
-	// breaking every internal/core/mfa.go caller that branches on
-	// user.MFAEnabled once #524's storage-primitive proxies made the rest of
-	// the enrolment/management flow reachable (MFARecoveryCodesRemaining
-	// always reported 0/0, DisableMFA/RegenerateMFARecoveryCodes always
-	// refused with "MFA is not enabled", and requireReauth's TOTP-code re-auth
-	// branch — the only re-auth path that can work under storage.type: remote,
-	// since PasswordHash is deliberately never sent — was unreachable dead
-	// code).
+	// sensitive the way PasswordHash is). Historically (#524, since resolved by
+	// RemoteStorage's full removal in #2162) this field also fixed a
+	// storage.type: remote deployment: RemoteStorage's own GetUser decoded
+	// every user's MFAEnabled as the Go zero value (false) regardless of the
+	// upstream's real state, silently breaking every internal/core/mfa.go
+	// caller that branches on user.MFAEnabled.
 	out["mfa_enabled"] = u.MFAEnabled
 	return out
 }
@@ -326,51 +319,6 @@ func GetUserByExternalID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defaultUserHandler.GetUserByExternalID(w, r)
-}
-
-// VerifyCredentials handles POST /api/v1/users/verify-credentials (#506).
-func VerifyCredentials(w http.ResponseWriter, r *http.Request) {
-	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
-		return
-	}
-	defaultUserHandler.VerifyCredentials(w, r)
-}
-
-// VerifyMFACredentials handles POST /api/v1/users/verify-mfa (#509).
-func VerifyMFACredentials(w http.ResponseWriter, r *http.Request) {
-	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
-		return
-	}
-	defaultUserHandler.VerifyMFACredentials(w, r)
-}
-
-// IssueMFAChallenge handles POST /api/v1/users/{id}/mfa-challenge (#509).
-func IssueMFAChallenge(w http.ResponseWriter, r *http.Request) {
-	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
-		return
-	}
-	defaultUserHandler.IssueMFAChallenge(w, r)
-}
-
-// GetActiveMFAChallenge handles POST /api/v1/users/mfa-challenge/active (#522).
-func GetActiveMFAChallenge(w http.ResponseWriter, r *http.Request) {
-	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
-		return
-	}
-	defaultUserHandler.GetActiveMFAChallenge(w, r)
-}
-
-// ConsumeMFAChallenge handles POST /api/v1/users/mfa-challenge/consume (#522).
-func ConsumeMFAChallenge(w http.ResponseWriter, r *http.Request) {
-	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
-		return
-	}
-	defaultUserHandler.ConsumeMFAChallenge(w, r)
 }
 
 // UpdateUser handles PUT /api/v1/users/{id}

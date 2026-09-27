@@ -382,25 +382,6 @@ func TestUserHandler_RestoreUser_NotFoundV2(t *testing.T) {
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
 }
 
-// ── UserHandler.VerifyCredentials ─────────────────────────────────────────────
-
-func TestUserHandler_VerifyCredentials_Unauthorized(t *testing.T) {
-	h := newUserHandlerS5(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"username":"u","password":"p"}`))
-	w := httptest.NewRecorder()
-	h.VerifyCredentials(w, req)
-	// no user context → not 500 (should be 401 or handled by no-core)
-	assert.NotEqual(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestUserHandler_VerifyMFACredentials_UnauthorizedV2(t *testing.T) {
-	h := newUserHandlerS5(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	h.VerifyMFACredentials(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
 // ── ImpersonationHandler.Start ────────────────────────────────────────────────
 
 func TestImpersonationHandler_Start_UnauthorizedS5(t *testing.T) {
@@ -1699,41 +1680,6 @@ func TestAuthHandler_UpdateProfile_UnauthorizedS5(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-// ── users_crud.go — IssueMFAChallenge / ConsumeMFAChallenge ──────────────────
-
-func TestUserHandler_IssueMFAChallenge_BadID(t *testing.T) {
-	h := newUserHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "bad"))
-	w := httptest.NewRecorder()
-	h.IssueMFAChallenge(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestUserHandler_IssueMFAChallenge_NotFound(t *testing.T) {
-	h := newUserHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "9999"))
-	w := httptest.NewRecorder()
-	h.IssueMFAChallenge(w, req)
-	// not found → not 401
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestUserHandler_ConsumeMFAChallenge_BadID(t *testing.T) {
-	h := newUserHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"code":"123456"}`)), "id", "bad"))
-	w := httptest.NewRecorder()
-	h.ConsumeMFAChallenge(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestUserHandler_ConsumeMFAChallenge_BadJSONS5(t *testing.T) {
-	h := newUserHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "id", "1"))
-	w := httptest.NewRecorder()
-	h.ConsumeMFAChallenge(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── DashboardHandler — happy-path coverage ─────────────────────────────────────
 
 func TestDashboardHandler_GetCompliancePosture_HappyPathS5(t *testing.T) {
@@ -1875,56 +1821,6 @@ func TestPkgGetUserByExternalID_NilHandler(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/?external_id=ext-1", nil)
 	GetUserByExternalID(w, req)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestPkgVerifyCredentials_NilHandler(t *testing.T) {
-	saved := defaultUserHandler
-	defaultUserHandler = nil
-	t.Cleanup(func() { defaultUserHandler = saved })
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	VerifyCredentials(w, req)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestPkgVerifyMFACredentials_NilHandler(t *testing.T) {
-	saved := defaultUserHandler
-	defaultUserHandler = nil
-	t.Cleanup(func() { defaultUserHandler = saved })
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	VerifyMFACredentials(w, req)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestPkgIssueMFAChallenge_NilHandler(t *testing.T) {
-	saved := defaultUserHandler
-	defaultUserHandler = nil
-	t.Cleanup(func() { defaultUserHandler = saved })
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	IssueMFAChallenge(w, req)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestPkgGetActiveMFAChallenge_NilHandler(t *testing.T) {
-	saved := defaultUserHandler
-	defaultUserHandler = nil
-	t.Cleanup(func() { defaultUserHandler = saved })
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	GetActiveMFAChallenge(w, req)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestPkgConsumeMFAChallenge_NilHandler(t *testing.T) {
-	saved := defaultUserHandler
-	defaultUserHandler = nil
-	t.Cleanup(func() { defaultUserHandler = saved })
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	ConsumeMFAChallenge(w, req)
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
