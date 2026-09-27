@@ -51,14 +51,42 @@ func isPrivateIP(ip net.IP) bool {
 	return netutil.IsPrivateOrLinkLocal(ip)
 }
 
-// parseDSNHost extracts the host (without port) from an admin DSN in any of the
+// parseDSNHost extracts the FIRST host (without port) from an admin DSN in any
+// of the supported formats -- see parseDSNHosts, which this delegates to. Kept
+// for callers (and existing tests) that only ever dealt with a single-host DSN;
+// validateAdminDSNHost itself uses parseDSNHosts directly so a multi-host DSN
+// gets every host checked, not just this first one.
+//
+// Returns "" when the format is unrecognised or no host can be extracted.
+func parseDSNHost(dsn string) string {
+	hosts := parseDSNHosts(dsn)
+	if len(hosts) == 0 {
+		return ""
+	}
+	return hosts[0]
+}
+
+// parseDSNHosts extracts every host named in an admin DSN, in any of the
 // supported formats:
 //   - URL-form: postgres://user:pass@host:port/db, mysql://…, mongodb://…, redis://…
 //   - PostgreSQL key-value: host=xxx port=yyy user=zzz dbname=www
 //   - MySQL tcp-wrapper: user:pass@tcp(host:port)/db or user:pass@(host:port)/db
 //
-// Returns "" when the format is unrecognised or the host cannot be extracted.
-func parseDSNHost(dsn string) string {
+// PostgreSQL supports a MULTI-HOST DSN for client-side failover, in both forms
+// this function recognises: key-value (host=h1,h2,h3 port=p1,p2,p3 ...) and URL
+// (postgres://user@h1:5432,h2:5432,h3:5432/db) -- pgconn.ParseConfig accepts
+// both and tries each host in order (see internal/dynamic/postgres.go's
+// dialPostgres). A guard that extracts only DSN.Host, or naively runs
+// net.SplitHostPort/net.LookupHost against the whole comma-joined string
+// (which fails with "too many colons in address" for the URL form, or a bogus
+// hostname lookup for the key-value form), silently skips validation for EVERY
+// host in the list -- not just the ones after the first. Every returned host is
+// checked by validateAdminDSNHost, in list order, so a private/IMDS address
+// anywhere in a multi-host DSN is still caught before the failover behavior
+// ever gets a chance to dial it.
+//
+// Returns nil when the format is unrecognised or no host can be extracted.
+func parseDSNHosts(dsn string) []string {
 	// The kubernetes backend's admin_dsn is a JSON blob ({"api_server": "https://
 	// host:port", ...}, see internal/dynamic/kubernetes.go), not a URL/wrapper/
 	// key-value DSN string -- none of the checks below can extract a host from it
@@ -68,24 +96,57 @@ func parseDSNHost(dsn string) string {
 	// private-IP/IMDS guard for this one backend type. Try this first since it's
 	// the most precise match for its exact shape.
 	if h, ok := parseDSNHostFromKubernetesConfig(dsn); ok {
-		return h
+		return []string{h}
 	}
-	// URL-form DSNs (any scheme that carries ://host).
+	// URL-form DSNs (any scheme that carries ://host), including a multi-host
+	// comma-separated host list.
 	if strings.Contains(dsn, "://") {
-		if h, ok := parseDSNHostFromURL(dsn); ok {
-			return h
+		if hosts, ok := parseDSNHostsFromURL(dsn); ok {
+			return hosts
 		}
 	}
 	// MySQL tcp-wrapper: user:pass@tcp(host:port)/db
 	if h, ok := parseDSNHostFromWrapper(dsn, "@tcp("); ok {
-		return h
+		return []string{h}
 	}
 	// MySQL alternative wrapper: user:pass@(host:port)/db
 	if h, ok := parseDSNHostFromWrapper(dsn, "@("); ok {
-		return h
+		return []string{h}
 	}
-	// PostgreSQL key-value: scan for host=<value>
-	return parseDSNHostFromKeyValue(dsn)
+	// PostgreSQL key-value: scan for host=<value>, including a multi-host
+	// comma-separated value.
+	return parseDSNHostsFromKeyValue(dsn)
+}
+
+// splitDSNHostList splits a possibly comma-separated host (or host:port) list
+// -- PostgreSQL's multi-host syntax, in either DSN form -- into individual
+// hosts, stripping a per-entry port when present. A single, non-comma entry is
+// the ordinary single-host case: it just comes back as a one-element list.
+func splitDSNHostList(field string) []string {
+	var hosts []string
+	for _, part := range strings.Split(field, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if h, _, err := net.SplitHostPort(part); err == nil && h != "" {
+			hosts = append(hosts, h)
+			continue
+		}
+		// net.SplitHostPort requires an explicit port, so a bracket-quoted
+		// IPv6 literal with NO port (e.g. "[64:ff9b::8.8.8.8]" -- a legal
+		// PostgreSQL multi-host URI entry that just uses the default port)
+		// fails that call for want of one. Strip the brackets before giving
+		// up, rather than carrying them into the "host" -- net.ParseIP (and
+		// every guard downstream of it) rejects a bracket-wrapped literal
+		// outright, which would otherwise fall through to net.LookupHost and
+		// silently skip validation for exactly this shape.
+		if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") && len(part) > 1 {
+			part = part[1 : len(part)-1]
+		}
+		hosts = append(hosts, part)
+	}
+	return hosts
 }
 
 // parseDSNHostFromKubernetesConfig extracts the host from a kubernetes backend's
@@ -100,18 +161,75 @@ func parseDSNHostFromKubernetesConfig(dsn string) (string, bool) {
 	if err := json.Unmarshal([]byte(dsn), &cfg); err != nil || strings.TrimSpace(cfg.APIServer) == "" {
 		return "", false
 	}
-	return parseDSNHostFromURL(cfg.APIServer)
-}
-
-func parseDSNHostFromURL(dsn string) (string, bool) {
-	u, err := url.Parse(dsn)
-	if err != nil || u.Host == "" {
+	hosts, ok := parseDSNHostsFromURL(cfg.APIServer)
+	if !ok || len(hosts) == 0 {
 		return "", false
 	}
-	if h, _, _ := net.SplitHostPort(u.Host); h != "" {
-		return h, true
+	return hosts[0], true
+}
+
+// parseDSNHostsFromURL extracts every host from a URL-form DSN's host
+// component, splitting on comma first so a PostgreSQL multi-host URL
+// (postgres://user@h1:5432,h2:5432,h3:5432/db) yields every host rather than
+// failing net.SplitHostPort outright ("too many colons in address") and
+// falling back to the whole unsplit string as a single bogus "host".
+//
+// url.Parse itself REJECTS a multi-host URL the moment any one host in the
+// list is a bracket-quoted IPv6 literal (RFC 3986 requires the brackets, and
+// PostgreSQL's own multi-host URI syntax permits mixing bracketed-IPv6 and
+// plain-IPv4 hosts in one comma list) -- confirmed directly: url.Parse on
+// "postgres://user@[64:ff9b::8.8.8.8]:5432,10.0.0.1:5432/db" fails with
+// `invalid port ":5432,10.0.0.1:5432" after host`, because it treats
+// everything after the closing bracket as a single port component and that
+// text isn't pure digits. pgx.ParseConfig (the actual driver dialPostgres
+// uses) parses and CONNECTS to this exact string without complaint. Before
+// the manualAuthorityHosts fallback below, that url.Parse error propagated
+// all the way out of parseDSNHosts (no other format matches either), and
+// validateAdminDSNHost's "unrecognised format, can't extract host" branch
+// treated the WHOLE DSN as unvalidatable -- a real, reachable SSRF bypass: an
+// admin_dsn using this multi-host shape with a NAT64/6to4/Teredo/native-IPv6
+// private or IMDS host anywhere in the list sailed through validation
+// entirely while pgx happily dialed it.
+func parseDSNHostsFromURL(dsn string) ([]string, bool) {
+	if u, err := url.Parse(dsn); err == nil && u.Host != "" {
+		return splitDSNHostList(u.Host), true
 	}
-	return u.Host, true
+	return manualAuthorityHosts(dsn)
+}
+
+// manualAuthorityHosts extracts a URL-form DSN's host-list authority segment
+// (the text between "://" — or the last "@" before it, to skip userinfo —
+// and the next "/", "?", or "#") by direct string scanning, bypassing
+// url.Parse's authority grammar entirely. Only reached as a fallback when
+// url.Parse itself rejects the DSN (see parseDSNHostsFromURL's doc comment
+// for the multi-host-plus-bracketed-IPv6 shape that triggers this).
+// Deliberately simple and over-inclusive for a security check: extracting a
+// spurious extra "host" candidate from a shape this doesn't fully understand
+// is a safe failure (the candidate just gets validated too, and an
+// unresolvable/malformed one is skipped exactly like any other unresolvable
+// host); extracting too FEW hosts is not.
+func manualAuthorityHosts(dsn string) ([]string, bool) {
+	schemeIdx := strings.Index(dsn, "://")
+	if schemeIdx == -1 {
+		return nil, false
+	}
+	rest := dsn[schemeIdx+3:]
+	end := len(rest)
+	for i, c := range rest {
+		if c == '/' || c == '?' || c == '#' {
+			end = i
+			break
+		}
+	}
+	authority := rest[:end]
+	if at := strings.LastIndex(authority, "@"); at != -1 {
+		authority = authority[at+1:]
+	}
+	authority = strings.TrimSpace(authority)
+	if authority == "" {
+		return nil, false
+	}
+	return splitDSNHostList(authority), true
 }
 
 // parseDSNHostFromWrapper extracts the host:port between marker and the next
@@ -131,27 +249,49 @@ func parseDSNHostFromWrapper(dsn, marker string) (string, bool) {
 	return hostport, true
 }
 
-func parseDSNHostFromKeyValue(dsn string) string {
+// parseDSNHostsFromKeyValue extracts every host from a PostgreSQL key-value
+// DSN's host=<value>, splitting <value> on comma so a multi-host DSN
+// (host=h1,h2,h3 port=p1,p2,p3 ...) yields every host rather than a single
+// bogus comma-joined "host" that net.LookupHost will just fail to resolve.
+func parseDSNHostsFromKeyValue(dsn string) []string {
 	for part := range strings.FieldsSeq(dsn) {
 		if h, ok := strings.CutPrefix(part, "host="); ok {
-			return h
+			return splitDSNHostList(h)
 		}
 	}
-	return ""
+	return nil
 }
 
-// validateAdminDSNHost rejects an admin DSN whose host is a private or link-local
-// address. Literal IPs are checked directly; hostnames are resolved and each
-// returned address is checked. If the hostname cannot be resolved (e.g. the target
-// is in a network segment not reachable from Keyorix at config-register time), the
-// check is skipped — the connection will fail at issue time. This prevents an internal
-// operator from using Keyorix as an SSRF proxy against other services on the same
-// private network (including the cloud IMDS endpoint).
+// validateAdminDSNHost rejects an admin DSN whose host is a private or
+// link-local address. This prevents an internal operator from using Keyorix
+// as an SSRF proxy against other services on the same private network
+// (including the cloud IMDS endpoint).
+//
+// PostgreSQL's multi-host DSN syntax (host=h1,h2,h3 in key-value form, or
+// h1:5432,h2:5432,h3:5432 in URL form) names several failover hosts, any of
+// which pgconn may actually dial (internal/dynamic/postgres.go's
+// dialPostgres); every one of them is checked here via parseDSNHosts, not
+// just the first.
 func validateAdminDSNHost(adminDSN string) error {
-	host := parseDSNHost(adminDSN)
-	if host == "" {
+	hosts := parseDSNHosts(adminDSN)
+	if len(hosts) == 0 {
 		return nil // unrecognised format — can't extract host
 	}
+	for _, host := range hosts {
+		if err := validateAdminDSNSingleHost(host); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateAdminDSNSingleHost applies validateAdminDSNHost's check to one
+// already-extracted host. Literal IPs are checked directly; hostnames are
+// resolved and each returned address is checked. If the hostname cannot be
+// resolved (e.g. the target is in a network segment not reachable from
+// Keyorix at config-register time), the check is skipped for THIS host only —
+// the connection will fail at issue time regardless.
+func validateAdminDSNSingleHost(host string) error {
 	if ip := net.ParseIP(host); ip != nil {
 		if isPrivateIP(ip) {
 			return fmt.Errorf("admin_dsn host %q is a private or link-local address; "+

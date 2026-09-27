@@ -1,0 +1,11 @@
+go test fuzz v1
+byte('\x00')
+byte('\x00')
+byte('\x00')
+byte('\x01')
+byte('\x04')
+byte('\b')
+byte('\b')
+byte('\b')
+byte('\b')
+bool(false)

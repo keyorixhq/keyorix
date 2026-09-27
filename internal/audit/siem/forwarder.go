@@ -62,11 +62,50 @@ func isLoopbackHost(host string) bool {
 // permitted, unlike netutil.IsPrivateOrLinkLocal's stricter backend-DSN
 // policy -- see isLoopbackHost above for why the two destination classes
 // warrant different defaults).
+//
+// Checked both directly AND against ip's embedded IPv4 (netutil.EmbeddedIPv4),
+// mirroring netutil's own matchesCIDRsWithEmbedded "direct match OR embedded
+// match" shape — classifying ONLY the decoded form would wrongly permit a
+// genuine IPv6 link-local literal whose low 32 bits happen not to look
+// link-local once reinterpreted as IPv4, and would need care around ::1 itself
+// (which decodes, as deprecated IPv4-compatible, to embedded 0.0.0.1). A NAT64
+// (64:ff9b::/96) or IPv4-compatible (::x) encoding of a private/link-local
+// IPv4 (e.g. 64:ff9b::a9fe:a9fe = cloud IMDS 169.254.169.254) needs the
+// embedded check: Go's own net.IP.IsPrivate/IsLinkLocalUnicast fold
+// IPv4-MAPPED (::ffff:x) via To4, but NOT these two encodings, so a bare
+// stdlib check here disagreed with netutil.IsPrivateOrLinkLocal (the guard
+// every other backend-infrastructure dial site in this codebase shares) for
+// exactly those two forms -- an SSRF bypass reachable through this
+// forwarder's own dial-time Disallow policy (newForwarder wires
+// isDisallowedIP directly into netutil.Dialer), not merely a register-time
+// convenience check.
 func isDisallowedIP(ip net.IP) bool {
+	if isDisallowedIPDirect(ip) {
+		return true
+	}
+	if v4 := netutil.EmbeddedIPv4(ip); v4 != nil {
+		return isDisallowedIPDirect(v4)
+	}
+	return false
+}
+
+func isDisallowedIPDirect(ip net.IP) bool {
 	if ip.IsLoopback() {
 		return false
 	}
 	return ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
+}
+
+// IsDisallowedIPForFuzz is isDisallowedIP, exported so
+// FuzzSSRFGuardDifferential (internal/core/ssrf_guard_differential_fuzz_test.go)
+// can drive this package's REAL dial-time SSRF policy from a single
+// cross-package differential harness alongside netutil's and internal/core's
+// own guards — the same "export the real logic for an external parity
+// checker" shape netutil.EmbeddedIPv4 already establishes. Test-only: no
+// production caller should use this; newForwarder already wires
+// isDisallowedIP directly.
+func IsDisallowedIPForFuzz(ip net.IP) bool {
+	return isDisallowedIP(ip)
 }
 
 // refuseRedirect blocks a redirect to a different host or an https->http downgrade.
