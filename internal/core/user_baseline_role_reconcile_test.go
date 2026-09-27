@@ -194,6 +194,60 @@ func TestReconcileUserBaselineRoles_NoopOnFreshInstall(t *testing.T) {
 	require.NoError(t, c.ReconcileUserBaselineRoles(context.Background()))
 }
 
+// TestReconcileUserBaselineRoles_OneTimeMarkerBlocksLaterRestarts proves the
+// #2195 rework: the completion marker makes the sweep run exactly once. A
+// later restart must skip entirely and grant nothing — even when a user has
+// since lost the role by some other means — because the marker exists
+// specifically to stop an ordinary restart from re-litigating role state the
+// install may have changed on purpose after the one-time repair ran.
+func TestReconcileUserBaselineRoles_OneTimeMarkerBlocksLaterRestarts(t *testing.T) {
+	t.Parallel()
+	c := newPreFixOrderingCore(t)
+	admin := bootstrapWithPreFixOrdering(t, c)
+	ctx := context.Background()
+
+	require.NoError(t, c.ReconcileUserBaselineRoles(ctx))
+	require.True(t, userHasRoleName(t, c, admin.ID, "system_viewer"), "sanity: first run repaired the admin")
+	require.Equal(t, 1, countBaselineBackfillAuditEvents(t, c, admin.ID))
+
+	role, err := c.storage.GetRoleByName(ctx, "system_viewer")
+	require.NoError(t, err)
+	require.NoError(t, c.storage.RemoveRole(ctx, admin.ID, role.ID, Scope{}))
+	require.False(t, userHasRoleName(t, c, admin.ID, "system_viewer"), "sanity: the role really is gone now")
+
+	require.NoError(t, c.ReconcileUserBaselineRoles(ctx))
+	assert.False(t, userHasRoleName(t, c, admin.ID, "system_viewer"),
+		"the one-time marker must block a later restart from re-granting a role the install has since changed")
+	assert.Equal(t, 1, countBaselineBackfillAuditEvents(t, c, admin.ID),
+		"the marker-blocked restart must write no new backfill audit event")
+}
+
+// TestReconcileUserBaselineRoles_SkipsAdminRemovedUser proves the other half
+// of the #2195 rework: a user with a role.removed audit event for
+// system_viewer — an admin's own deliberate removal, which RemoveUserRole
+// permits since nothing protects the baseline role — is never re-granted by
+// the sweep, even on the one run that does execute.
+func TestReconcileUserBaselineRoles_SkipsAdminRemovedUser(t *testing.T) {
+	t.Parallel()
+	c := newPreFixOrderingCore(t)
+	admin := bootstrapWithPreFixOrdering(t, c)
+	ctx := context.Background()
+
+	role, err := c.storage.GetRoleByName(ctx, "system_viewer")
+	require.NoError(t, err)
+
+	// Simulate an admin's deliberate removal of the baseline role, recorded
+	// in the RBAC audit trail exactly as RemoveUserRole would have logged it.
+	c.LogRoleRemoved(ctx, admin.ID, admin.ID, role.ID, Scope{})
+
+	require.NoError(t, c.ReconcileUserBaselineRoles(ctx))
+
+	assert.False(t, userHasRoleName(t, c, admin.ID, "system_viewer"),
+		"a user with a role.removed history for system_viewer must never be re-granted by the reconcile")
+	assert.Equal(t, 0, countBaselineBackfillAuditEvents(t, c, admin.ID),
+		"no backfill audit event must be written for a skipped, deliberately-removed user")
+}
+
 // TestReconcileUserBaselineRoles_RepairsPreFixOrdering_Postgres mirrors the
 // SQLite case against a real, isolated PostgreSQL schema, migrated exactly as
 // production does. Skips (does not fail) when KEYORIX_TEST_PG_DSN is unset.
