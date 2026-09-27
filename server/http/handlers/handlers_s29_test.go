@@ -24,9 +24,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -349,149 +349,25 @@ func TestListAccessRequests_HappyPath_S29(t *testing.T) {
 
 // TestCountActiveLeasesProxy_MissingConfigID_S29 — missing config_id query
 // parameter → 400.
-func TestCountActiveLeasesProxy_MissingConfigID_S29(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS29(t)
-	h := NewDynamicSecretHandler(cs)
-
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/dynamic-secrets/leases/active-count", nil)
-	w := httptest.NewRecorder()
-	h.CountActiveLeasesProxy(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.False(t, resp["success"].(bool))
-}
 
 // TestCountActiveLeasesProxy_BadConfigID_S29 — non-numeric config_id → 400.
-func TestCountActiveLeasesProxy_BadConfigID_S29(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS29(t)
-	h := NewDynamicSecretHandler(cs)
-
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/dynamic-secrets/leases/active-count?config_id=notanint", nil)
-	w := httptest.NewRecorder()
-	h.CountActiveLeasesProxy(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestCountActiveLeasesProxy_HappyPath_S29 — valid config_id (no leases in DB)
 // → 200 with count=0.
-func TestCountActiveLeasesProxy_HappyPath_S29(t *testing.T) {
-	t.Parallel()
-	cs, db := freshCoreS29WithAdmin(t)
-	h := NewDynamicSecretHandler(cs)
-
-	proj := &models.Project{Name: "s29-count-proj"}
-	require.NoError(t, db.Create(proj).Error)
-	cfg := &models.DynamicSecretConfig{
-		Name: "s29-count-cfg", ProjectID: proj.ID,
-		BackendType: "postgres", DefaultTTLSeconds: 3600, MaxTTLSeconds: 7200,
-	}
-	require.NoError(t, db.Create(cfg).Error)
-
-	req := httptest.NewRequest(http.MethodGet,
-		fmt.Sprintf("/api/v1/system/dynamic-secrets/leases/active-count?config_id=%d", cfg.ID), nil)
-	w := httptest.NewRecorder()
-	h.CountActiveLeasesProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp["success"].(bool))
-	data, ok := resp["data"].(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, float64(0), data["count"])
-}
 
 // ── groups_proxy.go: UpdateGroupProxy ────────────────────────────────────────
 
 // TestUpdateGroupProxy_BadID_S29 — non-numeric {id} → 400.
-func TestUpdateGroupProxy_BadID_S29(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS29(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-
-	req := withChiParam_S25(
-		httptest.NewRequest(http.MethodPut, "/api/v1/system/groups/bad",
-			jsonBodyS29(t, map[string]string{"name": "newname"})),
-		"id", "bad",
-	)
-	w := httptest.NewRecorder()
-	h.UpdateGroupProxy(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestUpdateGroupProxy_BadBody_S29 — invalid JSON body → 400.
-func TestUpdateGroupProxy_BadBody_S29(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS29(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-
-	req := withChiParam_S25(
-		httptest.NewRequest(http.MethodPut, "/api/v1/system/groups/1",
-			bytes.NewBufferString("not-json")),
-		"id", "1",
-	)
-	w := httptest.NewRecorder()
-	h.UpdateGroupProxy(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestUpdateGroupProxy_NonexistentID_S29 — UpdateGroupProxy now routes through
 // core.KeyorixCore.UpdateGroup (#G79), which requires the target group to
 // already exist (GetGroup first) rather than the previous bare
 // storage.UpdateGroup's GORM-Save upsert-on-missing-ID quirk. A PUT to a
 // nonexistent group ID must 404, not silently create a new row.
-func TestUpdateGroupProxy_NonexistentID_S29(t *testing.T) {
-	t.Parallel()
-	cs, _ := freshCoreS29WithAdmin(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-
-	req := withUserCtx(withChiParam_S25(
-		httptest.NewRequest(http.MethodPut, "/api/v1/system/groups/1",
-			jsonBodyS29(t, map[string]string{"name": "auto-inserted"})),
-		"id", "1",
-	))
-	w := httptest.NewRecorder()
-	h.UpdateGroupProxy(w, req)
-
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // TestUpdateGroupProxy_HappyPath_S29 — existing group is updated → 200.
-func TestUpdateGroupProxy_HappyPath_S29(t *testing.T) {
-	t.Parallel()
-	cs, db := freshCoreS29WithAdmin(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-
-	grp := &models.Group{Name: "s29-update-group", Description: "original"}
-	require.NoError(t, db.Create(grp).Error)
-
-	req := withUserCtx(withChiParam_S25(
-		httptest.NewRequest(http.MethodPut,
-			fmt.Sprintf("/api/v1/system/groups/%d", grp.ID),
-			jsonBodyS29(t, map[string]string{"name": "updated-name", "description": "updated"})),
-		"id", uintStrS29(grp.ID),
-	))
-	w := httptest.NewRecorder()
-	h.UpdateGroupProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp["success"].(bool))
-}
 
 // ── audit.go: VerifyAuditChain ────────────────────────────────────────────────
 

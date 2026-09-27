@@ -114,40 +114,6 @@ func createTestToken(t *testing.T, c *core.KeyorixCore) string {
 	return session.SessionToken
 }
 
-// createNodeIdentityAndAdmin bootstraps the system (via createTestToken),
-// creates a node-type machine identity in the seeded default project, and
-// returns it alongside the admin actor that created it and that project's ID
-// — the shared setup behind createNodeToken and createBareNodeToken below.
-func createNodeIdentityAndAdmin(t *testing.T, c *core.KeyorixCore) (mi *models.MachineIdentity, admin *models.User, projectID uint) {
-	t.Helper()
-	ctx := context.Background()
-	_ = createTestToken(t, c) // bootstraps admin user/roles/project as a side effect
-	admin, err := c.GetUserByEmail(ctx, "testadmin@example.com")
-	require.NoError(t, err)
-	projects, err := c.Storage().ListProjects(ctx)
-	require.NoError(t, err)
-	require.NotEmpty(t, projects, "createTestToken must have seeded a default project")
-	mi, err = c.CreateMachineIdentity(ctx, projects[0].ID, "test-node", core.MachineTypeNode, "test node credential", "", admin.ID, 0)
-	require.NoError(t, err)
-	return mi, admin, projects[0].ID
-}
-
-// createBareNodeToken mints a node-type machine-identity bearer token holding
-// NO role grant at all — the zero-RBAC credential ADR-085 (Accepted,
-// 2026-08-25) requires /api/v1/system/* to now refuse, since the OR-arm that
-// used to let a bare node credential reach it regardless of permissions is
-// removed. Used only where a test's whole point is pinning that refusal (the
-// system-write-ceiling table, node_credential_route_classification_test.go);
-// everything else that just needs a working credential to drive RemoteStorage
-// against a real router should use createNodeToken instead.
-func createBareNodeToken(t *testing.T, c *core.KeyorixCore) string {
-	t.Helper()
-	mi, admin, projectID := createNodeIdentityAndAdmin(t, c)
-	result, err := c.IssueMachineToken(context.Background(), projectID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: "test-node-token"})
-	require.NoError(t, err)
-	return result.PlainToken
-}
-
 // createLimitedToken creates a non-admin user and returns a valid session token.
 // The user has only read permissions (no write/delete), so restricted endpoints return 403.
 func createLimitedToken(t *testing.T, c *core.KeyorixCore) string {

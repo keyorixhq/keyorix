@@ -13,11 +13,13 @@
 // this guard used to scan only internal/core's own directory, and its own
 // doc comment claimed "there is exactly one direct storage.LogAuditEvent
 // caller outside emitAudit" -- true for that one package, false for the
-// repo. Two more direct callers exist outside internal/core entirely
-// (server/main.go's auditConnectorProjectBindingCreate,
-// server/http/handlers/audit_ingest_proxy.go's IngestAuditEventProxy), both
-// safe on inspection but invisible to the old package-scoped scan -- an
-// enumeration is only as complete as the directories it looks in. Still
+// repo. server/main.go's auditConnectorProjectBindingCreate is one such
+// direct caller outside internal/core entirely, safe on inspection but
+// invisible to the old package-scoped scan -- an enumeration is only as
+// complete as the directories it looks in. (A second one,
+// server/http/handlers/audit_ingest_proxy.go's IngestAuditEventProxy, was
+// removed in ADR-108 Phase 6 step 14c along with the rest of the /system
+// proxy tier.) Still
 // allowlist-shaped, not a full AST walk (a `.LogAuditEvent(` substring match
 // per function, not real parsing), but now walks every non-test *.go file
 // in the repository.
@@ -55,14 +57,6 @@ var auditAttributionAllowlist = map[string]string{
 	"server/main.go:auditConnectorProjectBindingCreate": "hardcodes ActorType: core.ActorTypeSystem and never " +
 		"sets UserID (absent from the struct literal, so it's the zero value nil) -- an unattended boot-time " +
 		"binding-creation event with no actor, same shape as the anomaly.go entry above.",
-	"server/http/handlers/audit_ingest_proxy.go:IngestAuditEventProxy": "the hub side of the storage.type: " +
-		"remote LogAuditEvent proxy (#r122-A): persists an already-fully-formed AuditEvent a follower's own " +
-		"core.KeyorixCore already ran through emitAudit (correctly clearing UserID) before serializing it over " +
-		"the wire -- this endpoint is a raw passthrough, not a second policy decision. A malicious system.write " +
-		"holder submitting a forged event directly (bypassing the emitting server's emitAudit entirely) is a " +
-		"KNOWN, already-tracked, separately-scoped gap (#G79, this file's own auditIngestProxyMaxClockSkew doc " +
-		"comment) -- a distinct trust-boundary problem (attesting the submitter is a legitimate node) that " +
-		"#1626/#1628's single-process UserID-attribution fix was never going to close, deferred to Wave 4.",
 	"server/main.go:auditKeylessModeStartup": "hardcodes ActorType: core.ActorTypeSystem and never sets " +
 		"UserID (absent from the struct literal) -- the boot-time keyless-mode warning event " +
 		"(docs/design-b2-recover-admin.md §5), emitted before any request context exists, same " +

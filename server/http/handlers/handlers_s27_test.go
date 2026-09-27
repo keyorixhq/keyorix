@@ -13,13 +13,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -225,83 +224,18 @@ func TestWriteAuditCheckpoint_S27_ConflictOnBrokenChain(t *testing.T) {
 
 // TestGetAccessRequestProxy_S27_HappyPath — create a request via storage then
 // GET it via the proxy → 200 with the request data.
-func TestGetAccessRequestProxy_S27_HappyPath(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS27(t)
-	ctx := context.Background()
-	// Create an access request directly in storage.
-	created, err := cs.Storage().CreateAccessRequest(ctx, &models.AccessRequest{
-		ProjectID: 1, UserID: 2, State: "pending",
-	})
-	require.NoError(t, err)
-
-	h := NewCatalogHandler(cs)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodGet, "/", nil),
-		"id", fmt.Sprintf("%d", created.ID),
-	)
-	w := httptest.NewRecorder()
-	h.GetAccessRequestProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	body := w.Body.String()
-	assert.Contains(t, body, "project_id")
-	assert.Contains(t, body, "pending")
-}
 
 // ── access_request_proxy.go: ListAccessRequestApprovalsProxy ─────────────────
 
 // TestListAccessRequestApprovalsProxy_S27_BadID — non-numeric {id} → 400.
-func TestListAccessRequestApprovalsProxy_S27_BadID(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS27(t))
-	req := withChiParam(
-		httptest.NewRequest(http.MethodGet, "/", nil),
-		"id", "notanumber",
-	)
-	w := httptest.NewRecorder()
-	h.ListAccessRequestApprovalsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_PARAMETER")
-}
 
 // TestListAccessRequestApprovalsProxy_S27_HappyPath — valid request ID with no
 // approvals → 200 with empty list.
-func TestListAccessRequestApprovalsProxy_S27_HappyPath(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS27(t)
-	ctx := context.Background()
-	// Create an access request to have a valid ID to query approvals for.
-	created, err := cs.Storage().CreateAccessRequest(ctx, &models.AccessRequest{
-		ProjectID: 1, UserID: 2, State: "pending",
-	})
-	require.NoError(t, err)
-
-	h := NewCatalogHandler(cs)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodGet, "/", nil),
-		"id", fmt.Sprintf("%d", created.ID),
-	)
-	w := httptest.NewRecorder()
-	h.ListAccessRequestApprovalsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	body := w.Body.String()
-	assert.Contains(t, body, "approvals")
-}
 
 // ── access_request_proxy.go: CreateAccessRequestProxy happy path ──────────────
 
 // TestCreateAccessRequestProxy_S27_HappyPath — all required fields present →
 // storage create succeeds → 200 with the created record.
-func TestCreateAccessRequestProxy_S27_HappyPath(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS27(t))
-	body := strings.NewReader(`{"project_id":1,"user_id":2,"state":"pending"}`)
-	req := httptest.NewRequest(http.MethodPost, "/", body)
-	w := httptest.NewRecorder()
-	h.CreateAccessRequestProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "project_id")
-}
 
 // ── access_request_proxy.go: UpdateAccessRequestProxy happy path ──────────────
 
@@ -312,17 +246,6 @@ func TestCreateAccessRequestProxy_S27_HappyPath(t *testing.T) {
 // EXISTING row whose state already moved away from pending — still finds the
 // row via Get and still reports updated:false from the conditional UPDATE,
 // unaffected by this change).
-func TestUpdateAccessRequestProxy_S27_NoRow(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS27(t))
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"state":"approved"}`)),
-		"id", "99999",
-	)
-	w := httptest.NewRecorder()
-	h.UpdateAccessRequestProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // ── access_review_campaigns.go: ListAccessReviewCampaigns ────────────────────
 

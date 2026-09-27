@@ -182,94 +182,19 @@ func TestListSoDViolations_EmptyDB_S13(t *testing.T) {
 
 // ── sod_proxy.go: CreateSoDPolicyProxy ───────────────────────────────────────
 
-func TestCreateSoDPolicyProxy_BadJSON_S13(t *testing.T) {
-	h := newCatalogHandlerSoDSodS13(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad json"))
-	w := httptest.NewRecorder()
-	h.CreateSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCreateSoDPolicyProxy_MissingFields_S13(t *testing.T) {
-	h := newCatalogHandlerSoDSodS13(t)
-	// name is set but permission_a and permission_b are empty
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"test"}`))
-	w := httptest.NewRecorder()
-	h.CreateSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // #1529: CreateSoDPolicy now requires admin-tier authority. freshCoreS12 seeds
 // no roles at all, so this seeds a minimal admin role + UserID=1 assignment
 // directly (matching withUserCtx's hardcoded UserID=1) rather than pulling in
 // a whole new fixture helper for one test.
-func TestCreateSoDPolicyProxy_HappyPath_S13(t *testing.T) {
-	h := newCatalogHandlerSoDSodS13(t)
-	ctx := context.Background()
-	systemAdminName, err := identity.NewFoldedName("system_admin")
-	require.NoError(t, err)
-	adminRole, err := h.coreService.Storage().CreateRole(ctx, systemAdminName, "Administrator")
-	require.NoError(t, err)
-	// ADR-084: BypassesPermissionChecks is the structural admin-bypass flag now,
-	// not the name -- CreateRole never sets it from a request DTO, so set it here
-	// exactly as real bootstrap seeding would.
-	require.NoError(t, h.coreService.Storage().SetRoleBypassesPermissionChecks(ctx, adminRole.ID, true))
-	require.NoError(t, h.coreService.Storage().AssignRole(ctx, 1, adminRole.ID, storage.Scope{}))
-
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/",
-		strings.NewReader(`{"name":"proxy-pol","permission_a":"secrets.read","permission_b":"secrets.write"}`)))
-	w := httptest.NewRecorder()
-	h.CreateSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── sod_proxy.go: GetSoDPolicyProxy ──────────────────────────────────────────
 
-func TestGetSoDPolicyProxy_BadID_S13(t *testing.T) {
-	h := newCatalogHandlerSoDSodS13(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "notanumber")
-	w := httptest.NewRecorder()
-	h.GetSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestGetSoDPolicyProxy_NotFound_S13(t *testing.T) {
-	h := newCatalogHandlerSoDSodS13(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "999999")
-	w := httptest.NewRecorder()
-	h.GetSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 // ── sod_proxy.go: ListSoDPoliciesProxy ───────────────────────────────────────
 
-func TestListSoDPoliciesProxy_EmptyDB_S13(t *testing.T) {
-	h := newCatalogHandlerSoDSodS13(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListSoDPoliciesProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // ── sod_proxy.go: DeleteSoDPolicyProxy ───────────────────────────────────────
-
-func TestDeleteSoDPolicyProxy_BadID_S13(t *testing.T) {
-	h := newCatalogHandlerSoDSodS13(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "notanumber")
-	w := httptest.NewRecorder()
-	h.DeleteSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // FIX-6: a request with no user context resolves actorID(r) to 0 (an
 // uncredentialed/system pseudo-actor), which DeleteSoDPolicy's #1529
 // authority check has never treated as admin-tier -- so a nonexistent policy
 // id surfaces the same 403 denial as an existing-but-foreign one, not a
 // distinguishing 404 (see DeleteSoDPolicyProxy's doc comment).
-func TestDeleteSoDPolicyProxy_NotFound_S13(t *testing.T) {
-	h := newCatalogHandlerSoDSodS13(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "999999")
-	w := httptest.NewRecorder()
-	h.DeleteSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusForbidden, w.Code)
-}

@@ -24,7 +24,6 @@ package handlers
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -32,14 +31,13 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
@@ -448,83 +446,16 @@ func TestListOIDCBindings_NotFound_S19(t *testing.T) {
 // ── misc_remote_proxy.go: CreateUserWithRoleGrantsProxy ─────────────────────
 
 // TestCreateUserWithRoleGrantsProxy_BadBody_S19 — malformed JSON → 400.
-func TestCreateUserWithRoleGrantsProxy_BadBody_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	uh, err := NewUserHandler(cs)
-	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/users/with-grants",
-		bytes.NewBufferString("{bad"))
-	w := httptest.NewRecorder()
-	uh.CreateUserWithRoleGrantsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.False(t, resp.Success)
-}
 
 // TestCreateUserWithRoleGrantsProxy_MissingFields_S19 — missing username → 400.
-func TestCreateUserWithRoleGrantsProxy_MissingFields_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	uh, err := NewUserHandler(cs)
-	require.NoError(t, err)
-	body, _ := json.Marshal(map[string]string{"email": "x@example.com"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/users/with-grants",
-		bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	uh.CreateUserWithRoleGrantsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestCreateUserWithRoleGrantsProxy_Success_S19 — all required fields → 200.
-func TestCreateUserWithRoleGrantsProxy_Success_S19(t *testing.T) {
-	cs, _ := freshCoreS19WithAdmin(t)
-	uh, err := NewUserHandler(cs)
-	require.NoError(t, err)
-	body, _ := json.Marshal(map[string]interface{}{
-		"username":      "proxy-user-s19",
-		"email":         "proxy-user-s19@example.com",
-		"password_hash": "$2a$12$fakehashfakehashfakehashfakehashfakehashfakehashfakex",
-		"is_active":     true,
-		"account_state": "active",
-	})
-	// F6 sweep (2026-09-22): ValidateRoleGrantAuthority now requires a
-	// users.write baseline before its per-grant loop; this route has no
-	// actor-context exemption for actorID==0, unlike core-internal callers,
-	// so an authorized caller context is required here.
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/system/users/with-grants",
-		bytes.NewReader(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	uh.CreateUserWithRoleGrantsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.True(t, resp.Success)
-}
 
 // ── access_review_campaigns_proxy.go: GetLatestClosedAccessReviewCampaignProxy ─
 
 // TestGetLatestClosedAccessReviewCampaignProxy_MissingProjectID_S19 — missing project_id → 400.
-func TestGetLatestClosedAccessReviewCampaignProxy_MissingProjectID_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewCatalogHandler(cs)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/access-review-campaigns/latest-closed", nil)
-	w := httptest.NewRecorder()
-	h.GetLatestClosedAccessReviewCampaignProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.False(t, resp.Success)
-}
 
 // TestGetLatestClosedAccessReviewCampaignProxy_NilResult_S19 — project with no closed campaign → 200 nil.
-func TestGetLatestClosedAccessReviewCampaignProxy_NilResult_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewCatalogHandler(cs)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/access-review-campaigns/latest-closed?project_id=999", nil)
-	w := httptest.NewRecorder()
-	h.GetLatestClosedAccessReviewCampaignProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.True(t, resp.Success)
-}
 
 // ── admin_jobs.go: RunComplianceDigest ───────────────────────────────────────
 
@@ -552,38 +483,10 @@ func TestRunComplianceDigest_Success_S19(t *testing.T) {
 // ── dynamic_secrets_proxy.go: CountActiveLeasesProxy ─────────────────────────
 
 // TestCountActiveLeasesProxy_MissingConfigID_S19 — missing config_id → 400.
-func TestCountActiveLeasesProxy_MissingConfigID_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewDynamicSecretHandler(cs)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/leases/active-count", nil)
-	w := httptest.NewRecorder()
-	h.CountActiveLeasesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.False(t, resp.Success)
-}
 
 // TestCountActiveLeasesProxy_BadConfigID_S19 — non-numeric config_id → 400.
-func TestCountActiveLeasesProxy_BadConfigID_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewDynamicSecretHandler(cs)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/leases/active-count?config_id=notanint", nil)
-	w := httptest.NewRecorder()
-	h.CountActiveLeasesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestCountActiveLeasesProxy_Success_S19 — valid config_id, config absent → count=0.
-func TestCountActiveLeasesProxy_Success_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewDynamicSecretHandler(cs)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/dynamic-secrets/leases/active-count?config_id=1", nil)
-	w := httptest.NewRecorder()
-	h.CountActiveLeasesProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.True(t, resp.Success)
-}
 
 // ── dynamic_secrets.go: ListLeases ───────────────────────────────────────────
 
@@ -617,34 +520,8 @@ func TestListLeases_NotFound_S19(t *testing.T) {
 // ── groups_proxy.go: UpdateGroupProxy ────────────────────────────────────────
 
 // TestUpdateGroupProxy_BadID_S19 — non-numeric group id → 400.
-func TestUpdateGroupProxy_BadID_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/api/v1/system/groups/bad", nil),
-		"id", "bad",
-	)
-	w := httptest.NewRecorder()
-	h.UpdateGroupProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.False(t, resp.Success)
-}
 
 // TestUpdateGroupProxy_BadBody_S19 — malformed JSON body → 400.
-func TestUpdateGroupProxy_BadBody_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/api/v1/system/groups/1", bytes.NewBufferString("{bad")),
-		"id", "1",
-	)
-	w := httptest.NewRecorder()
-	h.UpdateGroupProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestUpdateGroupProxy_Success_S19 — GORM Save upserts (creates if absent) so a
 // non-existent group ID succeeds rather than returning 404.
@@ -653,19 +530,6 @@ func TestUpdateGroupProxy_BadBody_S19(t *testing.T) {
 // already exist (GetGroup first) rather than the previous bare
 // storage.UpdateGroup's GORM-Save upsert-on-missing-ID quirk — a PUT to a
 // nonexistent group ID must 404, not silently create a new row.
-func TestUpdateGroupProxy_NonexistentID_S19(t *testing.T) {
-	cs, _ := freshCoreS19WithAdmin(t)
-	h, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-	body, _ := json.Marshal(map[string]interface{}{"name": "upserted-group-s19"})
-	req := withUserCtx(withChiParam(
-		httptest.NewRequest(http.MethodPut, "/api/v1/system/groups/9999", bytes.NewReader(body)),
-		"id", "9999",
-	))
-	w := httptest.NewRecorder()
-	h.UpdateGroupProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // ── invitations.go: ListAccessRequests ───────────────────────────────────────
 
@@ -699,151 +563,29 @@ func TestListAccessRequests_Success_S19(t *testing.T) {
 // ── legal_hold_proxy.go: CreateLegalHoldProxy ────────────────────────────────
 
 // TestCreateLegalHoldProxy_BadBody_S19 — malformed JSON → 400.
-func TestCreateLegalHoldProxy_BadBody_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewDashboardHandler(cs)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/legal-hold",
-		bytes.NewBufferString("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateLegalHoldProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.False(t, resp.Success)
-}
 
 // TestCreateLegalHoldProxy_MissingReason_S19 — empty reason → 400.
-func TestCreateLegalHoldProxy_MissingReason_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewDashboardHandler(cs)
-	body, _ := json.Marshal(map[string]interface{}{"reason": ""})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/legal-hold", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateLegalHoldProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestCreateLegalHoldProxy_Success_S19 — valid body → 200 with created hold.
 // TestCreateLegalHoldProxy_Success_S19: CreateLegalHoldProxy now routes
 // through core.KeyorixCore.PlaceLegalHold (#G79), which requires an
 // admin-tier actor — an admin-tier caller (seeded here) can still place a
 // hold via the proxy.
-func TestCreateLegalHoldProxy_Success_S19(t *testing.T) {
-	cs, _ := freshCoreS19WithAdmin(t)
-	h := NewDashboardHandler(cs)
-	body, _ := json.Marshal(map[string]interface{}{
-		"reason":      "compliance investigation",
-		"placed_by":   uint(1),
-		"resource_id": uint(0),
-	})
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/system/legal-hold", bytes.NewReader(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateLegalHoldProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.True(t, resp.Success)
-}
 
 // TestCreateLegalHoldProxy_RefusesNonAdminActor_S19 is the #G79 regression: a
 // system.write-only caller with no admin-tier role must be refused — the
 // bug this fix closes let ANY caller holding system.write place a legal hold.
-func TestCreateLegalHoldProxy_RefusesNonAdminActor_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewDashboardHandler(cs)
-	body, _ := json.Marshal(map[string]interface{}{"reason": "compliance investigation"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/legal-hold", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateLegalHoldProxy(w, req)
-	assert.NotEqual(t, http.StatusOK, w.Code, "a caller with no admin-tier role must not be able to place a legal hold via the proxy")
-}
 
 // ── project_memberships_proxy.go: CreateMembershipProxy ─────────────────────
 
 // TestCreateMembershipProxy_BadBody_S19 — malformed JSON → 400.
-func TestCreateMembershipProxy_BadBody_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewCatalogHandler(cs)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/project-memberships",
-		bytes.NewBufferString("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateMembershipProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.False(t, resp.Success)
-}
 
 // TestCreateMembershipProxy_MissingFields_S19 — missing required fields → 400.
-func TestCreateMembershipProxy_MissingFields_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewCatalogHandler(cs)
-	// project_id=0, user_id=0, role="", state="" — all zero/empty
-	body, _ := json.Marshal(map[string]interface{}{"project_id": 0})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/project-memberships",
-		bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateMembershipProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestCreateMembershipProxy_Success_S19 — all required fields → 200 with membership.
-func TestCreateMembershipProxy_Success_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h := NewCatalogHandler(cs)
-	// FIX-1's requireGranterHoldsRolePermissions ceiling resolves the granted
-	// role by ID (unlike the old name-based check), so it must exist even
-	// though this unauthenticated request (actorID 0) is exempt from the
-	// ceiling itself.
-	viewerName, err := identity.NewFoldedName("viewer")
-	require.NoError(t, err)
-	_, err = cs.Storage().CreateRole(context.Background(), viewerName, "test-only role")
-	require.NoError(t, err)
-	body, _ := json.Marshal(map[string]interface{}{
-		"project_id": 1,
-		"user_id":    1,
-		"role":       "viewer",
-		"state":      "active",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/project-memberships",
-		bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateMembershipProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.True(t, resp.Success)
-}
 
 // ── retention_proxy.go: DeleteExpiredShareRecordsProxy ───────────────────────
 
 // TestDeleteExpiredShareRecordsProxy_BadBody_S19 — malformed JSON → 400.
-func TestDeleteExpiredShareRecordsProxy_BadBody_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h, err := NewShareHandler(cs)
-	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/system/retention/share-records",
-		bytes.NewBufferString("{bad"))
-	w := httptest.NewRecorder()
-	h.DeleteExpiredShareRecordsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.False(t, resp.Success)
-}
 
 // TestDeleteExpiredShareRecordsProxy_Success_S19 — valid before time, no records → 200.
-func TestDeleteExpiredShareRecordsProxy_Success_S19(t *testing.T) {
-	cs := freshCoreS19(t)
-	h, err := NewShareHandler(cs)
-	require.NoError(t, err)
-	body, _ := json.Marshal(map[string]interface{}{
-		"before": "2020-01-01T00:00:00Z",
-	})
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/system/retention/share-records",
-		bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.DeleteExpiredShareRecordsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.True(t, resp.Success)
-}

@@ -42,6 +42,13 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+// isNotFoundErr reports whether err is a storage "not found" error. Originated in
+// server/http/handlers/dynamic_secrets_proxy.go, removed with the ADR-108 Phase 6
+// /system proxy tier deletion; kept here for this file's own live caller.
+func isNotFoundErr(err error) bool {
+	return strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "record not found")
+}
+
 // secretUpdateFieldClass classifies one models.SecretNode field for the default-deny diff.
 type secretUpdateFieldClass int
 

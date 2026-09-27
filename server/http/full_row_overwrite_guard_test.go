@@ -119,27 +119,9 @@ var fullRowOverwriteMethods = map[string]bool{
 // "What this guard does not catch" section) doesn't flag it, so an entry for
 // it here would itself go stale (this guard's own staleness check below
 // would flag it as "no longer makes a flagged call").
-var fullRowOverwriteAllowlist = map[string]string{
-	// TransitionMachineIdentityStateProxy: m := body.MachineIdentity.toModel()
-	// is flagged because toModel() is a non-fetch call, but this is the
-	// RemoteStorage HTTP-relay proxy (router.go's machine-identity storage-
-	// primitive group, system.write-gated, internal server-to-server only --
-	// see this file's own package doc and router.go:1284). The wire body it
-	// decodes is NOT attacker-authored from scratch: it is the full row the
-	// CALLING server's own internal/core.KeyorixCore already fetched via
-	// LockMachineIdentityForUpdate (transitionMachineInTx, machine_identities.go)
-	// or machineInProject (ClassifyMachineIdentity, machine_identities.go),
-	// mutated only the fields that call legitimately changes, then serialized
-	// whole over the wire for this proxy to relay onto local storage --
-	// exactly the same "helper receiving a caller's already-fetched row"
-	// shape as the 7 documented same-process false positives, one HTTP hop
-	// removed. Unlike models.User's wire type (which deliberately omits
-	// PasswordHash/AccountState), machineIdentityProxyWire.toModel() is a
-	// verified 1:1 field mirror of models.MachineIdentity (machine_identities_
-	// proxy.go) -- no field is silently dropped/zeroed by the relay itself.
-	// Re-verified by hand during this guard's construction (2026-09-04).
-	"TransitionMachineIdentityStateProxy": "RemoteStorage relay proxy: m is the caller's already-fetched-and-mutated row, serialized whole over the wire (1:1 field mirror, no drop), not an attacker-built struct -- see comment above.",
-}
+// TransitionMachineIdentityStateProxy's entry was removed with the ADR-108
+// Phase 6 /system proxy tier deletion -- the function no longer exists.
+var fullRowOverwriteAllowlist = map[string]string{}
 
 // TestNoUnfetchedStructIntoFullRowOverwrite is the preventive guard: for
 // every function in server/http/handlers/*.go and server/grpc/services/*.go,

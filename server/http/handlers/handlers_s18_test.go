@@ -15,13 +15,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 // ── createUserWithOTP uncovered branches ─────────────────────────────────────
@@ -105,36 +103,6 @@ func TestCreateUserWithSetupLink_Success_S18(t *testing.T) {
 // GetMachineIdentityCredentialByHashProxy and expects a 200 response. This
 // covers the success branch that was previously unreachable (only the 404 path
 // was exercised by S4/S5/S13).
-func TestGetMachineIdentityCredentialByHashProxy_Found_S18(t *testing.T) {
-	cs, db := freshCoreS12WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	mi := &models.MachineIdentity{
-		Name:  "mi-cred-hash-s18",
-		State: "active",
-	}
-	require.NoError(t, db.Create(mi).Error)
-
-	const knownHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" // 64 hex chars (SHA-256)
-	cred := &models.MachineIdentityCredential{
-		MachineIdentityID: mi.ID,
-		Name:              "cred-hash-s18",
-		TokenHash:         knownHash,
-	}
-	require.NoError(t, db.Create(cred).Error)
-
-	req := withChiParam(
-		httptest.NewRequest(http.MethodGet,
-			"/api/v1/system/machine-credentials/by-hash/"+knownHash, nil),
-		"hash", knownHash,
-	)
-	w := httptest.NewRecorder()
-	h.GetMachineIdentityCredentialByHashProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	// The response envelope should carry the credential fields.
-	body := w.Body.String()
-	assert.Contains(t, body, "cred-hash-s18")
-}
 
 // ── newGroupProxyWire: soft-deleted group (DeletedAt.Valid = true) ────────────
 
@@ -146,21 +114,6 @@ func TestGetMachineIdentityCredentialByHashProxy_Found_S18(t *testing.T) {
 // layer (which respects GORM soft-delete by default and returns not-found), we
 // instead call newGroupProxyWire directly with a models.Group that has a valid
 // DeletedAt.
-func TestNewGroupProxyWire_SoftDeletedGroup_S18(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Second)
-	g := &models.Group{
-		ID:          99,
-		Name:        "deleted-group-s18",
-		Description: "soft deleted",
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		DeletedAt:   gorm.DeletedAt{Time: now, Valid: true},
-	}
-	w := newGroupProxyWire(g)
-	assert.Equal(t, "deleted-group-s18", w.Name)
-	assert.NotNil(t, w.DeletedAt, "DeletedAt should be set for a soft-deleted group")
-	assert.Equal(t, now, *w.DeletedAt)
-}
 
 // ── newUserRetentionProxyWire: soft-deleted user (DeletedAt.Valid = true) ─────
 
@@ -168,24 +121,6 @@ func TestNewGroupProxyWire_SoftDeletedGroup_S18(t *testing.T) {
 // u.DeletedAt.Valid branch of newUserRetentionProxyWire (the branch that sets
 // w.DeletedAt = &t) by calling the function directly with a models.User whose
 // DeletedAt is valid.
-func TestNewUserRetentionProxyWire_SoftDeletedUser_S18(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Second)
-	u := &models.User{
-		ID:           42,
-		Username:     "deleted-user-s18",
-		Email:        "deleted-user-s18@x.com",
-		DisplayName:  "Deleted User S18",
-		IsActive:     false,
-		AccountState: core.AccountActive,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-		DeletedAt:    gorm.DeletedAt{Time: now, Valid: true},
-	}
-	w := newUserRetentionProxyWire(u)
-	assert.Equal(t, "deleted-user-s18", w.Username)
-	assert.NotNil(t, w.DeletedAt, "DeletedAt should be set for a soft-deleted user")
-	assert.Equal(t, now, *w.DeletedAt)
-}
 
 // ── RotationPolicyHandler.sendSuccess — direct invocation ────────────────────
 
@@ -300,27 +235,6 @@ func TestShareHandler_SendSuccess_BrokenWriter_S18(t *testing.T) {
 // TestNewGroupProxyWire_ViaProxy_S18 calls CreateGroupProxy and inspects the
 // wire response to ensure the non-deleted path in newGroupProxyWire is also
 // exercised through an actual HTTP call (not just direct invocation).
-func TestNewGroupProxyWire_ViaProxy_S18(t *testing.T) {
-	cs, _ := freshCoreS12WithAdmin(t)
-	gh, err := NewGroupHandler(cs)
-	require.NoError(t, err)
-
-	body, _ := json.Marshal(map[string]string{
-		"name":        "wire-proxy-s18",
-		"description": "via proxy s18",
-	})
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
-	w := httptest.NewRecorder()
-	gh.CreateGroupProxy(w, req)
-	require.Equal(t, http.StatusOK, w.Code)
-	var resp struct {
-		Data struct {
-			Name string `json:"name"`
-		} `json:"data"`
-	}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.Equal(t, "wire-proxy-s18", resp.Data.Name)
-}
 
 // ── createUserWithOTP internal-error path ────────────────────────────────────
 

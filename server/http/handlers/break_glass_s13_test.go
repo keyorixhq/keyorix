@@ -1,6 +1,7 @@
-// break_glass_s13_test.go — S13 coverage sweep for break_glass.go and
-// break_glass_proxy.go. Targets uncovered branches: bad-param paths, missing
-// user context, bad JSON, validation errors, and proxy 400 paths.
+// break_glass_s13_test.go — S13 coverage sweep for break_glass.go. Targets
+// uncovered branches: bad-param paths, missing user context, bad JSON,
+// validation errors. break_glass_proxy.go's tests were removed with the
+// ADR-108 Phase 6 /system proxy tier deletion.
 package handlers
 
 import (
@@ -126,81 +127,4 @@ func TestRevokeBreakGlass_NotFound_S13(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.RevokeBreakGlass(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-// ── break_glass_proxy.go: GetBreakGlassActivationProxy ───────────────────────
-
-func TestGetBreakGlassActivationProxy_BadID_S13(t *testing.T) {
-	h := newCatalogHandlerBreakGlassS13(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "notanumber")
-	w := httptest.NewRecorder()
-	h.GetBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestGetBreakGlassActivationProxy_NotFound_S13(t *testing.T) {
-	h := newCatalogHandlerBreakGlassS13(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "999999")
-	w := httptest.NewRecorder()
-	h.GetBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-// ── break_glass_proxy.go: ListBreakGlassActivationsProxy ─────────────────────
-
-func TestListBreakGlassActivationsProxy_MissingProjectID_S13(t *testing.T) {
-	h := newCatalogHandlerBreakGlassS13(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil) // no project_id query param
-	w := httptest.NewRecorder()
-	h.ListBreakGlassActivationsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestListBreakGlassActivationsProxy_BadProjectID_S13(t *testing.T) {
-	h := newCatalogHandlerBreakGlassS13(t)
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=notanumber", nil)
-	w := httptest.NewRecorder()
-	h.ListBreakGlassActivationsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestListBreakGlassActivationsProxy_HappyPath_S13(t *testing.T) {
-	h := newCatalogHandlerBreakGlassS13(t)
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListBreakGlassActivationsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// ── break_glass_proxy.go: RevokeBreakGlassActivationProxy ────────────────────
-
-func TestRevokeBreakGlassActivationProxy_BadID_S13(t *testing.T) {
-	h := newCatalogHandlerBreakGlassS13(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"revoked_by":1}`)), "id", "notanumber")
-	w := httptest.NewRecorder()
-	h.RevokeBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRevokeBreakGlassActivationProxy_BadJSON_S13(t *testing.T) {
-	h := newCatalogHandlerBreakGlassS13(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "id", "1")
-	w := httptest.NewRecorder()
-	h.RevokeBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestRevokeBreakGlassActivationProxy_NoAuthenticatedCaller_S13 (G80
-// documented-exception re-verification sweep, 2026-08-25) supersedes the
-// old MissingRevokedBy test: revoked_by is no longer read from the wire at
-// all (it used to feed the role-removal actor, the persisted RevokedBy, and
-// the audit event with zero relation to who actually called this route), so
-// a wire body that sets it to 0 is no longer a distinct case. What must
-// still be rejected is a call with no authenticated human caller at all.
-func TestRevokeBreakGlassActivationProxy_NoAuthenticatedCaller_S13(t *testing.T) {
-	h := newCatalogHandlerBreakGlassS13(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"revoked_by":0}`)), "id", "1")
-	w := httptest.NewRecorder()
-	h.RevokeBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusForbidden, w.Code)
 }

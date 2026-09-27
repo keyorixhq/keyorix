@@ -310,11 +310,6 @@ func FuzzStorageFaultOperations(f *testing.F) {
 	if s := seedFor("REST DELETE /api/v1/secrets/{id}", "DeleteSecret", 1, 2); s != nil {
 		f.Add(s)
 	}
-	// /system proxy bypass class.
-	if s := seedFor("REST PUT /api/v1/system/machine-identities/{id}/transition", "TransitionMachineIdentityState", 1, 0); s != nil {
-		f.Add(s)
-	}
-
 	f.Fuzz(func(t *testing.T, data []byte) {
 		runOneFuzzIteration(t, data)
 	})

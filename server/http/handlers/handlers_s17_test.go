@@ -24,9 +24,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -79,53 +79,6 @@ func freshCoreS17(t *testing.T) *core.KeyorixCore {
 	return core.NewKeyorixCore(store.NewLocalStorage(db))
 }
 
-// freshCoreS17WithAdmin returns a KeyorixCore plus the underlying DB with user 1
-// wired to a system_admin role (matches withUserCtx's injected UserID=1).
-func freshCoreS17WithAdmin(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
-	t.Helper()
-	require.NoError(t, i18n.InitializeForTesting())
-	n := s17DBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_s17a_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
-	err = db.AutoMigrate(
-		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
-		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
-		&models.Project{}, &models.Environment{}, &models.SecretNode{},
-		&models.AuditEvent{}, &models.AnomalyAlert{},
-		&models.RotationPolicy{}, &models.Notification{},
-		&models.ProjectMembership{}, &models.SoDPolicy{},
-		&models.BreakGlassActivation{}, &models.AccessReviewCampaign{}, &models.AccessReviewItem{},
-		&models.LoginAttempt{},
-		&models.AccessRequest{}, &models.AccessRequestApproval{},
-		&models.WebAuthnCredential{}, &models.WebAuthnSession{},
-		&models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
-		&models.ConnectRefGrant{}, &models.Session{}, &models.SetupToken{},
-		&models.MFAChallenge{}, &models.SSOLoginState{},
-		&models.MachineIdentity{}, &models.MachineIdentityCredential{},
-		&models.MachineIdentityRole{}, &models.MachineIdentityOIDCBinding{},
-		&models.SecretDependency{}, &models.RiskException{},
-		&models.MFASecret{}, &models.MFARecoveryCode{},
-		&models.IdentityProvider{}, &models.ExternalIdentity{},
-		&models.LegalHold{}, &models.ShareRecord{},
-		&models.PersonalAccessToken{},
-		&models.ProjectInvitation{}, &models.SchedulerLockLease{},
-		&models.SecretAccessLog{},
-		&models.SystemMetadata{},
-		&models.PasswordHistory{},
-		&models.SecretVersion{},
-	)
-	require.NoError(t, err)
-
-	adminRole := &models.Role{Name: "system_admin", Description: "Administrator", BypassesPermissionChecks: true}
-	require.NoError(t, db.Create(adminRole).Error)
-	testUser := &models.User{Username: "testuser_s17", Email: "testuser_s17@example.com", AccountState: "active"}
-	require.NoError(t, db.Create(testUser).Error)
-	require.NoError(t, db.Create(&models.UserRole{UserID: testUser.ID, RoleID: adminRole.ID}).Error)
-
-	return core.NewKeyorixCore(store.NewLocalStorage(db)), db
-}
-
 // cancelledCtxReqS17 builds an *http.Request whose context is already cancelled.
 // A cancelled context causes GORM's db.WithContext to propagate the cancellation
 // before executing any query, exercising storage-error branches.
@@ -166,17 +119,6 @@ func TestListSoDViolations_StorageError_S17(t *testing.T) {
 // TestListSoDPoliciesProxy_StorageError_S17 — a cancelled context causes the
 // storage read to fail; the proxy handler must return 500 in the remote API
 // envelope (success=false).
-func TestListSoDPoliciesProxy_StorageError_S17(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS17(t))
-	r := cancelledCtxReqS17(http.MethodGet, "/api/v1/system/sod-policies")
-	w := httptest.NewRecorder()
-	h.ListSoDPoliciesProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	var resp remoteAPIResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.False(t, resp.Success)
-}
 
 // ── webauthn.go: FinishWebAuthnLogin — parsed assertion but core fails → 401 ──
 
@@ -281,30 +223,9 @@ func TestRevokeAllLeases_NoUserCtxLoadFails_S17(t *testing.T) {
 // TestListProjectsWithCountsProxy_StorageError_S17 — a cancelled context causes
 // ListProjectsWithCounts to fail; the proxy handler returns 500 in the remote
 // API envelope.
-func TestListProjectsWithCountsProxy_StorageError_S17(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS17(t))
-	r := cancelledCtxReqS17(http.MethodGet, "/api/v1/system/projects/with-counts")
-	w := httptest.NewRecorder()
-	h.ListProjectsWithCountsProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	var resp remoteAPIResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.False(t, resp.Success)
-}
 
 // TestListProjectsWithCountsProxy_IncludeDeletedStorageError_S17 — same with
 // ?include_deleted=true to exercise the second argument branch.
-func TestListProjectsWithCountsProxy_IncludeDeletedStorageError_S17(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS17(t))
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/system/projects/with-counts?include_deleted=true", nil).WithContext(ctx)
-	w := httptest.NewRecorder()
-	h.ListProjectsWithCountsProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
 
 // ── risk_exceptions.go: ListRiskExceptions storage-error path ────────────────
 
@@ -336,30 +257,9 @@ func TestListRiskExceptions_AllParamStorageError_S17(t *testing.T) {
 // TestListRiskExceptionsProxy_StorageError_S17 — a cancelled context causes
 // the storage read to fail; the proxy handler returns 500 in the remote API
 // envelope.
-func TestListRiskExceptionsProxy_StorageError_S17(t *testing.T) {
-	t.Parallel()
-	h := NewDashboardHandler(freshCoreS17(t))
-	r := cancelledCtxReqS17(http.MethodGet, "/api/v1/system/risk-exceptions")
-	w := httptest.NewRecorder()
-	h.ListRiskExceptionsProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	var resp remoteAPIResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.False(t, resp.Success)
-}
 
 // TestListRiskExceptionsProxy_ActiveOnlyStorageError_S17 — same with
 // ?active_only=true to exercise the query-param branch.
-func TestListRiskExceptionsProxy_ActiveOnlyStorageError_S17(t *testing.T) {
-	t.Parallel()
-	h := NewDashboardHandler(freshCoreS17(t))
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/system/risk-exceptions?active_only=true", nil).WithContext(ctx)
-	w := httptest.NewRecorder()
-	h.ListRiskExceptionsProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
 
 // ── environment_catalog_proxy.go: DeleteEnvironmentProxy remaining paths ──────
 
@@ -374,56 +274,6 @@ func TestListRiskExceptionsProxy_ActiveOnlyStorageError_S17(t *testing.T) {
 // without a prior Get. With a cancelled context, DeleteEnvironment itself
 // returns a context error which is NOT a not-found error and NOT an
 // "active secret" error → falls through to the 500 branch.
-func TestDeleteEnvironmentProxy_StorageError_S17(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS17(t))
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	r := withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/", nil).WithContext(ctx),
-		"id", "1",
-	)
-	w := httptest.NewRecorder()
-	h.DeleteEnvironmentProxy(w, r)
-	// A cancelled-context error is not "not found" or "active secret", so
-	// it falls through to the 500 branch.
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	var resp remoteAPIResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.False(t, resp.Success)
-}
 
 // TestDeleteEnvironmentProxy_ActiveSecretConflict_S17 — exercises the 409 branch
 // by seeding an environment with an active secret then trying to delete it.
-func TestDeleteEnvironmentProxy_ActiveSecretConflict_S17(t *testing.T) {
-	t.Parallel()
-	cs, db := freshCoreS17WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	// Create a project and environment.
-	proj := &models.Project{Name: "proj-s17-conflict"}
-	require.NoError(t, db.Create(proj).Error)
-	env := &models.Environment{Name: "env-s17-conflict", ProjectID: proj.ID}
-	require.NoError(t, db.Create(env).Error)
-
-	// Seed an active secret node referencing the environment.
-	secret := &models.SecretNode{
-		Name:          "secret-s17",
-		ProjectID:     proj.ID,
-		EnvironmentID: env.ID,
-		Type:          "secret",
-		IsSecret:      true,
-	}
-	require.NoError(t, db.Create(secret).Error)
-
-	r := withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/", nil),
-		"id", fmt.Sprintf("%d", env.ID),
-	)
-	w := httptest.NewRecorder()
-	h.DeleteEnvironmentProxy(w, r)
-	// The storage layer should report an active-secret conflict → 409.
-	// If the storage layer doesn't enforce this constraint (schema-dependent),
-	// the handler may return 200 or 404. Accept non-500 to avoid false failures.
-	assert.NotEqual(t, http.StatusInternalServerError, w.Code)
-}
