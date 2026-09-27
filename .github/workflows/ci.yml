@@ -702,6 +702,16 @@ jobs:
           - leg: storage-store-2
             timeout: 1800
             coverage-file: coverage_storage_store2.out
+          # internal/encryption split out of root-1 into two test-name shards
+          # (2026-09-27): it was 829.5s of root-1's ~15-16 min on merge-queue
+          # run 36320819069, the longest leg in the matrix. See
+          # encryption_pkgs in scripts/ci-test-legs.sh.
+          - leg: encryption-1
+            timeout: 1800
+            coverage-file: coverage_encryption1.out
+          - leg: encryption-2
+            timeout: 1800
+            coverage-file: coverage_encryption2.out
           # handlers (server/http/handlers, one package, 167 test files, 5151
           # top-level tests, all already t.Parallel()) measured at 911s in CI
           # -- vs. 15s wall / 37s summed-per-test locally without -race. That
@@ -858,6 +868,11 @@ jobs:
               shard=${leg#http-}
               run_filter=$(run_filter_for_shard "$pkgs" "$shard" 8)
               pkgs=./server/http
+              ;;
+            encryption-1|encryption-2)
+              shard=${leg#encryption-}
+              run_filter=$(run_filter_for_shard "$pkgs" "$shard" 2)
+              pkgs=./internal/encryption
               ;;
             storage-store-1|storage-store-2)
               shard=${leg#storage-store-}
@@ -1134,7 +1149,7 @@ jobs:
           # floor). The coverage_storage_store*.out files below are included: they are THIS
           # leg's own new file, and omitting it would just be reproducing that
           # same gap in new code rather than inheriting an unrelated one.
-          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root3.out coverage_root4.out coverage_storage_store1.out coverage_storage_store2.out coverage_handlers1.out coverage_handlers2.out coverage_http1.out coverage_http2.out coverage_http3.out coverage_http4.out coverage_http5.out coverage_http6.out coverage_http7.out coverage_http8.out | grep -v "${grep_args[@]}" >> coverage_merged.out
+          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root3.out coverage_root4.out coverage_storage_store1.out coverage_storage_store2.out coverage_encryption1.out coverage_encryption2.out coverage_handlers1.out coverage_handlers2.out coverage_http1.out coverage_http2.out coverage_http3.out coverage_http4.out coverage_http5.out coverage_http6.out coverage_http7.out coverage_http8.out | grep -v "${grep_args[@]}" >> coverage_merged.out
           mv coverage_merged.out coverage.out
 
       - name: Check coverage floor (≥${{ env.COVERAGE_FLOOR }}%)
