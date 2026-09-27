@@ -1,5 +1,8 @@
-# Build stage
-FROM golang:1.27.1-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS builder
+# Build stage. Pinned to $BUILDPLATFORM (the runner's own arch, never emulated)
+# even when cross-building for a different $TARGETPLATFORM: the Go toolchain
+# cross-compiles natively via GOOS/GOARCH below, which is far faster than
+# running the whole build stage under QEMU emulation for the target arch.
+FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS builder
 RUN apk add --no-cache git make
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -10,12 +13,17 @@ COPY . .
 # docker-publish workflow passes the git tag + sha. Mirrors the Makefile LDFLAGS.
 ARG VERSION=dev
 ARG GIT_COMMIT=none
+# Set by buildx to the requested target platform, independent of the builder's
+# own (BUILDPLATFORM) arch above -- same CGO_ENABLED=0 cross-compile shape the
+# release Makefile already uses (modernc.org/sqlite is pure Go, no cgo needed).
+ARG TARGETOS
+ARG TARGETARCH
 RUN set -- \
     "-s -w" \
     "-X github.com/keyorixhq/keyorix/internal/cli.version=${VERSION}" \
     "-X github.com/keyorixhq/keyorix/internal/version.Version=${VERSION}" \
     "-X github.com/keyorixhq/keyorix/internal/version.Commit=${GIT_COMMIT}" && \
-    go build -ldflags "$*" \
+    GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -ldflags "$*" \
     -o bin/keyorix-server ./server
 
 # Runtime stage
