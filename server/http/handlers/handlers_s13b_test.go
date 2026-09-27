@@ -12,19 +12,12 @@ package handlers
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"testing"
-	"time"
 
-	"github.com/go-webauthn/webauthn/webauthn"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // ── mfa.go: EnrollMFA core-error ─────────────────────────────────────────────
@@ -249,132 +242,27 @@ func TestFinishWebAuthnPasswordlessLogin_RateLimited_S13B(t *testing.T) {
 
 // TestCountUnusedMFARecoveryCodesProxy_Success_S13B — valid user_id, no
 // recovery codes → count = 0 → 200.
-func TestCountUnusedMFARecoveryCodesProxy_Success_S13B(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/mfa/recovery-codes/count?user_id=1", nil)
-	w := httptest.NewRecorder()
-	h.CountUnusedMFARecoveryCodesProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── webauthn_proxy.go: success paths ─────────────────────────────────────────
 
 // TestListWebAuthnCredentialsProxy_Success_S13B — valid user_id, no credentials
 // in DB → empty list → 200.
-func TestListWebAuthnCredentialsProxy_Success_S13B(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/webauthn/credentials?user_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListWebAuthnCredentialsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestGetWebAuthnCredentialByCredIDProxy_StorageError_S13B — valid params but
 // cred with different user → 404 (not-found is the expected error code).
 // (The GetWebAuthnCredentialByCredID storage call returns not-found, tested
 // separately; storage error path is equivalent since we can't inject one easily.)
-func TestGetWebAuthnCredentialByCredIDProxy_StorageError_S13B(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	credIDBytes := []byte("another-cred")
-	credIDB64 := base64.StdEncoding.EncodeToString(credIDBytes)
-	r := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/webauthn/credentials/lookup?user_id=2&credential_id="+credIDB64, nil)
-	w := httptest.NewRecorder()
-	h.GetWebAuthnCredentialByCredIDProxy(w, r)
-	// Not-found for non-existent credential → 404.
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // TestUpdateWebAuthnCredentialProxy_Success_S13B — seed a credential then
 // disable it (the ONLY legitimate use of this route, #1714) → 200, Disabled
 // becomes true, and fields this route may NOT change (Name) are untouched --
 // this route no longer applies a caller-supplied full-row replacement.
-func TestUpdateWebAuthnCredentialProxy_Success_S13B(t *testing.T) {
-	h, _, db := setupMFAReauthTest(t)
-	blob, _ := json.Marshal(webauthn.Credential{ID: []byte("cred-upd")})
-	cred := &models.WebAuthnCredential{
-		UserID:         1,
-		CredentialID:   []byte("cred-upd"),
-		Name:           "old-name",
-		CredentialBlob: blob,
-	}
-	require.NoError(t, db.Create(cred).Error)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"user_id":       1,
-		"credential_id": []byte("cred-upd"),
-		"disabled":      true,
-	})
-	r := httptest.NewRequest(http.MethodPut,
-		fmt.Sprintf("/api/v1/system/webauthn/credentials/%d", cred.ID),
-		bytes.NewReader(body))
-	r = withChiParams(r, map[string]string{"id": strconv.FormatUint(uint64(cred.ID), 10)})
-	// Self-service: caller authenticates as the credential's own owner
-	// (UserID 1), matching body.UserID exactly — the route's one
-	// no-extra-check path (#UpdateWebAuthnCredential, system-proxy-target-authority
-	// audit).
-	r = withUserCtx(r)
-	w := httptest.NewRecorder()
-	h.UpdateWebAuthnCredentialProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var reloaded models.WebAuthnCredential
-	require.NoError(t, db.First(&reloaded, cred.ID).Error)
-	assert.True(t, reloaded.Disabled, "the credential must be disabled")
-	assert.Equal(t, "old-name", reloaded.Name, "this route must not change Name")
-}
 
 // TestAdvanceWebAuthnCredentialCounterProxy_NotFound_S13B — valid body but
 // credential doesn't exist → 404.
-func TestAdvanceWebAuthnCredentialCounterProxy_NotFound_S13B(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	body, _ := json.Marshal(map[string]interface{}{
-		"credential_id":  []byte("nosuchcred"),
-		"user_id":        1,
-		"new_blob":       []byte("blob"),
-		"new_sign_count": uint32(5),
-		"last_used_at":   time.Now().UTC(),
-	})
-	r := httptest.NewRequest(http.MethodPatch,
-		"/api/v1/system/webauthn/credentials/advance-counter",
-		bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.AdvanceWebAuthnCredentialCounterProxy(w, r)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // TestCountWebAuthnCredentialsProxy_Success_S13B — valid user_id, no
 // credentials → count = 0 → 200.
-func TestCountWebAuthnCredentialsProxy_Success_S13B(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/webauthn/credentials/count?user_id=1", nil)
-	w := httptest.NewRecorder()
-	h.CountWebAuthnCredentialsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestCreateWebAuthnSessionProxy_Success_S13B — valid user_id + token_hash →
 // creates the session → 200.
-func TestCreateWebAuthnSessionProxy_Success_S13B(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	body, _ := json.Marshal(map[string]interface{}{
-		"user_id":    1,
-		"token_hash": "testhash123",
-		"purpose":    "registration",
-		"expires_at": time.Now().Add(time.Hour).UTC(),
-	})
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/webauthn/sessions",
-		bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateWebAuthnSessionProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}

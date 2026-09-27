@@ -368,294 +368,60 @@ func TestMembershipActionState_AllActions_S13(t *testing.T) {
 // ── project_memberships_proxy.go ─────────────────────────────────────────────
 
 // TestCreateMembershipProxy_BadJSON_S13 — malformed JSON body → 400.
-func TestCreateMembershipProxy_BadJSON_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	r.ContentLength = 4
-	w := httptest.NewRecorder()
-	h.CreateMembershipProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestCreateMembershipProxy_MissingFields_S13 — zero project_id/user_id → 400.
-func TestCreateMembershipProxy_MissingFields_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	body := `{"project_id":0,"user_id":0,"role":"","state":""}`
-	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateMembershipProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestGetMembershipProxy_BadID_S13 — non-numeric membership ID → 400.
-func TestGetMembershipProxy_BadID_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "notnum")
-	w := httptest.NewRecorder()
-	h.GetMembershipProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestGetActiveMembershipProxy_MissingParams_S13 — no project_id / user_id → 400.
-func TestGetActiveMembershipProxy_MissingParams_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.GetActiveMembershipProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestGetActiveMembershipProxy_BadProjectID_S13 — invalid project_id → 400.
-func TestGetActiveMembershipProxy_BadProjectID_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := httptest.NewRequest(http.MethodGet, "/?project_id=bad&user_id=1", nil)
-	w := httptest.NewRecorder()
-	h.GetActiveMembershipProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestGetActiveMembershipProxy_BadUserID_S13 — invalid user_id → 400.
-func TestGetActiveMembershipProxy_BadUserID_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := httptest.NewRequest(http.MethodGet, "/?project_id=1&user_id=bad", nil)
-	w := httptest.NewRecorder()
-	h.GetActiveMembershipProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestGetActiveMembershipProxy_NotFound_S13 — valid IDs but no membership → 404.
-func TestGetActiveMembershipProxy_NotFound_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := httptest.NewRequest(http.MethodGet, "/?project_id=99999&user_id=99999", nil)
-	w := httptest.NewRecorder()
-	h.GetActiveMembershipProxy(w, r)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // TestListStaleInvitedMembershipsProxy_MissingBefore_S13 — no before param → 400.
-func TestListStaleInvitedMembershipsProxy_MissingBefore_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListStaleInvitedMembershipsProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestListStaleInvitedMembershipsProxy_BadBefore_S13 — invalid timestamp → 400.
-func TestListStaleInvitedMembershipsProxy_BadBefore_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := httptest.NewRequest(http.MethodGet, "/?before=not-a-time", nil)
-	w := httptest.NewRecorder()
-	h.ListStaleInvitedMembershipsProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestListUserMembershipsProxy_BadUserID_S13 — non-numeric userID → 400.
-func TestListUserMembershipsProxy_BadUserID_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "userID", "notnum")
-	w := httptest.NewRecorder()
-	h.ListUserMembershipsProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestCountMembershipsByUsersProxy_MissingParam_S13 — no user_ids → 400.
-func TestCountMembershipsByUsersProxy_MissingParam_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.CountMembershipsByUsersProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestCountMembershipsByUsersProxy_BadUserIDs_S13 — non-numeric value in list → 400.
-func TestCountMembershipsByUsersProxy_BadUserIDs_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := httptest.NewRequest(http.MethodGet, "/?user_ids=1,bad,3", nil)
-	w := httptest.NewRecorder()
-	h.CountMembershipsByUsersProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestCountMembershipsByUsersProxy_HappyPath_S13 — valid user_ids → 200.
-func TestCountMembershipsByUsersProxy_HappyPath_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := httptest.NewRequest(http.MethodGet, "/?user_ids=1,2,3", nil)
-	w := httptest.NewRecorder()
-	h.CountMembershipsByUsersProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── project_catalog_proxy.go ─────────────────────────────────────────────────
 
 // TestListProjectsProxy_HappyPath_S13 — empty DB → 200 with empty list.
-func TestListProjectsProxy_HappyPath_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListProjectsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListProjectsWithCountsProxy_HappyPath_S13 — no include_deleted → 200.
-func TestListProjectsWithCountsProxy_HappyPath_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListProjectsWithCountsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListProjectsWithCountsProxy_IncludeDeleted_S13 — include_deleted=true → 200.
-func TestListProjectsWithCountsProxy_IncludeDeleted_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := httptest.NewRequest(http.MethodGet, "/?include_deleted=true", nil)
-	w := httptest.NewRecorder()
-	h.ListProjectsWithCountsProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestGetProjectProxy_BadID_S13 — non-numeric id → 400.
-func TestGetProjectProxy_BadID_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "notnum")
-	w := httptest.NewRecorder()
-	h.GetProjectProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestGetProjectProxy_NotFound_S13 — non-existent id → 404.
-func TestGetProjectProxy_NotFound_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "99999")
-	w := httptest.NewRecorder()
-	h.GetProjectProxy(w, r)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // TestGetProjectProxy_HappyPath_S13 — existing project → 200.
-func TestGetProjectProxy_HappyPath_S13(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS12(t)
-	h := NewCatalogHandler(cs)
-	proj, err := cs.CreateProject(context.Background(), "s13getprojproxy", "")
-	require.NoError(t, err)
-
-	r := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", fmt.Sprintf("%d", proj.ID))
-	w := httptest.NewRecorder()
-	h.GetProjectProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestDeleteProjectProxy_BadID_S13 — non-numeric id → 400.
-func TestDeleteProjectProxy_BadID_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "notnum")
-	w := httptest.NewRecorder()
-	h.DeleteProjectProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestDeleteProjectProxy_NotFound_S13 — non-existent id → 404.
-func TestDeleteProjectProxy_NotFound_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "99999")
-	w := httptest.NewRecorder()
-	h.DeleteProjectProxy(w, r)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // TestDeleteProjectProxy_HappyPath_S13 — existing project → 200.
-func TestDeleteProjectProxy_HappyPath_S13(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS12(t)
-	h := NewCatalogHandler(cs)
-	proj, err := cs.CreateProject(context.Background(), "s13delproj", "")
-	require.NoError(t, err)
-
-	r := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", fmt.Sprintf("%d", proj.ID))
-	w := httptest.NewRecorder()
-	h.DeleteProjectProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestDeleteProjectIfEmptyProxy_BadID_S13 — non-numeric id → 400.
-func TestDeleteProjectIfEmptyProxy_BadID_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "notnum")
-	w := httptest.NewRecorder()
-	h.DeleteProjectIfEmptyProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestDeleteProjectIfEmptyProxy_NotFound_S13 — non-existent id → 404.
-func TestDeleteProjectIfEmptyProxy_NotFound_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "99999")
-	w := httptest.NewRecorder()
-	h.DeleteProjectIfEmptyProxy(w, r)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // TestDeleteProjectIfEmptyProxy_HappyPath_S13 — empty project → 200.
-func TestDeleteProjectIfEmptyProxy_HappyPath_S13(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS12(t)
-	h := NewCatalogHandler(cs)
-	proj, err := cs.CreateProject(context.Background(), "s13delifempty", "")
-	require.NoError(t, err)
-
-	r := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", fmt.Sprintf("%d", proj.ID))
-	w := httptest.NewRecorder()
-	h.DeleteProjectIfEmptyProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListProjectMembersProxy_BadID_S13 — non-numeric id → 400.
-func TestListProjectMembersProxy_BadID_S13(t *testing.T) {
-	t.Parallel()
-	h := newCatalogHandlerProjS13(t)
-	r := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "notnum")
-	w := httptest.NewRecorder()
-	h.ListProjectMembersProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestListProjectMembersProxy_HappyPath_S13 — valid project → 200.
-func TestListProjectMembersProxy_HappyPath_S13(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS12(t)
-	h := NewCatalogHandler(cs)
-	proj, err := cs.CreateProject(context.Background(), "s13listmemproxy", "")
-	require.NoError(t, err)
-
-	r := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", fmt.Sprintf("%d", proj.ID))
-	w := httptest.NewRecorder()
-	h.ListProjectMembersProxy(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── project_hygiene.go ───────────────────────────────────────────────────────
 

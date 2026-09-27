@@ -138,16 +138,6 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 			"with HasActiveMFAStepUp's own callers, which this same allowlist enumerates separately " +
 			"(currently just mfa.go:504).",
 	},
-	"server/http/handlers/mfa_stepup_proxy.go:63": {
-		expectedPurpose: "",
-		reason: "GetActiveMFAStepUpGrantProxy: the server-side passthrough backing RemoteStorage's " +
-			"GetActiveMFAStepUpGrant for a storage.type: remote spoke node (ADR-049). Forwards the wire " +
-			"body's Purpose field verbatim -- it makes no policy decision itself (see this file's own doc " +
-			"comment: \"no policy decisions made here\"). The actual authorization decision, and the " +
-			"literal purpose constant used to make it, lives entirely on the calling core.KeyorixCore side " +
-			"(mfa.go:504 / classification_gate.go:178 above), which is unaffected by which storage backend " +
-			"(Local or Remote) it happens to be wired to.",
-	},
 }
 
 type mfaStepUpSite struct {

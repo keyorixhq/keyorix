@@ -579,116 +579,17 @@ func TestListSecretDependencies_HappyPath_S13(t *testing.T) {
 // ── secret_dependencies_proxy.go ─────────────────────────────────────────────
 
 // TestCreateSecretDependencyExclusiveProxy_MissingFields_S13 — zero IDs → 400.
-func TestCreateSecretDependencyExclusiveProxy_MissingFields_S13(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS12(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-
-	body, _ := json.Marshal(map[string]any{"project_id": 0, "dependent_secret_id": 0, "depends_on_secret_id": 0})
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateSecretDependencyExclusiveProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestCreateSecretDependencyExclusiveProxy_HappyPath_S13 — valid body
 // referencing two real secrets in the same project/environment (#G79's
 // cross-reference check requires this) → 200.
-func TestCreateSecretDependencyExclusiveProxy_HappyPath_S13(t *testing.T) {
-	t.Parallel()
-	// #SecretDependency (system-proxy-target-authority audit):
-	// CreateSecretDependencyExclusiveProxy now re-derives AuthorizeSecretPrincipal
-	// on both endpoints, so this happy-path test needs an authorized caller —
-	// freshCoreS12WithAdmin seeds UserID 1 (withUserCtx's caller) with a
-	// BypassesPermissionChecks role.
-	cs, _ := freshCoreS12WithAdmin(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	proj, err := cs.Storage().CreateProject(ctx, &models.Project{Name: "proj-dep-excl-s13"})
-	require.NoError(t, err)
-	env, err := cs.Storage().CreateEnvironment(ctx, &models.Environment{Name: "env-dep-excl-s13", ProjectID: proj.ID})
-	require.NoError(t, err)
-	s1, err := cs.Storage().CreateSecret(ctx, &models.SecretNode{Name: "s1", ProjectID: proj.ID, EnvironmentID: env.ID, Type: "password", OwnerID: 1})
-	require.NoError(t, err)
-	s2, err := cs.Storage().CreateSecret(ctx, &models.SecretNode{Name: "s2", ProjectID: proj.ID, EnvironmentID: env.ID, Type: "password", OwnerID: 1})
-	require.NoError(t, err)
-
-	body, _ := json.Marshal(map[string]any{
-		"project_id":           proj.ID,
-		"dependent_secret_id":  s1.ID,
-		"depends_on_secret_id": s2.ID,
-	})
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
-	w := httptest.NewRecorder()
-	h.CreateSecretDependencyExclusiveProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestGetSecretDependencyProxy_NotFound_S13 — valid numeric id but row absent → 404.
-func TestGetSecretDependencyProxy_NotFound_S13(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS12(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "9999")
-	w := httptest.NewRecorder()
-	h.GetSecretDependencyProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // TestGetSecretDependencyProxy_HappyPath_S13 — row exists → 200.
-func TestGetSecretDependencyProxy_HappyPath_S13(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS12(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-
-	// Create a row first via the Create proxy so we have a real ID.
-	dep, createErr := cs.Storage().CreateSecretDependency(
-		httptest.NewRequest(http.MethodGet, "/", nil).Context(),
-		&models.SecretDependency{
-			ProjectID:         1,
-			DependentSecretID: 3,
-			DependsOnSecretID: 4,
-		},
-	)
-	require.NoError(t, createErr)
-
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", fmt.Sprintf("%d", dep.ID))
-	w := httptest.NewRecorder()
-	h.GetSecretDependencyProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListSecretDependenciesForProjectProxy_InvalidQuery_S13 — non-numeric project_id → 400.
-func TestListSecretDependenciesForProjectProxy_InvalidQuery_S13(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS12(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=xyz", nil)
-	w := httptest.NewRecorder()
-	h.ListSecretDependenciesForProjectProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestParseProxyProjectIDQuery_S13 — exercises the 77.8% branch directly.
 // The missing branch is the invalid-integer path (already partially covered above,
 // but let's hit it directly to be sure).
-func TestParseProxyProjectIDQuery_InvalidInt_S13(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS12(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-
-	// Negative number-like string that ParseUint rejects as invalid.
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=-1", nil)
-	w := httptest.NewRecorder()
-	h.ListSecretDependenciesForProjectProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}

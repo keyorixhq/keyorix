@@ -24,11 +24,10 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
-	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -132,230 +131,38 @@ func freshCoreS20WithAdmin(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 
 // TestCountMachineIdentitiesByClassificationProxy_Success_S20 calls the
 // handler on an empty DB and expects a 200 with success=true.
-func TestCountMachineIdentitiesByClassificationProxy_Success_S20(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS20(t))
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/machine-identities/classification-counts", nil)
-	w := httptest.NewRecorder()
-	h.CountMachineIdentitiesByClassificationProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp remoteAPIResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp.Success)
-}
 
 // TestCountMachineIdentitiesByClassificationProxy_WithData_S20 seeds a
 // MachineIdentity row and verifies the counts map is returned.
-func TestCountMachineIdentitiesByClassificationProxy_WithData_S20(t *testing.T) {
-	t.Parallel()
-	cs, db := freshCoreS20WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	mi := &models.MachineIdentity{Name: "mi-count-s20", State: "active", Classification: "sensitive"}
-	require.NoError(t, db.Create(mi).Error)
-
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/machine-identities/classification-counts", nil)
-	w := httptest.NewRecorder()
-	h.CountMachineIdentitiesByClassificationProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp remoteAPIResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp.Success)
-}
 
 // ── machine_identities_proxy.go: GetMachineIdentityCredentialByHashProxy ──────
 
 // TestGetMachineIdentityCredentialByHashProxy_NotFound_S20 sends a hash that
 // does not exist → expects 404.
-func TestGetMachineIdentityCredentialByHashProxy_NotFound_S20(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS20(t))
-	req := withChiParam(
-		httptest.NewRequest(http.MethodGet,
-			"/api/v1/system/machine-credentials/by-hash/nonexistenthash", nil),
-		"hash", "nonexistenthash",
-	)
-	w := httptest.NewRecorder()
-	h.GetMachineIdentityCredentialByHashProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-	var resp remoteAPIResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.False(t, resp.Success)
-}
 
 // ── machine_identities_proxy.go: CountMachineIdentityCredentialsByClassificationProxy
 
 // TestCountMachineIdentityCredentialsByClassificationProxy_Success_S20 — empty
 // DB returns 200 with success=true.
-func TestCountMachineIdentityCredentialsByClassificationProxy_Success_S20(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS20(t))
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/machine-credentials/classification-counts", nil)
-	w := httptest.NewRecorder()
-	h.CountMachineIdentityCredentialsByClassificationProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp remoteAPIResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp.Success)
-}
 
 // TestCountMachineIdentityCredentialsByClassificationProxy_WithData_S20 seeds a
 // credential and verifies the counts map is non-nil.
-func TestCountMachineIdentityCredentialsByClassificationProxy_WithData_S20(t *testing.T) {
-	t.Parallel()
-	cs, db := freshCoreS20WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	mi := &models.MachineIdentity{Name: "mi-cred-count-s20", State: "active"}
-	require.NoError(t, db.Create(mi).Error)
-
-	cred := &models.MachineIdentityCredential{
-		MachineIdentityID: mi.ID,
-		Name:              "cred-count-s20",
-		TokenHash:         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		Classification:    "sensitive",
-	}
-	require.NoError(t, db.Create(cred).Error)
-
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/machine-credentials/classification-counts", nil)
-	w := httptest.NewRecorder()
-	h.CountMachineIdentityCredentialsByClassificationProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp remoteAPIResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp.Success)
-}
 
 // ── machine_identities_proxy.go: CreateOIDCBindingProxy ───────────────────────
 
 // TestCreateOIDCBindingProxy_InvalidBody_S20 — malformed JSON → 400.
-func TestCreateOIDCBindingProxy_InvalidBody_S20(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS20(t))
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/machine-oidc-bindings",
-		bytes.NewBufferString("not-json"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateOIDCBindingProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	var resp remoteAPIResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.False(t, resp.Success)
-}
 
 // TestCreateOIDCBindingProxy_MissingFields_S20 — missing machine_identity_id,
 // issuer, and subject → 400 validation error.
-func TestCreateOIDCBindingProxy_MissingFields_S20(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS20(t))
-	body, _ := json.Marshal(map[string]interface{}{
-		"machine_identity_id": 0, // invalid: zero
-		"issuer":              "",
-		"subject":             "",
-	})
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/machine-oidc-bindings",
-		bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateOIDCBindingProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	var resp remoteAPIResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.False(t, resp.Success)
-}
 
 // TestCreateOIDCBindingProxy_MissingIssuer_S20 — valid machine_identity_id but
 // empty issuer → 400 validation error.
-func TestCreateOIDCBindingProxy_MissingIssuer_S20(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS20(t))
-	body, _ := json.Marshal(map[string]interface{}{
-		"machine_identity_id": 1,
-		"issuer":              "",
-		"subject":             "sub",
-	})
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/machine-oidc-bindings",
-		bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateOIDCBindingProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestCreateOIDCBindingProxy_Success_S20 seeds a MachineIdentity, then creates
 // an OIDC binding for it and expects a 200 success.
-func TestCreateOIDCBindingProxy_Success_S20(t *testing.T) {
-	t.Parallel()
-	cs, db := freshCoreS20WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	mi := &models.MachineIdentity{Name: "mi-oidc-s20", State: "active"}
-	require.NoError(t, db.Create(mi).Error)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"machine_identity_id": mi.ID,
-		"issuer":              "https://accounts.example.com",
-		"subject":             "user@example.com",
-	})
-	req := withUserCtx(httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/machine-oidc-bindings",
-		bytes.NewReader(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateOIDCBindingProxy(w, req)
-	// G80 raw-storage-bypass fix: CreateOIDCBindingProxy now requires
-	// install-wide admin authority (core.CreateOIDCBinding's requireAuthorityForRole
-	// check) — withUserCtx's UserID=1 matches freshCoreS20WithAdmin's system_admin
-	// grant, so the actor holds it.
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp remoteAPIResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp.Success)
-}
 
 // TestCreateOIDCBindingProxy_Duplicate_S20 creates the same binding twice and
 // expects a 409 on the second attempt.
-func TestCreateOIDCBindingProxy_Duplicate_S20(t *testing.T) {
-	t.Parallel()
-	cs, db := freshCoreS20WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	mi := &models.MachineIdentity{Name: "mi-oidc-dup-s20", State: "active"}
-	require.NoError(t, db.Create(mi).Error)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"machine_identity_id": mi.ID,
-		"issuer":              "https://dup.example.com",
-		"subject":             "dup@example.com",
-	})
-
-	// First creation — should succeed. G80 raw-storage-bypass fix: requires
-	// install-wide admin authority — withUserCtx's UserID=1 matches
-	// freshCoreS20WithAdmin's system_admin grant.
-	req := withUserCtx(httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/machine-oidc-bindings",
-		bytes.NewReader(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateOIDCBindingProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	// Second creation — same issuer/subject → unique-violation → 409.
-	req2 := withUserCtx(httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/machine-oidc-bindings",
-		bytes.NewReader(body)))
-	req2.Header.Set("Content-Type", "application/json")
-	w2 := httptest.NewRecorder()
-	h.CreateOIDCBindingProxy(w2, req2)
-	assert.Equal(t, http.StatusConflict, w2.Code)
-}
 
 // ── dynamic_secrets.go: RevokeAllLeases ──────────────────────────────────────
 
@@ -494,123 +301,27 @@ func TestCreateUserWithSetupLink_ValidationError_S20(t *testing.T) {
 // TestNewProjectProxyWire_SoftDeleted_S20 calls newProjectProxyWire directly
 // with a models.Project whose DeletedAt is valid (soft-deleted) and verifies
 // the wire's DeletedAt field is populated.
-func TestNewProjectProxyWire_SoftDeleted_S20(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Second)
-	p := &models.Project{
-		ID:        77,
-		Name:      "deleted-proj-s20",
-		DeletedAt: gorm.DeletedAt{Time: now, Valid: true},
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	w := newProjectProxyWire(p)
-	assert.Equal(t, "deleted-proj-s20", w.Name)
-	assert.NotNil(t, w.DeletedAt, "DeletedAt should be set for a soft-deleted project")
-	assert.Equal(t, now, *w.DeletedAt)
-}
 
 // TestNewProjectProxyWire_Active_S20 calls newProjectProxyWire with a live
 // project and verifies DeletedAt is nil.
-func TestNewProjectProxyWire_Active_S20(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Second)
-	p := &models.Project{
-		ID:        78,
-		Name:      "active-proj-s20",
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	w := newProjectProxyWire(p)
-	assert.Equal(t, "active-proj-s20", w.Name)
-	assert.Nil(t, w.DeletedAt, "DeletedAt should be nil for an active project")
-}
 
 // ── project_catalog_proxy.go: ListProjectsWithCountsProxy success path ────────
 
 // TestListProjectsWithCountsProxy_Success_S20 calls the handler against an
 // empty DB and expects a 200 success envelope.
-func TestListProjectsWithCountsProxy_Success_S20(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS20(t))
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/projects/with-counts", nil)
-	w := httptest.NewRecorder()
-	h.ListProjectsWithCountsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp remoteAPIResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp.Success)
-}
 
 // TestListProjectsWithCountsProxy_IncludeDeleted_Success_S20 — same but with
 // ?include_deleted=true to exercise the second argument branch.
-func TestListProjectsWithCountsProxy_IncludeDeleted_Success_S20(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS20(t))
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/projects/with-counts?include_deleted=true", nil)
-	w := httptest.NewRecorder()
-	h.ListProjectsWithCountsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp remoteAPIResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp.Success)
-}
 
 // ── environment_catalog_proxy.go: DeleteEnvironmentProxy ─────────────────────
 
 // TestDeleteEnvironmentProxy_BadID_S20 — a non-numeric ID → 400.
-func TestDeleteEnvironmentProxy_BadID_S20(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS20(t))
-	req := withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/", nil),
-		"id", "notanumber",
-	)
-	w := httptest.NewRecorder()
-	h.DeleteEnvironmentProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	var resp remoteAPIResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.False(t, resp.Success)
-}
 
 // TestDeleteEnvironmentProxy_NotFound_S20 — valid numeric ID but environment
 // does not exist → 404.
-func TestDeleteEnvironmentProxy_NotFound_S20(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS20(t))
-	req := withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/", nil),
-		"id", "99999",
-	)
-	w := httptest.NewRecorder()
-	h.DeleteEnvironmentProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // TestDeleteEnvironmentProxy_Success_S20 seeds a project+environment and
 // deletes it successfully → 200.
-func TestDeleteEnvironmentProxy_Success_S20(t *testing.T) {
-	t.Parallel()
-	cs, db := freshCoreS20WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "proj-env-del-s20"}
-	require.NoError(t, db.Create(proj).Error)
-	env := &models.Environment{Name: "env-del-s20", ProjectID: proj.ID}
-	require.NoError(t, db.Create(env).Error)
-
-	req := withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/", nil),
-		"id", fmt.Sprintf("%d", env.ID),
-	)
-	w := httptest.NewRecorder()
-	h.DeleteEnvironmentProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp remoteAPIResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp.Success)
-}
 
 // ── risk_exceptions.go: ListRiskExceptions success path ──────────────────────
 
@@ -641,32 +352,9 @@ func TestListRiskExceptions_AllParam_Success_S20(t *testing.T) {
 
 // TestListRiskExceptionsProxy_Success_S20 — empty DB returns 200 with
 // success=true in the remote API envelope.
-func TestListRiskExceptionsProxy_Success_S20(t *testing.T) {
-	t.Parallel()
-	h := NewDashboardHandler(freshCoreS20(t))
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/risk-exceptions", nil)
-	w := httptest.NewRecorder()
-	h.ListRiskExceptionsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp remoteAPIResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp.Success)
-}
 
 // TestListRiskExceptionsProxy_ActiveOnly_Success_S20 — ?active_only=true
 // exercises the activeOnly=true branch.
-func TestListRiskExceptionsProxy_ActiveOnly_Success_S20(t *testing.T) {
-	t.Parallel()
-	h := NewDashboardHandler(freshCoreS20(t))
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/risk-exceptions?active_only=true", nil)
-	w := httptest.NewRecorder()
-	h.ListRiskExceptionsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp remoteAPIResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp.Success)
-}
 
 // ── sod.go: ListSoDPolicies success path ─────────────────────────────────────
 
@@ -724,40 +412,6 @@ func TestListSoDViolations_Success_S20(t *testing.T) {
 
 // TestListSoDPoliciesProxy_Success_S20 — empty DB returns 200 with success=true
 // in the remote API envelope.
-func TestListSoDPoliciesProxy_Success_S20(t *testing.T) {
-	t.Parallel()
-	h := NewCatalogHandler(freshCoreS20(t))
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/sod-policies", nil)
-	w := httptest.NewRecorder()
-	h.ListSoDPoliciesProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp remoteAPIResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.True(t, resp.Success)
-}
 
 // TestListSoDPoliciesProxy_WithData_S20 seeds a SoD policy and verifies it
 // appears in the remote API response.
-func TestListSoDPoliciesProxy_WithData_S20(t *testing.T) {
-	t.Parallel()
-	cs, db := freshCoreS20WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	policy := &models.SoDPolicy{
-		Name:        "proxy-sod-s20",
-		PermissionA: "users.read",
-		PermissionB: "users.write",
-	}
-	require.NoError(t, db.Create(policy).Error)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/sod-policies", nil)
-	w := httptest.NewRecorder()
-	h.ListSoDPoliciesProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	// Capture body before decoding (decoding consumes the reader).
-	rawBody := w.Body.String()
-	assert.Contains(t, rawBody, "proxy-sod-s20")
-	var resp remoteAPIResponse
-	require.NoError(t, json.Unmarshal([]byte(rawBody), &resp))
-	assert.True(t, resp.Success)
-}

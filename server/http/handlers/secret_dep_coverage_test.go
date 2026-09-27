@@ -21,13 +21,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"sync/atomic"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -277,62 +276,9 @@ func TestGetDeploymentRotationPlan_StorageError_DepCov(t *testing.T) {
 
 // TestCreateSecretDependencyExclusiveProxy_Duplicate_DepCov — inserting the
 // same edge twice triggers ErrDuplicateSecretDependency → 409 Conflict.
-func TestCreateSecretDependencyExclusiveProxy_Duplicate_DepCov(t *testing.T) {
-	cs, db := freshDepCovCore(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-
-	projectID, envID := seedProjectEnv(t, db)
-	depID := mkDepSecret(t, db, projectID, envID, "dependent")
-	dependsOnID := mkDepSecret(t, db, projectID, envID, "depends-on")
-
-	// Insert the row once so the second call triggers a duplicate error.
-	require.NoError(t, db.Create(&models.SecretDependency{
-		ProjectID:         projectID,
-		DependentSecretID: depID,
-		DependsOnSecretID: dependsOnID,
-	}).Error)
-
-	body, _ := json.Marshal(map[string]any{
-		"project_id":           projectID,
-		"dependent_secret_id":  depID,
-		"depends_on_secret_id": dependsOnID,
-	})
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
-	w := httptest.NewRecorder()
-	h.CreateSecretDependencyExclusiveProxy(w, req)
-	assert.Equal(t, http.StatusConflict, w.Code)
-}
 
 // TestCreateSecretDependencyExclusiveProxy_Cycle_DepCov — insert A→B first,
 // then attempt B→A via the exclusive proxy; the cycle check returns 400.
-func TestCreateSecretDependencyExclusiveProxy_Cycle_DepCov(t *testing.T) {
-	cs, db := freshDepCovCore(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-
-	projectID, envID := seedProjectEnv(t, db)
-	secretA := mkDepSecret(t, db, projectID, envID, "a")
-	secretB := mkDepSecret(t, db, projectID, envID, "b")
-
-	// Insert A→B to prime the cycle detector.
-	require.NoError(t, db.Create(&models.SecretDependency{
-		ProjectID:         projectID,
-		DependentSecretID: secretA,
-		DependsOnSecretID: secretB,
-	}).Error)
-
-	// Now attempt B→A (A depends on B, B depends on A → cycle).
-	body, _ := json.Marshal(map[string]any{
-		"project_id":           projectID,
-		"dependent_secret_id":  secretB,
-		"depends_on_secret_id": secretA,
-	})
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
-	w := httptest.NewRecorder()
-	h.CreateSecretDependencyExclusiveProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestCreateSecretDependencyExclusiveProxy_ConcurrentCycleRace is the #G79
 // regression for the mutex bypass: two concurrent requests each adding one
@@ -341,83 +287,6 @@ func TestCreateSecretDependencyExclusiveProxy_Cycle_DepCov(t *testing.T) {
 // cycle check had no row to lock on SQLite (no FOR UPDATE support) for a
 // project starting with zero edges, so both requests could read "no cycle yet"
 // before either commits.
-func TestCreateSecretDependencyExclusiveProxy_ConcurrentCycleRace(t *testing.T) {
-	cs, db := freshDepCovCore(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-
-	projectID, envID := seedProjectEnv(t, db)
-	secretA := mkDepSecret(t, db, projectID, envID, "race-a")
-	secretB := mkDepSecret(t, db, projectID, envID, "race-b")
-
-	bodyAB, _ := json.Marshal(map[string]any{
-		"project_id":           projectID,
-		"dependent_secret_id":  secretA,
-		"depends_on_secret_id": secretB,
-	})
-	bodyBA, _ := json.Marshal(map[string]any{
-		"project_id":           projectID,
-		"dependent_secret_id":  secretB,
-		"depends_on_secret_id": secretA,
-	})
-
-	var wg sync.WaitGroup
-	codes := make([]int, 2)
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(bodyAB)))
-		w := httptest.NewRecorder()
-		h.CreateSecretDependencyExclusiveProxy(w, req)
-		codes[0] = w.Code
-	}()
-	go func() {
-		defer wg.Done()
-		req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(bodyBA)))
-		w := httptest.NewRecorder()
-		h.CreateSecretDependencyExclusiveProxy(w, req)
-		codes[1] = w.Code
-	}()
-	wg.Wait()
-
-	successes := 0
-	for _, c := range codes {
-		if c == http.StatusOK {
-			successes++
-		}
-	}
-	assert.LessOrEqual(t, successes, 1, "at most one half of a cycle may succeed; both succeeding means a cycle was committed")
-}
 
 // TestCreateSecretDependencyExclusiveProxy_DefaultStorageError_DepCov — closed
 // DB triggers a plain storage error (neither duplicate nor cycle) → 500.
-func TestCreateSecretDependencyExclusiveProxy_DefaultStorageError_DepCov(t *testing.T) {
-	require.NoError(t, i18n.InitializeForTesting())
-	n := sDepCovCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxdep_cov_exclerr_%d?mode=memory&cache=shared&_timeout=5000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
-
-	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	require.NoError(t, sqlDB.Close())
-
-	body, _ := json.Marshal(map[string]any{
-		"project_id":           1,
-		"dependent_secret_id":  10,
-		"depends_on_secret_id": 20,
-	})
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateSecretDependencyExclusiveProxy(w, req)
-	// #G79: crossReferenceSecretDependencyProxy now runs first and fails closed
-	// on ANY GetSecret error (including a broken-DB storage error, indistinguishable
-	// here from "no such secret") — so this never reaches the storage.
-	// CreateSecretDependencyExclusive call this test originally exercised.
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}

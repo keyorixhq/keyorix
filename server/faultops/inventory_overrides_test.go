@@ -43,9 +43,6 @@ var operationOverrides = map[string]overrideEntry{
 	// F3: replaceRolePermissions drops GetRolePermissions/RemovePermissionFromRole
 	// errors and always replies 200 — confirmed live on main (STEP 0 report).
 	"REST PUT /api/v1/roles/{id}": {StatusFuzzed, "opCatalog[\"UpdateRole\"] — F3's replaceRolePermissions call chain"},
-	// /system proxy bypass class: TransitionMachineIdentityStateProxy calls
-	// coreService.Storage() directly, skipping core.* — same bypass shape as F3.
-	"REST PUT /api/v1/system/machine-identities/{id}/transition": {StatusFuzzed, "opCatalog[\"TransitionMachineIdentityProxy\"] — /system direct-Storage() bypass class"},
 	// Representative gRPC mutating call, driven in-process via the real
 	// *RoleGRPCService (no core.* bypass here — included to prove the harness
 	// generalizes across transports, not just REST).
@@ -57,13 +54,6 @@ var operationOverrides = map[string]overrideEntry{
 	"REST DELETE /api/v1/secrets/{id}": {StatusFuzzed, "opCatalog[\"DeleteSecret\"]"},
 	"REST POST /api/v1/projects":       {StatusFuzzed, "opCatalog[\"CreateProject\"]"},
 	"REST POST /api/v1/users/":         {StatusFuzzed, "opCatalog[\"CreateUser\"]"},
-	// Coverage batch 1 (of the 67 /system proxy routes): plain CRUD proxies
-	// with straightforward wire shapes, picked first per the "wire /system
-	// proxy routes before REST+gRPC resource CRUD" priority order.
-	"REST POST /api/v1/system/machine-identities": {StatusFuzzed, "opCatalog[\"CreateMachineIdentityProxy\"] — batch 1"},
-	"REST POST /api/v1/system/groups":             {StatusFuzzed, "opCatalog[\"CreateGroupProxy\"] — batch 1"},
-	"REST DELETE /api/v1/system/groups/{id}":      {StatusFuzzed, "opCatalog[\"DeleteGroupProxy\"] — batch 1"},
-	"REST DELETE /api/v1/system/projects/{id}":    {StatusFuzzed, "opCatalog[\"DeleteProjectProxy\"] — batch 1"},
 	// Coverage batch 2: ordinary REST CRUD.
 	"REST POST /api/v1/groups/":       {StatusFuzzed, "opCatalog[\"CreateGroup\"] — batch 2"},
 	"REST DELETE /api/v1/groups/{id}": {StatusFuzzed, "opCatalog[\"DeleteGroup\"] — batch 2"},
@@ -78,14 +68,9 @@ var operationOverrides = map[string]overrideEntry{
 	// Coverage batch 5: rotation policies.
 	"REST POST /api/v1/rotation-policies/":       {StatusFuzzed, "opCatalog[\"CreateRotationPolicy\"] — batch 5"},
 	"REST DELETE /api/v1/rotation-policies/{id}": {StatusFuzzed, "opCatalog[\"DeleteRotationPolicy\"] — batch 5"},
-	// Coverage batch 6: /system proxy routes with non-trivial (non-passthrough)
-	// logic of their own -- multi-step state guard + side effect (break-glass
-	// revoke) and an invariant-checked write (secret-dependency exclusive create).
-	"REST POST /api/v1/system/break-glass/{id}/revoke":       {StatusFuzzed, "opCatalog[\"RevokeBreakGlassActivationProxy\"] — batch 6"},
-	"REST POST /api/v1/system/secret-dependencies/exclusive": {StatusFuzzed, "opCatalog[\"CreateSecretDependencyExclusiveProxy\"] — batch 6"},
 	// Coverage batch 7 (2026-09-24, fuzz/new-surfaces): the ordinary
-	// (non-/system) break-glass revoke path — sibling of the /system proxy
-	// entry above, same core.RevokeBreakGlass function, other caller.
+	// break-glass revoke path (the /system proxy sibling this once compared
+	// against was removed in ADR-108 Phase 6 step 14c).
 	"REST POST /api/v1/projects/{id}/break-glass/{activationId}/revoke": {StatusFuzzed, "opCatalog[\"RevokeBreakGlass\"] — batch 7"},
 	// Coverage batch 8 (2026-09-24, fuzz/new-surfaces): the secret-scoped access
 	// request family (server/http/handlers/secret_access_requests.go,

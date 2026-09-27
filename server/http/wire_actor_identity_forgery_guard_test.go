@@ -26,6 +26,16 @@
 // found and fixed by hand during the sweep (see machine_identities_proxy.go's
 // own doc comments); this guard cannot re-detect a regression in them and
 // makes no claim to.
+//
+// TestNoUnjustifiedActorIdentityForgery (the actual /system-scoped guard) was
+// removed with the ADR-108 Phase 6 /system proxy tier deletion -- its entire
+// target population (every /system handler) no longer exists. The scanner
+// infrastructure below (handlerBodyText, actorFieldReads,
+// actorFieldReadsAgainst) and its self-test
+// (TestActorFieldReadsScannerDetectsWireForgery) are generic and handler-name-
+// agnostic, so they're kept: retargeting this guard at a live handler
+// population, if this bug class recurs elsewhere, is a scope decision for
+// that future work, not something Phase 6 deletion should do silently.
 package http
 
 import (
@@ -46,10 +56,6 @@ import (
 var actorShapedFieldNames = []string{
 	"InvitedBy", "ResolvedBy", "CreatedBy", "DecidedBy", "ApproverID", "RevokedBy",
 }
-
-// handlersDir is the real server/http/handlers directory, relative to this
-// package — what every real handlerBodyText caller passes today.
-var handlersDir = filepath.Join("..", "..", "server", "http", "handlers")
 
 // actorFieldReadRe matches `body.<ActorField>` for each name above, used to
 // scan a handler's raw source text (comments included, filtered separately —
@@ -116,44 +122,6 @@ func handlerBodyText(t *testing.T, dir, handlerName string) string {
 		}
 	}
 	return out.String()
-}
-
-// actorFieldReads returns the actor-shaped field names read (not written)
-// from the wire body within the given handler's source text. A line whose
-// trimmed content starts with "//" is skipped entirely — a comment
-// mentioning "body.ResolvedBy" in prose (this file's own fix commentary does
-// exactly that, describing what USED to happen) must not itself trip the
-// guard. For each remaining match, the immediately-following non-space
-// character is inspected: a single `=` (not `==`) means the field is being
-// OVERWRITTEN before use — the fix pattern this sweep applied everywhere
-// (`body.CreatedBy = actorID(r)`) — and is not flagged; anything else (a bare
-// reference, `==`, a function argument, a struct-literal read via
-// `body.toModel()` picking it up implicitly) is flagged as a live read.
-func actorFieldReads(t *testing.T, handlerName string) []string {
-	t.Helper()
-	text := handlerBodyText(t, handlersDir, handlerName)
-	var found []string
-	seen := map[string]bool{}
-	for _, line := range strings.Split(text, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "//") {
-			continue
-		}
-		for i, re := range actorFieldReadRes {
-			name := actorShapedFieldNames[i]
-			for _, loc := range re.FindAllStringIndex(line, -1) {
-				rest := strings.TrimLeft(line[loc[1]:], " \t")
-				if strings.HasPrefix(rest, "=") && !strings.HasPrefix(rest, "==") {
-					continue // overwritten before use -- the fix pattern, not a read
-				}
-				if !seen[name] {
-					seen[name] = true
-					found = append(found, name)
-				}
-			}
-		}
-	}
-	sort.Strings(found)
-	return found
 }
 
 // TestActorFieldReadsScannerDetectsWireForgery is this guard's red-proof.
@@ -251,98 +219,4 @@ func actorFieldReadsAgainst(t *testing.T, dir, handlerName string) []string {
 	}
 	sort.Strings(found)
 	return found
-}
-
-// actorIdentityForgeryAllowlist is the exhaustive, reasoned inventory of
-// every /system handler this guard's scan currently flags, reviewed as
-// SAFE — either fixed (the flagged read is a false-positive remnant, e.g. a
-// name that also appears as a struct field TAG rather than a live read the
-// scan's line-level heuristic can't distinguish) or genuinely inconsequential
-// (no authorization decision or trusted attribution ever reads the field
-// back). Each entry needs a reason; TestNoUnjustifiedActorIdentityForgery
-// fails if a flagged handler is missing from both this list and
-// knownUnfixedActorIdentityForgeries, or if a listed entry stops reproducing.
-var actorIdentityForgeryAllowlist = map[string]string{}
-
-// knownUnfixedActorIdentityForgeries is the set of /system handlers
-// confirmed, by individual review during the G80 documented-exception
-// re-verification sweep (2026-08-25), to read an actor-shaped field off the
-// wire with a real (if low-severity) consequence, not yet fixed.
-// Grandfathered so this guard can go live immediately; each entry is a
-// tracked gap, not a claim of safety.
-//
-// CreateDynamicSecretConfigProxy's blind-spot instance (noted here as a plain
-// comment, never a map entry, for the reason explained below) is now MOOT:
-// the handler is DELETED (#1580 liveness sweep, no live caller in either
-// topology — docs/adr-090-stale-fork-proxy-deletion.md's "#1579/#1580"
-// addendum), so there is no wire-actor-forgery surface left to track.
-var knownUnfixedActorIdentityForgeries = map[string]string{}
-
-// TestNoUnjustifiedActorIdentityForgery is this sweep's guard: for every
-// /system handler, if its body reads an actor-shaped field straight off the
-// wire (see actorFieldReads), that handler must have an entry in
-// actorIdentityForgeryAllowlist (reviewed safe) or
-// knownUnfixedActorIdentityForgeries (reviewed real, tracked, not yet fixed)
-// explaining why. A newly-added route (or a regression in an already-fixed
-// one) that reintroduces this shape fails immediately.
-func TestNoUnjustifiedActorIdentityForgery(t *testing.T) {
-	routerPath := filepath.Join(".", "router.go")
-	actual := extractSystemGroupRoutes(t, routerPath)
-
-	handlerFlagged := map[string]bool{}
-	seenHandlers := map[string]bool{}
-	var flagged []string
-	for _, r := range actual {
-		if r.Handler == "" || seenHandlers[r.Handler] {
-			continue
-		}
-		seenHandlers[r.Handler] = true
-		reads := actorFieldReads(t, r.Handler)
-		if len(reads) == 0 {
-			continue
-		}
-		handlerFlagged[r.Handler] = true
-		_, safe := actorIdentityForgeryAllowlist[r.Handler]
-		_, unfixed := knownUnfixedActorIdentityForgeries[r.Handler]
-		if !safe && !unfixed {
-			flagged = append(flagged, r.Handler+" reads wire-supplied actor field(s) "+strings.Join(reads, ",")+
-				" directly -- derive from actorID(r)/requestActorKindAndID(r) instead")
-		}
-	}
-	sort.Strings(flagged)
-
-	if len(flagged) > 0 {
-		t.Errorf("found %d /system handler(s) trusting a wire-supplied actor identity (the wire-actor-identity "+
-			"forgery shape): %v\nEither derive the field from the authenticated caller (actorID(r) for a "+
-			"human-only decision, requestActorKindAndID(r) for an actor-kind-aware one), or add a reasoned entry "+
-			"to actorIdentityForgeryAllowlist (if genuinely safe) or knownUnfixedActorIdentityForgeries (if it's a "+
-			"real, tracked, not-yet-fixed gap) in this file.", len(flagged), flagged)
-	}
-
-	checkStale := func(listName string, m map[string]string) {
-		var stale []string
-		for handler := range m {
-			found := false
-			for _, r := range actual {
-				if r.Handler == handler {
-					found = true
-					break
-				}
-			}
-			if !found {
-				stale = append(stale, handler+" (no longer registered under /system)")
-				continue
-			}
-			if !handlerFlagged[handler] {
-				stale = append(stale, handler+" (no longer reads a wire-supplied actor field)")
-			}
-		}
-		sort.Strings(stale)
-		if len(stale) > 0 {
-			t.Errorf("%s entr(y/ies) no longer reproduce: %v\nRemove the entry, or move it to the other list if "+
-				"its status changed (e.g. a real gap just got fixed).", listName, stale)
-		}
-	}
-	checkStale("actorIdentityForgeryAllowlist", actorIdentityForgeryAllowlist)
-	checkStale("knownUnfixedActorIdentityForgeries", knownUnfixedActorIdentityForgeries)
 }

@@ -118,49 +118,6 @@ func createRoleForFuzz(ctx context.Context, w *faultWorld) (uint, error) {
 	return decoded.Data.Role.ID, nil
 }
 
-// createMachineIdentityForFuzz creates a project + machine identity, returning
-// (projectID, machineIdentityID).
-func createMachineIdentityForFuzz(ctx context.Context, w *faultWorld) (uint, uint, error) {
-	pStatus, pBody, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects", map[string]any{"name": "fuzz-mi-project"})
-	if err != nil {
-		return 0, 0, err
-	}
-	if pStatus/100 != 2 {
-		return 0, 0, fmt.Errorf("setup CreateProject: HTTP %d: %s", pStatus, pBody)
-	}
-	// models.Project carries no json tags, so its fields serialize with Go's
-	// default (capitalized) names — confirmed against a live response body
-	// during opcatalog_smoke_test.go's TestOpCatalog_SucceedsWithNoFaultArmed,
-	// not guessed.
-	var proj struct {
-		Data struct {
-			ID uint `json:"ID"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(pBody, &proj); err != nil || proj.Data.ID == 0 {
-		return 0, 0, fmt.Errorf("decoding CreateProject response: %w (body=%s)", err, pBody)
-	}
-
-	mStatus, mBody, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/system/machine-identities", map[string]any{
-		"project_id": proj.Data.ID, "name": "fuzz-machine", "created_by": 1,
-	})
-	if err != nil {
-		return 0, 0, err
-	}
-	if mStatus/100 != 2 {
-		return 0, 0, fmt.Errorf("setup CreateMachineIdentityProxy: HTTP %d: %s", mStatus, mBody)
-	}
-	var mi struct {
-		Data struct {
-			ID uint `json:"id"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(mBody, &mi); err != nil || mi.Data.ID == 0 {
-		return 0, 0, fmt.Errorf("decoding CreateMachineIdentityProxy response: %w (body=%s)", err, mBody)
-	}
-	return proj.Data.ID, mi.Data.ID, nil
-}
-
 // createSecretForFuzz creates a secret and returns its ID — setup for the
 // UpdateSecret/DeleteSecret operations. Same "no json tags, Go default
 // capitalized names" shape as Project (models.SecretNode).
@@ -232,23 +189,6 @@ func createUserForFuzz(ctx context.Context, w *faultWorld, username string) (uin
 	return decoded.Data.ID, nil
 }
 
-// machineIdentityWireForFuzz mirrors server/http/handlers/machine_identities_proxy.go's
-// unexported machineIdentityProxyWire (fields it round-trips over the wire) —
-// duplicated here rather than exported from the production handler package,
-// consistent with this repo's convention of a harness owning its own fixture
-// shapes instead of the production package growing a
-// test-only export.
-type machineIdentityWireForFuzz struct {
-	ID             uint   `json:"id"`
-	ProjectID      uint   `json:"project_id"`
-	Name           string `json:"name"`
-	IdentityType   string `json:"identity_type"`
-	State          string `json:"state"`
-	Description    string `json:"description"`
-	CreatedBy      uint   `json:"created_by"`
-	Classification string `json:"classification"`
-}
-
 // opCatalog is the closed set of operations FuzzStorageFaultOperations can pick
 // from — see the STEP 0 report for the running Fuzzed/Pending/Excluded count
 // across the full 309-operation inventory; this is intentionally a starting
@@ -268,50 +208,6 @@ var opCatalog = []operation{
 			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/roles/%d", roleID), map[string]any{
 				"permissions": []string{"secrets.read"},
 			})
-			if err != nil {
-				return opResult{}, err
-			}
-			return httpResult(st, body), nil
-		},
-	},
-	{
-		// /system proxy bypass class: TransitionMachineIdentityStateProxy calls
-		// coreService.Storage() directly, never core.* — same bypass shape as F3.
-		Key: "REST PUT /api/v1/system/machine-identities/{id}/transition",
-		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
-			_, miID, err := createMachineIdentityForFuzz(ctx, w)
-			if err != nil {
-				return nil, err
-			}
-			// The wire protocol expects the FULL row with State already mutated
-			// client-side plus the FromState it was read at
-			// (transitionMachineIdentityStateBody). CreateMachineIdentity leaves
-			// a fresh row in MachineActive ("active"); MachineActive ->
-			// MachineSuspended ("suspended") is the one legal non-terminal
-			// transition (machineTransitions, internal/core/machine_identities.go).
-			getStatus, getBody, err := httpJSON(ctx, w, http.MethodGet,
-				fmt.Sprintf("/api/v1/system/machine-identities/%d", miID), nil)
-			if err != nil {
-				return nil, err
-			}
-			if getStatus/100 != 2 {
-				return nil, fmt.Errorf("setup GetMachineIdentityProxy: HTTP %d: %s", getStatus, getBody)
-			}
-			var got struct {
-				Data machineIdentityWireForFuzz `json:"data"`
-			}
-			if err := json.Unmarshal(getBody, &got); err != nil {
-				return nil, fmt.Errorf("decoding GetMachineIdentityProxy response: %w (body=%s)", err, getBody)
-			}
-			fromState := got.Data.State
-			got.Data.State = "suspended"
-			return map[string]any{"miID": miID, "machine_identity": got.Data, "from_state": fromState}, nil
-		},
-		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
-			s := state.(map[string]any)
-			st, body, err := httpJSON(ctx, w, http.MethodPut,
-				fmt.Sprintf("/api/v1/system/machine-identities/%d/transition", s["miID"]),
-				map[string]any{"machine_identity": s["machine_identity"], "from_state": s["from_state"]})
 			if err != nil {
 				return opResult{}, err
 			}
@@ -400,115 +296,6 @@ var opCatalog = []operation{
 				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
 			}
 			return opResult{Success: true, Detail: codes.OK.String()}, nil
-		},
-	},
-	{
-		// /system proxy bypass class (batch 1): CreateMachineIdentityProxy
-		// calls coreService.CreateMachineIdentity directly, never through a
-		// REST-facing handler layer of its own.
-		Key: "REST POST /api/v1/system/machine-identities",
-		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
-			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects", map[string]any{"name": "fuzz-mi-batch1-project"})
-			if err != nil {
-				return nil, err
-			}
-			if st/100 != 2 {
-				return nil, fmt.Errorf("setup CreateProject: HTTP %d: %s", st, body)
-			}
-			var proj struct {
-				Data struct {
-					ID uint `json:"ID"`
-				} `json:"data"`
-			}
-			if err := json.Unmarshal(body, &proj); err != nil || proj.Data.ID == 0 {
-				return nil, fmt.Errorf("decoding CreateProject response: %w (body=%s)", err, body)
-			}
-			return proj.Data.ID, nil
-		},
-		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
-			projectID := state.(uint)
-			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/system/machine-identities", map[string]any{
-				"project_id": projectID, "name": "fuzz-mi-batch1", "created_by": 1,
-			})
-			if err != nil {
-				return opResult{}, err
-			}
-			return httpResult(st, body), nil
-		},
-	},
-	{
-		// /system proxy bypass class (batch 1): CreateGroupProxy.
-		Key: "REST POST /api/v1/system/groups",
-		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
-			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/system/groups", map[string]any{
-				"name": "fuzz-group-batch1", "description": "fuzz group",
-			})
-			if err != nil {
-				return opResult{}, err
-			}
-			return httpResult(st, body), nil
-		},
-	},
-	{
-		// /system proxy bypass class (batch 1): DeleteGroupProxy.
-		Key: "REST DELETE /api/v1/system/groups/{id}",
-		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
-			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/system/groups", map[string]any{
-				"name": "fuzz-group-batch1-setup", "description": "fuzz group",
-			})
-			if err != nil {
-				return nil, err
-			}
-			if st/100 != 2 {
-				return nil, fmt.Errorf("setup CreateGroupProxy: HTTP %d: %s", st, body)
-			}
-			var decoded struct {
-				Data struct {
-					ID uint `json:"id"`
-				} `json:"data"`
-			}
-			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
-				return nil, fmt.Errorf("decoding CreateGroupProxy response: %w (body=%s)", err, body)
-			}
-			return decoded.Data.ID, nil
-		},
-		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
-			id := state.(uint)
-			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/system/groups/%d", id), nil)
-			if err != nil {
-				return opResult{}, err
-			}
-			return httpResult(st, body), nil
-		},
-	},
-	{
-		// /system proxy bypass class (batch 1): DeleteProjectProxy.
-		Key: "REST DELETE /api/v1/system/projects/{id}",
-		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
-			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects", map[string]any{"name": "fuzz-project-delete-batch1"})
-			if err != nil {
-				return nil, err
-			}
-			if st/100 != 2 {
-				return nil, fmt.Errorf("setup CreateProject: HTTP %d: %s", st, body)
-			}
-			var proj struct {
-				Data struct {
-					ID uint `json:"ID"`
-				} `json:"data"`
-			}
-			if err := json.Unmarshal(body, &proj); err != nil || proj.Data.ID == 0 {
-				return nil, fmt.Errorf("decoding CreateProject response: %w (body=%s)", err, body)
-			}
-			return proj.Data.ID, nil
-		},
-		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
-			id := state.(uint)
-			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/system/projects/%d", id), nil)
-			if err != nil {
-				return opResult{}, err
-			}
-			return httpResult(st, body), nil
 		},
 	},
 	{
@@ -714,68 +501,6 @@ var opCatalog = []operation{
 		},
 	},
 	{
-		// Coverage batch 6: RevokeBreakGlassActivationProxy — a multi-step
-		// /system proxy (state guard + role removal + conditional revoke +
-		// audit, see break_glass_proxy.go's own doc for why it is NOT a thin
-		// passthrough) with no transaction spanning its steps. No REST
-		// creation route exists any more (CreateBreakGlassActivationProxy was
-		// deleted, G80 liveness sweep), so Setup seeds the activation and its
-		// role grant directly through the unfaulted storage wrapper — the
-		// same primitives a real downstream server's core.ActivateBreakGlass
-		// would call.
-		Key: "REST POST /api/v1/system/break-glass/{id}/revoke",
-		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
-			pStatus, pBody, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects", map[string]any{"name": "fuzz-bg-project"})
-			if err != nil {
-				return nil, err
-			}
-			if pStatus/100 != 2 {
-				return nil, fmt.Errorf("setup CreateProject: HTTP %d: %s", pStatus, pBody)
-			}
-			var proj struct {
-				Data struct {
-					ID uint `json:"ID"`
-				} `json:"data"`
-			}
-			if err := json.Unmarshal(pBody, &proj); err != nil || proj.Data.ID == 0 {
-				return nil, fmt.Errorf("decoding CreateProject response: %w (body=%s)", err, pBody)
-			}
-			userID, err := createUserForFuzz(ctx, w, "fuzz-bg-user")
-			if err != nil {
-				return nil, err
-			}
-			roleID, err := createRoleForFuzz(ctx, w)
-			if err != nil {
-				return nil, err
-			}
-			if err := w.faulty.AssignRole(ctx, userID, roleID, coreStorage.Scope{ProjectID: proj.Data.ID}); err != nil {
-				return nil, fmt.Errorf("setup AssignRole: %w", err)
-			}
-			activation, err := w.faulty.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
-				ProjectID:     proj.Data.ID,
-				UserID:        userID,
-				RoleID:        roleID,
-				RoleName:      "fuzz-role",
-				Justification: "fuzz break-glass",
-				State:         core.BreakGlassActive,
-			})
-			if err != nil {
-				return nil, fmt.Errorf("setup CreateBreakGlassActivation: %w", err)
-			}
-			return activation.ID, nil
-		},
-		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
-			id := state.(uint)
-			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/system/break-glass/%d/revoke", id), map[string]any{
-				"revoked_by": 1, "revoked_at": time.Now(),
-			})
-			if err != nil {
-				return opResult{}, err
-			}
-			return httpResult(st, body), nil
-		},
-	},
-	{
 		// Coverage batch 7 (2026-09-24, fuzz/new-surfaces): RevokeBreakGlass —
 		// the ORDINARY, roles.assign-gated self-service revoke path
 		// (server/http/handlers/break_glass.go), sibling to
@@ -836,56 +561,6 @@ var opCatalog = []operation{
 			s := state.(map[string]uint)
 			st, body, err := httpJSON(ctx, w, http.MethodPost,
 				fmt.Sprintf("/api/v1/projects/%d/break-glass/%d/revoke", s["projectID"], s["activationID"]), nil)
-			if err != nil {
-				return opResult{}, err
-			}
-			return httpResult(st, body), nil
-		},
-	},
-	{
-		// Coverage batch 6: CreateSecretDependencyExclusiveProxy — the ONE
-		// deliberately non-passthrough method in secret_dependencies_proxy.go
-		// (evaluates the duplicate/cycle invariant itself, since no real
-		// transaction spans the HTTP hop back to the calling server); routed
-		// through core.LockedCreateSecretDependencyExclusive, which holds the
-		// same lock core.AddSecretDependency does around the identical call.
-		Key: "REST POST /api/v1/system/secret-dependencies/exclusive",
-		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
-			createSecret := func(name string) (uint, error) {
-				st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/secrets/", map[string]any{
-					"name": name, "value": "fuzz-value", "project_id": 1, "environment_id": 1, "type": "generic",
-				})
-				if err != nil {
-					return 0, err
-				}
-				if st/100 != 2 {
-					return 0, fmt.Errorf("setup CreateSecret(%s): HTTP %d: %s", name, st, body)
-				}
-				var decoded struct {
-					Data struct {
-						ID uint `json:"ID"`
-					} `json:"data"`
-				}
-				if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
-					return 0, fmt.Errorf("decoding CreateSecret(%s) response: %w (body=%s)", name, err, body)
-				}
-				return decoded.Data.ID, nil
-			}
-			dependent, err := createSecret("fuzz-sd-dependent")
-			if err != nil {
-				return nil, err
-			}
-			dependsOn, err := createSecret("fuzz-sd-dependson")
-			if err != nil {
-				return nil, err
-			}
-			return map[string]uint{"dependent": dependent, "dependsOn": dependsOn}, nil
-		},
-		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
-			s := state.(map[string]uint)
-			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/system/secret-dependencies/exclusive", map[string]any{
-				"project_id": 1, "dependent_secret_id": s["dependent"], "depends_on_secret_id": s["dependsOn"],
-			})
 			if err != nil {
 				return opResult{}, err
 			}

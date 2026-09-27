@@ -17,10 +17,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // ── MFA self-service handlers (mfa.go) ───────────────────────────────────────
@@ -376,245 +374,53 @@ func TestFinishWebAuthnPasswordlessLogin_InvalidAssertion_S13(t *testing.T) {
 // ── MFA management proxy handlers (mfa_management_proxy.go) ──────────────────
 
 // TestGetMFASecretProxy_MissingUserID_S13 — missing user_id query param → 400.
-func TestGetMFASecretProxy_MissingUserID_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/system/mfa/secrets", nil)
-	w := httptest.NewRecorder()
-	h.GetMFASecretProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestGetMFASecretProxy_InvalidUserID_S13 — non-numeric user_id → 400.
-func TestGetMFASecretProxy_InvalidUserID_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/system/mfa/secrets?user_id=bad", nil)
-	w := httptest.NewRecorder()
-	h.GetMFASecretProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestGetMFASecretProxy_NotFound_S13 — valid user_id but no MFA secret → 404.
-func TestGetMFASecretProxy_NotFound_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/system/mfa/secrets?user_id=9999", nil)
-	w := httptest.NewRecorder()
-	h.GetMFASecretProxy(w, r)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // TestCountUnusedMFARecoveryCodesProxy_MissingUserID_S13 — missing user_id → 400.
-func TestCountUnusedMFARecoveryCodesProxy_MissingUserID_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/system/mfa/recovery-codes/count", nil)
-	w := httptest.NewRecorder()
-	h.CountUnusedMFARecoveryCodesProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestCountUnusedMFARecoveryCodesProxy_InvalidUserID_S13 — non-numeric user_id → 400.
-func TestCountUnusedMFARecoveryCodesProxy_InvalidUserID_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/system/mfa/recovery-codes/count?user_id=abc", nil)
-	w := httptest.NewRecorder()
-	h.CountUnusedMFARecoveryCodesProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ── WebAuthn proxy handlers (webauthn_proxy.go) ───────────────────────────────
 
 // TestListWebAuthnCredentialsProxy_MissingUserID_S13 — missing user_id → 400.
-func TestListWebAuthnCredentialsProxy_MissingUserID_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/system/webauthn/credentials", nil)
-	w := httptest.NewRecorder()
-	h.ListWebAuthnCredentialsProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestListWebAuthnCredentialsProxy_InvalidUserID_S13 — non-numeric user_id → 400.
-func TestListWebAuthnCredentialsProxy_InvalidUserID_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/system/webauthn/credentials?user_id=bad", nil)
-	w := httptest.NewRecorder()
-	h.ListWebAuthnCredentialsProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestGetWebAuthnCredentialByCredIDProxy_MissingUserID_S13 — missing user_id → 400.
-func TestGetWebAuthnCredentialByCredIDProxy_MissingUserID_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/system/webauthn/credentials/lookup", nil)
-	w := httptest.NewRecorder()
-	h.GetWebAuthnCredentialByCredIDProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestGetWebAuthnCredentialByCredIDProxy_MissingCredID_S13 — user_id ok but
 // missing credential_id → 400.
-func TestGetWebAuthnCredentialByCredIDProxy_MissingCredID_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/webauthn/credentials/lookup?user_id=1", nil)
-	w := httptest.NewRecorder()
-	h.GetWebAuthnCredentialByCredIDProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestGetWebAuthnCredentialByCredIDProxy_InvalidBase64_S13 — credential_id that
 // isn't valid base64 → 400.
-func TestGetWebAuthnCredentialByCredIDProxy_InvalidBase64_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/webauthn/credentials/lookup?user_id=1&credential_id=!!not-base64!!", nil)
-	w := httptest.NewRecorder()
-	h.GetWebAuthnCredentialByCredIDProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestGetWebAuthnCredentialByCredIDProxy_NotFound_S13 — valid params but cred
 // doesn't exist → 404.
-func TestGetWebAuthnCredentialByCredIDProxy_NotFound_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	// base64("test") = "dGVzdA=="
-	r := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/webauthn/credentials/lookup?user_id=1&credential_id=dGVzdA==", nil)
-	w := httptest.NewRecorder()
-	h.GetWebAuthnCredentialByCredIDProxy(w, r)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // TestUpdateWebAuthnCredentialProxy_BadIDParam_S13 — non-numeric id → 400.
-func TestUpdateWebAuthnCredentialProxy_BadIDParam_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodPut, "/api/v1/system/webauthn/credentials/bad",
-		bytes.NewBufferString("{}"))
-	r = withChiParams(r, map[string]string{"id": "bad"})
-	w := httptest.NewRecorder()
-	h.UpdateWebAuthnCredentialProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestUpdateWebAuthnCredentialProxy_BadJSON_S13 — valid id but malformed JSON → 400.
-func TestUpdateWebAuthnCredentialProxy_BadJSON_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodPut, "/api/v1/system/webauthn/credentials/1",
-		bytes.NewBufferString("not-json"))
-	r = withChiParams(r, map[string]string{"id": "1"})
-	w := httptest.NewRecorder()
-	h.UpdateWebAuthnCredentialProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestAdvanceWebAuthnCredentialCounterProxy_BadJSON_S13 — malformed JSON → 400.
-func TestAdvanceWebAuthnCredentialCounterProxy_BadJSON_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodPatch, "/api/v1/system/webauthn/credentials/advance-counter",
-		bytes.NewBufferString("not-json"))
-	w := httptest.NewRecorder()
-	h.AdvanceWebAuthnCredentialCounterProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestAdvanceWebAuthnCredentialCounterProxy_MissingFields_S13 — missing required
 // fields → 400.
-func TestAdvanceWebAuthnCredentialCounterProxy_MissingFields_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	// Only user_id set, credential_id and new_blob are missing/empty.
-	body, _ := json.Marshal(map[string]interface{}{"user_id": 1})
-	r := httptest.NewRequest(http.MethodPatch, "/api/v1/system/webauthn/credentials/advance-counter",
-		bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.AdvanceWebAuthnCredentialCounterProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestCountWebAuthnCredentialsProxy_MissingUserID_S13 — missing user_id → 400.
-func TestCountWebAuthnCredentialsProxy_MissingUserID_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/webauthn/credentials/count", nil)
-	w := httptest.NewRecorder()
-	h.CountWebAuthnCredentialsProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestCreateWebAuthnSessionProxy_BadJSON_S13 — malformed JSON → 400.
-func TestCreateWebAuthnSessionProxy_BadJSON_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/webauthn/sessions",
-		bytes.NewBufferString("not-json"))
-	w := httptest.NewRecorder()
-	h.CreateWebAuthnSessionProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestCreateWebAuthnSessionProxy_MissingFields_S13 — missing user_id/token_hash → 400.
-func TestCreateWebAuthnSessionProxy_MissingFields_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	body, _ := json.Marshal(map[string]interface{}{"user_id": 0})
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/webauthn/sessions",
-		bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateWebAuthnSessionProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestConsumeWebAuthnSessionProxy_BadJSON_S13 — malformed JSON → 400.
-func TestConsumeWebAuthnSessionProxy_BadJSON_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/webauthn/sessions/consume",
-		bytes.NewBufferString("not-json"))
-	w := httptest.NewRecorder()
-	h.ConsumeWebAuthnSessionProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestConsumeWebAuthnSessionProxy_MissingFields_S13 — missing token_hash/now → 400.
-func TestConsumeWebAuthnSessionProxy_MissingFields_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	body, _ := json.Marshal(map[string]interface{}{"token_hash": ""})
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/webauthn/sessions/consume",
-		bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.ConsumeWebAuthnSessionProxy(w, r)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestConsumeWebAuthnSessionProxy_NotFound_S13 — valid body but no matching
 // session → 404.
-func TestConsumeWebAuthnSessionProxy_NotFound_S13(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-	body, _ := json.Marshal(map[string]interface{}{
-		"token_hash": "nonexistent-hash",
-		"now":        "2026-01-01T00:00:00Z",
-	})
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/webauthn/sessions/consume",
-		bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	h.ConsumeWebAuthnSessionProxy(w, r)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // TestConsumeWebAuthnSessionProxy_SecondConsumeFails is the G80 documented-
 // exception re-verification sweep's regression test for the "holds" verdict on
@@ -622,34 +428,3 @@ func TestConsumeWebAuthnSessionProxy_NotFound_S13(t *testing.T) {
 // underlying conditional UPDATE (local_webauthn.go) must actually be single-
 // use, not just described as such. A second consume of the SAME token_hash
 // must fail — a second success would mean the CAS isn't real.
-func TestConsumeWebAuthnSessionProxy_SecondConsumeFails(t *testing.T) {
-	cs := freshCoreS12(t)
-	h := NewAuthHandler(cs, false)
-
-	createBody, _ := json.Marshal(map[string]interface{}{
-		"user_id":    1,
-		"token_hash": "single-use-webauthn-session",
-		"purpose":    "registration",
-		"expires_at": time.Now().Add(time.Hour).UTC(),
-	})
-	r0 := httptest.NewRequest(http.MethodPost, "/api/v1/system/webauthn/sessions", bytes.NewReader(createBody))
-	w0 := httptest.NewRecorder()
-	h.CreateWebAuthnSessionProxy(w0, r0)
-	require.Equal(t, http.StatusOK, w0.Code)
-
-	consumeBody, _ := json.Marshal(map[string]interface{}{
-		"token_hash": "single-use-webauthn-session",
-		"now":        time.Now().UTC().Format(time.RFC3339),
-	})
-	r1 := httptest.NewRequest(http.MethodPost, "/api/v1/system/webauthn/sessions/consume", bytes.NewReader(consumeBody))
-	w1 := httptest.NewRecorder()
-	h.ConsumeWebAuthnSessionProxy(w1, r1)
-	require.Equal(t, http.StatusOK, w1.Code, "first consume must succeed")
-
-	r2 := httptest.NewRequest(http.MethodPost, "/api/v1/system/webauthn/sessions/consume", bytes.NewReader(consumeBody))
-	w2 := httptest.NewRecorder()
-	h.ConsumeWebAuthnSessionProxy(w2, r2)
-	assert.NotEqual(t, http.StatusOK, w2.Code,
-		"CEILING VIOLATED: a second consume of an already-consumed WebAuthn session must fail — the conditional "+
-			"UPDATE this handler relies on for its single-use guarantee is not actually a CAS if this succeeds")
-}

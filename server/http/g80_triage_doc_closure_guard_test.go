@@ -92,30 +92,21 @@ var g80TriageClosureClaims = []g80ClosureClaim{
 	// section, verified against origin/main by this same correction pass
 	// (2026-08-25) -- see that section's own "Corrections from an
 	// independent verification session" subsection.
-	{label: "docs/g80-raw-storage-bypass-triage.md: PR #1557 (CreateAccessRequestProxy/UpdateAccessRequestProxy dual-control bypass)",
-		sha: "2b888df72c322563030dbd7a7b996c022cf08061",
-		marker: g80ClosureMarker{file: "server/http/handlers/access_request_proxy.go",
-			mustExist: "RequireAdminAuthorityAt"}},
-	{label: "docs/g80-raw-storage-bypass-triage.md: PR #1558 (CreateInvitationProxy/UpdateInvitationProxy escalation-by-proxy bypass)",
-		sha: "28b52cfbeec5a1acd2bf2d81e32afb42328e4590",
-		marker: g80ClosureMarker{file: "server/http/handlers/invitations_proxy.go",
-			mustExist: "RequireGranterHoldsRolePermissions"}},
+	//
+	// PRs #1557, #1558, #1560, #1561, #1562 retired (ADR-108 Phase 6): each
+	// entry's marker pointed at a server/http/handlers/*_proxy.go file (or a
+	// router.go route registration) that no longer exists -- the entire
+	// /system RemoteStorage proxy tier these fixes closed a bypass in was
+	// deleted, so the vulnerable surface itself, not just the fix, is gone.
+	// Surface removed, not silently dropped: docs/security-closures.tsv rows
+	// for the same PRs get the identical "surface removed" retirement.
+	// #1559 (SoD policy/risk-exception authority) is unaffected -- its marker
+	// (internal/core/sod.go's isGlobalAdminRoleName) is core-layer, not
+	// proxy-layer, and still exists -- kept below.
 	{label: "docs/g80-raw-storage-bypass-triage.md: PR #1559 (SoD policy and risk-exception authority gaps)",
 		sha: "f83d63c63a03a6bedc79a4440eb84def3805a471",
 		marker: g80ClosureMarker{file: "internal/core/sod.go",
 			mustExist: "isGlobalAdminRoleName"}},
-	{label: "docs/g80-raw-storage-bypass-triage.md: PR #1560 (DeleteOIDCBindingProxy direct-caller routing)",
-		sha: "33eaf8df9dd5faaac77d11979b3e65c267ca9ca4",
-		marker: g80ClosureMarker{file: "server/http/handlers/machine_identities_proxy.go",
-			mustExist: "coreService.DeleteOIDCBinding"}},
-	{label: "docs/g80-raw-storage-bypass-triage.md: PR #1561 (UpdateUser PAT/session-revocation residual)",
-		sha: "10fdb34ab705448bd6bdf6f6e0193a1555dad430",
-		marker: g80ClosureMarker{file: "server/http/router.go",
-			mustExist: "RevokeAllPersonalAccessTokensForUserProxy"}},
-	{label: "docs/g80-raw-storage-bypass-triage.md: PR #1562 (RemoveGlobalAdminRoleGuardedProxy actor-authority gap)",
-		sha: "cb26f4f0baed17ffe0c89a9fc93635d613ae6307",
-		marker: g80ClosureMarker{file: "server/http/handlers/rbac_role_grants_proxy.go",
-			mustExist: "coreService.RemoveUserRole"}},
 	// PRs #1563-#1566 (server/http proxy Tier-2 fixes) and the ADR-085
 	// node-credential-arm removal: an independent verification session's
 	// headline finding (2026-08-25) is that all four PRs showed

@@ -18,7 +18,6 @@ package handlers
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -27,14 +26,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
@@ -567,36 +565,6 @@ func TestCreateInvitation_UnknownRole_S26(t *testing.T) {
 // TestGetLatestClosedCampaignProxy_WithRecord_S26 verifies that when a closed
 // campaign exists, GetLatestClosedAccessReviewCampaignProxy returns 200 with a
 // non-nil campaign (covers line 318 in access_review_campaigns_proxy.go).
-func TestGetLatestClosedCampaignProxy_WithRecord_S26(t *testing.T) {
-	cs, db := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "s26-closed-campaign-proj"}
-	require.NoError(t, db.Create(proj).Error)
-
-	// Create a closed campaign for this project.
-	closedAt := time.Now()
-	campaign := &models.AccessReviewCampaign{
-		ProjectID: proj.ID,
-		Name:      "Q1 2026 Access Review",
-		State:     "closed",
-		CreatedBy: 1,
-		ClosedAt:  &closedAt,
-	}
-	require.NoError(t, db.Create(campaign).Error)
-
-	req := httptest.NewRequest(http.MethodGet,
-		fmt.Sprintf("/api/v1/system/access-review-campaigns/latest-closed?project_id=%d", proj.ID),
-		nil)
-	w := httptest.NewRecorder()
-	h.GetLatestClosedAccessReviewCampaignProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	// campaign field should be non-nil (it contains the closed campaign data)
-	assert.NotNil(t, resp["data"])
-}
 
 // ── users_crud.go: bad ID / not found paths ──────────────────────────────────
 
@@ -759,27 +727,6 @@ func TestListAccessReviewCampaigns_EmptyResult_S26(t *testing.T) {
 
 // TestCreateAccessReviewCampaignProxy_HappyPath_S26 verifies that a valid campaign
 // body creates a campaign and returns 200.
-func TestCreateAccessReviewCampaignProxy_HappyPath_S26(t *testing.T) {
-	cs, db := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "s26-arcamp-proxy-proj"}
-	require.NoError(t, db.Create(proj).Error)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"project_id": proj.ID,
-		"name":       "Q2 2026 Review",
-		"state":      "open",
-		"created_by": 1,
-	})
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/system/access-review-campaigns",
-		bytes.NewReader(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateAccessReviewCampaignProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── ListInvitations happy path ────────────────────────────────────────────────
 
@@ -805,272 +752,41 @@ func TestListInvitations_HappyPath_S26(t *testing.T) {
 
 // TestGetOpenAccessReviewCampaignProxy_WithOpenCampaign_S26 verifies that when
 // an open campaign exists, GetOpenAccessReviewCampaignProxy returns it.
-func TestGetOpenAccessReviewCampaignProxy_WithOpenCampaign_S26(t *testing.T) {
-	cs, db := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "s26-open-campaign-proj"}
-	require.NoError(t, db.Create(proj).Error)
-
-	campaign := &models.AccessReviewCampaign{
-		ProjectID: proj.ID,
-		Name:      "Q2 2026 Access Review",
-		State:     "open",
-		CreatedBy: 1,
-	}
-	require.NoError(t, db.Create(campaign).Error)
-
-	req := httptest.NewRequest(http.MethodGet,
-		fmt.Sprintf("/api/v1/system/access-review-campaigns/open?project_id=%d", proj.ID),
-		nil)
-	w := httptest.NewRecorder()
-	h.GetOpenAccessReviewCampaignProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	data, ok := resp["data"].(map[string]interface{})
-	require.True(t, ok, "expected data to be a map")
-	assert.NotNil(t, data["campaign"])
-}
 
 // ── CountPendingAccessReviewItemsProxy happy path ────────────────────────────
 
 // TestCountPendingAccessReviewItemsProxy_HappyPath_S26 verifies the happy path
 // for counting pending items in a campaign (returns 200 with count=0).
-func TestCountPendingAccessReviewItemsProxy_HappyPath_S26(t *testing.T) {
-	cs, db := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "s26-count-pending-proj"}
-	require.NoError(t, db.Create(proj).Error)
-	campaign := &models.AccessReviewCampaign{
-		ProjectID: proj.ID,
-		Name:      "Count Pending Test",
-		State:     "open",
-		CreatedBy: 1,
-	}
-	require.NoError(t, db.Create(campaign).Error)
-
-	req := withChiParam_S25(
-		httptest.NewRequest(http.MethodGet,
-			fmt.Sprintf("/api/v1/system/access-review-campaigns/%d/items/pending-count", campaign.ID),
-			nil),
-		"id", uintStrS26(campaign.ID),
-	)
-	w := httptest.NewRecorder()
-	h.CountPendingAccessReviewItemsProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── CreateAccessReviewItemsProxy happy path ───────────────────────────────────
 
 // TestCreateAccessReviewItemsProxy_EmptyItems_S26 verifies that posting zero
 // items returns 200 (empty-batch path).
-func TestCreateAccessReviewItemsProxy_EmptyItems_S26(t *testing.T) {
-	cs, db := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "s26-create-items-proj"}
-	require.NoError(t, db.Create(proj).Error)
-	campaign := &models.AccessReviewCampaign{
-		ProjectID: proj.ID,
-		Name:      "Create Items Test",
-		State:     "open",
-		CreatedBy: 1,
-	}
-	require.NoError(t, db.Create(campaign).Error)
-
-	body, _ := json.Marshal(map[string]interface{}{"items": []interface{}{}})
-	req := withUserCtx(withChiParam_S25(
-		httptest.NewRequest(http.MethodPost,
-			fmt.Sprintf("/api/v1/system/access-review-campaigns/%d/items", campaign.ID),
-			bytes.NewReader(body)),
-		"id", uintStrS26(campaign.ID),
-	))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateAccessReviewItemsProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── GetAccessReviewItemProxy happy path (after creating an item) ─────────────
 
 // TestGetAccessReviewItemProxy_HappyPath_S26 verifies that looking up an
 // existing item returns 200.
-func TestGetAccessReviewItemProxy_HappyPath_S26(t *testing.T) {
-	cs, db := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "s26-get-item-proj"}
-	require.NoError(t, db.Create(proj).Error)
-	campaign := &models.AccessReviewCampaign{
-		ProjectID: proj.ID,
-		Name:      "Get Item Test",
-		State:     "open",
-		CreatedBy: 1,
-	}
-	require.NoError(t, db.Create(campaign).Error)
-	item := &models.AccessReviewItem{
-		CampaignID:    campaign.ID,
-		PrincipalID:   1,
-		PrincipalType: "user",
-		Decision:      "pending",
-	}
-	require.NoError(t, db.Create(item).Error)
-
-	req := withChiParam_S25(
-		httptest.NewRequest(http.MethodGet,
-			fmt.Sprintf("/api/v1/system/access-review-campaigns/items/%d", item.ID),
-			nil),
-		"itemID", uintStrS26(item.ID),
-	)
-	w := httptest.NewRecorder()
-	h.GetAccessReviewItemProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── UpdateAccessReviewItemProxy happy path ────────────────────────────────────
 
 // TestUpdateAccessReviewItemProxy_HappyPath_S26 verifies that updating a pending
 // item in an open campaign returns 200.
-func TestUpdateAccessReviewItemProxy_HappyPath_S26(t *testing.T) {
-	cs, db := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "s26-update-item-proj"}
-	require.NoError(t, db.Create(proj).Error)
-	campaign := &models.AccessReviewCampaign{
-		ProjectID: proj.ID,
-		Name:      "Update Item Test",
-		State:     "open",
-		CreatedBy: 1,
-	}
-	require.NoError(t, db.Create(campaign).Error)
-	// PrincipalID (5) deliberately differs from withUserCtx's authenticated
-	// caller (UserID=1) -- G80 documented-exception re-verification sweep
-	// (2026-08-25): the self-certification check is now anchored to the
-	// AUTHENTICATED caller, not the wire's decided_by, so the reviewer and
-	// the item's subject must genuinely be different principals here.
-	item := &models.AccessReviewItem{
-		CampaignID:    campaign.ID,
-		PrincipalID:   5,
-		PrincipalType: "user",
-		Decision:      "pending",
-	}
-	require.NoError(t, db.Create(item).Error)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"id":             item.ID,
-		"campaign_id":    campaign.ID,
-		"principal_id":   5,
-		"principal_type": "user",
-		"decision":       "attest",
-	})
-	req := withUserCtx(withChiParam_S25(
-		httptest.NewRequest(http.MethodPut,
-			fmt.Sprintf("/api/v1/system/access-review-campaigns/items/%d", item.ID),
-			bytes.NewReader(body)),
-		"itemID", uintStrS26(item.ID),
-	))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.UpdateAccessReviewItemProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── ListAccessReviewItemsProxy with items ────────────────────────────────────
 
 // TestListAccessReviewItemsProxy_WithItems_S26 verifies that listing items for
 // a campaign that has items returns 200 with the items.
-func TestListAccessReviewItemsProxy_WithItems_S26(t *testing.T) {
-	cs, db := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "s26-list-items-proj"}
-	require.NoError(t, db.Create(proj).Error)
-	campaign := &models.AccessReviewCampaign{
-		ProjectID: proj.ID,
-		Name:      "List Items Test",
-		State:     "open",
-		CreatedBy: 1,
-	}
-	require.NoError(t, db.Create(campaign).Error)
-	item := &models.AccessReviewItem{
-		CampaignID:    campaign.ID,
-		PrincipalID:   1,
-		PrincipalType: "user",
-		Decision:      "pending",
-	}
-	require.NoError(t, db.Create(item).Error)
-
-	req := withChiParam_S25(
-		httptest.NewRequest(http.MethodGet,
-			fmt.Sprintf("/api/v1/system/access-review-campaigns/%d/items", campaign.ID),
-			nil),
-		"id", uintStrS26(campaign.ID),
-	)
-	w := httptest.NewRecorder()
-	h.ListAccessReviewItemsProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── GetBreakGlassActivationProxy happy path ───────────────────────────────────
 
 // TestGetBreakGlassActivationProxy_HappyPath_S26 verifies that looking up an
 // existing break-glass activation returns 200.
-func TestGetBreakGlassActivationProxy_HappyPath_S26(t *testing.T) {
-	cs, db := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "s26-get-bg-act-proj"}
-	require.NoError(t, db.Create(proj).Error)
-	expiresAt := time.Now().Add(time.Hour)
-	activation := &models.BreakGlassActivation{
-		ProjectID:     proj.ID,
-		UserID:        1,
-		State:         "active",
-		Justification: "incident response",
-		ExpiresAt:     &expiresAt,
-	}
-	require.NoError(t, db.Create(activation).Error)
-
-	req := withChiParam_S25(
-		httptest.NewRequest(http.MethodGet,
-			fmt.Sprintf("/api/v1/system/break-glass-activations/%d", activation.ID),
-			nil),
-		"id", uintStrS26(activation.ID),
-	)
-	w := httptest.NewRecorder()
-	h.GetBreakGlassActivationProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── ListBreakGlassActivationsProxy happy path ─────────────────────────────────
 
 // TestListBreakGlassActivationsProxy_HappyPath_S26 verifies the happy path for
 // listing break-glass activations (empty list → 200).
-func TestListBreakGlassActivationsProxy_HappyPath_S26(t *testing.T) {
-	cs, db := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "s26-list-bg-proxy-proj"}
-	require.NoError(t, db.Create(proj).Error)
-
-	req := httptest.NewRequest(http.MethodGet,
-		fmt.Sprintf("/api/v1/system/break-glass-activations?project_id=%d", proj.ID),
-		nil)
-	w := httptest.NewRecorder()
-	h.ListBreakGlassActivationsProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── RevokeBreakGlassActivationProxy happy path ───────────────────────────────
 
@@ -1085,57 +801,11 @@ func TestListBreakGlassActivationsProxy_HappyPath_S26(t *testing.T) {
 // non-existent ID is now 404, not 409. See
 // TestRevokeBreakGlassActivationProxy_AlreadyRevoked_S26 below for the 409 case
 // this test used to also (imprecisely) cover.
-func TestRevokeBreakGlassActivationProxy_NotFound_S26(t *testing.T) {
-	cs := freshCoreS26(t)
-	h := NewCatalogHandler(cs)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"revoked_by": 1,
-		"revoked_at": time.Now(),
-	})
-	req := withUserCtx(withChiParam_S25(
-		httptest.NewRequest(http.MethodPost, "/api/v1/system/break-glass-activations/99999/revoke",
-			bytes.NewReader(body)),
-		"id", "99999",
-	))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.RevokeBreakGlassActivationProxy(w, req)
-
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // TestRevokeBreakGlassActivationProxy_AlreadyRevoked_S26 verifies 409 when revoke
 // targets an activation that exists but is already in state=revoked — the case
 // TestRevokeBreakGlassActivationProxy_NotFound_S26 used to (imprecisely) assert
 // via a non-existent ID instead.
-func TestRevokeBreakGlassActivationProxy_AlreadyRevoked_S26(t *testing.T) {
-	cs, _ := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	revokedAt := time.Now().UTC()
-	activation, err := cs.Storage().CreateBreakGlassActivation(context.Background(), &models.BreakGlassActivation{
-		ProjectID: 1, UserID: 1, RoleID: 1, RoleName: "test_role",
-		Justification: "already revoked fixture", State: "revoked",
-		RevokedBy: 1, RevokedAt: &revokedAt,
-	})
-	require.NoError(t, err)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"revoked_by": 1,
-		"revoked_at": time.Now(),
-	})
-	req := withUserCtx(withChiParam_S25(
-		httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/system/break-glass-activations/%d/revoke", activation.ID),
-			bytes.NewReader(body)),
-		"id", fmt.Sprintf("%d", activation.ID),
-	))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.RevokeBreakGlassActivationProxy(w, req)
-
-	assert.Equal(t, http.StatusConflict, w.Code)
-}
 
 // TestRevokeBreakGlassActivationProxy_ExpiredStateStillRevocable_S26 is #1653
 // reopened's regression test for this call site: a TTL-lapsed activation
@@ -1144,31 +814,6 @@ func TestRevokeBreakGlassActivationProxy_AlreadyRevoked_S26(t *testing.T) {
 // refusing it here because of a clock-derived value was the exact defect this
 // finding produced, duplicated at this second (remote-storage-proxy) call
 // site alongside core.RevokeBreakGlass's own guard.
-func TestRevokeBreakGlassActivationProxy_ExpiredStateStillRevocable_S26(t *testing.T) {
-	cs, _ := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	activation, err := cs.Storage().CreateBreakGlassActivation(context.Background(), &models.BreakGlassActivation{
-		ProjectID: 1, UserID: 1, RoleID: 1, RoleName: "test_role",
-		Justification: "ttl-lapsed fixture", State: "expired",
-	})
-	require.NoError(t, err)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"revoked_by": 1,
-		"revoked_at": time.Now(),
-	})
-	req := withUserCtx(withChiParam_S25(
-		httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/system/break-glass-activations/%d/revoke", activation.ID),
-			bytes.NewReader(body)),
-		"id", fmt.Sprintf("%d", activation.ID),
-	))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.RevokeBreakGlassActivationProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code, "an expired-but-not-yet-revoked activation must be revocable, body: %s", w.Body.String())
-}
 
 // TestRevokeBreakGlassActivationProxy_RemovesRoleGrant is the G80 documented-
 // exception fix's own regression test: before the fix, this handler flipped the
@@ -1178,48 +823,6 @@ func TestRevokeBreakGlassActivationProxy_ExpiredStateStillRevocable_S26(t *testi
 // wire route, #1511). A live emergency role grant must actually be gone from
 // user_roles (the table RBAC reads) after a successful revoke, not just
 // reported revoked in the activation row.
-func TestRevokeBreakGlassActivationProxy_RemovesRoleGrant(t *testing.T) {
-	cs, _ := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-	ctx := context.Background()
-
-	breakGlassEmergencyRoleName, err := identity.NewFoldedName("s26_break_glass_emergency_role")
-	require.NoError(t, err)
-	role, err := cs.Storage().CreateRole(ctx, breakGlassEmergencyRoleName, "")
-	require.NoError(t, err)
-	scope := core.Scope{ProjectID: 1}
-	require.NoError(t, cs.Storage().AssignRole(ctx, 1, role.ID, scope))
-
-	roleIDs, err := cs.Storage().GetUserRoleIDsAt(ctx, 1, scope)
-	require.NoError(t, err)
-	require.Contains(t, roleIDs, role.ID, "fixture setup: role grant must exist before the revoke")
-
-	activation, err := cs.Storage().CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
-		ProjectID: 1, UserID: 1, RoleID: role.ID, RoleName: role.Name,
-		Justification: "regression test for the role-removal fix", State: "active",
-	})
-	require.NoError(t, err)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"revoked_by": 1,
-		"revoked_at": time.Now(),
-	})
-	req := withUserCtx(withChiParam_S25(
-		httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/system/break-glass-activations/%d/revoke", activation.ID),
-			bytes.NewReader(body)),
-		"id", fmt.Sprintf("%d", activation.ID),
-	))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.RevokeBreakGlassActivationProxy(w, req)
-	require.Equal(t, http.StatusOK, w.Code, "revoke of a genuinely active activation must succeed: %s", w.Body.String())
-
-	roleIDs, err = cs.Storage().GetUserRoleIDsAt(ctx, 1, scope)
-	require.NoError(t, err)
-	assert.NotContains(t, roleIDs, role.ID,
-		"CEILING VIOLATED: the emergency role grant must be removed from user_roles by a successful revoke, "+
-			"not merely reported revoked in the activation row")
-}
 
 // ── catalog.go: DeleteEnvironment error branches ──────────────────────────────
 
@@ -1302,187 +905,21 @@ func TestDeleteProject_HasSecrets_S26(t *testing.T) {
 
 // TestCreateAccessRequestProxy_HappyPath_S26 verifies that a valid access
 // request is stored and 200 returned.
-func TestCreateAccessRequestProxy_HappyPath_S26(t *testing.T) {
-	cs, db := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "s26-access-req-proj"}
-	require.NoError(t, db.Create(proj).Error)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"user_id":        1,
-		"project_id":     proj.ID,
-		"suggested_role": "viewer",
-		"state":          "pending",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/access-requests",
-		bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateAccessRequestProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestGetAccessRequestProxy_HappyPath_S26 verifies that looking up an existing
 // access request returns 200.
-func TestGetAccessRequestProxy_HappyPath_S26(t *testing.T) {
-	cs, db := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "s26-get-ar-proj"}
-	require.NoError(t, db.Create(proj).Error)
-	ar := &models.AccessRequest{
-		UserID:        1,
-		ProjectID:     proj.ID,
-		SuggestedRole: "viewer",
-		State:         "pending",
-	}
-	require.NoError(t, db.Create(ar).Error)
-
-	req := withChiParam_S25(
-		httptest.NewRequest(http.MethodGet,
-			fmt.Sprintf("/api/v1/system/access-requests/%d", ar.ID), nil),
-		"id", uintStrS26(ar.ID),
-	)
-	w := httptest.NewRecorder()
-	h.GetAccessRequestProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListAccessRequestsProxy_HappyPath_S26 verifies that listing access
 // requests for a project returns 200.
-func TestListAccessRequestsProxy_HappyPath_S26(t *testing.T) {
-	cs, db := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "s26-list-ar-proj"}
-	require.NoError(t, db.Create(proj).Error)
-	ar := &models.AccessRequest{
-		UserID:        1,
-		ProjectID:     proj.ID,
-		SuggestedRole: "viewer",
-		State:         "pending",
-	}
-	require.NoError(t, db.Create(ar).Error)
-
-	req := httptest.NewRequest(http.MethodGet,
-		fmt.Sprintf("/api/v1/system/access-requests?project_id=%d", proj.ID), nil)
-	w := httptest.NewRecorder()
-	h.ListAccessRequestsProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListAccessRequestApprovalsProxy_HappyPath_S26 verifies that listing
 // approvals for an access request returns 200 with empty list.
-func TestListAccessRequestApprovalsProxy_HappyPath_S26(t *testing.T) {
-	cs, db := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "s26-list-ara-proj"}
-	require.NoError(t, db.Create(proj).Error)
-	ar := &models.AccessRequest{
-		UserID:        1,
-		ProjectID:     proj.ID,
-		SuggestedRole: "viewer",
-		State:         "pending",
-	}
-	require.NoError(t, db.Create(ar).Error)
-
-	req := withChiParam_S25(
-		httptest.NewRequest(http.MethodGet,
-			fmt.Sprintf("/api/v1/system/access-requests/%d/approvals", ar.ID), nil),
-		"id", uintStrS26(ar.ID),
-	)
-	w := httptest.NewRecorder()
-	h.ListAccessRequestApprovalsProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestUpdateAccessRequestProxy_HappyPath_S26 verifies that updating an existing
 // access request returns 200.
-func TestUpdateAccessRequestProxy_HappyPath_S26(t *testing.T) {
-	cs, db := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "s26-update-ar-proj"}
-	require.NoError(t, db.Create(proj).Error)
-	// FIX-1's requireGranterHoldsRolePermissions ceiling resolves the granted
-	// role by ID, so it must exist as a real row.
-	require.NoError(t, db.Create(&models.Role{Name: "viewer"}).Error)
-	ar := &models.AccessRequest{
-		UserID:        1,
-		ProjectID:     proj.ID,
-		SuggestedRole: "viewer",
-		State:         "pending",
-	}
-	require.NoError(t, db.Create(ar).Error)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"id":             ar.ID,
-		"user_id":        1,
-		"project_id":     proj.ID,
-		"suggested_role": "viewer",
-		"state":          "approved",
-	})
-	req := withChiParam_S25(
-		httptest.NewRequest(http.MethodPut,
-			fmt.Sprintf("/api/v1/system/access-requests/%d", ar.ID),
-			bytes.NewReader(body)),
-		"id", uintStrS26(ar.ID),
-	)
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.UpdateAccessRequestProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestCreateAccessRequestApprovalProxy_HappyPath_S26 verifies that creating an
 // approval for an access request returns 200.
-func TestCreateAccessRequestApprovalProxy_HappyPath_S26(t *testing.T) {
-	cs, db := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	proj := &models.Project{Name: "s26-create-ara-proj"}
-	require.NoError(t, db.Create(proj).Error)
-	// CreateAccessRequestApprovalProxy now re-derives the same authority
-	// ceiling core.ApproveAccessRequestWithExpiry applies, which resolves
-	// SuggestedRole by name -- this fixture seeds no default roles, so
-	// "viewer" must exist as a real row for GetRoleByName to resolve it.
-	require.NoError(t, db.Create(&models.Role{Name: "viewer", NameFolded: "viewer"}).Error)
-	// UserID must differ from withUserCtx's actor (1) -- CreateAccessRequestApprovalProxy
-	// now refuses self-approval (access-request-proxy-create-approval-ceiling
-	// finding), so a request from the same user as the approving actor would
-	// no longer reach 200.
-	ar := &models.AccessRequest{
-		UserID:        2,
-		ProjectID:     proj.ID,
-		SuggestedRole: "viewer",
-		State:         "pending",
-	}
-	require.NoError(t, db.Create(ar).Error)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"access_request_id": ar.ID,
-		"approver_id":       1,
-		"decision":          "approved",
-	})
-	req := withUserCtx(withChiParam_S25(
-		httptest.NewRequest(http.MethodPost,
-			fmt.Sprintf("/api/v1/system/access-requests/%d/approvals", ar.ID),
-			bytes.NewReader(body)),
-		"id", uintStrS26(ar.ID),
-	))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateAccessRequestApprovalProxy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── rbac.go: GetGroupRoles happy path ────────────────────────────────────────
 
@@ -1575,134 +1012,28 @@ func TestListMachineIdentities_HappyPath_S26(t *testing.T) {
 // freshCoreS26WithAdmin (seeds UserID=1 as admin) + withUserCtx (attaches
 // UserID=1 to the request context) instead of the plain freshCoreS26 +
 // bare-context request this test used before.
-func TestCreateSoDPolicyProxy_HappyPath_S26(t *testing.T) {
-	cs, _ := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"name":         "s26-sod-policy",
-		"permission_a": "secrets.write",
-		"permission_b": "roles.assign",
-	})
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/system/sod-policies",
-		bytes.NewReader(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.CreateSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestGetSoDPolicyProxy_HappyPath_S26 verifies that getting an existing SoD
 // policy returns 200.
-func TestGetSoDPolicyProxy_HappyPath_S26(t *testing.T) {
-	cs, db := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	sod := &models.SoDPolicy{
-		Name:        "s26-get-sod-policy",
-		PermissionA: "secrets.write",
-		PermissionB: "roles.assign",
-	}
-	require.NoError(t, db.Create(sod).Error)
-
-	req := withChiParam_S25(
-		httptest.NewRequest(http.MethodGet,
-			fmt.Sprintf("/api/v1/system/sod-policies/%d", sod.ID), nil),
-		"id", uintStrS26(sod.ID),
-	)
-	w := httptest.NewRecorder()
-	h.GetSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestDeleteSoDPolicyProxy_HappyPath_S26 verifies that deleting an existing
 // SoD policy returns 200.
-func TestDeleteSoDPolicyProxy_HappyPath_S26(t *testing.T) {
-	cs, db := freshCoreS26WithAdmin(t)
-	h := NewCatalogHandler(cs)
-
-	sod := &models.SoDPolicy{
-		Name:        "s26-del-sod-policy",
-		PermissionA: "secrets.write",
-		PermissionB: "roles.assign",
-	}
-	require.NoError(t, db.Create(sod).Error)
-
-	req := withChiParam_S25(
-		httptest.NewRequest(http.MethodDelete,
-			fmt.Sprintf("/api/v1/system/sod-policies/%d", sod.ID), nil),
-		"id", uintStrS26(sod.ID),
-	)
-	w := httptest.NewRecorder()
-	h.DeleteSoDPolicyProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── webauthn_proxy.go: happy paths ──────────────────────────────────────────
 
 // TestListWebAuthnCredentialsProxy_HappyPath_S26 verifies listing webauthn
 // credentials for a user returns 200.
-func TestListWebAuthnCredentialsProxy_HappyPath_S26(t *testing.T) {
-	cs, _ := freshCoreS26WithAdmin(t)
-	h := NewAuthHandler(cs, false)
-
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/webauthn-credentials?user_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListWebAuthnCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestCountWebAuthnCredentialsProxy_HappyPath_S26 verifies counting webauthn
 // credentials for a user returns 200.
-func TestCountWebAuthnCredentialsProxy_HappyPath_S26(t *testing.T) {
-	cs, _ := freshCoreS26WithAdmin(t)
-	h := NewAuthHandler(cs, false)
-
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/webauthn-credentials/count?user_id=1", nil)
-	w := httptest.NewRecorder()
-	h.CountWebAuthnCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── setup_tokens_proxy.go: happy paths ──────────────────────────────────────
 
 // TestExpireSetupTokenProxy_HappyPath_S26 verifies that expiring a setup token
 // returns 200 when no tokens match (affected = 0).
-func TestExpireSetupTokenProxy_HappyPath_S26(t *testing.T) {
-	cs, _ := freshCoreS26WithAdmin(t)
-	h := NewAuthHandler(cs, false)
-
-	// ExpireSetupTokenProxy uses chi "id" (token ID), not a JSON body.
-	// Use a real token ID of 1; MarkSetupTokenExpired with a non-existent ID still succeeds.
-	req := withUserCtx(withChiParam_S25(
-		httptest.NewRequest(http.MethodPost,
-			"/api/v1/system/setup-tokens/1/expire", nil),
-		"id", "1",
-	))
-	w := httptest.NewRecorder()
-	h.ExpireSetupTokenProxy(w, req)
-	// MarkSetupTokenExpired with non-existent ID returns nil → 200 OK
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestGetSetupTokenByHashProxy_NotFound_S26 verifies that looking up a
 // setup token by hash returns 404 when not found.
-func TestGetSetupTokenByHashProxy_NotFound_S26(t *testing.T) {
-	cs := freshCoreS26(t)
-	h := NewAuthHandler(cs, false)
-
-	// GetSetupTokenByHashProxy uses chi "hash" (URL param), not a query param.
-	req := withChiParam_S25(
-		httptest.NewRequest(http.MethodGet,
-			"/api/v1/system/setup-tokens/by-hash/nonexistent_hash_s26", nil),
-		"hash", "nonexistent_hash_s26",
-	)
-	w := httptest.NewRecorder()
-	h.GetSetupTokenByHashProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
 
 // ── admin_jobs.go: RunComplianceDigest happy path ────────────────────────────
 

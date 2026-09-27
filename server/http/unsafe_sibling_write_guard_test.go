@@ -64,19 +64,10 @@ var unsafeSiblingPairs = map[string]string{
 // the stale-fork shape), or if a listed entry no longer reproduces (fixed,
 // or the route removed) — same discipline as
 // rawStorageBypassAllowlist/knownUnfixedRawStorageBypasses above.
-var unsafeSiblingAllowlist = map[string]string{
-	// UpdateWebAuthnCredentialProxy entry removed (#1714): reclassified from
-	// "capability-reducing, no independent ceiling" to a real authz bypass --
-	// the old raw call trusted an attacker-controlled full-row body
-	// (ownership reassignment via a mismatched user_id, silent re-enable of a
-	// clone-disabled credential). Fixed by routing through
-	// KeyorixCore.MarkWebAuthnCredentialClonedByLookup; the handler no longer
-	// makes an unsafe-sibling call at all, so this guard no longer flags it.
-	"DeleteProjectProxy": "no-independent-ceiling: core.DeleteProject(force=true) intentionally skips the " +
-		"force=false guard+cascade atomicity problem entirely and calls the plain, unconditional " +
-		"storage.DeleteProject cascade -- no actor-authority check of any kind exists at the core layer for " +
-		"this path, so there is nothing for the raw call to bypass.",
-}
+// DeleteProjectProxy's entry (the only one) was removed with the ADR-108
+// Phase 6 /system proxy tier deletion -- the handler no longer exists. See
+// git history for the full reasoning.
+var unsafeSiblingAllowlist = map[string]string{}
 
 // TestNoProxyCallsUnsafeSiblingWhenSafeExists is the preventive half of
 // #1592's sweep: for every /system route, if its handler calls a

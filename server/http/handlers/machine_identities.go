@@ -14,8 +14,49 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
+
+// machineIdentityProxyWire mirrors models.MachineIdentity's fields in explicit
+// snake_case (the model carries no json tags of its own, so a direct marshal
+// would send Go-cased keys instead of this API's wire convention). Named
+// "Proxy" for its ADR-108-deleted origin (server/http/handlers/
+// machine_identities_proxy.go, removed with the /system proxy tier); kept
+// here unrenamed since this handler's live callers already depend on it.
+type machineIdentityProxyWire struct {
+	ID                         uint       `json:"id"`
+	ProjectID                  uint       `json:"project_id"`
+	Name                       string     `json:"name"`
+	IdentityType               string     `json:"identity_type"`
+	State                      string     `json:"state"`
+	Description                string     `json:"description"`
+	CreatedBy                  uint       `json:"created_by"`
+	CreatedAt                  time.Time  `json:"created_at"`
+	UpdatedAt                  time.Time  `json:"updated_at"`
+	LastSeenAt                 *time.Time `json:"last_seen_at"`
+	RevokedAt                  *time.Time `json:"revoked_at"`
+	Classification             string     `json:"classification"`
+	CreatedByMachineIdentityID uint       `json:"created_by_machine_identity_id,omitempty"` // #1573 machine-caller attribution; mirrors models.MachineIdentity
+}
+
+func newMachineIdentityProxyWire(m *models.MachineIdentity) machineIdentityProxyWire {
+	return machineIdentityProxyWire{
+		ID:                         m.ID,
+		ProjectID:                  m.ProjectID,
+		Name:                       m.Name,
+		IdentityType:               m.IdentityType,
+		State:                      m.State,
+		Description:                m.Description,
+		CreatedBy:                  m.CreatedBy,
+		CreatedAt:                  m.CreatedAt,
+		UpdatedAt:                  m.UpdatedAt,
+		LastSeenAt:                 m.LastSeenAt,
+		RevokedAt:                  m.RevokedAt,
+		Classification:             m.Classification,
+		CreatedByMachineIdentityID: m.CreatedByMachineIdentityID,
+	}
+}
 
 // ListMachineIdentities handles GET /api/v1/projects/{id}/machine-identities.
 func (h *CatalogHandler) ListMachineIdentities(w http.ResponseWriter, r *http.Request) {

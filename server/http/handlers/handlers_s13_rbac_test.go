@@ -11,36 +11,16 @@ package handlers
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// withNodeCredentialContextS13 attaches a UserContext for user 1 (the
-// system_admin seeded by freshCoreS12WithAdmin) to req.
-// RemoveGlobalAdminRoleGuardedProxy requires roles.assign at global scope for
-// every caller (ADR-085, 2026-08-25 — the prior node-credential OR-arm that
-// let a bare node credential skip this check unconditionally is removed); a
-// caller must now hold real authority to reach the raw
-// storage.RemoveGlobalAdminRoleGuarded call these tests exercise, so they
-// present user 1, who has that authority via the adminRoleNames bypass
-// (internal/core/authz.go), instead of a permission-less node credential.
-func withNodeCredentialContextS13(req *http.Request) *http.Request {
-	uc := &middleware.UserContext{
-		UserID:    1,
-		ActorType: core.ActorTypeUser,
-	}
-	return req.WithContext(context.WithValue(req.Context(), middleware.GetUserContextKey(), uc))
-}
 
 // ── rbac.go: ListRoles ────────────────────────────────────────────────────────
 
@@ -391,259 +371,45 @@ func TestRBACHandler_GetUserRoles_BadParam_S13(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// ── rbac_role_grants_proxy.go ─────────────────────────────────────────────────
-
-// newRBACHandlerForProxy returns an RBACHandler backed by freshCoreS12 (full
-// migrate, no admin seed needed — proxies are auth-gated at the router level,
-// not inside the handler itself).
-func newRBACHandlerForProxy(t *testing.T) *RBACHandler {
-	t.Helper()
-	return NewRBACHandler(freshCoreS12(t))
-}
-
 // TestGetGroupRoleGrantsProxy_BadGroupID_S13 covers the bad groupID path.
-func TestGetGroupRoleGrantsProxy_BadGroupID_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/rbac/groups/nan/role-grants", nil)
-	req = withChiParam(req, "groupID", "nan")
-	w := httptest.NewRecorder()
-	h.GetGroupRoleGrantsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_PARAMETER")
-}
 
 // TestGetGroupRoleGrantsProxy_Happy_S13 covers the success path (empty list).
-func TestGetGroupRoleGrantsProxy_Happy_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/rbac/groups/99/role-grants", nil)
-	req = withChiParam(req, "groupID", "99")
-	w := httptest.NewRecorder()
-	h.GetGroupRoleGrantsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestAssignRoleWithExpiryProxy_BadBody_S13 covers JSON decode error.
-func TestAssignRoleWithExpiryProxy_BadBody_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/rbac/assign-role-with-expiry",
-		bytes.NewBufferString(`{bad`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.AssignRoleWithExpiryProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_BODY")
-}
 
 // TestAssignRoleWithExpiryProxy_MissingUserID_S13 covers missing user_id.
-func TestAssignRoleWithExpiryProxy_MissingUserID_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	body, _ := json.Marshal(map[string]interface{}{"role_id": 1})
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/rbac/assign-role-with-expiry",
-		bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.AssignRoleWithExpiryProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_BODY")
-}
 
 // TestAssignRoleWithExpiryProxy_MissingRoleID_S13 covers missing role_id.
-func TestAssignRoleWithExpiryProxy_MissingRoleID_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	body, _ := json.Marshal(map[string]interface{}{"user_id": 1})
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/rbac/assign-role-with-expiry",
-		bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.AssignRoleWithExpiryProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestAssignRoleToGroupWithExpiryProxy_BadBody_S13 covers JSON decode error.
-func TestAssignRoleToGroupWithExpiryProxy_BadBody_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/rbac/assign-role-to-group-with-expiry",
-		bytes.NewBufferString(`{bad`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.AssignRoleToGroupWithExpiryProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_BODY")
-}
 
 // TestAssignRoleToGroupWithExpiryProxy_MissingGroupID_S13 covers missing group_id.
-func TestAssignRoleToGroupWithExpiryProxy_MissingGroupID_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	body, _ := json.Marshal(map[string]interface{}{"role_id": 1})
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/rbac/assign-role-to-group-with-expiry",
-		bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.AssignRoleToGroupWithExpiryProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_BODY")
-}
 
 // TestAssignRoleToGroupWithExpiryProxy_MissingRoleID_S13 covers missing role_id.
-func TestAssignRoleToGroupWithExpiryProxy_MissingRoleID_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	body, _ := json.Marshal(map[string]interface{}{"group_id": 1})
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/rbac/assign-role-to-group-with-expiry",
-		bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.AssignRoleToGroupWithExpiryProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // TestRemoveAllProjectRoleGrantsProxy_BadBody_S13 covers JSON decode error.
-func TestRemoveAllProjectRoleGrantsProxy_BadBody_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/rbac/remove-all-project-role-grants",
-		bytes.NewBufferString(`{bad`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.RemoveAllProjectRoleGrantsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_BODY")
-}
 
 // TestRemoveAllProjectRoleGrantsProxy_MissingFields_S13 covers missing user_id+project_id.
-func TestRemoveAllProjectRoleGrantsProxy_MissingFields_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	body, _ := json.Marshal(map[string]interface{}{"user_id": 0, "project_id": 0})
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/rbac/remove-all-project-role-grants",
-		bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.RemoveAllProjectRoleGrantsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_BODY")
-}
 
 // TestRemoveAllProjectRoleGrantsProxy_Happy_S13 covers the success path.
-func TestRemoveAllProjectRoleGrantsProxy_Happy_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	body, _ := json.Marshal(map[string]interface{}{"user_id": 1, "project_id": 1})
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/rbac/remove-all-project-role-grants",
-		bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.RemoveAllProjectRoleGrantsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListGroupRoleAssignmentsProxy_BadGroupID_S13 covers the bad groupID path.
-func TestListGroupRoleAssignmentsProxy_BadGroupID_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/rbac/groups/nan/role-assignments", nil)
-	req = withChiParam(req, "groupID", "nan")
-	w := httptest.NewRecorder()
-	h.ListGroupRoleAssignmentsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_PARAMETER")
-}
 
 // TestListGroupRoleAssignmentsProxy_Happy_S13 covers the success path.
-func TestListGroupRoleAssignmentsProxy_Happy_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/rbac/groups/99/role-assignments", nil)
-	req = withChiParam(req, "groupID", "99")
-	w := httptest.NewRecorder()
-	h.ListGroupRoleAssignmentsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListProjectRoleAssignmentsProxy_MissingProjectID_S13 covers missing param.
-func TestListProjectRoleAssignmentsProxy_MissingProjectID_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/rbac/project-role-assignments", nil)
-	w := httptest.NewRecorder()
-	h.ListProjectRoleAssignmentsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_QUERY")
-}
 
 // TestListProjectRoleAssignmentsProxy_BadProjectID_S13 covers invalid project_id.
-func TestListProjectRoleAssignmentsProxy_BadProjectID_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/rbac/project-role-assignments?project_id=nan", nil)
-	w := httptest.NewRecorder()
-	h.ListProjectRoleAssignmentsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_QUERY")
-}
 
 // TestListProjectRoleAssignmentsProxy_Happy_S13 covers the success path.
-func TestListProjectRoleAssignmentsProxy_Happy_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/rbac/project-role-assignments?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListProjectRoleAssignmentsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestListProjectMachineRoleAssignmentsProxy_MissingProjectID_S13 covers missing param.
-func TestListProjectMachineRoleAssignmentsProxy_MissingProjectID_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/rbac/project-machine-role-assignments", nil)
-	w := httptest.NewRecorder()
-	h.ListProjectMachineRoleAssignmentsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_QUERY")
-}
 
 // TestListProjectMachineRoleAssignmentsProxy_Happy_S13 covers success path.
-func TestListProjectMachineRoleAssignmentsProxy_Happy_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/system/rbac/project-machine-role-assignments?project_id=5", nil)
-	w := httptest.NewRecorder()
-	h.ListProjectMachineRoleAssignmentsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // TestRemoveGlobalAdminRoleGuardedProxy_BadBody_S13 covers JSON decode error.
-func TestRemoveGlobalAdminRoleGuardedProxy_BadBody_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/rbac/global-admin-role/remove-guarded",
-		bytes.NewBufferString(`{bad`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.RemoveGlobalAdminRoleGuardedProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_BODY")
-}
 
 // TestRemoveGlobalAdminRoleGuardedProxy_MissingFields_S13 covers zero user_id+role_id.
-func TestRemoveGlobalAdminRoleGuardedProxy_MissingFields_S13(t *testing.T) {
-	h := newRBACHandlerForProxy(t)
-	body, _ := json.Marshal(map[string]interface{}{"user_id": 0, "role_id": 0})
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/rbac/global-admin-role/remove-guarded",
-		bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.RemoveGlobalAdminRoleGuardedProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "INVALID_BODY")
-}
 
 // TestRemoveGlobalAdminRoleGuardedProxy_NotAssigned_S13 covers the
 // ErrRoleNotAssigned → 404 path.
@@ -652,64 +418,9 @@ func TestRemoveGlobalAdminRoleGuardedProxy_MissingFields_S13(t *testing.T) {
 // which requires another admin assignment to exist. We seed user 2 with
 // the admin role so the guard sees a surviving admin, then try to remove
 // that same role from user 3 (who never had it) → ErrRoleNotAssigned → 404.
-func TestRemoveGlobalAdminRoleGuardedProxy_NotAssigned_S13(t *testing.T) {
-	cs, db := freshCoreS12WithAdmin(t)
-	h := NewRBACHandler(cs)
-
-	// Fetch the system_admin role that freshCoreS12WithAdmin seeds.
-	var adminRole models.Role
-	require.NoError(t, db.Where("name = ?", "system_admin").First(&adminRole).Error)
-
-	// Seed a second admin (user 2) so the guard sees a survivor.
-	user2 := &models.User{Username: "admin2", Email: "admin2@example.com", PasswordHash: "x"}
-	require.NoError(t, db.Create(user2).Error)
-	require.NoError(t, db.Create(&models.UserRole{
-		UserID: user2.ID, RoleID: adminRole.ID,
-	}).Error)
-
-	// Try to remove adminRole from user 3 — who never had it.
-	body, _ := json.Marshal(map[string]interface{}{
-		"user_id":        3,
-		"role_id":        adminRole.ID,
-		"admin_role_ids": []uint{adminRole.ID},
-	})
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/rbac/global-admin-role/remove-guarded",
-		bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	req = withNodeCredentialContextS13(req)
-	w := httptest.NewRecorder()
-	h.RemoveGlobalAdminRoleGuardedProxy(w, req)
-	// guard passes (user2 still has admin), user3 never had role → ErrRoleNotAssigned → 404
-	assert.Equal(t, http.StatusNotFound, w.Code)
-	assert.Contains(t, w.Body.String(), "ROLE_NOT_ASSIGNED")
-}
 
 // TestRemoveGlobalAdminRoleGuardedProxy_LastAdmin_S13 covers the
 // ErrWouldStrandLastAdmin → 409 path when removing the sole admin.
-func TestRemoveGlobalAdminRoleGuardedProxy_LastAdmin_S13(t *testing.T) {
-	cs, db := freshCoreS12WithAdmin(t)
-	h := NewRBACHandler(cs)
-	// The seeded admin role is system_admin; fetch its ID.
-	var adminRole models.Role
-	require.NoError(t, db.Where("name = ?", "system_admin").First(&adminRole).Error)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"user_id":        1,
-		"role_id":        adminRole.ID,
-		"admin_role_ids": []uint{adminRole.ID},
-	})
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/rbac/global-admin-role/remove-guarded",
-		bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	req = withNodeCredentialContextS13(req)
-	w := httptest.NewRecorder()
-	h.RemoveGlobalAdminRoleGuardedProxy(w, req)
-	// Only one admin → last-admin guard → 409
-	assert.Equal(t, http.StatusConflict, w.Code)
-	assert.Contains(t, w.Body.String(), "WOULD_STRAND_LAST_ADMIN")
-}
 
 // TestRemoveGlobalAdminRoleGuardedProxy_IgnoresWireSuppliedAdminRoleIDs is the
 // #G79 regression: RemoveGlobalAdminRoleGuardedProxy previously trusted the
@@ -718,27 +429,6 @@ func TestRemoveGlobalAdminRoleGuardedProxy_LastAdmin_S13(t *testing.T) {
 // (omitting the real admin role, attempting to make the guard undercount and
 // let the sole admin's role be removed) must still be refused — the server
 // now resolves the admin-role set itself and ignores the wire value entirely.
-func TestRemoveGlobalAdminRoleGuardedProxy_IgnoresWireSuppliedAdminRoleIDs(t *testing.T) {
-	cs, db := freshCoreS12WithAdmin(t)
-	h := NewRBACHandler(cs)
-	var adminRole models.Role
-	require.NoError(t, db.Where("name = ?", "system_admin").First(&adminRole).Error)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"user_id":        1,
-		"role_id":        adminRole.ID,
-		"admin_role_ids": []uint{}, // attacker-supplied, deliberately empty
-	})
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/system/rbac/global-admin-role/remove-guarded",
-		bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	req = withNodeCredentialContextS13(req)
-	w := httptest.NewRecorder()
-	h.RemoveGlobalAdminRoleGuardedProxy(w, req)
-	assert.Equal(t, http.StatusConflict, w.Code, "an empty wire-supplied admin_role_ids must not bypass the last-admin guard")
-	assert.Contains(t, w.Body.String(), "WOULD_STRAND_LAST_ADMIN")
-}
 
 // ── users_roles.go: GetUserRolesForUser ──────────────────────────────────────
 
