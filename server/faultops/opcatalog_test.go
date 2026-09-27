@@ -667,6 +667,304 @@ var opCatalog = []operation{
 			return httpResult(st, body), nil
 		},
 	},
+	{
+		// Coverage batch 10 (FAULTOPS-SPEED STEP 2, wiring batch 2, 2026-09-27):
+		// gRPC siblings of already-REST-wired core CRUD -- proves the harness
+		// generalizes across transports for the same resource families batch 9
+		// covered for REST, per this harness's own stated purpose.
+		Key: "GRPC keyorix.v1.ProjectService.UpdateProject",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects", map[string]any{"name": "fuzz-b10-proj-update"})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateProject: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					ID uint `json:"ID"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateProject response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			_, err := pb.NewProjectServiceClient(w.grpcConn).UpdateProject(w.grpcCtx, &pb.UpdateProjectRequest{
+				Id: uint32(id), Name: "fuzz-b10-proj-updated",
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.ProjectService.DeleteProject",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects", map[string]any{"name": "fuzz-b10-proj-delete"})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateProject: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					ID uint `json:"ID"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateProject response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			_, err := pb.NewProjectServiceClient(w.grpcConn).DeleteProject(w.grpcCtx, &pb.DeleteProjectRequest{Id: uint32(id)})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.UserService.UpdateUser",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createUserForFuzz(ctx, w, "fuzz-b10-user-update")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			newName := "Fuzz B10 Updated"
+			_, err := pb.NewUserServiceClient(w.grpcConn).UpdateUser(w.grpcCtx, &pb.UpdateUserRequest{
+				Id: uint32(id), DisplayName: &newName,
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.UserService.DeleteUser",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createUserForFuzz(ctx, w, "fuzz-b10-user-delete")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			_, err := pb.NewUserServiceClient(w.grpcConn).DeleteUser(w.grpcCtx, &pb.DeleteUserRequest{Id: uint32(id)})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.GroupService.UpdateGroup",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createGroupForFuzz(ctx, w, "fuzz-b10-group-update")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			_, err := pb.NewGroupServiceClient(w.grpcConn).UpdateGroup(w.grpcCtx, &pb.UpdateGroupRequest{
+				Id: uint32(id), Name: "fuzz-b10-group-updated",
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.GroupService.DeleteGroup",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createGroupForFuzz(ctx, w, "fuzz-b10-group-delete")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			_, err := pb.NewGroupServiceClient(w.grpcConn).DeleteGroup(w.grpcCtx, &pb.DeleteGroupRequest{Id: uint32(id)})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		// Setup soft-deletes the group first (via the same gRPC DeleteGroup this
+		// catalog already wires above), then Execute restores it — proving
+		// RestoreGroup on a genuinely soft-deleted row, not a no-op on a live one.
+		Key: "GRPC keyorix.v1.GroupService.RestoreGroup",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			id, err := createGroupForFuzz(ctx, w, "fuzz-b10-group-restore")
+			if err != nil {
+				return nil, err
+			}
+			if _, err := pb.NewGroupServiceClient(w.grpcConn).DeleteGroup(w.grpcCtx, &pb.DeleteGroupRequest{Id: uint32(id)}); err != nil {
+				return nil, fmt.Errorf("setup DeleteGroup (grpc): %w", err)
+			}
+			return id, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			_, err := pb.NewGroupServiceClient(w.grpcConn).RestoreGroup(w.grpcCtx, &pb.RestoreGroupRequest{Id: uint32(id)})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.GroupService.AddGroupMember",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			groupID, err := createGroupForFuzz(ctx, w, "fuzz-b10-group-addmember")
+			if err != nil {
+				return nil, err
+			}
+			userID, err := createUserForFuzz(ctx, w, "fuzz-b10-addmember-user")
+			if err != nil {
+				return nil, err
+			}
+			return map[string]uint{"groupID": groupID, "userID": userID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			s := state.(map[string]uint)
+			_, err := pb.NewGroupServiceClient(w.grpcConn).AddGroupMember(w.grpcCtx, &pb.GroupMemberRequest{
+				GroupId: uint32(s["groupID"]), UserId: uint32(s["userID"]),
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		// Setup adds the member first (via the same gRPC AddGroupMember this
+		// catalog already wires above), so Execute removes a genuinely-present
+		// member, not a no-op.
+		Key: "GRPC keyorix.v1.GroupService.RemoveGroupMember",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			groupID, err := createGroupForFuzz(ctx, w, "fuzz-b10-group-removemember")
+			if err != nil {
+				return nil, err
+			}
+			userID, err := createUserForFuzz(ctx, w, "fuzz-b10-removemember-user")
+			if err != nil {
+				return nil, err
+			}
+			if _, err := pb.NewGroupServiceClient(w.grpcConn).AddGroupMember(w.grpcCtx, &pb.GroupMemberRequest{
+				GroupId: uint32(groupID), UserId: uint32(userID),
+			}); err != nil {
+				return nil, fmt.Errorf("setup AddGroupMember (grpc): %w", err)
+			}
+			return map[string]uint{"groupID": groupID, "userID": userID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			s := state.(map[string]uint)
+			_, err := pb.NewGroupServiceClient(w.grpcConn).RemoveGroupMember(w.grpcCtx, &pb.GroupMemberRequest{
+				GroupId: uint32(s["groupID"]), UserId: uint32(s["userID"]),
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.RoleService.UpdateRole",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createRoleForFuzz(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			desc := "fuzz b10 updated role"
+			_, err := pb.NewRoleServiceClient(w.grpcConn).UpdateRole(w.grpcCtx, &pb.UpdateRoleRequest{
+				Id: uint32(id), Description: &desc, Permissions: []string{"secrets.read"},
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		// RemoveRole is AssignRole's revoke sibling (both already-wired
+		// AssignRole above and this entry share the exact same request shape:
+		// user+role+optional scope). Setup assigns first so Execute revokes a
+		// genuinely-held grant.
+		Key: "GRPC keyorix.v1.RoleService.RemoveRole",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			roleID, err := createRoleForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			userID, err := createUserForFuzz(ctx, w, "fuzz-b10-removerole-user")
+			if err != nil {
+				return nil, err
+			}
+			if _, err := pb.NewRoleServiceClient(w.grpcConn).AssignRole(w.grpcCtx, &pb.AssignRoleRequest{
+				UserId: uint32(userID), RoleId: uint32(roleID),
+			}); err != nil {
+				return nil, fmt.Errorf("setup AssignRole (grpc): %w", err)
+			}
+			return map[string]uint{"userID": userID, "roleID": roleID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			s := state.(map[string]uint)
+			_, err := pb.NewRoleServiceClient(w.grpcConn).RemoveRole(w.grpcCtx, &pb.RemoveRoleRequest{
+				UserId: uint32(s["userID"]), RoleId: uint32(s["roleID"]),
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.SecretService.CreateSecret",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			_, err := pb.NewSecretServiceClient(w.grpcConn).CreateSecret(w.grpcCtx, &pb.CreateSecretRequest{
+				Name: "fuzz-b10-secret-grpc-create", Value: "fuzz-value", ProjectId: 1, EnvironmentId: 1, Type: "generic",
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.SecretService.UpdateSecret",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createSecretForFuzz(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			newVal := "fuzz-b10-secret-grpc-updated"
+			_, err := pb.NewSecretServiceClient(w.grpcConn).UpdateSecret(w.grpcCtx, &pb.UpdateSecretRequest{
+				Id: uint32(id), Value: &newVal,
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.SecretService.DeleteSecret",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createSecretForFuzz(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			_, err := pb.NewSecretServiceClient(w.grpcConn).DeleteSecret(w.grpcCtx, &pb.DeleteSecretRequest{Id: uint32(id)})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
 }
 
 // runOp runs op.Setup (if any) then op.Execute against w, with no fault

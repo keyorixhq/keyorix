@@ -81,6 +81,24 @@ var operationOverrides = map[string]overrideEntry{
 	"REST POST /api/v1/secret-access-requests":                      {StatusFuzzed, "opCatalog[\"CreateSecretAccessRequest\"] — batch 8"},
 	"REST POST /api/v1/secret-access-requests/{requestId}/withdraw": {StatusFuzzed, "opCatalog[\"WithdrawSecretAccessRequest\"] — batch 8"},
 	"REST PUT /api/v1/secret-access-requests/{requestId}":           {StatusFuzzed, "opCatalog[\"ResolveSecretAccessRequest\"] — batch 8"},
+	// Coverage batch 10 (FAULTOPS-SPEED STEP 2, wiring batch 2, 2026-09-27):
+	// gRPC siblings of already-REST-wired core CRUD (project/user/group/role/
+	// secret) — proves the harness generalizes across transports for the same
+	// resource families batch 9 covered for REST.
+	"GRPC keyorix.v1.ProjectService.UpdateProject":   {StatusFuzzed, "opCatalog[\"GRPCUpdateProject\"] — batch 10"},
+	"GRPC keyorix.v1.ProjectService.DeleteProject":   {StatusFuzzed, "opCatalog[\"GRPCDeleteProject\"] — batch 10"},
+	"GRPC keyorix.v1.UserService.UpdateUser":         {StatusFuzzed, "opCatalog[\"GRPCUpdateUser\"] — batch 10"},
+	"GRPC keyorix.v1.UserService.DeleteUser":         {StatusFuzzed, "opCatalog[\"GRPCDeleteUser\"] — batch 10"},
+	"GRPC keyorix.v1.GroupService.UpdateGroup":       {StatusFuzzed, "opCatalog[\"GRPCUpdateGroup\"] — batch 10"},
+	"GRPC keyorix.v1.GroupService.DeleteGroup":       {StatusFuzzed, "opCatalog[\"GRPCDeleteGroup\"] — batch 10"},
+	"GRPC keyorix.v1.GroupService.RestoreGroup":      {StatusFuzzed, "opCatalog[\"GRPCRestoreGroup\"] — batch 10"},
+	"GRPC keyorix.v1.GroupService.AddGroupMember":    {StatusFuzzed, "opCatalog[\"GRPCAddGroupMember\"] — batch 10"},
+	"GRPC keyorix.v1.GroupService.RemoveGroupMember": {StatusFuzzed, "opCatalog[\"GRPCRemoveGroupMember\"] — batch 10"},
+	"GRPC keyorix.v1.RoleService.UpdateRole":         {StatusFuzzed, "opCatalog[\"GRPCUpdateRole\"] — batch 10"},
+	"GRPC keyorix.v1.RoleService.RemoveRole":         {StatusFuzzed, "opCatalog[\"GRPCRemoveRole\"] — batch 10"},
+	"GRPC keyorix.v1.SecretService.CreateSecret":     {StatusFuzzed, "opCatalog[\"GRPCCreateSecret\"] — batch 10"},
+	"GRPC keyorix.v1.SecretService.UpdateSecret":     {StatusFuzzed, "opCatalog[\"GRPCUpdateSecret\"] — batch 10"},
+	"GRPC keyorix.v1.SecretService.DeleteSecret":     {StatusFuzzed, "opCatalog[\"GRPCDeleteSecret\"] — batch 10"},
 }
 
 func statusOf(key string) overrideEntry {
