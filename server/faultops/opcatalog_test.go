@@ -233,6 +233,80 @@ func startImpersonationForFuzz(ctx context.Context, w *faultWorld, targetUserID 
 	return "", fmt.Errorf("StartImpersonation response carried no %s cookie", middleware.SessionCookieName)
 }
 
+// assignUserRoleForFuzz assigns roleID to userID at projectID scope
+// (environment 0) via the real REST endpoint — setup for access-review
+// operations, which need a real, live project-scoped role grant to act on.
+func assignUserRoleForFuzz(ctx context.Context, w *faultWorld, userID, roleID, projectID uint) error {
+	st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/user-roles", map[string]any{
+		"user_id": userID, "role_id": roleID, "project_id": projectID, "environment_id": 0,
+	})
+	if err != nil {
+		return err
+	}
+	if st/100 != 2 {
+		return fmt.Errorf("setup AssignRole: HTTP %d: %s", st, body)
+	}
+	return nil
+}
+
+// openAccessReviewCampaignForFuzz opens a campaign for projectID and returns
+// its ID — setup for CloseAccessReviewCampaign and
+// DecideAccessReviewCampaignItem.
+func openAccessReviewCampaignForFuzz(ctx context.Context, w *faultWorld, projectID uint) (uint, error) {
+	st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/%d/access-review/campaigns", projectID), map[string]any{
+		"name": "fuzz campaign",
+	})
+	if err != nil {
+		return 0, err
+	}
+	if st/100 != 2 {
+		return 0, fmt.Errorf("setup OpenAccessReviewCampaign: HTTP %d: %s", st, body)
+	}
+	var decoded struct {
+		Data struct {
+			Campaign struct {
+				ID uint `json:"id"`
+			} `json:"campaign"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.Campaign.ID == 0 {
+		return 0, fmt.Errorf("decoding OpenAccessReviewCampaign response: %w (body=%s)", err, body)
+	}
+	return decoded.Data.Campaign.ID, nil
+}
+
+// accessReviewItemIDForPrincipal fetches campaignID's items and returns the
+// one belonging to principalID — setup for DecideAccessReviewCampaignItem,
+// which needs a real item ID for the just-created grant, not just the first
+// item (which could belong to the reviewer itself and trip the campaign's
+// own reviewer-independence check).
+func accessReviewItemIDForPrincipal(ctx context.Context, w *faultWorld, projectID, campaignID, principalID uint) (uint, error) {
+	st, body, err := httpJSON(ctx, w, http.MethodGet, fmt.Sprintf("/api/v1/projects/%d/access-review/campaigns/%d", projectID, campaignID), nil)
+	if err != nil {
+		return 0, err
+	}
+	if st/100 != 2 {
+		return 0, fmt.Errorf("setup GetAccessReviewCampaign: HTTP %d: %s", st, body)
+	}
+	var decoded struct {
+		Data struct {
+			Items []struct {
+				ID          uint `json:"id"`
+				PrincipalID uint `json:"principal_id"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return 0, fmt.Errorf("decoding GetAccessReviewCampaign response: %w (body=%s)", err, body)
+	}
+	for _, item := range decoded.Data.Items {
+		if item.PrincipalID == principalID {
+			return item.ID, nil
+		}
+	}
+	return 0, fmt.Errorf("no access-review item found for principal %d (body=%s)", principalID, body)
+}
+
 // opCatalog is the closed set of operations FuzzStorageFaultOperations can pick
 // from — see the STEP 0 report for the running Fuzzed/Pending/Excluded count
 // across the full 309-operation inventory; this is intentionally a starting
@@ -1245,6 +1319,132 @@ var opCatalog = []operation{
 		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
 			token := state.(string)
 			st, body, err := httpJSONAs(ctx, w, token, http.MethodPost, "/api/v1/auth/end-impersonation", nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// access_review_campaigns.go's OpenAccessReviewCampaign — batch 13.
+		Key: "REST POST /api/v1/projects/{id}/access-review/campaigns",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/access-review/campaigns", map[string]any{
+				"name": "fuzz campaign",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// access_review_campaigns.go's CloseAccessReviewCampaign, force-closed
+		// with zero items pending — batch 13.
+		Key: "REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return openAccessReviewCampaignForFuzz(ctx, w, 1)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			campaignID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/1/access-review/campaigns/%d/close", campaignID), map[string]any{
+				"force": true,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// access_review_campaigns.go's DecideAccessReviewCampaignItem (attest
+		// action) — batch 13.
+		Key: "REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			userID, err := createUserForFuzz(ctx, w, "fuzz-b13-decide-user")
+			if err != nil {
+				return nil, err
+			}
+			roleID, err := createRoleForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			if err := assignUserRoleForFuzz(ctx, w, userID, roleID, 1); err != nil {
+				return nil, err
+			}
+			campaignID, err := openAccessReviewCampaignForFuzz(ctx, w, 1)
+			if err != nil {
+				return nil, err
+			}
+			itemID, err := accessReviewItemIDForPrincipal(ctx, w, 1, campaignID, userID)
+			if err != nil {
+				return nil, err
+			}
+			return [2]uint{campaignID, itemID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/1/access-review/campaigns/%d/items/%d/decide", ids[0], ids[1]), map[string]any{
+				"action": "attest", "reason": "fuzz",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// project_members.go's AttestProjectAccessReview (standalone
+		// endpoint, not the campaign flow) — batch 13.
+		Key: "REST POST /api/v1/projects/{id}/access-review/attest",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			userID, err := createUserForFuzz(ctx, w, "fuzz-b13-attest-user")
+			if err != nil {
+				return nil, err
+			}
+			roleID, err := createRoleForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			if err := assignUserRoleForFuzz(ctx, w, userID, roleID, 1); err != nil {
+				return nil, err
+			}
+			return [2]uint{userID, roleID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/access-review/attest", map[string]any{
+				"source": "role", "principal_type": "user", "principal_id": ids[0], "role_id": ids[1], "environment_id": 0,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// project_members.go's RevokeProjectAccessReview (standalone
+		// endpoint, not the campaign flow) — batch 13.
+		Key: "REST POST /api/v1/projects/{id}/access-review/revoke",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			userID, err := createUserForFuzz(ctx, w, "fuzz-b13-revoke-user")
+			if err != nil {
+				return nil, err
+			}
+			roleID, err := createRoleForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			if err := assignUserRoleForFuzz(ctx, w, userID, roleID, 1); err != nil {
+				return nil, err
+			}
+			return [2]uint{userID, roleID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/access-review/revoke", map[string]any{
+				"source": "role", "principal_type": "user", "principal_id": ids[0], "role_id": ids[1], "environment_id": 0,
+			})
 			if err != nil {
 				return opResult{}, err
 			}

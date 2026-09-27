@@ -122,6 +122,12 @@ var operationOverrides = map[string]overrideEntry{
 
 	"REST POST /api/v1/admin/impersonate":      {StatusFuzzed, "opCatalog[\"StartImpersonation\"] — batch 12"},
 	"REST POST /api/v1/auth/end-impersonation": {StatusFuzzed, "opCatalog[\"EndImpersonation\"] — batch 12"},
+
+	"REST POST /api/v1/projects/{id}/access-review/campaigns":                                    {StatusFuzzed, "opCatalog[\"OpenAccessReviewCampaign\"] — batch 13"},
+	"REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close":                 {StatusFuzzed, "opCatalog[\"CloseAccessReviewCampaign\"] — batch 13"},
+	"REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide": {StatusFuzzed, "opCatalog[\"DecideAccessReviewCampaignItem\"] — batch 13"},
+	"REST POST /api/v1/projects/{id}/access-review/attest":                                       {StatusFuzzed, "opCatalog[\"AttestProjectAccessReview\"] — batch 13"},
+	"REST POST /api/v1/projects/{id}/access-review/revoke":                                       {StatusFuzzed, "opCatalog[\"RevokeProjectAccessReview\"] — batch 13"},
 }
 
 func statusOf(key string) overrideEntry {
