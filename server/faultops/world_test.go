@@ -20,12 +20,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/delivery"
+	"github.com/keyorixhq/keyorix/internal/dynamic"
+	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -145,6 +150,47 @@ type faultWorld struct {
 	adminToken string
 	grpcConn   *grpc.ClientConn
 	grpcCtx    context.Context
+
+	encryptOnce sync.Once
+	encryptErr  error
+}
+
+// ensureEncryption lazily wires ADR-004 encryption into this world's core: a
+// real KEK path (password key provider, PBKDF2-derived, per-world DEK/salt
+// files under a real temp directory — same shape production wires in
+// server/main.go's initializeEncryption, not a stub encryptor), fails loud on
+// SecretValueEncryptionActive()==false exactly like production's own
+// fail-closed check. Built on FIRST USE rather than unconditionally in
+// newFaultWorld: PBKDF2's deliberately-slow work factor (~125ms, confirmed by
+// profiling — see the PR body) would regress every op's world-build time, not
+// just the handful (MFA enrollment, signed audit checkpoints, dynamic-secret
+// admin-DSN/lease-credential encryption) that actually need it. Safe to call
+// more than once (sync.Once-guarded); returns the first call's error, if any.
+func (w *faultWorld) ensureEncryption(t *testing.T) error {
+	t.Helper()
+	w.encryptOnce.Do(func() {
+		encKeyDir, err := os.MkdirTemp("", "faultops-enc-*")
+		if err != nil {
+			w.encryptErr = fmt.Errorf("mkdir encryption key dir: %w", err)
+			return
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(encKeyDir) })
+		encSvc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, encKeyDir)
+		if err := encSvc.Initialize("faultops-fixture-passphrase"); err != nil {
+			w.encryptErr = fmt.Errorf("encryption Initialize: %w", err)
+			return
+		}
+		w.core.SetSecretValueEncryptor(encSvc)
+		if !w.core.SecretValueEncryptionActive() {
+			w.encryptErr = fmt.Errorf("secret-value encryption did not activate — plaintext-at-rest would make an encryption-dependent op's oracle checks vacuous")
+			return
+		}
+		w.core.SetAuthEncryptor(encSvc) // MFA TOTP secrets; dynamic-secret admin DSNs/lease credentials
+		if key, keyVer, ok := encSvc.AuditCheckpointKey(); ok {
+			w.core.SetAuditCheckpointKey(key, keyVer)
+		}
+	})
+	return w.encryptErr
 }
 
 // newFaultWorld builds a fresh world with spec armed (nil arms nothing — a pure
@@ -186,6 +232,40 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 	faulty := faultstorage.NewFaultyStorage(real, spec)
 	testCore := core.NewKeyorixCore(faulty)
 
+	// credential_delivery.base_url (ADR-028): the default mode (empty Mode, no
+	// SMTP configured) resolves to delivery.New's own OutOfBandDelivery — the
+	// same real, production-supported no-network default an install gets with
+	// no credential_delivery block at all (server/main.go's initializeCoreService
+	// calls delivery.New identically) — never a stub. Wired unconditionally
+	// (not lazily like ensureEncryption): delivery.New does no key derivation or
+	// I/O, so there is no world-build-time cost to defer.
+	deliverer, err := delivery.New(delivery.Config{})
+	if err != nil {
+		t.Fatalf("delivery.New: %v", err)
+	}
+	testCore.SetCredentialDelivery(deliverer, "https://fuzz-world.invalid")
+
+	// WebAuthn RP (ADR-036): newFaultWorld never called SetWebAuthn, so the
+	// entire WebAuthn family (register/login/passwordless/reauth) returns
+	// ErrWebAuthnDisabled unconditionally. A real webauthn.New RP config, same
+	// shape production wires in server/main.go — a fixed test RP identity, not
+	// derived from httpServer's own ephemeral origin, matching this exact
+	// codebase's own established precedent for a webauthn.New call inside a
+	// test world (server/http/handlers/mfa_webauthn_reauth_test.go uses the
+	// identical RPID/RPOrigins): WebAuthn's origin check validates the
+	// request's Origin HEADER against RPOrigins, not the TCP port the request
+	// actually arrived on, so a fixed RP identity is real and correct as long
+	// as whatever ceremony Setup/Execute code sends a matching Origin header
+	// (PR B's concern when it wires the first WebAuthn operation — none exists
+	// in opCatalog yet, hence no request-header change here).
+	rp, err := webauthn.New(&webauthn.Config{
+		RPID: "localhost", RPDisplayName: "Keyorix", RPOrigins: []string{"https://localhost"},
+	})
+	if err != nil {
+		t.Fatalf("webauthn.New: %v", err)
+	}
+	testCore.SetWebAuthn(rp)
+
 	testCore.SetBootstrapToken("fault-fuzz-bootstrap")
 	ctx := context.Background()
 	if _, err := testCore.BootstrapSystem(ctx, &core.BootstrapRequest{
@@ -201,6 +281,35 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 		t.Fatalf("Login: %v", err)
 	}
 	logWorldPhase(t, "bootstrap+login", worldPhase)
+
+	// Break-glass policy (self-service emergency access): newFaultWorld never
+	// called SetBreakGlassPolicy, so ActivateBreakGlass (REST + 2 gRPC
+	// siblings) refuses unconditionally with ErrorPermissionDenied regardless
+	// of any fault armed. EmergencyRole is "project_developer" — a REAL
+	// builtin role BootstrapSystem just seeded above (auth_bootstrap.go),
+	// contained (no roles.assign — break_glass.go's own doc comment names this
+	// exact role as the correct choice: "powerful-but-contained... not
+	// project_admin"), not a role invented for this fixture. DefaultTTL/MaxTTL
+	// match config.BreakGlassConfig{}'s own zero-value production defaults
+	// (4h/24h — internal/config/config.go), not arbitrary test values.
+	testCore.SetBreakGlassPolicy(core.BreakGlassPolicy{
+		Enabled: true, EmergencyRole: "project_developer",
+		DefaultTTL: 4 * time.Hour, MaxTTL: 24 * time.Hour,
+	})
+
+	// Dynamic-secrets engine factory: newFaultWorld never called
+	// SetDynamicEngineFactory (nil factory), so CreateConfig fails at the gate
+	// and every op needing an existing config is unreachable transitively (13
+	// ops). The REAL factory function server/main.go's wireDynamicSecrets wires
+	// in production — dynamic.New per backend type, not a fake/stub engine —
+	// with the same safe (deny-by-default) allowPrivateNetwork/
+	// allowInsecureTransport settings production defaults to absent explicit
+	// operator opt-in. This registers only a FUNCTION (no I/O, no dial) — the
+	// actual dynamic.New call, and whatever backend connectivity it needs, only
+	// happens if/when a future operation (PR B) actually calls CreateConfig.
+	testCore.SetDynamicEngineFactory(func(backendType string) (dynamic.CredentialEngine, error) {
+		return dynamic.New(backendType, false, false)
+	})
 
 	worldPhase = time.Now()
 	cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}}}
