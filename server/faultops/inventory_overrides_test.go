@@ -81,6 +81,25 @@ var operationOverrides = map[string]overrideEntry{
 	"REST POST /api/v1/secret-access-requests":                      {StatusFuzzed, "opCatalog[\"CreateSecretAccessRequest\"] — batch 8"},
 	"REST POST /api/v1/secret-access-requests/{requestId}/withdraw": {StatusFuzzed, "opCatalog[\"WithdrawSecretAccessRequest\"] — batch 8"},
 	"REST PUT /api/v1/secret-access-requests/{requestId}":           {StatusFuzzed, "opCatalog[\"ResolveSecretAccessRequest\"] — batch 8"},
+	// Coverage batch 9 (FAULTOPS-SPEED STEP 2, 2026-09-27): secret
+	// ACL/share/rotation family — highest security value per the STEP 1 plan.
+	// /system routes were deliberately skipped this batch: PR #2171 (ADR-108
+	// Phase 6 step 14c-1) deletes the entire /system route tier, so wiring
+	// more of it would be wasted work.
+	"REST POST /api/v1/secrets/{id}/acl":                 {StatusFuzzed, "opCatalog[\"GrantSecretACL\"] — batch 9"},
+	"REST DELETE /api/v1/secrets/{id}/acl/{aclId}":       {StatusFuzzed, "opCatalog[\"RevokeSecretACL\"] — batch 9"},
+	"GRPC keyorix.v1.SecretService.GrantSecretACL":       {StatusFuzzed, "opCatalog[\"GRPCGrantSecretACL\"] — batch 9"},
+	"GRPC keyorix.v1.SecretService.RevokeSecretACL":      {StatusFuzzed, "opCatalog[\"GRPCRevokeSecretACL\"] — batch 9"},
+	"REST PATCH /api/v1/secrets/{id}/auto-rotate":        {StatusFuzzed, "opCatalog[\"SetAutoRotate\"] — batch 9"},
+	"GRPC keyorix.v1.SecretService.SetSecretAutoRotate":  {StatusFuzzed, "opCatalog[\"GRPCSetSecretAutoRotate\"] — batch 9"},
+	"REST POST /api/v1/secrets/{id}/rotate":              {StatusFuzzed, "opCatalog[\"RotateSecret\"] — batch 9"},
+	"REST POST /api/v1/secrets/{id}/rollback":            {StatusFuzzed, "opCatalog[\"RollbackSecret\"] — batch 9"},
+	"REST POST /api/v1/secrets/{id}/share":               {StatusFuzzed, "opCatalog[\"ShareSecret\"] — batch 9"},
+	"REST PUT /api/v1/shares/{id}":                       {StatusFuzzed, "opCatalog[\"UpdateSharePermission\"] — batch 9"},
+	"REST DELETE /api/v1/shares/{id}":                    {StatusFuzzed, "opCatalog[\"RevokeShare\"] — batch 9"},
+	"GRPC keyorix.v1.ShareService.ShareSecret":           {StatusFuzzed, "opCatalog[\"GRPCShareSecret\"] — batch 9"},
+	"GRPC keyorix.v1.ShareService.UpdateSharePermission": {StatusFuzzed, "opCatalog[\"GRPCUpdateSharePermission\"] — batch 9"},
+	"GRPC keyorix.v1.ShareService.RevokeShare":           {StatusFuzzed, "opCatalog[\"GRPCRevokeShare\"] — batch 9"},
 }
 
 func statusOf(key string) overrideEntry {
