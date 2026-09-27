@@ -3794,6 +3794,215 @@ var opCatalog = []operation{
 		},
 	},
 	{
+		// project_members.go's AddProjectMember (dedicated opCatalog entry —
+		// addProjectMemberForFuzz already exercises this handler as a setup
+		// helper elsewhere, but that isn't a registered opCatalog key) —
+		// batch 19.
+		Key: "REST POST /api/v1/projects/{id}/members",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createUserForFuzz(ctx, w, "fuzz-b19-addmember")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			userID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/members", map[string]any{
+				"user_id": userID, "role": "viewer",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// users_crud.go's UpdateUser — batch 19.
+		Key: "REST PUT /api/v1/users/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createUserForFuzz(ctx, w, "fuzz-b19-update-user")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/users/%d", id), map[string]any{
+				"display_name": "Fuzz Updated Name",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// users_crud.go's RestoreUser — batch 19.
+		Key: "REST POST /api/v1/users/{id}/restore",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			id, err := createUserForFuzz(ctx, w, "fuzz-b19-restore-user")
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/users/%d", id), nil)
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup DeleteUser: HTTP %d: %s", st, body)
+			}
+			return id, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/users/%d/restore", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// users_crud.go's UnlockUser: a plain lockout-clear, no precondition
+		// that the target was actually locked — batch 19.
+		Key: "REST POST /api/v1/users/{id}/unlock",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createUserForFuzz(ctx, w, "fuzz-b19-unlock-user")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/users/%d/unlock", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// users_crud.go's SuspendUser — batch 19.
+		Key: "REST POST /api/v1/users/{id}/suspend",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createUserForFuzz(ctx, w, "fuzz-b19-suspend-user")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/users/%d/suspend", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// users_crud.go's ReactivateUser: needs a suspended target — batch 19.
+		Key: "REST POST /api/v1/users/{id}/reactivate",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			id, err := createUserForFuzz(ctx, w, "fuzz-b19-reactivate-user")
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/users/%d/suspend", id), nil)
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup SuspendUser: HTTP %d: %s", st, body)
+			}
+			return id, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/users/%d/reactivate", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// users_crud.go's RequirePasswordReset — batch 19.
+		Key: "REST POST /api/v1/users/{id}/require-password-reset",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createUserForFuzz(ctx, w, "fuzz-b19-pwreset-user")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/users/%d/require-password-reset", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// users_crud.go's RevokeSessions — batch 19.
+		Key: "REST POST /api/v1/users/{id}/revoke-sessions",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createUserForFuzz(ctx, w, "fuzz-b19-revokesess-user")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/users/%d/revoke-sessions", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// groups_handler.go's UpdateGroup — batch 19.
+		Key: "REST PUT /api/v1/groups/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createGroupForFuzz(ctx, w, "fuzz-b19-update-group")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/groups/%d", id), map[string]any{
+				"description": "fuzz updated description",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// catalog.go's UpdateProject (REST) — batch 19.
+		Key: "REST PUT /api/v1/projects/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createProjectForFuzz(ctx, w, "fuzz-b19-update-project")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/projects/%d", id), map[string]any{
+				"name": "fuzz-b19-project-updated", "description": "fuzz updated",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// users_roles.go's UpdateUserRoles — batch 19.
+		Key: "REST PUT /api/v1/users/{id}/roles",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			userID, err := createUserForFuzz(ctx, w, "fuzz-b19-userroles-update")
+			if err != nil {
+				return nil, err
+			}
+			roleID, err := createRoleForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			return [2]uint{userID, roleID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/users/%d/roles", ids[0]), map[string]any{
+				"role_ids": []uint{ids[1]}, "project_id": 1, "environment_id": 0,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
 		Key: "GRPC keyorix.v1.MachineIdentityService.ClassifyMachineToken",
 		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
 			machineID, err := createMachineIdentityForFuzz(ctx, w, 1)

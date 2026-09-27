@@ -223,6 +223,18 @@ var operationOverrides = map[string]overrideEntry{
 	"REST PUT /api/v1/admin/anomaly-config/":                          {StatusFuzzed, "opCatalog[\"UpdateAnomalyConfig\"] — batch 18"},
 	"REST POST /api/v1/access-requests/bulk-approve":                  {StatusFuzzed, "opCatalog[\"BulkApproveAccessRequests\"] — batch 18"},
 	"REST POST /api/v1/access-requests/bulk-reject":                   {StatusFuzzed, "opCatalog[\"BulkRejectAccessRequests\"] — batch 18"},
+
+	"REST POST /api/v1/projects/{id}/members":              {StatusFuzzed, "opCatalog[\"AddProjectMember\"] — batch 19"},
+	"REST PUT /api/v1/users/{id}":                          {StatusFuzzed, "opCatalog[\"UpdateUser\"] — batch 19"},
+	"REST POST /api/v1/users/{id}/restore":                 {StatusFuzzed, "opCatalog[\"RestoreUser\"] — batch 19"},
+	"REST POST /api/v1/users/{id}/unlock":                  {StatusFuzzed, "opCatalog[\"UnlockUser\"] — batch 19"},
+	"REST POST /api/v1/users/{id}/suspend":                 {StatusFuzzed, "opCatalog[\"SuspendUser\"] — batch 19"},
+	"REST POST /api/v1/users/{id}/reactivate":              {StatusFuzzed, "opCatalog[\"ReactivateUser\"] — batch 19"},
+	"REST POST /api/v1/users/{id}/require-password-reset":  {StatusFuzzed, "opCatalog[\"RequirePasswordReset\"] — batch 19"},
+	"REST POST /api/v1/users/{id}/revoke-sessions":         {StatusFuzzed, "opCatalog[\"RevokeSessions\"] — batch 19"},
+	"REST PUT /api/v1/groups/{id}":                         {StatusFuzzed, "opCatalog[\"UpdateGroup\"] — batch 19"},
+	"REST PUT /api/v1/projects/{id}":                       {StatusFuzzed, "opCatalog[\"UpdateProject\"] — batch 19"},
+	"REST PUT /api/v1/users/{id}/roles":                    {StatusFuzzed, "opCatalog[\"UpdateUserRoles\"] — batch 19"},
 }
 
 func statusOf(key string) overrideEntry {
