@@ -20,12 +20,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -145,6 +147,47 @@ type faultWorld struct {
 	adminToken string
 	grpcConn   *grpc.ClientConn
 	grpcCtx    context.Context
+
+	encryptOnce sync.Once
+	encryptErr  error
+}
+
+// ensureEncryption lazily wires ADR-004 encryption into this world's core: a
+// real KEK path (password key provider, PBKDF2-derived, per-world DEK/salt
+// files under a real temp directory — same shape production wires in
+// server/main.go's initializeEncryption, not a stub encryptor), fails loud on
+// SecretValueEncryptionActive()==false exactly like production's own
+// fail-closed check. Built on FIRST USE rather than unconditionally in
+// newFaultWorld: PBKDF2's deliberately-slow work factor (~125ms, confirmed by
+// profiling — see the PR body) would regress every op's world-build time, not
+// just the handful (MFA enrollment, signed audit checkpoints, dynamic-secret
+// admin-DSN/lease-credential encryption) that actually need it. Safe to call
+// more than once (sync.Once-guarded); returns the first call's error, if any.
+func (w *faultWorld) ensureEncryption(t *testing.T) error {
+	t.Helper()
+	w.encryptOnce.Do(func() {
+		encKeyDir, err := os.MkdirTemp("", "faultops-enc-*")
+		if err != nil {
+			w.encryptErr = fmt.Errorf("mkdir encryption key dir: %w", err)
+			return
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(encKeyDir) })
+		encSvc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, encKeyDir)
+		if err := encSvc.Initialize("faultops-fixture-passphrase"); err != nil {
+			w.encryptErr = fmt.Errorf("encryption Initialize: %w", err)
+			return
+		}
+		w.core.SetSecretValueEncryptor(encSvc)
+		if !w.core.SecretValueEncryptionActive() {
+			w.encryptErr = fmt.Errorf("secret-value encryption did not activate — plaintext-at-rest would make an encryption-dependent op's oracle checks vacuous")
+			return
+		}
+		w.core.SetAuthEncryptor(encSvc) // MFA TOTP secrets; dynamic-secret admin DSNs/lease credentials
+		if key, keyVer, ok := encSvc.AuditCheckpointKey(); ok {
+			w.core.SetAuditCheckpointKey(key, keyVer)
+		}
+	})
+	return w.encryptErr
 }
 
 // newFaultWorld builds a fresh world with spec armed (nil arms nothing — a pure
