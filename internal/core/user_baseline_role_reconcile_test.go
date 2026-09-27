@@ -1,0 +1,221 @@
+package core
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/identity"
+	kxstorage "github.com/keyorixhq/keyorix/internal/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
+)
+
+// newPreFixOrderingCore spins up a fresh in-memory SQLite store (full
+// production schema) without running BootstrapSystem, so the caller controls
+// the exact bootstrap ordering.
+func newPreFixOrderingCore(t *testing.T) *KeyorixCore {
+	t.Helper()
+	require.NoError(t, i18n.Initialize(&config.Config{
+		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
+	}))
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, kxstorage.MigrateExisting(db))
+
+	return NewKeyorixCore(store.NewLocalStorage(db))
+}
+
+// seedDefaultCatalog seeds the canonical permission/role catalog exactly as
+// bootstrapSystemLocked does — independent of whether any user has been
+// created yet, so a test can control that ordering itself.
+func seedDefaultCatalog(t *testing.T, c *KeyorixCore) {
+	t.Helper()
+	ctx := context.Background()
+
+	permIDs := make(map[string]uint, len(defaultPermissions))
+	for _, def := range defaultPermissions {
+		p, err := c.storage.CreatePermission(ctx, &models.Permission{
+			Name: def.Name, Description: def.Description, Resource: def.Resource, Action: def.Action,
+		})
+		require.NoError(t, err)
+		permIDs[def.Name] = p.ID
+	}
+	for _, rdef := range defaultRoles {
+		foldedName, ferr := identity.NewFoldedName(rdef.Name)
+		require.NoError(t, ferr)
+		role, err := c.storage.CreateRole(ctx, foldedName, rdef.Description)
+		require.NoError(t, err)
+		for _, name := range rdef.Permissions {
+			require.NoError(t, c.storage.AssignPermissionToRole(ctx, role.ID, permIDs[name]))
+		}
+	}
+}
+
+// bootstrapWithPreFixOrdering reproduces the exact sequence
+// bootstrapSystemLocked used before #2188 fixed it: CreateUser runs BEFORE the
+// permission/role catalog is seeded, so CreateUser's own best-effort
+// system_viewer auto-assign (ADR-021) deterministically misses — GetRoleByName
+// finds nothing yet — leaving the resulting admin without the baseline role.
+// This is the exact starting state ReconcileUserBaselineRoles exists to
+// repair on every subsequent restart of an install that was bootstrapped this
+// way (v0.95.0 and earlier, any backend).
+//
+// Deliberately reproduces the ordering with independent test code rather than
+// depending on bootstrapSystemLocked's OWN current ordering, so this
+// regression test stays meaningful regardless of whether #2188 has landed on
+// whatever branch it runs against.
+func bootstrapWithPreFixOrdering(t *testing.T, c *KeyorixCore) *models.User {
+	t.Helper()
+	ctx := context.Background()
+
+	user, err := c.CreateUser(ctx, &CreateUserRequest{
+		Username: "admin", Email: "admin@example.com", Password: "BootstrapPass123!", DisplayName: "Admin",
+	})
+	require.NoError(t, err)
+
+	seedDefaultCatalog(t, c)
+
+	adminRole, err := c.storage.GetRoleByName(ctx, "admin")
+	require.NoError(t, err)
+	require.NoError(t, c.storage.AssignRole(ctx, user.ID, adminRole.ID, Scope{}))
+	return user
+}
+
+func userHasRoleName(t *testing.T, c *KeyorixCore, userID uint, roleName string) bool {
+	t.Helper()
+	roles, err := c.storage.GetUserRoles(context.Background(), userID)
+	require.NoError(t, err)
+	for _, r := range roles {
+		if r.Name == roleName {
+			return true
+		}
+	}
+	return false
+}
+
+// countBaselineBackfillAuditEvents counts role.assigned RBAC audit entries
+// tagged reason=baseline_role_backfill for targetUserID — the marker
+// LogRoleAssignedBackfill writes (audit.go), distinguishing a startup repair
+// grant from an ordinary role.assigned event.
+func countBaselineBackfillAuditEvents(t *testing.T, c *KeyorixCore, targetUserID uint) int {
+	t.Helper()
+	entries, _, err := c.ListRBACAuditLogs(context.Background(), 1, 100)
+	require.NoError(t, err)
+	n := 0
+	for _, e := range entries {
+		if e.Action != EventRoleAssigned || e.TargetUserID == nil || *e.TargetUserID != targetUserID {
+			continue
+		}
+		if strings.Contains(e.Details, "reason="+reasonBaselineRoleBackfill) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestReconcileUserBaselineRoles_RepairsPreFixOrdering(t *testing.T) {
+	t.Parallel()
+	c := newPreFixOrderingCore(t)
+	admin := bootstrapWithPreFixOrdering(t, c)
+	ctx := context.Background()
+
+	// Precondition: the admin created under the old ordering does NOT hold
+	// system_viewer — the exact defect #2188's own regression test proved for
+	// a fresh bootstrap.
+	require.False(t, userHasRoleName(t, c, admin.ID, "system_viewer"))
+	require.True(t, userHasRoleName(t, c, admin.ID, "admin"), "sanity: admin role itself was granted")
+
+	// Restart #1: the reconcile repairs the existing install.
+	require.NoError(t, c.ReconcileUserBaselineRoles(ctx))
+	assert.True(t, userHasRoleName(t, c, admin.ID, "system_viewer"), "admin must now hold the baseline role")
+	assert.Equal(t, 1, countBaselineBackfillAuditEvents(t, c, admin.ID),
+		"exactly one audit event must record the backfill grant")
+
+	// The admin role itself, and every other grant, must be untouched.
+	assert.True(t, userHasRoleName(t, c, admin.ID, "admin"), "reconcile must never remove or change any other role")
+
+	// Restart #2: idempotent — nothing new is granted or logged.
+	require.NoError(t, c.ReconcileUserBaselineRoles(ctx))
+	assert.True(t, userHasRoleName(t, c, admin.ID, "system_viewer"))
+	assert.Equal(t, 1, countBaselineBackfillAuditEvents(t, c, admin.ID),
+		"a second restart must grant nothing new — no duplicate audit event")
+
+	roles, err := c.storage.GetUserRoles(ctx, admin.ID)
+	require.NoError(t, err)
+	systemViewerCount := 0
+	for _, r := range roles {
+		if r.Name == "system_viewer" {
+			systemViewerCount++
+		}
+	}
+	assert.Equal(t, 1, systemViewerCount, "no duplicate role assignment row after a second restart")
+}
+
+// TestReconcileUserBaselineRoles_SkipsUsersAlreadyCorrect proves the reconcile
+// is additive-only: a user who already holds system_viewer (created normally,
+// via the production CreateUser path, once the catalog already exists — the
+// #2188-fixed ordering) is left untouched by the reconcile — no duplicate
+// grant, no audit event.
+func TestReconcileUserBaselineRoles_SkipsUsersAlreadyCorrect(t *testing.T) {
+	t.Parallel()
+	c := newPreFixOrderingCore(t)
+	seedDefaultCatalog(t, c)
+	ctx := context.Background()
+
+	user, err := c.CreateUser(ctx, &CreateUserRequest{
+		Username: "normal", Email: "normal@example.com", Password: "BootstrapPass123!", DisplayName: "Normal",
+	})
+	require.NoError(t, err)
+	require.True(t, userHasRoleName(t, c, user.ID, "system_viewer"), "sanity: CreateUser's own auto-assign already granted it")
+
+	require.NoError(t, c.ReconcileUserBaselineRoles(ctx))
+
+	assert.Equal(t, 0, countBaselineBackfillAuditEvents(t, c, user.ID), "a user who already holds the role must not be touched")
+}
+
+func TestReconcileUserBaselineRoles_NoopOnFreshInstall(t *testing.T) {
+	t.Parallel()
+	c := newPreFixOrderingCore(t)
+	// Empty catalog (pre-bootstrap): system_viewer does not exist yet, so
+	// reconcile must do nothing — first-boot seeding (as fixed by #2188) owns
+	// this case.
+	require.NoError(t, c.ReconcileUserBaselineRoles(context.Background()))
+}
+
+// TestReconcileUserBaselineRoles_RepairsPreFixOrdering_Postgres mirrors the
+// SQLite case against a real, isolated PostgreSQL schema, migrated exactly as
+// production does. Skips (does not fail) when KEYORIX_TEST_PG_DSN is unset.
+func TestReconcileUserBaselineRoles_RepairsPreFixOrdering_Postgres(t *testing.T) {
+	base := pgTestDSN(t)
+	dsn := pgIsolatedSchemaDSN(t, base)
+	db := pgOpen(t, dsn)
+	require.NoError(t, kxstorage.MigrateExisting(db))
+	require.NoError(t, i18n.Initialize(&config.Config{
+		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
+	}))
+
+	c := NewKeyorixCore(store.NewLocalStorage(db))
+	admin := bootstrapWithPreFixOrdering(t, c)
+	ctx := context.Background()
+
+	require.False(t, userHasRoleName(t, c, admin.ID, "system_viewer"))
+
+	require.NoError(t, c.ReconcileUserBaselineRoles(ctx))
+	assert.True(t, userHasRoleName(t, c, admin.ID, "system_viewer"))
+	assert.Equal(t, 1, countBaselineBackfillAuditEvents(t, c, admin.ID))
+
+	require.NoError(t, c.ReconcileUserBaselineRoles(ctx))
+	assert.Equal(t, 1, countBaselineBackfillAuditEvents(t, c, admin.ID), "second restart on Postgres grants nothing new")
+}

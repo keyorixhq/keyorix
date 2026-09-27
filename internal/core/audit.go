@@ -61,6 +61,15 @@ var rbacAuditEventTypes = []string{
 // there is no reason to wait.
 const reasonBuiltinRoleTarget = "builtin_role_target"
 
+// reasonBaselineRoleBackfill is the reason= token for a role.assigned event
+// issued by ReconcileUserBaselineRoles (user_baseline_role_reconcile.go) — the
+// startup sweep that grants system_viewer to any user missing it, repairing
+// an install bootstrapped before #2188 fixed the seeding-order bug that made
+// every fresh install (any backend) miss the grant on its first user. Same
+// free-text-token-in-Description convention as reasonBuiltinRoleTarget
+// (ADR-082 §H), paired with the structured BaselineRoleBackfill field below.
+const reasonBaselineRoleBackfill = "baseline_role_backfill"
+
 // rbacAuditDetail is the structured payload stored in an RBAC event's Diff field,
 // carrying the target/role/scope that the generic AuditEvent row cannot.
 type rbacAuditDetail struct {
@@ -72,28 +81,46 @@ type rbacAuditDetail struct {
 	// (IsBuiltinRole) — #1500. Set only by logPermissionChange today; see
 	// reasonBuiltinRoleTarget above for the parallel Description token.
 	BuiltinRoleTarget bool `json:"builtin_role_target,omitempty"`
-	ProjectID         uint `json:"project_id,omitempty"`
-	EnvironmentID     uint `json:"environment_id,omitempty"`
+	// BaselineRoleBackfill is true when this grant was issued by the startup
+	// baseline-role reconcile rather than an ordinary role-assignment path —
+	// see reasonBaselineRoleBackfill above.
+	BaselineRoleBackfill bool `json:"baseline_role_backfill,omitempty"`
+	ProjectID            uint `json:"project_id,omitempty"`
+	EnvironmentID        uint `json:"environment_id,omitempty"`
 }
 
 // LogRoleAssigned / LogRoleRemoved record an RBAC change. actorID is the user who
 // made the change (0 = no authenticated principal, e.g. a local CLI invocation);
 // the target/role/scope are captured in the event's structured diff.
 func (c *KeyorixCore) LogRoleAssigned(ctx context.Context, actorID, targetUserID, roleID uint, scope Scope) {
-	c.logRoleChange(ctx, EventRoleAssigned, "assigned to", actorID, targetUserID, roleID, scope)
+	c.logRoleChange(ctx, EventRoleAssigned, "assigned to", actorID, targetUserID, roleID, scope, false)
 }
 
 func (c *KeyorixCore) LogRoleRemoved(ctx context.Context, actorID, targetUserID, roleID uint, scope Scope) {
-	c.logRoleChange(ctx, EventRoleRemoved, "removed from", actorID, targetUserID, roleID, scope)
+	c.logRoleChange(ctx, EventRoleRemoved, "removed from", actorID, targetUserID, roleID, scope, false)
 }
 
-func (c *KeyorixCore) logRoleChange(ctx context.Context, eventType, verb string, actorID, targetUserID, roleID uint, scope Scope) {
+// LogRoleAssignedBackfill records a role grant issued by the startup baseline-
+// role reconcile (ReconcileUserBaselineRoles) — same event type and shape as
+// LogRoleAssigned, tagged reason=baseline_role_backfill (Description) and
+// BaselineRoleBackfill=true (structured Diff) so an operator reading the audit
+// trail can tell "the system repaired this on startup" apart from an ordinary
+// role.assigned grant.
+func (c *KeyorixCore) LogRoleAssignedBackfill(ctx context.Context, actorID, targetUserID, roleID uint, scope Scope) {
+	c.logRoleChange(ctx, EventRoleAssigned, "assigned to", actorID, targetUserID, roleID, scope, true)
+}
+
+func (c *KeyorixCore) logRoleChange(ctx context.Context, eventType, verb string, actorID, targetUserID, roleID uint, scope Scope, baselineBackfill bool) {
 	desc := fmt.Sprintf("role %d %s user %d", roleID, verb, targetUserID)
+	if baselineBackfill {
+		desc = fmt.Sprintf("%s reason=%s", desc, reasonBaselineRoleBackfill)
+	}
 	c.writeRBACAudit(ctx, eventType, desc, actorID, scope, rbacAuditDetail{
-		TargetUserID:  targetUserID,
-		RoleID:        roleID,
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
+		TargetUserID:         targetUserID,
+		RoleID:               roleID,
+		BaselineRoleBackfill: baselineBackfill,
+		ProjectID:            scope.ProjectID,
+		EnvironmentID:        scope.EnvironmentID,
 	})
 }
 
