@@ -1,4 +1,4 @@
-//go:build !noaws && !noazure && !nogcp
+//go:build !noaws && !noazure && !nogcp && !nok8s
 
 package dynamic
 

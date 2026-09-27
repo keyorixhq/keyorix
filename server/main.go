@@ -2259,9 +2259,13 @@ func DefaultIntegrations(cfg *config.Config, coreService *core.KeyorixCore) erro
 		return err
 	}
 	wireHumanSSO(cfg, coreService)
-	wireBackendRotation(cfg, coreService)
+	if err := wireBackendRotation(cfg, coreService); err != nil {
+		return err
+	}
 	wireDynamicSecrets(cfg, coreService)
-	wireConnect(cfg, coreService)
+	if err := wireConnect(cfg, coreService); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -2273,11 +2277,36 @@ func DefaultIntegrations(cfg *config.Config, coreService *core.KeyorixCore) erro
 // this wiring's pre-ADR-109 behavior. A KNOWN cloud backend type (aws-iam,
 // gcp-service-account, azure-app) whose implementation this server binary
 // was compiled without (a no<provider> build tag) is a different condition —
-// that fails startup outright (ADR-109 step 6): never fail open on a config
-// the operator explicitly enabled.
-func wireBackendRotation(cfg *config.Config, coreService *core.KeyorixCore) {
+// that fails startup outright (ADR-109 step 6, S2): never fail open on a
+// config the operator explicitly enabled. Returns an error (rather than
+// calling log.Fatalf directly, like most of this file's other boot-time
+// checks) precisely so that failure is a plain Go value
+// TestWireBackendRotation_UnbuiltCloudBackend_FailsClosed (and any other
+// caller) can assert on directly, instead of a call that would kill the
+// test process.
+// cloudExclusionTag names the build tag (ADR-109 step 6) that excludes
+// backendType's implementation, for a clear boot-failure message. Only called
+// once LookupCloudExecutor/NewCloudConnector/newCloudKMSProvider has already
+// reported ok=false for backendType, so the default (empty) branch is
+// unreached in practice — kept as "a no<provider> build tag" rather than a
+// panic so an unanticipated future cloud type still gets a comprehensible,
+// if generic, message instead of crashing the error path itself.
+func cloudExclusionTag(backendType string) string {
+	switch backendType {
+	case "aws-iam", "aws-secrets-manager", "aws-kms", "aws-sts":
+		return "noaws"
+	case "azure-app", "azure-key-vault", "azure-kms", "azure":
+		return "noazure"
+	case "gcp-service-account", "gcp-secret-manager", "gcp-kms", "gcp":
+		return "nogcp"
+	default:
+		return "a no<provider>"
+	}
+}
+
+func wireBackendRotation(cfg *config.Config, coreService *core.KeyorixCore) error {
 	if len(cfg.AutoRotation.Backends) == 0 {
-		return
+		return nil
 	}
 	var execs []rotation.Executor
 	for _, b := range cfg.AutoRotation.Backends {
@@ -2342,7 +2371,7 @@ func wireBackendRotation(cfg *config.Config, coreService *core.KeyorixCore) {
 				Name: b.Name, Region: b.Region, AllowedRefs: b.AllowedRefs,
 			})
 			if !ok {
-				log.Fatalf("Rotation backend %q has type %q, which this server binary was not built with (excluded by a no<provider> build tag) — rebuild without that tag, or remove this backend", b.Name, b.Type)
+				return fmt.Errorf("rotation backend %q has type %q, which this server binary was not built with (excluded by the %s build tag) — rebuild without that tag, or remove this backend", b.Name, b.Type, cloudExclusionTag(b.Type))
 			}
 			execs = append(execs, exec)
 		default:
@@ -2353,6 +2382,7 @@ func wireBackendRotation(cfg *config.Config, coreService *core.KeyorixCore) {
 		coreService.SetRotationManager(rotation.NewManager(execs))
 		log.Printf("Backend rotation executors enabled (%d backend(s))", len(execs))
 	}
+	return nil
 }
 
 // wireCheckpointNotary wires external-notary anchoring of audit checkpoints when
@@ -2463,10 +2493,17 @@ func wireDynamicSecrets(cfg *config.Config, coreService *core.KeyorixCore) {
 // coreService.Storage() for the boot-time ownership resolution and drift
 // check below; core.NewKeyorixCore(store) always sets storage before
 // DefaultIntegrations is ever called, so it is available here unconditionally.
-func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) {
+// Returns an error (rather than calling log.Fatalf directly) for every
+// boot-fatal condition below — ADR-109 step 6, S2 — so each one is a plain Go
+// value a test can assert on directly (see connector_type_registry_test.go's
+// pre-existing TestInitializeCoreService_* tests, which already rely on this
+// same initializeCoreService(cfg) → error contract for the connect.Validate()
+// -side checks; this extends it to the no<x>-build-tag-exclusion check, which
+// cfg.Validate() cannot know about).
+func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) error {
 	cc := cfg.Connect
 	if !cc.Enabled || len(cc.Connectors) == 0 {
-		return
+		return nil
 	}
 	// ADR-082 §C: cfg.Validate() already refused to boot with a missing/invalid
 	// connector scope — unconditionally, no deployment-wide escape hatch (amended:
@@ -2494,7 +2531,7 @@ func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) {
 			}
 			conn, ok := connect.NewCloudConnector(cn.Type, connect.ConnectorParams{Name: cn.Name, Region: cn.Region, AccountID: cn.AccountID, AllowedRefs: cn.AllowedRefs})
 			if !ok {
-				log.Fatalf("Keyorix Connect: connector %q has type %q, which this server binary was not built with (excluded by the noaws build tag) — rebuild without -tags noaws, or remove this connector", cn.Name, cn.Type)
+				return fmt.Errorf("keyorix connect: connector %q has type %q, which this server binary was not built with (excluded by the noaws build tag) — rebuild without -tags noaws, or remove this connector", cn.Name, cn.Type)
 			}
 			connectors = append(connectors, conn)
 		case "gcp-secret-manager":
@@ -2509,17 +2546,17 @@ func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) {
 			// unpinned connector boot with only a log warning, which is exactly the
 			// confused-deputy gap this field now closes.
 			if cn.ProjectID == "" {
-				log.Fatalf("Keyorix Connect: gcp-secret-manager connector %q has no project_id — this should have been caught by cfg.Validate()", cn.Name)
+				return fmt.Errorf("keyorix connect: gcp-secret-manager connector %q has no project_id — this should have been caught by cfg.Validate()", cn.Name)
 			}
 			conn, ok := connect.NewCloudConnector(cn.Type, connect.ConnectorParams{Name: cn.Name, ProjectID: cn.ProjectID, AllowedRefs: cn.AllowedRefs})
 			if !ok {
-				log.Fatalf("Keyorix Connect: connector %q has type %q, which this server binary was not built with (excluded by the nogcp build tag) — rebuild without -tags nogcp, or remove this connector", cn.Name, cn.Type)
+				return fmt.Errorf("keyorix connect: connector %q has type %q, which this server binary was not built with (excluded by the nogcp build tag) — rebuild without -tags nogcp, or remove this connector", cn.Name, cn.Type)
 			}
 			connectors = append(connectors, conn)
 		case "azure-key-vault":
 			conn, ok := connect.NewCloudConnector(cn.Type, connect.ConnectorParams{Name: cn.Name, Address: cn.Address, AllowedRefs: cn.AllowedRefs})
 			if !ok {
-				log.Fatalf("Keyorix Connect: connector %q has type %q, which this server binary was not built with (excluded by the noazure build tag) — rebuild without -tags noazure, or remove this connector", cn.Name, cn.Type)
+				return fmt.Errorf("keyorix connect: connector %q has type %q, which this server binary was not built with (excluded by the noazure build tag) — rebuild without -tags noazure, or remove this connector", cn.Name, cn.Type)
 			}
 			connectors = append(connectors, conn)
 		case "vault":
@@ -2552,11 +2589,11 @@ func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) {
 			// ADR-082 closed for scope. See
 			// server/connector_type_registry_test.go for the test keeping this
 			// switch's case set and connect.KnownTypes from drifting apart.
-			log.Fatalf("Keyorix Connect: connector %q has unrecognized type %q (must be one of %s) — this should have been caught by cfg.Validate()", cn.Name, cn.Type, strings.Join(connect.KnownTypes, ", "))
+			return fmt.Errorf("keyorix connect: connector %q has unrecognized type %q (must be one of %s) — this should have been caught by cfg.Validate()", cn.Name, cn.Type, strings.Join(connect.KnownTypes, ", "))
 		}
 	}
 	if len(connectors) == 0 {
-		return
+		return nil
 	}
 	mgr := connect.NewManager(connectors)
 
@@ -2566,7 +2603,7 @@ func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) {
 	// entirely rather than leaving Connect half-wired.
 	ownership, err := resolveConnectorOwnership(context.Background(), coreService.Storage(), cc.Connectors)
 	if err != nil {
-		log.Fatalf("Keyorix Connect: %v", err)
+		return fmt.Errorf("keyorix connect: %w", err)
 	}
 
 	// Defense-in-depth: ownership was resolved from the FULL cc.Connectors
@@ -2582,7 +2619,7 @@ func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) {
 	// removed along with the flag): every divergence between the two sets is
 	// reported.
 	if mismatch := connectOwnershipKeySetMismatch(mgr.Names(), ownership); len(mismatch) > 0 {
-		log.Fatalf("Keyorix Connect: connector(s) present in config but whose manager/ownership resolution disagree on which connectors exist — this must never happen in a correctly-booted server; investigate before proceeding (ADR-082): %s", strings.Join(mismatch, ", "))
+		return fmt.Errorf("keyorix connect: connector(s) present in config but whose manager/ownership resolution disagree on which connectors exist — this must never happen in a correctly-booted server; investigate before proceeding (ADR-082): %s", strings.Join(mismatch, ", "))
 	}
 
 	coreService.SetConnectManager(mgr)
@@ -2600,6 +2637,7 @@ func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) {
 	// a dead ref-grant or an orphaned binding both already fail closed/are
 	// simply unused, no over-permission — so this warns, never fails boot.
 	warnConnectConfigDrift(context.Background(), coreService.Storage(), ownership)
+	return nil
 }
 
 // ssoCompleteURL derives the SPA completion URL (<redirect origin>/auth/sso/complete)

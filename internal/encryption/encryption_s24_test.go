@@ -584,21 +584,11 @@ func TestNewKeyProviderFromConfig_TPM(t *testing.T) {
 	assert.NotNil(t, p)
 }
 
-// ─── NewKeyProviderFromConfig: azure-kms with encryption context → error ──────
-
-func TestNewKeyProviderFromConfig_AzureKMS_WithEncryptionContext_Error(t *testing.T) {
-	cfg := &config.EncryptionConfig{
-		KeyProvider: config.KeyProviderConfig{
-			Type:                 "azure-kms",
-			KMSKeyID:             "https://vault.example.com/keys/mykey",
-			KMSEncryptionContext: map[string]string{"env": "prod"},
-		},
-	}
-	_, err := NewKeyProviderFromConfig(cfg, t.TempDir(), "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "azure-kms")
-	assert.Contains(t, err.Error(), "kms_encryption_context")
-}
+// TestNewKeyProviderFromConfig_AzureKMS_WithEncryptionContext_Error moved to
+// azurekms_encryption_context_test.go (//go:build !noazure, ADR-109 step 6):
+// it needs the real azure-kms registration to reach the RSA-OAEP/AAD check
+// inside it, rather than failing earlier on "not available in this build" in
+// a noazure build.
 
 // ─── NewKeyProviderFromConfig: unknown type → error ───────────────────────────
 
