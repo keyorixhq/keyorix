@@ -128,6 +128,24 @@ var operationOverrides = map[string]overrideEntry{
 	"REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide": {StatusFuzzed, "opCatalog[\"DecideAccessReviewCampaignItem\"] — batch 13"},
 	"REST POST /api/v1/projects/{id}/access-review/attest":                                       {StatusFuzzed, "opCatalog[\"AttestProjectAccessReview\"] — batch 13"},
 	"REST POST /api/v1/projects/{id}/access-review/revoke":                                       {StatusFuzzed, "opCatalog[\"RevokeProjectAccessReview\"] — batch 13"},
+
+	"REST POST /api/v1/projects/{id}/machine-identities":                                                 {StatusFuzzed, "opCatalog[\"CreateMachineIdentity\"] — batch 14"},
+	"REST POST /api/v1/projects/{id}/machine-identities/migrate-from-user":                               {StatusFuzzed, "opCatalog[\"MigrateUserToMachine\"] — batch 14"},
+	"REST PUT /api/v1/projects/{id}/machine-identities/{machineId}":                                      {StatusFuzzed, "opCatalog[\"TransitionMachineIdentity\"] — batch 14"},
+	"REST POST /api/v1/projects/{id}/machine-identities/{machineId}/tokens":                              {StatusFuzzed, "opCatalog[\"IssueMachineToken\"] — batch 14"},
+	"REST DELETE /api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}":                  {StatusFuzzed, "opCatalog[\"RevokeMachineToken\"] — batch 14"},
+	"REST PATCH /api/v1/projects/{id}/machine-identities/{machineId}/classification":                     {StatusFuzzed, "opCatalog[\"ClassifyMachineIdentity\"] — batch 14"},
+	"REST PATCH /api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}/classification":    {StatusFuzzed, "opCatalog[\"ClassifyMachineToken\"] — batch 14"},
+	"REST POST /api/v1/projects/{id}/machine-identities/{machineId}/roles":                               {StatusFuzzed, "opCatalog[\"GrantMachineRole\"] — batch 14"},
+	"REST DELETE /api/v1/projects/{id}/machine-identities/{machineId}/roles/{roleId}":                    {StatusFuzzed, "opCatalog[\"RemoveMachineRole\"] — batch 14"},
+	"REST POST /api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings":                       {StatusFuzzed, "opCatalog[\"CreateOIDCBinding\"] — batch 14"},
+	"REST DELETE /api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings/{bindingId}":         {StatusFuzzed, "opCatalog[\"DeleteOIDCBinding\"] — batch 14"},
+	"GRPC keyorix.v1.MachineIdentityService.CreateMachineIdentity":                                       {StatusFuzzed, "opCatalog[\"GRPCCreateMachineIdentity\"] — batch 14"},
+	"GRPC keyorix.v1.MachineIdentityService.TransitionMachineIdentity":                                   {StatusFuzzed, "opCatalog[\"GRPCTransitionMachineIdentity\"] — batch 14"},
+	"GRPC keyorix.v1.MachineIdentityService.ClassifyMachineIdentity":                                     {StatusFuzzed, "opCatalog[\"GRPCClassifyMachineIdentity\"] — batch 14"},
+	"GRPC keyorix.v1.MachineIdentityService.IssueMachineToken":                                           {StatusFuzzed, "opCatalog[\"GRPCIssueMachineToken\"] — batch 14"},
+	"GRPC keyorix.v1.MachineIdentityService.RevokeMachineToken":                                          {StatusFuzzed, "opCatalog[\"GRPCRevokeMachineToken\"] — batch 14"},
+	"GRPC keyorix.v1.MachineIdentityService.ClassifyMachineToken":                                        {StatusFuzzed, "opCatalog[\"GRPCClassifyMachineToken\"] — batch 14"},
 }
 
 func statusOf(key string) overrideEntry {

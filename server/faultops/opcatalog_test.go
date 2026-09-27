@@ -307,6 +307,57 @@ func accessReviewItemIDForPrincipal(ctx context.Context, w *faultWorld, projectI
 	return 0, fmt.Errorf("no access-review item found for principal %d (body=%s)", principalID, body)
 }
 
+// createMachineIdentityForFuzz creates a project-scoped machine identity via
+// the real REST endpoint and returns its ID. New identities are created
+// active by construction (core.CreateMachineIdentity sets State: MachineActive
+// directly — there is no separate "pending" initial state despite
+// machineTransitions listing one).
+func createMachineIdentityForFuzz(ctx context.Context, w *faultWorld, projectID uint) (uint, error) {
+	st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/%d/machine-identities", projectID), map[string]any{
+		"name": "fuzz-machine", "identity_type": "service",
+	})
+	if err != nil {
+		return 0, err
+	}
+	if st/100 != 2 {
+		return 0, fmt.Errorf("setup CreateMachineIdentity: HTTP %d: %s", st, body)
+	}
+	var decoded struct {
+		Data struct {
+			MachineIdentity struct {
+				ID uint `json:"id"`
+			} `json:"machine_identity"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.MachineIdentity.ID == 0 {
+		return 0, fmt.Errorf("decoding CreateMachineIdentity response: %w (body=%s)", err, body)
+	}
+	return decoded.Data.MachineIdentity.ID, nil
+}
+
+// issueMachineTokenForFuzz issues a token for machineID and returns its
+// credential ID — setup for RevokeMachineToken/ClassifyMachineToken.
+func issueMachineTokenForFuzz(ctx context.Context, w *faultWorld, projectID, machineID uint) (uint, error) {
+	st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/%d/machine-identities/%d/tokens", projectID, machineID), map[string]any{
+		"name": "fuzz-token", "expires_in_days": 90,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if st/100 != 2 {
+		return 0, fmt.Errorf("setup IssueMachineToken: HTTP %d: %s", st, body)
+	}
+	var decoded struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+		return 0, fmt.Errorf("decoding IssueMachineToken response: %w (body=%s)", err, body)
+	}
+	return decoded.Data.ID, nil
+}
+
 // opCatalog is the closed set of operations FuzzStorageFaultOperations can pick
 // from — see the STEP 0 report for the running Fuzzed/Pending/Excluded count
 // across the full 309-operation inventory; this is intentionally a starting
@@ -1449,6 +1500,354 @@ var opCatalog = []operation{
 				return opResult{}, err
 			}
 			return httpResult(st, body), nil
+		},
+	},
+	{
+		// machine_identities.go's CreateMachineIdentity — batch 14.
+		Key: "REST POST /api/v1/projects/{id}/machine-identities",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/machine-identities", map[string]any{
+				"name": "fuzz-machine-create", "identity_type": "service",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// machine_identities.go's MigrateUserToMachine (ADR-023) — batch 14.
+		Key: "REST POST /api/v1/projects/{id}/machine-identities/migrate-from-user",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createUserForFuzz(ctx, w, "fuzz-b14-migrate-user")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/machine-identities/migrate-from-user", map[string]any{
+				"username": "fuzz-b14-migrate-user", "identity_type": "service", "name": "fuzz-migrated",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// machine_identities.go's TransitionMachineIdentity: a fresh identity
+		// is created ACTIVE, so the only legal first move is suspend or
+		// revoke (machineTransitions), not "activate" — batch 14.
+		Key: "REST PUT /api/v1/projects/{id}/machine-identities/{machineId}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createMachineIdentityForFuzz(ctx, w, 1)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			machineID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/projects/1/machine-identities/%d", machineID), map[string]any{
+				"action": "suspend",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// machine_identities.go's IssueMachineToken — batch 14.
+		Key: "REST POST /api/v1/projects/{id}/machine-identities/{machineId}/tokens",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createMachineIdentityForFuzz(ctx, w, 1)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			machineID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/1/machine-identities/%d/tokens", machineID), map[string]any{
+				"name": "fuzz-token-issue", "expires_in_days": 90,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// machine_identities.go's RevokeMachineToken — batch 14.
+		Key: "REST DELETE /api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			machineID, err := createMachineIdentityForFuzz(ctx, w, 1)
+			if err != nil {
+				return nil, err
+			}
+			tokenID, err := issueMachineTokenForFuzz(ctx, w, 1, machineID)
+			if err != nil {
+				return nil, err
+			}
+			return [2]uint{machineID, tokenID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/projects/1/machine-identities/%d/tokens/%d", ids[0], ids[1]), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// machine_identities.go's ClassifyMachineIdentity — batch 14.
+		Key: "REST PATCH /api/v1/projects/{id}/machine-identities/{machineId}/classification",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createMachineIdentityForFuzz(ctx, w, 1)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			machineID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPatch, fmt.Sprintf("/api/v1/projects/1/machine-identities/%d/classification", machineID), map[string]any{
+				"classification": "internal",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// machine_identities.go's ClassifyMachineToken — batch 14.
+		Key: "REST PATCH /api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}/classification",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			machineID, err := createMachineIdentityForFuzz(ctx, w, 1)
+			if err != nil {
+				return nil, err
+			}
+			tokenID, err := issueMachineTokenForFuzz(ctx, w, 1, machineID)
+			if err != nil {
+				return nil, err
+			}
+			return [2]uint{machineID, tokenID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPatch, fmt.Sprintf("/api/v1/projects/1/machine-identities/%d/tokens/%d/classification", ids[0], ids[1]), map[string]any{
+				"classification": "internal",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// machine_identities.go's GrantMachineRole — batch 14.
+		Key: "REST POST /api/v1/projects/{id}/machine-identities/{machineId}/roles",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			machineID, err := createMachineIdentityForFuzz(ctx, w, 1)
+			if err != nil {
+				return nil, err
+			}
+			roleID, err := createRoleForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			return [2]uint{machineID, roleID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/1/machine-identities/%d/roles", ids[0]), map[string]any{
+				"role_id": ids[1],
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// machine_identities.go's RemoveMachineRole — batch 14.
+		Key: "REST DELETE /api/v1/projects/{id}/machine-identities/{machineId}/roles/{roleId}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			machineID, err := createMachineIdentityForFuzz(ctx, w, 1)
+			if err != nil {
+				return nil, err
+			}
+			roleID, err := createRoleForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/1/machine-identities/%d/roles", machineID), map[string]any{
+				"role_id": roleID,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup GrantMachineRole: HTTP %d: %s", st, body)
+			}
+			return [2]uint{machineID, roleID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/projects/1/machine-identities/%d/roles/%d", ids[0], ids[1]), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// machine_identities.go's CreateOIDCBinding (ADR-031) — batch 14.
+		Key: "REST POST /api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createMachineIdentityForFuzz(ctx, w, 1)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			machineID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/1/machine-identities/%d/oidc-bindings", machineID), map[string]any{
+				"issuer": "https://fuzz.example/issuer", "subject": "fuzz-subject",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// machine_identities.go's DeleteOIDCBinding — batch 14.
+		Key: "REST DELETE /api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings/{bindingId}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			machineID, err := createMachineIdentityForFuzz(ctx, w, 1)
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/1/machine-identities/%d/oidc-bindings", machineID), map[string]any{
+				"issuer": "https://fuzz.example/issuer", "subject": "fuzz-subject-delete",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreateOIDCBinding: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					ID uint `json:"id"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateOIDCBinding response: %w (body=%s)", err, body)
+			}
+			return [2]uint{machineID, decoded.Data.ID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/projects/1/machine-identities/%d/oidc-bindings/%d", ids[0], ids[1]), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.MachineIdentityService.CreateMachineIdentity",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			_, err := pb.NewMachineIdentityServiceClient(w.grpcConn).CreateMachineIdentity(w.grpcCtx, &pb.CreateMachineIdentityRequest{
+				ProjectId: 1, Name: "fuzz-b14-machine-grpc-create", IdentityType: "service",
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.MachineIdentityService.TransitionMachineIdentity",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createMachineIdentityForFuzz(ctx, w, 1)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			machineID := state.(uint)
+			_, err := pb.NewMachineIdentityServiceClient(w.grpcConn).TransitionMachineIdentity(w.grpcCtx, &pb.TransitionMachineIdentityRequest{
+				ProjectId: 1, MachineId: uint32(machineID), Action: "suspend",
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.MachineIdentityService.ClassifyMachineIdentity",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createMachineIdentityForFuzz(ctx, w, 1)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			machineID := state.(uint)
+			_, err := pb.NewMachineIdentityServiceClient(w.grpcConn).ClassifyMachineIdentity(w.grpcCtx, &pb.ClassifyMachineIdentityRequest{
+				ProjectId: 1, MachineId: uint32(machineID), Classification: "internal",
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.MachineIdentityService.IssueMachineToken",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createMachineIdentityForFuzz(ctx, w, 1)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			machineID := state.(uint)
+			_, err := pb.NewMachineIdentityServiceClient(w.grpcConn).IssueMachineToken(w.grpcCtx, &pb.IssueMachineTokenRequest{
+				ProjectId: 1, MachineId: uint32(machineID), Name: "fuzz-b14-token-grpc", ExpiresInDays: 90,
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.MachineIdentityService.RevokeMachineToken",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			machineID, err := createMachineIdentityForFuzz(ctx, w, 1)
+			if err != nil {
+				return nil, err
+			}
+			tokenID, err := issueMachineTokenForFuzz(ctx, w, 1, machineID)
+			if err != nil {
+				return nil, err
+			}
+			return [2]uint{machineID, tokenID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			_, err := pb.NewMachineIdentityServiceClient(w.grpcConn).RevokeMachineToken(w.grpcCtx, &pb.RevokeMachineTokenRequest{
+				ProjectId: 1, MachineId: uint32(ids[0]), TokenId: uint32(ids[1]),
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.MachineIdentityService.ClassifyMachineToken",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			machineID, err := createMachineIdentityForFuzz(ctx, w, 1)
+			if err != nil {
+				return nil, err
+			}
+			tokenID, err := issueMachineTokenForFuzz(ctx, w, 1, machineID)
+			if err != nil {
+				return nil, err
+			}
+			return [2]uint{machineID, tokenID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			_, err := pb.NewMachineIdentityServiceClient(w.grpcConn).ClassifyMachineToken(w.grpcCtx, &pb.ClassifyMachineTokenRequest{
+				ProjectId: 1, MachineId: uint32(ids[0]), TokenId: uint32(ids[1]), Classification: "internal",
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
 		},
 	},
 }
