@@ -1,2 +1,2 @@
 go test fuzz v1
-[]byte("0!X80")
+[]byte("\x0f!X80")
