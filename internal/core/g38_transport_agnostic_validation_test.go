@@ -31,6 +31,10 @@ func newG38TestCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, db.AutoMigrate(
 		&models.Project{}, &models.Environment{}, &models.Group{}, &models.AuditEvent{},
 		&models.User{},
+		// RBAC tables: the admin-rank ceiling resolves the target's roles
+		// and, since it now fails closed, needs them to exist.
+		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
+		&models.UserGroup{}, &models.GroupRole{},
 	))
 	return NewKeyorixCore(store.NewLocalStorage(db)), db
 }

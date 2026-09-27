@@ -759,7 +759,8 @@ func (c *KeyorixCore) requireEqualOrGreaterAdminAuthority(ctx context.Context, a
 // failure caused by the backend being unable to answer the question at all
 // (a storage/role-resolution error), as opposed to a genuine ceiling
 // REFUSAL (the actor was asked and found wanting). requireAdminRankCeilingForTarget
-// treats the two very differently — see its own doc comment.
+// refuses both (fail closed); only the returned error differs, so a resolution
+// failure surfaces as a retryable server error rather than a 403.
 var errCeilingResolutionFailed = errors.New("ceiling resolution failed")
 
 func (c *KeyorixCore) requireAdminRankCeilingForTarget(ctx context.Context, actorID, targetID uint, action string) error {
@@ -771,24 +772,23 @@ func (c *KeyorixCore) requireAdminRankCeilingForTarget(ctx context.Context, acto
 		return nil
 	}
 	if errors.Is(err, errCeilingResolutionFailed) {
-		// The backend could not answer "what does the target hold" at all —
-		// confirmed reachable under storage.type: remote (RemoteStorage does
-		// not implement GetUserRoleScopes; ADR-083 confirms this backend is
-		// CLI-client-only, never a server, so this never fires on the
-		// primary HTTP/gRPC paths, which are always backed by real
-		// local/Postgres storage). Do NOT block here: the underlying
-		// storage.UpdateUser/DeleteUser/etc. call this precedes will itself
-		// fail or succeed on RemoteStorage's own terms momentarily (often
-		// with a more specific, already-tested error/friendly-message path),
-		// and for RemoteStorage specifically the REAL enforcement point is
-		// server-side, on the /system proxy route RemoteStorage's own
-		// methods call over HTTP (already ceiling-gated for the routes this
-		// program's sibling fixes touched) — this core-layer check was never
-		// the only backstop for that path. Blocking here would silently
-		// break every user-mutation command under storage.type: remote
-		// (client mode), not just privileged targets, since NO target's
-		// authority can be resolved through this backend at all.
-		return nil
+		// FAIL CLOSED. This branch used to return nil ("allow") on the grounds
+		// that only storage.type: remote (RemoteStorage, CLI client mode) could
+		// ever reach it. RemoteStorage was deleted in #2162 (ADR-108), so the
+		// only way here now is a real storage error on the primary backend (a
+		// DB blip, a timeout, a bug in a role-resolution read) -- exactly the
+		// window in which we cannot verify the actor outranks the target.
+		// Refuse, and return an error that is NOT ErrInsufficientAdminAuthority:
+		// the caller didn't lack authority, we couldn't check it, so this
+		// surfaces as a retryable server error, not a 403. It is logged rather
+		// than written as an audit event: like any other storage error it is an
+		// infrastructure failure, not an authorization decision, and an error
+		// path must leave no persisted state behind (FuzzStorageFaultOperations
+		// oracle (a)). Found by that fuzzer (REPLAY_HEX=1829d438: gRPC
+		// DeleteUser, fault on GetUserGroupRoleIDsAt).
+		log.Printf("Keyorix: refusing to %s user %d for actor %d: could not verify admin authority: %v",
+			action, targetID, actorID, err)
+		return fmt.Errorf("could not verify admin authority to %s user %d: %w", action, targetID, err)
 	}
 	aid := actorID
 	c.writeAuditEventFailed(ctx, EventAdminRankCeilingRefused, &aid, nil, "",
