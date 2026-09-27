@@ -40,6 +40,29 @@ import (
 // tell its own injected crash apart from a genuine panic in the code under test.
 type rotationCrash struct{ label string }
 
+// tmpDirEnv creates a fresh, per-call temp dir via os.MkdirTemp("", pattern),
+// which resolves through os.TempDir() and therefore always honors $TMPDIR.
+// This is used instead of testing.T.TempDir() for the crash-consistency
+// harnesses specifically because testing.go's makeTempDir calls
+// os.MkdirTemp(os.Getenv("GOTMPDIR"), pattern) — it prefers $GOTMPDIR over
+// $TMPDIR whenever GOTMPDIR is set. A rig that sets GOTMPDIR for its own
+// build-cache reasons would silently override an operator's intended
+// `TMPDIR=/dev/shm` for these targets' fsync-heavy temp dirs, and the
+// override happens with no error or warning — go on quietly using the slow
+// path. tmpDirEnv bypasses that by never consulting GOTMPDIR. Real fsync
+// calls inside the code under test are untouched; only the directory's
+// location changes. Registers cleanup so both a passing and a failing
+// (panicking) run remove the directory, matching t.TempDir()'s behavior.
+func tmpDirEnv(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "keyorix-crash-consistency-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 // kekRotationGuardDeadline is a HANG backstop, not the shared fuzzutil 3s amplification
 // guard. A legitimate iteration seeds a KeyManager (real 600k-iteration PBKDF2), rotates the
 // KEK passphrase (more PBKDF2), then recovers by trying passphrases against the on-disk files
@@ -79,8 +102,9 @@ func FuzzKEKRotationCrashConsistency(f *testing.F) {
 		}
 		target := crashLabels[int(crashSel)%len(crashLabels)]
 
-		// t.TempDir() must run on the test goroutine, not inside Guard's goroutine.
-		dir := t.TempDir()
+		// tmpDirEnv (not t.TempDir()) must run on the test goroutine, not inside
+		// Guard's goroutine.
+		dir := tmpDirEnv(t)
 
 		// Local hang backstop with a generous deadline (see kekRotationGuardDeadline) instead
 		// of fuzzutil.Guard's shared 3s, which is tuned for fast file/parse targets. An invariant

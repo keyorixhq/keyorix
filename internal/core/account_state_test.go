@@ -106,8 +106,17 @@ func TestAccountLoginBlocked_FailsClosedOnBlankAndWhitespace(t *testing.T) {
 // silent" requirement: hitting the fail-closed default increments the
 // unrecognized-state counter (the routine Suspended/Deprovisioned path must
 // NOT increment it -- that's expected, not anomalous).
+//
+// Deliberately NOT t.Parallel(): accountStateUnrecognizedTotal is a package-
+// global counter, and this test asserts exact deltas on it. Sibling tests in
+// this file (TestAccountState_UnrecognizedValueFailsClosed,
+// TestAccountLoginBlocked_FailsClosedOnBlankAndWhitespace) also drive garbage/
+// blank states through the same counter and DO run in parallel with each
+// other -- if this test parallelized too, their increments could land between
+// this test's "before" read and its delta assertions, flaking the count.
+// Running serially guarantees this test completes before any t.Parallel()
+// test in the package starts.
 func TestAccountLoginBlocked_MetricAndLogOnFailClosed(t *testing.T) {
-	t.Parallel()
 	before := testutil.ToFloat64(accountStateUnrecognizedTotal)
 
 	assert.True(t, AccountLoginBlocked(1, AccountSuspended))
