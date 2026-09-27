@@ -417,6 +417,11 @@ func createEnvironmentForFuzz(ctx context.Context, w *faultWorld, projectID uint
 // one of these users after creating it.
 const fuzzUserPassword = "Xk7#Qm2$Lp9@Vn4!"
 
+// faultAdminPassword is the bootstrapped admin's real password (world_test.go's
+// newFaultWorld) — needed by any operation that re-verifies the caller's
+// current password (ChangePassword, UpdateProfile).
+const faultAdminPassword = "FaultFuzzAdmin123!"
+
 // loginForFuzz logs in as username/password via the real /auth/login endpoint
 // and returns the resulting session token (the raw kx_session cookie value) —
 // setup for operations whose real caller must be a specific non-admin user
@@ -3996,6 +4001,187 @@ var opCatalog = []operation{
 			st, body, err := httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/users/%d/roles", ids[0]), map[string]any{
 				"role_ids": []uint{ids[1]}, "project_id": 1, "environment_id": 0,
 			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// auth.go's Login — batch 20.
+		Key: "REST POST /auth/login",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/auth/login", map[string]any{
+				"username": "faultadmin", "password": faultAdminPassword,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// auth.go's Logout — batch 20.
+		Key: "REST POST /auth/logout",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/auth/logout", nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// auth.go's RefreshToken — batch 20.
+		Key: "REST POST /auth/refresh",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/auth/refresh", nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// auth.go's ChangePassword — batch 20.
+		Key: "REST POST /api/v1/auth/change-password",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/auth/change-password", map[string]any{
+				"current_password": faultAdminPassword, "new_password": "FuzzB20NewPassw0rd!",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// auth.go's UpdateProfile — batch 20.
+		Key: "REST PUT /api/v1/auth/profile",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPut, "/api/v1/auth/profile", map[string]any{
+				"display_name": "Fuzz Admin Updated", "email": "faultadmin@example.com", "current_password": faultAdminPassword,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// auth.go's RevokeSession (self-service) — batch 20.
+		Key: "REST DELETE /api/v1/auth/sessions/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodGet, "/api/v1/auth/sessions", nil)
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup ListSessions: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data []struct {
+					ID uint `json:"id"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || len(decoded.Data) == 0 {
+				return nil, fmt.Errorf("decoding ListSessions response: %w (body=%s)", err, body)
+			}
+			return decoded.Data[0].ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/auth/sessions/%d", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// sessions_remote.go's DeleteSessionByID (RemoteStorage server-side
+		// counterpart, admin-scoped, delete-by-numeric-ID) — batch 20.
+		Key: "REST DELETE /api/v1/sessions/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodGet, fmt.Sprintf("/api/v1/sessions/%s", w.adminToken), nil)
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup GetSessionByToken: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					ID uint `json:"ID"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding GetSessionByToken response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/sessions/%d", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// pat_handler.go's CreatePAT — batch 20.
+		Key: "REST POST /api/v1/auth/tokens",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/auth/tokens", map[string]any{
+				"name": "fuzz-b20-pat-create",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// pat_handler.go's RevokePAT — batch 20.
+		Key: "REST DELETE /api/v1/auth/tokens/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/auth/tokens", map[string]any{
+				"name": "fuzz-b20-pat-delete",
+			})
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup CreatePAT: HTTP %d: %s", st, body)
+			}
+			var decoded struct {
+				Data struct {
+					PAT struct {
+						ID uint `json:"id"`
+					} `json:"pat"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.PAT.ID == 0 {
+				return nil, fmt.Errorf("decoding CreatePAT response: %w (body=%s)", err, body)
+			}
+			return decoded.Data.PAT.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			id := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/auth/tokens/%d", id), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// pat_expiry_handler.go's BulkRevokeExpiredPATs: zero expired tokens
+		// is a valid, successful no-op — batch 20.
+		Key: "REST DELETE /api/v1/auth/tokens/expired",
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodDelete, "/api/v1/auth/tokens/expired", nil)
 			if err != nil {
 				return opResult{}, err
 			}
