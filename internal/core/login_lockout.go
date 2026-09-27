@@ -11,7 +11,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
@@ -63,25 +62,6 @@ func (p LoginLockoutPolicy) cooldownFor(lockoutCount int) time.Duration {
 		cd = p.MaxCooldown
 	}
 	return cd
-}
-
-// warnLockoutUnsupportedOnce logs a loud, ONE-TIME operator warning the first time the
-// active storage backend proves it can never persist login-lockout accounting (#454) —
-// as opposed to an ordinary transient storage error, which stays silent (the existing,
-// intentional fail-open backstop behaviour). Mirrors warnRateLimitUnsupportedOnce
-// (rate_limit.go, #452) for the identical class of gap on the other brute-force
-// backstop. Safe for concurrent use; only the first call's message is emitted.
-func (c *KeyorixCore) warnLockoutUnsupportedOnce() {
-	c.loginLockoutUnsupportedWarnOnce.Do(func() {
-		log.Printf("WARNING: per-account login lockout accounting is INERT under the " +
-			"active storage backend (storage.type: remote) — UpdateLoginLockoutState has " +
-			"no implementation to proxy to (the upstream server's PUT /api/v1/users/{id} " +
-			"wire format cannot carry these fields), so every failed-login/clear write " +
-			"fails and is silently skipped. There is NO per-account lockout protection for " +
-			"this deployment unless the cluster-wide per-IP rate limiter is relied on " +
-			"instead (see ADR-040 / #452). This warning is logged once per process; the " +
-			"underlying gap persists for its lifetime.")
-	})
 }
 
 // recordFailedLogin increments the user's failed-attempt counter (resetting it when
@@ -138,24 +118,15 @@ func (c *KeyorixCore) recordFailedLogin(ctx context.Context, user *models.User) 
 			u.LoginLockedUntil = &until
 			u.FailedLoginAttempts = 0 // window counter resets; the lock now gates
 		}
-		// #454: persist via the narrow UpdateLoginLockoutState, not the generic
-		// UpdateUser — RemoteStorage can never express these columns in its wire format,
-		// so it always returns storage.ErrUnsupportedByBackend here. Unlike
-		// setAccountState/UpdateSCIMUser's hard fail, lockout accounting is a passive
-		// backstop (#452's identical rationale for the per-IP rate limiter): log once and
-		// fail open, rather than erroring the caller (which would otherwise refuse every
-		// login attempt for a storage backend that can never persist this).
+		// Persist via the narrow UpdateLoginLockoutState, not the generic UpdateUser —
+		// this is the sole write path for the four lockout-accounting columns.
 		if err := tx.UpdateLoginLockoutState(ctx, uid, u.FailedLoginAttempts, u.LastFailedLoginAt, u.LoginLockedUntil, u.LoginLockoutCount); err != nil {
-			if isUnsupportedByBackend(err) {
-				c.warnLockoutUnsupportedOnce()
-				return nil
-			}
 			return err
 		}
 		// Reflect the persisted lockout fields back onto the caller's struct (it was
 		// loaded before the lock), without clobbering preloaded associations. Only reached
 		// when the write above actually committed, so a struct mutated in memory always
-		// matches what was (or, on the unsupported-backend path above, was not) persisted.
+		// matches what was persisted.
 		user.FailedLoginAttempts = u.FailedLoginAttempts
 		user.LastFailedLoginAt = u.LastFailedLoginAt
 		user.LoginLockedUntil = u.LoginLockedUntil
@@ -200,13 +171,6 @@ func (c *KeyorixCore) recordFailedLogin(ctx context.Context, user *models.User) 
 // (VerifyMFALogin), and WebAuthn (FinishWebAuthnLogin /
 // FinishWebAuthnPasswordlessLogin) — recordFailedLogin feeds the same counter
 // from all of them, so the recheck must cover all of them too.
-//
-// #454: when clearing accumulated failures, a backend that can never persist the
-// clear (RemoteStorage) is treated the same as "nothing to clear" — logged once via
-// warnLockoutUnsupportedOnce and NOT surfaced as the fail-closed "unable to verify"
-// error, since lockout is a backstop, not the primary auth boundary (mirrors #452's
-// identical fail-open-but-loud tradeoff for the per-IP rate limiter). A genuine
-// transient storage error is unaffected and still fails closed below.
 func (c *KeyorixCore) checkLockAndClearLoginFailures(ctx context.Context, user *models.User) error {
 	if !c.loginLockout.Enabled {
 		c.clearLoginFailures(ctx, user)
@@ -237,10 +201,6 @@ func (c *KeyorixCore) checkLockAndClearLoginFailures(ctx context.Context, user *
 			return nil // nothing to clear
 		}
 		if err := tx.UpdateLoginLockoutState(ctx, uid, 0, nil, nil, 0); err != nil {
-			if isUnsupportedByBackend(err) {
-				c.warnLockoutUnsupportedOnce()
-				return nil // can't clear counters on this backend; fail OPEN (not locked), not closed
-			}
 			return err
 		}
 		user.FailedLoginAttempts = 0
@@ -260,17 +220,13 @@ func (c *KeyorixCore) checkLockAndClearLoginFailures(ctx context.Context, user *
 
 // clearLoginFailures resets the lockout state after a successful authentication.
 // It writes only when there is something to clear, so the happy path adds no extra
-// write on every login. #454: persists via UpdateLoginLockoutState, not the generic
-// UpdateUser, so a backend that can never express these columns (RemoteStorage) is
-// visibly reported (a one-time operator warning) instead of silently no-op'd.
+// write on every login. Persists via the narrow UpdateLoginLockoutState, not the
+// generic UpdateUser.
 func (c *KeyorixCore) clearLoginFailures(ctx context.Context, user *models.User) {
 	if user.FailedLoginAttempts == 0 && user.LoginLockedUntil == nil && user.LoginLockoutCount == 0 {
 		return
 	}
 	if err := c.storage.UpdateLoginLockoutState(ctx, user.ID, 0, nil, nil, 0); err != nil {
-		if isUnsupportedByBackend(err) {
-			c.warnLockoutUnsupportedOnce()
-		}
 		return
 	}
 	user.FailedLoginAttempts = 0
@@ -284,15 +240,9 @@ func (c *KeyorixCore) clearLoginFailures(ctx context.Context, user *models.User)
 //
 // #484: persists via the same narrow UpdateLoginLockoutState primitive #454 already
 // established for the automatic clear paths (clearLoginFailures /
-// checkLockAndClearLoginFailures) — not the generic UpdateUser, which silently no-ops
-// every one of these columns under storage.type: remote (they have no field in the
-// wire format at all). UnlockUser clears the exact same four columns those callers
-// do, just admin-triggered instead of triggered by a successful login, so it gets the
-// identical treatment: lockout accounting is a passive backstop, not an explicit
-// security directive (unlike account_state), so a backend that can never persist the
-// clear fails OPEN (logged once via warnLockoutUnsupportedOnce) rather than erroring
-// the admin — the worst case is the lock merely expires on its own cooldown instead of
-// being cleared early.
+// checkLockAndClearLoginFailures) — not the generic UpdateUser. UnlockUser clears the
+// exact same four columns those callers do, just admin-triggered instead of triggered
+// by a successful login.
 // S1 sweep decision (CLI-split inventory #2012): deliberately NOT ceiling-gated
 // like its siblings (UpdateUser, DeleteUser, RestoreUser, SuspendUser/
 // ReactivateUser/RequirePasswordReset, RevokeUserSessions,
@@ -310,16 +260,12 @@ func (c *KeyorixCore) UnlockUser(ctx context.Context, adminID, userID uint) erro
 		return fmt.Errorf("user not found: %w", err)
 	}
 	if err := c.storage.UpdateLoginLockoutState(ctx, userID, 0, nil, nil, 0); err != nil {
-		if !isUnsupportedByBackend(err) {
-			return fmt.Errorf("failed to unlock user: %w", err)
-		}
-		c.warnLockoutUnsupportedOnce()
-	} else {
-		user.FailedLoginAttempts = 0
-		user.LastFailedLoginAt = nil
-		user.LoginLockedUntil = nil
-		user.LoginLockoutCount = 0
+		return fmt.Errorf("failed to unlock user: %w", err)
 	}
+	user.FailedLoginAttempts = 0
+	user.LastFailedLoginAt = nil
+	user.LoginLockedUntil = nil
+	user.LoginLockoutCount = 0
 	aid := adminID
 	c.writeAuditEventFull(ctx, EventAccountUnlocked, &aid, nil, nil, "",
 		fmt.Sprintf("user %d login lockout cleared by admin %d", userID, adminID))

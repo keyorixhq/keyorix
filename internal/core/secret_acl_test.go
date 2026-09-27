@@ -10,22 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
-
-// unsupportedACLStorage wraps a real storage.Storage but forces GetSecretACL
-// to return storage.ErrUnsupportedByBackend, simulating a backend (like
-// RemoteStorage's still-unproxied ACL read path) that doesn't support
-// SecretACL at all.
-type unsupportedACLStorage struct {
-	corestorage.Storage
-}
-
-func (unsupportedACLStorage) GetSecretACL(context.Context, uint, uint) (*models.SecretACL, error) {
-	return nil, corestorage.ErrUnsupportedByBackend
-}
 
 // newACLCore returns a KeyorixCore backed by an in-memory SQLite DB with all
 // tables needed for the ACL tests already migrated.
@@ -351,23 +338,6 @@ func TestAuthorizeSecret_DeniesStaleGrantAfterMembershipRemoved(t *testing.T) {
 	ok2, err := c.AuthorizeSecret(ctx, 55, sid, "secrets.write")
 	require.NoError(t, err)
 	assert.False(t, ok2, "a departed member's stale ACL grant must not authorize secrets.write — this is the same check gating TransferSecretOwnership's HTTP route")
-}
-
-// TestHasSecretACL_UnsupportedBackendDegradesToNoGrant verifies that a
-// backend returning storage.ErrUnsupportedByBackend for GetSecretACL (e.g.
-// RemoteStorage's still-unproxied read path) degrades to "no grant" rather
-// than failing every secret-access check closed — mirroring HasSecretACL's
-// existing GetSecretAncestors handling for the same sentinel.
-func TestHasSecretACL_UnsupportedBackendDegradesToNoGrant(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	c, db := newACLCore(t)
-	sid := mkACLSecret(t, db, "unsupported-backend-secret")
-	c.storage = unsupportedACLStorage{c.storage}
-
-	got, err := c.HasSecretACL(ctx, 42, sid, "secrets.read")
-	require.NoError(t, err, "an unsupported-backend error from GetSecretACL must not propagate as a hard failure")
-	assert.False(t, got)
 }
 
 // TestGrantSecretACL_Upsert verifies that a second grant on the same (secret, user)

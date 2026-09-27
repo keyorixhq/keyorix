@@ -167,13 +167,14 @@ func (c *KeyorixCore) ListStaleMachineIdentities(ctx context.Context, projectID 
 // Finding #518: the actual write goes through TransitionMachineIdentityState, a
 // conditional "WHERE id = ? AND state = ?" persist, rather than a plain
 // UpdateMachineIdentity — because storage.type: remote's RemoteStorage.WithTransaction
-// is a no-op passthrough over HTTP (no real transaction/row-lock spans the Lock
-// call and the write), a plain Lock-then-Update proxy pair would silently lose the
-// #388 guarantee entirely under remote mode. Gating the write itself on the state
-// this call observed under the lock restores the guarantee across that HTTP hop:
-// a lost race reports matched=false, treated identically to an illegal transition.
-// This makes no behavioral difference against LocalStorage (the lock already
-// guarantees the state can't have moved by the time the conditional write runs).
+// was a no-op passthrough over HTTP (no real transaction/row-lock spanned the Lock
+// call and the write), so a plain Lock-then-Update proxy pair would have silently
+// lost the #388 guarantee entirely under remote mode. Gating the write itself on
+// the state this call observed under the lock restored the guarantee across that
+// HTTP hop: a lost race reports matched=false, treated identically to an illegal
+// transition. This makes no behavioral difference against LocalStorage (the lock
+// already guarantees the state can't have moved by the time the conditional write
+// runs).
 // transitionMachineInTx performs the state transition inside an existing transaction.
 // It is the body of TransitionMachineIdentity's WithTransaction closure, extracted to
 // keep the outer function's cognitive complexity within limits.

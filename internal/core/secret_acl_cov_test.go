@@ -220,19 +220,6 @@ func TestRevokeSecretACL_DeleteError(t *testing.T) {
 
 // --- HasSecretACL ancestor paths ---
 
-func TestHasSecretACL_AncestorUnsupported(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	c, db := newACLCore(t)
-	sid := mkACLSecret(t, db, "ha-unsupported")
-	// No ACL on sid → direct check returns false.
-	// GetSecretAncestors returns ErrUnsupportedByBackend → must return (false, nil).
-	c2 := newACLCoreWithStorage(c, &ancestorErrStorage{Storage: c.storage, err: corestorage.ErrUnsupportedByBackend})
-	got, err := c2.HasSecretACL(ctx, 99, sid, "secrets.read")
-	require.NoError(t, err)
-	assert.False(t, got)
-}
-
 func TestHasSecretACL_AncestorStorageError(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

@@ -62,42 +62,19 @@ var defaultPermissions = []bootstrapPermissionDef{
 	// knows what they're actually handing over: audit-checkpoint writes and
 	// anomaly-alert acknowledgment, legal-hold place/lift, risk-exception
 	// create/approve/revoke, SoD-policy create/delete, and on-demand admin job
-	// triggers (rotation/expiry reminders, anomaly alerts, compliance digest). It
-	// ALSO still reaches the RemoteStorage-sync proxy tree
-	// (server/http/handlers/*_proxy.go, mounted under /api/v1/system) — that surface
-	// is reachable by system.write ALONE, so a custom role granted this
-	// permission for its documented purpose unknowingly also gains the ability to
-	// act as a relay. From #G79 through 2026-08-25 the proxy tree was ALSO gated by
-	// RequireNodeCredentialOrPermission: EITHER this permission OR a machine-identity
-	// credential of IdentityType "node" (no role, including admin/system_admin,
-	// granted that identity type) — that OR-arm is REMOVED (ADR-085, Accepted,
-	// 2026-08-25: the "downstream Keyorix node relaying an already-authorized human
-	// action" topology it existed to serve cannot exist in this codebase; see
-	// server/http/router.go's /system group comment and docs/adr-085-node-credential-
-	// permission-scope.md for the full history). The proxy tree is now gated by plain
-	// system.write, same as every other route this permission covers; a node-type
-	// machine identity gets no special standing and must hold system.write via a
-	// real role grant like any other machine identity to reach it. Note this still
-	// does not fully close the original over-broad-grant concern by itself:
-	// adminRoleNames (authz.go) unconditionally bypass every permission check, so
-	// any admin-tier role holder still reaches the proxy tree via the permission arm
-	// regardless of what's explicitly bundled into their role.
-	// #F6 (system-proxy-target-authority audit, 2026-09-21): the description
-	// used to name only the narrow, documented use case (audit checkpoints,
-	// legal holds, risk exceptions, SoD policies, admin job triggers) and said
-	// nothing about this permission's actual, much broader footprint: it is
-	// also the blanket gate on the entire /api/v1/system RemoteStorage-proxy
-	// route tree (server/http/router.go's r.Route("/system", ...) —
-	// machine-identity/credential/OIDC-binding CRUD, group CRUD, secret
-	// dependencies, invitations, setup tokens, break-glass, access-review
-	// campaigns, and more). Most of those routes have their own additional
-	// ceiling beyond this blanket gate (users.write, roles.assign,
-	// requireGranterHoldsRolePermissions, ...) — this permission alone does
-	// not grant them — but it is the FIRST gate every one of those routes
-	// requires, and a role scoped to only the narrow use case above still
-	// reaches every /system route's own gate. An operator granting
-	// system.write for the narrow use case should know this.
-	{"system.write", "Manage audit checkpoints/alerts, legal holds, risk exceptions, SoD policies, and admin job triggers -- also the blanket gate on the entire /api/v1/system RemoteStorage-proxy route tree", "system", "write"},
+	// triggers (rotation/expiry reminders, anomaly alerts, compliance digest).
+	//
+	// #F6 (system-proxy-target-authority audit, 2026-09-21) through ADR-108 Phase 6
+	// (#2162/#2171): this permission USED TO also be the blanket gate on the entire
+	// /api/v1/system RemoteStorage-sync proxy route tree (server/http/router.go's
+	// r.Route("/system", ...) — machine-identity/credential/OIDC-binding CRUD, group
+	// CRUD, secret dependencies, invitations, setup tokens, break-glass,
+	// access-review campaigns, and more), a much broader footprint than the
+	// narrow, documented use case above. That entire route tree — along with
+	// RemoteStorage itself, the deployment topology it served — has since been
+	// deleted; system.write's actual footprint is now exactly the narrow use case
+	// this description names.
+	{"system.write", "Manage audit checkpoints/alerts, legal holds, risk exceptions, SoD policies, and admin job triggers", "system", "write"},
 	{"connect.read", "Read secrets from external stores via Keyorix Connect (ADR-043)", "connect", "read"},
 	// ADR-082 branch 4: narrows scope: platform connector reads, which connect.read
 	// alone permitted for any holder through branch 3 (an interim fail-open, marked

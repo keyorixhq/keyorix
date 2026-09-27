@@ -8,10 +8,8 @@ package core
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
-	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -76,7 +74,7 @@ func (c *KeyorixCore) MoveSecret(ctx context.Context, actorID, secretID uint, ne
 		// refuse the move if secretID appears in it, meaning newParentID is a
 		// descendant of the node being moved.
 		ancestors, err := c.storage.GetSecretAncestors(ctx, *newParentID)
-		if err != nil && !errors.Is(err, storage.ErrUnsupportedByBackend) {
+		if err != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
 		for _, ancestorID := range ancestors {

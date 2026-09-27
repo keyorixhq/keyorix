@@ -181,11 +181,8 @@ func (c *KeyorixCore) DeleteProject(ctx context.Context, id uint, force bool) er
 	// expecting the delete to be rejected. #313 originally closed this by running both
 	// inside one storage.WithTransaction call; #528 replaced that with
 	// DeleteProjectIfEmpty, a single atomic storage primitive doing the same guard+
-	// cascade in ONE call — WithTransaction is a real transaction only for LocalStorage
-	// (RemoteStorage.WithTransaction is a no-op passthrough over HTTP, so the original
-	// two-call pair reopened this exact TOCTOU window across a full network round trip
-	// under storage.type: remote). force=true intentionally skips the guard entirely and
-	// keeps calling the plain unconditional cascade.
+	// cascade in ONE call. force=true intentionally skips the guard entirely and keeps
+	// calling the plain unconditional cascade.
 	if force {
 		if err := c.storage.DeleteProject(ctx, id); err != nil {
 			return err

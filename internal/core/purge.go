@@ -40,10 +40,7 @@ func (c *KeyorixCore) PurgeExpiredSoftDeletes(ctx context.Context, before time.T
 	// call already manages its own internal atomicity (a nested
 	// transaction/savepoint), so a single entity's failure doesn't abort the
 	// others — matching the pre-existing "continue past individual errors,
-	// report the first" partial-success design. NOTE: RemoteStorage.WithTransaction
-	// is a no-op passthrough — under storage.type: remote this narrows the
-	// window but does not eliminate it (see audit_retention.go's PurgeAuditLogs
-	// for the same caveat).
+	// report the first" partial-success design.
 	res := &PurgeResult{}
 	var firstErr error
 	record := func(n int64, err error) int64 {

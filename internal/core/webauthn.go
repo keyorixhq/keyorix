@@ -734,14 +734,11 @@ func (c *KeyorixCore) MarkWebAuthnCredentialClonedByLookup(ctx context.Context, 
 // logins (#306). The actual read-validate-write now happens in ONE atomic
 // storage-layer call, storage.Storage.AdvanceWebAuthnCredentialCounter (#517) — see
 // its doc (internal/core/storage/interface.go) for why this had to move down a
-// layer: RemoteStorage.WithTransaction is a no-op passthrough (each remote call is
-// independent), so composing LockWebAuthnCredentialForUpdate + UpdateWebAuthnCredential
-// as two separate remote round trips (as this function used to, against
-// LocalStorage only) would reopen the exact TOCTOU race the transaction was built to
-// prevent. webauthnCredentialMu still serializes same-process callers (belt-and-
+// layer: composing LockWebAuthnCredentialForUpdate + UpdateWebAuthnCredential as two
+// separate calls (as this function used to) left a TOCTOU race window open between
+// them. webauthnCredentialMu still serializes same-process callers (belt-and-
 // suspenders for the single-process SQLite case, where AdvanceWebAuthnCredentialCounter's
-// own row lock is a no-op); combined with LocalStorage's row lock on Postgres, or the
-// upstream server's own equivalent lock for a storage.type: remote deployment, the
+// own row lock is a no-op); combined with LocalStorage's row lock on Postgres, the
 // counter stays monotonic across replicas too.
 func (c *KeyorixCore) persistUpdatedCredential(ctx context.Context, userID uint, cred *webauthn.Credential) {
 	blob, err := json.Marshal(cred)

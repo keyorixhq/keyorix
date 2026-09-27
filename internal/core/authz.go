@@ -606,15 +606,10 @@ func (c *KeyorixCore) requireMachinePrivilegeCeiling(ctx context.Context, actorT
 }
 
 // RequireMachinePrivilegeCeiling is requireMachinePrivilegeCeiling's exported
-// form, for callers outside internal/core that need the SAME MACH-001 check
-// IssueMachineToken already runs — CreateMachineIdentityCredentialProxy and
-// CreateMachineIdentityProxy (server/http/handlers/machine_identities_proxy.go).
-// CreateMachineIdentityCredentialProxy must preserve the raw, caller-supplied
-// TokenHash (needed for a legitimate RemoteStorage relay persisting a hash it
-// already generated locally) and therefore cannot route through
-// IssueMachineToken itself, only reuse its privilege-ceiling check.
-// CreateMachineIdentityProxy passes machineID==0 (the identity doesn't exist
-// yet) to run the creation-time half of the same check.
+// form, originally for callers outside internal/core that needed the SAME
+// MACH-001 check IssueMachineToken already runs — CreateMachineIdentityCredentialProxy
+// and CreateMachineIdentityProxy, both since deleted along with the rest of the
+// RemoteStorage-sync proxy tree (ADR-108 Phase 6, #2162/#2171).
 func (c *KeyorixCore) RequireMachinePrivilegeCeiling(ctx context.Context, actorType string, principalID, projectID, machineID uint) error {
 	return c.requireMachinePrivilegeCeiling(ctx, actorType, principalID, projectID, machineID)
 }
@@ -913,10 +908,9 @@ func isSystemProxyRelayGrant(ctx context.Context) bool {
 // A node credential is, at the auth layer, structurally indistinguishable
 // from any other machine token -- resolving and using its own permissions
 // here let ANY node credential self-authorize an admin-tier grant it was
-// merely relaying on behalf of an unidentified downstream actor,
-// confirmed via TestRemoteStorageGroup_Membership_AdminConferringGroup_
-// DeniesNodeCredential and its Invitation/Membership proxy siblings going
-// from correctly denying to silently succeeding.
+// merely relaying on behalf of an unidentified downstream actor -- see
+// TestSystemProxyRelayGranter_RefusesAdminTierRoles (authz_system_proxy_relay_
+// ceiling_test.go) and its Invitation/Membership/group-service siblings.
 //
 // This fix instead checks a SEPARATE, narrowly-scoped context tag,
 // selfMachineGranterFromContext (WithSelfMachineGranter), that is ONLY set

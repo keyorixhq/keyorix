@@ -108,16 +108,9 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 
 	if _, err := c.storage.GetUserByUsername(ctx, req.Username); err == nil {
 		return nil, "", fmt.Errorf("%w: username already exists", ErrUserAlreadyExists)
-	} else if !errors.Is(err, storage.ErrUnsupportedByBackend) && !storage.IsUserNotFound(err) {
+	} else if !storage.IsUserNotFound(err) {
 		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
-	// RemoteStorage.GetUserByUsername is unimplemented (ErrUnsupportedByBackend, #499):
-	// it has no by-username lookup route to call. Rather than hard-failing every
-	// remote CreateUser on a pre-check the backend can't perform, skip it here — the
-	// upstream server's own CreateUser handler runs this exact same buildUserForCreate
-	// check against its own LocalStorage when it receives the forwarded request, so the
-	// duplicate-username invariant is still enforced authoritatively, just on the other
-	// side of the wire instead of redundantly on both.
 
 	existing, err := c.storage.GetUserByEmail(ctx, req.Email)
 	if err == nil && existing != nil {
@@ -158,8 +151,9 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 	}
 
 	// req.Password is forwarded as the optional plaintext argument (#499): LocalStorage
-	// ignores it (a no-op — it already has the hash above), while RemoteStorage forwards
-	// it over the wire so the real upstream handler can hash its own copy. This covers
+	// ignores it (a no-op — it already has the hash above). RemoteStorage (since
+	// deleted, #2162) used to forward it over the wire so the upstream handler could
+	// hash its own copy. This covers
 	// every core.CreateUser caller uniformly (the admin classic path, CreateUserWithSetupLink,
 	// and CreateUserWithOneTimePassword all populate req.Password with a real, hashable
 	// string before reaching here — see buildUserForCreate above and setup_delivery.go),
@@ -391,13 +385,10 @@ func (c *KeyorixCore) resolveProjectRoleGrant(ctx context.Context, actorID uint,
 // itself complete a separation-of-duties violation — the same two guards
 // (requireAuthorityForRole per grant, requireGrantSetNoSoDViolation over the
 // full set) CreateUserWithAssignments above applies to a human-supplied
-// []ProjectAssignment. Exposed for a caller that already has a resolved
-// []storage.RoleGrant instead of role names — namely
-// CreateUserWithRoleGrantsProxy (server/http/handlers/misc_remote_proxy.go),
-// which persists a RemoteStorage node's already-built grant set atomically
-// and, unlike the human-facing path, never has a plaintext password or role
-// names to work with, only role IDs. Kept in core rather than duplicated in
-// the handler so the ceiling+SoD logic is defined exactly once (#G79).
+// []ProjectAssignment. Was exposed for a caller that already had a resolved
+// []storage.RoleGrant instead of role names — CreateUserWithRoleGrantsProxy,
+// deleted along with the rest of the RemoteStorage-sync proxy tree (ADR-108
+// Phase 6, #2162/#2171). No production caller currently reaches this method.
 func (c *KeyorixCore) ValidateRoleGrantAuthority(ctx context.Context, actorID uint, actorIsMachine bool, grants []storage.RoleGrant) error {
 	if len(grants) > maxUserCreateAssignments {
 		return fmt.Errorf("%s: grants exceeds the maximum batch size of %d", i18n.T("ErrorValidation", nil), maxUserCreateAssignments)
@@ -1012,8 +1003,7 @@ func (c *KeyorixCore) GetUserByEmail(ctx context.Context, email string) (*models
 }
 
 // GetUserByUsername retrieves a user by username. Backs the GET
-// /api/v1/users/by-username HTTP route (#505) — the server-side counterpart
-// RemoteStorage.GetUserByUsername needs.
+// /api/v1/users/by-username HTTP route (#505).
 func (c *KeyorixCore) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
 	if username == "" {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "username is required")
@@ -1026,8 +1016,7 @@ func (c *KeyorixCore) GetUserByUsername(ctx context.Context, username string) (*
 }
 
 // GetUserByExternalID retrieves a user by the IdP-assigned external id. Backs the
-// GET /api/v1/users/by-external-id HTTP route (#505) — the server-side
-// counterpart RemoteStorage.GetUserByExternalID needs for SSO/SCIM identity
+// GET /api/v1/users/by-external-id HTTP route (#505), for SSO/SCIM identity
 // resolution.
 func (c *KeyorixCore) GetUserByExternalID(ctx context.Context, externalID string) (*models.User, error) {
 	if externalID == "" {

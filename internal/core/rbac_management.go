@@ -542,17 +542,13 @@ func (c *KeyorixCore) assignUserRoleSystemGrant(ctx context.Context, actorID, us
 // the install with zero admins. Prior to #525 this ran as
 // ListGlobalAdminAssignmentsForUpdate + RemoveRole inside a single
 // storage.WithTransaction closure: correct against LocalStorage (a real DB
-// transaction + Postgres row lock spans both calls), but
-// RemoteStorage.WithTransaction is a no-op passthrough — under storage.type:
-// remote those were two independent HTTP round trips with nothing serializing
-// them beyond globalAdminGuardMu, which only covers same-process callers (not a
-// second spoke, or the hub's own direct callers, racing the same admin set).
-// RemoveGlobalAdminRoleGuarded folds the check and the write into ONE storage
-// call, so whichever server actually owns the row — the hub, for a remote spoke —
-// is the only one that ever needs to enforce it atomically; globalAdminGuardMu is
-// kept as a cheap same-process fast-path serializer (mirroring
-// login_lockout.go's recordFailedLogin two-layer pattern), not as the sole
-// correctness mechanism.
+// transaction + Postgres row lock spans both calls), but RemoteStorage.WithTransaction
+// was a no-op passthrough — under storage.type: remote those were two independent
+// HTTP round trips with nothing serializing them beyond globalAdminGuardMu, which
+// only covers same-process callers. RemoveGlobalAdminRoleGuarded folds the check and
+// the write into ONE storage call; globalAdminGuardMu is kept as a cheap
+// same-process fast-path serializer (mirroring login_lockout.go's recordFailedLogin
+// two-layer pattern), not as the sole correctness mechanism.
 //
 // FIX-2: RemoveUserRole was scope-blind past the global check — a project-scoped
 // removal (scope.ProjectID != 0) fell straight through to storage.RemoveRole with

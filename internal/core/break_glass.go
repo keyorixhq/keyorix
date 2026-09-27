@@ -310,17 +310,8 @@ func (c *KeyorixCore) RevokeBreakGlass(ctx context.Context, actorID, actorMachin
 // authorization and state-guard (activation.State == BreakGlassRevoked)
 // checks first — this function performs neither.
 //
-// Under storage.type: remote, WithTransaction is a documented no-op
-// (RemoteStorage.WithTransaction, internal/storage/store/remote_transaction.go)
-// — this only closes the atomicity gap for a LocalStorage-backed caller.
-// RevokeBreakGlassActivationProxy always runs against LocalStorage
-// (validateRemoteStorageNotServer forbids wiring RemoteStorage into
-// server/http/handlers at all), so it is fully covered. RevokeBreakGlass's own
-// role-removal step is independently broken under storage.type: remote already
-// (RemoveUserRole's project-scoped RemoveRole call has no registered wire
-// route, #1511, per RevokeBreakGlassActivationProxy's own doc comment) — this
-// fix does not worsen that pre-existing gap, and does not close it either;
-// #1511 is tracked separately.
+// RevokeBreakGlassActivationProxy always runs against LocalStorage, so it is
+// fully covered by this fix.
 //
 // TOCTOU-1 sibling fix (rbac_management.go's RemoveUserRole had the identical
 // bug): the last-project-admin guard's read+decide and the role removal must

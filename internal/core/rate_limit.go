@@ -3,35 +3,16 @@
 // across HA replicas (the old limiter was a per-process in-memory map). Rate
 // limiting is a backstop on top of the real password/passkey checks, so a storage
 // error fails OPEN (allow) rather than locking everyone out on a DB hiccup.
-//
-// #452 (closed): RemoteStorage.CountRecentLoginAttempts/RecordLoginAttempt/
-// PruneLoginAttempts used to have no server endpoint to proxy to at all when the
-// server itself ran storage.type: remote in a chained deployment, so the fail-open
-// below was permanent and total for the life of the process rather than an
-// occasional transient degradation. That is now fixed — see
-// internal/storage/store/remote_login_attempts.go and
-// server/http/handlers/login_attempts_proxy.go: RemoteStorage genuinely proxies to a
-// real upstream counter, the same one ADR-040's own /auth/login handler uses.
-//
-// The storage.ErrUnsupportedByBackend detection below is kept as defense in depth
-// for any FUTURE backend (or storage-layer change) that genuinely cannot satisfy
-// this call — a plain transient storage error (DB hiccup, network blip) still fails
-// open silently by design (an acceptable, temporary degradation), but a backend that
-// can NEVER satisfy the call is worth a loud, ONE-TIME operator-visible warning
-// instead (not per-request log spam, and not blocking login — this is still a
-// backstop, not the auth boundary).
 package core
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"strings"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 )
 
@@ -70,31 +51,6 @@ const (
 	LoginWindow = 15 * time.Minute
 )
 
-// warnRateLimitUnsupportedOnce logs a loud, ONE-TIME operator warning the first
-// time the active storage backend proves it can never satisfy
-// CountRecentLoginAttempts (originally #452; RemoteStorage itself no longer hits
-// this — see rate_limit.go's file-level doc comment) — as opposed to an ordinary
-// transient error, which stays silent (that's the existing, intentional fail-open
-// backstop behaviour). Safe for concurrent use; only the first call's message is
-// emitted.
-func (c *KeyorixCore) warnRateLimitUnsupportedOnce() {
-	c.rateLimitUnsupportedWarnOnce.Do(func() {
-		log.Printf("WARNING: login/password-reset rate limiting is INERT under the " +
-			"active storage backend — CountRecentLoginAttempts has no implementation " +
-			"to proxy to, so every call fails open. There is NO cluster-wide " +
-			"brute-force login throttle for this deployment unless per-account lockout " +
-			"is separately enabled (see docs on login lockout / ADR-025). This warning " +
-			"is logged once per process; the underlying gap persists for its lifetime.")
-	})
-}
-
-// isUnsupportedByBackend reports whether err indicates the active storage
-// backend has no implementation for the operation at all (permanent, not a
-// transient failure worth staying silent about).
-func isUnsupportedByBackend(err error) bool {
-	return errors.Is(err, storage.ErrUnsupportedByBackend)
-}
-
 // IsLoginRateLimited reports whether an IP has reached the failed-login budget
 // within the window. Fails open (false) on an empty IP or a storage error.
 func (c *KeyorixCore) IsLoginRateLimited(ctx context.Context, ip string) bool {
@@ -104,9 +60,6 @@ func (c *KeyorixCore) IsLoginRateLimited(ctx context.Context, ip string) bool {
 	ip = CanonicalIP(ip)
 	n, err := c.storage.CountRecentLoginAttempts(ctx, ip, c.now().Add(-LoginWindow))
 	if err != nil {
-		if isUnsupportedByBackend(err) {
-			c.warnRateLimitUnsupportedOnce()
-		}
 		return false
 	}
 	return n >= LoginMaxAttempts
@@ -273,9 +226,6 @@ func (c *KeyorixCore) IsPasswordResetRateLimited(ctx context.Context, ip string)
 	}
 	n, err := c.storage.CountRecentLoginAttempts(ctx, passwordResetRateLimitPrefix+CanonicalIP(ip), c.now().Add(-PasswordResetWindow))
 	if err != nil {
-		if isUnsupportedByBackend(err) {
-			c.warnRateLimitUnsupportedOnce()
-		}
 		return false
 	}
 	return n >= PasswordResetMaxAttempts
@@ -320,9 +270,6 @@ func (c *KeyorixCore) IsSSOBeginRateLimited(ctx context.Context, ip string) bool
 	}
 	n, err := c.storage.CountRecentLoginAttempts(ctx, ssoRateLimitPrefix+CanonicalIP(ip), c.now().Add(-SSOBeginWindow))
 	if err != nil {
-		if isUnsupportedByBackend(err) {
-			c.warnRateLimitUnsupportedOnce()
-		}
 		return false
 	}
 	return n >= SSOBeginMaxAttempts

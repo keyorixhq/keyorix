@@ -179,20 +179,7 @@ type KeyorixCore struct {
 	// now runs under storage.WithNamedLock keyed per request — strictly stronger
 	// cross-replica, and strictly more concurrent in-process, since distinct
 	// requests no longer serialize against one another. Nothing replaces the field.
-	// rateLimitUnsupportedWarnOnce guards the #452 operator warning logged the
-	// first time IsLoginRateLimited/IsPasswordResetRateLimited observe that the
-	// active storage backend can never satisfy CountRecentLoginAttempts (as
-	// opposed to an ordinary transient storage error) — once per process, not
-	// once per request. Zero value is ready to use. See rate_limit.go.
-	rateLimitUnsupportedWarnOnce sync.Once
-	// loginLockoutUnsupportedWarnOnce guards the #454 operator warning logged the
-	// first time recordFailedLogin/checkLockAndClearLoginFailures/clearLoginFailures
-	// observe that the active storage backend can never satisfy
-	// UpdateLoginLockoutState (as opposed to an ordinary transient storage error) —
-	// once per process, not once per login attempt. Zero value is ready to use. See
-	// login_lockout.go.
-	loginLockoutUnsupportedWarnOnce sync.Once
-	auditForwarder                  AuditForwarder
+	auditForwarder AuditForwarder
 	// auditStream is the in-process pub/sub broker that wakes live audit tails
 	// (gRPC StreamAuditLogs) the instant an event is written, replacing fixed-interval
 	// DB polling. Always non-nil (set in the constructors).
@@ -404,14 +391,12 @@ type KeyorixCore struct {
 	// RUNNING (the scenario ADR-094/#1632 named as the live one for this
 	// site), without requiring every other wall-clock site in #1632 to adopt
 	// the same mechanism. Deliberately NOT persisted (unlike auditMaxCertified,
-	// which backstops a SystemMetadata row): GetSystemMetadata/SetSystemMetadata
-	// are unconditionally unsupported on RemoteStorage
-	// (internal/storage/store/remote_audit.go), and this guard runs on every
-	// secret-value read including the CLI's embedded storage.type: remote
-	// path — persisting here would make every such read depend on a storage
-	// call that hard-fails under that backend, breaking secret reads entirely
-	// under remote mode to close a gap that mode is already reachable through.
-	// Residual risk, named rather than hidden: resets to zero on process
+	// which backstops a SystemMetadata row): this guard runs on every
+	// secret-value read, and at the time this was written GetSystemMetadata/
+	// SetSystemMetadata were unconditionally unsupported under storage.type: remote
+	// (RemoteStorage, since deleted, #2162) — persisting here would have made
+	// every such read depend on a storage call that hard-failed under that
+	// backend. Residual risk, named rather than hidden: resets to zero on process
 	// restart, so an attacker who can also restart the process after
 	// stepping the clock back defeats it — a real limitation, not covered by
 	// this fix, of the same kind ADR-094 already flagged as calling for an
@@ -661,8 +646,8 @@ func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) {
 	event.Description = truncateAuditField(event.Description, auditDescriptionMaxLen)
 	event.Diff = truncateAuditField(event.Diff, auditDiffMaxLen)
 	// #1650: the request-cancellation-immunity fix lives at the storage layer
-	// (LocalStorage.LogAuditEvent / RemoteStorage.LogAuditEvent detach their own ctx
-	// before doing I/O), not here — this is one of four call sites into LogAuditEvent
+	// (LocalStorage.LogAuditEvent detaches its own ctx before doing I/O), not here —
+	// this is one of four call sites into LogAuditEvent
 	// in the codebase (the other three bypass emitAudit entirely: server/main.go,
 	// audit_ingest_proxy.go, anomaly.go), so fixing it at emitAudit alone would leave
 	// those three still vulnerable. See store.auditWriteContext's doc comment for the

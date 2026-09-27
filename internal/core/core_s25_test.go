@@ -9,7 +9,7 @@
 // rotation_executor.go (RotationBackendNames),
 // rotation_policies.go (GetRotationPolicy, ListRotationPolicies),
 // oidc.go (TrustsIssuer, OIDCEnabled, ListOIDCBindings, DeleteOIDCBinding),
-// rate_limit.go (warnRateLimitUnsupportedOnce, IsPasswordResetRateLimited, RecordPasswordResetAttempt),
+// rate_limit.go (IsPasswordResetRateLimited, RecordPasswordResetAttempt),
 // webauthn.go (ListWebAuthnCredentials),
 // invitations.go (ResendInvitationLink, StaleInvitations, RejectAccessRequest),
 // scim.go (FindSCIMUser, ProvisionSCIMUser, ListSCIMUsers),

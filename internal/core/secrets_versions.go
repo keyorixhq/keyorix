@@ -135,9 +135,7 @@ func (c *KeyorixCore) storeNextSecretVersion(ctx context.Context, secret *models
 // was not ambiguous: the version write's success was certain, not a network-blip
 // guess, so there was a concrete row to roll back — and unlike RotateSecret, there is
 // no external upstream credential whose already-applied change that version would be
-// the only record of, so rolling it back loses nothing. RemoteStorage.WithTransaction
-// remains a no-op passthrough, same documented limitation as every other
-// WithTransaction call site in this package.
+// the only record of, so rolling it back loses nothing.
 func (c *KeyorixCore) updateSecretWithNewVersion(ctx context.Context, secret *models.SecretNode, value []byte) (*models.SecretNode, error) {
 	var updated *models.SecretNode
 	var lastErr error

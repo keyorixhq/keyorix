@@ -77,7 +77,7 @@ const (
 	defaultCumulativeRateMax = 20
 )
 
-// StorageInterface is satisfied by *storage.LocalStorage and *storage.RemoteStorage.
+// StorageInterface is satisfied by *storage.LocalStorage.
 type StorageInterface = interface {
 	ListSecretAccessLogs(ctx context.Context, secretID uint, since time.Time) ([]models.SecretAccessLog, error)
 	// PrincipalSecretFirstSeen backs the per-principal breadth-exfiltration pass

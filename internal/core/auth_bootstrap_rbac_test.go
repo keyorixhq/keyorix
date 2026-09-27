@@ -173,13 +173,17 @@ func TestBootstrapGrantsConnectPlatformUseToAdminRoles(t *testing.T) {
 // admin job triggers — not just the legacy service-account/API-token routes
 // (removed as dead code by finding #131). A misleading description here is an
 // informed-consent gap for whoever grants this permission on a custom role.
+// The description previously also had to warn about a much broader footprint
+// (the /api/v1/system RemoteStorage-sync proxy route tree, #F6) — that route
+// tree, and RemoteStorage itself, were deleted in ADR-108 Phase 6 (#2162/#2171),
+// so the description no longer needs that caveat.
 func TestSystemWritePermissionDescriptionMatchesFullFootprint(t *testing.T) {
 	t.Parallel()
 	for _, def := range defaultPermissions {
 		if def.Name != "system.write" {
 			continue
 		}
-		assert.Equal(t, "Manage audit checkpoints/alerts, legal holds, risk exceptions, SoD policies, and admin job triggers -- also the blanket gate on the entire /api/v1/system RemoteStorage-proxy route tree", def.Description)
+		assert.Equal(t, "Manage audit checkpoints/alerts, legal holds, risk exceptions, SoD policies, and admin job triggers", def.Description)
 		return
 	}
 	t.Fatal("system.write not found in defaultPermissions")

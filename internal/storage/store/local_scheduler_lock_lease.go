@@ -1,8 +1,9 @@
 // local_scheduler_lock_lease.go — the TTL-bounded distributed-mutex primitive
-// backing RemoteStorage's WithSchedulerLock (#530): TryAcquireSchedulerLock and
-// ReleaseSchedulerLock, both single-round-trip-atomic so they stay safe when
-// called over HTTP by a storage.type: remote spoke (remote_scheduler_lock.go),
-// where no transaction can span two separate requests.
+// originally built to back RemoteStorage's WithSchedulerLock (#530, RemoteStorage
+// since deleted, #2162): TryAcquireSchedulerLock and ReleaseSchedulerLock, both
+// single-round-trip-atomic so they stayed safe when called over HTTP by a
+// storage.type: remote spoke, where no transaction could span two separate
+// requests.
 //
 // Deliberately independent of WithSchedulerLock/local_scheduler_lock.go's
 // Postgres session advisory lock: that mechanism ties the lock's lifetime to a
@@ -39,8 +40,8 @@ import (
 //     if the row had already existed.
 //   - A row exists, held by holder itself (not yet expired, or expired — either
 //     way it's this holder's own lease): update ExpiresAt. This is the renewal/
-//     heartbeat path RemoteStorage.WithSchedulerLock uses to extend the lease
-//     while fn is still running, without needing a distinct "renew" method.
+//     heartbeat path a holder uses to extend the lease while fn is still
+//     running, without needing a distinct "renew" method.
 //   - A row exists, held by a DIFFERENT holder and not yet expired: acquired
 //     stays false — the lock is genuinely contended.
 //   - A row exists, held by a different holder but already expired: reclaim it
