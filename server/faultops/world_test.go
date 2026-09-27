@@ -281,6 +281,21 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 	}
 	logWorldPhase(t, "bootstrap+login", worldPhase)
 
+	// Break-glass policy (self-service emergency access): newFaultWorld never
+	// called SetBreakGlassPolicy, so ActivateBreakGlass (REST + 2 gRPC
+	// siblings) refuses unconditionally with ErrorPermissionDenied regardless
+	// of any fault armed. EmergencyRole is "project_developer" — a REAL
+	// builtin role BootstrapSystem just seeded above (auth_bootstrap.go),
+	// contained (no roles.assign — break_glass.go's own doc comment names this
+	// exact role as the correct choice: "powerful-but-contained... not
+	// project_admin"), not a role invented for this fixture. DefaultTTL/MaxTTL
+	// match config.BreakGlassConfig{}'s own zero-value production defaults
+	// (4h/24h — internal/config/config.go), not arbitrary test values.
+	testCore.SetBreakGlassPolicy(core.BreakGlassPolicy{
+		Enabled: true, EmergencyRole: "project_developer",
+		DefaultTTL: 4 * time.Hour, MaxTTL: 24 * time.Hour,
+	})
+
 	worldPhase = time.Now()
 	cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}}}
 	handler, err := httpserver.NewRouter(cfg, testCore)
