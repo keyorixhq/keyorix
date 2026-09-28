@@ -97,6 +97,12 @@ func (k *KeyorixCore) CheckReadQuotas(ctx context.Context) (*ReadQuotaCheckResul
 		k.notifyWithSeverity(ctx, s.OwnerID, nType, title, msg, nil, link, severity)
 		k.bumpQuotaCount(result, severity, exhausted)
 	}
+	// Written unconditionally: this job only ever creates in-app Notification
+	// rows, never an audit_events row of its own (F4, audit-completeness
+	// campaign).
+	k.writeAuditEvent(ctx, "admin_job.check_read_quotas_run", nil, nil,
+		fmt.Sprintf("check-read-quotas job ran: %d checked, %d warning(s), %d critical(s), %d exhausted",
+			result.Checked, result.Warnings, result.Criticals, result.Exhausted))
 	return result, nil
 }
 

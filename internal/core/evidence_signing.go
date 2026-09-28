@@ -11,11 +11,26 @@
 package core
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"strings"
 )
+
+// EventComplianceEvidenceVerified is audited on every evidence-pack signature
+// verification request (F4, audit-completeness campaign) -- a compliance
+// officer checking an exported pack's authenticity is itself evidence-relevant
+// activity worth a trail, and the request previously left none at all.
+const EventComplianceEvidenceVerified = "compliance.evidence_verified"
+
+// LogComplianceEvidenceVerified records a compliance-evidence signature
+// verification request. actorID is the requesting caller (0 = none).
+func (c *KeyorixCore) LogComplianceEvidenceVerified(ctx context.Context, actorID uint, filename string, result *EvidenceVerifyResult) {
+	c.writeAuditEvent(ctx, EventComplianceEvidenceVerified, actorPtr(actorID), nil,
+		fmt.Sprintf("compliance evidence pack %q verification requested: valid=%t reason=%q", filename, result.Valid, result.Reason))
+}
 
 // SetEvidenceSignKey wires the KEK-derived HMAC key (and its key-version fingerprint)
 // used to sign and verify evidence packs. Called at startup when encryption is

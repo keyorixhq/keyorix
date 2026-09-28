@@ -87,6 +87,11 @@ func (c *KeyorixCore) SendExpiryReminders(ctx context.Context, leadDays int) (in
 			sent++
 		}
 	}
+	// Written unconditionally, same reasoning as SendRotationReminders'
+	// identical summary event (F4, audit-completeness campaign): this job
+	// only ever creates in-app Notification rows.
+	c.writeAuditEvent(ctx, "admin_job.expiry_reminders_run", nil, nil,
+		fmt.Sprintf("expiry-reminders job ran: %d reminder(s) sent/escalated", sent))
 	return sent, nil
 }
 

@@ -128,6 +128,8 @@ func (c *KeyorixCore) RunAlertEscalation(ctx context.Context) (*EscalationResult
 
 	active := activePolicies(policies)
 	if len(active) == 0 {
+		c.writeAuditEvent(ctx, "admin_job.run_alert_escalation_run", nil, nil,
+			"run-alert-escalation job ran: 0 active escalation policies")
 		return &EscalationResult{}, nil
 	}
 
@@ -154,6 +156,13 @@ func (c *KeyorixCore) RunAlertEscalation(ctx context.Context) (*EscalationResult
 	// Alerts evaluated but with no matching policy also count as skipped.
 	// (result.Evaluated already covers them; Skipped + Escalated should equal
 	// the number of candidates returned by the store query.)
+	// Written unconditionally: this job otherwise leaves no audit trail at all
+	// of its own (F4, audit-completeness campaign) -- per-channel dispatch
+	// failures are logged, not audited, and a run with zero candidate alerts
+	// would leave no trace it ran.
+	c.writeAuditEvent(ctx, "admin_job.run_alert_escalation_run", nil, nil,
+		fmt.Sprintf("run-alert-escalation job ran: %d evaluated, %d escalated, %d skipped",
+			result.Evaluated, result.Escalated, result.Skipped))
 	return result, nil
 }
 
@@ -278,6 +287,36 @@ func (c *KeyorixCore) postJSONToURL(_ context.Context, rawURL string, payload an
 }
 
 // --- CRUD for AlertEscalationPolicy ---
+
+// Alert-escalation-policy audit event types (F4, audit-completeness
+// campaign) -- same convention as notification_channels.go's
+// EventNotificationChannelCreated/Updated/Deleted, its sibling feature in the
+// same alerting-config domain. CreateAlertEscalationPolicy/
+// UpdateAlertEscalationPolicy/DeleteAlertEscalationPolicy take no actor
+// parameter (many pre-existing tests construct them directly with no caller
+// identity in scope), so these are standalone methods the REST handler calls
+// explicitly once it has the actor -- same reasoning as LogRoleCreated/
+// LogRoleUpdated/LogRoleDeleted (audit.go).
+const (
+	EventAlertEscalationPolicyCreated = "alert_escalation_policy.created"
+	EventAlertEscalationPolicyUpdated = "alert_escalation_policy.updated"
+	EventAlertEscalationPolicyDeleted = "alert_escalation_policy.deleted"
+)
+
+func (c *KeyorixCore) LogAlertEscalationPolicyCreated(ctx context.Context, actorID uint, p *models.AlertEscalationPolicy) {
+	c.writeConfigChangeAuditEvent(ctx, EventAlertEscalationPolicyCreated, actorID,
+		fmt.Sprintf("alert escalation policy %d (%q) created", p.ID, p.Name), nil, *p)
+}
+
+func (c *KeyorixCore) LogAlertEscalationPolicyUpdated(ctx context.Context, actorID uint, p *models.AlertEscalationPolicy) {
+	c.writeConfigChangeAuditEvent(ctx, EventAlertEscalationPolicyUpdated, actorID,
+		fmt.Sprintf("alert escalation policy %d (%q) updated", p.ID, p.Name), nil, *p)
+}
+
+func (c *KeyorixCore) LogAlertEscalationPolicyDeleted(ctx context.Context, actorID, policyID uint) {
+	c.writeAuditEvent(ctx, EventAlertEscalationPolicyDeleted, actorPtr(actorID), nil,
+		fmt.Sprintf("alert escalation policy %d deleted", policyID))
+}
 
 // CreateAlertEscalationPolicy validates and persists a new escalation policy.
 func (c *KeyorixCore) CreateAlertEscalationPolicy(ctx context.Context, p *models.AlertEscalationPolicy) (*models.AlertEscalationPolicy, error) {

@@ -92,6 +92,7 @@ func (h *AlertEscalationHandler) Create(w http.ResponseWriter, r *http.Request) 
 		sendError(w, "InternalError", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
+	h.coreService.LogAlertEscalationPolicyCreated(r.Context(), u.UserID, created)
 	sendCreated(w, policyToAPI(created), "")
 }
 
@@ -131,6 +132,11 @@ func (h *AlertEscalationHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Update handles PUT /api/v1/alert-escalation-policies/{id}.
 func (h *AlertEscalationHandler) Update(w http.ResponseWriter, r *http.Request) {
+	u := middleware.GetUserFromContext(r.Context())
+	if u == nil {
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
 	id, ok := parseUintParam(w, r, "id")
 	if !ok {
 		return
@@ -154,11 +160,17 @@ func (h *AlertEscalationHandler) Update(w http.ResponseWriter, r *http.Request) 
 		sendError(w, "InternalError", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
+	h.coreService.LogAlertEscalationPolicyUpdated(r.Context(), u.UserID, updated)
 	sendSuccess(w, policyToAPI(updated), "")
 }
 
 // Delete handles DELETE /api/v1/alert-escalation-policies/{id}.
 func (h *AlertEscalationHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	u := middleware.GetUserFromContext(r.Context())
+	if u == nil {
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
 	id, ok := parseUintParam(w, r, "id")
 	if !ok {
 		return
@@ -172,6 +184,7 @@ func (h *AlertEscalationHandler) Delete(w http.ResponseWriter, r *http.Request) 
 		sendError(w, "InternalError", "Failed to delete alert escalation policy", http.StatusInternalServerError, nil)
 		return
 	}
+	h.coreService.LogAlertEscalationPolicyDeleted(r.Context(), u.UserID, id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -105,7 +105,21 @@ func plural(n int) string {
 // "send now" was indistinguishable from the scheduled run in the audit trail.
 func (c *KeyorixCore) SendComplianceDigest(ctx context.Context, actorID uint) (bool, error) {
 	if c.notificationSink == nil {
-		return false, nil // nowhere to deliver — no channel configured
+		// Nowhere to deliver — no channel configured. Still a successful run of
+		// the job (nothing failed), so it must still leave a trail that it ran
+		// (F4, audit-completeness campaign) — the same reasoning as the
+		// !attempted branch below, just one step earlier.
+		auditCtx := ctx
+		var userID *uint
+		if actorID != 0 {
+			uid := actorID
+			userID = &uid
+		} else {
+			auditCtx = WithActorType(ctx, ActorTypeSystem)
+		}
+		c.writeAuditEvent(auditCtx, EventComplianceDigestSent, userID, nil,
+			"compliance digest job ran but no notification channel is configured")
+		return false, nil
 	}
 	title, body, err := c.BuildComplianceDigest(ctx)
 	if err != nil {
