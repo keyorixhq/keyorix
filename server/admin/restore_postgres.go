@@ -11,9 +11,13 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
+
+	"gorm.io/gorm/schema"
 
 	"github.com/keyorixhq/keyorix/internal/auditverify"
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/storage"
 )
 
 // postgresWitnessAnchorDir returns a stable, host-local directory to anchor
@@ -157,6 +161,73 @@ func postgresAuditEventsNewerThan(cfg *config.Config, archiveHead int64) (int64,
 // strings.Contains(err.Error(), "no such table") check.
 func isPostgresUndefinedTable(err error) bool {
 	return strings.Contains(err.Error(), "42P01") || strings.Contains(err.Error(), "does not exist")
+}
+
+// postgresResyncSchemaCache is its own cache (not internal/backupfmt's --
+// unexported to that package), shared across every parseSchemaForResync call
+// within one process so repeated schema.Parse calls on the same model don't
+// re-walk its struct tags every time.
+var postgresResyncSchemaCache sync.Map
+
+// resyncPostgresSequences fixes a real, reproducible gap found live building
+// this restore path (design §11.1/H6's version-skip upgrade proof): LoadArchive
+// inserts every row with its ORIGINAL, explicit primary-key value (design's
+// whole point -- cross-table references must keep resolving), but a Postgres
+// SERIAL/BIGSERIAL column's underlying sequence is NEVER auto-advanced by an
+// explicit-value INSERT (only a value-omitted one calls nextval()) -- exactly
+// the gap pg_dump/pg_restore's own well-known `setval(...)` fixup exists to
+// close, which nothing in this restore path was doing.
+//
+// Left unfixed, the very next auto-generated INSERT on any restored table
+// collides with an already-restored row's id: found live as three duplicate-
+// key failures on audit_events during this very code path's own POST-restore
+// admin.restore_completed audit write and the server's own first-boot startup
+// writes (role.assigned, data_retention.policy_configured, license.evaluated),
+// and traced to a SECOND, more damaging symptom: whichever pooled Postgres
+// connection one of those failed writes leaves in an aborted-transaction
+// state serves the very NEXT unrelated request beside it -- observed as the
+// first real login attempt against a freshly-restored server returning 401
+// (a poisoned connection, not a credentials problem: the same password/hash
+// pair succeeds on every later request once that connection cycles). A
+// side-by-side control confirmed this is restore-specific -- an equivalent
+// fresh (non-restored) Postgres install's first login always succeeds,
+// because it has no pre-existing audit_events rows to collide with in the
+// first place.
+//
+// Runs for every model storage.AllModels() defines that GORM would manage
+// via a sequence-backed "id" primary key (composite-PK join tables have no
+// single sequence to resync and are skipped, matching
+// internal/backupfmt/order.go's own ChildHasIDColumn convention for the
+// identical structural reason) -- registry-driven, not a hand-picked table
+// list, so a model added to the registry later is covered automatically.
+func resyncPostgresSequences(db *sql.DB) error {
+	for _, m := range storage.AllModels() {
+		s, err := schema.Parse(m, &postgresResyncSchemaCache, schema.NamingStrategy{})
+		if err != nil {
+			return fmt.Errorf("parse schema for %T: %w", m, err)
+		}
+		if s.LookUpField("ID") == nil {
+			continue // composite-PK join table -- no single sequence to resync
+		}
+		// #nosec G201 -- s.Table/idCol come from parseSchema resolving storage.AllModels()'s
+		// compiled-in Go structs via GORM's own naming strategy, never from archive or request content.
+		q := fmt.Sprintf(
+			`SELECT setval(pg_get_serial_sequence('%s', 'id'), COALESCE((SELECT MAX(id) FROM %s), 1), `+
+				`(SELECT MAX(id) FROM %s) IS NOT NULL)`,
+			s.Table, quoteIdentPG(s.Table), quoteIdentPG(s.Table))
+		if _, err := db.Exec(q); err != nil {
+			return fmt.Errorf("resync sequence for table %q: %w", s.Table, err)
+		}
+	}
+	return nil
+}
+
+// quoteIdentPG double-quotes a Postgres identifier this package itself
+// derived from a Go struct's own table name (never operator/archive input),
+// matching the same identifier set referenceEdges()/AllModels() already
+// trust elsewhere in this codebase.
+func quoteIdentPG(ident string) string {
+	return `"` + strings.ReplaceAll(ident, `"`, `""`) + `"`
 }
 
 // verifyRestoredAuditPostgres is verifyRestoredAudit's Postgres equivalent,
