@@ -1,3 +1,5 @@
+//go:build !noaws && !noazure && !nogcp
+
 package connect
 
 // coverage_test.go — additional tests targeting uncovered branches in the

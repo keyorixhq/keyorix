@@ -24,6 +24,13 @@
 // check) — but this enforcement only bites ARN-shaped refs; a bare-name ref carries
 // no account segment to check, by construction, regardless of whether accountID is
 // configured.
+//
+// A noaws build (see awssm_noaws.go, ADR-109 step 6) compiles this file out
+// entirely, dropping aws-sdk-go-v2 (the packages this file alone pulls into
+// this package) from the binary.
+//
+//go:build !noaws
+
 package connect
 
 import (
@@ -158,4 +165,10 @@ func (c *AWSSecretsManagerConnector) GetSecret(ctx context.Context, ref string) 
 		return base64.StdEncoding.EncodeToString(out.SecretBinary), nil
 	}
 	return "", fmt.Errorf("aws-secrets-manager: secret %q has no value", ref)
+}
+
+func init() {
+	registerCloudConnector("aws-secrets-manager", func(p ConnectorParams) Connector {
+		return NewAWSSecretsManagerConnector(p.Name, p.Region, p.AccountID, p.AllowedRefs)
+	})
 }

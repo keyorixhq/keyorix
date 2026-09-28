@@ -1,16 +1,17 @@
-//go:build lean
+//go:build lean || noaws
 
-// objectstore_lean.go — lean-build stand-in for objectstore.go. Keeps the same
-// exported surface (NewObjectStore, ObjectStore.ForwardEvidence/Target, and
-// shares ObjectStoreConfig from objectstore_config.go) so server/main.go's
-// unconditional `evidencesink.NewObjectStore` call compiles either way, but
-// drops the aws-sdk-go-v2/service/s3 import entirely. A config that still
-// enables the object-store evidence target fails LOUDLY at server startup
-// with a clear "not built into this binary" error — server/main.go treats a
-// non-nil error from NewObjectStore as fatal — never a silent no-op, so an
-// operator who deploys the lean binary against a config written for the full
-// one finds out at startup, not the first time a scheduled evidence export
-// silently fails to reach the bucket.
+// objectstore_lean.go — lean-build (and, ADR-109 step 6, noaws-build) stand-in
+// for objectstore.go. Keeps the same exported surface (NewObjectStore,
+// ObjectStore.ForwardEvidence/Target, and shares ObjectStoreConfig from
+// objectstore_config.go) so server/main.go's unconditional
+// `evidencesink.NewObjectStore` call compiles either way, but drops the
+// aws-sdk-go-v2/service/s3 import entirely. A config that still enables the
+// object-store evidence target fails LOUDLY at server startup with a clear
+// "not built into this binary" error — server/main.go treats a non-nil error
+// from NewObjectStore as fatal — never a silent no-op, so an operator who
+// deploys this binary against a config written for the full one finds out at
+// startup, not the first time a scheduled evidence export silently fails to
+// reach the bucket.
 package evidencesink
 
 import (
@@ -21,9 +22,10 @@ import (
 // ObjectStore is the lean-build stand-in for the real sink in objectstore.go.
 type ObjectStore struct{}
 
-// leanObjectStoreErr is returned by every ObjectStore method in a lean build.
+// leanObjectStoreErr is returned by every ObjectStore method in a lean or
+// noaws build.
 func leanObjectStoreErr() error {
-	return fmt.Errorf("evidencesink: object-store target not available in this lean build (compiled with -tags lean); rebuild without the lean tag to use it")
+	return fmt.Errorf("evidencesink: object-store target not available in this build (compiled with -tags lean or -tags noaws); rebuild without that tag to use it")
 }
 
 // NewObjectStore returns an error unconditionally in a lean build: there is no

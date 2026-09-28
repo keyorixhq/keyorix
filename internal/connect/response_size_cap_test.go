@@ -1,3 +1,5 @@
+//go:build !noaws && !noazure
+
 package connect
 
 // response_size_cap_test.go — regression tests for the shared post-decompression

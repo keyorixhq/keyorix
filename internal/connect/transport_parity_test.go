@@ -46,24 +46,31 @@ func unwrapHardenedTransport(t *testing.T, rt http.RoundTripper) *http.Transport
 // dial-timeout/keep-alive values it sets are checked once, not per backend,
 // since they're a shared constant, not something that could drift between
 // backends independently.
+// transportParityCase is one row of
+// TestConnectHardenedTransport_ParityWithBackendDefaults's table — named (not
+// anonymous) so a build-tag-gated file (transport_parity_aws_test.go /
+// transport_parity_noaws_test.go, ADR-109 step 6, B1/S2) can construct one
+// without duplicating the struct shape.
+type transportParityCase struct {
+	name                    string
+	base                    *http.Transport
+	wantForceHTTP2          bool
+	wantTLSHandshakeTimeout time.Duration
+	wantIdleConnTimeout     time.Duration
+	wantMaxIdleConns        int
+	// wantMaxIdleConnsPerHost: 0 means "field left at Go's zero value",
+	// which net/http's Transport internally treats as
+	// DefaultMaxIdleConnsPerHost (2) at request time — Vault's own
+	// pre-fix http.DefaultTransport never set this field explicitly
+	// either, so 0 here is the correct preserved value, not a gap.
+	wantMaxIdleConnsPerHost int
+}
+
 func TestConnectHardenedTransport_ParityWithBackendDefaults(t *testing.T) {
 	assert.Equal(t, 30*time.Second, connectDialTimeout, "must match all three backends' own pre-fix dial timeout (Go stdlib, azcore, aws-sdk-go-v2 all independently use 30s)")
 	assert.Equal(t, 30*time.Second, connectDialKeepAlive, "must match all three backends' own pre-fix dial keep-alive (same three sources, all 30s)")
 
-	cases := []struct {
-		name                    string
-		base                    *http.Transport
-		wantForceHTTP2          bool
-		wantTLSHandshakeTimeout time.Duration
-		wantIdleConnTimeout     time.Duration
-		wantMaxIdleConns        int
-		// wantMaxIdleConnsPerHost: 0 means "field left at Go's zero value",
-		// which net/http's Transport internally treats as
-		// DefaultMaxIdleConnsPerHost (2) at request time — Vault's own
-		// pre-fix http.DefaultTransport never set this field explicitly
-		// either, so 0 here is the correct preserved value, not a gap.
-		wantMaxIdleConnsPerHost int
-	}{
+	cases := []transportParityCase{
 		// vault: Go's own http.DefaultTransport, verified directly against
 		// GOROOT's net/http/transport.go — never had any SDK-specific tuning
 		// to preserve, since vault.go never used one.
@@ -71,9 +78,12 @@ func TestConnectHardenedTransport_ParityWithBackendDefaults(t *testing.T) {
 		// azure: hand-replicated from azure-sdk-for-go's own unexported
 		// default (azureBaseTransport's own doc comment cites the exact file).
 		{"azure", azureBaseTransport(), true, 10 * time.Second, 90 * time.Second, 100, 10},
-		// aws: a REAL clone of aws-sdk-go-v2's own default transport, via the
-		// SDK's own exported constructor (awsBaseTransport's own doc comment).
-		{"aws", awsBaseTransport(), true, 10 * time.Second, 90 * time.Second, 100, 10},
+	}
+	// aws: a REAL clone of aws-sdk-go-v2's own default transport, via the
+	// SDK's own exported constructor (awsBaseTransport's own doc comment) —
+	// absent (nil) in a noaws build, where awsBaseTransport doesn't exist.
+	if awsCase := awsTransportParityCase(); awsCase != nil {
+		cases = append(cases, *awsCase)
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -156,7 +166,10 @@ func TestConnectBaseTransports_NoCustomCAConfiguredToday(t *testing.T) {
 	bases := map[string]*http.Transport{
 		"vault": vaultBaseTransport(),
 		"azure": azureBaseTransport(),
-		"aws":   awsBaseTransport(),
+	}
+	// aws: absent (nil) in a noaws build, where awsBaseTransport doesn't exist.
+	if aws := awsBaseTransportOrNil(); aws != nil {
+		bases["aws"] = aws
 	}
 	for name, base := range bases {
 		t.Run(name, func(t *testing.T) {

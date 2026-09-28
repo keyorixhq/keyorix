@@ -4,6 +4,12 @@
 // connector's configured address; credentials come from the ambient Azure identity
 // chain (managed identity / workload identity / env / CLI) via DefaultAzureCredential
 // — never from Keyorix config — mirroring the Azure KMS integration.
+//
+// A noazure build (see azurekv_noazure.go, ADR-109 step 6) compiles this file
+// out entirely, dropping the Azure SDK from the binary.
+//
+//go:build !noazure
+
 package connect
 
 import (
@@ -114,4 +120,10 @@ func (c *AzureKeyVaultConnector) GetSecret(ctx context.Context, ref string) (str
 		return "", fmt.Errorf("azure-key-vault: secret %q has no value", ref)
 	}
 	return *out.Value, nil
+}
+
+func init() {
+	registerCloudConnector("azure-key-vault", func(p ConnectorParams) Connector {
+		return NewAzureKeyVaultConnector(p.Name, p.Address, p.AllowedRefs)
+	})
 }

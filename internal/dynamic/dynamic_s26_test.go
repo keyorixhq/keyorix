@@ -1,3 +1,5 @@
+//go:build !noaws && !noazure && !nogcp && !nok8s
+
 package dynamic
 
 // dynamic_s26_test.go – G80 coverage push for internal/dynamic (93.3% → as close to

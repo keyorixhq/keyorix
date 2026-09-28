@@ -1,3 +1,5 @@
+//go:build !noaws
+
 package connect
 
 // connect_s24_test.go — coverage blitz targeting the three uncovered branches in

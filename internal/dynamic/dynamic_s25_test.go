@@ -1,3 +1,5 @@
+//go:build !noaws
+
 package dynamic
 
 // dynamic_s25_test.go – coverage blitz targeting the remaining < 90% functions.

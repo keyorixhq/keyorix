@@ -1,3 +1,5 @@
+//go:build !nogcp
+
 package connect
 
 // gcpsm_recv_cap_test.go — proves gcpMaxRecvMsgSize (gcpsm.go) actually bounds

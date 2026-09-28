@@ -38,3 +38,9 @@ func (e *AWSIAMExecutor) Rotate(_ context.Context, _, _ string) error {
 func (e *AWSIAMExecutor) GenerateUpstream(_ context.Context, _ string) (string, error) {
 	return "", fmt.Errorf("aws-iam: not available in this lean build (compiled with -tags lean); rebuild without the lean tag to use this backend")
 }
+
+func init() {
+	registerCloudExecutor("aws-iam", func(p CloudExecutorParams) Executor {
+		return NewAWSIAMExecutor(p.Name, p.Region, p.AllowedRefs)
+	})
+}

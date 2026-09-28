@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"time"
 
-	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
@@ -262,17 +261,10 @@ func azureBaseTransport() *http.Transport {
 	}
 }
 
-// awsBaseTransport returns a REAL clone of aws-sdk-go-v2's own default
-// transport, via the SDK's own exported constructor
-// (awshttp.NewBuildableClient().GetTransport(), which returns
-// defaultHTTPTransport() when no transport has been set) — not a hand-copied
-// literal, so it tracks the SDK's actual defaults automatically across version
-// bumps, including its FIPS-140-mode TLS curve-preference restriction
-// (DefaultHTTPTransportTLSCurvePreferencesFIPS) that a hand-copy would risk
-// silently drifting out of sync with.
-func awsBaseTransport() *http.Transport {
-	return awshttp.NewBuildableClient().GetTransport()
-}
+// awsBaseTransport lives in hardened_client_aws.go (ADR-109 step 6): the only
+// piece of this file that needs the AWS SDK, so it is split out and gated
+// //go:build !noaws rather than pulling aws-sdk-go-v2/aws/transport/http into
+// every build via this always-compiled file.
 
 // newConnectHardenedTransport wraps base (a backend-specific starting point —
 // see vaultBaseTransport/azureBaseTransport/awsBaseTransport — never Go's

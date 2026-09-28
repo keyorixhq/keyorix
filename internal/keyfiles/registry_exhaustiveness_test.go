@@ -214,6 +214,48 @@ func buildSingleProviderCaseDispatch(t *testing.T) map[string]map[string]bool {
 	return result
 }
 
+// cloudKMSRegistrationDispatch scans internal/encryption's non-test files for
+// registerCloudKMSProvider("<type>", ...) calls (the ADR-109 step 6 cloud-KMS
+// registration seam) and returns, per registered type, the crypto.New\w+
+// constructors called in that registration's body -- the same shape
+// buildSingleProviderCaseDispatch returns for inline cases. Files are scanned
+// regardless of build tags, so a no<x> tag never hides a writer from this test.
+func cloudKMSRegistrationDispatch(t *testing.T) map[string]map[string]bool {
+	t.Helper()
+	dir := filepath.Join(repoRoot(t), "internal", "encryption")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+	regRe := regexp.MustCompile(`registerCloudKMSProvider\("([^"]+)"`)
+	constructorRe := regexp.MustCompile(`crypto\.(New\w+)\(`)
+	result := make(map[string]map[string]bool)
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, name)) // #nosec G304 -- fixed repo-relative test-only path
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		src := string(data)
+		idx := regRe.FindAllStringSubmatchIndex(src, -1)
+		for i, m := range idx {
+			end := len(src)
+			if i+1 < len(idx) {
+				end = idx[i+1][0]
+			}
+			constructors := make(map[string]bool)
+			for _, c := range constructorRe.FindAllStringSubmatch(src[m[1]:end], -1) {
+				constructors[c[1]] = true
+			}
+			result[src[m[2]:m[3]]] = constructors
+		}
+	}
+	return result
+}
+
 func TestSourceScan_WriteCapableProviderTypesMatchRegistry(t *testing.T) {
 	writers := writerConstructors(t, filepath.Join(repoRoot(t), "internal", "crypto"))
 	if len(writers) == 0 {
@@ -223,6 +265,17 @@ func TestSourceScan_WriteCapableProviderTypesMatchRegistry(t *testing.T) {
 	dispatch := buildSingleProviderCaseDispatch(t)
 	if len(dispatch) == 0 {
 		t.Fatal("source scan found zero case clauses in buildSingleProvider -- the parser is broken")
+	}
+	// ADR-109 step 6: the cloud-KMS cases no longer call their constructors
+	// inline -- they dispatch through newCloudKMSProvider, and each provider's
+	// constructor lives in its own registerCloudKMSProvider("<type>", ...) call
+	// (internal/encryption/kms_<x>.go, behind a //go:build !no<x> tag). Follow
+	// that indirection so the scan still sees what each type constructs.
+	for typeName, constructors := range cloudKMSRegistrationDispatch(t) {
+		if _, ok := dispatch[typeName]; !ok {
+			t.Fatalf("registerCloudKMSProvider(%q) has no matching case in buildSingleProvider -- a registered type is unreachable", typeName)
+		}
+		dispatch[typeName] = constructors
 	}
 
 	derived := make(map[string]bool)

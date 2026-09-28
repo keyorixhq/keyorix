@@ -1,3 +1,5 @@
+//go:build !noazure && !nogcp
+
 package dynamic
 
 import (

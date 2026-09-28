@@ -2268,9 +2268,13 @@ func DefaultIntegrations(cfg *config.Config, coreService *core.KeyorixCore) erro
 		return err
 	}
 	wireHumanSSO(cfg, coreService)
-	wireBackendRotation(cfg, coreService)
+	if err := wireBackendRotation(cfg, coreService); err != nil {
+		return err
+	}
 	wireDynamicSecrets(cfg, coreService)
-	wireConnect(cfg, coreService)
+	if err := wireConnect(cfg, coreService); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -2279,10 +2283,16 @@ func DefaultIntegrations(cfg *config.Config, coreService *core.KeyorixCore) erro
 // place. Admin DSNs come from the environment, never the config file. A
 // backend with an unknown type, or one missing its fail-closed allowed_refs
 // allowlist, is skipped with a warning rather than failing startup — matching
-// this wiring's pre-ADR-109 behavior.
-func wireBackendRotation(cfg *config.Config, coreService *core.KeyorixCore) {
+// this wiring's pre-ADR-109 behavior. A KNOWN cloud backend type (aws-iam,
+// gcp-service-account, azure-app) whose implementation this server binary
+// was compiled without (a no<provider> build tag) is a different condition —
+// that fails startup outright (ADR-109 step 6, S2): never fail open on a
+// config the operator explicitly enabled. Returned (not log.Fatalf'd)
+// specifically for that one condition so it is testable in-process — see
+// server/rotation_failclosed_noaws_test.go and its nogcp sibling.
+func wireBackendRotation(cfg *config.Config, coreService *core.KeyorixCore) error {
 	if len(cfg.AutoRotation.Backends) == 0 {
-		return
+		return nil
 	}
 	var execs []rotation.Executor
 	for _, b := range cfg.AutoRotation.Backends {
@@ -2329,30 +2339,27 @@ func wireBackendRotation(cfg *config.Config, coreService *core.KeyorixCore) {
 				log.Printf("Rotation backend %q has no admin DSN (%s unset) — rotations will fail", b.Name, b.DSNEnv)
 			}
 			execs = append(execs, rotation.NewRedisExecutor(b.Name, dsn, b.AllowedRefs))
-		case "aws-iam":
-			// Generate-upstream backend: AWS mints the new key; credentials come from
-			// the ambient AWS chain (no DSN). Still fail-closed on allowed_refs.
+		case "aws-iam", "gcp-service-account", "azure-app":
+			// Generate-upstream backends: the cloud mints the new credential;
+			// credentials for the mint call itself come from the ambient cloud
+			// identity chain (no DSN). Still fail-closed on allowed_refs. Routed
+			// through rotation.LookupCloudExecutor (ADR-109 step 6) rather than each
+			// backend's own constructor directly, because a no<x>-tagged build
+			// (e.g. noaws) does not compile that constructor in at all — ok=false
+			// is exactly the "not available in this build" signal, handled the
+			// same as an unknown type below (S2 hardens this into a startup
+			// failure for an explicitly-configured, not-compiled-in backend).
 			if len(b.AllowedRefs) == 0 {
 				log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
 				continue
 			}
-			execs = append(execs, rotation.NewAWSIAMExecutor(b.Name, b.Region, b.AllowedRefs))
-		case "gcp-service-account":
-			// Generate-upstream backend: GCP mints the key; credentials come from
-			// Application Default Credentials (no DSN). Fail-closed on allowed_refs.
-			if len(b.AllowedRefs) == 0 {
-				log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
-				continue
+			exec, ok := rotation.LookupCloudExecutor(b.Type, rotation.CloudExecutorParams{
+				Name: b.Name, Region: b.Region, AllowedRefs: b.AllowedRefs,
+			})
+			if !ok {
+				return fmt.Errorf("rotation backend %q has type %q, which this server binary was not built with (excluded by a no%s build tag) — rebuild without that tag, or remove this backend", b.Name, b.Type, cloudProviderTag(b.Type))
 			}
-			execs = append(execs, rotation.NewGCPServiceAccountKeyExecutor(b.Name, b.AllowedRefs))
-		case "azure-app":
-			// Generate-upstream backend: Azure mints the client secret via Graph;
-			// credentials come from the ambient Azure chain (no DSN). Fail-closed.
-			if len(b.AllowedRefs) == 0 {
-				log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
-				continue
-			}
-			execs = append(execs, rotation.NewAzureAppSecretExecutor(b.Name, b.AllowedRefs))
+			execs = append(execs, exec)
 		default:
 			log.Printf("Rotation backend %q: unknown type %q, skipping", b.Name, b.Type)
 		}
@@ -2360,6 +2367,24 @@ func wireBackendRotation(cfg *config.Config, coreService *core.KeyorixCore) {
 	if len(execs) > 0 {
 		coreService.SetRotationManager(rotation.NewManager(execs))
 		log.Printf("Backend rotation executors enabled (%d backend(s))", len(execs))
+	}
+	return nil
+}
+
+// cloudProviderTag maps a cloud backend/connector type to the no<provider>
+// build tag that excludes it (ADR-109 step 6), for use in a boot-time error
+// naming the build profile responsible — e.g. "rotation backend ... excluded
+// by a noaws build tag".
+func cloudProviderTag(backendOrConnectorType string) string {
+	switch backendOrConnectorType {
+	case "aws-iam", "aws-secrets-manager", "aws-sts", "aws-kms":
+		return "aws"
+	case "gcp-service-account", "gcp-secret-manager", "gcp", "gcp-kms":
+		return "gcp"
+	case "azure-app", "azure-key-vault", "azure", "azure-kms":
+		return "azure"
+	default:
+		return "<provider>"
 	}
 }
 
@@ -2471,10 +2496,10 @@ func wireDynamicSecrets(cfg *config.Config, coreService *core.KeyorixCore) {
 // coreService.Storage() for the boot-time ownership resolution and drift
 // check below; core.NewKeyorixCore(store) always sets storage before
 // DefaultIntegrations is ever called, so it is available here unconditionally.
-func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) {
+func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) error {
 	cc := cfg.Connect
 	if !cc.Enabled || len(cc.Connectors) == 0 {
-		return
+		return nil
 	}
 	// ADR-082 §C: cfg.Validate() already refused to boot with a missing/invalid
 	// connector scope — unconditionally, no deployment-wide escape hatch (amended:
@@ -2500,7 +2525,11 @@ func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) {
 			if cn.AccountID == "" {
 				log.Printf("Keyorix Connect: aws-secrets-manager connector %q has no account_id configured — a ref supplied as a full ARN naming a DIFFERENT AWS account will still succeed if that account's own resource policy grants cross-account access; set account_id to pin the connector to one account (a bare secret-name ref is unaffected either way -- Secrets Manager always resolves those within the caller's own account)", cn.Name)
 			}
-			connectors = append(connectors, connect.NewAWSSecretsManagerConnector(cn.Name, cn.Region, cn.AccountID, cn.AllowedRefs))
+			conn, ok := connect.NewCloudConnector(cn.Type, connect.ConnectorParams{Name: cn.Name, Region: cn.Region, AccountID: cn.AccountID, AllowedRefs: cn.AllowedRefs})
+			if !ok {
+				return fmt.Errorf("keyorix connect: connector %q has type %q, which this server binary was not built with (excluded by the no%s build tag) — rebuild without -tags no%s, or remove this connector", cn.Name, cn.Type, cloudProviderTag(cn.Type), cloudProviderTag(cn.Type))
+			}
+			connectors = append(connectors, conn)
 		case "gcp-secret-manager":
 			// project_id is now a required field: unreachable via a config that
 			// passed cfg.Validate() — validateConnectGCPProjectID
@@ -2515,9 +2544,17 @@ func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) {
 			if cn.ProjectID == "" {
 				log.Fatalf("Keyorix Connect: gcp-secret-manager connector %q has no project_id — this should have been caught by cfg.Validate()", cn.Name)
 			}
-			connectors = append(connectors, connect.NewGCPSecretManagerConnector(cn.Name, cn.ProjectID, cn.AllowedRefs))
+			conn, ok := connect.NewCloudConnector(cn.Type, connect.ConnectorParams{Name: cn.Name, ProjectID: cn.ProjectID, AllowedRefs: cn.AllowedRefs})
+			if !ok {
+				return fmt.Errorf("keyorix connect: connector %q has type %q, which this server binary was not built with (excluded by the no%s build tag) — rebuild without -tags no%s, or remove this connector", cn.Name, cn.Type, cloudProviderTag(cn.Type), cloudProviderTag(cn.Type))
+			}
+			connectors = append(connectors, conn)
 		case "azure-key-vault":
-			connectors = append(connectors, connect.NewAzureKeyVaultConnector(cn.Name, cn.Address, cn.AllowedRefs))
+			conn, ok := connect.NewCloudConnector(cn.Type, connect.ConnectorParams{Name: cn.Name, Address: cn.Address, AllowedRefs: cn.AllowedRefs})
+			if !ok {
+				return fmt.Errorf("keyorix connect: connector %q has type %q, which this server binary was not built with (excluded by the no%s build tag) — rebuild without -tags no%s, or remove this connector", cn.Name, cn.Type, cloudProviderTag(cn.Type), cloudProviderTag(cn.Type))
+			}
+			connectors = append(connectors, conn)
 		case "vault":
 			tokenEnv := cn.TokenEnv
 			if tokenEnv == "" {
@@ -2552,7 +2589,7 @@ func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) {
 		}
 	}
 	if len(connectors) == 0 {
-		return
+		return nil
 	}
 	mgr := connect.NewManager(connectors)
 
@@ -2596,6 +2633,7 @@ func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) {
 	// a dead ref-grant or an orphaned binding both already fail closed/are
 	// simply unused, no over-permission — so this warns, never fails boot.
 	warnConnectConfigDrift(context.Background(), coreService.Storage(), ownership)
+	return nil
 }
 
 // ssoCompleteURL derives the SPA completion URL (<redirect origin>/auth/sso/complete)

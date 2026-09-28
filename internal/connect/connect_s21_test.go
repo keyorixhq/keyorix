@@ -1,10 +1,27 @@
 package connect
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+// stubManagerConnector is a minimal, build-tag-agnostic Connector used by the
+// Manager-behavior tests below (duplicate names, empty names, nil entries) —
+// none of that behavior is AWS-specific, so it must not depend on a cloud-SDK
+// connector that a no<x> build (ADR-109 step 6) may exclude (this file itself
+// carries no //go:build constraint and must compile under every profile).
+type stubManagerConnector struct{ name string }
+
+func connectorNamed(name string) *stubManagerConnector { return &stubManagerConnector{name: name} }
+
+func (s *stubManagerConnector) Name() string { return s.name }
+func (s *stubManagerConnector) Type() string { return "stub" }
+func (s *stubManagerConnector) GetSecret(_ context.Context, ref string) (string, error) {
+	return "", fmt.Errorf("stubManagerConnector: GetSecret(%q) not implemented", ref)
+}
 
 // ── refWithinPrefix ─────────────────────────────────────────────────────────
 
@@ -150,8 +167,8 @@ func TestSanitizeVaultRef_S21(t *testing.T) {
 // TestManager_DuplicateNameLastWins_S21 verifies that when two connectors share
 // the same Name, the second one replaces the first (last-wins semantics).
 func TestManager_DuplicateNameLastWins_S21(t *testing.T) {
-	first := connectorWith("shared", &fakeSM{})
-	second := connectorWith("shared", &fakeSM{})
+	first := connectorNamed("shared")
+	second := connectorNamed("shared")
 
 	m := NewManager([]Connector{first, second})
 	got, ok := m.Get("shared")
@@ -164,8 +181,8 @@ func TestManager_DuplicateNameLastWins_S21(t *testing.T) {
 // TestManager_EmptyNameConnectorIgnored_S21 verifies that a connector whose
 // Name() returns "" is silently dropped from the manager.
 func TestManager_EmptyNameConnectorIgnored_S21(t *testing.T) {
-	blank := connectorWith("", &fakeSM{})
-	named := connectorWith("real", &fakeSM{})
+	blank := connectorNamed("")
+	named := connectorNamed("real")
 	m := NewManager([]Connector{blank, named})
 
 	_, ok := m.Get("")
@@ -176,7 +193,7 @@ func TestManager_EmptyNameConnectorIgnored_S21(t *testing.T) {
 // TestManager_AllNilOrEmpty_S21 verifies that a Manager built only from nil /
 // empty-named connectors has no registered entries and operations are safe.
 func TestManager_AllNilOrEmpty_S21(t *testing.T) {
-	m := NewManager([]Connector{nil, connectorWith("", &fakeSM{})})
+	m := NewManager([]Connector{nil, connectorNamed("")})
 	assert.Empty(t, m.Names())
 	_, ok := m.Get("anything")
 	assert.False(t, ok)
