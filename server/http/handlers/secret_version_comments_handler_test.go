@@ -102,14 +102,20 @@ func TestCreateComment_EmptyComment(t *testing.T) {
 // TestCreateComment_VersionBelongsToAnotherSecret is the #G53 regression:
 // versionId in the URL actually belongs to secret B, not the {id} (secret A)
 // the caller was authorized against — must be refused, not silently written
-// under secret A's authorization.
+// under secret A's authorization. Expects 404, not 500: versionBelongsToSecret
+// returns an ordinary "not found" error here (internal/core/
+// secret_version_comments.go), which sendVersionCommentError now classifies
+// via the same errNotFound-substring convention every sibling handler in this
+// package already uses (e.g. machine_identities.go) — found by SESSION-I's
+// fresh-install API smoke driver, which got an opaque 500 for exactly this
+// shape of caller mistake (a stale/wrong version ID, not a server fault).
 func TestCreateComment_VersionBelongsToAnotherSecret(t *testing.T) {
 	f := newVersionCommentTestHandler(t)
 	body := bytes.NewBufferString(`{"comment":"cross-tenant write"}`)
 	r := withUserCtx(withChiParams(httptest.NewRequest(http.MethodPost, "/", body), chiParamsForVersion(f.secretAID, f.versionBID)))
 	w := httptest.NewRecorder()
 	f.handler.CreateComment(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestListComments_InvalidVersionID(t *testing.T) {
@@ -145,13 +151,15 @@ func TestListComments_Empty(t *testing.T) {
 
 // TestListComments_VersionBelongsToAnotherSecret is the #G53 regression: the
 // caller is authorized on secret A ({id}) but supplies secret B's versionId —
-// must be refused rather than disclosing secret B's comments.
+// must be refused rather than disclosing secret B's comments. Expects 404,
+// not 500 — see TestCreateComment_VersionBelongsToAnotherSecret's updated
+// doc comment for why.
 func TestListComments_VersionBelongsToAnotherSecret(t *testing.T) {
 	f := newVersionCommentTestHandler(t)
 	r := withUserCtx(withChiParams(httptest.NewRequest(http.MethodGet, "/", nil), chiParamsForVersion(f.secretAID, f.versionBID)))
 	w := httptest.NewRecorder()
 	f.handler.ListComments(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestDeleteComment_Unauthorized(t *testing.T) {
@@ -175,8 +183,11 @@ func TestDeleteComment_InvalidCommentID(t *testing.T) {
 // comment with that ID exists under them. Since local_version_comments.go's
 // DeleteSecretVersionComment now scopes the delete to secret_id/version_id
 // AND reports RowsAffected==0 as not-found (#G53), this is no longer a silent
-// no-op success — it surfaces as an error, same as any other core failure
-// this handler maps to 500.
+// no-op success — it surfaces as an error. Expects 404, not 500: both
+// versionBelongsToSecret's "not found" (checked first) and storage's
+// RowsAffected==0 "Resource not found" (checked second, i18n's ErrorNotFound)
+// contain the errNotFound substring sendVersionCommentError now classifies —
+// see TestCreateComment_VersionBelongsToAnotherSecret's doc comment.
 func TestDeleteComment_NotFound(t *testing.T) {
 	f := newVersionCommentTestHandler(t)
 	params := chiParamsForVersion(f.secretAID, f.versionAID)
@@ -184,12 +195,13 @@ func TestDeleteComment_NotFound(t *testing.T) {
 	r := withUserCtx(withChiParams(httptest.NewRequest(http.MethodDelete, "/", nil), params))
 	w := httptest.NewRecorder()
 	f.handler.DeleteComment(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // TestDeleteComment_VersionBelongsToAnotherSecret is the #G53 regression for
 // delete: the caller is authorized on secret A but supplies secret B's
-// versionId — must be refused before any delete is attempted.
+// versionId — must be refused before any delete is attempted. Expects 404,
+// not 500 — see TestCreateComment_VersionBelongsToAnotherSecret's doc comment.
 func TestDeleteComment_VersionBelongsToAnotherSecret(t *testing.T) {
 	f := newVersionCommentTestHandler(t)
 	params := chiParamsForVersion(f.secretAID, f.versionBID)
@@ -197,7 +209,7 @@ func TestDeleteComment_VersionBelongsToAnotherSecret(t *testing.T) {
 	r := withUserCtx(withChiParams(httptest.NewRequest(http.MethodDelete, "/", nil), params))
 	w := httptest.NewRecorder()
 	f.handler.DeleteComment(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func chiParamsForVersion(secretID, versionID uint) map[string]string {
