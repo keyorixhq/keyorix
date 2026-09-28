@@ -3,8 +3,9 @@
 //
 // Before this package existed, four independent call sites each hand-built
 // their own []securefiles.FilePermSpec list for the same underlying key
-// material: internal/cli/system/audit.go (`keyorix system audit`),
-// cmd/system/fixfileperm.go (`keyorix system fixfileperm`),
+// material: the old CLI's `system audit` and `system fixfileperm` commands
+// (both deleted; the audit check now lives in server/admin/audit.go,
+// `keyorix-server admin system audit`, per ADR-108),
 // internal/startup/validation.go (every server boot), and
 // internal/encryption/keymanager_io.go (KeyManager.ValidateKeyFiles /
 // FixKeyFilePermissions). All four only ever listed the KEK salt and the
