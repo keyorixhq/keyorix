@@ -427,7 +427,7 @@ func destinationEventsNewerThan(dbPath string, archiveHead int64) (int64, error)
 	for _, et := range rollbackBookkeepingEventTypes {
 		args = append(args, et)
 	}
-	if err := db.QueryRow(q, args...).Scan(&n); err != nil {
+	if err := db.QueryRow(q, args...).Scan(&n); err != nil { // nosemgrep: go.lang.security.audit.sqli.gosql-sqli.gosql-sqli -- q's dynamic part is only a "?,?,..." placeholder run sized off len(rollbackBookkeepingEventTypes) (a package-level literal slice); every actual value (archiveHead, et) is passed as a parameterized arg, never interpolated into q
 		if strings.Contains(err.Error(), "no such table") {
 			return 0, nil
 		}
