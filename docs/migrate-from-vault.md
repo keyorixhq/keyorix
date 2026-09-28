@@ -5,6 +5,13 @@ public REST API. It is a separate tool and binary from the `keyorix` CLI — see
 `docs/design-keyorix-migrate.md` for why. This guide walks through a typical
 one-time migration of an existing, possibly orphaned Vault install.
 
+**Not sure yet whether — or how badly — you need to migrate?**
+[`keyorix-migrate vault scan`](vault-health-scan.md) is a free, strictly
+read-only health check for your existing Vault install (same binary, no
+separate download) — version/EOL, seal config, audit devices, policy
+sprawl, and more, plus a "migration readiness" summary of what this tool
+can and can't import. Safe to run against production.
+
 Every run defaults to a **dry run**: it prints what it would do without
 writing anything. Nothing changes until you pass `--apply`.
 
