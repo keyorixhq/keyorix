@@ -7,6 +7,52 @@ All notable changes to Keyorix are documented here. This project follows
 
 ## v0.95.1 — 2026-09-27
 
+### Security
+- **Admin-rank ceiling now fails closed on a storage error.** A transient DB error while
+  resolving a target's or actor's roles during a privileged user mutation (delete,
+  update, suspend, revoke sessions — over REST and gRPC) used to be treated as
+  permission-granted; it now refuses the action. High severity: this let a
+  lower-privileged actor act on a higher-privileged user's account during the error
+  window. Found by `FuzzStorageFaultOperations`. (#2201)
+- **Dynamic-secret lease renewal/sweep now enforces an anti-rollback watermark** against
+  clock jumps (NTP correction, VM pause/resume, manual clock changes), closing a window
+  where a backwards time step could let an expired lease be renewed or an active lease
+  swept early. (#2186)
+- **Login-throttle budget is now reserved by `ConsumeSetup` and
+  `BeginWebAuthnPasswordlessLogin`**, closing two authentication paths that could be
+  hammered without counting against the same per-account throttle every other login path
+  already respects. (#2190)
+- **SSRF guards now validate every host in a multi-host PostgreSQL admin DSN**, and decode
+  6to4/Teredo/NAT64-local-use IPv6 encodings of an embedded IPv4 address (extending the
+  existing NAT64/IPv4-compatible decoding already used by the SIEM forwarder and
+  notification-channel webhook guards). Previously, a bracket-quoted IPv6 host anywhere in
+  a comma-separated failover DSN skipped SSRF validation entirely, even though the
+  Postgres driver would still dial it. (#2197)
+- **Auth-cache negative tombstones are no longer written on a benign account-state
+  transition** (e.g. reactivating a suspended user). Previously, any state transition
+  evicted every one of the account's session/PAT hashes from the auth cache via a
+  short-lived negative tombstone — including on reactivation, where a credential created
+  while suspended (never cached before) could be spuriously rejected as "invalid or
+  expired" for up to the tombstone TTL after the account came back. (#2206)
+- **Removed the dead `verify-credentials`/`verify-mfa`/`mfa-challenge` HTTP endpoints.**
+  These existed only to serve `storage.type: remote`, which was removed entirely in
+  ADR-108 Phase 6 — the routes had no remaining legitimate caller but were still live and
+  gated only by `users.write`, making them an unnecessary credential/MFA-testing oracle
+  for any holder of that permission. (#2212)
+- **Installs bootstrapped before v0.95.0's ordering fix now self-repair on first upgrade.**
+  See "Fresh-Postgres bootstrap" below (#2188) — that fix only prevents the bug on *new*
+  installs. A one-time startup reconcile now grants the missing `system_viewer` baseline
+  role to any existing user who never got it, on every backend, the first time a
+  pre-v0.95.1 install starts up after upgrading. It runs exactly once (a
+  `system_metadata` completion marker prevents any later run), and skips a user whose
+  audit trail shows an admin deliberately removed the role, or who was JIT-provisioned via
+  SSO with a different configured baseline role — it repairs the ordering bug only, never
+  overrides a deliberate choice made since. **Known limitation:** if audit-log retention
+  has already purged an admin's `role.removed` event for a given user before this reconcile
+  runs, that removal history is no longer visible to it, and the user is re-granted
+  `system_viewer` once on this one upgrade despite having been deliberately removed —
+  re-remove it if this applies to your install. (#2195)
+
 ### Fixed
 - **Fresh-Postgres bootstrap no longer logs `"user 1 (admin) created without its baseline
   system_viewer role: Role not found"`.** The bootstrap admin user was created before the
