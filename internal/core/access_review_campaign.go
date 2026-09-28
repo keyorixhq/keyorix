@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -92,39 +93,48 @@ func (c *KeyorixCore) OpenAccessReviewCampaign(ctx context.Context, actorID, act
 	// campaign row itself instead of discarding them the instant the report is
 	// consumed — an ephemeral return value is not a durable record that this
 	// recertification cycle's evidence snapshot was incomplete.
-	campaign, err := c.storage.CreateAccessReviewCampaign(ctx, &models.AccessReviewCampaign{
-		ProjectID:                  projectID,
-		Name:                       name,
-		State:                      CampaignStateOpen,
-		CreatedBy:                  actorID,
-		CreatedByMachineIdentityID: actorMachineID,
-		CreatedAt:                  c.now(),
-		Degraded:                   report.Degraded,
-		DegradedReasons:            report.DegradedReasons,
+	items := make([]*models.AccessReviewItem, 0, len(entries))
+	// The campaign row and its items run in one transaction: a failure creating the
+	// items used to leave an empty, orphaned campaign committed — it reads as
+	// "0 pending, fully reviewed" (looks complete) rather than what it actually is
+	// (a snapshot that never finished).
+	var campaign *models.AccessReviewCampaign
+	err = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		var cerr error
+		campaign, cerr = tx.CreateAccessReviewCampaign(ctx, &models.AccessReviewCampaign{
+			ProjectID:                  projectID,
+			Name:                       name,
+			State:                      CampaignStateOpen,
+			CreatedBy:                  actorID,
+			CreatedByMachineIdentityID: actorMachineID,
+			CreatedAt:                  c.now(),
+			Degraded:                   report.Degraded,
+			DegradedReasons:            report.DegradedReasons,
+		})
+		if cerr != nil {
+			return cerr
+		}
+		for _, e := range entries {
+			items = append(items, &models.AccessReviewItem{
+				CampaignID:    campaign.ID,
+				PrincipalType: e.PrincipalType,
+				PrincipalID:   e.PrincipalID,
+				PrincipalName: e.PrincipalName,
+				Email:         e.Email,
+				Source:        e.Source,
+				RoleID:        e.RoleID,
+				RoleName:      e.RoleName,
+				AccessLevel:   e.AccessLevel,
+				EnvironmentID: e.EnvironmentID,
+				SecretID:      e.SecretID,
+				SecretName:    e.SecretName,
+				LastUsedAt:    e.LastUsedAt,
+				Decision:      ReviewItemPending,
+			})
+		}
+		return tx.CreateAccessReviewItems(ctx, items)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	items := make([]*models.AccessReviewItem, 0, len(entries))
-	for _, e := range entries {
-		items = append(items, &models.AccessReviewItem{
-			CampaignID:    campaign.ID,
-			PrincipalType: e.PrincipalType,
-			PrincipalID:   e.PrincipalID,
-			PrincipalName: e.PrincipalName,
-			Email:         e.Email,
-			Source:        e.Source,
-			RoleID:        e.RoleID,
-			RoleName:      e.RoleName,
-			AccessLevel:   e.AccessLevel,
-			EnvironmentID: e.EnvironmentID,
-			SecretID:      e.SecretID,
-			SecretName:    e.SecretName,
-			LastUsedAt:    e.LastUsedAt,
-			Decision:      ReviewItemPending,
-		})
-	}
-	if err := c.storage.CreateAccessReviewItems(ctx, items); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	c.auditProjectScoped(ctx, EventCampaignOpened, actorID, projectID,
