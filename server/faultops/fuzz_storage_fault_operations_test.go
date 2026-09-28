@@ -310,6 +310,14 @@ func FuzzStorageFaultOperations(f *testing.F) {
 	if s := seedFor("REST DELETE /api/v1/secrets/{id}", "DeleteSecret", 1, 2); s != nil {
 		f.Add(s)
 	}
+	// Oracle false-positive regression (TokenPrefix): a fired fault that the op
+	// tolerates by design (here the auth middleware's documented skip-on-error
+	// account-state re-read) reports success, so oracle (a) compares against the
+	// independently-bootstrapped reference world -- whose setup minted its own
+	// random machine token. TokenPrefix must be presence-only, like TokenHash.
+	if s := seedFor("REST DELETE /api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}", "GetUser", 1, 0); s != nil {
+		f.Add(s)
+	}
 	f.Fuzz(func(t *testing.T, data []byte) {
 		runOneFuzzIteration(t, data)
 	})

@@ -64,6 +64,7 @@ var presenceOnlyFields = map[string]string{
 	"PasswordHash":   "bcrypt includes a random salt per hash",
 	"TokenHash":      "the raw token is randomly generated before hashing",
 	"CodeHash":       "the raw MFA recovery code is randomly generated before hashing",
+	"TokenPrefix":    "leading characters of the same randomly generated raw token TokenHash hashes (PAT and machine credentials, models.go) -- two independently bootstrapped worlds never mint the same token, so never the same prefix; found by FuzzStorageFaultOperations (REST DELETE machine token, GetUser#1 error) on PR #2195's CI",
 	"SecretEnc":      "AEAD ciphertext includes a random nonce",
 	"AdminDSNEnc":    "AEAD ciphertext includes a random nonce",
 	"CredentialEnc":  "AEAD ciphertext includes a random nonce",
