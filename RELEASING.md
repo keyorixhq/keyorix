@@ -31,6 +31,24 @@ That's it. Watch the runs under the repo's **Actions** tab.
 The asset names produced by `make release` are exactly what `install.sh`
 downloads — keep `make release`, `install.sh`, and any image references in sync.
 
+## SLSA build provenance (ADR-109 step 6)
+
+`release.yml` and `docker-publish.yml` each run `actions/attest-build-provenance`
+(SHA-pinned) for every binary and image they publish — a separate mechanism from the
+cosign keyless signature above, verifiable with `gh attestation verify` and documented
+for customers in [SECURITY.md](SECURITY.md). After cutting a release, confirm the
+attestations actually landed:
+
+```sh
+gh attestation verify dist/keyorix-server_linux_amd64 --owner keyorixhq
+gh attestation verify oci://ghcr.io/keyorixhq/keyorix-server:<tag> --owner keyorixhq
+```
+
+A missing or failed attestation on a freshly-cut release means the `attestations: write`
+permission was dropped from the job, or `actions/attest-build-provenance`'s step was
+skipped/failed silently — check the workflow run's own logs for that step before
+assuming the release itself is otherwise fine.
+
 ## After the release — verify it's consumable
 
 ```sh

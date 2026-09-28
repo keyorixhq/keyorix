@@ -100,11 +100,12 @@ sha256sum --check --ignore-missing checksums.txt
 
 Every release also ships one **CycloneDX SBOM per binary** (e.g.
 `keyorix-server_linux_amd64_sbom.cdx.json`, 14 total across the CLI, server
-(full + lean), and keyorix-migrate binaries × linux/darwin × amd64/arm64,
-lean server variants linux-only) — a full dependency and licence inventory,
-the component list needed to assess CVE exposure under the EU CRA. The six
-server/server-lean binaries embed a built React dashboard (`server/webui`);
-each of their SBOMs links to one shared, production-scope frontend SBOM
+(full + air-gapped, ADR-109), and keyorix-migrate binaries × linux/darwin ×
+amd64/arm64, air-gapped server variant linux-only) — a full dependency and
+licence inventory, the component list needed to assess CVE exposure under
+the EU CRA. The six server/server-airgap binaries embed a built React
+dashboard (`server/webui`); each of their SBOMs links to one shared,
+production-scope frontend SBOM
 (`keyorix-server_frontend_sbom.cdx.json`) via a hashed CycloneDX
 `externalReferences` entry, so a scanner pointed at a server binary's own SBOM
 can follow the link rather than needing a separate download step (ADR-073).
@@ -128,6 +129,26 @@ cosign verify \
   --certificate-identity-regexp 'https://github.com/keyorixhq/keyorix/\.github/workflows/docker-publish\.yml@.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   ghcr.io/keyorixhq/keyorix-server:<tag>
+```
+
+Every release binary and container image (both `keyorix-server` variants and
+every other published image) also carries a **SLSA build provenance
+attestation** (`actions/attest-build-provenance`, ADR-109 step 6) — an
+in-toto statement naming the exact GitHub Actions workflow run, its inputs
+(repo, ref, commit SHA), and the builder identity that produced it. This is a
+second, independent mechanism from the cosign signature above: cosign proves
+"Keyorix's release workflow signed this"; SLSA provenance additionally proves
+*which* workflow run, from *which* source commit, with a machine-checkable
+build definition GitHub itself attests to (not something Keyorix could forge
+even with the signing identity compromised, since GitHub's Attestations API
+is the party recording it). Verify with the `gh` CLI (no extra tooling):
+
+```bash
+# a downloaded release binary
+gh attestation verify keyorix-server_linux_amd64 --owner keyorixhq
+
+# a container image
+gh attestation verify oci://ghcr.io/keyorixhq/keyorix-server:<tag> --owner keyorixhq
 ```
 
 Download releases only from `github.com/keyorixhq/keyorix/releases` over HTTPS.
