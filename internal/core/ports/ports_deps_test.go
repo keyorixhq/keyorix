@@ -17,6 +17,12 @@ var forbiddenDepPrefixes = []string{
 	"github.com/keyorixhq/keyorix/internal/encryption",
 	"github.com/keyorixhq/keyorix/internal/notary",
 	"github.com/keyorixhq/keyorix/internal/saml",
+	// internal/delivery and internal/license (ADR-109 "last decoupling", B5):
+	// ports_delivery.go/ports_license.go declare their own canonical types
+	// (or alias straight to pkg/licenseverify, license's own upstream), so
+	// this package has no legitimate reason to import either.
+	"github.com/keyorixhq/keyorix/internal/delivery",
+	"github.com/keyorixhq/keyorix/internal/license",
 	"github.com/aws/aws-sdk-go-v2/service/",
 	"github.com/Azure/azure-sdk-for-go/sdk/security/",
 	"cloud.google.com/go/",
