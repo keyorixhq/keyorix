@@ -124,7 +124,14 @@ the keys without the DB are useless.
 # 1. Database
 docker compose exec -T postgres pg_dump -U keyorix keyorix | gzip > keyorix-db-$(date +%F).sql.gz
 
-# 2. Encryption keys (the keyorix_keys volume)
+# 2. Encryption keys (the keyorix_keys volume). The example below assumes your
+# Compose project is named "keyorix" (true for a plain `git clone .../keyorix`
+# checkout run from that directory) -- Compose prefixes every named volume
+# with the project name, so the actual volume is <project>_keyorix_keys. If
+# your checkout directory has a different name, or you set
+# COMPOSE_PROJECT_NAME explicitly, run `docker volume ls | grep keyorix_keys`
+# first and substitute the real name below (verified against a real
+# non-"keyorix"-named checkout: ADR-109 step 6, B7 runbook validation).
 docker run --rm -v keyorix_keyorix_keys:/keys -v "$PWD":/backup alpine \
   tar czf /backup/keyorix-keys-$(date +%F).tar.gz -C /keys .
 ```
@@ -137,10 +144,18 @@ that unwraps the backed-up DEK).
 ```sh
 docker compose up -d postgres
 gunzip -c keyorix-db-YYYY-MM-DD.sql.gz | docker compose exec -T postgres psql -U keyorix keyorix
+# Same volume-naming caveat as the backup step above.
 docker run --rm -v keyorix_keyorix_keys:/keys -v "$PWD":/backup alpine \
   tar xzf /backup/keyorix-keys-YYYY-MM-DD.tar.gz -C /keys
 docker compose up -d
 ```
+
+Verified end to end (ADR-109 step 6, B7): a fresh Postgres-backed stack, real
+secret write, `pg_dump`/keys-volume backup, full teardown (`docker compose
+down -v`), restore into fresh volumes via `psql`/keys-volume-extract, and
+`keyorix-server admin verify-audit` reporting `VALID` against the restored
+database — the secret value round-tripped correctly and the audit chain
+carried across the dump/restore boundary intact.
 
 **Single-binary (local/sqlite) deployments** can use `keyorix-server admin
 backup --output <path>` / `admin restore --input <path>` instead, which
