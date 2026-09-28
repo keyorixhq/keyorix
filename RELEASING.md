@@ -22,9 +22,10 @@ That's it. Watch the runs under the repo's **Actions** tab.
 
 | Workflow | Trigger | Output |
 |----------|---------|--------|
-| `release.yml` → `build-and-release` | `v*` tag | CLI + server + keyorix-migrate binaries for linux/darwin × amd64/arm64 (`keyorix_<os>_<arch>`, `keyorix-server_<os>_<arch>`, `keyorix-server-lean_<os>_<arch>` linux-only, `keyorix-migrate_<os>_<arch>`), one CycloneDX SBOM per binary (`<binary_asset_name>_sbom.cdx.json`, 14 total) plus one shared, production-scope frontend SBOM (`keyorix-server_frontend_sbom.cdx.json`, linked from all six server/server-lean SBOMs — ADR-073), `checksums.txt` covering all 29 files, and `checksums.txt.sig`/`.pem` (cosign keyless signature). All attached to the GitHub Release. |
+| `release.yml` → `build-and-release` | `v*` tag | CLI + server + keyorix-migrate binaries for linux/darwin × amd64/arm64 (`keyorix_<os>_<arch>`, `keyorix-server_<os>_<arch>`, `keyorix-server-airgap_<os>_<arch>` linux-only, `keyorix-migrate_<os>_<arch>`), one CycloneDX SBOM per binary (`<binary_asset_name>_sbom.cdx.json`, 14 total) plus one shared, production-scope frontend SBOM (`keyorix-server_frontend_sbom.cdx.json`, linked from all six server/server-airgap SBOMs — ADR-073), `checksums.txt` covering all 29 files, and `checksums.txt.sig`/`.pem` (cosign keyless signature). All attached to the GitHub Release. `keyorix-server-airgap` replaces the old `keyorix-server-lean` (ADR-109 step 6 — see CHANGELOG.md). |
 | `release.yml` → `publish-chart` | `v*` tag | Helm chart pushed to `oci://ghcr.io/keyorixhq/charts` (chart + app version = the tag without the `v`). |
 | `docker-publish.yml` | `v*` tag (and `main`) | `ghcr.io/keyorixhq/keyorix-server` image tagged with the semver version. |
+| `docker-publish.yml` | `v*` tag (and `main`) | `ghcr.io/keyorixhq/keyorix-server` AIR-GAPPED variant, tagged `<version>-airgap` (ADR-109 step 6) — same multi-arch platforms and Trivy gates as the full image. |
 | `docker-publish.yml` | `v*` tag (and `main`) | `ghcr.io/keyorixhq/keyorix-web` image tagged with the same semver version — same workflow run, same tag (ADR-070). |
 
 The asset names produced by `make release` are exactly what `install.sh`
