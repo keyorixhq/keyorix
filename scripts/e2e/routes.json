@@ -1,0 +1,4444 @@
+[
+  {
+    "method": "POST",
+    "pattern": "/api/v1/access-requests/bulk-approve",
+    "feature_group": "access-requests",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 521
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/access-requests/bulk-reject",
+    "feature_group": "access-requests",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 522
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/admin/anomaly-config",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemRead"
+    ],
+    "router_go_line": 1223
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/admin/anomaly-config",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1224
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/admin/billing/report",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1199
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/admin/impersonate",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "router_go_line": 936
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/admin/jobs/anomaly-alerts",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1206
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/admin/jobs/check-read-quotas",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1213
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/admin/jobs/compliance-digest",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1209
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/admin/jobs/expiry-reminders",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1208
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/admin/jobs/purge-audit-logs",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1217
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/admin/jobs/record-hygiene-snapshot",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1211
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/admin/jobs/role-expiry-check",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1212
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/admin/jobs/rotation-reminders",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1207
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/admin/jobs/run-alert-escalation",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1214
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/admin/jobs/suspend-inactive-users",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1216
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/admin/jobs/token-expiry-check",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1215
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/admin/scheduler-metrics",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1077
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/admin/usage",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1190
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/alert-escalation-policies",
+    "feature_group": "alert-escalation-policies",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 402
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/alert-escalation-policies",
+    "feature_group": "alert-escalation-policies",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 401
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/alert-escalation-policies/{id}",
+    "feature_group": "alert-escalation-policies",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 405
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/alert-escalation-policies/{id}",
+    "feature_group": "alert-escalation-policies",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 403
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/alert-escalation-policies/{id}",
+    "feature_group": "alert-escalation-policies",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 404
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/audit/anomalies",
+    "feature_group": "audit",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead",
+      "permSystemRead"
+    ],
+    "router_go_line": 1064
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/audit/anomalies/{id}/acknowledge",
+    "feature_group": "audit",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead",
+      "permSystemWrite"
+    ],
+    "router_go_line": 1068
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/audit/checkpoint",
+    "feature_group": "audit",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead",
+      "permSystemWrite"
+    ],
+    "router_go_line": 1056
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/audit/export",
+    "feature_group": "audit",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1049
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/audit/export.csv",
+    "feature_group": "audit",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1050
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/audit/logs",
+    "feature_group": "audit",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1047
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/audit/migrate-chain-encoding",
+    "feature_group": "audit",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead",
+      "permSystemWrite"
+    ],
+    "router_go_line": 1060
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/audit/rbac-logs",
+    "feature_group": "audit",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1051
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/audit/retention",
+    "feature_group": "audit",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1052
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/audit/search",
+    "feature_group": "audit",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1048
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/audit/verify",
+    "feature_group": "audit",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1053
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/auth/change-password",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 342
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/auth/end-impersonation",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 384
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/auth/mfa/activate",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 348
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/auth/mfa/disable",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 349
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/auth/mfa/enroll",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 347
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/auth/mfa/recovery-codes",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 350
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/auth/mfa/recovery-codes/regenerate",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 351
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/auth/mfa/stepup",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 356
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/auth/profile",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 340
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/auth/profile",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 341
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/auth/sessions",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 373
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/auth/sessions/{id}",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 374
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/auth/tokens",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 375
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/auth/tokens",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 378
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/auth/tokens/expired",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 382
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/auth/tokens/expired",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 381
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/auth/tokens/{id}",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 379
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/auth/webauthn/credentials",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 360
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/auth/webauthn/credentials/{id}",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 365
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/auth/webauthn/reauth/begin",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 371
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/auth/webauthn/reauth/finish",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 372
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/auth/webauthn/register/begin",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 358
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/auth/webauthn/register/finish",
+    "feature_group": "auth",
+    "gated": false,
+    "router_go_line": 359
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/compliance/controls",
+    "feature_group": "compliance",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1118
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/compliance/controls.csv",
+    "feature_group": "compliance",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1121
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/compliance/credential-trends",
+    "feature_group": "compliance",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1109
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/compliance/digest",
+    "feature_group": "compliance",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1124
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/compliance/digest/send",
+    "feature_group": "compliance",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1133
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/compliance/evidence",
+    "feature_group": "compliance",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1150
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/compliance/evidence/verify",
+    "feature_group": "compliance",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1152
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/compliance/permission-baseline",
+    "feature_group": "compliance",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1157
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/compliance/permission-baseline.csv",
+    "feature_group": "compliance",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1158
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/compliance/permission-changes",
+    "feature_group": "compliance",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1163
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/compliance/posture",
+    "feature_group": "compliance",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1111
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/compliance/rotation-by-backend",
+    "feature_group": "compliance",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1116
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/compliance/snapshots",
+    "feature_group": "compliance",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1137
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/compliance/snapshots",
+    "feature_group": "compliance",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1136
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/connect/connectors",
+    "feature_group": "connect",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "router_go_line": 450
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/connect/ref-grants",
+    "feature_group": "connect",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesRead"
+    ],
+    "router_go_line": 455
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/connect/ref-grants",
+    "feature_group": "connect",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesWrite"
+    ],
+    "router_go_line": 456
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/connect/ref-grants/{id}",
+    "feature_group": "connect",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesWrite"
+    ],
+    "router_go_line": 457
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/connect/{name}/secret:read",
+    "feature_group": "connect",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "router_go_line": 451
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/dashboard/activity",
+    "feature_group": "dashboard",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 424
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/dashboard/stats",
+    "feature_group": "dashboard",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemRead"
+    ],
+    "router_go_line": 421
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/dynamic-secrets/configs",
+    "feature_group": "dynamic-secrets",
+    "gated": false,
+    "router_go_line": 844
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/dynamic-secrets/configs",
+    "feature_group": "dynamic-secrets",
+    "gated": false,
+    "router_go_line": 843
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/dynamic-secrets/configs/{id}",
+    "feature_group": "dynamic-secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 845
+  },
+  {
+    "method": "PATCH",
+    "pattern": "/api/v1/dynamic-secrets/configs/{id}/classification",
+    "feature_group": "dynamic-secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 846
+  },
+  {
+    "method": "PATCH",
+    "pattern": "/api/v1/dynamic-secrets/configs/{id}/enabled",
+    "feature_group": "dynamic-secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 847
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/dynamic-secrets/configs/{id}/issue",
+    "feature_group": "dynamic-secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 848
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/dynamic-secrets/configs/{id}/leases",
+    "feature_group": "dynamic-secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 849
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/dynamic-secrets/configs/{id}/revoke-all",
+    "feature_group": "dynamic-secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 850
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/dynamic-secrets/leases/{leaseID}/renew",
+    "feature_group": "dynamic-secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 851
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/dynamic-secrets/leases/{leaseID}/revoke",
+    "feature_group": "dynamic-secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 852
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/environments",
+    "feature_group": "environments",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 633
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/environments/{id}",
+    "feature_group": "environments",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsDelete"
+    ],
+    "router_go_line": 632
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/folders",
+    "feature_group": "folders",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 791
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/folders",
+    "feature_group": "folders",
+    "gated": false,
+    "router_go_line": 792
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/folders/{id}",
+    "feature_group": "folders",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsDelete"
+    ],
+    "router_go_line": 793
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/groups",
+    "feature_group": "groups",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 942
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/groups",
+    "feature_group": "groups",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead",
+      "permUsersWrite"
+    ],
+    "router_go_line": 945
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/groups/{id}",
+    "feature_group": "groups",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead",
+      "permUsersWrite"
+    ],
+    "router_go_line": 948
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/groups/{id}",
+    "feature_group": "groups",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 946
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/groups/{id}",
+    "feature_group": "groups",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead",
+      "permUsersWrite"
+    ],
+    "router_go_line": 947
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/groups/{id}/members",
+    "feature_group": "groups",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 953
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/groups/{id}/members",
+    "feature_group": "groups",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign",
+      "permUsersRead"
+    ],
+    "router_go_line": 963
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/groups/{id}/members/{userId}",
+    "feature_group": "groups",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign",
+      "permUsersRead"
+    ],
+    "router_go_line": 964
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/groups/{id}/restore",
+    "feature_group": "groups",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign",
+      "permUsersRead"
+    ],
+    "router_go_line": 952
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/groups/{id}/roles",
+    "feature_group": "groups",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesRead",
+      "permUsersRead"
+    ],
+    "router_go_line": 972
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/groups/{id}/roles",
+    "feature_group": "groups",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign",
+      "permUsersRead"
+    ],
+    "router_go_line": 973
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/groups/{id}/roles/{roleId}",
+    "feature_group": "groups",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign",
+      "permUsersRead"
+    ],
+    "router_go_line": 974
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/groups/{id}/shared-secrets",
+    "feature_group": "groups",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead",
+      "permUsersRead"
+    ],
+    "router_go_line": 956
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/groups/{id}/shares",
+    "feature_group": "groups",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead",
+      "permUsersRead"
+    ],
+    "router_go_line": 959
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/hygiene",
+    "feature_group": "hygiene",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1100
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/invitations",
+    "feature_group": "invitations",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersWrite"
+    ],
+    "router_go_line": 511
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/legal-hold",
+    "feature_group": "legal-hold",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1143
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/legal-hold",
+    "feature_group": "legal-hold",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1141
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/legal-hold",
+    "feature_group": "legal-hold",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1142
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/license/status",
+    "feature_group": "license",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemRead"
+    ],
+    "router_go_line": 1080
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/machine-identities/audit",
+    "feature_group": "machine-identities",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1095
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/machine-identities/audit.csv",
+    "feature_group": "machine-identities",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1096
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/machine-token-hygiene",
+    "feature_group": "machine-token-hygiene",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1091
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/notification-channels",
+    "feature_group": "notification-channels",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 392
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/notification-channels",
+    "feature_group": "notification-channels",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 393
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/notification-channels/{id}",
+    "feature_group": "notification-channels",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 396
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/notification-channels/{id}",
+    "feature_group": "notification-channels",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 394
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/notification-channels/{id}",
+    "feature_group": "notification-channels",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 395
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/notification-channels/{id}/retry-policy",
+    "feature_group": "notification-channels",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemRead"
+    ],
+    "router_go_line": 398
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/notification-channels/{id}/retry-policy",
+    "feature_group": "notification-channels",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 397
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/notifications",
+    "feature_group": "notifications",
+    "gated": false,
+    "router_go_line": 387
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/notifications/read-all",
+    "feature_group": "notifications",
+    "gated": false,
+    "router_go_line": 388
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/notifications/{id}/read",
+    "feature_group": "notifications",
+    "gated": false,
+    "router_go_line": 389
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/pat-hygiene",
+    "feature_group": "pat-hygiene",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1087
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/permissions",
+    "feature_group": "permissions",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesRead"
+    ],
+    "router_go_line": 1009
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/permissions/{id}",
+    "feature_group": "permissions",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesRead"
+    ],
+    "router_go_line": 1016
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 458
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 460
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/projects/{id}",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsDelete"
+    ],
+    "router_go_line": 462
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 459
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/projects/{id}",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 461
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/access-requests",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 515
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/access-requests",
+    "feature_group": "projects",
+    "gated": false,
+    "router_go_line": 516
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/projects/{id}/access-requests/{requestId}",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 517
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/access-requests/{requestId}/withdraw",
+    "feature_group": "projects",
+    "gated": false,
+    "router_go_line": 518
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/access-review",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesRead"
+    ],
+    "router_go_line": 480
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/access-review/attest",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesRead"
+    ],
+    "router_go_line": 483
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/access-review/campaigns",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesRead"
+    ],
+    "router_go_line": 487
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/access-review/campaigns",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 488
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/access-review/campaigns/{campaignId}",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesRead"
+    ],
+    "router_go_line": 489
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/access-review/campaigns/{campaignId}/close",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 491
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/access-review/campaigns/{campaignId}/export.csv",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesRead"
+    ],
+    "router_go_line": 494
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 490
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/access-review/revoke",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 484
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/break-glass",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesRead"
+    ],
+    "router_go_line": 552
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/break-glass",
+    "feature_group": "projects",
+    "gated": false,
+    "router_go_line": 551
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/break-glass/{activationId}/revoke",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 553
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/drift",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 467
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/environments",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 625
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/environments",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 626
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/environments/{envId}/clone",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead",
+      "permSecretsWrite"
+    ],
+    "router_go_line": 621
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/environments/{envId}/copy-secrets",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead",
+      "permSecretsWrite"
+    ],
+    "router_go_line": 614
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/health",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 470
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/hygiene",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 583
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/invitations",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 504
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/invitations",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 505
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/projects/{id}/invitations/{invitationId}",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 506
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/invitations/{invitationId}/resend",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 508
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/machine-identities",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 555
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/machine-identities",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 557
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/machine-identities/migrate-from-user",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission",
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign",
+      "permUsersWrite"
+    ],
+    "router_go_line": 560
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/machine-identities/stale",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 556
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/projects/{id}/machine-identities/{machineId}",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 563
+  },
+  {
+    "method": "PATCH",
+    "pattern": "/api/v1/projects/{id}/machine-identities/{machineId}/classification",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 564
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 578
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 577
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings/{bindingId}",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 579
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/machine-identities/{machineId}/roles",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesRead"
+    ],
+    "router_go_line": 575
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/machine-identities/{machineId}/roles",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 573
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/projects/{id}/machine-identities/{machineId}/roles/{roleId}",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 574
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/machine-identities/{machineId}/tokens",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 571
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/machine-identities/{machineId}/tokens",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 570
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 572
+  },
+  {
+    "method": "PATCH",
+    "pattern": "/api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}/classification",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 565
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/members",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 479
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/members",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 495
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/projects/{id}/members/{userId}",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 497
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/projects/{id}/members/{userId}",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 496
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/memberships",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 500
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/memberships",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 501
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/projects/{id}/memberships/{membershipId}",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 502
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/restore",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 466
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/rotation-order",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 468
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/rotation-plan",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 469
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/secrets/bulk-delete",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsDelete"
+    ],
+    "router_go_line": 606
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/secrets/bulk-rename",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 602
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/secrets/bulk-rotate",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 604
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/secrets/deleted",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 581
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/secrets/expiring",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 584
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/secrets/extend-expiring",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 600
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/secrets/inventory.csv",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 587
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/secrets/name-conformance",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 590
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/secrets/orphaned",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 582
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/secrets/reassign-owner",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 598
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/secrets/render",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 580
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/secrets/resume-all",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 592
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{id}/secrets/suspend-all",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 591
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/projects/{id}/stats",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 471
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/projects/{projectId}/environments/{id}/restore",
+    "feature_group": "projects",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 631
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/rbac/permission-matrix",
+    "feature_group": "rbac",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesRead"
+    ],
+    "router_go_line": 1004
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/rejection-reason-templates",
+    "feature_group": "rejection-reason-templates",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 543
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/rejection-reason-templates",
+    "feature_group": "rejection-reason-templates",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 542
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/rejection-reason-templates/{id}",
+    "feature_group": "rejection-reason-templates",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 544
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/risk-exceptions",
+    "feature_group": "risk-exceptions",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1167
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/risk-exceptions",
+    "feature_group": "risk-exceptions",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1168
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/risk-exceptions/{id}",
+    "feature_group": "risk-exceptions",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1170
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/risk-exceptions/{id}/approve",
+    "feature_group": "risk-exceptions",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1169
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/roles",
+    "feature_group": "roles",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesRead"
+    ],
+    "router_go_line": 980
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/roles",
+    "feature_group": "roles",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesRead",
+      "permRolesWrite"
+    ],
+    "router_go_line": 981
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/roles/by-name",
+    "feature_group": "roles",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesRead"
+    ],
+    "router_go_line": 991
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/roles/{id}",
+    "feature_group": "roles",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesRead",
+      "permRolesWrite"
+    ],
+    "router_go_line": 994
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/roles/{id}",
+    "feature_group": "roles",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesRead"
+    ],
+    "router_go_line": 992
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/roles/{id}",
+    "feature_group": "roles",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesRead",
+      "permRolesWrite"
+    ],
+    "router_go_line": 993
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/roles/{id}/permissions",
+    "feature_group": "roles",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesRead"
+    ],
+    "router_go_line": 995
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/roles/{id}/permissions",
+    "feature_group": "roles",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesRead",
+      "permRolesWrite"
+    ],
+    "router_go_line": 996
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/roles/{id}/permissions/{permissionId}",
+    "feature_group": "roles",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesRead",
+      "permRolesWrite"
+    ],
+    "router_go_line": 997
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/rotation-calendar",
+    "feature_group": "rotation-calendar",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 803
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/rotation-plan",
+    "feature_group": "rotation-plan",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 475
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/rotation-policies",
+    "feature_group": "rotation-policies",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 810
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/rotation-policies",
+    "feature_group": "rotation-policies",
+    "gated": false,
+    "router_go_line": 814
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/rotation-policies/evaluate",
+    "feature_group": "rotation-policies",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 811
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/rotation-policies/status",
+    "feature_group": "rotation-policies",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 812
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/rotation-policies/{id}",
+    "feature_group": "rotation-policies",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 816
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/rotation-policies/{id}",
+    "feature_group": "rotation-policies",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 813
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/rotation-policies/{id}",
+    "feature_group": "rotation-policies",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 815
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secret-access-requests",
+    "feature_group": "secret-access-requests",
+    "gated": false,
+    "router_go_line": 536
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/secret-access-requests",
+    "feature_group": "secret-access-requests",
+    "gated": false,
+    "router_go_line": 535
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secret-access-requests/{requestId}",
+    "feature_group": "secret-access-requests",
+    "gated": false,
+    "router_go_line": 537
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/secret-access-requests/{requestId}",
+    "feature_group": "secret-access-requests",
+    "gated": false,
+    "router_go_line": 538
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/secret-access-requests/{requestId}/withdraw",
+    "feature_group": "secret-access-requests",
+    "gated": false,
+    "router_go_line": 539
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secret-templates",
+    "feature_group": "secret-templates",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 823
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/secret-templates",
+    "feature_group": "secret-templates",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 824
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/secret-templates/{id}",
+    "feature_group": "secret-templates",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 827
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secret-templates/{id}",
+    "feature_group": "secret-templates",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 825
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/secret-templates/{id}",
+    "feature_group": "secret-templates",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 826
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/secret-templates/{id}/apply",
+    "feature_group": "secret-templates",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 828
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets",
+    "feature_group": "secrets",
+    "gated": false,
+    "router_go_line": 650
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/secrets",
+    "feature_group": "secrets",
+    "gated": false,
+    "router_go_line": 746
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/by-name",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 686
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/inventory.csv",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 670
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/name-conformance",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 675
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/policy",
+    "feature_group": "secrets",
+    "gated": false,
+    "router_go_line": 652
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/quota-report",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 663
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/usage/most-accessed",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 654
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/usage/unused",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 655
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/value",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretRefPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 681
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/secrets/{id}",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsDelete"
+    ],
+    "router_go_line": 769
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 687
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/secrets/{id}",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 747
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/access",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 698
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/access-log",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 699
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/access-log/export",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 700
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/acl",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsManage"
+    ],
+    "router_go_line": 726
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/secrets/{id}/acl",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsManage"
+    ],
+    "router_go_line": 727
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/secrets/{id}/acl/{aclId}",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsManage"
+    ],
+    "router_go_line": 728
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/audit",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 703
+  },
+  {
+    "method": "PATCH",
+    "pattern": "/api/v1/secrets/{id}/auto-rotate",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 753
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/blast-radius",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 714
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/certificate",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 743
+  },
+  {
+    "method": "PATCH",
+    "pattern": "/api/v1/secrets/{id}/classification",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 748
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/secrets/{id}/copy",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 752
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/dependencies",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 709
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/secrets/{id}/dependencies",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 710
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/secrets/{id}/dependencies/{depId}",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 711
+  },
+  {
+    "method": "PATCH",
+    "pattern": "/api/v1/secrets/{id}/description",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 749
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/impact",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 712
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/impact-preview",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 718
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/secrets/{id}/move",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 760
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/ownership-history",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 704
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/read-summary",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsManage"
+    ],
+    "router_go_line": 716
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/secrets/{id}/restore",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 771
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/secrets/{id}/resume",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 762
+  },
+  {
+    "method": "PATCH",
+    "pattern": "/api/v1/secrets/{id}/retention",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsManage"
+    ],
+    "router_go_line": 740
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/risk",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 696
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/secrets/{id}/rollback",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 758
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/secrets/{id}/rotate",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 754
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/rotation-state",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 723
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/secrets/{id}/rotation/simulate",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 757
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/secrets/{id}/schedule",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsManage"
+    ],
+    "router_go_line": 733
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/schedule",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsManage"
+    ],
+    "router_go_line": 731
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/secrets/{id}/schedule",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsManage"
+    ],
+    "router_go_line": 732
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/secrets/{id}/self-share",
+    "feature_group": "secrets",
+    "gated": false,
+    "router_go_line": 767
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/secrets/{id}/share",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 763
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/shares",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 697
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/stats",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 702
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/secrets/{id}/suspend",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 761
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/tags",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 705
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/secrets/{id}/tags",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 706
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/secrets/{id}/transfer-ownership",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 759
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/versions",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 688
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/versions/{from}/diff/{to}",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 689
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/secrets/{id}/versions/{versionId}/comments",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 692
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/secrets/{id}/versions/{versionId}/comments",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 693
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/secrets/{id}/versions/{versionId}/comments/{commentId}",
+    "feature_group": "secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedSecretPermission"
+    ],
+    "gate_perms": [
+      "permSecretsManage"
+    ],
+    "router_go_line": 695
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/shared-secrets",
+    "feature_group": "shared-secrets",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 784
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/shares",
+    "feature_group": "shares",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead"
+    ],
+    "router_go_line": 778
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/shares/{id}",
+    "feature_group": "shares",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 780
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/shares/{id}",
+    "feature_group": "shares",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permSecretsWrite"
+    ],
+    "router_go_line": 779
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/sod/policies",
+    "feature_group": "sod",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemRead"
+    ],
+    "router_go_line": 1176
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/sod/policies",
+    "feature_group": "sod",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1177
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/sod/policies/{id}",
+    "feature_group": "sod",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1178
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/sod/violations",
+    "feature_group": "sod",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAuditRead"
+    ],
+    "router_go_line": 1179
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/system/auth-config",
+    "feature_group": "system",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemRead"
+    ],
+    "router_go_line": 431
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/system/encryption-config",
+    "feature_group": "system",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemRead"
+    ],
+    "router_go_line": 432
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/system/info",
+    "feature_group": "system",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemRead"
+    ],
+    "router_go_line": 439
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/system/metrics",
+    "feature_group": "system",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemRead"
+    ],
+    "router_go_line": 440
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/user-roles",
+    "feature_group": "user-roles",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 1040
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/user-roles",
+    "feature_group": "user-roles",
+    "gated": true,
+    "gate_fns": [
+      "RequireScopedPermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 1039
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/user-roles/user/{userId}",
+    "feature_group": "user-roles",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign"
+    ],
+    "router_go_line": 1041
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/users",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 858
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/users",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead",
+      "permUsersWrite"
+    ],
+    "router_go_line": 863
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/users/by-email",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 874
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/users/by-external-id",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 882
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/users/by-username",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 881
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/users/search",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 864
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/users/stale",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 866
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/api/v1/users/{id}",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 891
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/users/{id}",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 883
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/users/{id}",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead",
+      "permUsersWrite"
+    ],
+    "router_go_line": 887
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/users/{id}/memberships",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 918
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/users/{id}/permissions",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead"
+    ],
+    "router_go_line": 913
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/users/{id}/reactivate",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead",
+      "permUsersWrite"
+    ],
+    "router_go_line": 898
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/users/{id}/require-password-reset",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead",
+      "permUsersWrite"
+    ],
+    "router_go_line": 899
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/users/{id}/resend-setup-link",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead",
+      "permUsersWrite"
+    ],
+    "router_go_line": 901
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/users/{id}/restore",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead",
+      "permUsersWrite"
+    ],
+    "router_go_line": 892
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/users/{id}/revoke-sessions",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead",
+      "permUsersWrite"
+    ],
+    "router_go_line": 895
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/users/{id}/roles",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesRead",
+      "permUsersRead"
+    ],
+    "router_go_line": 909
+  },
+  {
+    "method": "PUT",
+    "pattern": "/api/v1/users/{id}/roles",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permRolesAssign",
+      "permUsersRead"
+    ],
+    "router_go_line": 916
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/users/{id}/shared-secrets",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSecretsRead",
+      "permUsersRead"
+    ],
+    "router_go_line": 931
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/users/{id}/suspend",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead",
+      "permUsersWrite"
+    ],
+    "router_go_line": 897
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/users/{id}/unlock",
+    "feature_group": "users",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permUsersRead",
+      "permUsersWrite"
+    ],
+    "router_go_line": 893
+  },
+  {
+    "method": "GET",
+    "pattern": "/api/v1/version",
+    "feature_group": "version",
+    "gated": false,
+    "router_go_line": 227
+  },
+  {
+    "method": "POST",
+    "pattern": "/auth/login",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 178
+  },
+  {
+    "method": "POST",
+    "pattern": "/auth/logout",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 184
+  },
+  {
+    "method": "POST",
+    "pattern": "/auth/mfa/verify",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 189
+  },
+  {
+    "method": "POST",
+    "pattern": "/auth/password-reset",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 186
+  },
+  {
+    "method": "POST",
+    "pattern": "/auth/refresh",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 185
+  },
+  {
+    "method": "POST",
+    "pattern": "/auth/saml/{provider}/acs",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 216
+  },
+  {
+    "method": "GET",
+    "pattern": "/auth/saml/{provider}/login",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 215
+  },
+  {
+    "method": "GET",
+    "pattern": "/auth/saml/{provider}/metadata",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 214
+  },
+  {
+    "method": "POST",
+    "pattern": "/auth/setup/consume",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 203
+  },
+  {
+    "method": "GET",
+    "pattern": "/auth/setup/{token}",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 202
+  },
+  {
+    "method": "GET",
+    "pattern": "/auth/sso/providers",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 209
+  },
+  {
+    "method": "GET",
+    "pattern": "/auth/sso/{provider}/callback",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 211
+  },
+  {
+    "method": "GET",
+    "pattern": "/auth/sso/{provider}/login",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 210
+  },
+  {
+    "method": "POST",
+    "pattern": "/auth/webauthn/login/begin",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 192
+  },
+  {
+    "method": "POST",
+    "pattern": "/auth/webauthn/login/finish",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 193
+  },
+  {
+    "method": "POST",
+    "pattern": "/auth/webauthn/passwordless/begin",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 196
+  },
+  {
+    "method": "POST",
+    "pattern": "/auth/webauthn/passwordless/finish",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 197
+  },
+  {
+    "method": "GET",
+    "pattern": "/health",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 221
+  },
+  {
+    "method": "HANDLE",
+    "pattern": "/metrics",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 250
+  },
+  {
+    "method": "GET",
+    "pattern": "/openapi.yaml",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 1235
+  },
+  {
+    "method": "GET",
+    "pattern": "/readyz",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 231
+  },
+  {
+    "method": "GET",
+    "pattern": "/scim/v2/Groups",
+    "feature_group": "scim",
+    "gated": true,
+    "gate_fns": [
+      "SCIMToken"
+    ],
+    "router_go_line": 305
+  },
+  {
+    "method": "POST",
+    "pattern": "/scim/v2/Groups",
+    "feature_group": "scim",
+    "gated": true,
+    "gate_fns": [
+      "SCIMToken"
+    ],
+    "router_go_line": 306
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/scim/v2/Groups/{id}",
+    "feature_group": "scim",
+    "gated": true,
+    "gate_fns": [
+      "SCIMToken"
+    ],
+    "router_go_line": 310
+  },
+  {
+    "method": "GET",
+    "pattern": "/scim/v2/Groups/{id}",
+    "feature_group": "scim",
+    "gated": true,
+    "gate_fns": [
+      "SCIMToken"
+    ],
+    "router_go_line": 307
+  },
+  {
+    "method": "PATCH",
+    "pattern": "/scim/v2/Groups/{id}",
+    "feature_group": "scim",
+    "gated": true,
+    "gate_fns": [
+      "SCIMToken"
+    ],
+    "router_go_line": 309
+  },
+  {
+    "method": "PUT",
+    "pattern": "/scim/v2/Groups/{id}",
+    "feature_group": "scim",
+    "gated": true,
+    "gate_fns": [
+      "SCIMToken"
+    ],
+    "router_go_line": 308
+  },
+  {
+    "method": "GET",
+    "pattern": "/scim/v2/ServiceProviderConfig",
+    "feature_group": "scim",
+    "gated": true,
+    "gate_fns": [
+      "SCIMToken"
+    ],
+    "router_go_line": 298
+  },
+  {
+    "method": "GET",
+    "pattern": "/scim/v2/Users",
+    "feature_group": "scim",
+    "gated": true,
+    "gate_fns": [
+      "SCIMToken"
+    ],
+    "router_go_line": 299
+  },
+  {
+    "method": "POST",
+    "pattern": "/scim/v2/Users",
+    "feature_group": "scim",
+    "gated": true,
+    "gate_fns": [
+      "SCIMToken"
+    ],
+    "router_go_line": 300
+  },
+  {
+    "method": "DELETE",
+    "pattern": "/scim/v2/Users/{id}",
+    "feature_group": "scim",
+    "gated": true,
+    "gate_fns": [
+      "SCIMToken"
+    ],
+    "router_go_line": 304
+  },
+  {
+    "method": "GET",
+    "pattern": "/scim/v2/Users/{id}",
+    "feature_group": "scim",
+    "gated": true,
+    "gate_fns": [
+      "SCIMToken"
+    ],
+    "router_go_line": 301
+  },
+  {
+    "method": "PATCH",
+    "pattern": "/scim/v2/Users/{id}",
+    "feature_group": "scim",
+    "gated": true,
+    "gate_fns": [
+      "SCIMToken"
+    ],
+    "router_go_line": 303
+  },
+  {
+    "method": "PUT",
+    "pattern": "/scim/v2/Users/{id}",
+    "feature_group": "scim",
+    "gated": true,
+    "gate_fns": [
+      "SCIMToken"
+    ],
+    "router_go_line": 302
+  },
+  {
+    "method": "GET",
+    "pattern": "/status",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 253
+  },
+  {
+    "method": "GET",
+    "pattern": "/status-es",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 269
+  },
+  {
+    "method": "MOUNT",
+    "pattern": "/swagger/",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 1234
+  },
+  {
+    "method": "POST",
+    "pattern": "/system/init",
+    "feature_group": "root",
+    "gated": false,
+    "router_go_line": 198
+  }
+]
