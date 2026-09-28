@@ -1,0 +1,80 @@
+# Atomicity guard exemption list — internal/core/atomicity_guard_test.go
+# (TestAtomicityGuard_UnclassifiedMultiWriteFunction) fails the build when a
+# non-test function on *KeyorixCore/*AnomalyDetector makes 2+ storage/core
+# writes outside a WithTransaction closure and has no entry here. Seeded from
+# Session O's O1 triage (~/proj/prompts/reports/SESSION-O.md) — every hit from
+# the coordinator's txscan (32) plus the blind-spot core-to-core sweep (6) was
+# individually read and classified before being listed.
+#
+# Columns: function <TAB> class <TAB> reason
+#
+# Classes:
+#   B — consume-first by design: a single-use value is consumed BEFORE later
+#       work and must stay consumed even if later work fails (replay
+#       protection). See the function's own `// atomicity: consume-first by
+#       design` comment and its verifying test (Session O, O4).
+#   C — independent steps by design: partial completion is safe and
+#       self-healing (a later run/retry naturally corrects it).
+#   D — false positive: the flagged calls are on MUTUALLY EXCLUSIVE branches
+#       (if/else, switch) — never actually sequential — or the function is
+#       already atomic via a single storage primitive with the flagged calls
+#       being deliberate best-effort follow-ups.
+#   S — saga (compensating-action): no single DB transaction is available
+#       (the writes span audited, individually-locked core choke points like
+#       AssignUserRole/RemoveUserRole, not raw storage calls), so the function
+#       instead tracks what succeeded and reverts it on a later failure, with
+#       the revert's own failure audited loudly. Reviewed and accepted as this
+#       codebase's established alternative to a DB transaction for this shape
+#       (see TransitionMembership's revertFailedActivation, the original
+#       reference instance).
+#   TEMP-A — a genuine, confirmed class-A atomicity bug (must be fixed, not
+#       exempted) with an OPEN, NOT-YET-MERGED fix PR already up. Listed here
+#       ONLY so this guard can be merged without immediately breaking CI on
+#       unfixed main — remove the line as part of merging the cited PR (the
+#       fix wraps the writes in WithTransaction, so the function naturally
+#       stops being flagged once merged; the TSV line becomes dead weight, not
+#       actively wrong, if left — but should be cleaned up).
+#
+# Never add a class-A (real, unfixed, no-open-PR) entry here. Fix it instead.
+
+(*KeyorixCore).bootstrapSystemLocked	TEMP-A	Confirmed real: first-boot bootstrap is NOT atomic on origin/main today (verified 2026-09-28 during Session O's O1 triage — the brief's premise that #2295 already fixed this was wrong, #2295 is still open, state: OPEN, mergedAt: null). #2295's diff (auth_bootstrap.go + auth_bootstrap_retryable_test.go) is the correct fix; not mine to land. Remove this line when #2295 merges.
+(*KeyorixCore).PurgeExpiredComplianceRecords	C	Per-type purge batches, independently `rec()`'d, self-healing next scheduled run.
+(*KeyorixCore).FinishWebAuthnLogin	B	MFA challenge + WebAuthn session consumed before mintSession; trailing UpsertMFAStepupToken/CreateMFAStepUpGrant are best-effort UX convenience post-mint. Verified fail-closed: TestFinishWebAuthnLogin_MintFailureAfterConsume_FailsClosed (Session O, O4, PR #2310).
+(*KeyorixCore).FinishWebAuthnPasswordlessLogin	B	Same shape as FinishWebAuthnLogin. Verified: TestFinishWebAuthnPasswordlessLogin_MintFailureAfterConsume_FailsClosed (Session O, O4, PR #2310).
+(*KeyorixCore).RefreshSession	D	The 2 DeleteSession calls are on mutually exclusive early-return branches (ceiling exceeded / account inactive); RotateSession is already one atomic CAS transaction (#211).
+(*KeyorixCore).FinishWebAuthnRegistration	TEMP-A	Credential-create + WebAuthnEnabled-flag-set not yet wrapped in one transaction on unfixed main. Fix open: PR #2302. Remove this line when it merges.
+(*KeyorixCore).PatchSCIMGroup	TEMP-A	Add/remove membership writes not yet wrapped in one transaction on unfixed main. Fix open: PR #2304. Remove this line when it merges.
+(*KeyorixCore).RemoveProjectMember	TEMP-A	RemoveAllProjectRoleGrants/ClearProjectSecretOwnership/DeleteSecretACLsByUserAndProject not yet wrapped in one transaction on unfixed main. Fix open: PR #2297. Remove this line when it merges.
+(*KeyorixCore).VerifyMFACredentials	B	Challenge consumed first; TOTP vs recovery-code are mutually exclusive attempts. Verified: TestVerifyMFALogin_MintFailureAfterConsume_FailsClosed exercises this via its caller VerifyMFALogin (Session O, O4, PR #2310).
+(*KeyorixCore).verifyMFAStepUpCode	B	TOTP attempt then recovery-code attempt, consume-shaped. Verified: TestVerifyMFAStepUp_GrantFailureAfterConsume_FailsClosed (Session O, O4, PR #2310).
+(*KeyorixCore).ActivateBreakGlass	S	CreateBreakGlassActivation then assignUserRoleWithExpirySkipSoD; on grant failure the activation is reconciled back to revoked (compensating revert), with the revert's own failure now audited loudly (Session O, O3 item 5, PR #2307).
+(*KeyorixCore).RevokeLease	D	The 2 UpdateDynamicSecretLease calls are on mutually exclusive branches (engine.Revoke fails -> revoke_failed; succeeds -> revoked).
+(*KeyorixCore).finalizeAccessRequestApproval	S	Grants role, then records approval, then updates request state; a compensating revert (RemoveUserRole) now covers every failure after the grant lands, not only the original !ok race (Session O, O3 item 4, PR #2306).
+(*KeyorixCore).IssueMachineToken	TEMP-A	CreateMachineIdentityCredential + RevokeMachineIdentityCredential not yet wrapped in one transaction on unfixed main. Fix open: PR #2301. Remove this line when it merges.
+(*KeyorixCore).refreshCertNotAfterCache	D	The 2 SetSecretCertNotAfter calls are on mutually exclusive branches (cert parses / doesn't).
+(*KeyorixCore).requireReauth	B	MarkTOTPStepUsed / ConsumeMFAStepUpGrant are alternative verification paths, consume-shaped. Verified: existing TestRequireReauth_GrantConsumedOnFirstAction_SecondDifferentActionRejected and siblings (mfa_stepup_grant_single_use_test.go); re-confirmed in scope during Session O, O4, PR #2310.
+(*KeyorixCore).OpenAccessReviewCampaign	TEMP-A	CreateAccessReviewCampaign + CreateAccessReviewItems not yet wrapped in one transaction on unfixed main. Fix open: PR #2305. Remove this line when it merges.
+(*KeyorixCore).DeleteProject	D	force/non-force branches are mutually exclusive; the non-force path already uses DeleteProjectIfEmpty, a single atomic storage primitive (#528).
+(*KeyorixCore).ProvisionSCIMUser	TEMP-A	User-create + baseline-role-assign not yet wrapped in one transaction on unfixed main. Fix open: PR #2303. Remove this line when it merges.
+(*KeyorixCore).ProvisionSCIMGroup	TEMP-A	Group-create + initial-membership writes not yet wrapped in one transaction on unfixed main. Fix open: PR #2304. Remove this line when it merges.
+(*KeyorixCore).ApproveSecretAccessRequest	D	The 2 UpdateAccessRequest calls are on mutually exclusive branches (lazy-expire vs approve); grants no role at all.
+(*KeyorixCore).applyGroupMembershipChanges	TEMP-A	Remove-loop then add-loop, both storage.WithTransaction-wrapped in the open fix. Fix open: PR #2304. Remove this line when it merges.
+(*KeyorixCore).provisionSSOUser	TEMP-A	User-create + default-role-assign not yet wrapped in one transaction on unfixed main. Fix open: PR #2303. Remove this line when it merges.
+(*KeyorixCore).CreateUserWithAssignments	D	CreateUserWithRoleGrants is already one atomic storage call (user+grants together); AddPasswordHistory after is deliberately best-effort per ADR-025 (self-healing on next password change).
+(*KeyorixCore).UpdateUser	D	The 2 flagged UpdateUserIfActiveStateMatches calls are on mutually exclusive switch branches; the deactivating branch's own PAT/session revocation is already correctly WithTransaction-wrapped, with the revocation sub-calls' best-effort-ness explicitly justified (ValidateSessionToken/ValidatePATToken independently re-check IsActive on every use).
+(*KeyorixCore).RestoreUser	TEMP-A	RestoreUser + IsActive/AccountState UpdateUser not yet wrapped in one transaction on unfixed main. Fix open: PR #2308. Remove this line when it merges.
+(*KeyorixCore).handleSessionReuse	D	DeleteSession (legacy, no-family) / DeleteSessionsByFamily are on mutually exclusive branches. The real gap here was a swallowed single-write error, not multi-write atomicity — fixed by auditing loudly on DeleteSessionsByFamily failure (Session O, O2 item 2, PR #2298); the branch shape itself is unchanged and still textually flagged.
+(*KeyorixCore).FinishWebAuthnReauth	B	ConsumeWebAuthnSession before CreateMFAStepUpGrant; fails closed (grant-creation failure returns an error with the session already consumed and no grant issued). Verified: TestFinishWebAuthnReauth_GrantFailureAfterConsume_FailsClosed (Session O, O4, PR #2310) — no prior test existed for this function at all.
+(*AnomalyDetector).detectOneSecretAnomalies	C	Independent per-rule alert saves, failure count aggregated, not fatal.
+(*KeyorixCore).applyNewPassword	D	Password hash + account-state ARE already correctly transactional. The 2 flagged writes are the best-effort tail: AddPasswordHistory (reuse-policy only, self-healing) and RevokeAllPersonalAccessTokensForUser (security-relevant; its failure is now audited loudly rather than silently swallowed — Session O, O2 item 2, PR #2298).
+(*KeyorixCore).revokeRoleByPrincipalType	D	switch on d.PrincipalType — mutually exclusive branches (group/machine/user).
+(*KeyorixCore).RotateSecretOnDemand	D	switch on the upstream backend-rotation result — mutually exclusive branches; already has an explicit partial-state audit trail (ROTATION-001).
+(*KeyorixCore).BulkDeleteSecrets	C	Per-item loop; each item's fetch+delete is independent, failures collected in the result rather than aborting the batch — correct design for a bulk operation.
+(*KeyorixCore).TransitionMembership	S	Membership-state write then role-grant side effect; revertFailedActivation (audits loudly, "MANUAL CLEANUP REQUIRED", on its own failure) covers both the activate and revoke directions, including the benign ErrNotProjectMember case. Reference-quality saga pattern for this codebase.
+(*KeyorixCore).SetUserRoles	S	Full role-set replacement via AssignUserRole/RemoveUserRole (each its own audited choke point, no shared DB transaction available); tracks what landed and reverts it on any later failure, with the revert's own failure audited loudly (Session O, O3 item 7, PR #2309). New finding, not in the coordinator's original 32-hit list — found via the core-to-core blind-spot sweep this guard's corescan half now covers permanently.
+(*KeyorixCore).DeleteWebAuthnCredential	TEMP-A	Credential-delete + conditional WebAuthnEnabled-flag-clear not yet wrapped in one transaction on unfixed main. Fix open: PR #2302. Remove this line when it merges.
+(*KeyorixCore).RevokeUserCredentialsForDeactivation	C	Reclassified from the coordinator's preliminary "A": verified ValidateSessionToken/ValidatePATToken BOTH independently re-check IsActive/AccountLoginBlocked on every use, cold path and the warm-cache path, so a failed revocation here leaves only an inert row, never a live credential — self-healing, not a real gap. See SESSION-O.md's O1 table for the full verification.
+(*KeyorixCore).CompleteSAML	B	ConsumeSSOLoginState (single-use login state, replay protection) is consumed before mintSession; the trailing RecordLogin is an explicitly-commented best-effort last-login stamp. Fails closed by construction: a mintSession failure returns an error with the login state already consumed. New finding — a mixed storage-write + core-to-core-write shape invisible to a scanner that only counts one call style at a time (this guard's own historical txscan/corescan split would each have seen only 1 write here, not 2+).
+(*KeyorixCore).ReconcileRBACPermissions	C	Startup top-up reconciliation (ADR-044), explicitly documented as additive/non-clobbering/best-effort in its own doc comment: a failure just means the next server restart retries the same reconcile. New finding via this guard's broader verb coverage.
+(*KeyorixCore).completeInvitationAccept	S	CreateUser, then consumeInspectedToken (consume-first), then applyInvitationGrants, then UpdateProjectInvitation -- deliberately ordered (see the function's own extensive comments) with an explicit compensating revert (revokeInvitationGrants) on the final race-loss path. Reviewed, reference-quality saga. New finding via this guard's broader verb coverage.
+(*KeyorixCore).inviteMemberWithMode	S	CreateProjectMembership, then (when the mode activates immediately) AddProjectMember; on a grant failure, reverts via the same revertFailedActivation helper TransitionMembership uses (audits loudly, "MANUAL CLEANUP REQUIRED", on its own failure). New finding via this guard's broader verb coverage.
