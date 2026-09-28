@@ -2,7 +2,12 @@
 // otherwise only run on their background schedulers (anomaly alerting, rotation and
 // expiry reminders, the compliance digest). After an incident or a config change an
 // operator often needs to dispatch these immediately rather than wait for the next
-// tick. All are deployment-wide admin actions, gated by system.write in the router.
+// tick. All are deployment-wide admin actions; F1 (ADR-110 follow-up) split the
+// router's gate per route — the pure notification/reminder triggers are gated on
+// alerts.write, RunRoleExpiryCheck and RunReadQuotaCheck included (verified to only
+// emit Notification rows, never revoke/block anything); SuspendInactiveUsers and
+// PurgeAuditLogsJob (in audit_retention_handler.go) stay on system.write, the account/
+// data mutations. See router.go's /admin/jobs route group for the exact split.
 package handlers
 
 import (

@@ -151,8 +151,10 @@ type systemReadSite struct {
 // trackedGatePerms is every permission identifier this scan collects sites for.
 // permSystemRead: this file's own CP-001/CP-008 sweep, below. permSystemWrite: the
 // ADR-110 sweep (system_write_scope_test.go) reuses this same walk rather than
-// duplicating it -- see that file's own package doc.
-var trackedGatePerms = map[string]bool{"permSystemRead": true, "permSystemWrite": true}
+// duplicating it -- see that file's own package doc. permAlertsWrite: the F1
+// (ADR-110 follow-up) alerting-operator sweep (alerts_write_scope_test.go)
+// reuses the same walk for the same reason.
+var trackedGatePerms = map[string]bool{"permSystemRead": true, "permSystemWrite": true, "permAlertsWrite": true}
 
 // addSystemReadSite inserts a found call site (for any permission in
 // trackedGatePerms) into found, keyed by routeKey. Two independent call sites that

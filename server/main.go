@@ -523,6 +523,23 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		log.Printf("RBAC permission reconciliation: %v (continuing)", err)
 	}
 
+	// Repair an install bootstrapped before #2188 fixed the seeding-order bug
+	// that made every fresh install (any backend) miss the system_viewer
+	// baseline-role grant on its first user. No-op pre-bootstrap and
+	// best-effort (never blocks startup); a no-op on every subsequent restart
+	// once every user holds the role.
+	if err := coreService.ReconcileUserBaselineRoles(context.Background()); err != nil {
+		log.Printf("Baseline role reconciliation: %v (continuing)", err)
+	}
+
+	// F1 (ADR-110 follow-up): seed the alert_operator built-in role on an
+	// install that predates it, and grant alerts.write, once, to every role that
+	// already holds system.write. No-op pre-bootstrap and best-effort (never
+	// blocks startup); a no-op on every subsequent restart once run.
+	if err := coreService.ReconcileAlertsWriteRole(context.Background()); err != nil {
+		log.Printf("alerts.write role reconciliation: %v (continuing)", err)
+	}
+
 	// Wire the bootstrap token that gates POST /system/init. Prefer an operator-set
 	// KEYORIX_BOOTSTRAP_TOKEN (for automation); otherwise generate one and, while the
 	// install is still empty, log it so the operator can complete first-boot init. This

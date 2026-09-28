@@ -39,6 +39,19 @@ All notable changes to Keyorix are documented here. This project follows
   entirely in ADR-108 Phase 6 — the routes had no remaining legitimate caller
   but stayed live, gated only by `users.write`. (`c8bcf9dd`)
 
+### Added
+- **New `alerts.write` permission and `alert_operator` built-in role** (ADR-110
+  follow-up): notification-channel/escalation-policy management and 8 of the 10
+  `/admin/jobs` on-demand triggers (the ones that only emit/dispatch a
+  notification — anomaly-alerts, rotation/expiry/token-expiry reminders,
+  compliance-digest, run-alert-escalation, role-expiry-check, check-read-quotas)
+  moved off `system.write` onto this narrower permission. `system.write` remains
+  a strict superset: existing holders keep access via a one-time backfill on
+  upgrade. `record-hygiene-snapshot`, `suspend-inactive-users`, and
+  `purge-audit-logs` stayed on `system.write` (they mutate account/data state,
+  not just send a notification). See `docs/adr-110-system-write-scope.md`'s
+  Decision section for the full per-route table.
+
 ### Fixed
 - **Seven tables with live handler code were never migrated on any
   install** (secret version comments, notification channels, alert
@@ -46,6 +59,12 @@ All notable changes to Keyorix are documented here. This project follows
   snapshots, compliance-posture snapshots) — every fresh install 500'd on
   first use of any of them. Fixed for fresh and upgraded installs alike.
   (`0b6bb65a`)
+- **`NotificationChannel`/`AlertEscalationPolicy` were never migrated on any
+  backend** — a fresh install's notification-channel and alert-escalation-policy
+  routes, and the `run-alert-escalation` job, would all fail with "no such
+  table"/"relation does not exist" against a real database. Found while writing
+  the `alert_operator` behavioral test above; fixed in the same bulk-migration
+  list as the pre-existing `MFAStepUpGrant` fix.
 
 ### Changed
 - **The air-gapped build profile ships, and the published air-gapped image

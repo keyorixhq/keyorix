@@ -5,6 +5,7 @@ const (
 	ctrlAccessGovernance = "Access governance"
 	ctrlOpAcc4           = "op.acc.4"
 	evtSecretUpdated     = "secret.updated"
+	permAlertsWrite      = "alerts.write"
 	permAuditRead        = "audit.read"
 	permRolesAssign      = "roles.assign"
 	permRolesRead        = "roles.read"
