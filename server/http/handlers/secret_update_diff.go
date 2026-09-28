@@ -1,14 +1,19 @@
-// secret_update_diff.go — the default-deny diff backing PUT /api/v1/secrets/{id}
-// (G80 Phase 0: internal/storage/store/remote_secrets.go's old secretUpdateWireRequest
-// carried only 3 of models.SecretNode's ~28 persisted fields, so RemoteStorage.UpdateSecret
-// silently dropped every other field the internal/core call sites listed in
-// updateSecretAllowlist below mutate before calling storage.UpdateSecret — ownership
-// transfers, moves, classification changes, renames, and rotation-backend bindings would
-// all have appeared to succeed while changing nothing on the hub's authoritative row, had
-// any current CLI command actually reached them through RemoteStorage. Tracing every real
-// caller found none does today (see docs/g80-remediation-notes.md's severity correction) —
-// this closes a real storage.Storage interface-contract gap for current/future callers,
-// not a live incident.
+// secret_update_diff.go — the default-deny diff backing the reqBody.Secret branch of
+// PUT /api/v1/secrets/{id} (G80 Phase 0: internal/storage/store/remote_secrets.go's old
+// secretUpdateWireRequest carried only 3 of models.SecretNode's ~28 persisted fields, so
+// the now-deleted RemoteStorage.UpdateSecret silently dropped every other field the
+// internal/core call sites listed in updateSecretAllowlist below mutate before calling
+// storage.UpdateSecret — ownership transfers, moves, classification changes, renames, and
+// rotation-backend bindings would all have appeared to succeed while changing nothing on
+// the hub's authoritative row, had any current CLI command actually reached them through
+// RemoteStorage. Tracing every real caller found none did even then (see
+// docs/g80-remediation-notes.md's severity correction), and RemoteStorage itself is now
+// fully deleted (repo-wide in #2162) — the reqBody.Secret wire shape this file diffs
+// against isn't in openapi.yaml's updateSecret request schema at all, so no generated
+// client (the CLI's included) can construct a request that reaches updateSecretViaDiff
+// today. Left in place as a still-correct interface-contract guard against a raw,
+// hand-crafted request hitting this JSON field rather than removed outright — a
+// reachability finding worth a dedicated follow-up PR to actually delete, not fixed here.
 //
 // This is deliberately NOT fixed by widening the wire DTO with named fields for those
 // operations and applying them under this endpoint's own plain secrets.write gate: several
@@ -18,7 +23,7 @@
 // any secrets.write holder bypass all three, a privilege-escalation regression, not a
 // completeness fix.
 //
-// Instead: RemoteStorage now sends its FULL locally-mutated SecretNode (Go-to-Go, see
+// Instead: a caller sending reqBody.Secret sends its FULL locally-mutated SecretNode (see
 // secretUpdateWireRequest), and this file diffs it against the hub's OWN authoritative row
 // — never against a client-supplied pre-image, which would be trivially forgeable and
 // would reopen the exact TOCTOU window G79's proxy fixes closed elsewhere. Every field is
@@ -264,10 +269,10 @@ func diffSecretUpdate(authoritative, desired *models.SecretNode) secretUpdateDif
 	return d
 }
 
-// rejectedFieldsError formats diff.Rejected as the error UpdateSecret returns to
-// RemoteStorage — named fields, and an explicit statement that the operation isn't
-// available through this endpoint yet, so a connected-mode caller gets a clear,
-// actionable failure instead of a silent no-op.
+// rejectedFieldsError formats diff.Rejected as the error UpdateSecret returns to a
+// reqBody.Secret caller — named fields, and an explicit statement that the operation isn't
+// available through this endpoint yet, so the caller gets a clear, actionable failure
+// instead of a silent no-op.
 func rejectedFieldsError(rejected []string) error {
 	return fmt.Errorf("cannot update field(s) [%s] via this endpoint: each requires its own dedicated endpoint against a hub, not yet available in connected mode",
 		strings.Join(rejected, ", "))
@@ -295,9 +300,10 @@ func timePtrEqual(a, b *time.Time) bool {
 }
 
 // updateSecretViaDiff handles PUT /api/v1/secrets/{id} when the request carries a full
-// desired SecretNode (reqBody.Secret in secrets_crud.go's UpdateSecret) — RemoteStorage's
-// path, per G80 Phase 0. desired is the caller's complete locally-mutated state; this
-// function decides what of it may actually be persisted.
+// desired SecretNode (reqBody.Secret in secrets_crud.go's UpdateSecret) — the now-deleted
+// RemoteStorage's path, per G80 Phase 0 (see this file's package doc for why this branch
+// has no known live caller today). desired is the caller's complete locally-mutated state;
+// this function decides what of it may actually be persisted.
 func (h *SecretHandler) updateSecretViaDiff(w http.ResponseWriter, r *http.Request, id uint, userCtx *middleware.UserContext, desired *models.SecretNode) {
 	ctx := r.Context()
 
