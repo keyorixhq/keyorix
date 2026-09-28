@@ -82,13 +82,25 @@ func pgDatabaseYAML(dsn string) string {
 
 func runAPISmoke(t *testing.T, serverBin, cliBin string, backend dbBackend) {
 	t.Helper()
-	routes := loadRoutes(t)
-
 	srv := startServer(t, serverBin, backend)
 	t.Cleanup(srv.Close)
+	runAPISmokeAgainstServer(t, srv, cliBin, backend, "smoketestadmin", bootstrapAdminPassword)
+}
+
+// runAPISmokeAgainstServer is runAPISmoke's group-running half, split out so
+// I3's upgrade-path test (upgrade_test.go) can reuse the exact same
+// create/read/list/update/delete sweep and coverage/audit assertions against
+// a server it started its own way (an old-release binary's DB, migrated and
+// booted with the HEAD binary) instead of a freshly-`startServer`-built one.
+// adminUsername/adminPassword let the upgrade-path caller log in as the
+// admin IT already bootstrapped with the OLD binary, rather than this
+// function bootstrapping a new one.
+func runAPISmokeAgainstServer(t *testing.T, srv *server, cliBin string, backend dbBackend, adminUsername, adminPassword string) {
+	t.Helper()
+	routes := loadRoutes(t)
 
 	c := newClient(t, srv.baseURL)
-	c.login("smoketestadmin", bootstrapAdminPassword)
+	c.login(adminUsername, adminPassword)
 
 	// Each groupXxx function drives one feature group's happy-path
 	// create/read/list/update/delete (or as close to that as the feature
@@ -99,7 +111,10 @@ func runAPISmoke(t *testing.T, serverBin, cliBin string, backend dbBackend) {
 	// is no dependency ordering requirement between them beyond what's noted
 	// inline (e.g. groupSecrets must run before groupShares, which shares the
 	// secret it created).
-	ctx := &smokeCtx{t: t, c: c, cli: cliBin, cliEnv: srv.cliEnv()}
+	ctx := &smokeCtx{
+		t: t, c: c, cli: cliBin, cliEnv: srv.cliEnv(),
+		adminUsername: adminUsername, adminPassword: adminPassword,
+	}
 
 	groupAuthProfile(ctx)
 	groupProjectsAndEnvironments(ctx)
@@ -172,6 +187,14 @@ type smokeCtx struct {
 	c      *client
 	cli    string
 	cliEnv []string
+
+	// adminUsername/adminPassword are the CLI-login credentials for the
+	// account this run bootstrapped as admin -- "smoketestadmin" for a fresh
+	// install (runAPISmoke), or whatever account the OLD binary created for
+	// TestAPISmoke_UpgradePath. groupCLISmoke uses these rather than a
+	// hardcoded literal so it works against either.
+	adminUsername string
+	adminPassword string
 
 	adminUserID   uint
 	projectID     uint

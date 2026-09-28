@@ -164,7 +164,20 @@ func freeTCPPort(t *testing.T) string {
 	return strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
 }
 
-var portLineRe = regexp.MustCompile(`port: "8080"`)
+// portLineRe matches server.http.port's value specifically -- anchored to
+// the "enabled: true" line immediately above it in the generated template
+// (configs/keyorix.yaml.tpl), not a bare `port: "\d+"` pattern. A bare
+// pattern also matches storage.database.port (written by a PostgreSQL
+// backend's configExtra, e.g. `port: "15433"`) and server.grpc.port (whose
+// own "enabled: false" line would need excluding some other way) -- both
+// at the exact same indentation depth as server.http.port, so a
+// content-blind regex silently rewrites the WRONG port whenever a Postgres
+// backend or a second rewrite (upgrade_test.go picks a second free port for
+// the NEW binary after the OLD binary already rewrote it once) is in play.
+// grpc defaults to "enabled: false", so anchoring to "enabled: true"
+// uniquely selects http's port even though grpc has the identical
+// enabled/port shape.
+var portLineRe = regexp.MustCompile(`(enabled: true\n\s*port: )"\d+"`)
 
 // bootstrapAdminPassword deliberately shares no substring with the
 // bootstrap admin's username/email/display_name (see startServer's
@@ -191,14 +204,10 @@ func startServer(t *testing.T, binary string, backend dbBackend) *server {
 	}, backend.extraEnv...)
 
 	configPath := "./keyorix.yaml"
-	logPath := filepath.Join(dir, "e2e-server.log")
 
 	run := func(args ...string) {
 		t.Helper()
-		cmd := exec.Command(binary, append([]string{"admin"}, args...)...)
-		cmd.Dir = dir
-		cmd.Env = env
-		out, err := cmd.CombinedOutput()
+		out, err := runAdminCmd(binary, dir, env, args...)
 		if err != nil {
 			t.Fatalf("keyorix-server admin %s: %v\n%s", strings.Join(args, " "), err, out)
 		}
@@ -236,39 +245,80 @@ func startServer(t *testing.T, binary string, backend dbBackend) *server {
 	run("migrate", "--config", configPath)
 
 	port := freeTCPPort(t)
-	raw, err := os.ReadFile(filepath.Join(dir, "keyorix.yaml"))
+	rewritePort(t, dir, port)
+
+	const bootstrapToken = "e2e-smoke-bootstrap-token-0123456789"
+	// Password is deliberately unrelated to username/email/display_name --
+	// internal/core/rules.DefaultPasswordPolicy rejects a password
+	// containing any of those (confirmed live: "E2E-Smoke-Adm1n-Passw0rd!"
+	// was rejected because it embeds the "e2e" prefix of the username
+	// "e2eadmin"), same trap scripts/smoke.sh's own header comment warns
+	// about for its admin password.
+	s := bootAndBootstrap(t, binary, dir, env, configPath, port, bootstrapToken,
+		"smoketestadmin", "smoketestadmin@example.invalid", bootstrapAdminPassword)
+	s.backend = backend
+	return s
+}
+
+// runAdminCmd runs `binary admin <args...>` in dir with env, returning its
+// combined output. Shared by startServer (fresh install) and
+// upgrade_test.go's TestAPISmoke_UpgradePath (old-binary provisioning +
+// new-binary in-place migrate).
+func runAdminCmd(binary, dir string, env []string, args ...string) (string, error) {
+	cmd := exec.Command(binary, append([]string{"admin"}, args...)...) // #nosec G204 -- binary/args are this test's own fixed, non-attacker-controlled arguments
+	cmd.Dir = dir
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// rewritePort overwrites the generated config's listen port in place --
+// admin init's template always listens on 8080, which every parallel test
+// leg (SQLite, Postgres, the upgrade path) needs its own free port instead
+// of, to avoid colliding with each other or a real dev server.
+func rewritePort(t *testing.T, dir, port string) {
+	t.Helper()
+	path := filepath.Join(dir, "keyorix.yaml")
+	raw, err := os.ReadFile(path) // #nosec G304 -- fixed test-tmpdir path
 	if err != nil {
 		t.Fatalf("read config before port rewrite: %v", err)
 	}
-	rewritten := portLineRe.ReplaceAllString(string(raw), fmt.Sprintf("port: \"%s\"", port))
-	if err := os.WriteFile(filepath.Join(dir, "keyorix.yaml"), []byte(rewritten), 0o600); err != nil {
+	rewritten := portLineRe.ReplaceAllString(string(raw), fmt.Sprintf(`${1}"%s"`, port))
+	if err := os.WriteFile(path, []byte(rewritten), 0o600); err != nil {
 		t.Fatalf("rewrite config port: %v", err)
 	}
+}
 
-	const bootstrapToken = "e2e-smoke-bootstrap-token-0123456789"
-	serverEnv := append(append([]string{}, env...),
-		"KEYORIX_BOOTSTRAP_TOKEN="+bootstrapToken,
-		"KEYORIX_CONFIG_PATH="+configPath,
-	)
-
-	logFile, err := os.Create(logPath) // #nosec G304 -- fixed test-tmpdir path
+// startBackgroundProcess starts s.binary as a subprocess (cwd s.dir, the
+// given serverEnv -- which must already carry KEYORIX_CONFIG_PATH/
+// KEYORIX_BOOTSTRAP_TOKEN if needed, unlike s.env which does not), logging
+// to s.logPath, and records the running *exec.Cmd on s for Close/
+// waitHealthy to use. Does not wait for readiness -- call waitHealthy next.
+func startBackgroundProcess(t *testing.T, s *server, serverEnv []string) {
+	t.Helper()
+	logFile, err := os.Create(s.logPath) // #nosec G304 -- fixed test-tmpdir path
 	if err != nil {
 		t.Fatalf("create server log: %v", err)
 	}
-	cmd := exec.Command(binary)
-	cmd.Dir = dir
+	cmd := exec.Command(s.binary) // #nosec G204 -- s.binary is this test's own built/downloaded fixed path
+	cmd.Dir = s.dir
 	cmd.Env = serverEnv
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("start keyorix-server (%s): %v", backend.name, err)
+		t.Fatalf("start keyorix-server (%s): %v", s.backend.name, err)
 	}
+	s.cmd = cmd
+}
 
-	baseURL := "http://127.0.0.1:" + port
+// waitHealthy polls s.baseURL/health until it reports 200 or 30s elapses,
+// fatally killing the process and dumping its log on timeout.
+func waitHealthy(t *testing.T, s *server) {
+	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	healthy := false
 	for time.Now().Before(deadline) {
-		resp, herr := http.Get(baseURL + "/health") // #nosec G107 -- fixed localhost test URL
+		resp, herr := http.Get(s.baseURL + "/health") // #nosec G107 -- fixed localhost test URL
 		if herr == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -279,27 +329,37 @@ func startServer(t *testing.T, binary string, backend dbBackend) *server {
 		time.Sleep(200 * time.Millisecond)
 	}
 	if !healthy {
-		logBytes, _ := os.ReadFile(logPath)
-		_ = cmd.Process.Kill()
-		t.Fatalf("keyorix-server (%s) never became healthy; log:\n%s", backend.name, logBytes)
+		logBytes, _ := os.ReadFile(s.logPath)
+		if s.cmd != nil && s.cmd.Process != nil {
+			_ = s.cmd.Process.Kill()
+		}
+		t.Fatalf("keyorix-server (%s) never became healthy; log:\n%s", s.backend.name, logBytes)
 	}
+}
 
+// bootAndBootstrap starts binary as a background server (serving at
+// 127.0.0.1:port, config at configPath inside dir), waits for it to become
+// healthy, then claims the first admin via POST /system/init (bootstrapToken
+// via header, InitSystem's preferred path). Returns the running *server
+// (caller must eventually Close it).
+func bootAndBootstrap(t *testing.T, binary, dir string, env []string, configPath, port, bootstrapToken, username, email, password string) *server {
+	t.Helper()
+	serverEnv := append(append([]string{}, env...),
+		"KEYORIX_BOOTSTRAP_TOKEN="+bootstrapToken,
+		"KEYORIX_CONFIG_PATH="+configPath,
+	)
 	s := &server{
-		t: t, cmd: cmd, dir: dir, configPath: configPath, baseURL: baseURL,
-		binary: binary, env: env, logPath: logPath, backend: backend,
+		t: t, dir: dir, configPath: configPath, baseURL: "http://127.0.0.1:" + port,
+		binary: binary, env: env, logPath: filepath.Join(dir, "e2e-server-"+filepath.Base(binary)+".log"),
+		backend: dbBackend{name: username},
 	}
+	startBackgroundProcess(t, s, serverEnv)
+	waitHealthy(t, s)
 
-	// Password is deliberately unrelated to username/email/display_name --
-	// internal/core/rules.DefaultPasswordPolicy rejects a password
-	// containing any of those (confirmed live: "E2E-Smoke-Adm1n-Passw0rd!"
-	// was rejected because it embeds the "e2e" prefix of the username
-	// "e2eadmin"), same trap scripts/smoke.sh's own header comment warns
-	// about for its admin password.
 	body, _ := json.Marshal(map[string]string{
-		"username": "smoketestadmin", "email": "smoketestadmin@example.invalid",
-		"password": bootstrapAdminPassword, "display_name": "Smoke Test Administrator",
+		"username": username, "email": email, "password": password, "display_name": username,
 	})
-	req, err := http.NewRequest(http.MethodPost, baseURL+"/system/init", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, s.baseURL+"/system/init", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("build /system/init request: %v", err)
 	}
