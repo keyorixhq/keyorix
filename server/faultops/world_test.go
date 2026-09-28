@@ -142,6 +142,7 @@ func mustExec(t *testing.T, db *gorm.DB, sql string) {
 // snapshotDB), the faulty storage wrapper (for arming/inspecting faults), and
 // live REST + gRPC clients authenticated as the one bootstrapped admin.
 type faultWorld struct {
+	t          *testing.T
 	db         *gorm.DB
 	core       *core.KeyorixCore
 	faulty     *faultstorage.FaultyStorage
@@ -166,15 +167,18 @@ type faultWorld struct {
 // just the handful (MFA enrollment, signed audit checkpoints, dynamic-secret
 // admin-DSN/lease-credential encryption) that actually need it. Safe to call
 // more than once (sync.Once-guarded); returns the first call's error, if any.
-func (w *faultWorld) ensureEncryption(t *testing.T) error {
-	t.Helper()
+// Uses the *testing.T newFaultWorld was built with (stored on w.t) rather than
+// taking one as a parameter, so opCatalog Setup/Execute functions — which only
+// receive (ctx, w) — can call it too, not just a test function with a t in scope.
+func (w *faultWorld) ensureEncryption() error {
+	w.t.Helper()
 	w.encryptOnce.Do(func() {
 		encKeyDir, err := os.MkdirTemp("", "faultops-enc-*")
 		if err != nil {
 			w.encryptErr = fmt.Errorf("mkdir encryption key dir: %w", err)
 			return
 		}
-		t.Cleanup(func() { _ = os.RemoveAll(encKeyDir) })
+		w.t.Cleanup(func() { _ = os.RemoveAll(encKeyDir) })
 		encSvc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, encKeyDir)
 		if err := encSvc.Initialize("faultops-fixture-passphrase"); err != nil {
 			w.encryptErr = fmt.Errorf("encryption Initialize: %w", err)
@@ -209,6 +213,16 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 	worldPhase := time.Now()
 	db, backend := openWorldDB(t)
 	if err := db.AutoMigrate(models.AllTestModels()...); err != nil {
+		t.Fatal(err)
+	}
+	// audit_checkpoints is not in AllTestModels (so it stays out of the
+	// oracle's state snapshots: a checkpoint's signature covers run-relative
+	// chain content), but ensureEncryption wires the audit-checkpoint key, and
+	// once that key is set VerifyAuditChain reads this table -- production
+	// always has it. Without it, any op whose Setup activates encryption
+	// (MFA enroll/activate, batch 25) failed FuzzAuditCompleteness with
+	// "no such table: audit_checkpoints".
+	if err := db.AutoMigrate(&models.AuditCheckpoint{}); err != nil {
 		t.Fatal(err)
 	}
 	// Mirrors server/http/integration_test.go's partial-unique-index setup
@@ -345,7 +359,7 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 		metadata.Pairs("authorization", "Bearer "+session.SessionToken))
 
 	return &faultWorld{
-		db: db, core: testCore, faulty: faulty,
+		t: t, db: db, core: testCore, faulty: faulty,
 		httpServer: httpSrv, httpClient: &http.Client{Timeout: 10 * time.Second},
 		adminToken: session.SessionToken,
 		grpcConn:   conn, grpcCtx: grpcCtx,
