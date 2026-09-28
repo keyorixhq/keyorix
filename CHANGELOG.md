@@ -82,6 +82,17 @@ All notable changes to Keyorix are documented here. This project follows
   PascalCase keys (`ID`, `ProjectID`, `IsShared`, ...) off any of these
   routes needs to switch to the snake_case equivalents.
 
+- **`keyorix-server-lean` is replaced by `keyorix-server-airgap`** (ADR-109
+  step 6). The new AIR-GAPPED release variant (`-tags noaws,noazure,nogcp`)
+  excludes every AWS/Azure/GCP SDK package (0 remaining, enforced by
+  `scripts/airgap-dependency-guard.sh`) — Vault and Kubernetes stay, since
+  on-prem Vault read-through and on-prem k8s are legitimate air-gapped uses.
+  The old `lean` variant only ever excluded the AWS IAM rotation backend and
+  the S3-compatible evidence sink (131 cloud SDK packages remained) — a
+  narrower, different exclusion this release replaces rather than aliases. A
+  `<ver>-airgap` image tag is also now published alongside the full
+  `keyorix-server` image.
+
 ### Removed
 - **The `/system` server-to-server proxy route tier is gone (ADR-108 Phase 6
   step 14c).** These 151 `...Proxy`-suffixed routes existed only to let a
