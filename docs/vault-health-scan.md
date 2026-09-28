@@ -8,8 +8,8 @@ stand. It's the same tool `keyorix-migrate vault` (the secret importer, see
 [migrate-from-vault.md](migrate-from-vault.md)) ships in — same binary, same release, no
 separate download.
 
-This is **not** the paid Vault Health Assessment (a human-delivered engagement — see the
-outreach materials in `~/proj/gtm/` for that offer). It's the free, self-run version: one
+This is **not** the paid Vault Health Assessment (a human-delivered engagement — see
+<https://keyorix.com/vault-health>). It's the free, self-run version: one
 command, a report, and a sense of what an expert would find.
 
 ## The read-only guarantee, and how it's enforced
@@ -150,4 +150,5 @@ top-level secret count, and which mounts it **cannot** import (dynamic-secrets e
 
 If you'd like a second opinion, or want to talk about the paid Vault Health Assessment, send us
 `report.json` — it never contains a secret value, only findings, evidence text, and metadata
-about your Vault's configuration. See the report's own footer for where.
+about your Vault's configuration. Use the form at <https://keyorix.com/vault-health>, which
+also takes the file as an attachment.
