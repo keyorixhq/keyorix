@@ -28,7 +28,7 @@ func verifyAuditChain(t *testing.T, srv *server, backend dbBackend) {
 		// srv.dir (configs/keyorix.yaml.tpl's "keyorix.db" default).
 		args = append(args, "--db", filepath.Join(srv.dir, "keyorix.db"))
 	}
-	cmd := exec.Command(srv.binary, args...)
+	cmd := exec.Command(srv.binary, args...) // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- runs the keyorix binary this e2e harness itself built or downloaded, with the harness's own fixed arguments; no external input reaches it
 	cmd.Dir = srv.dir
 	cmd.Env = srv.env
 	out, err := cmd.CombinedOutput()

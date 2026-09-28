@@ -94,7 +94,7 @@ func buildBinaries(t *testing.T) (server, cli string) {
 		}
 
 		serverPath := filepath.Join(dir, "keyorix-server")
-		cmd := exec.Command("go", "build", "-o", serverPath, "./server")
+		cmd := exec.Command("go", "build", "-o", serverPath, "./server") // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- runs the keyorix binary this e2e harness itself built or downloaded, with the harness's own fixed arguments; no external input reaches it
 		cmd.Dir = root
 		if out, berr := cmd.CombinedOutput(); berr != nil {
 			buildErr = fmt.Errorf("build keyorix-server: %w\n%s", berr, out)
@@ -102,7 +102,7 @@ func buildBinaries(t *testing.T) (server, cli string) {
 		}
 
 		cliPath := filepath.Join(dir, "keyorix")
-		cliCmd := exec.Command("go", "build", "-o", cliPath, ".")
+		cliCmd := exec.Command("go", "build", "-o", cliPath, ".") // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- runs the keyorix binary this e2e harness itself built or downloaded, with the harness's own fixed arguments; no external input reaches it
 		cliCmd.Dir = filepath.Join(root, "cli")
 		cliCmd.Env = append(os.Environ(), "GOWORK=off")
 		if out, berr := cliCmd.CombinedOutput(); berr != nil {
@@ -265,7 +265,7 @@ func startServer(t *testing.T, binary string, backend dbBackend) *server {
 // upgrade_test.go's TestAPISmoke_UpgradePath (old-binary provisioning +
 // new-binary in-place migrate).
 func runAdminCmd(binary, dir string, env []string, args ...string) (string, error) {
-	cmd := exec.Command(binary, append([]string{"admin"}, args...)...) // #nosec G204 -- binary/args are this test's own fixed, non-attacker-controlled arguments
+	cmd := exec.Command(binary, append([]string{"admin"}, args...)...) // #nosec G204 -- binary/args are this test's own fixed, non-attacker-controlled arguments nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- runs the keyorix binary this e2e harness itself built or downloaded, with the harness's own fixed arguments; no external input reaches it
 	cmd.Dir = dir
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
@@ -300,7 +300,7 @@ func startBackgroundProcess(t *testing.T, s *server, serverEnv []string) {
 	if err != nil {
 		t.Fatalf("create server log: %v", err)
 	}
-	cmd := exec.Command(s.binary) // #nosec G204 -- s.binary is this test's own built/downloaded fixed path
+	cmd := exec.Command(s.binary) // #nosec G204 -- s.binary is this test's own built/downloaded fixed path nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- runs the keyorix binary this e2e harness itself built or downloaded, with the harness's own fixed arguments; no external input reaches it
 	cmd.Dir = s.dir
 	cmd.Env = serverEnv
 	cmd.Stdout = logFile
