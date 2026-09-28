@@ -89,6 +89,16 @@ func isDisallowedIP(ip net.IP) bool {
 	return false
 }
 
+// DialDisallowed reports whether the SIEM forwarder's dial-time egress policy
+// refuses ip. It is the same predicate newForwarder wires into netutil.Dialer
+// (isDisallowedIP), exported read-only so an external parity check
+// (internal/core's FuzzSSRFGuardDifferential) can compare this package's real
+// policy against netutil's and internal/core's own guards. It is pure: it
+// grants nothing and changes no state.
+func DialDisallowed(ip net.IP) bool {
+	return isDisallowedIP(ip)
+}
+
 func isDisallowedIPDirect(ip net.IP) bool {
 	if ip.IsLoopback() {
 		return false
