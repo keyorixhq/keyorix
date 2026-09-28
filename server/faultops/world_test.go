@@ -215,6 +215,16 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 	if err := db.AutoMigrate(models.AllTestModels()...); err != nil {
 		t.Fatal(err)
 	}
+	// audit_checkpoints is not in AllTestModels (so it stays out of the
+	// oracle's state snapshots: a checkpoint's signature covers run-relative
+	// chain content), but ensureEncryption wires the audit-checkpoint key, and
+	// once that key is set VerifyAuditChain reads this table -- production
+	// always has it. Without it, any op whose Setup activates encryption
+	// (MFA enroll/activate, batch 25) failed FuzzAuditCompleteness with
+	// "no such table: audit_checkpoints".
+	if err := db.AutoMigrate(&models.AuditCheckpoint{}); err != nil {
+		t.Fatal(err)
+	}
 	// Mirrors server/http/integration_test.go's partial-unique-index setup
 	// (production migrations these AutoMigrate skips) — duplicated per this
 	// repo's established fuzzworld_test.go convention of one copy per package
