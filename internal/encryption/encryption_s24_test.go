@@ -891,7 +891,7 @@ func TestEncryptionService_RotateKey_RoundTrip(t *testing.T) {
 	enc, err := es.Encrypt(plain, "v1")
 	require.NoError(t, err)
 
-	rotated, err := es.rotateKey(enc, "v2")
+	rotated, err := rotateKey(es, enc, "v2")
 	require.NoError(t, err)
 	assert.Equal(t, "v2", rotated.Metadata.KeyVersion)
 

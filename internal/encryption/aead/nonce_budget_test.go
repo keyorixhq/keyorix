@@ -1,4 +1,4 @@
-package encryption
+package aead
 
 // nonce_budget_test.go — regression test for the DEK nonce-budget observability
 // nudge (Wave 6 info-severity finding): Encrypt/EncryptWithAAD draw a fresh random
@@ -17,6 +17,11 @@ import (
 	"strings"
 	"testing"
 )
+
+// testKeyVersion mirrors package encryption's own test constant of the same
+// name (encryption_test.go) — this file moved here with FuzzDecrypt/etc. and
+// needs its own copy since it's now in a different package.
+const testKeyVersion = "test-v1"
 
 // captureLogOutput redirects the standard logger to a buffer for the duration of
 // the test and restores the previous output/flags on cleanup.

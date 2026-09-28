@@ -66,7 +66,7 @@ func TestEncryptionService_RotateKey(t *testing.T) {
 	enc, err := es.Encrypt(original, "v1")
 	require.NoError(t, err)
 
-	rotated, err := es.rotateKey(enc, "v2")
+	rotated, err := rotateKey(es, enc, "v2")
 	require.NoError(t, err)
 	assert.Equal(t, "v2", rotated.Metadata.KeyVersion)
 
@@ -90,7 +90,7 @@ func TestEncryptionService_RotateKey_CorruptInput(t *testing.T) {
 		},
 	}
 	// Wrong nonce length → error on Decrypt
-	_, err = es.rotateKey(bad, "v2")
+	_, err = rotateKey(es, bad, "v2")
 	require.Error(t, err)
 }
 

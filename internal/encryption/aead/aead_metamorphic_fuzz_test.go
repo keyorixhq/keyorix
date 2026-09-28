@@ -1,4 +1,4 @@
-package encryption
+package aead
 
 // aead_metamorphic_fuzz_test.go — FuzzAEADTamperRoundTrip.
 //

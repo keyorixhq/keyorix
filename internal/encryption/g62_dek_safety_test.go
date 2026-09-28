@@ -133,7 +133,7 @@ func TestServiceShutdown_WipesEncryptionServiceDEK(t *testing.T) {
 		svc.mu.RUnlock()
 		t.Fatal("test setup bug: expected an initialized encryptionService before Shutdown")
 	}
-	dekRef := svc.encryptionService.dek // same backing array wipeBytes must zero in place
+	dekRef := svc.encryptionService.DEKBytes() // same backing array WipeDEK must zero in place
 	svc.mu.RUnlock()
 
 	if allZeroBytes(dekRef) {
@@ -168,7 +168,7 @@ func TestRotateDEKWithSweep_WipesSupersededEncryptionServiceDEK(t *testing.T) {
 	defer svc.Shutdown()
 
 	svc.mu.RLock()
-	oldDEKRef := svc.encryptionService.dek
+	oldDEKRef := svc.encryptionService.DEKBytes()
 	svc.mu.RUnlock()
 	if allZeroBytes(oldDEKRef) {
 		t.Fatal("test setup bug: DEK was already all-zero before rotation")
@@ -186,7 +186,7 @@ func TestRotateDEKWithSweep_WipesSupersededEncryptionServiceDEK(t *testing.T) {
 	// Non-regression: the NEW encryption service (the one actually in use after
 	// rotation) must still work — this fix must not have wiped the wrong slice.
 	svc.mu.RLock()
-	newDEKRef := svc.encryptionService.dek
+	newDEKRef := svc.encryptionService.DEKBytes()
 	svc.mu.RUnlock()
 	if allZeroBytes(newDEKRef) {
 		t.Fatal("the post-rotation (live) EncryptionService's DEK was wiped too — encryption would now be broken")
