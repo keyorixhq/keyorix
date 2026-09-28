@@ -246,9 +246,22 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 	if subtle.ConstantTimeCompare([]byte(req.Token), []byte(c.bootstrapToken)) != 1 {
 		return nil, ErrInvalidBootstrapToken
 	}
+	displayName := req.DisplayName
+	if displayName == "" {
+		displayName = req.Username
+	}
 	// The initial admin is the most privileged account; enforce the password policy
 	// here too (plain CreateUser does not), so it can't be seeded with a weak password.
-	if err := c.passwordPolicy.Validate(req.Password, nil); err != nil {
+	// Validate against the admin's own identity (username / email / display name)
+	// HERE, before any write: CreateUser runs the same personal-info check later,
+	// and a rejection there used to land after permissions and roles were already
+	// committed, leaving the install unable to bootstrap again (every retry hit a
+	// duplicate-permission 500; FINDINGS-inbox, Session J, 2026-09-28).
+	if err := c.passwordPolicy.Validate(req.Password, &models.User{
+		Username:    req.Username,
+		Email:       req.Email,
+		DisplayName: displayName,
+	}); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
 
@@ -263,8 +276,37 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 	// "system_viewer", regardless of backend timing). Confirmed live via a
 	// fresh docker-compose Postgres bootstrap before this fix: `user_roles`
 	// held only the "admin" grant for user 1, never "system_viewer".
+	//
+	// Seeding is idempotent: a previous attempt that failed after this point
+	// (any later step, not only the password check above) may have committed
+	// some permissions / roles / role-permission links already. Reuse what
+	// exists instead of failing on a unique constraint, so a failed bootstrap
+	// stays retryable. Only default-catalog names are reused, and only while the
+	// install is still un-initialised (no marker, no users -- checked above
+	// under the bootstrap lock), so this cannot adopt anything an operator made.
+	existingPerms, err := c.storage.ListPermissions(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list existing permissions: %w", err)
+	}
+	permByName := make(map[string]*models.Permission, len(existingPerms))
+	for _, p := range existingPerms {
+		permByName[p.Name] = p
+	}
+	existingRoles, err := c.storage.ListRoles(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list existing roles: %w", err)
+	}
+	roleByFolded := make(map[string]*models.Role, len(existingRoles))
+	for _, r := range existingRoles {
+		roleByFolded[r.NameFolded] = r
+	}
+
 	permIDs := make(map[string]uint, len(defaultPermissions))
 	for _, def := range defaultPermissions {
+		if p, ok := permByName[def.Name]; ok {
+			permIDs[def.Name] = p.ID
+			continue
+		}
 		p, err := c.storage.CreatePermission(ctx, &models.Permission{
 			Name:        def.Name,
 			Description: def.Description,
@@ -283,9 +325,13 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 		if ferr != nil {
 			return nil, fmt.Errorf("failed to normalize seed role name %s: %w", rdef.Name, ferr)
 		}
-		role, err := c.storage.CreateRole(ctx, foldedName, rdef.Description)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create role %s: %w", rdef.Name, err)
+		role, reused := roleByFolded[foldedName.Folded()]
+		if !reused {
+			created, err := c.storage.CreateRole(ctx, foldedName, rdef.Description)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create role %s: %w", rdef.Name, err)
+			}
+			role = created
 		}
 		roleIDs[rdef.Name] = role.ID
 		// ADR-084: the four admin-tier seeded roles get the structural bypass
@@ -300,17 +346,26 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 				return nil, fmt.Errorf("failed to flag admin-tier role %s (ADR-084): %w", rdef.Name, err)
 			}
 		}
+		linked := map[uint]bool{}
+		if reused {
+			have, err := c.storage.GetRolePermissions(ctx, role.ID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read permissions of role %s: %w", rdef.Name, err)
+			}
+			for _, p := range have {
+				linked[p.ID] = true
+			}
+		}
 		for _, name := range rdef.Permissions {
+			if linked[permIDs[name]] {
+				continue
+			}
 			if err := c.storage.AssignPermissionToRole(ctx, role.ID, permIDs[name]); err != nil {
 				return nil, fmt.Errorf("failed to assign permission %s to role %s: %w", name, rdef.Name, err)
 			}
 		}
 	}
 
-	displayName := req.DisplayName
-	if displayName == "" {
-		displayName = req.Username
-	}
 	user, err := c.CreateUser(ctx, &CreateUserRequest{
 		Username:    req.Username,
 		Email:       req.Email,
