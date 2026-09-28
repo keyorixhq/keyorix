@@ -252,6 +252,34 @@ func classifyAll() (classified []classifiedField, unresolved []string) {
 	return classified, unresolved
 }
 
+// ClassifiedField is classifyAll's exported counterpart -- what a caller
+// outside this package needs to generically populate one row per model (the
+// core property test, design §11.1) without duplicating classifyAll's own
+// override/convention logic: for every ID-shaped field, whether it's a
+// cross-table reference (and to which model), a self-reference, or not a
+// reference at all.
+type ClassifiedField struct {
+	Model        string
+	Field        string
+	Refs         string // referenced model's Go type name; "" if SelfRef or NotReference
+	SelfRef      bool
+	NotReference bool
+}
+
+// ClassifiedFields exposes classifyAll()'s result: every ID-shaped field on
+// every model in storage.AllModels(), classified. unresolved is always empty
+// in a passing build -- RestoreOrder() itself refuses to run otherwise -- but
+// is still returned so a caller can fail loudly rather than silently ignore
+// an unclassified field if this is ever called before that invariant holds.
+func ClassifiedFields() (classified []ClassifiedField, unresolved []string) {
+	internal, unresolved := classifyAll()
+	classified = make([]ClassifiedField, len(internal))
+	for i, c := range internal {
+		classified[i] = ClassifiedField(c)
+	}
+	return classified, unresolved
+}
+
 // RestoreOrder returns AllModels()'s Go type names ordered so that every
 // model referenced by another model's field (per classifyAll) is inserted
 // before the model that references it -- a topological sort of the
