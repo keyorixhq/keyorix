@@ -445,6 +445,11 @@ var beforeSaveBypassAllowlistG1619 = map[string]string{
 		"range query) and compares via Go's Location-independent now.After(*pat.ExpiresAt) " +
 		"(pat_expiry_enforce.go) — never a SQLite string range comparison, so BeforeSave's UTC normalization " +
 		"has nothing to protect on this read path regardless of what Location the raw write left in place.",
+	"server/middleware/authcache_differential_fuzz_test.go::acRunOp::Session.ExpiresAt#1": "Session.ExpiresAt — the auth-cache " +
+		"differential fuzzer (FUZZ-GAPS G5) backdates a live session's real expiry deterministically (no sleep) to model " +
+		"#1878's stale-cache shape. `past := time.Now().UTC().Add(-24 * time.Hour)` is already canonical UTC, so " +
+		"BeforeSave's normalization would be a no-op; a raw Update is used only because Save() would re-write every column " +
+		"of the fetched row.",
 	"internal/storage/store/stale_accounts_test.go::TestListUsersInStateBefore::User.CreatedAt#1": "User.CreatedAt — `createdAt` is derived from " +
 		"`now := time.Now().UTC()` two lines above the mk() helper, already canonical, so BeforeSave's " +
 		"normalization would be a no-op. (This model's OWN read path, ListUsersInStateBefore, IS a real SQL " +
