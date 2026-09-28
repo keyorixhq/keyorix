@@ -530,7 +530,7 @@ func checkSchemaEpoch(db *gorm.DB) error {
 	if parseErr != nil {
 		return fmt.Errorf("stored schema epoch %q is not a valid integer -- refusing to start rather than guess whether this database is ahead of this binary (ADR-097)", m.Value)
 	}
-	if dbEpoch > currentSchemaEpoch {
+	if SchemaEpochTooNew(dbEpoch) {
 		// #1674 (Part 2 continuation, design decision recorded in
 		// docs/adr-101-schema-epoch-compatibility-floor.md): this refusal is NOT
 		// made conditional on how recently the newer epoch was recorded, or on
@@ -559,6 +559,25 @@ func checkSchemaEpoch(db *gorm.DB) error {
 			dbEpoch, currentSchemaEpoch, m.UpdatedAt.Format(time.RFC3339), time.Since(m.UpdatedAt).Round(time.Second))
 	}
 	return nil
+}
+
+// CurrentSchemaEpoch returns this binary's compiled-in schema version
+// (ADR-097) -- design-b3-backup-v2.md §3.5/§3.6: `admin backup` records
+// this in the manifest at backup time, exactly the same value
+// checkSchemaEpoch compares a live database's own recorded epoch against.
+func CurrentSchemaEpoch() int {
+	return currentSchemaEpoch
+}
+
+// SchemaEpochTooNew reports whether epoch is newer than this binary's
+// CurrentSchemaEpoch() -- the same comparison checkSchemaEpoch applies to a
+// live database's recorded epoch (ADR-097), exposed so `admin restore`
+// (design §3.5) can apply the identical decision rule to an archive's
+// manifest-declared schema_epoch instead: a backup taken by a newer binary
+// than this one is refused, for the same reason a newer-schema live
+// database is.
+func SchemaEpochTooNew(epoch int) bool {
+	return epoch > currentSchemaEpoch
 }
 
 // recordSchemaEpoch (ADR-097) upserts currentSchemaEpoch into system_metadata.
