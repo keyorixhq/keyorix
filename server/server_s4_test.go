@@ -414,6 +414,7 @@ func TestInitializeCoreService_RotationBackend_MySQL(t *testing.T) {
 // ── initializeCoreService — rotation backend (various types) ─────────────────
 
 func TestInitializeCoreService_RotationBackend_Various(t *testing.T) {
+	requireCloudBuild(t, true, true, true)
 	initI18n(t)
 	cfg := newMinimalCfg(t)
 	cfg.AutoRotation.Backends = []config.RotationBackendConfig{
@@ -456,6 +457,7 @@ func TestInitializeCoreService_Connect_UnknownType(t *testing.T) {
 // ── initializeCoreService — Connect (known types) ─────────────────────────────
 
 func TestInitializeCoreService_Connect_KnownTypes(t *testing.T) {
+	requireCloudBuild(t, true, false, true)
 	initI18n(t)
 	cfg := newMinimalCfg(t)
 	cfg.Connect = config.ConnectConfig{
@@ -511,6 +513,7 @@ func TestInitializeCoreService_Connect_GCP_NoProjectID(t *testing.T) {
 // validateConnectAWSAccountID's format check, run from cfg.Validate() before the
 // Connect-wiring loop is ever reached.
 func TestInitializeCoreService_Connect_AWS_NoAccountID(t *testing.T) {
+	requireCloudBuild(t, true, false, false)
 	initI18n(t)
 	cfg := newMinimalCfg(t)
 	cfg.Connect = config.ConnectConfig{
@@ -548,6 +551,7 @@ func TestInitializeCoreService_Connect_AWS_MalformedAccountID(t *testing.T) {
 // ── initializeCoreService — azure connector ───────────────────────────────────
 
 func TestInitializeCoreService_Connect_AzureKeyVault(t *testing.T) {
+	requireCloudBuild(t, false, true, false)
 	initI18n(t)
 	cfg := newMinimalCfg(t)
 	cfg.Connect = config.ConnectConfig{
