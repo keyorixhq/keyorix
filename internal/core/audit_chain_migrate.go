@@ -45,6 +45,11 @@ func (c *KeyorixCore) MigrateAuditChainEncoding(ctx context.Context, actorID uin
 		return nil, fmt.Errorf("failed to migrate audit chain encoding: %w", err)
 	}
 	if dryRun {
+		// No audit event on a dry run (F5, audit-completeness campaign):
+		// confirmed intentional, not a gap — the dry run persists nothing and
+		// has no effect to record, and TestMigrateAuditChainEncoding_Core_
+		// DryRunPersistsNothing already asserts zero "audit.chain_migrated"
+		// events after a dry-run call. Only a real run appends one, below.
 		return result, nil
 	}
 

@@ -102,7 +102,7 @@ func (h *SecretVersionCommentHandler) ListComments(w http.ResponseWriter, r *htt
 
 // DeleteComment handles DELETE /api/v1/secrets/{id}/versions/{versionId}/comments/{commentId}.
 func (h *SecretVersionCommentHandler) DeleteComment(w http.ResponseWriter, r *http.Request) {
-	_, ok := mustGetUser(w, r)
+	userCtx, ok := mustGetUser(w, r)
 	if !ok {
 		return
 	}
@@ -124,6 +124,7 @@ func (h *SecretVersionCommentHandler) DeleteComment(w http.ResponseWriter, r *ht
 		sendVersionCommentError(w, "deleting", secretID, versionID, err)
 		return
 	}
+	h.coreService.LogSecretVersionCommentDeleted(r.Context(), userCtx.UserID, secretID, versionID, commentID)
 
 	w.WriteHeader(http.StatusNoContent)
 }

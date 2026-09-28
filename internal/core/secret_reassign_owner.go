@@ -75,5 +75,14 @@ func (c *KeyorixCore) ReassignOwnedSecrets(ctx context.Context, actorKind string
 	}
 	// One "N secrets reassigned to you" notification instead of one per secret.
 	c.notifySecretsReassigned(ctx, toOwnerID, actorID, projectID, reassigned)
+	// Written unconditionally: transferOwnership audits each individual
+	// transfer, but a reassignment where the old owner has nothing left to
+	// hand off (already reassigned, or none writable) would otherwise leave
+	// no trail that this bulk operation was attempted (F5, audit-completeness
+	// campaign) -- same reasoning as SuspendProjectSecrets/ResumeProjectSecrets.
+	pid := projectID
+	c.writeAuditEventFull(ctx, "secret.bulk_reassign_owner_attempted", actorPtr(actorID), nil, &pid, "",
+		fmt.Sprintf("project %d bulk-reassign-owner attempted: %d secret(s) reassigned from user %d to user %d",
+			projectID, reassigned, fromOwnerID, toOwnerID))
 	return reassigned, nil
 }

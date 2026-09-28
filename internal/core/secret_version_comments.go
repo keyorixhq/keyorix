@@ -60,6 +60,9 @@ func (k *KeyorixCore) CreateSecretVersionComment(ctx context.Context, req Create
 	if err := k.storage.CreateSecretVersionComment(ctx, c); err != nil {
 		return nil, err
 	}
+	sid := req.SecretID
+	k.writeAuditEventFull(ctx, "secret.version_comment_created", actorPtr(req.UserID), &sid, nil, "",
+		fmt.Sprintf("comment added to secret %d version %d", req.SecretID, req.VersionID))
 	return c, nil
 }
 
@@ -81,4 +84,15 @@ func (k *KeyorixCore) DeleteSecretVersionComment(ctx context.Context, secretID, 
 		return err
 	}
 	return k.storage.DeleteSecretVersionComment(ctx, secretID, versionID, id)
+}
+
+// LogSecretVersionCommentDeleted records a version-comment deletion. actorID
+// is the deleting user (0 = none). Standalone method since
+// DeleteSecretVersionComment takes no actor parameter (F5, audit-completeness
+// campaign) -- same reasoning as LogRoleCreated/LogRoleUpdated/LogRoleDeleted
+// (audit.go). The REST handler calls this explicitly once it has the actor.
+func (k *KeyorixCore) LogSecretVersionCommentDeleted(ctx context.Context, actorID, secretID, versionID, commentID uint) {
+	sid := secretID
+	k.writeAuditEventFull(ctx, "secret.version_comment_deleted", actorPtr(actorID), &sid, nil, "",
+		fmt.Sprintf("comment %d deleted from secret %d version %d", commentID, secretID, versionID))
 }

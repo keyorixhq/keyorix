@@ -107,6 +107,8 @@ func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, 
 		}
 	}
 	_ = c.deleteSessionsForUserAndEvict(ctx, userID, keepID, keepHash)
+	c.writeAuditEvent(ctx, "auth.password_changed", actorPtr(userID), nil,
+		fmt.Sprintf("user %d changed their own password", userID))
 	return nil
 }
 

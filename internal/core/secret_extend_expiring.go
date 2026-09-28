@@ -59,5 +59,14 @@ func (c *KeyorixCore) ExtendExpiringSecrets(ctx context.Context, projectID uint,
 		c.LogSecretUpdatedWithProject(ctx, actorID, s.ID, projectID, actor, s.Name, "", "")
 		extended++
 	}
+	// Written unconditionally: each renewal audits as secret.updated, but a
+	// sweep that finds nothing to extend (empty window, or nothing writable)
+	// would otherwise leave no trail that this bulk operation was attempted
+	// (F5, audit-completeness campaign) -- same reasoning as
+	// SuspendProjectSecrets/ResumeProjectSecrets.
+	pid := projectID
+	c.writeAuditEventFull(ctx, "secret.bulk_extend_expiring_attempted", actorPtr(actorID), nil, &pid, "",
+		fmt.Sprintf("project %d bulk-extend-expiring attempted (within %d day(s), new window %d day(s)): %d secret(s) extended",
+			projectID, withinDays, newWindowDays, extended))
 	return extended, truncated, nil
 }

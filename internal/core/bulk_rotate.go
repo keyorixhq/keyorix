@@ -99,6 +99,7 @@ func (c *KeyorixCore) BulkRotateSecrets(ctx context.Context, req BulkRotateReque
 		if err := c.bulkRotateExplicit(ctx, req, result); err != nil {
 			return nil, err
 		}
+		c.logBulkRotateAttempted(ctx, req, result)
 		return result, nil
 	}
 
@@ -137,7 +138,21 @@ func (c *KeyorixCore) BulkRotateSecrets(ctx context.Context, req BulkRotateReque
 		}
 		_ = c.bulkRotateOne(ctx, s.ID, s.RotationLength, s.RotationCharset, req.RotatedBy, result)
 	}
+	c.logBulkRotateAttempted(ctx, req, result)
 	return result, nil
+}
+
+// logBulkRotateAttempted records that a bulk-rotate call was made, unconditionally.
+// RotateSecretOnDemand/RotateSecret already audit each individual rotation, but a
+// call that matched nothing (empty project, all not-rotation-configured, all
+// not-found) would otherwise leave no trail that this bulk operation was attempted
+// (F5, audit-completeness campaign) -- same reasoning as
+// SuspendProjectSecrets/ResumeProjectSecrets/ExtendExpiringSecrets.
+func (c *KeyorixCore) logBulkRotateAttempted(ctx context.Context, req BulkRotateRequest, result *BulkRotateResult) {
+	pid := req.ProjectID
+	c.writeAuditEventFull(ctx, "secret.bulk_rotate_attempted", nil, nil, &pid, "",
+		fmt.Sprintf("project %d bulk-rotate attempted by %q: %d/%d secret(s) triggered",
+			req.ProjectID, req.RotatedBy, len(result.Triggered), result.Total))
 }
 
 // bulkRotateExplicit processes an explicit list of secret IDs, checking project membership
