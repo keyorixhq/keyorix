@@ -104,9 +104,9 @@ jobs:
   # check stuck pending forever (why codeql.yml's Analyze (server)/(operator)
   # and this workflow's own trigger are deliberately NOT path-filtered).
   #
-  # Deliberately scoped to pull_request only (push-to-main only happens once
-  # per merge, so the "waste" of a full run there is not worth the added
-  # complexity of also diffing push events).
+  # Scoped to pull_request and merge_group (2026-09-28: the merge queue's
+  # 18-shard matrix was running in full for docs-only groups). push-to-main
+  # still always runs everything (once per merge; not worth diffing).
   #
   # gitleaks is NOT gated by this: a secret pasted into a markdown file is
   # exactly the class of leak gitleaks exists to catch, so it always runs
@@ -180,7 +180,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
+          if [ "${{ github.event_name }}" = "merge_group" ]; then
+            # Merge queue (2026-09-28): classify the WHOLE group diff (main's
+            # tip .. the group commit, which includes every earlier PR in the
+            # same group), so a docs-only / web-only group skips the 18-shard
+            # test matrix exactly like the same PR already does on
+            # pull_request. Fail-safe: the compare API lists at most 300
+            # files; at or above that, or on any API error, `changed` is
+            # emptied, and every *_only output below treats an empty list as
+            # "false" (full suite runs). boot_smoke_relevant stays true here,
+            # unchanged from before.
+            changed=$(gh api "repos/${{ github.repository }}/compare/${{ github.event.merge_group.base_sha }}...${{ github.event.merge_group.head_sha }}" --jq '.files[].filename') || changed=""
+            if [ "$(printf '%s\n' "$changed" | grep -c .)" -ge 300 ]; then
+              changed=""
+            fi
+            echo "Changed files (merge group):"
+            echo "$changed"
+            echo "boot_smoke_relevant=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" != "pull_request" ]; then
             {
               echo "docs_only=false"
               echo "web_only=false"
@@ -189,8 +206,9 @@ jobs:
               echo "boot_smoke_relevant=true"
             } >> "$GITHUB_OUTPUT"
             exit 0
+          else
+            changed=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
           fi
-          changed=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
           echo "Changed files:"
           echo "$changed"
           # A change to ci.yml itself must always run these two jobs too --
@@ -201,7 +219,9 @@ jobs:
           # touching only ci.yml (adding these jobs) evaluated the path
           # regex against ci.yml's own path, matched nothing, and both jobs
           # showed "skipping" -- the one PR that most needed to exercise them.
-          if echo "$changed" | grep -qx '\.github/workflows/ci\.yml'; then
+          if [ "${{ github.event_name }}" = "merge_group" ]; then
+            : # already written above
+          elif echo "$changed" | grep -qx '\.github/workflows/ci\.yml'; then
             echo "boot_smoke_relevant=true" >> "$GITHUB_OUTPUT"
           elif [ -n "$changed" ] && echo "$changed" | grep -qE '^(Dockerfile|docker-compose|keyorix\.docker\.yaml$|deploy/helm/|internal/encryption/|server/)'; then
             echo "boot_smoke_relevant=true" >> "$GITHUB_OUTPUT"

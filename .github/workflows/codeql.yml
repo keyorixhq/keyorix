@@ -3,9 +3,13 @@ name: CodeQL
 on:
   push:
     branches: [main]
-  pull_request:
-    # See ci.yml's own comment: also covers stacked-PR review chains.
-    branches: [main, 'adr082/**', 'feat/**', 'fix/**']
+  # No pull_request trigger (2026-09-28, runner-cap relief): CodeQL is not a
+  # required check (ruleset "Require core CI checks on main"), and it still
+  # runs on every merge_group before anything reaches main, on push to main,
+  # and weekly. Dropping the per-push PR run saves ~13 runner-minutes and 5
+  # jobs per push against the 20-job concurrency cap. For an early read on a
+  # PR branch, run it by hand (workflow_dispatch below).
+  workflow_dispatch:
   # Merge queue. Every REQUIRED status check must also report on the
   # merge_group event or the queue never merges anything -- a check that
   # simply does not run is indistinguishable from one still pending, and it
