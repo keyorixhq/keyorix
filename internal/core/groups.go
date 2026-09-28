@@ -174,7 +174,7 @@ func (c *KeyorixCore) ListGroups(ctx context.Context) ([]*models.Group, error) {
 // trusted (it can grant any role directly via AssignRoleToUser, which bypasses this
 // ceiling entirely) and the exemption avoids forcing an existing admin group
 // deployment through this new check retroactively. A MACHINE credential (actorID 0,
-// actorIsMachine true — e.g. a RemoteStorage node relay, #1524 finding (b)) is NOT
+// actorIsMachine true — e.g. the former RemoteStorage node relay, #1524 finding (b)) is NOT
 // exempt: it is not the local CLI, and requireAuthorityForRole already fails closed
 // correctly for actorID 0 when the check actually runs (no real user holds the
 // admin-tier role an escalation attempt would need) — an ordinary, non-admin-conferring

@@ -96,10 +96,11 @@ const DefaultMFAStepUpGrantRetention = 30 * 24 * time.Hour
 // DefaultMFAStepUpGrantRetention). `before`, when non-zero and EARLIER than
 // the retention-derived cutoff, narrows the deletion window further —
 // mirroring PruneLoginAttempts's clamp (CORE-RATE-003): the effective cutoff
-// can never be LATER than now-retention, so a caller (including
-// server/http/handlers/mfa_stepup_proxy.go's PruneMFAStepUpGrantsProxy, the
-// only other caller, decoding a request body from a RemoteStorage spoke node)
-// can only narrow the window, never widen it into an unbounded wipe. Returns
+// can never be LATER than now-retention, so a caller (originally including
+// server/http/handlers/mfa_stepup_proxy.go's PruneMFAStepUpGrantsProxy,
+// deleted along with the rest of the /system tier, ADR-108; server/main.go's
+// store-mfa-002 scheduler is the live caller today) can only narrow the
+// window, never widen it into an unbounded wipe. Returns
 // the number of rows removed.
 //
 // Unlike PruneLoginAttempts, this does NOT emit an audit event. LoginAttempt

@@ -609,7 +609,10 @@ func (c *KeyorixCore) requireMachinePrivilegeCeiling(ctx context.Context, actorT
 // form, originally for callers outside internal/core that needed the SAME
 // MACH-001 check IssueMachineToken already runs — CreateMachineIdentityCredentialProxy
 // and CreateMachineIdentityProxy, both since deleted along with the rest of the
-// RemoteStorage-sync proxy tree (ADR-108 Phase 6, #2162/#2171).
+// RemoteStorage-sync proxy tree (ADR-108 Phase 6, #2162/#2171). Zero non-test
+// callers remain today -- another candidate for the same follow-up cleanup
+// pass as the plaintextValue/plaintextPassword variadics in
+// internal/core/storage/interface.go, not removed here.
 func (c *KeyorixCore) RequireMachinePrivilegeCeiling(ctx context.Context, actorType string, principalID, projectID, machineID uint) error {
 	return c.requireMachinePrivilegeCeiling(ctx, actorType, principalID, projectID, machineID)
 }
@@ -898,9 +901,10 @@ func isSystemProxyRelayGrant(ctx context.Context) bool {
 // granting machine's ID from ctx via the general-purpose WithMachineActor
 // tag (set for EVERY machine-authenticated request, audit-trail purposes)
 // and checked ITS permissions via AuthorizePrincipal. That was unsafe:
-// several of this function's callers are /system proxy handlers relaying a
-// raw storage call with NO real acting-user identity at all (actorID==0 by
-// construction, e.g. RemoteStorage.AddUserToGroup) -- the only "machine"
+// several of this function's callers were /system proxy handlers (since
+// deleted along with RemoteStorage, ADR-108) relaying a raw storage call with
+// NO real acting-user identity at all (actorID==0 by construction, e.g. the
+// former RemoteStorage.AddUserToGroup) -- the only "machine"
 // WithMachineActor's tag can resolve there is the NODE CREDENTIAL's own
 // machine identity, which integration tests deliberately grant admin-tier
 // roles for legitimate node-trust reasons ("no role, including admin,

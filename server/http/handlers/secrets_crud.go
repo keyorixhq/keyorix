@@ -43,8 +43,8 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 		ParentID *uint `json:"parent_id,omitempty"`
 		// Description and Expiration (found by the #1808 differential
 		// conformance harness): this struct never had a slot for either, so
-		// no caller of this route -- direct API client or RemoteStorage
-		// proxy alike -- could ever set them; core.CreateSecretRequest and
+		// no caller of this route -- direct API client or the now-deleted
+		// RemoteStorage proxy alike -- could ever set them; core.CreateSecretRequest and
 		// core.CreateSecret already fully support both (length-validate
 		// Description, persist Expiration), they just never reached here.
 		Description string     `json:"description,omitempty"`
@@ -301,7 +301,7 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 
 // GetSecretByName handles GET /api/v1/secrets/by-name?name=X&project_id=Y&environment_id=Z
 // — looks up a secret's metadata by its name scoped to a project/environment, for
-// callers (e.g. RemoteStorage) that only have the name rather than the numeric ID.
+// callers (e.g. the CLI) that only have the name rather than the numeric ID.
 // The route's scoped-permission gate (ScopeFromQuery) authorizes the caller against
 // the project_id/environment_id query params, matching ListSecrets' convention; the
 // per-user ownership/sharing check then runs against the resolved secret's own ID,
@@ -470,15 +470,16 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 		// one. They are mutually exclusive.
 		Expiration      string `json:"expiration,omitempty"`
 		ClearExpiration bool   `json:"clear_expiration,omitempty"`
-		// Secret, when present, is RemoteStorage's full desired SecretNode state
-		// (G80 Phase 0) — it takes over the whole request and every other field
-		// above is ignored. See updateSecretViaDiff / secret_update_diff.go for
-		// why this is a separate, default-deny path rather than folded into the
+		// Secret, when present, is the now-deleted RemoteStorage's full desired
+		// SecretNode state (G80 Phase 0) — it takes over the whole request and every
+		// other field above is ignored. See updateSecretViaDiff / secret_update_diff.go
+		// for why this is a separate, default-deny path rather than folded into the
 		// named fields above: those can only ever express the plain-secrets.write-
 		// safe fields (there is no JSON key for OwnerID etc.), so a caller using
 		// them was never able to smuggle a gated field through — Secret's whole
-		// point is to safely accept a caller's full local state (as RemoteStorage's
-		// internal/core callers already have it) without trusting all of it.
+		// point was to safely accept a caller's full local state without trusting
+		// all of it. Not in openapi.yaml's updateSecret schema; no known live
+		// caller reaches this branch today (see secret_update_diff.go's package doc).
 		Secret *models.SecretNode `json:"secret,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {

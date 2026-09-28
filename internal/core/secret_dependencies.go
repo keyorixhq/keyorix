@@ -165,7 +165,8 @@ func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string,
 // storage.CreateSecretDependencyExclusive while holding secretDependencyMu —
 // the same mutex AddSecretDependency holds around the identical storage call
 // above. #G79: CreateSecretDependencyExclusiveProxy (server/http/handlers/
-// secret_dependencies_proxy.go) calls the raw storage primitive directly
+// secret_dependencies_proxy.go, deleted along with the rest of the /system
+// tier, ADR-108) called the raw storage primitive directly
 // rather than through AddSecretDependency, since the caller's authorization
 // is now re-derived at the HTTP layer (AuthorizeSecretPrincipal on both
 // endpoints, #SecretDependency, system-proxy-target-authority audit) before

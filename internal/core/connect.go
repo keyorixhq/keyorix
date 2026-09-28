@@ -654,10 +654,11 @@ func refMatches(pattern, ref string) bool {
 // ref-grant is already resolved role-ID-at-ANY-scope for humans (it carries no
 // project/environment field of its own), so "does the machine hold this role
 // ANYWHERE" is the exact semantics needed, not a per-scope breakdown. This also
-// keeps actorRoleIDs working against a RemoteStorage-backed downstream Connect
-// node (ADR-043): GetMachineRoles is proxied over HTTP (unlike a per-scope
-// enumeration primitive, which — mirroring GetUserRoleScopes's own remote
-// status — would need to be a server-internal-only primitive).
+// kept actorRoleIDs working against a RemoteStorage-backed downstream Connect
+// node (ADR-043) while that topology still existed: GetMachineRoles was proxied
+// over HTTP, unlike a per-scope enumeration primitive, which — mirroring
+// GetUserRoleScopes's own remote status — would have needed to be a
+// server-internal-only primitive.
 func (c *KeyorixCore) actorRoleIDs(ctx context.Context, actorType string, principalID uint) (map[uint]bool, error) {
 	set := map[uint]bool{}
 	if actorType == ActorTypeMachine {

@@ -246,7 +246,7 @@ func (h *RBACHandler) GetRole(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetRoleByName handles GET /api/v1/roles/by-name?name=X — looks up a role by
-// name for callers (e.g. RemoteStorage, #512) that only have the role's name
+// name for callers (#512) that only have the role's name
 // rather than its numeric ID (InviteToProject resolves every invited role —
 // system and project roles alike — by name this way). The route's permission
 // gate (roles.read, inherited from the /roles group — the same gate GetRole-
@@ -259,8 +259,7 @@ func (h *RBACHandler) GetRole(w http.ResponseWriter, r *http.Request) {
 // name), and a caller WITH roles.read can already enumerate every role
 // (including name) via GET /roles, so this route grants no new capability at
 // that permission level. Unlike GetRole, this returns the bare role (no
-// permissions payload), matching what RemoteStorage.GetRoleByName's remote-API
-// contract expects (models.Role).
+// permissions payload — models.Role).
 func (h *RBACHandler) GetRoleByName(w http.ResponseWriter, r *http.Request) {
 	_, ok := mustGetUser(w, r)
 	if !ok {
@@ -576,10 +575,10 @@ func (h *RBACHandler) ListPermissions(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, map[string]any{"permissions": newPermissionWireList(perms), "total": len(perms)}, "")
 }
 
-// GetPermission handles GET /api/v1/permissions/{id} — added for #526 as the
-// sibling lookup RemoteStorage.GetPermission proxies onto (server/http/router.go,
-// internal/storage/store/remote_rbac.go): ListPermissions and
-// GetRolePermissions already had human-facing routes to reuse, but no route
+// GetPermission handles GET /api/v1/permissions/{id} — added for #526: the
+// now-deleted RemoteStorage's GetPermission proxied onto this same route.
+// ListPermissions and GetRolePermissions already had human-facing routes to
+// reuse, but no route
 // previously covered a per-ID permission lookup, which AssignPermissionToRole
 // needs to resolve permissionID -> name. Gated by the SAME roles.read as the
 // rest of the /permissions group — a caller who can already enumerate every

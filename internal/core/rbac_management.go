@@ -567,8 +567,9 @@ func (c *KeyorixCore) grantBaselineRoleBackfill(ctx context.Context, userID, rol
 // the install with zero admins. Prior to #525 this ran as
 // ListGlobalAdminAssignmentsForUpdate + RemoveRole inside a single
 // storage.WithTransaction closure: correct against LocalStorage (a real DB
-// transaction + Postgres row lock spans both calls), but RemoteStorage.WithTransaction
-// was a no-op passthrough — under storage.type: remote those were two independent
+// transaction + Postgres row lock spans both calls), but the now-deleted
+// RemoteStorage's WithTransaction was a no-op passthrough — under storage.type:
+// remote those were two independent
 // HTTP round trips with nothing serializing them beyond globalAdminGuardMu, which
 // only covers same-process callers. RemoveGlobalAdminRoleGuarded folds the check and
 // the write into ONE storage call; globalAdminGuardMu is kept as a cheap

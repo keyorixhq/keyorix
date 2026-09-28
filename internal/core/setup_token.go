@@ -211,16 +211,19 @@ func (c *KeyorixCore) expireSetupToken(ctx context.Context, tok *models.SetupTok
 // ExpireSetupTokenByID explicitly expires a setup token by ID, resolving it
 // first so the audit write carries the same purpose/subject detail as the
 // lazy-expiry path. This is the ONLY route into expireSetupToken for a caller
-// that has an ID rather than an already-resolved token — in particular,
-// server/http/handlers' ExpireSetupTokenProxy (backing a RemoteStorage peer's
-// own lazy-expiry-on-read, #1622), which must not call
+// that has an ID rather than an already-resolved token — originally
+// server/http/handlers' ExpireSetupTokenProxy (backing the now-deleted
+// RemoteStorage's own lazy-expiry-on-read, #1622), which had to not call
 // storage.MarkSetupTokenExpired directly since that would mutate state
-// without the audit write.
+// without the audit write. That proxy is itself deleted along with the rest
+// of the /system tier (ADR-108), leaving this method (and the
+// GetSetupTokenByID call it makes) with zero production callers today —
+// another follow-up cleanup candidate, not removed here.
 //
 // An unknown ID is a no-op, not an error: this mirrors the raw
 // storage.MarkSetupTokenExpired's own long-standing idempotent semantics (a
 // state-guarded UPDATE matching zero rows was never an error) that
-// ExpireSetupTokenProxy's existing tests already assert on -- closing the
+// ExpireSetupTokenProxy's tests already asserted on -- closing the
 // audit gap must not also turn a previously-tolerated "already gone" ID into
 // a new 500.
 func (c *KeyorixCore) ExpireSetupTokenByID(ctx context.Context, id uint) error {

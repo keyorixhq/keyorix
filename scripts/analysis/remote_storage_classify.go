@@ -1,10 +1,13 @@
 //go:build ignore
 
-// remote_storage_classify.go — mechanical LIVE/DEAD/UNRESOLVED classifier for
-// RemoteStorage's structurally-stub-shaped methods (see
+// remote_storage_classify.go — mechanical LIVE/DEAD/UNRESOLVED classifier that was
+// used for RemoteStorage's structurally-stub-shaped methods (see
 // internal/storage/store/remote_unsupported_completeness_test.go's
 // actualRemoteUnsupportedStubs for the same "does it ever reach
-// rs.client.<Verb>" definition this reuses).
+// rs.client.<Verb>" definition this reused). RemoteStorage and that test file are
+// now both fully deleted (ADR-108) -- this tool has nothing left to classify and
+// cannot run against the current tree. Retained, not deleted, as the forensic
+// record ADR-087 cites for how the deletion pass verified reachability.
 //
 // G80: 171 (later 183, after the #1583 deletion pass converted 12 more)
 // stub-shaped RemoteStorage methods exist. Wave 0 individually classified 13

@@ -938,9 +938,8 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 }
 
 // isNotFoundStorageErr reports whether err is a "not found"-substring error, the
-// convention every LocalStorage/RemoteStorage Get* method in this codebase uses
-// (see local_secrets.go's GetProject, project_catalog_proxy.go's
-// isProjectNotFound).
+// convention every LocalStorage Get* method in this codebase uses (see
+// local_secrets.go's GetProject).
 func isNotFoundStorageErr(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "not found")
 }
@@ -1024,10 +1023,10 @@ func resolveConnectorOwnership(ctx context.Context, st corestorage.Storage, conn
 // auditConnectorProjectBindingCreate records a ConnectorProjectBinding write
 // (ADR-082 branch 3, issue #1477's audit half): the binding is an
 // authorization input (it feeds core.ConnectOwnership, and from there
-// connectOwnershipSatisfied) regardless of which door the write comes through,
-// so the unattended boot-time path here uses the SAME event type as the
-// RemoteStorage proxy's write (server/http/handlers/connector_project_bindings_proxy.go).
-// source distinguishes the two call sites in the Description. A logging
+// connectOwnershipSatisfied) regardless of which door the write comes through.
+// This unattended boot-time path was originally paired with a second call site,
+// the now-deleted RemoteStorage proxy's write; source distinguishes call sites
+// in the Description in case a second one is reintroduced. A logging
 // failure here does not fail boot — the binding itself already persisted
 // successfully — but is surfaced loudly (SECURITY-prefixed, matching
 // internal/core's own emitAudit convention) since a silently-dropped audit
@@ -1620,9 +1619,13 @@ func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.
 	// successful VerifyMFAStepUp creates a new MFAStepUpGrant row, kept briefly
 	// past its own expiry for audit purposes (internal/storage/store/
 	// local_mfa_stepup_grant.go) — with no sweep, every legitimate
-	// re-verification left a permanent row (DeleteMFAStepUpGrantsFor exists but
-	// is only reachable via the RemoteStorage proxy, never called from a local
-	// maintenance path). Like login_attempt_prune above, this ALWAYS runs — not
+	// re-verification left a permanent row. This scheduler calls
+	// PruneMFAStepUpGrants below, not DeleteMFAStepUpGrantsFor -- that older
+	// method was originally only reachable via the now-deleted RemoteStorage
+	// proxy and has zero callers of any kind today (interface.go's declaration
+	// and the generated fault-injection wrapper aside); another follow-up
+	// cleanup candidate, not removed here. Like login_attempt_prune above, this
+	// ALWAYS runs — not
 	// legal-hold-gated: a grant row's CREATION is already permanently,
 	// independently audited (mfa.stepup_verified, never purged — ADR-029), so
 	// pruning the row itself never destroys evidence, only a redundant

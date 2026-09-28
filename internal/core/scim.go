@@ -458,14 +458,17 @@ func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID u
 }
 
 // GuardLastAdminDeactivation is guardLastAdminDeactivation, exported for
-// UpdateUserIfActiveStateMatchesProxy (server/http/handlers/users_active_transition_proxy.go)
-// -- the raw-storage /system proxy behind UpdateUserIfActiveStateMatches never
-// called this guard at all before the G80 overnight campaign's Tier 1 Group A
-// fix #3, meaning a caller could deactivate the install's last global admin
-// through that route with no lockout protection. The guard depends only on
-// targetID (this function takes no actor parameter, by design -- it's a
-// target-state invariant, not a caller-authority check), so it needed no
-// RemoteStorage wire-protocol change to close.
+// UpdateUserIfActiveStateMatchesProxy (server/http/handlers/users_active_transition_proxy.go,
+// deleted along with the rest of the /system tier, ADR-108, and with it this
+// method's only caller -- zero production callers remain today, another
+// follow-up cleanup candidate, not removed here) -- the raw-storage /system
+// proxy behind UpdateUserIfActiveStateMatches never called this guard at all
+// before the G80 overnight campaign's Tier 1 Group A fix #3, meaning a caller
+// could deactivate the install's last global admin through that route with no
+// lockout protection. The guard depended only on targetID (this function
+// takes no actor parameter, by design -- it's a target-state invariant, not a
+// caller-authority check), so it needed no RemoteStorage wire-protocol change
+// to close.
 func (c *KeyorixCore) GuardLastAdminDeactivation(ctx context.Context, targetID uint) error {
 	return c.guardLastAdminDeactivation(ctx, targetID)
 }

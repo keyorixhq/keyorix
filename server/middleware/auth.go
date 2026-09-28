@@ -80,10 +80,12 @@ type UserContext struct {
 	MachineIdentityID *uint  `json:"machine_identity_id,omitempty"`
 	ActorType         string `json:"actor_type,omitempty"`
 	// MachineIdentityType is the machine identity's IdentityType (ci|k8s|service|
-	// automation|other|node), empty for a non-machine principal. #G79: RequireNodeCredential
-	// (node_credential.go) checks this equals core.MachineTypeNode to gate the
-	// RemoteStorage-sync proxy tree — a credential class, not an RBAC permission, so a
-	// principal can never be granted node status via a role.
+	// automation|other|node), empty for a non-machine principal. #G79:
+	// RequireNodeCredential (node_credential.go) checks this equals
+	// core.MachineTypeNode -- a credential class, not an RBAC permission, so a
+	// principal can never be granted node status via a role -- though that
+	// middleware has never actually gated any real route (see its own doc); the
+	// RemoteStorage-sync proxy tree it was built for is deleted.
 	MachineIdentityType string `json:"-"`
 	// MFAEnabled is true when the user has any second factor enabled (TOTP or a
 	// passkey); SessionAuth is true only for an interactive session token (false for

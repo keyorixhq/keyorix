@@ -3,12 +3,11 @@
 // returning either raw was mixed-casing against openapi.yaml, which already
 // documented snake_case). See docs/findings/2026-09-25-FINDING-api-raw-model-exposure.md.
 //
-// Same field shape as project_catalog_proxy.go's projectProxyWire and
-// environment_catalog_proxy.go's environmentProxyWire (the /system RemoteStorage-proxy
-// tier's own wire types for these two models) — kept in sync deliberately so the
-// human-facing and proxy surfaces never mixed-case relative to each other. Not merged
-// into one shared type: those two files are CLI-RELEASE-owned (Phase 6 /system proxy
-// tier), so promoting them fully is left as a follow-up for that track.
+// Originally kept in sync with project_catalog_proxy.go's projectProxyWire and
+// environment_catalog_proxy.go's environmentProxyWire, the RemoteStorage-sync
+// /system proxy tier's own wire types for these two models — both files are now
+// deleted along with the rest of that tier (ADR-108), so this is the sole wire
+// type for either model today.
 package handlers
 
 import (

@@ -151,21 +151,6 @@ func TestDatabaseConfig_GetPassword_Fallback(t *testing.T) {
 	assert.Equal(t, "from-file", d.GetPassword())
 }
 
-// TestRemoteConfig_GetAPIKey_EnvVar validates env-var override for the remote
-// API key.
-func TestRemoteConfig_GetAPIKey_EnvVar(t *testing.T) {
-	t.Setenv("KEYORIX_REMOTE_API_KEY", "env-key")
-	r := &RemoteConfig{APIKey: "file-key"}
-	assert.Equal(t, "env-key", r.GetAPIKey())
-}
-
-// TestRemoteConfig_GetAPIKey_Fallback validates fallback to the file value.
-func TestRemoteConfig_GetAPIKey_Fallback(t *testing.T) {
-	t.Setenv("KEYORIX_REMOTE_API_KEY", "")
-	r := &RemoteConfig{APIKey: "file-key"}
-	assert.Equal(t, "file-key", r.GetAPIKey())
-}
-
 // TestBoolPtr validates that BoolPtr returns a pointer to the given value.
 func TestBoolPtr(t *testing.T) {
 	pTrue := BoolPtr(true)
