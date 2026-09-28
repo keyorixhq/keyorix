@@ -495,9 +495,12 @@ type RateLimitConfig struct {
 }
 
 type StorageConfig struct {
-	Type       string           `yaml:"type"` // "local" (alias "sqlite"), "postgres", "postgresql", "remote"
+	Type string `yaml:"type"` // "local" (alias "sqlite"), "postgres", "postgresql", "remote"
+	// "remote" is rejected unconditionally by Validate (validateRemoteStorageNotServer,
+	// ADR-083) -- this Config type is only ever used to configure a server process, and
+	// remote storage is a CLI/client mode only. There is deliberately no Remote field
+	// here: a "remote" storage.type config carries no server-side settings to parse.
 	Database   DatabaseConfig   `yaml:"database"`
-	Remote     *RemoteConfig    `yaml:"remote,omitempty"`
 	Encryption EncryptionConfig `yaml:"encryption"`
 }
 
@@ -549,29 +552,6 @@ func BuildPostgresDSN(d *DatabaseConfig) string {
 		dsn += " password=" + pw
 	}
 	return dsn
-}
-
-type RemoteConfig struct {
-	BaseURL        string `yaml:"base_url"`
-	APIKey         string `yaml:"api_key"` // use KEYORIX_REMOTE_API_KEY env var instead
-	TimeoutSeconds int    `yaml:"timeout_seconds"`
-	RetryAttempts  int    `yaml:"retry_attempts"`
-	// TLSVerify is a pointer so "unset" is distinguishable from an explicit
-	// false: omitting tls_verify must NOT disable certificate verification on
-	// the (highly sensitive) secrets-manager API channel. Resolve via VerifyTLS.
-	TLSVerify *bool `yaml:"tls_verify"`
-}
-
-// GetAPIKey returns the resolved API key, preferring the environment variable.
-func (r *RemoteConfig) GetAPIKey() string {
-	return resolveSecret("KEYORIX_REMOTE_API_KEY", r.APIKey)
-}
-
-// VerifyTLS reports whether TLS certificate verification is enabled for the
-// remote connection. Secure by default: verification is on unless the operator
-// EXPLICITLY sets `tls_verify: false`. An omitted key verifies.
-func (r *RemoteConfig) VerifyTLS() bool {
-	return r.TLSVerify == nil || *r.TLSVerify
 }
 
 // BoolPtr returns a pointer to b — for setting optional *bool config fields.
@@ -1956,13 +1936,13 @@ func Load(path string) (*Config, error) {
 	// server.http.domain/allowed_origins are the only fields documented (in
 	// server/config/production.yaml) as supporting ${VAR}/${VAR:-default} interpolation.
 	// Expansion is applied here, per-field, AFTER unmarshaling — not as a raw-bytes
-	// preprocessing pass over the whole file before yaml.Unmarshal — because
-	// storage.remote.api_key also legitimately contains a literal "${VAR}"-shaped string
-	// (see remote.Config.GetAPIKeyFromEnv, TestEnvironmentVariableSupport): that field is
-	// deliberately left as the unexpanded template by Load() and resolved lazily, only
-	// when the API key is actually used. A whole-file preprocessing pass can't tell that
-	// field's literal template apart from server.http's real interpolation points and
-	// would silently expand both.
+	// preprocessing pass over the whole file before yaml.Unmarshal. (Historically this
+	// also protected storage.remote.api_key, which legitimately held a literal
+	// "${VAR}"-shaped string of its own; that field is gone along with the rest of
+	// remote-storage's server-side config surface -- ADR-083 -- but per-field expansion
+	// stays the right shape regardless, since a whole-file pass can't distinguish a
+	// field that WANTS interpolation from one that doesn't without this same per-field
+	// allowlist.)
 	cfg.Server.HTTP.Domain = expandEnvVars(cfg.Server.HTTP.Domain)
 	for i, origin := range cfg.Server.HTTP.AllowedOrigins {
 		cfg.Server.HTTP.AllowedOrigins[i] = expandEnvVars(origin)
@@ -2046,8 +2026,8 @@ var envVarPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?
 // the `:-default` bash fallback form, so this is a small, scoped helper applied only to
 // the specific server.http.domain/allowed_origins fields Load() documents as supporting
 // it — not a general templating engine, and not run over the raw file bytes (see Load's
-// comment for why: storage.remote.api_key uses the identical "${VAR}" syntax for its own,
-// separately-deferred expansion and must not be touched here).
+// comment for why: a per-field allowlist, not a whole-file pass, is the only way to leave
+// some fields' own literal "${...}"-shaped values untouched while still expanding these).
 //
 // Semantics match bash's ${VAR:-default}: the default is used when VAR is unset OR set to
 // the empty string. A reference with no default whose variable is unset is left
@@ -2388,10 +2368,11 @@ func validateConnectAWSAccountID(cc ConnectConfig) error {
 // `cfg.X.Enabled` checks can fully close this gap; a new scheduler added later
 // would silently reopen it again. This function is safe to make unconditional
 // because it is ONLY ever reached from server/main.go's own cfg.Validate() call
-// (verified: internal/config.Config.Validate has no caller anywhere under
-// internal/cli — the CLI's own "connected mode" validates a narrower, distinct
-// internal/storage/remote.Config, never this type) -- there is no legitimate
-// caller this change could break.
+// (verified: internal/config.Config.Validate has no caller anywhere in the CLI --
+// the old internal/cli tree and the internal/storage/remote package it used are
+// both fully deleted now, and the current thin CLI, cli/, never imports this
+// package at all -- ADR-108 Decision A's depguard forbids it) -- there is no
+// legitimate caller this change could break.
 //
 // #1480: this function is enforcement, not the dead topology it forbids —
 // do NOT delete it (or its test) as part of any future cleanup pass that
