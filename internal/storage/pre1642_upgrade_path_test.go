@@ -149,3 +149,51 @@ func TestMigrateDatabase_RecreatesMFAStepUpGrantsOnUpgrade(t *testing.T) {
 	// pass has to be a no-op rather than a duplicate-table error.
 	require.NoError(t, f.migrateDatabase(db), "migrateDatabase must be idempotent across repeated upgrades")
 }
+
+// TestMigrateDatabase_CreatesNotificationChannelAndAlertEscalationPolicyTables
+// is the same shape of regression as
+// TestMigrateDatabase_RecreatesMFAStepUpGrantsOnUpgrade immediately above, for
+// two more tables that were never migrated anywhere in this factory, on
+// either the fresh-install or existing-DB path, despite both having live,
+// reviewed routes (router.go's notification-channels/alert-escalation-policies
+// groups, ADR-110). Before this fix, EVERY install — fresh or upgraded —
+// would 500 with "no such table"/"relation does not exist" on every route in
+// this family (GET/POST/PUT/DELETE /notification-channels,
+// POST/GET/GET/PUT/DELETE /alert-escalation-policies) and on the
+// run-alert-escalation admin job, independent of which RBAC permission gated
+// them.
+func TestMigrateDatabase_CreatesNotificationChannelAndAlertEscalationPolicyTables(t *testing.T) {
+	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "notif_escalation.db"))
+	require.NoError(t, err)
+	f := &DefaultStorageFactory{}
+
+	require.NoError(t, f.migrateDatabase(db), "initial fresh migration")
+	require.True(t, tableExists(db, "notification_channels"),
+		"sanity: a fresh install must have this table, or the rest of this test proves nothing")
+	require.True(t, tableExists(db, "alert_escalation_policies"),
+		"sanity: a fresh install must have this table, or the rest of this test proves nothing")
+
+	require.NoError(t, db.Exec("DROP TABLE notification_channels").Error)
+	require.NoError(t, db.Exec("DROP TABLE alert_escalation_policies").Error)
+	require.False(t, tableExists(db, "notification_channels"))
+	require.False(t, tableExists(db, "alert_escalation_policies"))
+
+	// projects still exists, so this second run takes the existing-DB path --
+	// the one a real upgrade takes.
+	require.True(t, tableExists(db, "projects"),
+		"the fixture must still look like an initialised database, or migrateDatabase takes the fresh path")
+	require.NoError(t, f.migrateDatabase(db), "the upgrade path must run cleanly")
+
+	require.True(t, tableExists(db, "notification_channels"),
+		"notification_channels must be created on the existing-DB path -- without it, every "+
+			"notification-channel route 500s with \"no such table\"/\"relation does not exist\" "+
+			"on every upgraded install")
+	require.True(t, tableExists(db, "alert_escalation_policies"),
+		"alert_escalation_policies must be created on the existing-DB path -- same failure mode "+
+			"as notification_channels above, for every alert-escalation-policy route and the "+
+			"run-alert-escalation admin job")
+
+	// Re-running must stay clean: the guard is an existence check, so a third
+	// pass has to be a no-op rather than a duplicate-table error.
+	require.NoError(t, f.migrateDatabase(db), "migrateDatabase must be idempotent across repeated upgrades")
+}

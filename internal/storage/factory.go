@@ -1219,6 +1219,8 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	mfaRecoveryExists := tableExists(db, "mfa_recovery_codes")
 	mfaChallengeExists := tableExists(db, "mfa_challenges")
 	mfaStepUpGrantExists := tableExists(db, "mfa_step_up_grants")
+	notificationChannelExists := tableExists(db, "notification_channels")
+	alertEscalationPolicyExists := tableExists(db, "alert_escalation_policies")
 	dynConfigExists := tableExists(db, "dynamic_secret_configs")
 	dynLeaseExists := tableExists(db, "dynamic_secret_leases")
 	webauthnCredExists := tableExists(db, "web_authn_credentials")
@@ -1300,6 +1302,27 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	if !mfaStepUpGrantExists {
 		if err := db.AutoMigrate(&models.MFAStepUpGrant{}); err != nil {
 			return fmt.Errorf("failed to migrate mfa_step_up_grants table: %w", err)
+		}
+	}
+	// NotificationChannel/AlertEscalationPolicy: same shape as MFAStepUpGrant
+	// immediately above — neither was migrated ANYWHERE in this factory, on
+	// either the fresh-install or existing-DB path, despite both having live,
+	// reviewed routes (router.go's notification-channels/
+	// alert-escalation-policies groups, ADR-110). A guarded, existence-checked
+	// block here (not the bulk AutoMigrate list further below, which sits
+	// after `if projectsExists { return nil }` and so only ever reaches fresh
+	// installs — exactly the mistake store-mfa-002 made and then had to fix a
+	// second time) reaches both paths. Before this fix, every install — fresh
+	// or upgraded — would 500 with "no such table"/"relation does not exist"
+	// on every route in this family and on the run-alert-escalation admin job.
+	if !notificationChannelExists {
+		if err := db.AutoMigrate(&models.NotificationChannel{}); err != nil {
+			return fmt.Errorf("failed to migrate notification_channels table: %w", err)
+		}
+	}
+	if !alertEscalationPolicyExists {
+		if err := db.AutoMigrate(&models.AlertEscalationPolicy{}); err != nil {
+			return fmt.Errorf("failed to migrate alert_escalation_policies table: %w", err)
 		}
 	}
 
