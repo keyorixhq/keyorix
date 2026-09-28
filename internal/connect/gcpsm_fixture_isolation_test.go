@@ -1,3 +1,5 @@
+//go:build !nogcp
+
 package connect
 
 // gcpsm_fixture_isolation_test.go — proves the shared fixture

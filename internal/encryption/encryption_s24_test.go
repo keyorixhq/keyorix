@@ -584,21 +584,15 @@ func TestNewKeyProviderFromConfig_TPM(t *testing.T) {
 	assert.NotNil(t, p)
 }
 
-// ─── NewKeyProviderFromConfig: azure-kms with encryption context → error ──────
-
-func TestNewKeyProviderFromConfig_AzureKMS_WithEncryptionContext_Error(t *testing.T) {
-	cfg := &config.EncryptionConfig{
-		KeyProvider: config.KeyProviderConfig{
-			Type:                 "azure-kms",
-			KMSKeyID:             "https://vault.example.com/keys/mykey",
-			KMSEncryptionContext: map[string]string{"env": "prod"},
-		},
-	}
-	_, err := NewKeyProviderFromConfig(cfg, t.TempDir(), "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "azure-kms")
-	assert.Contains(t, err.Error(), "kms_encryption_context")
-}
+// TestNewKeyProviderFromConfig_AzureKMS_WithEncryptionContext_Error moved to
+// kms_azurekms_validation_test.go (ADR-109 step 6, B1/S2): it asserts an
+// azure-kms-SPECIFIC validation error only reachable when the real azure-kms
+// constructor is compiled in, so it needs its own `!noazure` build tag rather
+// than living in this file (which must stay tag-agnostic — every other test
+// here is unrelated to any cloud provider). Under noazure, buildSingleProvider
+// fails closed with the generic "not available in this build" error instead
+// (see kms_registry_noazure_test.go), which does not mention
+// kms_encryption_context.
 
 // ─── NewKeyProviderFromConfig: unknown type → error ───────────────────────────
 
