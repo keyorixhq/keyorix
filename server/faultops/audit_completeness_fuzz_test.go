@@ -55,18 +55,12 @@ import (
 // of fixing the gap defeats the harness's purpose and must be reasoned
 // about explicitly, not done by habit.
 var knownUnauditedOperations = map[string]bool{
-	"GRPC keyorix.v1.ProjectService.CreateProject":                               true,
-	"GRPC keyorix.v1.ProjectService.DeleteProject":                               true,
-	"GRPC keyorix.v1.ProjectService.UpdateProject":                               true,
-	"GRPC keyorix.v1.UserService.CreateUser":                                     true,
-	"GRPC keyorix.v1.UserService.UpdateUser":                                     true,
 	"REST DELETE /api/v1/alert-escalation-policies/{id}":                         true,
 	"REST DELETE /api/v1/auth/sessions/{id}":                                     true,
 	"REST DELETE /api/v1/auth/tokens/{id}":                                       true,
 	"REST DELETE /api/v1/auth/tokens/expired":                                    true,
 	"REST DELETE /api/v1/environments/{id}":                                      true,
 	"REST DELETE /api/v1/folders/{id}":                                           true,
-	"REST DELETE /api/v1/projects/{id}":                                          true,
 	"REST DELETE /api/v1/secret-templates/{id}":                                  true,
 	"REST DELETE /api/v1/secrets/{id}/schedule":                                  true,
 	"REST DELETE /api/v1/secrets/{id}/versions/{versionId}/comments/{commentId}": true,
