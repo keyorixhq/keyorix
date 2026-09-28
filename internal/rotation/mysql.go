@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql" // registers the "mysql" sql driver
+
+	"github.com/keyorixhq/keyorix/internal/rotation/quote"
 )
 
 // mysqlConn is the slice of a MySQL connection the executor uses — an interface seam so
@@ -98,18 +100,16 @@ func (e *MySQLExecutor) Rotate(ctx context.Context, ref, newValue string) error 
 
 // quoteMySQLString renders s as a single-quoted MySQL string literal with internal
 // backslashes and single-quotes doubled — injection-safe under both the default and
-// NO_BACKSLASH_ESCAPES sql_modes. This is layer TWO of defense in depth: layer ONE is
-// core.validateRotationRef (internal/core/rotation_executor.go), which already rejects
-// quotes/backslashes/semicolons (plus path/query metacharacters and control characters)
-// in the ref at configuration time, before it is ever persisted. Keep both — this
-// quoting must not be removed just because the earlier layer also covers it; this
+// NO_BACKSLASH_ESCAPES sql_modes. Thin wrapper over quote.QuoteMySQLString
+// (internal/rotation/quote), moved there so the escaping logic can be fuzzed cheaply as a
+// leaf package — see that package's doc.go. This is layer TWO of defense in depth: layer
+// ONE is core.validateRotationRef (internal/core/rotation_executor.go), which already
+// rejects quotes/backslashes/semicolons (plus path/query metacharacters and control
+// characters) in the ref at configuration time, before it is ever persisted. Keep both —
+// this quoting must not be removed just because the earlier layer also covers it; this
 // function is the only defense against a ref/host reaching this backend through any
 // future write path.
-func quoteMySQLString(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `'`, `''`)
-	return "'" + s + "'"
-}
+func quoteMySQLString(s string) string { return quote.QuoteMySQLString(s) }
 
 // mysqlDBConn adapts *sql.DB to the mysqlConn seam.
 type mysqlDBConn struct{ db *sql.DB }
