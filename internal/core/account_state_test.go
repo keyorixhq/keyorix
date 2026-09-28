@@ -164,11 +164,22 @@ func TestAdminAccountTransitions(t *testing.T) {
 			store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
 				return e.EventType == tc.event
 			})).Return(nil)
-			// Every state change evicts the user's cached session tokens from the auth cache.
-			store.On("ListSessionTokenHashesForUser", ctx, uint(2)).Return([]string{}, nil)
-			// Every state change also evicts PAT hashes for immediate cache invalidation
-			// (#r125-H2: password_reset_required previously skipped PAT eviction).
-			store.On("ListPersonalAccessTokensByUser", ctx, uint(2)).Return([]*models.PersonalAccessToken{}, nil)
+			// A transition INTO a blocked or restricted state evicts the user's cached
+			// session tokens AND PAT hashes from the auth cache (#r125-H2:
+			// password_reset_required previously skipped PAT eviction). A transition TO
+			// plain active (reactivate) does not need this proactive sweep — see
+			// setAccountState's own doc comment and
+			// TestReactivateUser_DoesNotTombstoneNeverCachedPAT
+			// (server/http/account_state_reactivation_cache_test.go) for the real
+			// auth-cache/DB divergence this scoping fixes: the sweep used to
+			// unconditionally write a negative cache tombstone for every hash it
+			// collected, including on reactivate, which spuriously rejected a PAT that
+			// was created while the account was suspended and had never been cached at
+			// all.
+			if AccountLoginBlocked(1, tc.wantState) || AccountRestricted(tc.wantState) {
+				store.On("ListSessionTokenHashesForUser", ctx, uint(2)).Return([]string{}, nil)
+				store.On("ListPersonalAccessTokensByUser", ctx, uint(2)).Return([]*models.PersonalAccessToken{}, nil)
+			}
 			// A login-blocking transition (suspend) must purge the user's sessions AND PATs.
 			if AccountLoginBlocked(1, tc.wantState) {
 				store.On("DeleteSessionsForUserExcept", ctx, uint(2), uint(0)).Return(nil)

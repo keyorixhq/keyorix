@@ -270,6 +270,28 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 	c.accountStateMu.Lock()
 	defer c.accountStateMu.Unlock()
 
+	// The proactive cache-eviction sweep below is needed only when the TARGET state is
+	// more restrictive than plain active — i.e. it blocks login (AccountLoginBlocked) or
+	// imposes a restriction (AccountRestricted, e.g. password_reset_required). Both
+	// predicates fail closed to true for every state except AccountActive, so this is
+	// exactly "skip the sweep only when the account is becoming fully unrestricted."
+	// Moving TOWARD active never needs a proactive evict for correctness: an
+	// over-restrictive cached decision is already safe (fail-closed), and any EXISTING
+	// positive cache entry already gets its AccountState/Restricted refreshed on every
+	// hit by serveAuthCacheHit's own re-check (server/middleware/auth.go), independent of
+	// this sweep. See TestSetAccountState_ReactivationDoesNotTombstoneUncachedPAT for the
+	// bug this guard closes: FuzzAuthCacheDifferential (G5) found that reactivating an
+	// account (or any OTHER transition into active) unconditionally wrote a negative
+	// cache tombstone (InvalidateTokenCacheByHash's own doc comment: "a short-lived
+	// tombstone... negative-caches... for invalidTokenTTL") for every one of the user's
+	// PAT hashes, including PATs that had NEVER been cached at all — e.g. a PAT created
+	// WHILE the account was suspended, then hit by the reactivation's own sweep the
+	// moment the account went back to active. The result: a brand-new, fully valid PAT
+	// was spuriously rejected (401) for up to invalidTokenTTL immediately after an
+	// unrelated account-state transition, even though the account was already active
+	// again and nothing about that credential was ever wrong.
+	needsCacheEvictionSweep := AccountLoginBlocked(userID, state) || AccountRestricted(state)
+
 	var sessionHashes []string
 	err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
 		// The lock-guarded read is still needed for serialization (row lock + existence
@@ -277,20 +299,23 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 		if _, err := tx.LockUserForUpdate(ctx, userID); err != nil {
 			return err
 		}
-		// Capture the user's current session-token HASHES BEFORE mutating so we can evict
-		// their auth-cache entries after commit. The HTTP auth cache fast path serves a
-		// frozen identity without re-reading the DB, so without eviction a
-		// suspend/deactivate/restrict would not take effect until the positive-cache TTL —
-		// a window where a blocked user keeps full access. The stored session_token IS the
-		// SHA-256 hash, which is exactly the cache key.
-		sessionHashes, _ = tx.ListSessionTokenHashesForUser(ctx, userID)
-		// Also collect PAT hashes for cache eviction for ANY state transition, including
-		// restricted states like password_reset_required. Without this, a cached PAT
-		// bypasses the restriction for up to validTokenTTL (30 s) — ValidatePATToken
-		// sees the old identity from the cache and never re-checks the new account state
-		// (#r125-H2). We evict here without revoking; revoking follows for blocked states.
-		if pats, _ := tx.ListPersonalAccessTokensByUser(ctx, userID); len(pats) > 0 {
-			sessionHashes = append(sessionHashes, activePATHashes(pats)...)
+		if needsCacheEvictionSweep {
+			// Capture the user's current session-token HASHES BEFORE mutating so we can
+			// evict their auth-cache entries after commit. The HTTP auth cache fast path
+			// serves a frozen identity without re-reading the DB, so without eviction a
+			// suspend/deactivate/restrict would not take effect until the positive-cache
+			// TTL — a window where a blocked user keeps full access. The stored
+			// session_token IS the SHA-256 hash, which is exactly the cache key.
+			sessionHashes, _ = tx.ListSessionTokenHashesForUser(ctx, userID)
+			// Also collect PAT hashes for cache eviction for any transition INTO a
+			// blocked or restricted state (e.g. password_reset_required). Without this, a
+			// cached PAT bypasses the restriction for up to validTokenTTL (30 s) —
+			// ValidatePATToken sees the old identity from the cache and never re-checks
+			// the new account state (#r125-H2). We evict here without revoking; revoking
+			// follows for blocked states below.
+			if pats, _ := tx.ListPersonalAccessTokensByUser(ctx, userID); len(pats) > 0 {
+				sessionHashes = append(sessionHashes, activePATHashes(pats)...)
+			}
 		}
 
 		if err := tx.SetAccountState(ctx, userID, state, c.now()); err != nil {
