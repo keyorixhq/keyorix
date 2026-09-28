@@ -35,6 +35,24 @@ Open **http://localhost:8088** and log in with the admin credentials you set in
 > `docker-compose.yml` and swap the `backend` service's `image:` for the
 > commented-out `build:` block.
 
+**Generate your admin recovery key now, before you need it.** If every admin
+account is ever locked out (lost password, lost MFA device), the only way back
+in is `keyorix-server admin recover-admin` on the server host — and by
+default it also requires this key (`security.recover_admin.keyless_mode` is an
+explicit, less-secure opt-out documented in `configs/keyorix.yaml.tpl`, not the
+default, `security.recover_admin.keyless_mode: true` in server config opts
+out). No key exists until you generate one:
+
+```sh
+docker compose exec backend ./keyorix-server admin recovery-key rotate
+```
+
+This prints a 256-bit key **exactly once** — save it somewhere durable and
+separate from this host (a password manager, not a file next to `.env`). It is
+never written to a log file or the audit chain in plaintext, and losing it
+means running the command again (which invalidates the old key). See
+`docs/design-b2-recover-admin.md` for the full design.
+
 ## 3. Configuration (`.env`)
 
 All secrets come from `.env` — there are **no baked-in default passwords**; the
@@ -45,7 +63,7 @@ with `openssl rand -base64 32`.
 |---------------------------|----------|-------|
 | `KEYORIX_DB_PASSWORD`     | ✅       | PostgreSQL password (shared by `postgres` and `backend`). |
 | `KEYORIX_MASTER_PASSWORD` | ✅       | Passphrase the encryption KEK is derived from. **See the warning below.** |
-| `KEYORIX_ADMIN_PASSWORD`  | optional | If set, the first admin is created on first boot (idempotent). Leave blank to run `keyorix system init` manually. |
+| `KEYORIX_ADMIN_PASSWORD`  | optional | If set, the first admin is created on first boot (idempotent). Leave blank to run `keyorix-server admin init` manually on the server host. |
 | `KEYORIX_BOOTSTRAP_TOKEN` | required if `KEYORIX_ADMIN_PASSWORD` is set | `/system/init` always requires a matching bootstrap token. Setting `KEYORIX_ADMIN_PASSWORD` without this silently skips admin creation (a WARN is logged, but the container still reports healthy). |
 | `KEYORIX_ADMIN_USERNAME`  | optional | Defaults to `admin`. |
 | `KEYORIX_ADMIN_EMAIL`     | optional | Defaults to `admin@keyorix.local`. |
