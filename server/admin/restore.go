@@ -377,6 +377,31 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 		return fmt.Errorf("load backup data: %w", loadErr)
 	}
 
+	if isPG {
+		// Every row LoadArchive just inserted carries its ORIGINAL, explicit
+		// primary-key value -- design's whole point, so cross-table
+		// references keep resolving -- but Postgres never auto-advances a
+		// SERIAL/BIGSERIAL column's sequence for an explicit-value INSERT
+		// (only a value-omitted one calls nextval()). Left unresynced, the
+		// very next auto-generated INSERT on any restored table collides
+		// with an already-restored row's id -- found live as this exact
+		// function's own upcoming recordAdminAction call failing with a
+		// duplicate-key error on audit_events, and, worse, as the first real
+		// login attempt against the freshly-restored server returning 401
+		// (a Postgres connection left in an aborted-transaction state by
+		// one of those failures poisons whichever request draws it next).
+		// The same fixup pg_dump/pg_restore already do automatically.
+		sqlDB, err := postgresOpenSQL(cfg)
+		if err != nil {
+			return fmt.Errorf("open target Postgres database to resync sequences: %w", err)
+		}
+		resyncErr := resyncPostgresSequences(sqlDB)
+		_ = sqlDB.Close()
+		if resyncErr != nil {
+			return fmt.Errorf("resync Postgres sequences after restore: %w", resyncErr)
+		}
+	}
+
 	var totalRows int64
 	for _, te := range manifest.Tables {
 		totalRows += te.RowCount
