@@ -1135,24 +1135,6 @@ func TestRevokeInvitation_BadProjectID_S26(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// ── sessions_remote.go: DeleteSessionByID happy path ─────────────────────────
-
-// TestDeleteSessionByID_HappyPath_S26 verifies that deleting a session ID
-// (even one that doesn't exist) returns 200 (the proxy is idempotent).
-func TestDeleteSessionByID_HappyPath_S26(t *testing.T) {
-	cs := freshCoreS26(t)
-	h, err := NewUserHandler(cs)
-	require.NoError(t, err)
-	req := withUserCtx(withChiParam_S25(
-		httptest.NewRequest(http.MethodDelete, "/api/v1/sessions/99999", nil),
-		"id", "99999",
-	))
-	w := httptest.NewRecorder()
-	h.DeleteSessionByID(w, req)
-	// Non-existent session → idempotent delete → 200 OK
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // ── ListInvitations with existing invitations ──────────────────────────────────
 
 // TestListInvitations_WithInvitations_S26 verifies that listing invitations for

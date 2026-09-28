@@ -981,60 +981,6 @@ func TestUserHandler_ResendSetupLink_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-// ── sessions_remote.go ────────────────────────────────────────────────────────
-
-func TestGetSessionByToken_PackageLevel_ServiceUnavailable(t *testing.T) {
-	saved := defaultUserHandler
-	defaultUserHandler = nil
-	t.Cleanup(func() { defaultUserHandler = saved })
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "token", "abc")
-	w := httptest.NewRecorder()
-	GetSessionByToken(w, req)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestDeleteSessionByID_PackageLevel_ServiceUnavailable(t *testing.T) {
-	saved := defaultUserHandler
-	defaultUserHandler = nil
-	t.Cleanup(func() { defaultUserHandler = saved })
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	DeleteSessionByID(w, req)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestUserHandler_GetSessionByToken_Unauthorized(t *testing.T) {
-	h := newUserHandler(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "token", "tok")
-	w := httptest.NewRecorder()
-	h.GetSessionByToken(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestUserHandler_GetSessionByToken_MissingToken(t *testing.T) {
-	h := newUserHandler(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "token", ""))
-	w := httptest.NewRecorder()
-	h.GetSessionByToken(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestUserHandler_DeleteSessionByID_Unauthorized(t *testing.T) {
-	h := newUserHandler(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.DeleteSessionByID(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestUserHandler_DeleteSessionByID_BadID(t *testing.T) {
-	h := newUserHandler(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "bad"))
-	w := httptest.NewRecorder()
-	h.DeleteSessionByID(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── dynamic_secrets.go (human-facing handler) ─────────────────────────────────
 
 func TestDynamicSecretHandler_CreateConfig_Unauthorized(t *testing.T) {

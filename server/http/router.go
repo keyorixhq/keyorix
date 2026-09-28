@@ -126,7 +126,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	// only callers were /system UsersActiveTransitionProxy/UsersCredentialsProxy/
 	// WebauthnProxy routes, deleted with the proxy tier) -- InitCoreHandlers' side
 	// effect of setting the package-level defaultUserHandler is still required by
-	// users_handler.go's and sessions_remote.go's live wrapper functions.
+	// users_handler.go's live wrapper functions.
 	_, groupHandler, err := handlers.InitCoreHandlers(coreService)
 	if err != nil {
 		return nil, fmt.Errorf("failed to init core HTTP handlers: %w", err)
@@ -935,23 +935,6 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// admins hold (admin-bypass). Issues a session for the target user.
 		r.With(customMiddleware.RequirePermission("users.impersonate")).
 			Post("/admin/impersonate", impersonationHandler.Start)
-
-		// Sessions (#508) — originally added as the server-side counterparts
-		// RemoteStorage.GetSession/DeleteSession needed so a storage.type: remote
-		// deployment could validate and revoke sessions minted upstream by the
-		// (since-removed) POST /api/v1/users/verify-credentials proxy-login route
-		// (#506/#508's atomic verify+mint). RemoteStorage itself was removed
-		// repo-wide in #2162, and the proxy-login route in the
-		// REMOTESTORAGE-SWEEP track; these two routes remain live for admin
-		// session lookup/revocation independent of that history. Deliberately NO
-		// POST "/" here — there is no generic "create a session" route; see
-		// remote_auth.go's CreateSession doc for why that would be a
-		// privilege-escalation oracle. Gated by users.write, the SAME permission
-		// CreateUser/UnlockUser already require.
-		r.Route("/sessions", func(r chi.Router) {
-			r.With(customMiddleware.RequirePermission(permUsersWrite)).Get("/{token}", handlers.GetSessionByToken)
-			r.With(customMiddleware.RequirePermission(permUsersWrite)).Delete("/{id}", handlers.DeleteSessionByID)
-		})
 
 		// Groups endpoints
 		r.Route(pathGroups, func(r chi.Router) {
