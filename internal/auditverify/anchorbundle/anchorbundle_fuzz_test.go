@@ -1,4 +1,4 @@
-package auditverify
+package anchorbundle
 
 import (
 	"testing"
