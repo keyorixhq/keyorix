@@ -177,12 +177,19 @@ See [example apps](https://github.com/keyorixhq/keyorix-go/tree/main/examples/pe
 
 ## Architecture
 
-Single binary. HTTP REST API on port 8080. Web UI on port 3000.
+Two binaries: a thin `keyorix` CLI that only ever talks REST to a server, and the
+`keyorix-server` binary itself (HTTP REST + gRPC APIs, port 8080 by default). Web UI on
+port 3000. The CLI has no local database mode and cannot bypass the server's own
+authorization/audit — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full
+picture, including `keyorix-server admin`'s offline, host-side operations (recover a
+locked-out admin, offline backup/restore, independent audit-chain verification).
 
 SQLite for development and small teams. PostgreSQL for production.
 
-Air-gapped deployment: copy the binary and run. No internet required. (Optional
-features that delegate to an external identity provider — OIDC federation, SSO
+Air-gapped deployment: copy the `keyorix-server` binary and run — no internet required,
+and an air-gapped build profile excludes every cloud-SDK dependency entirely (see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#full-vs-air-gapped-build-profiles)).
+(Optional features that delegate to an external identity provider — OIDC federation, SSO
 login — need network reachability to that provider; see
 [Configuration](docs/CONFIGURATION.md#oidc).)
 
