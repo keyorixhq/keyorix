@@ -35,6 +35,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
+	"github.com/pquerna/otp/totp"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -5040,6 +5041,66 @@ var opCatalog = []operation{
 				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
 			}
 			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		// Coverage batch 25 (Session C item C2, FAULTOPS-SPEED STEP 3 PR B):
+		// self-service TOTP MFA lifecycle, unblocked by PR A's (#2196) lazy
+		// encryption fixture — BeginMFAEnrollment fails closed with
+		// "MFA enrolment requires at-rest encryption" whenever
+		// authEncryptor is nil/disabled (internal/core/mfa.go), which every
+		// world was before ensureEncryption() existed to turn it on.
+		Key: "REST POST /api/v1/auth/mfa/enroll",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			if err := w.ensureEncryption(); err != nil {
+				return nil, fmt.Errorf("setup ensureEncryption: %w", err)
+			}
+			return nil, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/auth/mfa/enroll", nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST POST /api/v1/auth/mfa/activate",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			if err := w.ensureEncryption(); err != nil {
+				return nil, fmt.Errorf("setup ensureEncryption: %w", err)
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/auth/mfa/enroll", nil)
+			if err != nil {
+				return nil, err
+			}
+			if st/100 != 2 {
+				return nil, fmt.Errorf("setup EnrollMFA: HTTP %d: %s", st, body)
+			}
+			var enrolled struct {
+				Data struct {
+					Secret string `json:"secret"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &enrolled); err != nil || enrolled.Data.Secret == "" {
+				return nil, fmt.Errorf("decoding EnrollMFA response: %w (body=%s)", err, body)
+			}
+			return enrolled.Data.Secret, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			secret := state.(string)
+			code, err := totp.GenerateCode(secret, time.Now())
+			if err != nil {
+				return opResult{}, fmt.Errorf("totp.GenerateCode: %w", err)
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/auth/mfa/activate", map[string]any{
+				"code": code, "password": faultAdminPassword,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
 		},
 	},
 }

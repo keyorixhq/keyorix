@@ -17,14 +17,14 @@ import (
 
 func TestWorldFixture_Encryption(t *testing.T) {
 	w := newFaultWorld(t, nil)
-	if err := w.ensureEncryption(t); err != nil {
+	if err := w.ensureEncryption(); err != nil {
 		t.Fatalf("ensureEncryption: %v", err)
 	}
 	if !w.core.SecretValueEncryptionActive() {
 		t.Fatal("secret-value encryption not active after ensureEncryption")
 	}
 	// Calling twice must be safe (sync.Once-guarded) and not re-derive the KEK.
-	if err := w.ensureEncryption(t); err != nil {
+	if err := w.ensureEncryption(); err != nil {
 		t.Fatalf("ensureEncryption (second call): %v", err)
 	}
 }
