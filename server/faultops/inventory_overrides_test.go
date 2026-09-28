@@ -320,6 +320,23 @@ var operationOverrides = map[string]overrideEntry{
 	"REST POST /api/v1/auth/mfa/disable":                   {StatusPending, "requireReauth needs a 3rd distinct TOTP proof within one iteration's real-time window; core's MarkTOTPStepUsed watermark makes that impossible without a ~30s sleep — needs a session-minting test seam, see batch 25's comment above"},
 	"REST POST /api/v1/auth/mfa/recovery-codes/regenerate": {StatusPending, "same requireReauth TOTP-watermark blocker as REST POST /api/v1/auth/mfa/disable"},
 	"REST POST /api/v1/auth/mfa/stepup":                    {StatusPending, "same requireReauth TOTP-watermark blocker as REST POST /api/v1/auth/mfa/disable"},
+	// E3 (FAULTOPS PR C): dynamic-secrets lifecycle family (ADR-035) — config
+	// CRUD/classification/enable-disable plus lease issue/renew/revoke/revoke-all,
+	// REST + gRPC. Branches from origin/main independent of #2224 (disjoint key
+	// set — break-glass/MFA — safe to merge in either order).
+	"REST POST /api/v1/dynamic-secrets/configs":                      {StatusFuzzed, "opCatalog key \"REST POST /api/v1/dynamic-secrets/configs\" — E3"},
+	"REST PATCH /api/v1/dynamic-secrets/configs/{id}/classification": {StatusFuzzed, "opCatalog key \"REST PATCH .../classification\" — E3"},
+	"REST PATCH /api/v1/dynamic-secrets/configs/{id}/enabled":        {StatusFuzzed, "opCatalog key \"REST PATCH .../enabled\" — E3"},
+	"REST POST /api/v1/dynamic-secrets/configs/{id}/issue":           {StatusFuzzed, "opCatalog key \"REST POST .../issue\" — E3"},
+	"REST POST /api/v1/dynamic-secrets/configs/{id}/revoke-all":      {StatusFuzzed, "opCatalog key \"REST POST .../revoke-all\" — E3"},
+	"REST POST /api/v1/dynamic-secrets/leases/{leaseID}/renew":       {StatusFuzzed, "opCatalog key \"REST POST .../renew\" — E3"},
+	"REST POST /api/v1/dynamic-secrets/leases/{leaseID}/revoke":      {StatusFuzzed, "opCatalog key \"REST POST .../revoke\" — E3"},
+	"GRPC keyorix.v1.DynamicSecretService.CreateConfig":              {StatusFuzzed, "opCatalog key \"GRPC ...DynamicSecretService.CreateConfig\" — E3"},
+	"GRPC keyorix.v1.DynamicSecretService.ClassifyConfig":            {StatusFuzzed, "opCatalog key \"GRPC ...DynamicSecretService.ClassifyConfig\" — E3"},
+	"GRPC keyorix.v1.DynamicSecretService.IssueLease":                {StatusFuzzed, "opCatalog key \"GRPC ...DynamicSecretService.IssueLease\" — E3"},
+	"GRPC keyorix.v1.DynamicSecretService.RenewLease":                {StatusFuzzed, "opCatalog key \"GRPC ...DynamicSecretService.RenewLease\" — E3"},
+	"GRPC keyorix.v1.DynamicSecretService.RevokeLease":               {StatusFuzzed, "opCatalog key \"GRPC ...DynamicSecretService.RevokeLease\" — E3"},
+	"GRPC keyorix.v1.DynamicSecretService.RevokeAllLeases":           {StatusFuzzed, "opCatalog key \"GRPC ...DynamicSecretService.RevokeAllLeases\" — E3"},
 }
 
 func statusOf(key string) overrideEntry {

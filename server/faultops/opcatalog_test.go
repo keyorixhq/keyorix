@@ -32,6 +32,8 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/dynamic"
+	"github.com/keyorixhq/keyorix/internal/dynamic/dynamictest"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
@@ -126,6 +128,96 @@ func createRoleForFuzz(ctx context.Context, w *faultWorld) (uint, error) {
 		return 0, fmt.Errorf("CreateRole response carried no role id (body=%s)", body)
 	}
 	return decoded.Data.Role.ID, nil
+}
+
+// dynamicSecretFuzzAdminDSN is a syntactically valid "postgres" DSN pointed at
+// localhost. There is no live external database this in-process harness can
+// dial, so wireFakeDynamicSecretEngineForFuzz below replaces the real dial
+// with dynamictest.FakeEngine (the same in-memory fake internal/core's own
+// unit tests use, e.g. internal/core/dynamic_secrets_test.go) — this DSN
+// string is never actually connected to, only stored (encrypted) and passed
+// through. "localhost" also requires the private-network-target opt-in below;
+// using it deliberately, not working around it.
+const dynamicSecretFuzzAdminDSN = "postgres://fake:fake@localhost/fakedb"
+
+// wireFakeDynamicSecretEngineForFuzz swaps this world's dynamic-secrets engine
+// factory (newFaultWorld wires the REAL one, dynamic.New, matching production
+// exactly — see its own comment: "the actual dynamic.New call... only happens
+// if/when a future operation actually calls CreateConfig") for
+// dynamictest.FakeEngine, and opts into private-network admin-DSN targets
+// (SetDynamicAllowPrivateTargets — its own doc comment: "Set to true only when
+// the dynamic-secret backend legitimately lives on a private segment", exactly
+// this harness's situation). Each fuzz iteration gets its own fresh
+// *core.KeyorixCore (confirmed via opcatalog_smoke_test.go's per-subtest world
+// build), so mutating w.core here is scoped to this op's own Setup+Execute,
+// not shared with any other op's iteration.
+//
+// Without this, EVERY dynamic-secrets op that reaches the backend
+// (IssueLease/RenewLease/RevokeLease/RevokeAllLeases) would deterministically
+// fail even with no fault armed — "localhost" is rejected by the SSRF guard
+// before any dial, and even with that allowed, the real dynamic.New("postgres",
+// ...) engine has nothing reachable to dial. TestOpCatalog_SucceedsWithNoFaultArmed
+// requires every catalog entry to succeed unfaulted, so a deterministically-
+// failing op is not an acceptable substitute for real backend reachability —
+// the fake engine is what makes these ops genuinely testable in-process.
+func wireFakeDynamicSecretEngineForFuzz(w *faultWorld) {
+	w.core.SetDynamicAllowPrivateTargets(true)
+	w.core.SetDynamicEngineFactory(func(string) (dynamic.CredentialEngine, error) {
+		return &dynamictest.FakeEngine{NativeExpiry: true}, nil
+	})
+}
+
+// createDynamicSecretConfigForFuzz wires the fake engine (see
+// wireFakeDynamicSecretEngineForFuzz), creates a dynamic-secret config
+// (backend "postgres", so SupportsNativeExpiry() is true and IssueLease's
+// sweep-disabled guard never short-circuits it) via the real HTTP transport,
+// and returns its ID.
+func createDynamicSecretConfigForFuzz(ctx context.Context, w *faultWorld, name string) (uint, error) {
+	wireFakeDynamicSecretEngineForFuzz(w)
+	st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/dynamic-secrets/configs", map[string]any{
+		"name": name, "project_id": 1, "environment_id": 1,
+		"backend_type": "postgres", "admin_dsn": dynamicSecretFuzzAdminDSN,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if st/100 != 2 {
+		return 0, fmt.Errorf("setup CreateDynamicSecretConfig: HTTP %d: %s", st, body)
+	}
+	var decoded struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
+		return 0, fmt.Errorf("decoding CreateDynamicSecretConfig response: %w (body=%s)", err, body)
+	}
+	return decoded.Data.ID, nil
+}
+
+// issueDynamicSecretLeaseForFuzz issues a REAL lease (via the real HTTP
+// /issue endpoint, now genuinely succeeding thanks to the fake engine wired by
+// createDynamicSecretConfigForFuzz) against cfgID, and returns its lease_id —
+// setup for RenewLease/RevokeLease/RevokeAllLeases.
+func issueDynamicSecretLeaseForFuzz(ctx context.Context, w *faultWorld, cfgID uint) (string, error) {
+	st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/dynamic-secrets/configs/%d/issue", cfgID), map[string]any{
+		"ttl_seconds": 60,
+	})
+	if err != nil {
+		return "", err
+	}
+	if st/100 != 2 {
+		return "", fmt.Errorf("setup IssueLease: HTTP %d: %s", st, body)
+	}
+	var decoded struct {
+		Data struct {
+			LeaseID string `json:"lease_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.LeaseID == "" {
+		return "", fmt.Errorf("decoding IssueLease response: %w (body=%s)", err, body)
+	}
+	return decoded.Data.LeaseID, nil
 }
 
 // createSecretForFuzz creates a secret and returns its ID — setup for the
@@ -5070,6 +5162,272 @@ var opCatalog = []operation{
 				return opResult{}, err
 			}
 			return httpResult(st, body), nil
+		},
+	},
+	{
+		// E3 dynamic-secrets batch: register a new target (ADR-035). Backend
+		// "postgres" + dynamicSecretFuzzAdminDSN — see that constant's doc
+		// comment for why (no live external DB in this in-process harness).
+		Key: "REST POST /api/v1/dynamic-secrets/configs",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			wireFakeDynamicSecretEngineForFuzz(w)
+			return nil, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/dynamic-secrets/configs", map[string]any{
+				"name": "fuzz-dynsec-create", "project_id": 1, "environment_id": 1,
+				"backend_type": "postgres", "admin_dsn": dynamicSecretFuzzAdminDSN,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST PATCH /api/v1/dynamic-secrets/configs/{id}/classification",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createDynamicSecretConfigForFuzz(ctx, w, "fuzz-dynsec-classify")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			cfgID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPatch, fmt.Sprintf("/api/v1/dynamic-secrets/configs/%d/classification", cfgID), map[string]any{
+				"classification": "confidential",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// #369: manual enable/disable, independent of DeleteProject's cascade.
+		Key: "REST PATCH /api/v1/dynamic-secrets/configs/{id}/enabled",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createDynamicSecretConfigForFuzz(ctx, w, "fuzz-dynsec-enabled")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			cfgID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPatch, fmt.Sprintf("/api/v1/dynamic-secrets/configs/%d/enabled", cfgID), map[string]any{
+				"enabled": false,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// Always fails at the dial (dynamicSecretFuzzAdminDSN, unreachable by
+		// design) — still real coverage: exercises the real transport, the
+		// real config lookup/disabled/live-project checks, and the real
+		// active-lease-ceiling check, all of which run BEFORE the dial and are
+		// all real fault-injection surface.
+		Key: "REST POST /api/v1/dynamic-secrets/configs/{id}/issue",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createDynamicSecretConfigForFuzz(ctx, w, "fuzz-dynsec-issue")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			cfgID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/dynamic-secrets/configs/%d/issue", cfgID), map[string]any{
+				"ttl_seconds": 60,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// Incident kill switch (RevokeLeasesForConfig): one active lease,
+		// issued for real (see issueDynamicSecretLeaseForFuzz).
+		Key: "REST POST /api/v1/dynamic-secrets/configs/{id}/revoke-all",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			cfgID, err := createDynamicSecretConfigForFuzz(ctx, w, "fuzz-dynsec-revokeall")
+			if err != nil {
+				return nil, err
+			}
+			if _, err := issueDynamicSecretLeaseForFuzz(ctx, w, cfgID); err != nil {
+				return nil, fmt.Errorf("setup issueDynamicSecretLeaseForFuzz: %w", err)
+			}
+			return cfgID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			cfgID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/dynamic-secrets/configs/%d/revoke-all", cfgID), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST POST /api/v1/dynamic-secrets/leases/{leaseID}/renew",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			cfgID, err := createDynamicSecretConfigForFuzz(ctx, w, "fuzz-dynsec-renew")
+			if err != nil {
+				return nil, err
+			}
+			leaseID, err := issueDynamicSecretLeaseForFuzz(ctx, w, cfgID)
+			if err != nil {
+				return nil, fmt.Errorf("setup issueDynamicSecretLeaseForFuzz: %w", err)
+			}
+			return leaseID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			leaseID := state.(string)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/dynamic-secrets/leases/%s/renew", leaseID), map[string]any{
+				"ttl_seconds": 60,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST POST /api/v1/dynamic-secrets/leases/{leaseID}/revoke",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			cfgID, err := createDynamicSecretConfigForFuzz(ctx, w, "fuzz-dynsec-revoke")
+			if err != nil {
+				return nil, err
+			}
+			leaseID, err := issueDynamicSecretLeaseForFuzz(ctx, w, cfgID)
+			if err != nil {
+				return nil, fmt.Errorf("setup issueDynamicSecretLeaseForFuzz: %w", err)
+			}
+			return leaseID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			leaseID := state.(string)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/dynamic-secrets/leases/%s/revoke", leaseID), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// gRPC sibling of REST CreateConfig — proves the dynamic-secrets
+		// family generalizes across transports too, matching this file's
+		// convention (e.g. batch 9/10's ACL and CRUD gRPC siblings).
+		Key: "GRPC keyorix.v1.DynamicSecretService.CreateConfig",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			wireFakeDynamicSecretEngineForFuzz(w)
+			return nil, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			_, err := pb.NewDynamicSecretServiceClient(w.grpcConn).CreateConfig(w.grpcCtx, &pb.CreateDynamicConfigRequest{
+				Name: "fuzz-dynsec-create-grpc", ProjectId: 1, EnvironmentId: 1,
+				BackendType: "postgres", AdminDsn: dynamicSecretFuzzAdminDSN,
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.DynamicSecretService.ClassifyConfig",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createDynamicSecretConfigForFuzz(ctx, w, "fuzz-dynsec-classify-grpc")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			cfgID := state.(uint)
+			_, err := pb.NewDynamicSecretServiceClient(w.grpcConn).ClassifyConfig(w.grpcCtx, &pb.ClassifyDynamicConfigRequest{
+				Id: uint32(cfgID), Classification: "confidential",
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.DynamicSecretService.IssueLease",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createDynamicSecretConfigForFuzz(ctx, w, "fuzz-dynsec-issue-grpc")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			cfgID := state.(uint)
+			_, err := pb.NewDynamicSecretServiceClient(w.grpcConn).IssueLease(w.grpcCtx, &pb.IssueLeaseRequest{
+				ConfigId: uint32(cfgID), TtlSeconds: 60,
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.DynamicSecretService.RenewLease",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			cfgID, err := createDynamicSecretConfigForFuzz(ctx, w, "fuzz-dynsec-renew-grpc")
+			if err != nil {
+				return nil, err
+			}
+			leaseID, err := issueDynamicSecretLeaseForFuzz(ctx, w, cfgID)
+			if err != nil {
+				return nil, fmt.Errorf("setup issueDynamicSecretLeaseForFuzz: %w", err)
+			}
+			return leaseID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			leaseID := state.(string)
+			_, err := pb.NewDynamicSecretServiceClient(w.grpcConn).RenewLease(w.grpcCtx, &pb.RenewLeaseRequest{
+				LeaseId: leaseID, TtlSeconds: 60,
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.DynamicSecretService.RevokeLease",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			cfgID, err := createDynamicSecretConfigForFuzz(ctx, w, "fuzz-dynsec-revoke-grpc")
+			if err != nil {
+				return nil, err
+			}
+			leaseID, err := issueDynamicSecretLeaseForFuzz(ctx, w, cfgID)
+			if err != nil {
+				return nil, fmt.Errorf("setup issueDynamicSecretLeaseForFuzz: %w", err)
+			}
+			return leaseID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			leaseID := state.(string)
+			_, err := pb.NewDynamicSecretServiceClient(w.grpcConn).RevokeLease(w.grpcCtx, &pb.RevokeLeaseRequest{
+				LeaseId: leaseID,
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.DynamicSecretService.RevokeAllLeases",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			cfgID, err := createDynamicSecretConfigForFuzz(ctx, w, "fuzz-dynsec-revokeall-grpc")
+			if err != nil {
+				return nil, err
+			}
+			if _, err := issueDynamicSecretLeaseForFuzz(ctx, w, cfgID); err != nil {
+				return nil, fmt.Errorf("setup issueDynamicSecretLeaseForFuzz: %w", err)
+			}
+			return cfgID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			cfgID := state.(uint)
+			_, err := pb.NewDynamicSecretServiceClient(w.grpcConn).RevokeAllLeases(w.grpcCtx, &pb.RevokeAllLeasesRequest{
+				ConfigId: uint32(cfgID),
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
 		},
 	},
 }
