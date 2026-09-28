@@ -56,6 +56,7 @@ const (
 var (
 	restoreInput             string
 	restoreOverwriteExisting bool
+	restoreAllowRollback     bool
 	restoreMaxEntryBytes     int64
 	restoreMaxTotalBytes     int64
 )
@@ -91,6 +92,19 @@ SAME config (same key-material paths) the backup was taken from. With
 <path>.pre-restore-<timestamp> rather than truncated or overwritten in
 place, so an unrecoverable mistake during the restore still has a way back.
 
+Rollback protection (design-b3-backup-v2.md §6): restoring an OLDER backup
+than this host has already progressed past can silently resurrect access an
+admin has since revoked (a suspended account, a deleted machine credential,
+a rotated role grant) -- the restored database simply doesn't know the
+revocation happened. Restore compares the archive's own certified audit
+high-water mark against a host-local witness file
+(<data-dir>/.audit-highwater-witness, sibling to the database, maintained by
+every server this host has run) BEFORE writing anything to disk, and refuses
+if the archive is behind. Pass --allow-rollback for a genuine disaster-
+recovery restore of an intentionally older backup -- this writes an audit
+event to the restored database recording exactly how far back the restore
+went, once the chain is writable again.
+
 Only local/sqlite storage is supported today. For a Postgres-backed
 deployment, restore with psql directly (see docs/SELF_HOSTING.md §5).`,
 	RunE: runAdminRestore,
@@ -99,6 +113,7 @@ deployment, restore with psql directly (see docs/SELF_HOSTING.md §5).`,
 func init() {
 	restoreCmd.Flags().StringVar(&restoreInput, "input", "", "Path to the backup archive to restore from (required)")
 	restoreCmd.Flags().BoolVar(&restoreOverwriteExisting, "overwrite-existing", false, "Overwrite an existing, non-empty database or key file (dangerous)")
+	restoreCmd.Flags().BoolVar(&restoreAllowRollback, "allow-rollback", false, "Proceed even though this backup is behind this host's own audit trail (dangerous -- see the rollback-protection note above)")
 	restoreCmd.Flags().Int64Var(&restoreMaxEntryBytes, "max-entry-bytes", defaultMaxRestoreEntryBytes,
 		"Reject the archive if any single entry (the database or a key file) decompresses to more than this many bytes")
 	restoreCmd.Flags().Int64Var(&restoreMaxTotalBytes, "max-total-bytes", defaultMaxRestoreTotalBytes,
@@ -166,6 +181,13 @@ func runAdminRestore(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Rollback protection (design-b3-backup-v2.md §6.3) -- BEFORE any write to
+	// disk below, so a refused restore never touches the target at all.
+	rollbackCheck, err := checkRollbackProtection(manifest.AuditHighWater, dbPath)
+	if err != nil {
+		return err
+	}
+
 	// One timestamp for the whole restore run, reused for every existing file
 	// --overwrite-existing moves aside, so they're identifiable as belonging
 	// to the same restore.
@@ -208,7 +230,106 @@ func runAdminRestore(cmd *cobra.Command, args []string) error {
 	recordAdminAction(cfg, "admin.restore_completed",
 		fmt.Sprintf("restored from backup archive %s (created %s)", restoreInput, manifest.CreatedAt.Format(time.RFC3339)), true)
 
+	// design-b3-backup-v2.md §6.3: advance the witness file to at least the
+	// just-restored archive's own high-water mark, so a SUBSEQUENT restore on
+	// this host compares against what actually landed on disk, not stale
+	// pre-restore state. Best-effort -- a failure here degrades this host's
+	// own future rollback detection, but the restore itself already
+	// succeeded and must not be reported as failed over it.
+	if rollbackCheck.archiveEncoded != "" {
+		if _, werr := auditverify.WriteWitnessIfHigher(auditverify.WitnessPath(dbPath), rollbackCheck.archiveEncoded); werr != nil {
+			fmt.Printf("note: could not update the rollback-protection witness file: %v\n", werr)
+		}
+	}
+	// An allowed rollback needs its own explicit audit trail entry, written
+	// once the restored chain is writable again (design-b3-backup-v2.md
+	// §6.2: "using it writes an audit event recording that the override was
+	// used" -- there is no silent, warning-only path).
+	if rollbackCheck.overrodeRollback {
+		recordAdminAction(cfg, "admin.restore_rollback_override",
+			fmt.Sprintf("restored a backup that is %d audit event(s) behind this host's last known state "+
+				"(--allow-rollback was used) -- any user/credential revocation recorded after that point is undone by this restore",
+				rollbackCheck.gapEvents), true)
+	}
+
 	return verifyRestoredAudit(cfg, dbPath)
+}
+
+// rollbackCheckOutcome is checkRollbackProtection's result: whether the
+// restore was allowed to proceed past a detected rollback, the size of that
+// gap (for the audit event runAdminRestore writes once the restored chain
+// is writable again), and the archive's own raw encoded high-water value
+// (so runAdminRestore can advance the witness file to it after a successful
+// restore, without re-parsing the manifest).
+type rollbackCheckOutcome struct {
+	overrodeRollback bool
+	gapEvents        int64
+	archiveEncoded   string
+}
+
+// checkRollbackProtection implements design-b3-backup-v2.md §6.3: compares
+// the archive's own certified audit-trail progress (highWaterEncoded, from
+// backupManifest.AuditHighWater -- empty if the source install had never
+// written a checkpoint) against this host's witness file (sibling to dbPath,
+// maintained by every server this host has run) BEFORE the caller writes
+// anything to disk. Returns an error (refusing the restore) if the archive
+// is behind and --allow-rollback was not given; any note worth printing is
+// returned alongside a nil error otherwise.
+//
+// Three cases, per §6.3:
+//   - witness absent: nothing to compare against (a genuinely fresh host, or
+//     the first restore ever run on this one) -- proceed. This is the
+//     legitimate bootstrap case, not a gap to close.
+//   - archive's high-water >= witness's: this backup is at least as current
+//     as anything this host has certified -- proceed normally.
+//   - archive's high-water < witness's: refuse unless --allow-rollback.
+//
+// A malformed manifest.AuditHighWater (non-empty but unparseable -- a
+// tampered or corrupted manifest) and a malformed witness file (exists but
+// unparseable) are BOTH treated as hard errors, never silently downgraded to
+// "absent" -- deleting or corrupting either one must not be a way to evade
+// this check.
+func checkRollbackProtection(highWaterEncoded, dbPath string) (rollbackCheckOutcome, error) {
+	var archiveEvents int64
+	if highWaterEncoded != "" {
+		archiveCP, _, ok := auditverify.ParseHighWater(highWaterEncoded)
+		if !ok {
+			return rollbackCheckOutcome{}, fmt.Errorf(
+				"backup archive's manifest carries an audit high-water value that does not parse -- " +
+					"the manifest may be corrupted or tampered with; restore refuses rather than treat this as if the archive had no recorded history")
+		}
+		archiveEvents = archiveCP.ChainedEvents
+	}
+
+	witnessPath := auditverify.WitnessPath(dbPath)
+	witnessCP, _, found, err := auditverify.ReadWitness(witnessPath)
+	if err != nil {
+		return rollbackCheckOutcome{}, fmt.Errorf(
+			"could not read the rollback-protection witness file %q: %w -- investigate before proceeding "+
+				"(a corrupted witness is not treated as absent)", witnessPath, err)
+	}
+	if !found {
+		// Fresh host / first restore ever here: nothing to compare against.
+		return rollbackCheckOutcome{archiveEncoded: highWaterEncoded}, nil
+	}
+
+	if archiveEvents >= witnessCP.ChainedEvents {
+		return rollbackCheckOutcome{archiveEncoded: highWaterEncoded}, nil
+	}
+
+	gap := witnessCP.ChainedEvents - archiveEvents
+	if !restoreAllowRollback {
+		return rollbackCheckOutcome{}, fmt.Errorf(
+			"refusing to restore: this backup's audit trail (%d event(s)) is %d event(s) BEHIND this host's own "+
+				"last known state (%d event(s)) -- restoring it would silently un-revoke any user/credential access "+
+				"revoked since this backup was taken. Pass --allow-rollback if this is a genuine disaster-recovery "+
+				"restore of an intentionally older backup", archiveEvents, gap, witnessCP.ChainedEvents)
+	}
+	fmt.Printf("WARNING: --allow-rollback is in effect. This backup's audit trail (%d event(s)) is %d event(s) "+
+		"behind this host's own last known state (%d event(s)) -- proceeding will silently un-revoke any "+
+		"user/credential access revoked since this backup was taken. Recording this override to the audit trail.\n",
+		archiveEvents, gap, witnessCP.ChainedEvents)
+	return rollbackCheckOutcome{overrodeRollback: true, gapEvents: gap, archiveEncoded: highWaterEncoded}, nil
 }
 
 // verifyRestoredAudit runs the same offline audit-chain re-walk

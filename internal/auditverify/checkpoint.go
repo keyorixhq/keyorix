@@ -53,6 +53,24 @@ func CheckpointSignatureValid(cp *Checkpoint, key []byte) bool {
 // plain string via SetSystemMetadata.
 const auditHighWaterSep = "\x1f"
 
+// EncodeHighWater serializes cp and sig into the same
+// "audit_checkpoint_highwater" string format ParseHighWater decodes —
+// byte-identical contract to internal/core.auditHighWaterValue. Exported for
+// symmetry with ParseHighWater: any caller (this package's own tests,
+// server/admin's backup/restore tests) that needs to construct a
+// syntactically valid high-water value should use this rather than
+// hand-rolling the separator-joined layout.
+func EncodeHighWater(cp *Checkpoint, sig string) string {
+	return strings.Join([]string{
+		"v1",
+		strconv.FormatInt(cp.ChainedEvents, 10),
+		strconv.FormatUint(cp.HeadID, 10),
+		cp.HeadHash,
+		cp.KeyVersion,
+		sig,
+	}, auditHighWaterSep)
+}
+
 // ParseHighWater parses a system_metadata "audit_checkpoint_highwater"
 // value into the checkpoint snapshot and signature it encodes. ok is false
 // on any malformed value (treated as "no mark") — byte-identical contract

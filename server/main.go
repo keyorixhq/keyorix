@@ -41,6 +41,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/audit/siem"
+	"github.com/keyorixhq/keyorix/internal/auditverify"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/connect"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -888,6 +889,21 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		}
 		coreService.SetOIDCVerifier(verifier)
 		log.Printf("OIDC federation enabled for %d issuer(s)", len(oidc.Issuers))
+	}
+
+	// Wire the audit high-water rollback-protection witness file
+	// (design-b3-backup-v2.md §6.3) for local/sqlite deployments -- the only
+	// backend `admin backup`/`admin restore` support, and therefore the only
+	// one a stale-backup restore is even possible against. Postgres
+	// deployments back up manually (pg_dump, docs/SELF_HOSTING.md §5) and
+	// have no `admin restore` path this witness would ever be compared
+	// against, so leaving it unset there is correct, not an oversight.
+	if cfg.Storage.Type == "local" || cfg.Storage.Type == "sqlite" {
+		dbPath := cfg.Storage.Database.Path
+		if dbPath == "" {
+			dbPath = "./secrets.db"
+		}
+		coreService.SetAuditHighWaterWitnessPath(auditverify.WitnessPath(dbPath))
 	}
 
 	// Wire WebAuthn / passkeys (ADR-036) when configured. A bad RP config (no

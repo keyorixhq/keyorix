@@ -21,6 +21,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -607,4 +609,72 @@ func (c *KeyorixCore) advanceAuditHighWater(ctx context.Context, cp *models.Audi
 		log.Printf("audit high-water: failed to persist mark at %d events: %v", cp.ChainedEvents, err)
 	}
 	c.bumpWatermark(cp.ChainedEvents)
+
+	// design-b3-backup-v2.md §6.3: mirror the just-persisted mark to the
+	// host-local witness file `admin restore` compares an archive against.
+	// Best-effort and silent-on-disable (auditHighWaterWitnessPath == "" for
+	// any deployment `admin backup`/`admin restore` don't support, or a test
+	// core with no on-disk database) — a witness-file write failure must
+	// never block the checkpoint write that just succeeded above; it only
+	// degrades this host's own future rollback detection, logged so an
+	// operator can notice.
+	//
+	// Unconditional write, deliberately not "write only if higher": the
+	// guard at the top of this function already refused to reach this point
+	// at all if cp.ChainedEvents were below the current floor, so val is
+	// already guaranteed monotonically non-decreasing by construction —
+	// there is nothing left to compare here. (internal/core cannot import
+	// internal/auditverify's own WriteWitnessIfHigher for this exact
+	// comparison: auditverify transitively imports internal/notary, which
+	// ADR-109's dependency guard forbids internal/core from depending on —
+	// see docs/adr-109-core-depends-on-interfaces.md. server/admin's restore
+	// path, which has no such restriction, is where the read-and-compare
+	// logic against a POTENTIALLY-tampered witness file actually lives; see
+	// restore.go's checkRollbackProtection.)
+	if c.auditHighWaterWitnessPath != "" {
+		if werr := writeFileAtomic0600(c.auditHighWaterWitnessPath, []byte(val)); werr != nil {
+			log.Printf("audit high-water: failed to update rollback-protection witness file %q: %v",
+				c.auditHighWaterWitnessPath, werr)
+		}
+	}
+}
+
+// writeFileAtomic0600 atomically writes data to path (temp file in the same
+// directory, fsynced, renamed into place) at mode 0600 — the same
+// temp-file-plus-rename shape server/admin's own restore-file writer uses,
+// duplicated in miniature here rather than imported: this is the one
+// production write internal/core performs directly to a plain filesystem
+// path (every other persisted state goes through the storage.Storage
+// interface), and it is small enough that pulling in a shared helper
+// package for one call site is not worth a new dependency edge.
+func writeFileAtomic0600(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) //nolint:errcheck // no-op once renamed into place below
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temp file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("fsync temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp file: %w", err)
+	}
+	if err := os.Chmod(tmpPath, 0600); err != nil {
+		return fmt.Errorf("set file mode: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("rename into place: %w", err)
+	}
+	return nil
 }

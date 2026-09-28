@@ -5,6 +5,19 @@ All notable changes to Keyorix are documented here. This project follows
 
 ## Unreleased
 
+### Security
+- **`admin restore` now refuses to restore a backup that is behind this host's
+  own audit trail, by default.** Restoring an older backup than the host has
+  already progressed past could silently undo any revocation recorded since
+  (a suspended account, a deleted machine credential, a rotated role grant) —
+  the restored database simply doesn't know it happened, and `verify-audit`
+  reported the restored (shorter, self-consistent) chain as `VALID` either
+  way. Restore now compares the archive's own certified audit-trail progress
+  against a host-local witness file before writing anything to disk, and
+  refuses if the archive is behind; pass `--allow-rollback` for a genuine
+  disaster-recovery restore of an intentionally older backup, which writes an
+  explicit audit event recording the override. See `docs/SELF_HOSTING.md` §5.
+
 ## v0.95.1 — 2026-09-27
 
 ### Security
