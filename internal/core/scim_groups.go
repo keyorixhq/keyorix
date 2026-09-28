@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -127,12 +128,31 @@ func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, disp
 	}
 	// Storage-direct: the SCIM path emits its own scim.group_provisioned event below,
 	// so it must not also fire the generic group.created from CreateGroup.
-	group, err := c.storage.CreateGroup(ctx, &models.Group{Name: displayName, NameFolded: foldedName.Folded()})
+	//
+	// The group row and its initial membership run in one transaction: a partial
+	// membership apply used to be best-effort (`_ =`), and — since a POST is not
+	// retry-safe the way PATCH is — a failed member add on a create previously left
+	// a partially-populated group with no signal to the IdP that anything was wrong
+	// (the create itself reported success), and a retry would create a SECOND,
+	// duplicate group rather than complete the first one. AddUserToGroup is
+	// idempotent (a second add to the same (user, group, 0) is a no-op), so this is
+	// also safe to retry once the whole create is atomic.
+	var group *models.Group
+	err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		var cerr error
+		group, cerr = tx.CreateGroup(ctx, &models.Group{Name: displayName, NameFolded: foldedName.Folded()})
+		if cerr != nil {
+			return cerr
+		}
+		for _, uid := range allowed {
+			if aerr := tx.AddUserToGroup(ctx, uid, group.ID, 0); aerr != nil { // SCIM memberships are always global
+				return aerr
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	for _, uid := range allowed {
-		_ = c.storage.AddUserToGroup(ctx, uid, group.ID, 0) // SCIM memberships are always global
 	}
 	c.writeAuditEvent(ctx, EventSCIMGroupProvisioned, actorPtr(actorID), nil,
 		fmt.Sprintf("SCIM provisioned group %d (%q) with %d member(s)", group.ID, displayName, len(allowed)))
@@ -234,11 +254,26 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 			return nil, err
 		}
 	}
-	for _, id := range allowedAdds {
-		_ = c.storage.AddUserToGroup(ctx, id, groupID, 0) // SCIM memberships are always global
-	}
-	for _, id := range toRemove {
-		_ = c.storage.RemoveUserFromGroup(ctx, id, groupID, 0) // SCIM memberships are always global
+	// All add/remove membership writes run in one transaction: a partial apply used
+	// to be best-effort (`_ =`). Both AddUserToGroup and RemoveUserFromGroup are
+	// idempotent (a duplicate add / already-gone remove is a no-op, not an error),
+	// so a fatal error here from a genuine storage failure — and a retry of the
+	// SAME PATCH after it — stay safe; this only changes the transient-failure case
+	// from "silently half-applied" to "rolled back, retry re-applies cleanly."
+	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		for _, id := range allowedAdds {
+			if err := tx.AddUserToGroup(ctx, id, groupID, 0); err != nil { // SCIM memberships are always global
+				return err
+			}
+		}
+		for _, id := range toRemove {
+			if err := tx.RemoveUserFromGroup(ctx, id, groupID, 0); err != nil { // SCIM memberships are always global
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	c.writeAuditEvent(ctx, EventSCIMGroupUpdated, actorPtr(actorID), nil,
 		fmt.Sprintf("SCIM patched group %d (+%d/-%d members)", groupID, len(addIDs), len(removeIDs)))
@@ -330,15 +365,24 @@ func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID u
 			}
 		}
 	}
-	for _, u := range current {
-		if !want[u.ID] {
-			_ = c.storage.RemoveUserFromGroup(ctx, u.ID, groupID, 0) // SCIM memberships are always global
+	// All add/remove membership writes run in one transaction: a partial apply used
+	// to be best-effort (`_ =`). Both storage calls are idempotent, so this stays
+	// safe under an IdP's own retry of the same PUT.
+	return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		for _, u := range current {
+			if !want[u.ID] {
+				if err := tx.RemoveUserFromGroup(ctx, u.ID, groupID, 0); err != nil { // SCIM memberships are always global
+					return err
+				}
+			}
 		}
-	}
-	for _, id := range toAdd {
-		_ = c.storage.AddUserToGroup(ctx, id, groupID, 0) // SCIM memberships are always global
-	}
-	return nil
+		for _, id := range toAdd {
+			if err := tx.AddUserToGroup(ctx, id, groupID, 0); err != nil { // SCIM memberships are always global
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // DeprovisionSCIMGroup handles a SCIM DELETE — removes the group (membership links
