@@ -33,6 +33,7 @@ import (
 
 	"golang.org/x/crypto/hkdf"
 
+	"github.com/keyorixhq/keyorix/internal/auditverify"
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
@@ -97,7 +98,19 @@ type KeyManager struct {
 	// currentDEK/evidenceSignKey.
 	auditCheckpointKey   []byte
 	auditCheckpointKeyID string
-	mu                   sync.RWMutex
+	// backupManifestKey/backupManifestKeyID are a 32-byte HMAC key and its
+	// public fingerprint, derived from the KEK via
+	// auditverify.DeriveBackupManifestKey at Initialize time -- the exact
+	// same treatment as auditCheckpointKey immediately above (KEK-derived
+	// so a DEK rotation never invalidates an already-signed manifest;
+	// re-derived on KEK rotation; wiped on shutdown), but its own
+	// independently domain-separated key: design-b3-backup-v2.md §5.2's
+	// explicit decision that the manifest-signing key must never be the
+	// audit-checkpoint key reused for a second protocol. Never persisted to
+	// disk -- held only in memory, like every other key here.
+	backupManifestKey   []byte
+	backupManifestKeyID string
+	mu                  sync.RWMutex
 }
 
 // evidenceSignKeyInfo/evidenceSignKeyIDInfo domain-separate the evidence-signing
@@ -346,11 +359,27 @@ func (km *KeyManager) Initialize(passphrase string) error {
 		return fmt.Errorf("failed to derive audit-checkpoint key: %w", err)
 	}
 
+	// Derive the backup-manifest signing key from the KEK too (design-b3-
+	// backup-v2.md §5.2), same reasoning, its own independently
+	// domain-separated derivation (internal/auditverify.
+	// DeriveBackupManifestKey, not this function -- that package's own
+	// dependency guard requires it to independently re-derive everything it
+	// verifies, so the construction is duplicated there, not imported here).
+	bmk, bmkID, err := auditverify.DeriveBackupManifestKey(kek)
+	if err != nil {
+		wipeBytes(dek)
+		wipeBytes(esk)
+		wipeBytes(ack)
+		return fmt.Errorf("failed to derive backup-manifest key: %w", err)
+	}
+
 	km.currentDEK = dek
 	km.evidenceSignKey = esk
 	km.evidenceSignKeyID = eskID
 	km.auditCheckpointKey = ack
 	km.auditCheckpointKeyID = ackID
+	km.backupManifestKey = bmk
+	km.backupManifestKeyID = bmkID
 	return nil
 }
 

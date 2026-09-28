@@ -57,6 +57,23 @@ func (km *KeyManager) GetAuditCheckpointKey() (key []byte, keyID string, ok bool
 	return key, km.auditCheckpointKeyID, true
 }
 
+// GetBackupManifestKey returns a copy of the KEK-derived backup-manifest
+// signing key and its fingerprint ("key version"), or ok=false if the
+// manager has not been initialized -- design-b3-backup-v2.md §5.2/§5.3:
+// both `admin backup` (to sign) and `admin restore` (to verify, after
+// unwrapping the KEK from the archive's own staged key files) reach the
+// key only through this getter, never the raw KEK itself.
+func (km *KeyManager) GetBackupManifestKey() (key []byte, keyID string, ok bool) {
+	km.mu.RLock()
+	defer km.mu.RUnlock()
+	if len(km.backupManifestKey) == 0 {
+		return nil, "", false
+	}
+	key = make([]byte, len(km.backupManifestKey))
+	copy(key, km.backupManifestKey)
+	return key, km.backupManifestKeyID, true
+}
+
 // ValidateKeyFiles checks that key files exist and have correct permissions
 // (0600). enc is the full encryption config (used to also cover any
 // KeyProviderConfig-driven key material -- TPM/cloud-KMS wrapped-KEK blobs,
@@ -117,8 +134,8 @@ func (km *KeyManager) keyFileSpecs(enc *config.EncryptionConfig) ([]securefiles.
 	return files, nil
 }
 
-// Wipe securely removes the DEK, the evidence-signing key, and the
-// audit-checkpoint signing key from memory.
+// Wipe securely removes the DEK, the evidence-signing key, the
+// audit-checkpoint signing key, and the backup-manifest signing key from memory.
 func (km *KeyManager) Wipe() {
 	km.mu.Lock()
 	defer km.mu.Unlock()
@@ -134,5 +151,9 @@ func (km *KeyManager) Wipe() {
 	if km.auditCheckpointKey != nil {
 		wipeBytes(km.auditCheckpointKey)
 		km.auditCheckpointKey = nil
+	}
+	if km.backupManifestKey != nil {
+		wipeBytes(km.backupManifestKey)
+		km.backupManifestKey = nil
 	}
 }

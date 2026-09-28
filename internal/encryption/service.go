@@ -264,6 +264,22 @@ func (s *Service) AuditCheckpointKey() (key []byte, keyVersion string, ok bool) 
 	return s.keyManager.GetAuditCheckpointKey()
 }
 
+// BackupManifestKey returns the KEK-derived backup-manifest signing key and
+// its fingerprint ("key version"), for `admin backup` to sign a manifest
+// with and `admin restore` to verify one against (design-b3-backup-v2.md
+// §5.2/§5.3) -- the raw KEK itself is never exposed outside this package;
+// every caller reaches a KEK-derived key only through a getter like this
+// one. ok=false when encryption is disabled or uninitialised, exactly like
+// AuditCheckpointKey immediately above.
+func (s *Service) BackupManifestKey() (key []byte, keyVersion string, ok bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.config.Enabled || !s.initialized {
+		return nil, "", false
+	}
+	return s.keyManager.GetBackupManifestKey()
+}
+
 // EvidenceSignKey returns the 32-byte HMAC key used to sign exported compliance-
 // evidence packs, alongside its fingerprint ("key version"). Unlike
 // AuditCheckpointKey, this key is derived from the KEK, not the DEK (see
