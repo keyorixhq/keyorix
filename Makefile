@@ -9,7 +9,17 @@ BINARY_MIGRATE=keyorix-migrate
 # internal/evidencesink/objectstore_lean.go) for installs that don't use the
 # AWS IAM rotation backend or the S3-compatible evidence sink. Linux only —
 # this variant targets air-gapped production servers, not local dev on macOS.
+# Being replaced by the AIR-GAPPED profile below (ADR-109 step 6, B3/S4 decides
+# whether this becomes an alias or is removed).
 BINARY_SERVER_LEAN=$(BINARY_SERVER)-lean
+# AIR-GAPPED release variant (-tags noaws,noazure,nogcp — ADR-109 step 6):
+# drops every AWS/Azure/GCP SDK package from the binary (measured 0 remaining,
+# scripts/airgap-dependency-guard.sh enforces this). Vault and Kubernetes STAY
+# (ADR-109's open-questions decision: on-prem Vault read-through and on-prem
+# k8s are legitimate air-gapped uses) — this is a deliberate superset of the
+# old `lean` tag's scope (lean only ever dropped rotation/awsiam +
+# evidencesink/objectstore), not a synonym for it.
+BINARY_SERVER_AIRGAP=$(BINARY_SERVER)-airgap
 BUILD_DIR=./bin
 VERSION?=dev
 GIT_COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo none)
@@ -43,7 +53,7 @@ CLI_RELEASE_LDFLAGS=-ldflags "-s -w $(CLI_VERSION_LDFLAGS)"
 MIGRATE_VERSION_LDFLAGS=-X github.com/keyorixhq/keyorix/migrate/internal/migrateversion.Version=$(VERSION)
 MIGRATE_RELEASE_LDFLAGS=-ldflags "-s -w $(MIGRATE_VERSION_LDFLAGS)"
 
-.PHONY: build build-cli build-server build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate smoke check-release-assets airgap-e2e
+.PHONY: build build-cli build-server build-server-airgap airgap-dependency-guard build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate smoke check-release-assets airgap-e2e
 
 # Pinned protoc-gen plugin versions (match google.golang.org/{protobuf,grpc} in go.mod).
 PROTOC_GEN_GO_VERSION=v1.36.11
@@ -81,6 +91,18 @@ build-cli:
 
 build-server:
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_SERVER) ./server
+
+# build-server-airgap: local dev build of the AIR-GAPPED profile (ADR-109 step
+# 6, B2/S3). Not cross-compiled or stripped here — see `release`'s
+# BINARY_SERVER_AIRGAP cross-compiles for the actual shipped artifact (B3/S4).
+build-server-airgap:
+	go build -tags noaws,noazure,nogcp $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_SERVER_AIRGAP) ./server
+
+# airgap-dependency-guard: fails the build if the air-gapped profile links a
+# forbidden cloud-SDK package (ADR-109 step 6, B2/S3). See the script's own
+# header for the full allowlist mechanism.
+airgap-dependency-guard:
+	./scripts/airgap-dependency-guard.sh
 
 # populate-webui-dist: builds the dashboard (web/, now an in-repo subtree —
 # ADR-070) and copies the real output into server/webui/dist/, which is
