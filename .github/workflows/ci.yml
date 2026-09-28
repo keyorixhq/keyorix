@@ -1968,7 +1968,7 @@ jobs:
           # the Kubernetes schema.
           helm template kx deploy/helm/keyorix \
             --set auth.masterPassword=ci --set postgresql.auth.password=ci \
-            --set auth.adminPassword=ci --set ingress.enabled=true \
+            --set auth.adminPassword=Ci-Render-Only-Pw1! --set ingress.enabled=true \
             | ./kubeconform -strict -summary -kubernetes-version 1.29.0
           helm template kx deploy/helm/keyorix \
             --set auth.masterPassword=ci --set postgresql.enabled=false \
@@ -1985,7 +1985,7 @@ jobs:
           APP_VERSION="$(sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' deploy/helm/keyorix/Chart.yaml)"
           helm template kx deploy/helm/keyorix \
             --set auth.masterPassword=ci --set postgresql.auth.password=ci \
-            --set auth.adminPassword=ci > default-render.yaml
+            --set auth.adminPassword=Ci-Render-Only-Pw1! > default-render.yaml
           if grep -q ':latest' default-render.yaml; then
             echo "expected no ':latest' image tag in the default render"; exit 1
           fi
@@ -2247,7 +2247,7 @@ jobs:
           # so an unpinned render would fail it regardless of chart capability.
           helm template kx deploy/helm/keyorix \
             --set auth.masterPassword=ci --set postgresql.auth.password=ci \
-            --set auth.adminPassword=ci --set ingress.enabled=true \
+            --set auth.adminPassword=Ci-Render-Only-Pw1! --set ingress.enabled=true \
             --set server.image.digest=sha256:1111111111111111111111111111111111111111111111111111111111111111 \
             --set web.image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
             > keyorix-render.yaml
