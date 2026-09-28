@@ -293,9 +293,24 @@ const SecretsFilterBar: React.FC<SecretsFilterBarProps> = ({
                     onChange={(e) => onFilterChange('environment', e.target.value === 'all' ? '' : e.target.value)}
                     options={[
                         { value: 'all', label: 'All Environments' },
-                        ...environments.map((e) => ({
-                            value: e.name,
-                            label: e.name.charAt(0).toUpperCase() + e.name.slice(1),
+                        // `environments` is the GLOBAL, cross-project list (useSecretsList's
+                        // query key is `['environments']`, no project scope), and this
+                        // filter is itself name-based (onFilterChange('environment', name)
+                        // filters this page's already-cross-project secrets list by
+                        // environment NAME, not by one specific environment row's id) --
+                        // so every project's own "development"/"staging"/"production" rows
+                        // collapse to the SAME filter value. Deduping by name before
+                        // mapping to options is required, not cosmetic: Select (components/
+                        // ui/Select.tsx) keys each <option> by `option.value`, so two (or,
+                        // with more than two projects, three-plus) environment rows sharing
+                        // a name previously produced duplicate React keys ("Encountered two
+                        // children with the same key, `development`") -- found live by
+                        // SESSION-I's web/e2e/real/pages.spec.ts running against a real
+                        // backend with more than one project, which every existing mocked
+                        // spec (web/e2e/*.spec.ts) never exercises with more than one.
+                        ...Array.from(new Set(environments.map((e) => e.name))).map((name) => ({
+                            value: name,
+                            label: name.charAt(0).toUpperCase() + name.slice(1),
                         })),
                     ]}
                 />
