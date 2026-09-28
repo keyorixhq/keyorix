@@ -1,0 +1,1 @@
+gcp-empty-access-token-001	./internal/dynamic	TestGCPEngine_Issue_EmptyAccessToken	default-ci	pending-merge	2208	GCPEngine.Issue accepted a successful lease when generateAccessToken returned a nil error alongside an empty access_token -- the code only checked the error, never the token's content; fixed by rejecting when strings.TrimSpace(token) == ""; fuzz-confirmed (#2208)
