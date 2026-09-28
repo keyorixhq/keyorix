@@ -5,6 +5,23 @@ All notable changes to Keyorix are documented here. This project follows
 
 ## Unreleased
 
+### Added
+- **`admin backup`/`admin restore` now support Postgres, in addition to
+  SQLite** — the same commands, same archive format, on either backend.
+  Backup reads through a single `REPEATABLE READ` snapshot transaction by
+  default on Postgres (`--exclusive` opts into the same host-level lock a
+  SQLite backup always holds). The archive itself is a new backend-neutral
+  logical format: a streaming, table-by-table snapshot with an
+  HMAC-signed manifest (KEK-derived key), rather than a raw database-file
+  copy — checksums catch corruption, the signature catches tampering a
+  checksum alone can't. Restore still reads an archive from the previous
+  (SQLite-only, physical-copy) format, with a deprecation notice, until
+  Keyorix 1.0. Moving a deployment from SQLite to Postgres, and restoring a
+  backup taken on a much older release, are both just this same restore
+  command pointed at a different target — no new subcommand, no separate
+  migration tool. See `docs/SELF_HOSTING.md` §5.
+  (#2261, #2263, #2270, #2280, #2284, #2288, #2291, #2293)
+
 ### Security
 - **`admin restore` now refuses to restore a backup that is behind this host's
   own audit trail, by default.** Restoring an older backup than the host has

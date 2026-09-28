@@ -241,15 +241,19 @@ as a proven-correct one), realistically putting a production-ready version at
 
 ## What this runbook does NOT cover
 
-- **Postgres-backed deployments** — back up/restore with `pg_dump`/`psql`
-  directly (SELF_HOSTING.md §5); `admin backup`/`admin restore` refuse
-  non-sqlite storage outright.
-- **Cross-backend migration** (SQLite → Postgres) or **version-skipping
-  upgrades** beyond what `admin restore`'s own automatic migration step
-  handles — these are documented usage patterns, not wrapped commands, per
-  the v2 backup design (PR #2100, `docs/design-b3-backup-v2.md` once merged).
-- **A portable, backend-neutral archive format.** Today's archive is a
-  SQLite file snapshot plus key files (`admin backup`'s own format,
-  version 1) — not yet the streaming, backend-neutral format
-  the v2 design (PR #2100) describes. v2 restore is designed to accept
-  v1 archives until 1.0.
+- **Postgres-backed deployments running this runbook's own drill script
+  end to end.** `admin backup`/`admin restore` now support Postgres directly
+  (`docs/design-b3-backup-v2.md` §4, §8) — the same commands this runbook
+  uses for SQLite work against a Postgres-configured deployment too, and
+  `pg_dump`/`psql` remains a reasonable alternative if you already have a
+  pipeline built around it (`SELF_HOSTING.md` §5). This runbook's own
+  automated drill (above) has not yet been extended to exercise the
+  Postgres target end to end — a good follow-up, not a capability gap in
+  the underlying commands.
+- **Cross-backend migration (SQLite → Postgres) and version-skipping
+  upgrades** are documented usage patterns of the same `admin backup`/
+  `admin restore` commands — no new subcommand, no separate tool
+  (`docs/design-b3-backup-v2.md` §8, `SELF_HOSTING.md` §5). An archive from
+  a release that only ever wrote the older v1 (physical, SQLite-only)
+  format can only restore into SQLite; restore it there first with the
+  current binary, then take a fresh backup of that to move it onward.
