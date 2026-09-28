@@ -53,7 +53,7 @@ CLI_RELEASE_LDFLAGS=-ldflags "-s -w $(CLI_VERSION_LDFLAGS)"
 MIGRATE_VERSION_LDFLAGS=-X github.com/keyorixhq/keyorix/migrate/internal/migrateversion.Version=$(VERSION)
 MIGRATE_RELEASE_LDFLAGS=-ldflags "-s -w $(MIGRATE_VERSION_LDFLAGS)"
 
-.PHONY: build build-cli build-server build-server-airgap airgap-dependency-guard build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate smoke check-release-assets airgap-e2e
+.PHONY: build build-cli build-server build-server-airgap airgap-dependency-guard build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate smoke check-release-assets airgap-e2e k8s-e2e
 
 # Pinned protoc-gen plugin versions (match google.golang.org/{protobuf,grpc} in go.mod).
 PROTOC_GEN_GO_VERSION=v1.36.11
@@ -337,6 +337,16 @@ e2e-web-smoke:
 # and the web UI (NOT the Postgres leg, which needs a docker container the
 # other three don't -- run e2e-smoke-postgres separately once one is up).
 e2e-smoke-all: e2e-smoke e2e-smoke-upgrade e2e-web-smoke
+
+# k8s-e2e: MANUAL target only, not run in CI by default (needs Docker + kind,
+# builds 4 images, installs a real External Secrets Operator, takes several
+# minutes) -- see scripts/k8s-e2e/run.sh's own header for the full flow.
+# Proves the Helm chart, operator, and keyorix-k8s-sync agent actually work
+# against a real cluster, not just that they render correctly -- `helm lint`/
+# `helm template`/kubeconform (already run in CI) catch none of the four real
+# bugs Session J found this way (see the script's own header).
+k8s-e2e:
+	@./scripts/k8s-e2e/run.sh
 
 
 clean:
