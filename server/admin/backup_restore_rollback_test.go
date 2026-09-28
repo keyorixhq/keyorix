@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -21,6 +22,7 @@ import (
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // minimalValidSQLiteBytes returns the bytes of a genuine, minimal SQLite
@@ -235,5 +237,59 @@ func TestAdminRestore_NoRecordedHighWater_TreatedAsBehind(t *testing.T) {
 
 	err = runAdminRestore(nil, nil)
 	require.Error(t, err)
+	require.Contains(t, err.Error(), "refusing to restore")
+}
+
+// TestAdminRestore_LiteralRepro_NoCheckpointNoWitness_RefusesOverwrite is the
+// EXACT sequence design-b3-backup-v2.md #6.3 was opened to close, reproduced
+// with no test-only shortcuts: back up (nothing has happened on the target
+// host yet, so there is no witness file at all), create a real audit event
+// on the TARGET host's own database (standing in for a revoked credential),
+// then attempt to restore that older backup over it with --overwrite-
+// existing. No checkpoint ever ran (the witness file never got the chance to
+// observe the new event) -- the ONLY signal available is the destination
+// database's own LIVE audit_events count, read moments before this restore
+// would have overwritten it. Without readExistingDatabaseAuditEventCount,
+// this restore would proceed silently (confirmed as this test's own red-
+// proof, see the PR body) -- with it, the destination's live state alone is
+// enough to refuse.
+func TestAdminRestore_LiteralRepro_NoCheckpointNoWitness_RefusesOverwrite(t *testing.T) {
+	resetBackupRestoreFlags(t)
+	require.NoError(t, i18n.InitializeForTesting())
+
+	cfgPath, dbPath := setUpRollbackRestoreTarget(t)
+	configPathFlag = cfgPath
+
+	// The backup was taken from a fresh install -- no checkpoint had ever
+	// run, so its manifest carries no recorded high-water at all.
+	restoreInput = seedRollbackTestArchive(t, t.TempDir(), -1)
+
+	// The target host's OWN database has since recorded a real audit event
+	// (e.g. a credential revocation) -- with NO checkpoint run afterward, so
+	// nothing ever touched a witness file.
+	witnessPath := auditverify.WitnessPath(dbPath)
+	_, statErr := os.Stat(witnessPath)
+	require.True(t, os.IsNotExist(statErr), "sanity: no witness file exists -- no checkpoint ever ran")
+
+	cfg, err := config.Load(cfgPath)
+	require.NoError(t, err)
+	st, err := storage.NewStorageFactory().CreateStorage(cfg) // creates + migrates the target DB for real
+	require.NoError(t, err)
+	success := true
+	require.NoError(t, st.LogAuditEvent(context.Background(), &models.AuditEvent{
+		EventType:   "user.revoked",
+		Description: "simulated credential revocation after the backup was taken",
+		Success:     &success,
+		EventTime:   time.Now(),
+	}))
+
+	restoreOverwriteExisting = true // the target DB now genuinely exists and is non-empty
+	restoreAllowRollback = false
+	restoreMaxEntryBytes = 0
+	restoreMaxTotalBytes = 0
+
+	err = runAdminRestore(nil, nil)
+	require.Error(t, err, "the destination database's own live audit event must be enough to refuse, "+
+		"with no witness file and no checkpoint involved at all")
 	require.Contains(t, err.Error(), "refusing to restore")
 }
