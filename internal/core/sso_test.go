@@ -404,7 +404,13 @@ func TestProvisionSSOUser(t *testing.T) {
 		store.AssertCalled(t, "GetRoleByName", mock.Anything, "project_admin")
 	})
 
-	t.Run("an unknown default_role grants nothing but still provisions", func(t *testing.T) {
+	// Session O atomicity fix: the user row and its default-role grant now run in
+	// one transaction (the same bootstrap shape #2295 fixed for first-boot) --
+	// an unknown/misconfigured default_role must refuse the whole provision, not
+	// silently mint a user with zero roles that an admin would only discover much
+	// later. Was "an unknown default_role grants nothing but still provisions"
+	// before this fix.
+	t.Run("an unknown default_role refuses the whole provision, no orphaned user", func(t *testing.T) {
 		c, store, _, p := ssoTestCore(t)
 		p.DefaultRole = "does_not_exist"
 		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
@@ -412,12 +418,11 @@ func TestProvisionSSOUser(t *testing.T) {
 		store.On("GetUserByUsername", mock.Anything, "ada").Return((*models.User)(nil), notFound())
 		store.On("CreateUser", mock.Anything, mock.Anything).Return(&models.User{ID: 8}, nil)
 		store.On("GetRoleByName", mock.Anything, "does_not_exist").Return((*models.Role)(nil), notFound())
-		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", true, "Ada")
-		require.NoError(t, err)
-		assert.Equal(t, uint(8), u.ID)
+		_, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", true, "Ada")
+		require.Error(t, err)
 		store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		store.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
 	})
 }
 
