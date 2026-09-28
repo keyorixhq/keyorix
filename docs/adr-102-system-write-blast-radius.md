@@ -2,6 +2,28 @@
 
 ## Status
 
+**Resolved by deletion, not by choosing (a) or (b) (2026-09-28, ADR-110
+review).** This ADR originally declined to choose between the two candidate
+positions below and recorded the facts #1622's investigation established so
+the choice could be made deliberately. That never happened — instead, the
+entire 148-route `/system` proxy surface this ADR's blast-radius question was
+posed against was deleted outright by ADR-108 Phase 6 (PRs #2162/#2171):
+`RemoteStorage` and the `storage.type: remote` deployment mode it served no
+longer exist, so the route group that let a `system.write` holder reach
+machine-identity credentials, RBAC role grants, account state, and
+break-glass revocation is gone, not narrowed. Neither (a) nor (b) was chosen;
+the premise for asking either one disappeared. **ADR-110**
+(`docs/adr-110-system-write-scope.md`) reviews the much smaller replacement
+surface `system.write` actually gates today (26 gate sites / 32 routes, none
+of them a storage-relay primitive) and is the operative document for that
+question going forward — read this ADR as historical context for how
+`system.write` used to work, not as a live open decision. The rest of this
+document is preserved unmodified below for that historical record.
+
+---
+
+*Original status, preserved for context:*
+
 **Proposed.** This ADR intentionally does not choose between the two candidate
 positions below — see "What this ADR does not do." It records the facts #1622's
 investigation established so the choice can be made deliberately, not by
@@ -241,21 +263,24 @@ declines to make unilaterally.
 
 ## Consequences
 
-- **Enforced, not just written down**: `TestADR102_SystemWriteBlastRadiusStillOpen`
-  (`internal/core/adr_open_decisions_tripwire_test.go`) fails CI once this
-  decision has sat open past its threshold age, mirroring the mechanism
-  ADR-101 already uses for its own deferred decision
-  (`TestCurrentSchemaEpoch_StillOne_SeeADR101`). Contrast with the state
-  before 2026-09-07: this ADR had no enforcing test at all, unlike ADR-101 —
-  see that test's own doc comment for the general "open decision" registry
-  this belongs to (also covers ADR-084).
-- Until this is decided, every future `/system` route addition should be
-  read as adding to an already-root-equivalent surface, not a narrow one —
-  reviewers should weigh new routes accordingly regardless of which position
-  eventually wins.
+*Historical — see the Status section above for how this was actually
+resolved.*
+
+- **Was enforced, no longer needed**: `TestADR102_SystemWriteBlastRadiusStillOpen`
+  and its `adrOpenDecisionRegistry` entry
+  (`internal/core/adr_open_decisions_tripwire_test.go`) were removed
+  2026-09-28 once `adr102Premise` (added the same day, before removal)
+  confirmed the `/system` route group itself no longer exists — the
+  mechanism did exactly what it was built for: it would have failed loudly
+  ("registry says still open, but its premise reports resolved") the moment
+  this status update didn't keep pace with the code fact, exactly the
+  ADR-084-staleness failure mode this whole registry exists to prevent.
+- The `/system` route group this bullet warned about no longer exists —
+  see ADR-108 Phase 6 and ADR-110's confirmation.
 - Position (a)'s alerting-rule work and position (b)'s permission-scoping work
-  are both real, multi-PR programs; neither should be started speculatively
-  before this ADR is resolved.
+  are both moot for the deleted surface. ADR-110 records its own, much
+  narrower open question (a possible "alerting operator" permission split)
+  for the surface that remains.
 - #1622's sibling list (raw-storage-bypass audit gaps on other `/system`
   routes, recorded in that PR's own description) is relevant evidence for
   either position: under (a), each is a detection blind spot to close; under

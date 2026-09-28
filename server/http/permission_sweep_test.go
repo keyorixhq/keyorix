@@ -145,19 +145,26 @@ type systemReadSite struct {
 	routeKey string
 	line     int
 	fn       string // "RequirePermission" or "RequireScopedPermission"
+	perm     string // the gated permission identifier, e.g. "permSystemRead" or "permSystemWrite"
 }
 
-// addSystemReadSite inserts a found permSystemRead call site into found, keyed by
-// routeKey. Two independent call sites that resolve to the exact same routeKey (a
-// route registered twice, or two distinct gate calls somehow attached to the same
-// route) are disambiguated by appending the gate function name and line rather than
-// silently overwriting one with the other.
-func addSystemReadSite(found map[string]systemReadSite, routeKey string, line int, fn string) {
+// trackedGatePerms is every permission identifier this scan collects sites for.
+// permSystemRead: this file's own CP-001/CP-008 sweep, below. permSystemWrite: the
+// ADR-110 sweep (system_write_scope_test.go) reuses this same walk rather than
+// duplicating it -- see that file's own package doc.
+var trackedGatePerms = map[string]bool{"permSystemRead": true, "permSystemWrite": true}
+
+// addSystemReadSite inserts a found call site (for any permission in
+// trackedGatePerms) into found, keyed by routeKey. Two independent call sites that
+// resolve to the exact same routeKey (a route registered twice, or two distinct gate
+// calls somehow attached to the same route) are disambiguated by appending the gate
+// function name and line rather than silently overwriting one with the other.
+func addSystemReadSite(found map[string]systemReadSite, routeKey string, line int, fn string, perm string) {
 	key := routeKey
 	if existing, ok := found[key]; ok && existing.line != line {
 		key = fmt.Sprintf("%s [%s@%d]", routeKey, fn, line)
 	}
-	found[key] = systemReadSite{routeKey: routeKey, line: line, fn: fn}
+	found[key] = systemReadSite{routeKey: routeKey, line: line, fn: fn, perm: perm}
 }
 
 // TestNoUnjustifiedSystemReadOnlyGates is the guard itself: every
@@ -168,7 +175,16 @@ func addSystemReadSite(found map[string]systemReadSite, routeKey string, line in
 // package doc comment.
 func TestNoUnjustifiedSystemReadOnlyGates(t *testing.T) {
 	routerGoPath := filepath.Join(permissionSweepRepoRoot(t), "server", "http", "router.go")
-	_, found := scanRouter(t, routerGoPath)
+	_, foundAll := scanRouter(t, routerGoPath)
+	// scanRouter also collects permSystemWrite sites for system_write_scope_test.go's
+	// ADR-110 sweep (same trackedGatePerms walk, see this file's package doc) -- filter
+	// to permSystemRead only here, this test's own concern.
+	found := map[string]systemReadSite{}
+	for key, s := range foundAll {
+		if s.perm == "permSystemRead" {
+			found[key] = s
+		}
+	}
 	if len(found) == 0 {
 		t.Fatal("found 0 RequirePermission(permSystemRead)/RequireScopedPermission(permSystemRead, " +
 			"...) call sites in router.go — this guard is now vacuous and is no longer checking " +
@@ -825,13 +841,13 @@ func walkRouterBlock(t *testing.T, fset *token.FileSet, consts map[string]string
 				continue
 			}
 			blockGated = true
-			if (gc.fn == "RequirePermission" || gc.fn == "RequireScopedPermission") && gc.perm == "permSystemRead" {
+			if (gc.fn == "RequirePermission" || gc.fn == "RequireScopedPermission") && trackedGatePerms[gc.perm] {
 				groupPath := prefix
 				if groupPath == "" {
 					groupPath = "/"
 				}
 				pos := fset.Position(call.Pos())
-				addSystemReadSite(systemRead, "USE "+groupPath, pos.Line, gc.fn)
+				addSystemReadSite(systemRead, "USE "+groupPath, pos.Line, gc.fn, gc.perm)
 			}
 		}
 	}
@@ -919,9 +935,9 @@ func walkRouterExpr(t *testing.T, fset *token.FileSet, consts map[string]string,
 			continue
 		}
 		gated = true
-		if (gc.fn == "RequirePermission" || gc.fn == "RequireScopedPermission") && gc.perm == "permSystemRead" {
+		if (gc.fn == "RequirePermission" || gc.fn == "RequireScopedPermission") && trackedGatePerms[gc.perm] {
 			pos := fset.Position(call.Pos())
-			addSystemReadSite(systemRead, method+" "+fullPath, pos.Line, gc.fn)
+			addSystemReadSite(systemRead, method+" "+fullPath, pos.Line, gc.fn, gc.perm)
 		}
 	}
 	if gated {

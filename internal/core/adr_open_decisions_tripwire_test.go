@@ -26,13 +26,20 @@
 // have caught the staleness immediately, the day #1671 merged, instead of
 // sitting wrong in a registry entry that was itself only hours old.
 // Age-based expiry is kept ONLY as a fallback for decisions whose
-// unresolved state produces no code artifact in either branch — ADR-102's
-// (a)/(b) policy choice (alerting vs. permission-scoping) is the current
-// example: neither un-chosen branch leaves anything in the codebase for a
-// premise function to inspect, so there is nothing to check except elapsed
-// time. Do not add an age-only entry without first asking whether a premise
-// exists — leave premise nil with a comment stating why not, so the omission
-// reads as considered, not overlooked the way ADR-084's was.
+// unresolved state produces no code artifact in either branch. Do not add an
+// age-only entry without first asking whether a premise exists — leave
+// premise nil with a comment stating why not, so the omission reads as
+// considered, not overlooked the way ADR-084's was.
+//
+// ADR-102 update, 2026-09-28: this entry originally had no premise ("neither
+// un-chosen branch leaves anything in the codebase to inspect"), which was
+// true of the (a)/(b) choice itself but missed a THIRD way the question could
+// stop mattering: the 148-route surface the question was posed against could
+// be deleted outright, rather than either narrowed (b) or left as intentional
+// break-glass (a). ADR-108 Phase 6 did exactly that (deleted the entire
+// /system proxy tier, PRs #2162/#2171) — a real code fact, checkable now.
+// adr102Premise below checks for it; see docs/adr-110-system-write-scope.md
+// for the follow-up review of the (much smaller) surface that remains.
 //
 // When a premise IS expressible, the check still also runs the age fallback
 // underneath it (see evaluateOpenDecision) — a resolved premise fires
@@ -87,23 +94,6 @@ type adrOpenDecision struct {
 // a threshold age." Add an entry here, not a new bespoke test function, the
 // next time this shape recurs.
 var adrOpenDecisionRegistry = []adrOpenDecision{
-	{
-		adr:      "ADR-102",
-		decision: "system.write's blast radius: is it (a) intentionally break-glass/root-equivalent (fix = alerting) or (b) a routine operator role (fix = permission-scoping migration)? docs/adr-102-system-write-blast-radius.md explicitly declines to choose.",
-		// No premise is expressible: unlike ADR-084's structural flag (whose
-		// presence directly proves the decision resolved), neither (a) nor
-		// (b) leaves a code artifact in its UNRESOLVED state for a premise
-		// function to check against — the decision is a pure product/policy
-		// choice with no interim code shape either fork would produce before
-		// someone actually builds it. Age is the only available signal.
-		openedDate: "2026-09-05",
-		threshold:  30 * 24 * time.Hour,
-		reasoning: "30 days: long enough for a real product/threat-model decision (this " +
-			"touches every /system route and every role holding system.write), short enough " +
-			"that the already-confirmed account-takeover chain motivating this ADR (see its " +
-			"own Context section) doesn't quietly age from '2 days old, worth catching now' " +
-			"(the 2026-09-07 review's own words) into 'forgotten.'",
-	},
 	{
 		adr: "ADR-105",
 		decision: "gRPC's machine-appropriate step-up primitive: MFA step-up has no coherent " +
@@ -187,11 +177,47 @@ func adr105Premise() (stillOpen bool, detail string) {
 		"must be decided and the ADR's Status updated now, not after"
 }
 
-// TestADR102_SystemWriteBlastRadiusStillOpen is the enforcing test named in
-// docs/adr-102-system-write-blast-radius.md's own Consequences section.
-func TestADR102_SystemWriteBlastRadiusStillOpen(t *testing.T) {
+// adr102Premise answers "does the 148-route /system proxy surface ADR-102's
+// blast-radius question was posed against still exist?" by checking for
+// r.Route("/system", ...) in server/http/router.go. ADR-108 Phase 6 deleted
+// that entire group (PRs #2162/#2171); its absence is a direct code fact,
+// not an inference from something else being true. This does not choose (a)
+// or (b) — it observes that the specific surface both positions argued about
+// is gone, which is the third resolution neither anticipated. See
+// docs/adr-110-system-write-scope.md for the review of what remains
+// (26 permSystemWrite gate sites, none of them a storage-relay primitive).
+func adr102Premise() (stillOpen bool, detail string) {
+	const routerGoPath = "../../server/http/router.go"
+	b, err := os.ReadFile(routerGoPath)
+	if err != nil {
+		return true, fmt.Sprintf("could not read %s (%v); treating the decision as still open", routerGoPath, err)
+	}
+	if strings.Contains(string(b), `r.Route("/system"`) {
+		return true, `server/http/router.go still registers r.Route("/system", ...) -- the 148-route ` +
+			"surface ADR-102's blast-radius question was posed against still exists; (a)/(b) remains unresolved"
+	}
+	return false, `server/http/router.go no longer registers r.Route("/system", ...) -- the 148-route ` +
+		"surface ADR-102 was posed against was deleted outright (ADR-108 Phase 6), not narrowed by " +
+		"choosing (a) or (b). See docs/adr-110-system-write-scope.md for the review of the much " +
+		"smaller replacement surface (26 gate sites) -- that ADR is the actual resolution artifact " +
+		"now, not this one."
+}
+
+// TestADR102SystemGroupStaysDeleted is the ADR-084-style worked example for
+// ADR-102: not a registry entry (removed 2026-09-28 once adr102Premise
+// confirmed resolution — see docs/adr-102-system-write-blast-radius.md's
+// Status section), but a live regression guard that the specific fact this
+// ADR's resolution rests on — the /system route group is gone — stays true.
+// A future PR that reintroduces r.Route("/system", ...) would silently
+// resurrect the exact 148-route blast-radius surface this ADR's (a)/(b)
+// question was posed against; this fails loudly instead.
+func TestADR102SystemGroupStaysDeleted(t *testing.T) {
 	t.Parallel()
-	checkADROpenDecisionNotStale(t, "ADR-102")
+	stillOpen, detail := adr102Premise()
+	if stillOpen {
+		t.Fatalf("ADR-102's resolution (the /system route group was deleted, not narrowed) has "+
+			"regressed: %s", detail)
+	}
 }
 
 // TestADRDecisionRoleSetContainsAdminIsStructural is the worked example of a
