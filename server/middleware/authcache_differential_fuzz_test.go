@@ -332,7 +332,7 @@ func acRunOp(t *testing.T, w *acWorld, st *acIterState, op byte) {
 		// ExpiresAt is already in the past.
 		if st.sessionToken != "" {
 			if sess, err := w.c.Storage().GetSession(ctx, st.sessionToken); err == nil && sess != nil {
-				past := time.Now().Add(-24 * time.Hour)
+				past := time.Now().UTC().Add(-24 * time.Hour) // canonical UTC: see beforeSaveBypassAllowlistG1619
 				_ = w.db.Model(&models.Session{}).Where("id = ?", sess.ID).Update("expires_at", past).Error
 			}
 		}
