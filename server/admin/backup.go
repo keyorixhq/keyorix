@@ -1,9 +1,15 @@
 // backup.go implements `keyorix-server admin backup` (ADR-108 §B3,
 // design-b3-backup-v2.md): a consistent, offline, backend-neutral logical
-// snapshot of the database and every encryption key-material file, taken
-// while this admin command holds the database exclusively
-// (acquireDatabaseLock) -- the same "operations that need the database to
-// themselves" guarantee every other admin command relies on.
+// snapshot of the database and every encryption key-material file. On
+// SQLite, always taken while this admin command holds the database
+// exclusively (acquireDatabaseLock) -- the same "operations that need the
+// database to themselves" guarantee every other admin command relies on. On
+// Postgres, consistency instead comes from a single REPEATABLE READ
+// snapshot transaction by default (design §4) -- the exclusive lock is an
+// explicit --exclusive opt-in there, since holding it would block an
+// ADR-039 HA deployment's other replicas from (re)starting for the whole
+// backup, the exact availability cost those deployments choose Postgres to
+// avoid.
 //
 // A complete backup is TWO things -- the database and the keys -- matching
 // docs/SELF_HOSTING.md §5's existing manual guidance for the Docker/Postgres
@@ -16,6 +22,7 @@ package admin
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -44,7 +51,15 @@ const auditHighWaterMetadataKey = "audit_checkpoint_highwater" // #nosec G101 --
 var (
 	backupOutput           string
 	backupPassphraseSource crypto.PassphraseSource
+	backupExclusive        bool
 )
+
+// isPostgresStorage reports whether cfg is configured for Postgres storage
+// -- the same two spellings storage/factory.go's own createPostgresStorage
+// dispatch accepts.
+func isPostgresStorage(cfg *config.Config) bool {
+	return cfg.Storage.Type == "postgres" || cfg.Storage.Type == "postgresql"
+}
 
 var backupCmd = &cobra.Command{
 	Use:   "backup",
@@ -60,12 +75,13 @@ The archive's per-table manifest is signed (HMAC-SHA256, KEK-derived key,
 design-b3-backup-v2.md §5) so tampering is caught by 'admin restore' before
 any byte reaches the target -- not only by a post-hoc 'admin verify-audit'.
 
-Consistency is guaranteed by the same exclusive database lock every admin
-command takes: no server (or other admin command) can be writing while this
-runs.
-
-Only local/sqlite storage is supported today. For a Postgres-backed
-deployment, back up with pg_dump directly (see docs/SELF_HOSTING.md §5).
+On SQLite, consistency is guaranteed by the same exclusive database lock
+every admin command takes: no server (or other admin command) can be
+writing while this runs. On Postgres, backup instead reads through a single
+REPEATABLE READ snapshot transaction by default (design §4) -- consistent
+without blocking other replicas in an HA deployment from (re)starting; pass
+--exclusive for the stronger (but availability-costing) guarantee of also
+holding the exclusive lock, e.g. before a major upgrade.
 
 --output must not already exist: each backup is a distinct, timestamped
 artifact. Store it OFF this host -- a backup that never leaves the machine
@@ -77,6 +93,10 @@ Restore with: keyorix-server admin restore --input <archive>`,
 
 func init() {
 	backupCmd.Flags().StringVar(&backupOutput, "output", "", "Path to write the backup archive to (must not already exist; required)")
+	backupCmd.Flags().BoolVar(&backupExclusive, "exclusive", false,
+		"Postgres only: hold this database's exclusive advisory lock for the whole backup, on top of the default "+
+			"REPEATABLE READ snapshot -- v1's stronger (but HA-availability-costing) guarantee, for e.g. a maintenance-"+
+			"window backup before a major upgrade (design §4). No effect on SQLite, which already always holds this lock.")
 	registerPassphraseFlags(backupCmd, &backupPassphraseSource)
 	rootCmd.AddCommand(backupCmd)
 }
@@ -90,16 +110,24 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if cfg.Storage.Type != "local" && cfg.Storage.Type != "sqlite" {
-		return fmt.Errorf("admin backup only supports local/sqlite storage today (got %q) -- "+
-			"for Postgres, back up with pg_dump directly (see docs/SELF_HOSTING.md §5)", cfg.Storage.Type)
+	if cfg.Storage.Type != "local" && cfg.Storage.Type != "sqlite" && !isPostgresStorage(cfg) {
+		return fmt.Errorf("admin backup does not support storage type %q", cfg.Storage.Type)
 	}
 
-	lock, err := acquireDatabaseLock(cfg)
-	if err != nil {
-		return err
+	// design §4: SQLite always holds the exclusive lock (VACUUM INTO's own
+	// precedent, and its only consistency mechanism); Postgres holds it only
+	// with --exclusive -- by default, Postgres backups run under a
+	// REPEATABLE READ snapshot instead, specifically so an ADR-039 HA
+	// deployment's other replicas are never blocked from (re)starting for
+	// the backup's duration, the whole reason those deployments choose
+	// Postgres over SQLite in the first place.
+	if !isPostgresStorage(cfg) || backupExclusive {
+		lock, err := acquireDatabaseLock(cfg)
+		if err != nil {
+			return err
+		}
+		defer lock.Release() //nolint:errcheck
 	}
-	defer lock.Release() //nolint:errcheck
 
 	manifestKey, err := unwrapManifestKey(cfg, ".", backupPassphraseSource)
 	if err != nil {
@@ -107,14 +135,8 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 	}
 	defer crypto.WipeBytes(manifestKey)
 
-	dbPath := cfg.Storage.Database.Path
-	if dbPath == "" {
-		dbPath = "./secrets.db"
-	}
-	if info, statErr := os.Stat(dbPath); statErr == nil {
-		if err := backupfmt.CheckFreeSpace(backupOutput, info.Size()); err != nil {
-			return fmt.Errorf("preflight free-space check (design §7.4): %w", err)
-		}
+	if err := preflightBackupFreeSpace(cfg); err != nil {
+		return fmt.Errorf("preflight free-space check (design §7.4): %w", err)
 	}
 
 	keyEntries, keyBlobs, err := readKeyFilesForBackup(cfg)
@@ -128,7 +150,43 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 	}
 	defer closeGormDB(gdb)
 
-	highWater, err := readAuditHighWater(gdb)
+	// design §4: the ENTIRE backup -- every table -- reads through ONE
+	// REPEATABLE READ transaction/connection on Postgres, never one
+	// transaction per table (closes the ordering hazard #2101 raised: no
+	// window exists in which a concurrent write becomes visible to one
+	// table's read but not another's, since every table sees the identical
+	// snapshot taken at BEGIN). SQLite has no equivalent step here -- its
+	// consistency already comes from the exclusive lock acquired above.
+	readDB := gdb
+	var pgSnapshotTx *gorm.DB
+	if isPostgresStorage(cfg) {
+		tx := gdb.Begin(&sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+		if tx.Error != nil {
+			return fmt.Errorf("begin REPEATABLE READ snapshot transaction: %w", tx.Error)
+		}
+		pgSnapshotTx = tx
+		readDB = tx
+	}
+	// Release the snapshot transaction/connection the moment reading is
+	// done, not deferred to function exit: recordAdminAction below opens a
+	// SEPARATE storage connection (via withUsableStorage) which, on
+	// Postgres, runs migration DDL that takes an ACCESS EXCLUSIVE lock --
+	// that blocks behind ANY still-open transaction holding even a read
+	// lock on the same table, including this one's own. Found live via
+	// TestAdminBackupRestore_Postgres_RoundTrip: with the transaction held
+	// open until function exit (defer tx.Rollback()), the backup itself
+	// completed but recordAdminAction's internal migration attempt deadlocked
+	// against this process's own still-open REPEATABLE READ transaction and
+	// hung for the full 10-minute test timeout.
+	releaseSnapshotTx := func() {
+		if pgSnapshotTx != nil {
+			pgSnapshotTx.Rollback() //nolint:errcheck // read-only snapshot; rollback (not commit) is always correct to release it
+			pgSnapshotTx = nil
+		}
+	}
+	defer releaseSnapshotTx()
+
+	highWater, err := readAuditHighWater(readDB)
 	if err != nil {
 		return fmt.Errorf("read audit high-water mark: %w", err)
 	}
@@ -141,7 +199,8 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("create %q: %w", backupOutput, err)
 	}
 
-	manifest, werr := backupfmt.WriteBackup(gdb, storage.CurrentSchemaEpoch(), highWater, manifestKey, keyEntries, keyBlobs, f)
+	manifest, werr := backupfmt.WriteBackup(readDB, storage.CurrentSchemaEpoch(), highWater, manifestKey, keyEntries, keyBlobs, f)
+	releaseSnapshotTx() // all reads are done -- release before anything below opens another connection
 	if werr != nil {
 		_ = f.Close()
 		_ = os.Remove(backupOutput)
@@ -212,6 +271,47 @@ func unwrapManifestKey(cfg *config.Config, baseDir string, passphraseSource cryp
 		return nil, fmt.Errorf("backup-manifest signing key unavailable (encryption not enabled?)")
 	}
 	return key, nil
+}
+
+// preflightBackupFreeSpace implements design §7.4 for `admin backup`: refuse
+// up front if --output's filesystem doesn't have enough free space, using
+// the source database's current on-disk size as the estimate. SQLite has an
+// actual file to stat; Postgres has no single file, so its estimate comes
+// from pg_database_size(current_database()) instead -- both feed the same
+// backupfmt.CheckFreeSpace check.
+func preflightBackupFreeSpace(cfg *config.Config) error {
+	if isPostgresStorage(cfg) {
+		size, err := postgresDatabaseSize(cfg)
+		if err != nil {
+			return fmt.Errorf("estimate source database size: %w", err)
+		}
+		return backupfmt.CheckFreeSpace(backupOutput, size)
+	}
+	dbPath := cfg.Storage.Database.Path
+	if dbPath == "" {
+		dbPath = "./secrets.db"
+	}
+	info, statErr := os.Stat(dbPath)
+	if statErr != nil {
+		return nil // a not-yet-existing source database has nothing to estimate from; migrateDatabase will fail loudly on its own if that's wrong
+	}
+	return backupfmt.CheckFreeSpace(backupOutput, info.Size())
+}
+
+// postgresDatabaseSize queries pg_database_size(current_database()) via a
+// short-lived connection -- just for the preflight estimate, independent of
+// the REPEATABLE READ snapshot transaction the real backup reads through.
+func postgresDatabaseSize(cfg *config.Config) (int64, error) {
+	gdb, err := storage.OpenGormDB(cfg)
+	if err != nil {
+		return 0, err
+	}
+	defer closeGormDB(gdb)
+	var size int64
+	if err := gdb.Raw("SELECT pg_database_size(current_database())").Scan(&size).Error; err != nil {
+		return 0, err
+	}
+	return size, nil
 }
 
 // readKeyFilesForBackup reads every file internal/keyfiles.Registry

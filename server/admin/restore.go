@@ -133,9 +133,8 @@ func runAdminRestore(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if cfg.Storage.Type != "local" && cfg.Storage.Type != "sqlite" {
-		return fmt.Errorf("admin restore only supports local/sqlite storage as a restore target today (got %q) -- "+
-			"for Postgres, restore with psql directly (see docs/SELF_HOSTING.md §5)", cfg.Storage.Type)
+	if cfg.Storage.Type != "local" && cfg.Storage.Type != "sqlite" && !isPostgresStorage(cfg) {
+		return fmt.Errorf("admin restore does not support storage type %q", cfg.Storage.Type)
 	}
 
 	lock, err := acquireDatabaseLock(cfg)
@@ -206,11 +205,17 @@ func peekFormatVersion(path string) (int, error) {
 
 // runAdminRestoreV2 is the current (design-b3-backup-v2.md) restore path.
 func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive complexity, orchestrates §5.3's full stage-then-verify-then-commit sequence in one place deliberately
+	isPG := isPostgresStorage(cfg)
+
 	dbPath := cfg.Storage.Database.Path
 	if dbPath == "" {
 		dbPath = "./secrets.db"
 	}
-	if err := refuseNonEmptyExisting("database", dbPath); err != nil {
+	if isPG {
+		if err := refuseNonEmptyPostgresTarget(cfg); err != nil {
+			return err
+		}
+	} else if err := refuseNonEmptyExisting("database", dbPath); err != nil {
 		return err
 	}
 	targetKeyPaths, err := expectedKeyFilePaths(cfg)
@@ -289,21 +294,42 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 	// reusing checkRollbackProtection UNCHANGED (the same function #2233
 	// added and this restore path's v1 sibling still uses) by re-encoding
 	// the v2 manifest's structured Checkpoint back into the same encoded
-	// string shape ParseHighWater already knows.
+	// string shape ParseHighWater already knows. On Postgres, dbPath is
+	// replaced by a synthesized identity path (postgresTargetIdentityPath)
+	// used ONLY for its directory component (auditverify.WitnessPath) --
+	// there is no single database file to open directly, so every count
+	// below is read via the Postgres-specific helpers instead.
+	identityPath := dbPath
+	var destinationFloor, newerSubstantive int64
 	highWaterEncoded := checkpointBundleToHighWaterString(manifest.Checkpoint)
-	destinationFloor, err := readExistingDatabaseAuditEventCount(dbPath)
-	if err != nil {
-		return fmt.Errorf("read existing destination database's audit event count: %w", err)
-	}
 	archiveRaw, err := archiveHeadFromStagedAuditEvents(stagingDir, manifest)
 	if err != nil {
 		return fmt.Errorf("read the archived database's audit event count: %w", err)
 	}
-	newerSubstantive, err := destinationEventsNewerThan(dbPath, archiveRaw)
-	if err != nil {
-		return fmt.Errorf("read existing destination database's newer audit events: %w", err)
+	if isPG {
+		identityPath, err = postgresTargetIdentityPath(cfg)
+		if err != nil {
+			return err
+		}
+		destinationFloor, err = postgresAuditEventCount(cfg)
+		if err != nil {
+			return fmt.Errorf("read existing destination database's audit event count: %w", err)
+		}
+		newerSubstantive, err = postgresAuditEventsNewerThan(cfg, archiveRaw)
+		if err != nil {
+			return fmt.Errorf("read existing destination database's newer audit events: %w", err)
+		}
+	} else {
+		destinationFloor, err = readExistingDatabaseAuditEventCount(dbPath)
+		if err != nil {
+			return fmt.Errorf("read existing destination database's audit event count: %w", err)
+		}
+		newerSubstantive, err = destinationEventsNewerThan(dbPath, archiveRaw)
+		if err != nil {
+			return fmt.Errorf("read existing destination database's newer audit events: %w", err)
+		}
 	}
-	rollbackCheck, err := checkRollbackProtection(highWaterEncoded, dbPath, destinationFloor, archiveRaw, newerSubstantive)
+	rollbackCheck, err := checkRollbackProtection(highWaterEncoded, identityPath, destinationFloor, archiveRaw, newerSubstantive)
 	if err != nil {
 		return err
 	}
@@ -320,15 +346,17 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 			return fmt.Errorf("write key file %q: %w", targetKeyPaths[i], err)
 		}
 	}
-	// v2 loads rows into a freshly-migrated database rather than writing a
-	// whole DB file (v1), so with --overwrite-existing the existing database
-	// must be moved aside first -- migrating and loading into it in place
-	// fails on the first colliding primary key.
-	if err := moveAsideExistingSQLiteDB(dbPath, restoreTS); err != nil {
-		return err
-	}
-	if err := removeStaleSQLiteSidecars(dbPath); err != nil {
-		return fmt.Errorf("clear stale WAL sidecar files for %q: %w", dbPath, err)
+	if !isPG {
+		// v2 loads rows into a freshly-migrated database rather than writing
+		// a whole DB file (v1), so with --overwrite-existing the existing
+		// database must be moved aside first -- migrating and loading into it
+		// in place fails on the first colliding primary key.
+		if err := moveAsideExistingSQLiteDB(dbPath, restoreTS); err != nil {
+			return err
+		}
+		if err := removeStaleSQLiteSidecars(dbPath); err != nil {
+			return fmt.Errorf("clear stale WAL sidecar files for %q: %w", dbPath, err)
+		}
 	}
 
 	fmt.Println("Running migrations against the fresh target database...")
@@ -361,7 +389,7 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 		fmt.Sprintf("restored from backup archive %s (created %s, format v2)", restoreInput, manifest.CreatedAt.Format(time.RFC3339)), true)
 
 	if rollbackCheck.archiveEncoded != "" {
-		if _, werr := auditverify.WriteWitnessIfHigher(auditverify.WitnessPath(dbPath), rollbackCheck.archiveEncoded); werr != nil {
+		if _, werr := auditverify.WriteWitnessIfHigher(auditverify.WitnessPath(identityPath), rollbackCheck.archiveEncoded); werr != nil {
 			fmt.Printf("note: could not update the rollback-protection witness file: %v\n", werr)
 		}
 	}
@@ -372,6 +400,9 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 				rollbackCheck.gapEvents), true)
 	}
 
+	if isPG {
+		return verifyRestoredAuditPostgres(cfg)
+	}
 	return verifyRestoredAudit(cfg, dbPath)
 }
 
@@ -512,6 +543,17 @@ func archiveHeadFromStagedAuditEvents(stagingDir string, manifest backupfmt.Mani
 // physical (SQLite-only) format (#2099) -- unchanged from that format's
 // original restore logic, kept until Keyorix 1.0 (design §3.6 decision 3).
 func runAdminRestoreV1(cfg *config.Config) error {
+	// v1 archives are always physical SQLite-file copies (#2099 never
+	// supported any other backend) -- refuse a Postgres TARGET explicitly
+	// here, rather than relying on manifest.Backend != "sqlite" below, which
+	// only checks the ARCHIVE's own (always "sqlite") declared backend and
+	// would otherwise silently pass regardless of cfg.Storage.Type, now that
+	// runAdminRestore's outer gate admits Postgres configs too (H4).
+	if isPostgresStorage(cfg) {
+		return fmt.Errorf("this archive uses the deprecated v1 (physical, SQLite-only) backup format, which never " +
+			"supported a Postgres target -- restore it into a SQLite-backed config, or take a fresh v2 backup " +
+			"(design §3.6 decision 3)")
+	}
 	manifest, dbBytes, keyBlobs, err := readBackupArchive(restoreInput, restoreMaxEntryBytes, restoreMaxTotalBytes)
 	if err != nil {
 		return fmt.Errorf("read backup archive %q: %w", restoreInput, err)
@@ -813,7 +855,15 @@ func verifyRestoredAudit(cfg *config.Config, dbPath string) error {
 		return fmt.Errorf("open restored database for automatic verify-audit: %w", err)
 	}
 	defer db.Close() //nolint:errcheck
+	return runVerifyRestoredAudit(cfg, db)
+}
 
+// runVerifyRestoredAudit is verifyRestoredAudit's backend-neutral core,
+// shared with verifyRestoredAuditPostgres (restore_postgres.go) -- takes an
+// already-opened auditverify.DB (either dialect; that package's own
+// independence requirement means every query past this point is identical
+// regardless of which one it is).
+func runVerifyRestoredAudit(cfg *config.Config, db *auditverify.DB) error {
 	var opts auditverify.Options
 	if cfg.Audit.OfflineAnchorPath != "" {
 		data, err := os.ReadFile(cfg.Audit.OfflineAnchorPath) // #nosec G304 -- operator-configured path (audit.offline_anchor_path)
