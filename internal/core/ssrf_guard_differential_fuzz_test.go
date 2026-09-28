@@ -8,7 +8,7 @@
 //     egress (OIDC/JWKS, Connect backends), where RFC-1918/on-prem targets are
 //     legitimate but cloud IMDS must never be reachable.
 //  3. internal/audit/siem's isDisallowedIP (exported here for fuzzing as
-//     IsDisallowedIPForFuzz) — the SIEM-forwarder dial-time policy (loopback
+//     DialDisallowed) — the SIEM-forwarder dial-time policy (loopback
 //     PERMITTED).
 //  4. internal/core's own isChannelDisallowedIP — the notification-channel
 //     webhook dial-time policy (loopback REFUSED, unlike #3).
@@ -197,7 +197,7 @@ func FuzzSSRFGuardDifferential(f *testing.F) {
 			if !netutil.IsPrivateOrLinkLocal(enc) {
 				t.Fatalf("GAP: native link-local literal %s not recognised by IsPrivateOrLinkLocal", encStr)
 			}
-			if !siem.IsDisallowedIPForFuzz(enc) {
+			if !siem.DialDisallowed(enc) {
 				t.Fatalf("GAP: native link-local literal %s not recognised by siem.isDisallowedIP", encStr)
 			}
 			if !isChannelDisallowedIP(enc) {
@@ -237,8 +237,8 @@ func FuzzSSRFGuardDifferential(f *testing.F) {
 			t.Fatalf("ENCODING PARITY (IsLinkLocal): raw %d.%d.%d.%d=%v but %s(%s)=%v", a, b, c, d, wantLL, encStr, enc, got)
 		}
 
-		wantSiem := siem.IsDisallowedIPForFuzz(rawV4)
-		if got := siem.IsDisallowedIPForFuzz(enc); got != wantSiem {
+		wantSiem := siem.DialDisallowed(rawV4)
+		if got := siem.DialDisallowed(enc); got != wantSiem {
 			t.Fatalf("ENCODING PARITY (siem.isDisallowedIP): raw %d.%d.%d.%d=%v but %s(%s)=%v", a, b, c, d, wantSiem, encStr, enc, got)
 		}
 
