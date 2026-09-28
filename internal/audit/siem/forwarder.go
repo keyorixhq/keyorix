@@ -96,18 +96,6 @@ func isDisallowedIPDirect(ip net.IP) bool {
 	return ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
 }
 
-// IsDisallowedIPForFuzz is isDisallowedIP, exported so
-// FuzzSSRFGuardDifferential (internal/core/ssrf_guard_differential_fuzz_test.go)
-// can drive this package's REAL dial-time SSRF policy from a single
-// cross-package differential harness alongside netutil's and internal/core's
-// own guards — the same "export the real logic for an external parity
-// checker" shape netutil.EmbeddedIPv4 already establishes. Test-only: no
-// production caller should use this; newForwarder already wires
-// isDisallowedIP directly.
-func IsDisallowedIPForFuzz(ip net.IP) bool {
-	return isDisallowedIP(ip)
-}
-
 // refuseRedirect blocks a redirect to a different host or an https->http downgrade.
 // The SIEM auth rides in custom headers (DD-API-KEY, Splunk token) that Go does NOT
 // strip on a cross-host redirect, so a compromised/misconfigured intake endpoint
