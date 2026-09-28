@@ -890,11 +890,11 @@ func TestDeleteProject_HasSecrets_S26(t *testing.T) {
 	}
 	require.NoError(t, db.Create(secret).Error)
 
-	req := withChiParam_S25(
+	req := withUserCtx(withChiParam_S25(
 		httptest.NewRequest(http.MethodDelete,
 			fmt.Sprintf("/api/v1/projects/%d", proj.ID), nil),
 		"id", uintStrS26(proj.ID),
-	)
+	))
 	w := httptest.NewRecorder()
 	h.DeleteProject(w, req)
 	// Project has secrets → 409 Conflict

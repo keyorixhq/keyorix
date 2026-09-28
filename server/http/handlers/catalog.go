@@ -181,6 +181,10 @@ func (h *CatalogHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
 		return
 	}
+	actor, ok := mustGetUser(w, r)
+	if !ok {
+		return
+	}
 
 	envs := make([]string, 0, len(body.Environments))
 	for _, e := range body.Environments {
@@ -208,6 +212,7 @@ func (h *CatalogHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	h.coreService.LogProjectCreated(r.Context(), actor.UserID, project.ID, project.Name)
 	sendCreated(w, newProjectWire(project), "Project created")
 }
 
@@ -241,16 +246,16 @@ func (h *CatalogHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
 		return
 	}
+	actor, ok := mustGetUser(w, r)
+	if !ok {
+		return
+	}
 	// require_mfa is a per-project SECURITY-POLICY control (ADR-037), not ordinary content.
 	// The route gate only proves secrets.write — held by the non-admin editor persona — so
 	// changing it must additionally require roles.assign at the project (the admin/membership
 	// tier), otherwise a developer could silently disable the project's MFA enforcement.
 	// name/description stay on the secrets.write gate.
 	if body.RequireMFA != nil {
-		actor, ok := mustGetUser(w, r)
-		if !ok {
-			return
-		}
 		if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), actor.ActorKind(), actor.PrincipalID(), "roles.assign", core.Scope{ProjectID: id}); aerr != nil || !ok {
 			sendError(w, "Forbidden", "changing a project's MFA requirement requires the roles.assign permission", http.StatusForbidden, nil)
 			return
@@ -272,6 +277,7 @@ func (h *CatalogHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
+	h.coreService.LogProjectUpdated(r.Context(), actor.UserID, project.ID, project.Name)
 	sendSuccess(w, newProjectWire(project), "Project updated")
 }
 
@@ -282,6 +288,10 @@ func (h *CatalogHandler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
+		return
+	}
+	actor, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	force := r.URL.Query().Get("force") == "true"
@@ -297,6 +307,7 @@ func (h *CatalogHandler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
+	h.coreService.LogProjectDeleted(r.Context(), actor.UserID, uint(id), force)
 	sendSuccess(w, nil, "Project deleted")
 }
 

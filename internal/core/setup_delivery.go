@@ -172,6 +172,7 @@ func (c *KeyorixCore) CreateUserWithSetupLink(ctx context.Context, req *CreateUs
 	if err != nil {
 		return nil, nil, err
 	}
+	c.LogUserCreated(ctx, createdBy, user.ID, user.Username)
 
 	res, err := c.provisionSetupLink(ctx, IssueSetupTokenRequest{
 		Purpose:       SetupPurposeAccountSetup,
@@ -219,6 +220,7 @@ func (c *KeyorixCore) CreateUserWithOneTimePassword(ctx context.Context, req *Cr
 	if err != nil {
 		return nil, nil, err
 	}
+	c.LogUserCreated(ctx, createdBy, user.ID, user.Username)
 
 	// Record that a human saw a credential — the one path the ADR singles out for
 	// compliance (artifact=one_time_password, vs the setup-link artifact). Uses

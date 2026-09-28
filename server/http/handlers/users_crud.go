@@ -177,6 +177,9 @@ func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, 
 		created, err = h.coreService.CreateUserWithAssignments(ctx, req, role, assignments, userCtx.UserID, userCtx.ActorKind() == core.ActorTypeMachine)
 	} else {
 		created, err = h.coreService.CreateUser(r.Context(), req)
+		if err == nil {
+			h.coreService.LogUserCreated(r.Context(), userCtx.UserID, created.ID, created.Username)
+		}
 	}
 	if err != nil {
 		log.Printf("Error creating user: %v", err)

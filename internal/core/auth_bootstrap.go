@@ -285,6 +285,7 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 	if err != nil {
 		return nil, fmt.Errorf("failed to create admin user: %w", err)
 	}
+	c.LogUserCreated(ctx, 0, user.ID, user.Username)
 
 	var (
 		createdUser *models.User

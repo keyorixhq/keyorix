@@ -219,6 +219,7 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	c.LogUserCreated(ctx, 0, user.ID, user.Username) // self-service: the invitee (not yet an account) is consuming their own invite link
 
 	// Consume the token (single-use, atomic) now that the account exists. tok was
 	// already inspected by CompleteSetup, so consume it directly (no re-lookup).
