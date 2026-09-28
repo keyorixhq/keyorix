@@ -7,12 +7,17 @@ package main
 // (admin_integration_test.go).
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"filippo.io/age"
+	"filippo.io/age/armor"
 )
 
 var groupedRecoveryKeyForm = regexp.MustCompile(`[A-HJ-NP-Z2-9]{5}(-[A-HJ-NP-Z2-9]{5}){9}-[A-HJ-NP-Z2-9]{2}`)
@@ -67,6 +72,108 @@ func TestAdminRecoveryKey_GenerateThenRotate_SQLite(t *testing.T) {
 	}
 	if !strings.Contains(thirdOut, "Recovery key rotated (generation 3)") {
 		t.Errorf("expected third run to report rotation to generation 3, got:\n%s", thirdOut)
+	}
+}
+
+// TestAdminRecoveryKey_RotateWithRecipient_EncryptedOutputOnly is F8's own
+// acceptance shape: `rotate --recipient <age1...> --output <file>` must
+// write an age-armored ciphertext file (mode 0600) that decrypts back to
+// the real recovery key, WITHOUT ever printing that key in plaintext to
+// stdout -- the whole point of the flag.
+func TestAdminRecoveryKey_RotateWithRecipient_EncryptedOutputOnly(t *testing.T) {
+	bin := buildServerBinary(t)
+	dir := t.TempDir()
+	env := baseEnv(dir)
+
+	if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin init failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "migrate", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin migrate failed: %v\n%s", err, out)
+	}
+
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatalf("generate age identity: %v", err)
+	}
+	outputPath := filepath.Join(dir, "recovery-key.age")
+
+	out, err := runAdmin(t, bin, dir, env, "recovery-key", "rotate", "--config", "./keyorix.yaml",
+		"--recipient", identity.Recipient().String(), "--output", outputPath)
+	if err != nil {
+		t.Fatalf("recovery-key rotate --recipient --output failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Recovery key generated (generation 1)") {
+		t.Errorf("expected the generation line, got:\n%s", out)
+	}
+	if groupedRecoveryKeyForm.FindString(out) != "" {
+		t.Fatalf("plaintext recovery key leaked to stdout despite --recipient:\n%s", out)
+	}
+	if strings.Contains(out, "-----BEGIN AGE ENCRYPTED FILE-----") {
+		t.Fatalf("armored ciphertext was printed to stdout even though --output was given:\n%s", out)
+	}
+
+	info, err := os.Stat(outputPath)
+	if err != nil {
+		t.Fatalf("stat output file: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("expected output file mode 0600, got %v", info.Mode().Perm())
+	}
+
+	encrypted, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read output file: %v", err)
+	}
+	ar := armor.NewReader(bytes.NewReader(encrypted))
+	dr, err := age.Decrypt(ar, identity)
+	if err != nil {
+		t.Fatalf("age.Decrypt the output file: %v", err)
+	}
+	plaintext, err := io.ReadAll(dr)
+	if err != nil {
+		t.Fatalf("read decrypted plaintext: %v", err)
+	}
+	if !groupedRecoveryKeyForm.MatchString(string(plaintext)) {
+		t.Fatalf("decrypted output file does not look like a recovery key: %q", plaintext)
+	}
+
+	// Re-running with the SAME --output path must refuse to overwrite.
+	out2, err2 := runAdmin(t, bin, dir, env, "recovery-key", "rotate", "--config", "./keyorix.yaml",
+		"--recipient", identity.Recipient().String(), "--output", outputPath)
+	if err2 == nil {
+		t.Fatalf("expected the second rotate with the same --output path to fail, got success:\n%s", out2)
+	}
+	if !strings.Contains(out2, "already exists") {
+		t.Errorf("expected an 'already exists' refusal, got:\n%s", out2)
+	}
+}
+
+// TestAdminRecoveryKey_OutputWithoutRecipient_Refused verifies --output
+// alone (no --recipient) is refused outright -- this command must never
+// write the PLAINTEXT key to a file.
+func TestAdminRecoveryKey_OutputWithoutRecipient_Refused(t *testing.T) {
+	bin := buildServerBinary(t)
+	dir := t.TempDir()
+	env := baseEnv(dir)
+
+	if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin init failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "migrate", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin migrate failed: %v\n%s", err, out)
+	}
+
+	out, err := runAdmin(t, bin, dir, env, "recovery-key", "rotate", "--config", "./keyorix.yaml",
+		"--output", filepath.Join(dir, "should-not-be-created.age"))
+	if err == nil {
+		t.Fatalf("expected --output without --recipient to fail, got success:\n%s", out)
+	}
+	if !strings.Contains(out, "--output requires --recipient") {
+		t.Errorf("expected the specific refusal message, got:\n%s", out)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "should-not-be-created.age")); statErr == nil {
+		t.Fatal("--output file was created despite the command failing")
 	}
 }
 

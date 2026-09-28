@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"time"
 
+	"filippo.io/age"
+
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/recoverykey"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -29,6 +31,11 @@ a SHA-256 verifier of the key is ever stored server-side -- the key itself
 is shown once, at generation/rotation time, and nowhere else.`,
 }
 
+var (
+	rotateRecoveryKeyRecipient string
+	rotateRecoveryKeyOutput    string
+)
+
 var rotateRecoveryKeyCmd = &cobra.Command{
 	Use:   "rotate",
 	Short: "Generate a fresh recovery key, replacing any existing one",
@@ -37,19 +44,48 @@ write, bumping the key generation counter. If no key exists yet (an install
 that predates this feature), this generates the FIRST one -- same command,
 same rules.
 
-The new key is printed to stdout exactly once. It is never written to a log
-file or the audit chain in plaintext, and cannot be recovered if lost --
-losing it just means running 'rotate' again. The OLD key stops verifying the
-instant this command completes; there is no grace window.`,
+By default the new key is printed to stdout in PLAINTEXT, exactly once. It
+is never written to a log file or the audit chain in plaintext, and cannot
+be recovered if lost -- losing it just means running 'rotate' again. The
+OLD key stops verifying the instant this command completes; there is no
+grace window.
+
+--recipient <age1... key | path to an ssh-ed25519 public key file> makes
+this print the key ONLY age-encrypted to that recipient -- the plaintext
+key is never written to the terminal at all in this mode. Decrypt with:
+age -d -i <identity file> <output>. --output <file> writes the encrypted
+result to that file (mode 0600, refuses to overwrite an existing file)
+instead of stdout; --output requires --recipient (this command never
+writes the PLAINTEXT key to a file).`,
 	RunE: runRotateRecoveryKey,
 }
 
 func init() {
+	rotateRecoveryKeyCmd.Flags().StringVar(&rotateRecoveryKeyRecipient, "recipient", "",
+		`Encrypt the printed key to this age1... recipient, or to the ssh-ed25519 public key in this file, instead of printing it in plaintext`)
+	rotateRecoveryKeyCmd.Flags().StringVar(&rotateRecoveryKeyOutput, "output", "",
+		`Write the --recipient-encrypted key to this file (0600, refuses to overwrite) instead of stdout; requires --recipient`)
 	recoveryKeyCmd.AddCommand(rotateRecoveryKeyCmd)
 	rootCmd.AddCommand(recoveryKeyCmd)
 }
 
 func runRotateRecoveryKey(cmd *cobra.Command, args []string) error {
+	if rotateRecoveryKeyOutput != "" && rotateRecoveryKeyRecipient == "" {
+		return fmt.Errorf("--output requires --recipient: this command never writes the plaintext key to a file")
+	}
+
+	// Parse/validate the recipient BEFORE touching any state below: a bad
+	// --recipient must fail with the OLD key still valid, not after the new
+	// key has already been generated and the old one invalidated (F8).
+	var recipient age.Recipient
+	if rotateRecoveryKeyRecipient != "" {
+		var rerr error
+		recipient, rerr = parseRecoveryKeyRecipient(rotateRecoveryKeyRecipient)
+		if rerr != nil {
+			return fmt.Errorf("--recipient: %w", rerr)
+		}
+	}
+
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
@@ -100,13 +136,39 @@ func runRotateRecoveryKey(cmd *cobra.Command, args []string) error {
 		action = "generated"
 	}
 	fmt.Printf("Recovery key %s (generation %d).\n\n", action, newVersion)
-	fmt.Println("=====================================================================")
-	fmt.Println("  RECORD THIS KEY NOW -- it is shown exactly once and cannot be")
-	fmt.Println("  recovered later. Store it offline (password manager, sealed")
-	fmt.Println("  envelope) -- NOT in this terminal's scrollback or a log file.")
-	fmt.Println()
-	fmt.Printf("  %s\n", rawKey)
-	fmt.Println("=====================================================================")
+
+	if recipient != nil {
+		encrypted, eerr := encryptRecoveryKeyForRecipient(rawKey, recipient)
+		if eerr != nil {
+			// The key is already rotated and stored at this point -- the OLD key
+			// is gone regardless. Report the failure loudly rather than falling
+			// back to printing the plaintext: a silent fallback would violate
+			// the operator's explicit --recipient request without them noticing.
+			return fmt.Errorf("encrypt recovery key for --recipient (the key WAS rotated -- generation %d is now active, "+
+				"but could not be delivered encrypted): %w", newVersion, eerr)
+		}
+		if rotateRecoveryKeyOutput != "" {
+			if werr := writeRecoveryKeyOutputFile(rotateRecoveryKeyOutput, encrypted); werr != nil {
+				return fmt.Errorf("recovery key WAS rotated (generation %d) but could not be written to --output: %w", newVersion, werr)
+			}
+			fmt.Printf("The age-encrypted key was written to %s (mode 0600).\n", rotateRecoveryKeyOutput)
+		} else {
+			fmt.Println("=====================================================================")
+			fmt.Println("  RECORD THIS ENCRYPTED KEY NOW -- it is shown exactly once. Decrypt")
+			fmt.Println("  with: age -d -i <identity file> <this output>")
+			fmt.Println()
+			fmt.Print(string(encrypted))
+			fmt.Println("=====================================================================")
+		}
+	} else {
+		fmt.Println("=====================================================================")
+		fmt.Println("  RECORD THIS KEY NOW -- it is shown exactly once and cannot be")
+		fmt.Println("  recovered later. Store it offline (password manager, sealed")
+		fmt.Println("  envelope) -- NOT in this terminal's scrollback or a log file.")
+		fmt.Println()
+		fmt.Printf("  %s\n", rawKey)
+		fmt.Println("=====================================================================")
+	}
 	fmt.Println()
 	fmt.Println("On a local-KEK-file install (storage.encryption.key_provider.type: file " +
 		"or unset), this key does not protect your secrets from host root -- it " +
