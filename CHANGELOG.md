@@ -50,7 +50,7 @@ All notable changes to Keyorix are documented here. This project follows
   upgrade. `record-hygiene-snapshot`, `suspend-inactive-users`, and
   `purge-audit-logs` stayed on `system.write` (they mutate account/data state,
   not just send a notification). See `docs/adr-110-system-write-scope.md`'s
-  Decision section for the full per-route table.
+  Decision section for the full per-route table. (#2244)
 
 ### Fixed
 - **Seven tables with live handler code were never migrated on any
@@ -64,7 +64,7 @@ All notable changes to Keyorix are documented here. This project follows
   routes, and the `run-alert-escalation` job, would all fail with "no such
   table"/"relation does not exist" against a real database. Found while writing
   the `alert_operator` behavioral test above; fixed in the same bulk-migration
-  list as the pre-existing `MFAStepUpGrant` fix.
+  list as the pre-existing `MFAStepUpGrant` fix. (#2244)
 
 ### Changed
 - **The air-gapped build profile ships, and the published air-gapped image
