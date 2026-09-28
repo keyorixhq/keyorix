@@ -886,9 +886,27 @@ func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *mo
 			return nil, fmt.Errorf("failed to grant role: %w", err)
 		}
 	}
+	// revertGrant is the SAME compensating action the race-loss path below already
+	// used, generalized to cover every failure after the grant lands, not only the
+	// UpdateAccessRequest(!ok) race. Before this, a CreateAccessRequestApproval
+	// failure (or a genuine UpdateAccessRequest storage error, as opposed to the
+	// !ok optimistic-concurrency loss) left the role granted with NO approval
+	// record and the request never flipping to approved — access granted with
+	// zero audit trail of who approved it, and no way to tell from the request's
+	// own state that anything happened.
+	revertGrant := func(reason string) {
+		if rerr := c.RemoveUserRole(ctx, approverID, req.UserID, roleModel.ID, scope); rerr != nil {
+			c.auditProjectScoped(ctx, "access_request.approval_race_revoke_failed", approverID, req.ProjectID,
+				fmt.Sprintf("access request %d: %s granting %s to user %d, and reverting the grant failed: %v — MANUAL CLEANUP REQUIRED", req.ID, reason, roleModel.Name, req.UserID, rerr))
+		} else {
+			c.auditProjectScoped(ctx, "access_request.approval_race_reverted", approverID, req.ProjectID,
+				fmt.Sprintf("access request %d: %s; reverted the %s grant just made to user %d", req.ID, reason, roleModel.Name, req.UserID))
+		}
+	}
 	if err := c.storage.CreateAccessRequestApproval(ctx, &models.AccessRequestApproval{
 		RequestID: req.ID, ApproverID: approverID, ApproverMachineIdentityID: approverMachineID, CreatedAt: now,
 	}); err != nil {
+		revertGrant(fmt.Sprintf("failed to record approval (%v) after", err))
 		return nil, fmt.Errorf("failed to record approval: %w", err)
 	}
 	req.State = AccessRequestApproved
@@ -898,6 +916,7 @@ func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *mo
 	req.ResolvedAt = &now
 	ok, err := c.storage.UpdateAccessRequest(ctx, req)
 	if err != nil {
+		revertGrant(fmt.Sprintf("failed to update access request (%v) after", err))
 		return nil, fmt.Errorf("failed to update access request: %w", err)
 	}
 	if !ok {
@@ -906,13 +925,7 @@ func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *mo
 		// the race after the role grant above already landed. The grant must not
 		// outlive a request that no longer reads as approved (#277): revoke it and
 		// fail closed rather than reporting success with a stale/contradictory state.
-		if rerr := c.RemoveUserRole(ctx, approverID, req.UserID, roleModel.ID, scope); rerr != nil {
-			c.auditProjectScoped(ctx, "access_request.approval_race_revoke_failed", approverID, req.ProjectID,
-				fmt.Sprintf("access request %d was concurrently withdrawn/rejected after granting %s to user %d, and reverting the grant failed: %v — MANUAL CLEANUP REQUIRED", req.ID, roleModel.Name, req.UserID, rerr))
-		} else {
-			c.auditProjectScoped(ctx, "access_request.approval_race_reverted", approverID, req.ProjectID,
-				fmt.Sprintf("access request %d was concurrently withdrawn/rejected; reverted the %s grant just made to user %d", req.ID, roleModel.Name, req.UserID))
-		}
+		revertGrant("was concurrently withdrawn/rejected after")
 		return nil, fmt.Errorf("access request was concurrently withdrawn or resolved; the role grant was reverted")
 	}
 	c.auditProjectScoped(ctx, "access_request.approved", approverID, req.ProjectID,
