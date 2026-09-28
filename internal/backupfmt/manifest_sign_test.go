@@ -17,8 +17,8 @@ func testFixtureManifest() Manifest {
 		CreatedAt:     time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC),
 		SchemaEpoch:   7,
 		Tables: []TableEntry{
-			{Name: "users", TarName: "tables/users.ndjson", RowCount: 2, UncompressedSize: 123, SHA256: "abc123"},
-			{Name: "projects", TarName: "tables/projects.ndjson", RowCount: 1, UncompressedSize: 45, SHA256: "def456"},
+			{Name: "users", TarName: "tables/users.ndjson", RowCount: 2, UncompressedSize: 123, SHA256: "abc123", Columns: []string{"id", "username"}},
+			{Name: "projects", TarName: "tables/projects.ndjson", RowCount: 1, UncompressedSize: 45, SHA256: "def456", Columns: []string{"id", "name"}},
 		},
 		KeyFiles: []KeyFileEntry{
 			{OriginalPath: "dek.key", TarName: "keyfiles/0", Mode: 0600, SHA256: "ghi789", Size: 32},
@@ -29,6 +29,19 @@ func testFixtureManifest() Manifest {
 			HeadHash:      "headhash",
 			KeyVersion:    "v1",
 			Signature:     "checkpointsig",
+		},
+		// Every field populated with non-empty/non-zero content deliberately
+		// (including DanglingReferences, which has its own omitempty tag and
+		// so is otherwise entirely absent from the JSON): a mutation that
+		// corrupts a JSON KEY NAME rather than a value, when that field's
+		// value was already empty/absent either way, is semantically a
+		// no-op after unmarshal -- not a real tamper. Confirmed the hard
+		// way: an earlier version of this fixture left Columns nil, and
+		// TestVerifyManifestSignature_ExhaustiveSingleByteTamper found a
+		// "verified: true" mutant at the "columns" key itself -- not a
+		// signing bug, a fixture gap that let a no-op mutation through.
+		DanglingReferences: []DanglingReference{
+			{Table: "environments", Column: "project_id", RowID: 5, RefTable: "projects", MissingID: 999},
 		},
 	}
 }

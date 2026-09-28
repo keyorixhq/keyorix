@@ -68,6 +68,12 @@ type TableEntry struct {
 	RowCount         int64  `json:"row_count"`
 	UncompressedSize int64  `json:"uncompressed_size"`
 	SHA256           string `json:"sha256"`
+	// Columns is this table's full column set (DB names) at backup time --
+	// design §3.5's schema-delta detection compares this against the
+	// CURRENT (restoring) binary's model to refuse an unrecognized column
+	// (a rename or type change the additive-only migration convention
+	// should have prevented) rather than silently drop or misparse it.
+	Columns []string `json:"columns"`
 }
 
 // KeyFileEntry is server/admin's backupFileEntry shape, duplicated here
