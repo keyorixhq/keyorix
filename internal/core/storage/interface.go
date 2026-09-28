@@ -17,9 +17,16 @@ import (
 // treat this as a client error ("already active"), not a storage failure.
 var ErrLegalHoldAlreadyActive = errors.New("a legal hold is already active")
 
-// Storage defines the unified interface for data persistence operations
-// This interface abstracts away the underlying storage implementation,
-// allowing for both local database access and remote API calls
+// Storage defines the unified interface for data persistence operations.
+// LocalStorage (internal/storage/store) is the sole implementation today.
+// A second implementation, RemoteStorage, proxied every call over HTTP to an
+// upstream server; it has since been deleted (ADR-083/ADR-108: remote storage
+// is a CLI/client-mode concept, not a server storage backend). Several method
+// pairs below (e.g. TryAcquireSchedulerLock/ReleaseSchedulerLock instead of a
+// single WithSchedulerLock-only API) still carry doc comments explaining the
+// cross-process-atomicity constraints RemoteStorage's HTTP-proxy nature used
+// to impose — kept as design history for why the interface has the shape it
+// does, not because a second implementation still exists.
 type Storage interface {
 	// Login rate limiting (ADR-040) — cluster-wide brute-force protection. Replaces
 	// the per-process in-memory limiter so the limit holds across HA replicas.
@@ -36,12 +43,14 @@ type Storage interface {
 
 	// TryAcquireSchedulerLock and ReleaseSchedulerLock (#530) are the two
 	// building blocks WithSchedulerLock is composed from. They exist as their
-	// own Storage methods (rather than being private to one implementation) so
-	// that RemoteStorage's WithSchedulerLock can acquire, run fn locally against
-	// itself (which may in turn make its own further proxied calls), and release
-	// as two separate HTTP round trips — a real cross-process transaction cannot
-	// span the acquire and release the way LocalStorage's single in-process call
-	// does, so each half must be independently atomic and safely idempotent.
+	// own Storage methods (rather than being private to one implementation)
+	// because RemoteStorage's now-deleted WithSchedulerLock had to acquire, run
+	// fn locally against itself (which could in turn make its own further
+	// proxied calls), and release as two separate HTTP round trips — a real
+	// cross-process transaction could not span the acquire and release the way
+	// LocalStorage's single in-process call does, so each half had to be
+	// independently atomic and safely idempotent. LocalStorage still keeps the
+	// same two-method split even with RemoteStorage gone.
 	//
 	// TryAcquireSchedulerLock atomically attempts to take (or renew, if holder
 	// already owns it) the named lock for ttl, in ONE round trip: acquired=true
@@ -113,11 +122,13 @@ type Storage interface {
 
 	// WithTransaction runs fn inside a single storage transaction: every mutation fn
 	// performs through the provided Storage commits together, or rolls back together if
-	// fn returns an error. The backing store decides the semantics — the local (DB)
-	// store opens a real transaction and hands fn a transaction-scoped Storage; the
-	// remote store runs fn directly against itself (each remote call is already atomic
-	// server-side, so there is no client-side transaction to open). Use it for
-	// multi-step mutations that must not half-apply (e.g. a suspend + delete pair).
+	// fn returns an error. LocalStorage opens a real DB transaction and hands fn a
+	// transaction-scoped Storage. (The now-deleted RemoteStorage instead ran fn directly
+	// against itself as a no-op passthrough, since each proxied HTTP call was already
+	// atomic server-side and there was no client-side transaction to open — several
+	// comments elsewhere in this file still explain invariants shaped by that
+	// constraint.) Use it for multi-step mutations that must not half-apply (e.g. a
+	// suspend + delete pair).
 	WithTransaction(ctx context.Context, fn func(Storage) error) error
 
 	// Project / Environment management
@@ -131,16 +142,15 @@ type Storage interface {
 	// ONE storage operation (#528). It replaces core.DeleteProject's prior
 	// WithTransaction-wrapped ListSecrets+DeleteProject pair (#313): that pair depended
 	// on WithTransaction opening a REAL transaction to keep the guard's read and the
-	// cascade's write atomic, which holds for LocalStorage but NOT for RemoteStorage —
-	// WithTransaction there is a no-op passthrough over HTTP (see its doc comment above),
-	// so a naive two-call proxy of that same pair would reopen a TOCTOU window across a
-	// full network round trip: a secret created between the count and the cascade would
-	// silently let a force=false delete cascade over it anyway, the same check-then-act-
-	// split-by-a-non-transactional-WithTransaction bug class this campaign has already
-	// hit repeatedly. Folding the guard and the cascade into one call closes that gap for
-	// both backends alike — under LocalStorage it is (and always was) one DB transaction;
-	// under RemoteStorage it is now one HTTP round trip executing the whole guard+cascade
-	// server-side. Returns the count of live secrets blocking the delete (0 means the
+	// cascade's write atomic, which held for LocalStorage but NOT for the now-deleted
+	// RemoteStorage — its WithTransaction was a no-op passthrough over HTTP (see its doc
+	// comment above), so a naive two-call proxy of that same pair would have reopened a
+	// TOCTOU window across a full network round trip: a secret created between the count
+	// and the cascade would silently let a force=false delete cascade over it anyway, the
+	// same check-then-act-split-by-a-non-transactional-WithTransaction bug class this
+	// campaign has already hit repeatedly. Folding the guard and the cascade into one call
+	// closed that gap; under LocalStorage it is (and always was) one DB transaction.
+	// Returns the count of live secrets blocking the delete (0 means the
 	// delete happened) so the caller can format the same "project has N secret(s)..."
 	// error DeleteProject(force=false) has always returned.
 	DeleteProjectIfEmpty(ctx context.Context, id uint) (blockingSecretCount int, err error)
@@ -193,15 +203,14 @@ type Storage interface {
 	// Added for #525: RemoveUserRole previously ran this check (via
 	// ListGlobalAdminAssignmentsForUpdate) and the removal (via RemoveRole) as TWO
 	// separate calls inside a WithTransaction closure. That is correct against
-	// LocalStorage (a real DB transaction + Postgres row lock spans both), but
-	// RemoteStorage.WithTransaction is a no-op passthrough — two separate HTTP
-	// round trips give a concurrent racing removal (from another spoke, or the
-	// hub's own direct callers) a window to observe "another admin still exists"
-	// before either write lands, reopening the exact cross-process last-admin
-	// lockout race #340 closed for HA Postgres replicas. Folding the check and the
-	// write into one call means whichever server actually owns the row — the hub,
-	// for a remote spoke — is the only one that ever needs to enforce it
-	// atomically, exactly like CreateSecretDependencyExclusive (#260) and
+	// LocalStorage (a real DB transaction + Postgres row lock spans both), but the
+	// now-deleted RemoteStorage's WithTransaction was a no-op passthrough — two
+	// separate HTTP round trips would have given a concurrent racing removal a
+	// window to observe "another admin still exists" before either write landed,
+	// reopening the exact cross-process last-admin lockout race #340 closed for HA
+	// Postgres replicas. Folding the check and the write into one call means
+	// whichever server actually owns the row is the only one that ever needs to
+	// enforce it atomically, exactly like CreateSecretDependencyExclusive (#260) and
 	// TransitionMachineIdentityState (#388/#518) did for their own TOCTOU classes.
 	//
 	// Returns ErrWouldStrandLastAdmin if the removal is refused, or
@@ -333,40 +342,35 @@ type Storage interface {
 	// taking a row-level write lock on every returned edge on backends that support
 	// one (Postgres FOR UPDATE), mirroring LockUserForUpdate/
 	// ListGlobalAdminAssignmentsForUpdate (#260). Retained as a raw storage
-	// primitive (parity with LocalStorage/RemoteStorage's other List*ForUpdate
-	// methods) but no longer used by AddSecretDependency
+	// primitive but no longer used by AddSecretDependency
 	// (internal/core/secret_dependencies.go) — see CreateSecretDependencyExclusive
 	// below for why the cycle-check read and the edge write had to be collapsed
 	// into ONE storage-layer call rather than orchestrated by the caller across
 	// this method and CreateSecretDependency.
 	ListSecretDependenciesForProjectForUpdate(ctx context.Context, projectID uint) ([]*models.SecretDependency, error)
 	// CreateSecretDependencyExclusive atomically validates and persists one secret
-	// dependency edge under a project-scoped exclusive lock (Postgres FOR UPDATE on
-	// LocalStorage; a single request handled by the upstream's own LocalStorage, on
-	// RemoteStorage), rejecting it with storage.ErrDuplicateSecretDependency or
+	// dependency edge under a project-scoped exclusive lock (Postgres FOR UPDATE),
+	// rejecting it with storage.ErrDuplicateSecretDependency or
 	// storage.ErrSecretDependencyCycle if the CURRENT edge set (read under that
 	// same lock) already contains the pair, or adding it would close a cycle.
 	//
 	// This is what AddSecretDependency now calls instead of orchestrating
 	// ListSecretDependenciesForProjectForUpdate + CreateSecretDependency itself
-	// inside a WithTransaction (#260's original design): RemoteStorage.
-	// WithTransaction is a no-op passthrough — no real transaction spans the wire
-	// — so a caller-driven "list under lock, decide, then create" sequence against
-	// a RemoteStorage backend is really two independent HTTP round trips with no
-	// lock held between them, silently losing #260's whole guarantee for any
-	// downstream server booted with storage.type: remote (ADR-049) — including
-	// the exact case that guarantee exists for: multiple such downstream replicas
-	// racing to add a reciprocal edge pair against the SAME upstream project
-	// concurrently. Collapsing the check-and-write into one storage-interface call
-	// fixes that: LocalStorage's implementation runs the identical duplicate/cycle
-	// logic AddSecretDependency used to run itself, just moved down a layer and
-	// wrapped in one real DB transaction; RemoteStorage's implementation is a
-	// single POST to a dedicated upstream route whose handler runs that SAME
-	// LocalStorage method, so the atomicity guarantee is enforced by whichever
-	// server ultimately owns the row — the same wire-code-translation technique
-	// that preserves CreateProjectMembership's DB-level unique-index atomicity
-	// across this boundary (#511), just for an invariant (acyclicity) no unique
-	// index can express.
+	// inside a WithTransaction (#260's original design): the now-deleted
+	// RemoteStorage's WithTransaction was a no-op passthrough — no real transaction
+	// spanned the wire — so a caller-driven "list under lock, decide, then create"
+	// sequence against a RemoteStorage backend was really two independent HTTP
+	// round trips with no lock held between them, silently losing #260's whole
+	// guarantee for any downstream server booted with storage.type: remote
+	// (ADR-049) — including the exact case that guarantee exists for: multiple
+	// such downstream replicas racing to add a reciprocal edge pair against the
+	// SAME upstream project concurrently. Collapsing the check-and-write into one
+	// storage-interface call fixed that: LocalStorage's implementation runs the
+	// identical duplicate/cycle logic AddSecretDependency used to run itself, just
+	// moved down a layer and wrapped in one real DB transaction — the same
+	// wire-code-translation technique that preserves CreateProjectMembership's
+	// DB-level unique-index atomicity across a remote boundary (#511), just for an
+	// invariant (acyclicity) no unique index can express.
 	CreateSecretDependencyExclusive(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error)
 
 	// Secret ACL (RBAC Phase 3) — per-secret fine-grained access grants.
@@ -429,14 +433,13 @@ type Storage interface {
 	// window between that read and this write, which is exactly the gap this
 	// conditional UPDATE closes.
 	//
-	// This exists — rather than a plain full-row overwrite — for the same
-	// reason TransitionMachineIdentityState does: RemoteStorage.WithTransaction is
-	// a no-op passthrough (remote_transaction.go), so a caller-driven
-	// read-then-conditional-write sequence run against RemoteStorage gets none of
-	// the atomicity a real DB transaction + row lock would give LocalStorage.
-	// Routing the write through this one conditional round trip — a single
-	// LocalStorage conditional SQL UPDATE, or a single proxied HTTP call to a
-	// dedicated upstream route — restores the guarantee across both backends.
+	// This exists — rather than a plain full-row overwrite — for the same reason
+	// TransitionMachineIdentityState does: the now-deleted RemoteStorage's
+	// WithTransaction was a no-op passthrough, so a caller-driven
+	// read-then-conditional-write sequence run against it got none of the
+	// atomicity a real DB transaction + row lock gives LocalStorage. Routing the
+	// write through this one conditional round trip — a single LocalStorage
+	// conditional SQL UPDATE — restores the guarantee.
 	RevokeRiskExceptionIfNotRevoked(ctx context.Context, e *models.RiskException) (bool, error)
 	// ApproveRiskExceptionIfPending persists e's full row (Approved/ApprovedBy/
 	// ApprovedAt already set by the caller) via a single conditional UPDATE —
@@ -501,16 +504,15 @@ type Storage interface {
 	// UpdateProjectInvitation's `WHERE id = ? AND state = 'pending'` pattern
 	// (#412). Returns whether the write actually matched a row.
 	//
-	// This exists because RemoteStorage.WithTransaction is a no-op passthrough
-	// (remote_transaction.go: "there is no client-side transaction to open over
-	// HTTP") — so a generic two-call Lock-then-Update sequence run against
-	// RemoteStorage gets NONE of the atomicity LocalStorage provides via a real
-	// DB transaction + row lock (Postgres: SELECT ... FOR UPDATE), silently
-	// reopening the exact #388 race (a concurrent revoke and reactivate racing
-	// off the same pre-transition state could un-revoke a just-revoked machine
-	// identity) across the HTTP hop. Routing the actual write through this one
-	// conditional round trip instead of a separate proxied Update restores the
-	// same guarantee LocalStorage already has, without making any
+	// This exists because the now-deleted RemoteStorage's WithTransaction was a
+	// no-op passthrough — there was no client-side transaction to open over HTTP
+	// — so a generic two-call Lock-then-Update sequence run against it got NONE of
+	// the atomicity LocalStorage provides via a real DB transaction + row lock
+	// (Postgres: SELECT ... FOR UPDATE), silently reopening the exact #388 race (a
+	// concurrent revoke and reactivate racing off the same pre-transition state
+	// could un-revoke a just-revoked machine identity) across the HTTP hop.
+	// Routing the actual write through this one conditional round trip restores
+	// the same guarantee LocalStorage already has, without making any
 	// transition-legality decision here: the caller (core.TransitionMachineIdentity)
 	// still decides fromState/to via canTransitionMachine before calling this;
 	// a false match result must be treated exactly like an illegal transition,
@@ -649,21 +651,19 @@ type Storage interface {
 	// field at all (models.SecretNode has none — the plaintext normally lives
 	// only in core.CreateSecretRequest.Value and is routed to a separate
 	// CreateSecretVersion call core.CreateSecret makes right after this one).
-	// The optional plaintextValue variadic (#499) exists ONLY for RemoteStorage:
-	// the real upstream HTTP handler (server/http/handlers/secrets_crud.go)
-	// requires "value" in the SAME POST /api/v1/secrets body and creates version
-	// 1 atomically as part of handling it — there is no separate
-	// "create metadata now, add the value later" route to call instead. At most
-	// one value is meaningful; callers pass zero or one. LocalStorage's
-	// implementation MUST ignore this parameter (its CreateSecret has never
-	// touched the value and must keep not doing so — the value continues to
-	// flow through the existing, unchanged CreateSecretVersion path). When
-	// RemoteStorage successfully forwards a plaintextValue, the *models.SecretNode
-	// it returns has ValueStored set (a transient, never-persisted field — see
-	// models.SecretNode) so core.CreateSecret knows version 1 already exists
-	// upstream and must NOT also call CreateSecretVersion itself, which would
-	// otherwise mint a conflicting duplicate version 1 (or, until that route
-	// exists server-side, simply fail).
+	// The optional plaintextValue variadic (#499) existed ONLY for the now-deleted
+	// RemoteStorage: its upstream HTTP handler required "value" in the SAME POST
+	// /api/v1/secrets body and created version 1 atomically as part of handling
+	// it, with no separate "create metadata now, add the value later" route to
+	// call instead. LocalStorage's implementation has always ignored this
+	// parameter — the value flows through the existing, unchanged
+	// CreateSecretVersion path — but callers (internal/core/secrets.go) still
+	// construct and pass it on every call, for a backend that no longer exists.
+	// Candidate for a follow-up cleanup: drop the parameter, ValueStored
+	// (models.SecretNode), and the now-always-false branch in core.CreateSecret
+	// that checks it — left untouched here since it threads through the
+	// interface, LocalStorage, and the generated fault-injection wrapper, and
+	// deserves its own reviewed PR rather than riding along with a comment sweep.
 	CreateSecret(ctx context.Context, secret *models.SecretNode, plaintextValue ...string) (*models.SecretNode, error)
 	GetSecret(ctx context.Context, id uint) (*models.SecretNode, error)
 	// GetSecretsByIDs is the batch form of GetSecret: every secret in ids, in one
@@ -691,13 +691,12 @@ type Storage interface {
 	// caller, and — because UpdateSecret persists the FULL in-memory struct —
 	// any OTHER field mutated by a concurrent, unrelated operation between the
 	// read and this write would be silently reverted to the stale value read at
-	// the top, a general lost-update problem. And because RemoteStorage.
-	// WithTransaction is a no-op passthrough (remote_transaction.go: "there is
-	// no client-side transaction to open over HTTP"), a naive two-call
-	// GetSecret-then-UpdateSecret sequence gets NONE of the atomicity a real DB
-	// transaction + conditional write provides, reopening the same race across
-	// the HTTP hop for a downstream server booted with storage.type: remote.
-	// Routing the write through this one conditional round trip instead
+	// the top, a general lost-update problem. And because the now-deleted
+	// RemoteStorage's WithTransaction was a no-op passthrough, a naive two-call
+	// GetSecret-then-UpdateSecret sequence run against it got NONE of the
+	// atomicity a real DB transaction + conditional write provides, reopening the
+	// same race across the HTTP hop. Routing the write through this one
+	// conditional round trip instead
 	// restores the same guarantee LocalStorage already has: a false match
 	// result must be treated exactly like a lost race — surfaced as an error to
 	// the caller — not retried or silently overwritten.
@@ -809,21 +808,15 @@ type Storage interface {
 	// CreateUser persists user, which by this point already carries its final
 	// bcrypt PasswordHash (`json:"-"` — core.buildUserForCreate hashes and
 	// discards the caller-supplied plaintext before ever reaching here). The
-	// optional plaintextPassword variadic (#499) exists ONLY for RemoteStorage:
-	// the real upstream HTTP handler (server/http/handlers/users_crud.go)
-	// re-hashes its own bcrypt copy server-side and therefore requires the
-	// PLAINTEXT password in its request body, not a hash it cannot verify was
-	// produced honestly. Passing it through here — rather than adding it to
-	// models.User itself — keeps the plaintext out of the persisted/logged user
-	// record entirely; it exists only as a function-call argument for the single
-	// call that needs it. At most one value is meaningful; callers pass zero or
-	// one. LocalStorage's implementation MUST ignore this parameter (it already
-	// has the hash and must never additionally receive, log, or persist the
-	// plaintext) — a no-op, not a new capability. Callers with no real plaintext
-	// to offer (SSO/SCIM auto-provisioning, which mints an unusable random
-	// password precisely because the account is never meant to authenticate
-	// with one) must not pass anything here; RemoteStorage.CreateUser then omits
-	// the wire field entirely, exactly as it did before #499 for those flows.
+	// optional plaintextPassword variadic (#499) existed ONLY for the now-deleted
+	// RemoteStorage: its upstream HTTP handler re-hashed its own bcrypt copy
+	// server-side and therefore required the PLAINTEXT password in its request
+	// body, not a hash it could not verify was produced honestly. LocalStorage's
+	// implementation has always ignored this parameter (it already has the hash
+	// and never additionally receives, logs, or persists the plaintext) — same
+	// follow-up cleanup candidate as CreateSecret's plaintextValue above (drop the
+	// parameter; call sites still construct and pass it for a backend that no
+	// longer exists).
 	CreateUser(ctx context.Context, user *models.User, plaintextPassword ...string) (*models.User, error)
 	// CreateUserWithRoleGrants creates the user and applies all role grants in a
 	// single transaction (ADR-028 atomic provisioning); on any failure nothing is
@@ -861,11 +854,11 @@ type Storage interface {
 	// profile edit racing an admin deactivation, or two deactivation attempts
 	// racing each other), and a plain write silently clobbers whichever change
 	// lost the race, with no error to either caller. This exists for the exact
-	// same reason TransitionMachineIdentityState does: RemoteStorage.WithTransaction
-	// is a no-op passthrough (remote_transaction.go), so a naive
-	// GetUser-then-UpdateUser sequence gets none of the atomicity LocalStorage
-	// provides via a real DB transaction once proxied over HTTP — routing the
-	// actual write through this one conditional round trip restores the same
+	// same reason TransitionMachineIdentityState does: the now-deleted
+	// RemoteStorage's WithTransaction was a no-op passthrough, so a naive
+	// GetUser-then-UpdateUser sequence run against it got none of the atomicity
+	// LocalStorage provides via a real DB transaction — routing the actual write
+	// through this one conditional round trip restores the same
 	// guarantee LocalStorage already has, without making any validation decision
 	// here: the caller (core.UpdateUser) still decides which fields to mutate and
 	// what fromActive to assert before calling this; a false match result must be
@@ -1444,14 +1437,13 @@ type Storage interface {
 	// (#388/#518) exactly, just gated on DynamicSecretConfig.Disabled instead of a
 	// string state column. Returns whether the write actually matched a row.
 	//
-	// This exists for the same reason TransitionMachineIdentityState does:
-	// RemoteStorage.WithTransaction is a no-op passthrough (remote_transaction.go:
-	// "there is no client-side transaction to open over HTTP"), so a plain
-	// GetDynamicSecretConfig-then-UpdateDynamicSecretConfig sequence — the shape
-	// SetDynamicSecretConfigEnabled used before this fix — has no atomicity at all
-	// against RemoteStorage: two racing callers (e.g. one admin enabling while
-	// another is mid-disable, or an unrelated concurrent edit landing between the
-	// read and the write) can silently clobber each other's change, or clobber an
+	// This exists for the same reason TransitionMachineIdentityState does: the
+	// now-deleted RemoteStorage's WithTransaction was a no-op passthrough, so a
+	// plain GetDynamicSecretConfig-then-UpdateDynamicSecretConfig sequence — the
+	// shape SetDynamicSecretConfigEnabled used before this fix — had no atomicity
+	// at all against it: two racing callers (e.g. one admin enabling while another
+	// is mid-disable, or an unrelated concurrent edit landing between the read and
+	// the write) could silently clobber each other's change, or clobber an
 	// unrelated field mutated by the other racer, with no error surfaced. Routing
 	// the actual write through this one conditional round trip instead of a
 	// separate proxied Update restores the same guarantee LocalStorage's
@@ -1486,8 +1478,9 @@ type Storage interface {
 	// UpsertMFAStepupToken records (or refreshes) the MFA step-up window for
 	// userID. expiresAt is set by the caller (core) from the configured window. One
 	// row per user; the previous row is replaced on re-verification so re-login
-	// extends the window cleanly. Intentional no-op stub on RemoteStorage — the
-	// step-up token is always created and checked server-side.
+	// extends the window cleanly. (The now-deleted RemoteStorage implemented this
+	// as an intentional no-op stub — the step-up token was always created and
+	// checked server-side.)
 	UpsertMFAStepupToken(ctx context.Context, userID uint, expiresAt time.Time) error
 	// HasActiveMFAStepup reports whether userID has a non-expired MFA step-up
 	// record, confirming a recent second-factor verification.
@@ -1549,12 +1542,11 @@ type Storage interface {
 	// counter-advance path that USED to compose these two into a single
 	// WithTransaction call (closing the cloned-authenticator race, #306) now goes
 	// through AdvanceWebAuthnCredentialCounter below instead, which performs the
-	// lock+compare+write as ONE atomic storage-layer call — required because
-	// RemoteStorage.WithTransaction is a no-op passthrough (see
-	// internal/storage/store/remote_transaction.go): composing
-	// LockWebAuthnCredentialForUpdate + UpdateWebAuthnCredential as two separate
-	// remote calls would reopen the exact TOCTOU race the transaction was built to
-	// prevent.
+	// lock+compare+write as ONE atomic storage-layer call — required because the
+	// now-deleted RemoteStorage's WithTransaction was a no-op passthrough:
+	// composing LockWebAuthnCredentialForUpdate + UpdateWebAuthnCredential as two
+	// separate remote calls would have reopened the exact TOCTOU race the
+	// transaction was built to prevent.
 	LockWebAuthnCredentialForUpdate(ctx context.Context, credentialID []byte, userID uint) (*models.WebAuthnCredential, error)
 	UpdateWebAuthnCredential(ctx context.Context, c *models.WebAuthnCredential) error
 	// AdvanceWebAuthnCredentialCounter conditionally persists an advanced signature
@@ -1570,15 +1562,12 @@ type Storage interface {
 	// stale — only reject when at least one side is nonzero and newSignCount fails to
 	// strictly exceed the row's current stored count.
 	//
-	// LocalStorage implements this as a single row-locked transaction (the exact
-	// Lock+compare+Update sequence persistUpdatedCredential used to run inline, moved
-	// down into this one storage-layer call so ALL backends — not just
-	// RemoteStorage — get it for free). RemoteStorage implements it as ONE HTTP call
-	// whose SERVER-SIDE handler performs the identical locked compare-and-swap
-	// against its OWN storage in a single request: the real atomicity is achieved
-	// server-side inside that one call, not via any client-side multi-step
-	// transaction (RemoteStorage.WithTransaction cannot provide one — it is a no-op
-	// passthrough).
+	// LocalStorage implements this as a single row-locked transaction — the exact
+	// Lock+compare+Update sequence persistUpdatedCredential used to run inline,
+	// moved down into this one storage-layer call. (The now-deleted RemoteStorage
+	// implemented it as ONE HTTP call whose server-side handler performed the
+	// identical locked compare-and-swap against its own storage, since its
+	// WithTransaction could not provide client-side atomicity at all.)
 	//
 	// Returns advanced=false, err=nil (not an error) when the write was skipped as
 	// stale — a benign, expected outcome of losing a race, not a failure — mirroring
@@ -1624,10 +1613,8 @@ type Storage interface {
 	// GetSetupTokenByHash is the consumption lookup (indexed equality on token_hash).
 	GetSetupTokenByHash(ctx context.Context, hash string) (*models.SetupToken, error)
 	// GetSetupTokenByID looks up a setup token by primary key. Only ever called
-	// hub-side (KeyorixCore.ExpireSetupTokenByID, #1622) to resolve purpose/subject
-	// detail for an explicit (non-lazy-read) expiry's audit write — no
-	// RemoteStorage caller needs this, since server/http/handlers is always
-	// LocalStorage-backed (validateRemoteStorageNotServer forbids the reverse).
+	// from KeyorixCore.ExpireSetupTokenByID (#1622) to resolve purpose/subject
+	// detail for an explicit (non-lazy-read) expiry's audit write.
 	GetSetupTokenByID(ctx context.Context, id uint) (*models.SetupToken, error)
 	// SupersedeActiveSetupTokens flips every active token for (purpose, email) to
 	// superseded, so reissuing ("resend") atomically kills the prior link.
