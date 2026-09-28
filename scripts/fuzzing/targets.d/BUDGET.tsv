@@ -1,0 +1,31 @@
+# scripts/fuzzing/targets.d/BUDGET.tsv — per-target rig priority, one line per
+# target file: <pkg-slug>__<FuzzName><TAB><priority>. priority is high, medium,
+# or low. A target with NO entry here defaults to medium (see
+# docs/fuzzing/continuous-rig.md). Lines starting with # or blank are ignored.
+# Only exceptions to the medium default are listed -- not a mandatory
+# enumeration of all targets, see the design doc for why.
+#
+# high: the target's own targets.d/*.conf comment cites a real finding this
+# exact fuzzer caught, or the code under test is reachable from an
+# unauthenticated route.
+internal-notary__FuzzVerifyReceipt.conf	high
+internal-recoverykey__FuzzHashAndVerify.conf	high
+internal-saml__FuzzParseResponse.conf	high
+internal-core__FuzzOIDCIDTokenSingleConstraintViolation.conf	high
+internal-core__FuzzSSOIDTokenSingleConstraintViolation.conf	high
+internal-core__FuzzSSRFGuardDifferential.conf	high
+internal-libconformance__FuzzDigitorusPKCS7BoundedWork.conf	high
+server-http-handlers__FuzzWebAuthnCredentialResponse.conf	high
+server-http__FuzzCanarySecretLeakage.conf	high
+
+# low: the target's own targets.d/*.conf comment says it is saturated
+# (+0 or +1 new-interesting per run) as of the comment's own dated
+# saturation snapshot -- re-promote when a re-tune (see targets.conf's own
+# header) finds it reopened.
+internal-crypto__FuzzCombineKEK.conf	low
+internal-rotation__FuzzAzureGenerateUpstreamRef.conf	low
+internal-rotation__FuzzPostgresQuoting.conf	low
+internal-rotation__FuzzMySQLQuoteString.conf	low
+internal-saml__FuzzSAMLMetadata.conf	low
+pkg-bundleverify__FuzzBundleVerify.conf	low
+pkg-bundleverify__FuzzComponentPathContainment.conf	low
