@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -129,6 +130,13 @@ func (c *KeyorixCore) AssignPermissionToRole(ctx context.Context, actorID, roleI
 		}
 	}
 	if err := c.storage.AssignPermissionToRole(ctx, roleID, permissionID); err != nil {
+		if errors.Is(err, storage.ErrDuplicateRolePermission) {
+			// Distinguishable message (matched by server/http/handlers/rbac.go's
+			// AssignPermissionToRole via the same strings.Contains classification
+			// idiom that function already uses for "do not hold it yourself" a few
+			// lines above) so this maps to 409 Conflict, not a generic 500.
+			return fmt.Errorf("role %q already has permission %q", role.Name, perm.Name)
+		}
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	builtinTarget := IsBuiltinRole(role.Name)

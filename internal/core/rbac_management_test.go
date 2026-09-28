@@ -147,6 +147,44 @@ func TestAssignPermissionToRole_AdminBypasses(t *testing.T) {
 	require.NoError(t, c.AssignPermissionToRole(ctx, admin, 1, 1, false))
 }
 
+// TestAssignPermissionToRole_DuplicateAssignment_ReturnsConflictNotStorageFailure
+// is SESSION-I's regression: role_permissions' composite primary key
+// (role_id, permission_id) rejects a duplicate insert at the real SQLite
+// layer, and before storage.ErrDuplicateRolePermission existed, that
+// primary-key violation surfaced from AssignPermissionToRole as a generic
+// "Storage operation failed" error indistinguishable from any other DB
+// failure — server/http/handlers/rbac.go's handler could not classify it,
+// so a re-assign of an already-held permission 500ed instead of the correct
+// 409 Conflict. Runs against a real SQLite database (newRBACManagementCore),
+// not a mock, so the actual UNIQUE constraint fires.
+func TestAssignPermissionToRole_DuplicateAssignment_ReturnsConflictNotStorageFailure(t *testing.T) {
+	c, db := newRBACManagementCore(t)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
+
+	const admin = uint(9)
+	require.NoError(t, db.Create(&models.UserRole{UserID: admin, RoleID: 1}).Error)
+
+	// First assignment succeeds.
+	require.NoError(t, c.AssignPermissionToRole(ctx, admin, 1, 1, false))
+
+	// Second, identical assignment must fail with a message the handler can
+	// classify as 409 (strings.Contains(err.Error(), "already has permission")),
+	// NOT the generic i18n.T("ErrorStorageFailed") wrapper every other,
+	// genuinely-unexpected storage error still falls through to.
+	err := c.AssignPermissionToRole(ctx, admin, 1, 1, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already has permission",
+		"a duplicate role-permission assignment must be classifiable as a conflict, not a generic storage failure")
+	assert.NotContains(t, err.Error(), "Storage operation failed",
+		"must not fall through to the generic default-case wrapper the handler maps to 500")
+
+	var count int64
+	require.NoError(t, db.Model(&models.RolePermission{}).Where("role_id = ? AND permission_id = ?", 1, 1).Count(&count).Error)
+	assert.Equal(t, int64(1), count, "the duplicate attempt must not have inserted a second row")
+}
+
 // RemovePermissionFromRole is purely subtractive (weakens a role) — it must NOT
 // require the actor hold the permission being removed, unlike assignment.
 func TestRemovePermissionFromRole_NoSelfPermissionRequired(t *testing.T) {

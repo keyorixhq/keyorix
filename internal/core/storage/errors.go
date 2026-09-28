@@ -125,6 +125,18 @@ var ErrBreakGlassAlreadyActive = errors.New("an active break-glass grant already
 // constraint-violation message.
 var ErrDuplicateDynamicSecretConfig = errors.New("a dynamic-secret config with this name already exists in this project and environment")
 
+// ErrDuplicateRolePermission is returned (wrapped) by AssignPermissionToRole
+// when the insert collides with role_permissions' composite primary key
+// (role_id, permission_id) -- i.e. the role already has this permission.
+// Before this existed, that primary-key violation fell through
+// AssignPermissionToRole's core wrapper as a generic "Storage operation
+// failed" error, which server/http/handlers/rbac.go's AssignPermissionToRole
+// handler could not distinguish from any other storage failure, so a
+// re-assign of an already-held permission (a plausible idempotent-retry
+// shape, not an attack) 500ed instead of returning 409 Conflict. Found by
+// SESSION-I's fresh-install API smoke driver (scripts/e2e).
+var ErrDuplicateRolePermission = errors.New("this role already has this permission")
+
 // ErrDuplicateReminderNotification is returned (wrapped) by CreateNotification when
 // the insert collides with the partial unique index on notifications (user_id, type,
 // project_id) scoped to unread rotation/expiry reminders (#488). Both
