@@ -34,12 +34,15 @@
 // this specific claim. The fuzz input selects which of the 3 real
 // fixtures to run -- small input space, but every value is a real,
 // independently-generated historical database, not a synthetic case.
+//
+// This file covers SQLite. See upgrade_migration_pg_replay_test.go
+// (FuzzUpgradeMigrationPostgres, E4) for the Postgres path: it replays each
+// fixture's own pre-migration schema and row data into an isolated Postgres
+// schema, then runs the exact same 4 oracles (runUpgradeOracles) there too.
 package core
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -50,6 +53,7 @@ import (
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 type upgradeFuzzManifest struct {
@@ -142,92 +146,17 @@ func FuzzUpgradeMigration(f *testing.F) {
 		c := NewKeyorixCore(st)
 		c.SetAuthEncryptor(enc)
 		c.SetSecretValueEncryptor(enc)
-		ctx := context.Background()
 
-		// Oracle 1: every secret decrypts to its recorded plaintext.
-		for idStr, want := range manifest.SecretValues {
-			var id uint
-			if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
-				t.Fatalf("manifest secret id %q: %v", idStr, err)
-			}
-			got, err := c.GetSecretValue(ctx, id)
-			if err != nil {
-				t.Fatalf("GetSecretValue(%d) after migrating a %s-vintage database: %v", id, manifest.SourceTag, err)
-			}
-			if string(got) != want {
-				t.Errorf("secret %d decrypted to %q after migration, want %q (source=%s)", id, got, want, manifest.SourceTag)
-			}
-		}
-
-		// Oracle 2: the fixed authz probe gives the same verdict the OLD
-		// tag's own core.Authorize recorded at seed time.
-		allowRead, err := c.Authorize(ctx, manifest.ProbeUserID, "secrets.read", Scope{ProjectID: manifest.ProbeProjectID})
+		// Oracles 1-4: shared with FuzzUpgradeMigrationPostgres (E4) via
+		// runUpgradeOracles, so the two backends can never silently diverge
+		// in what they check -- see upgrade_migration_pg_replay_test.go.
+		orphanDB, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{Logger: logger.Discard})
 		if err != nil {
-			t.Fatalf("Authorize(read) after migration: %v", err)
+			t.Fatalf("reopening %s for orphan check: %v", dbPath, err)
 		}
-		if allowRead != manifest.ProbeAllowRead {
-			t.Errorf("secrets.read verdict changed after migrating a %s-vintage database: was %v, now %v",
-				manifest.SourceTag, manifest.ProbeAllowRead, allowRead)
+		if sqlDB, e := orphanDB.DB(); e == nil {
+			defer func() { _ = sqlDB.Close() }()
 		}
-		allowWrite, err := c.Authorize(ctx, manifest.ProbeUserID, "secrets.write", Scope{ProjectID: manifest.ProbeProjectID})
-		if err != nil {
-			t.Fatalf("Authorize(write) after migration: %v", err)
-		}
-		if allowWrite != manifest.ProbeAllowWrite {
-			t.Errorf("secrets.write verdict changed after migrating a %s-vintage database: was %v, now %v",
-				manifest.SourceTag, manifest.ProbeAllowWrite, allowWrite)
-		}
-
-		// Oracle 3: the audit hash chain still verifies.
-		verification, err := c.VerifyAuditChain(ctx)
-		if err != nil {
-			t.Fatalf("VerifyAuditChain after migration: %v", err)
-		}
-		if !verification.Valid {
-			t.Errorf("audit chain failed to verify after migrating a %s-vintage database: first broken id=%v (chained=%d, unchained=%d)",
-				manifest.SourceTag, verification.FirstBrokenID, verification.ChainedEvents, verification.UnchainedEvents)
-		}
-
-		// Oracle 4: no orphan rows introduced by migration.
-		assertNoOrphans(t, dbPath, manifest.SourceTag)
+		runUpgradeOracles(t, c, orphanDB, manifest)
 	})
-}
-
-// assertNoOrphans opens dbPath directly (read-only, raw SQL) and checks
-// every foreign-key-shaped reference this schema is documented to have
-// resolves to a live parent row -- the migration's own job is additive
-// schema changes plus any data backfill it performs; either one leaving a
-// dangling reference behind is exactly what this oracle exists to catch.
-func assertNoOrphans(t *testing.T, dbPath, sourceTag string) {
-	t.Helper()
-	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("reopening %s for orphan check: %v", dbPath, err)
-	}
-	if sqlDB, err := db.DB(); err == nil {
-		defer func() { _ = sqlDB.Close() }()
-	}
-
-	checks := []struct {
-		desc  string
-		query string
-	}{
-		{"SecretVersion with no parent SecretNode",
-			"SELECT COUNT(*) FROM secret_versions sv LEFT JOIN secret_nodes sn ON sv.secret_node_id = sn.id WHERE sn.id IS NULL"},
-		{"UserRole with no parent User",
-			"SELECT COUNT(*) FROM user_roles ur LEFT JOIN users u ON ur.user_id = u.id WHERE u.id IS NULL"},
-		{"UserRole with no parent Role",
-			"SELECT COUNT(*) FROM user_roles ur LEFT JOIN roles r ON ur.role_id = r.id WHERE r.id IS NULL"},
-		{"RolePermission with no parent Role",
-			"SELECT COUNT(*) FROM role_permissions rp LEFT JOIN roles r ON rp.role_id = r.id WHERE r.id IS NULL"},
-	}
-	for _, c := range checks {
-		var count int64
-		if err := db.Raw(c.query).Scan(&count).Error; err != nil {
-			t.Fatalf("orphan check %q: %v", c.desc, err)
-		}
-		if count > 0 {
-			t.Errorf("%d orphan row(s) after migrating a %s-vintage database: %s", count, sourceTag, c.desc)
-		}
-	}
 }
