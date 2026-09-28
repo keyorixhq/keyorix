@@ -4897,6 +4897,151 @@ var opCatalog = []operation{
 			return opResult{Success: true, Detail: codes.OK.String()}, nil
 		},
 	},
+	{
+		// Coverage batch 24 (Session C item C2, FAULTOPS-SPEED STEP 3 PR B):
+		// self-service break-glass activation, the REST route + its 2 gRPC
+		// siblings — the "break-glass policy" fixture PR A (#2196) wired
+		// (SetBreakGlassPolicy, world_test.go) left these 3 unreachable until
+		// something actually called ActivateBreakGlass; the REST revoke sibling
+		// was already wired (batch 7). core.ActivateBreakGlass requires the
+		// caller to be an existing project member (IsProjectMember, any role,
+		// this project scope) — Setup grants the admin (userID 1, the bearer
+		// this world's REST/gRPC calls authenticate as) exactly that, mirroring
+		// world_fixture_test.go's own TestWorldFixture_BreakGlass proof that this
+		// exact shape satisfies ActivateBreakGlass end-to-end.
+		Key: "REST POST /api/v1/projects/{id}/break-glass",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			pStatus, pBody, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects", map[string]any{"name": "fuzz-bg-activate-project"})
+			if err != nil {
+				return nil, err
+			}
+			if pStatus/100 != 2 {
+				return nil, fmt.Errorf("setup CreateProject: HTTP %d: %s", pStatus, pBody)
+			}
+			var proj struct {
+				Data struct {
+					ID uint `json:"ID"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(pBody, &proj); err != nil || proj.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateProject response: %w (body=%s)", err, pBody)
+			}
+			roleID, err := createRoleForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			if err := w.faulty.AssignRole(ctx, 1, roleID, coreStorage.Scope{ProjectID: proj.Data.ID}); err != nil {
+				return nil, fmt.Errorf("setup AssignRole (admin membership): %w", err)
+			}
+			return proj.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			projID := state.(uint)
+			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/projects/%d/break-glass", projID), map[string]any{
+				"justification": "fuzz break-glass activation — batch 24",
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "GRPC keyorix.v1.BreakGlassService.ActivateBreakGlass",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			pStatus, pBody, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects", map[string]any{"name": "fuzz-bg-activate-grpc-project"})
+			if err != nil {
+				return nil, err
+			}
+			if pStatus/100 != 2 {
+				return nil, fmt.Errorf("setup CreateProject: HTTP %d: %s", pStatus, pBody)
+			}
+			var proj struct {
+				Data struct {
+					ID uint `json:"ID"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(pBody, &proj); err != nil || proj.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateProject response: %w (body=%s)", err, pBody)
+			}
+			roleID, err := createRoleForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			if err := w.faulty.AssignRole(ctx, 1, roleID, coreStorage.Scope{ProjectID: proj.Data.ID}); err != nil {
+				return nil, fmt.Errorf("setup AssignRole (admin membership): %w", err)
+			}
+			return proj.Data.ID, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			projID := state.(uint)
+			_, err := pb.NewBreakGlassServiceClient(w.grpcConn).ActivateBreakGlass(w.grpcCtx, &pb.ActivateBreakGlassRequest{
+				ProjectId: uint32(projID), Justification: "fuzz break-glass activation grpc — batch 24",
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
+	{
+		// gRPC RevokeBreakGlass sibling of the already-wired REST revoke
+		// (batch 7) — identical Setup shape (a real, pre-existing activation
+		// via the storage-level w.faulty helper, matching batch 7's own
+		// precedent for this exact operation family), driven over gRPC instead
+		// of REST to prove the harness generalizes across transports here too.
+		Key: "GRPC keyorix.v1.BreakGlassService.RevokeBreakGlass",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			pStatus, pBody, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects", map[string]any{"name": "fuzz-bg-revoke-grpc-project"})
+			if err != nil {
+				return nil, err
+			}
+			if pStatus/100 != 2 {
+				return nil, fmt.Errorf("setup CreateProject: HTTP %d: %s", pStatus, pBody)
+			}
+			var proj struct {
+				Data struct {
+					ID uint `json:"ID"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(pBody, &proj); err != nil || proj.Data.ID == 0 {
+				return nil, fmt.Errorf("decoding CreateProject response: %w (body=%s)", err, pBody)
+			}
+			userID, err := createUserForFuzz(ctx, w, "fuzz-bg-revoke-grpc-user")
+			if err != nil {
+				return nil, err
+			}
+			roleID, err := createRoleForFuzz(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			if err := w.faulty.AssignRole(ctx, userID, roleID, coreStorage.Scope{ProjectID: proj.Data.ID}); err != nil {
+				return nil, fmt.Errorf("setup AssignRole: %w", err)
+			}
+			activation, err := w.faulty.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
+				ProjectID:     proj.Data.ID,
+				UserID:        userID,
+				RoleID:        roleID,
+				RoleName:      "fuzz-role",
+				Justification: "fuzz break-glass grpc revoke path — batch 24",
+				State:         core.BreakGlassActive,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("setup CreateBreakGlassActivation: %w", err)
+			}
+			return map[string]uint{"projectID": proj.Data.ID, "activationID": activation.ID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			s := state.(map[string]uint)
+			_, err := pb.NewBreakGlassServiceClient(w.grpcConn).RevokeBreakGlass(w.grpcCtx, &pb.RevokeBreakGlassRequest{
+				ProjectId: uint32(s["projectID"]), ActivationId: uint32(s["activationID"]),
+			})
+			if err != nil {
+				return opResult{Success: false, Detail: status.Convert(err).Code().String() + ": " + err.Error()}, nil
+			}
+			return opResult{Success: true, Detail: codes.OK.String()}, nil
+		},
+	},
 }
 
 // runOp runs op.Setup (if any) then op.Execute against w, with no fault

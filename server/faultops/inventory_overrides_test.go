@@ -276,6 +276,13 @@ var operationOverrides = map[string]overrideEntry{
 	"REST POST /api/v1/notifications/{id}/read": {StatusFuzzed, "opCatalog[\"MarkRead\"] — batch 22"},
 
 	"REST DELETE /api/v1/alert-escalation-policies/{id}": {StatusFuzzed, "opCatalog[\"DeleteAlertEscalationPolicy\"] — batch 23"},
+
+	// Coverage batch 24 (Session C item C2, FAULTOPS-SPEED STEP 3 PR B):
+	// self-service break-glass activation, unblocked by PR A's (#2196)
+	// break-glass policy fixture.
+	"REST POST /api/v1/projects/{id}/break-glass":          {StatusFuzzed, "opCatalog[\"REST POST /api/v1/projects/{id}/break-glass\"] — batch 24"},
+	"GRPC keyorix.v1.BreakGlassService.ActivateBreakGlass": {StatusFuzzed, "opCatalog[\"GRPC keyorix.v1.BreakGlassService.ActivateBreakGlass\"] — batch 24"},
+	"GRPC keyorix.v1.BreakGlassService.RevokeBreakGlass":   {StatusFuzzed, "opCatalog[\"GRPC keyorix.v1.BreakGlassService.RevokeBreakGlass\"] — batch 24"},
 }
 
 func statusOf(key string) overrideEntry {
