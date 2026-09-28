@@ -113,5 +113,11 @@ func (c *KeyorixCore) BulkRevokeExpiredOwnPATs(ctx context.Context, userID uint)
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
-	return c.storage.BulkRevokeExpiredPATsByUser(ctx, userID, c.now())
+	revoked, err := c.storage.BulkRevokeExpiredPATsByUser(ctx, userID, c.now())
+	if err != nil {
+		return nil, err
+	}
+	c.writeAuditEvent(ctx, EventPATRevoked, actorPtr(userID), nil,
+		fmt.Sprintf("user %d bulk-revoked %d expired PAT(s)", userID, len(revoked)))
+	return revoked, nil
 }

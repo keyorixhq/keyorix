@@ -136,7 +136,7 @@ func TestSecretTemplateHandler_Get_Success(t *testing.T) {
 
 func TestSecretTemplateHandler_Update_InvalidID(t *testing.T) {
 	h := newSecretTemplateTestHandler(t)
-	req := stChiID(httptest.NewRequest(http.MethodPut, "/", bytes.NewBufferString(`{"name":"x"}`)), "xyz")
+	req := stChiID(withUserCtx(httptest.NewRequest(http.MethodPut, "/", bytes.NewBufferString(`{"name":"x"}`))), "xyz")
 	w := httptest.NewRecorder()
 	h.Update(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -144,7 +144,7 @@ func TestSecretTemplateHandler_Update_InvalidID(t *testing.T) {
 
 func TestSecretTemplateHandler_Update_InvalidJSON(t *testing.T) {
 	h := newSecretTemplateTestHandler(t)
-	req := stChiID(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "1")
+	req := stChiID(withUserCtx(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad"))), "1")
 	w := httptest.NewRecorder()
 	h.Update(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -201,7 +201,7 @@ func TestSecretTemplateHandler_Update_Success(t *testing.T) {
 
 func TestSecretTemplateHandler_Delete_InvalidID(t *testing.T) {
 	h := newSecretTemplateTestHandler(t)
-	req := stChiID(httptest.NewRequest(http.MethodDelete, "/", nil), "abc")
+	req := stChiID(withUserCtx(httptest.NewRequest(http.MethodDelete, "/", nil)), "abc")
 	w := httptest.NewRecorder()
 	h.Delete(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -209,7 +209,7 @@ func TestSecretTemplateHandler_Delete_InvalidID(t *testing.T) {
 
 func TestSecretTemplateHandler_Delete_NotFound(t *testing.T) {
 	h := newSecretTemplateTestHandler(t)
-	req := stChiID(httptest.NewRequest(http.MethodDelete, "/", nil), "999")
+	req := stChiID(withUserCtx(httptest.NewRequest(http.MethodDelete, "/", nil)), "999")
 	w := httptest.NewRecorder()
 	h.Delete(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -221,7 +221,7 @@ func TestSecretTemplateHandler_Delete_Success(t *testing.T) {
 	h.Create(cw, withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"name":"del-me"}`))))
 	require.Equal(t, http.StatusCreated, cw.Code)
 
-	req := stChiID(httptest.NewRequest(http.MethodDelete, "/", nil), "1")
+	req := stChiID(withUserCtx(httptest.NewRequest(http.MethodDelete, "/", nil)), "1")
 	w := httptest.NewRecorder()
 	h.Delete(w, req)
 	assert.Equal(t, http.StatusNoContent, w.Code)
@@ -231,7 +231,7 @@ func TestSecretTemplateHandler_Delete_Success(t *testing.T) {
 
 func TestSecretTemplateHandler_Apply_InvalidID(t *testing.T) {
 	h := newSecretTemplateTestHandler(t)
-	req := stChiID(httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{}`)), "zz")
+	req := stChiID(withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{}`))), "zz")
 	w := httptest.NewRecorder()
 	h.Apply(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -239,7 +239,7 @@ func TestSecretTemplateHandler_Apply_InvalidID(t *testing.T) {
 
 func TestSecretTemplateHandler_Apply_InvalidJSON(t *testing.T) {
 	h := newSecretTemplateTestHandler(t)
-	req := stChiID(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "1")
+	req := stChiID(withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))), "1")
 	w := httptest.NewRecorder()
 	h.Apply(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -247,7 +247,7 @@ func TestSecretTemplateHandler_Apply_InvalidJSON(t *testing.T) {
 
 func TestSecretTemplateHandler_Apply_NotFound(t *testing.T) {
 	h := newSecretTemplateTestHandler(t)
-	req := stChiID(httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{}`)), "999")
+	req := stChiID(withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{}`))), "999")
 	w := httptest.NewRecorder()
 	h.Apply(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -256,7 +256,7 @@ func TestSecretTemplateHandler_Apply_NotFound(t *testing.T) {
 func TestSecretTemplateHandler_Apply_InvalidClassification(t *testing.T) {
 	h := newSecretTemplateTestHandler(t)
 	body := bytes.NewBufferString(`{"classification":"ULTRA_SECRET"}`)
-	req := stChiID(httptest.NewRequest(http.MethodPost, "/", body), "1")
+	req := stChiID(withUserCtx(httptest.NewRequest(http.MethodPost, "/", body)), "1")
 	w := httptest.NewRecorder()
 	h.Apply(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -271,7 +271,7 @@ func TestSecretTemplateHandler_Apply_Success(t *testing.T) {
 	require.Equal(t, http.StatusCreated, cw.Code)
 
 	body := bytes.NewBufferString(`{"classification":"","description":"override"}`)
-	req := stChiID(httptest.NewRequest(http.MethodPost, "/", body), "1")
+	req := stChiID(withUserCtx(httptest.NewRequest(http.MethodPost, "/", body)), "1")
 	w := httptest.NewRecorder()
 	h.Apply(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)

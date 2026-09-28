@@ -354,6 +354,11 @@ func (c *KeyorixCore) ListOwnSessions(ctx context.Context, userID uint) ([]*mode
 // RevokeOwnSession deletes one of the caller's sessions after verifying ownership.
 // A session that exists but belongs to another user is reported as not found, so a
 // caller cannot probe for or revoke other users' session IDs.
+// EventSessionRevoked is audited when a user revokes one of their OWN sessions
+// (F3, audit-completeness campaign) — distinct from EventUserSessionsRevoked
+// (account_sessions.go), which covers an admin force-logging-out another user.
+const EventSessionRevoked = "session.revoked"
+
 func (c *KeyorixCore) RevokeOwnSession(ctx context.Context, userID, sessionID uint) error {
 	if userID == 0 || sessionID == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user and session IDs are required")
@@ -368,5 +373,7 @@ func (c *KeyorixCore) RevokeOwnSession(ctx context.Context, userID, sessionID ui
 	// Evict the revoked session from the auth cache so the device is logged out on its
 	// next request, not after the positive-cache TTL. session_token is the cache key.
 	c.invalidateTokenCache(session.SessionToken)
+	c.writeAuditEvent(ctx, EventSessionRevoked, actorPtr(userID), nil,
+		fmt.Sprintf("user %d revoked their own session %d", userID, sessionID))
 	return nil
 }

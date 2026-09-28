@@ -114,6 +114,11 @@ func (h *SecretTemplateHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Update handles PUT /api/v1/secret-templates/{id}.
 func (h *SecretTemplateHandler) Update(w http.ResponseWriter, r *http.Request) {
+	actor := middleware.GetUserFromContext(r.Context())
+	if actor == nil {
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", errInvalidTemplateID, http.StatusBadRequest, nil)
@@ -155,11 +160,17 @@ func (h *SecretTemplateHandler) Update(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
+	h.coreService.LogSecretTemplateUpdated(r.Context(), actor.UserID, tmpl.ID, tmpl.Name)
 	sendSuccess(w, tmpl, "Secret template updated")
 }
 
 // Delete handles DELETE /api/v1/secret-templates/{id}.
 func (h *SecretTemplateHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	actor := middleware.GetUserFromContext(r.Context())
+	if actor == nil {
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", errInvalidTemplateID, http.StatusBadRequest, nil)
@@ -174,6 +185,7 @@ func (h *SecretTemplateHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
+	h.coreService.LogSecretTemplateDeleted(r.Context(), actor.UserID, uint(id))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -181,6 +193,11 @@ func (h *SecretTemplateHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // that merges the template's defaults into the caller's supplied fields and
 // returns the merged result without creating any secret.
 func (h *SecretTemplateHandler) Apply(w http.ResponseWriter, r *http.Request) {
+	actor := middleware.GetUserFromContext(r.Context())
+	if actor == nil {
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", errInvalidTemplateID, http.StatusBadRequest, nil)
@@ -211,5 +228,6 @@ func (h *SecretTemplateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	h.coreService.LogSecretTemplateApplied(r.Context(), actor.UserID, uint(id))
 	sendSuccess(w, result, "")
 }

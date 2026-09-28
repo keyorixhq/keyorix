@@ -359,6 +359,31 @@ func (c *KeyorixCore) DeleteEnvironment(ctx context.Context, id uint) error {
 	return c.storage.DeleteEnvironment(ctx, id)
 }
 
+// EventEnvironmentCreated/EventEnvironmentDeleted are audited on every
+// environment create/delete (F3, audit-completeness campaign). Standalone
+// methods, not parameters on CreateEnvironment/DeleteEnvironment themselves
+// -- same reasoning as LogRoleCreated/LogRoleUpdated/LogRoleDeleted (audit.go)
+// and this file's own LogProjectCreated/LogProjectUpdated/LogProjectDeleted.
+const (
+	EventEnvironmentCreated = "environment.created"
+	EventEnvironmentDeleted = "environment.deleted"
+)
+
+// LogEnvironmentCreated records an environment creation. actorID is the
+// creating admin (0 = none).
+func (c *KeyorixCore) LogEnvironmentCreated(ctx context.Context, actorID, environmentID, projectID uint, name string) {
+	pid := projectID
+	c.writeAuditEventFull(ctx, EventEnvironmentCreated, actorPtr(actorID), nil, &pid, "",
+		fmt.Sprintf("environment %d (%q) created in project %d", environmentID, name, projectID))
+}
+
+// LogEnvironmentDeleted records an environment deletion. actorID is the
+// deleting admin (0 = none).
+func (c *KeyorixCore) LogEnvironmentDeleted(ctx context.Context, actorID, environmentID uint) {
+	c.writeAuditEvent(ctx, EventEnvironmentDeleted, actorPtr(actorID), nil,
+		fmt.Sprintf("environment %d deleted", environmentID))
+}
+
 // RestoreEnvironment clears the soft-delete on an environment, scoped to
 // projectID so a caller authorized for one project cannot restore another's.
 // actorID is the acting admin (0 = none). Audited as environment.restored.

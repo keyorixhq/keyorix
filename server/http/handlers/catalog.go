@@ -348,6 +348,7 @@ func (h *CatalogHandler) CreateProjectEnvironment(w http.ResponseWriter, r *http
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
+	h.coreService.LogEnvironmentCreated(r.Context(), actorID(r), env.ID, uint(id), env.Name)
 	sendCreated(w, newEnvironmentWire(env), "Environment created")
 }
 
@@ -374,6 +375,7 @@ func (h *CatalogHandler) DeleteEnvironment(w http.ResponseWriter, r *http.Reques
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
+	h.coreService.LogEnvironmentDeleted(r.Context(), actorID(r), uint(id))
 	sendSuccess(w, nil, "Environment deleted")
 }
 
