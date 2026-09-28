@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -341,4 +342,36 @@ func TestRefreshSession_LosingRotationRaceIsTreatedAsReuse(t *testing.T) {
 	require.Error(t, err, "the losing side of a rotation race must not mint a second session")
 	require.Equal(t, EventSessionReuseDetected, loggedType)
 	store.AssertCalled(t, "DeleteSessionsByFamily", mock.Anything, "fam-1")
+}
+
+// TestRefreshSession_FamilyRevokeFailureIsAuditedLoudly is the red-proof for
+// handleSessionReuse's silently-swallowed DeleteSessionsByFamily error (Session O,
+// O2 item 2): unlike the deactivation-cleanup case, nothing else independently
+// blocks a live sibling session here (the account is still active) — a failure to
+// revoke the family after reuse was detected leaves an attacker's session live with
+// no signal anywhere. Red before the fix: DeleteSessionsByFamily's error was `_ =`,
+// so no second audit event was ever written and this test's
+// EventSessionReuseFamilyRevokeFailed assertion could never pass.
+func TestRefreshSession_FamilyRevokeFailureIsAuditedLoudly(t *testing.T) {
+	t.Parallel()
+	store := new(MockStorage)
+	c := newSessionCore(store, 30*time.Minute, 0)
+
+	rotatedAt := sessionTestNow.Add(-time.Minute)
+	old := &models.Session{ID: 7, UserID: 1, SessionToken: "stale", FamilyID: "fam-1", RotatedAt: &rotatedAt}
+	store.On("GetSessionAny", mock.Anything, "stale").Return(old, nil)
+	store.On("ListSessionTokenHashesByFamily", mock.Anything, "fam-1").Return([]string{"hash-a"}, nil)
+	store.On("DeleteSessionsByFamily", mock.Anything, "fam-1").Return(errors.New("db unavailable"))
+	var loggedTypes []string
+	store.On("LogAuditEvent", mock.Anything, mock.AnythingOfType("*models.AuditEvent")).
+		Run(func(args mock.Arguments) {
+			loggedTypes = append(loggedTypes, args.Get(1).(*models.AuditEvent).EventType)
+		}).
+		Return(nil)
+
+	_, err := c.RefreshSession(context.Background(), "stale")
+	require.Error(t, err, "the client-facing error stays generic even when cleanup failed")
+	require.Contains(t, loggedTypes, EventSessionReuseDetected)
+	require.Contains(t, loggedTypes, EventSessionReuseFamilyRevokeFailed,
+		"a failure to revoke a reused session's family must be audited distinctly, not silently swallowed")
 }
