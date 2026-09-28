@@ -39,6 +39,11 @@ systemd unit's `ExecStart` points at `fuzz-runner.sh`.
   `gen-targets-conf.sh`; exists only because the external `fuzz-harness` rig
   repo still reads this flat file directly (see `targets.d/README.md`). Never
   edit it by hand — `gen-targets-conf.sh --check` fails CI if it drifts.
+- **`targets.d/BUDGET.tsv`** — per-target rig priority (high/medium/low),
+  orthogonal to each target's own per-invocation fuzztime. Validate with
+  `validate-budget.sh`. See `docs/fuzzing/continuous-rig.md` for the design
+  this supports (pve01 continuous rig, STEP 1 only — STEP 2 is blocked on
+  PHASE0, see that doc's own banner).
 - **`race-pass.sh`** — runs the fuzz corpus under `-race` (needs cgo; dev/CI
   only, since the rigs are `CGO_ENABLED=0`). Backs the data-race closure (#1870).
 - **`harness-acceptance.sh`** — reach-check + coverage-delta gate for *in-wall*
