@@ -73,6 +73,14 @@ func ExtractArchive(r io.Reader, stagingDir string, maxEntryBytes, maxTotalBytes
 				"archive entry %q is not a regular file (tar type %q) -- restore refuses non-regular entries",
 				hdr.Name, string(hdr.Typeflag))
 		}
+		// hdr.Name (and the manifest TarName it is matched against below) is
+		// attacker-controlled here: the manifest is not signature-verified
+		// until after extraction. Refuse absolute paths and any ".." escape
+		// before anything is written (tar-slip; Session P, 2026-09-29).
+		if !filepath.IsLocal(hdr.Name) {
+			return Manifest{}, fmt.Errorf(
+				"archive entry %q is not a safe relative path (absolute path or path traversal) -- restore refuses it", hdr.Name)
+		}
 		if seenNames[hdr.Name] {
 			return Manifest{}, fmt.Errorf("archive contains a duplicate entry %q", hdr.Name)
 		}
@@ -189,12 +197,15 @@ func readCapped(tr *tar.Reader, limit, maxTotalBytes int64, totalRead *int64, na
 }
 
 // stageFile writes data to stagingDir/name, creating any intermediate
-// directories the tar entry's own name implies (e.g. "tables/", "keyfiles/")
-// -- tarName components are always this package's own generated names
-// (never attacker-controlled path segments; validated by manifestEntryFor's
-// exact-match lookup above before this is ever called), so no path
-// traversal is possible here.
+// directories the tar entry's own name implies (e.g. "tables/", "keyfiles/").
+// name comes from an archive entry's tar header, which is attacker-controlled
+// at this point in restore (the manifest's own TarName values are not yet
+// signature-verified). ExtractArchive already refuses a non-local name; the
+// check is repeated here so stageFile stays safe for any future caller.
 func stageFile(stagingDir, name string, data []byte) error {
+	if !filepath.IsLocal(name) {
+		return fmt.Errorf("refusing to stage %q: not a safe relative path", name)
+	}
 	dest := filepath.Join(stagingDir, name)
 	if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
 		return fmt.Errorf("create staging subdirectory for %q: %w", name, err)
