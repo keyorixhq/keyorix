@@ -244,6 +244,14 @@ func (c *KeyorixCore) CreateMFAChallenge(ctx context.Context, userID uint) (stri
 	return token, nil
 }
 
+// atomicity: consume-first by design (Session O, O4) — the challenge, and the
+// TOTP step or recovery code, are consumed BEFORE the caller (VerifyMFALogin)
+// mints a session. A later mint failure must not un-consume them: verified by
+// TestVerifyMFALogin_MintFailureAfterConsume_FailsClosed (mfa_test.go / this
+// file's sibling), which injects a CreateSession failure after a successful
+// consume and confirms no session is issued and the consumed values stay
+// consumed (a same-code retry is still refused).
+//
 // VerifyMFACredentials consumes a challenge and verifies a TOTP code or a
 // recovery code against LocalStorage — everything VerifyMFALogin does EXCEPT
 // minting the session and the two post-mint audit writes, extracted (#509) as
@@ -442,6 +450,14 @@ func (c *KeyorixCore) auditMFAFailed(ctx context.Context, userID uint, phase str
 // uses, keyed by user (not IP, since this is an authenticated-session endpoint):
 // without it, this check would be the only throttle on guessing. phase labels the
 // mfa.failed audit event on a failed attempt.
+//
+// atomicity: consume-first by design (Session O, O4) — the TOTP step, or the
+// MFAStepUpGrant, is consumed as PART OF verification itself (there is no
+// separate later "issue" step to fail after): a return of nil here already
+// means the consume succeeded AND the caller may proceed; an error already
+// means nothing was consumed successfully. Existing single-use coverage:
+// TestRequireReauth_GrantConsumedOnFirstAction_SecondDifferentActionRejected
+// and its siblings (mfa_stepup_grant_single_use_test.go).
 func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, codeOrPassword, phase string) error {
 	if c.loginLocked(user) {
 		return fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")

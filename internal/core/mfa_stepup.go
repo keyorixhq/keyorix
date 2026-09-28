@@ -58,6 +58,14 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 	return nil
 }
 
+// atomicity: consume-first by design (Session O, O4) — the TOTP step (or
+// recovery code) is consumed BEFORE VerifyMFAStepUp creates the
+// MFAStepUpGrant. A later grant-creation failure must not un-consume it:
+// verified by TestVerifyMFAStepUp_GrantFailureAfterConsume_FailsClosed
+// (consume_first_fails_closed_test.go), which injects a CreateMFAStepUpGrant
+// failure after a successful consume and confirms no grant is issued and the
+// code stays consumed.
+//
 // verifyMFAStepUpCode checks code against the user's TOTP secret, falling
 // back to a recovery code, mirroring the login second-factor verification.
 func (c *KeyorixCore) verifyMFAStepUpCode(ctx context.Context, userID uint, code string) bool {
