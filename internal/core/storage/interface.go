@@ -1614,7 +1614,9 @@ type Storage interface {
 	GetSetupTokenByHash(ctx context.Context, hash string) (*models.SetupToken, error)
 	// GetSetupTokenByID looks up a setup token by primary key. Only ever called
 	// from KeyorixCore.ExpireSetupTokenByID (#1622) to resolve purpose/subject
-	// detail for an explicit (non-lazy-read) expiry's audit write.
+	// detail for an explicit (non-lazy-read) expiry's audit write --
+	// ExpireSetupTokenByID's own doc has more on why that method (and so this
+	// one) has zero production callers today.
 	GetSetupTokenByID(ctx context.Context, id uint) (*models.SetupToken, error)
 	// SupersedeActiveSetupTokens flips every active token for (purpose, email) to
 	// superseded, so reissuing ("resend") atomically kills the prior link.
