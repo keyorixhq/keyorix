@@ -366,18 +366,51 @@ func (c *KeyorixCore) SetUserRoles(ctx context.Context, actorID, userID uint, ro
 	for _, id := range roleIDs {
 		newSet[id] = true
 	}
+	// Unlike the ordinary AssignUserRole/RemoveUserRole choke points (each a single
+	// grant/revoke), this is a full role-SET replacement made of several of them in
+	// sequence, with no underlying storage.WithTransaction available (each call has
+	// its own WithNamedLock/SoD-check/audit-log side effects). Previously a failure
+	// partway through returned immediately with NO compensation: the completed
+	// removes stayed removed (stale roles that should have been kept, or the new
+	// set never fully applied), and the caller had no way to tell from the error
+	// alone which changes had actually landed. Track what actually succeeded and
+	// revert it on any later failure — the same compensating-action pattern this
+	// codebase already uses for TransitionMembership/ActivateBreakGlass/
+	// finalizeAccessRequestApproval — so a failure leaves the user's role set
+	// exactly as it was before the call, not some arbitrary in-between state.
+	var removedSoFar, addedSoFar []uint
+	revertPartialApply := func(cause error) error {
+		var revertErrs []error
+		for _, id := range removedSoFar {
+			if rerr := c.AssignUserRole(ctx, actorID, userID, id, scope, actorIsMachine); rerr != nil {
+				revertErrs = append(revertErrs, fmt.Errorf("failed to restore role %d: %w", id, rerr))
+			}
+		}
+		for _, id := range addedSoFar {
+			if rerr := c.RemoveUserRole(ctx, actorID, userID, id, scope); rerr != nil {
+				revertErrs = append(revertErrs, fmt.Errorf("failed to undo role %d: %w", id, rerr))
+			}
+		}
+		if len(revertErrs) > 0 {
+			c.auditProjectScoped(ctx, "rbac.set_user_roles_revert_failed", actorID, scope.ProjectID,
+				fmt.Sprintf("SetUserRoles for user %d failed (%v) and reverting the partial apply also failed (%v) — MANUAL CLEANUP REQUIRED: the user's role set is neither the old nor the new one", userID, cause, revertErrs))
+		}
+		return cause
+	}
 	for _, id := range current {
 		if !newSet[id] {
 			if err := c.RemoveUserRole(ctx, actorID, userID, id, scope); err != nil {
-				return err
+				return revertPartialApply(err)
 			}
+			removedSoFar = append(removedSoFar, id)
 		}
 	}
 	for _, id := range roleIDs {
 		if !currentSet[id] {
 			if err := c.AssignUserRole(ctx, actorID, userID, id, scope, actorIsMachine); err != nil {
-				return err
+				return revertPartialApply(err)
 			}
+			addedSoFar = append(addedSoFar, id)
 		}
 	}
 	return nil
