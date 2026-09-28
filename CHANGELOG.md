@@ -17,6 +17,24 @@ All notable changes to Keyorix are documented here. This project follows
   refuses if the archive is behind; pass `--allow-rollback` for a genuine
   disaster-recovery restore of an intentionally older backup, which writes an
   explicit audit event recording the override. See `docs/SELF_HOSTING.md` §5.
+- **Removed the dead `verify-credentials`/`verify-mfa`/`mfa-challenge` HTTP
+  endpoints.** These existed only to serve `storage.type: remote`, removed
+  entirely in ADR-108 Phase 6 — the routes had no remaining legitimate caller
+  but stayed live, gated only by `users.write`. (`c8bcf9dd`)
+
+### Fixed
+- **Seven tables with live handler code were never migrated on any
+  install** (secret version comments, notification channels, alert
+  escalation policies, secret templates, MFA step-up tokens, hygiene-trend
+  snapshots, compliance-posture snapshots) — every fresh install 500'd on
+  first use of any of them. Fixed for fresh and upgraded installs alike.
+  (`0b6bb65a`)
+
+### Changed
+- **The air-gapped build profile ships, and the published air-gapped image
+  is renamed** `keyorix-server-lean` → `keyorix-server-airgap`. Operators
+  pulling the air-gapped image must update their image reference. (`2bc79ce2`,
+  `ddadf47c`)
 
 ## v0.95.1 — 2026-09-27
 
