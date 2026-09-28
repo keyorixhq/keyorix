@@ -839,14 +839,16 @@ func (c *KeyorixCore) requireUserCredentialsRevokeAuthority(ctx context.Context,
 	return nil
 }
 
-// RequireUsersWriteAuthority is the /system-proxy-layer export of
+// RequireUsersWriteAuthority was the /system-proxy-layer export of
 // requireUserCredentialsRevokeAuthority's exact ceiling, for a caller outside
-// internal/core (server/http/handlers) that needs to re-derive the SAME
+// internal/core (server/http/handlers) that needed to re-derive the SAME
 // "users.write at global scope" authority the human-facing PUT
 // /api/v1/users/{id} route already requires before relaying a user-row
-// mutation. #F5: UpdateUserIfActiveStateMatchesProxy
-// (users_active_transition_proxy.go) — the /system active-transition proxy
-// backing RemoteStorage's UpdateUserIfActiveStateMatches — used to accept any
+// mutation. Zero callers remain today: #F5's UpdateUserIfActiveStateMatchesProxy
+// (users_active_transition_proxy.go), the /system active-transition proxy
+// backing the now-deleted RemoteStorage's UpdateUserIfActiveStateMatches, is
+// itself deleted along with the rest of that proxy tree (ADR-108 Phase 6) —
+// another follow-up cleanup candidate, not removed here. It used to accept any
 // caller holding only the /system route group's own blanket system.write
 // gate, with no per-target authority check at all, letting a system.write-only
 // principal rewrite ANY user's username/email/display_name/active state,

@@ -75,9 +75,10 @@ func userToAPIResponse(u *models.User) map[string]interface{} {
 		"active":        u.IsActive,
 		"account_state": core.NormalizeAccountState(u.AccountState),
 		// external_id (#505): the IdP-assigned SCIM/SSO identifier (empty for a
-		// native account). RemoteStorage's GetUserByExternalID/GetUserByEmail/GetUser
-		// decode this exact field — without it on the wire, every decoded user's
-		// ExternalID silently read back as "" under storage.type: remote, which
+		// native account). The now-deleted RemoteStorage's GetUserByExternalID/
+		// GetUserByEmail/GetUser decoded this exact field — without it on the wire,
+		// every decoded user's ExternalID would have silently read back as "" under
+		// storage.type: remote, which
 		// defeated resolveSSOUser's (internal/core/sso.go) cross-provider-takeover
 		// guard on the already-shipped email-fallback path, not just the new
 		// by-external-id lookup.
@@ -126,7 +127,7 @@ func userToAPIResponse(u *models.User) map[string]interface{} {
 	// trust boundary — not a lower-trust caller, and MFAEnabled is not
 	// sensitive the way PasswordHash is). Historically (#524, since resolved by
 	// RemoteStorage's full removal in #2162) this field also fixed a
-	// storage.type: remote deployment: RemoteStorage's own GetUser decoded
+	// storage.type: remote deployment: RemoteStorage's own GetUser had decoded
 	// every user's MFAEnabled as the Go zero value (false) regardless of the
 	// upstream's real state, silently breaking every internal/core/mfa.go
 	// caller that branches on user.MFAEnabled.

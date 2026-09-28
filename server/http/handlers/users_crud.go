@@ -239,7 +239,7 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetUserByEmail handles GET /api/v1/users/by-email?email=X — looks up a user by
-// email address for callers (e.g. RemoteStorage, #503) that only have the email
+// email address for callers (#503) that only have the email
 // rather than the numeric ID. The route's permission gate (users.read, inherited
 // from the /users group — the same gate GetUser-by-id uses) is the sole authz
 // check, matching GetUser's model exactly; there is no additional per-record
@@ -275,9 +275,8 @@ func (h *UserHandler) GetUserByEmail(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, resp, "")
 }
 
-// GetUserByUsername handles GET /api/v1/users/by-username?username=X (#505) —
-// the server-side counterpart RemoteStorage.GetUserByUsername needs. Same gate
-// and NotFound shape as GetUserByEmail: users.read (the group-wide gate above),
+// GetUserByUsername handles GET /api/v1/users/by-username?username=X (#505).
+// Same gate and NotFound shape as GetUserByEmail: users.read (the group-wide gate above),
 // generic NotFound on a miss so the route adds no username-enumeration surface
 // beyond what GET /users already exposes to a users.read caller.
 func (h *UserHandler) GetUserByUsername(w http.ResponseWriter, r *http.Request) {
@@ -306,8 +305,7 @@ func (h *UserHandler) GetUserByUsername(w http.ResponseWriter, r *http.Request) 
 }
 
 // GetUserByExternalID handles GET /api/v1/users/by-external-id?external_id=X
-// (#505) — the server-side counterpart RemoteStorage.GetUserByExternalID needs
-// for SSO/SCIM identity resolution. Same gate and NotFound shape as
+// (#505) — for SSO/SCIM identity resolution. Same gate and NotFound shape as
 // GetUserByEmail/GetUserByUsername: users.read, generic NotFound on a miss.
 func (h *UserHandler) GetUserByExternalID(w http.ResponseWriter, r *http.Request) {
 	_, ok := mustGetUser(w, r)
