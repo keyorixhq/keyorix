@@ -4,8 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/keyorixhq/keyorix/internal/storage"
 )
 
 // TestRestoreOrder_EveryReferenceFieldIsClassified is design-b3-backup-v2.md
@@ -30,7 +28,7 @@ func TestRestoreOrder_EveryReferenceFieldIsClassified(t *testing.T) {
 func TestRestoreOrder_NoStaleOverrideOrExclusionEntries(t *testing.T) {
 	live := make(map[[2]string]bool)
 	all := modelTypeNames()
-	models := allModelsByName()
+	models := modelsByTypeName()
 	for _, name := range all {
 		for _, f := range idShapedFields(models[name]) {
 			live[[2]string{name, f}] = true
@@ -74,19 +72,4 @@ func TestRestoreOrder_IsValidTopologicalSort(t *testing.T) {
 		require.Less(t, position[c.Refs], position[c.Model],
 			"%s (referenced by %s.%s) must come before %s in restore order", c.Refs, c.Model, c.Field, c.Model)
 	}
-}
-
-// allModelsByName is a test-only convenience: modelTypeNames() and
-// storage.AllModels() are index-aligned by construction (modelTypeNames
-// derives its names FROM storage.AllModels(), in the same order), so zip
-// them back together by name for tests that want to look a model instance
-// up by its Go type name.
-func allModelsByName() map[string]any {
-	all := storage.AllModels()
-	names := modelTypeNames()
-	out := make(map[string]any, len(all))
-	for i, m := range all {
-		out[names[i]] = m
-	}
-	return out
 }

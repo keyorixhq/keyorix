@@ -8,6 +8,9 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
+
+	"gorm.io/gorm/schema"
 
 	"github.com/keyorixhq/keyorix/internal/storage"
 )
@@ -334,4 +337,98 @@ func RestoreOrder() ([]string, error) {
 		return nil, fmt.Errorf("restore ordering: dependency graph has a cycle involving: %s", strings.Join(stuck, ", "))
 	}
 	return order, nil
+}
+
+// modelsByTypeName returns storage.AllModels()'s entries keyed by their Go
+// type name, e.g. "SecretNode" -> &models.SecretNode{} -- the same
+// registry, just index-able by the names RestoreOrder() returns.
+func modelsByTypeName() map[string]any {
+	all := storage.AllModels()
+	names := modelTypeNames()
+	out := make(map[string]any, len(all))
+	for i, m := range all {
+		out[names[i]] = m
+	}
+	return out
+}
+
+// modelsInOrder maps RestoreOrder()'s Go-type-name sequence back to the
+// actual model instances, in that same sequence -- what the table-walk
+// writer (writer.go) actually needs to drive.
+func modelsInOrder(order []string) []any {
+	byName := modelsByTypeName()
+	out := make([]any, len(order))
+	for i, name := range order {
+		out[i] = byName[name]
+	}
+	return out
+}
+
+// schemaCache is shared across every schema.Parse call in this package --
+// gorm's own recommended usage (avoids re-parsing the same struct tags on
+// every call) and required for schema.Parse's signature regardless.
+var schemaCache sync.Map
+
+// parseSchema parses m's GORM schema using the default (unconfigured)
+// naming strategy -- the same one every gorm.Open call in internal/storage
+// uses (factory.go's gormConfig sets no custom NamingStrategy), so table
+// and column names resolved here are byte-identical to what migrateDatabase
+// actually created, including any model's own custom TableName() override
+// (e.g. SoDPolicy, MachineIdentityOIDCBinding).
+func parseSchema(m any) (*schema.Schema, error) {
+	return schema.Parse(m, &schemaCache, schema.NamingStrategy{})
+}
+
+// referenceEdge is one classified cross-table reference, resolved from Go
+// type/field names (classifiedField) down to actual table/column names --
+// what CheckDanglingReferences (checks.go) needs to build real SQL, and
+// what a caller wanting the archive's physical table order can get from
+// RestoreOrder() directly without needing this resolution at all.
+type referenceEdge struct {
+	ChildTable  string
+	ChildColumn string
+	ParentTable string
+}
+
+// referenceEdges resolves classifyAll()'s classified cross-table references
+// (skipping self-references and not-a-reference fields) to real table and
+// column names via parseSchema.
+func referenceEdges() ([]referenceEdge, error) {
+	classified, unresolved := classifyAll()
+	if len(unresolved) > 0 {
+		return nil, fmt.Errorf("cannot resolve reference edges: %d ID-shaped field(s) unclassified: %s",
+			len(unresolved), strings.Join(unresolved, ", "))
+	}
+
+	byName := modelsByTypeName()
+	schemas := make(map[string]*schema.Schema, len(byName))
+	for name, m := range byName {
+		s, err := parseSchema(m)
+		if err != nil {
+			return nil, fmt.Errorf("parse schema for %s: %w", name, err)
+		}
+		schemas[name] = s
+	}
+
+	var edges []referenceEdge
+	for _, c := range classified {
+		if c.Refs == "" || c.Refs == c.Model {
+			continue
+		}
+		childSchema := schemas[c.Model]
+		field := childSchema.LookUpField(c.Field)
+		if field == nil {
+			return nil, fmt.Errorf("field %s.%s not found in parsed schema", c.Model, c.Field)
+		}
+		parentSchema, ok := schemas[c.Refs]
+		if !ok {
+			return nil, fmt.Errorf("referenced model %q (from %s.%s) not found in registry", c.Refs, c.Model, c.Field)
+		}
+		edges = append(edges, referenceEdge{
+			ChildTable:  childSchema.Table,
+			ChildColumn: field.DBName,
+			ParentTable: parentSchema.Table,
+		})
+	}
+	return edges, nil
 }
