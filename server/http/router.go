@@ -436,7 +436,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// group's system.write gate either — moved out to system.read here
 		// (previously squatted inside that group; see its own comment for why that
 		// group itself stays system.write).
-		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/system/info", handlers.MakeSystemInfoHandler(cfg))
+		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/system/info", handlers.MakeSystemInfoHandler(cfg, coreService))
 		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/system"+pathMetrics, handlers.GetMetrics)
 
 		// Catalog endpoints (projects, environments).

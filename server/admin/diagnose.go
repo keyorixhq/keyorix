@@ -1,13 +1,16 @@
 package admin
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
+	"gorm.io/gorm"
 )
 
 // diagnose is NEW (not a port): it runs the checks the server's own boot
@@ -85,11 +88,38 @@ func runAdminDiagnose(cmd *cobra.Command, args []string) error { // NOSONAR -- c
 		fmt.Printf("[WARN] migration state: %s\n", detail)
 	}
 
+	diagnoseRecoveryKey(db, cfg)
+
 	fmt.Println("\nAll startup checks that can fail this server's boot passed.")
 	if !upToDate {
 		fmt.Println("The database schema is behind this binary; run `keyorix-server admin migrate` before starting.")
 	}
 	return nil
+}
+
+// diagnoseRecoveryKey reports, non-fatally, whether `recover-admin` is
+// currently usable on this install (F6, recovery-key visibility). Skipped
+// entirely in keyless mode -- recover-admin does not check a key there, so
+// its absence is not a problem to warn about. Never fails the command: a
+// missing recovery key does not stop the SERVER from starting, only
+// `recover-admin` from working, so this is a [WARN] like migration state,
+// not a [FAIL].
+func diagnoseRecoveryKey(db *gorm.DB, cfg *config.Config) {
+	if cfg.Security.RecoverAdmin.KeylessMode {
+		fmt.Println("[SKIP] recovery key (security.recover_admin.keyless_mode is enabled)")
+		return
+	}
+	var rec models.RecoveryKeyRecord
+	err := db.Where("id = ?", 1).Take(&rec).Error
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		fmt.Println("[WARN] recovery key not configured — recover-admin is unusable. " +
+			"Run `keyorix-server admin recovery-key rotate` (see docs/SELF_HOSTING.md).")
+	case err != nil:
+		fmt.Printf("[WARN] recovery key: could not check (%v)\n", err)
+	default:
+		fmt.Printf("[ OK ] recovery key configured (generation %d)\n", rec.KeyVersion)
+	}
 }
 
 func diagnoseConfigParse() (*config.Config, error) {

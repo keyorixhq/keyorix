@@ -510,6 +510,8 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			"collapses host access and admin access into one trust boundary. Intended for labs/demo use only; " +
 			"disable it for any real deployment.")
 		auditKeylessModeStartup(store)
+	} else {
+		warnIfRecoveryKeyMissing(store)
 	}
 
 	// Top up the canonical RBAC permission catalog (ADR-044): adds any permission
@@ -2746,6 +2748,26 @@ func buildSAMLProvider(pc config.SSOProviderConfig) (*samlpkg.Provider, error) {
 		NameAttr:          pc.SAML.NameAttribute,
 		GroupsAttr:        pc.SAML.GroupsAttribute,
 	})
+}
+
+// warnIfRecoveryKeyMissing logs a prominent WARN on EVERY boot (not just the
+// first) while security.recover_admin.keyless_mode is off and no recovery
+// key has ever been generated -- `recover-admin` is unusable in that state
+// (F6, recovery-key visibility) and, unlike keyless mode, there is no other
+// startup-time signal an operator would see. Best-effort: a lookup failure
+// is logged but never blocks startup, matching every other best-effort
+// startup diagnostic in this function.
+func warnIfRecoveryKeyMissing(store corestorage.Storage) {
+	_, found, err := store.GetRecoveryKeyRecord(context.Background())
+	if err != nil {
+		log.Printf("note: could not check recovery-key configuration (%v)", err)
+		return
+	}
+	if !found {
+		log.Printf("WARNING: no recovery key is configured -- `keyorix-server admin recover-admin` is unusable " +
+			"until one is generated. Run `keyorix-server admin recovery-key rotate` (see docs/SELF_HOSTING.md, " +
+			"\"Generate your admin recovery key now\"). This warning repeats on every startup until a key is generated.")
+	}
 }
 
 // auditKeylessModeStartup records, at every boot while security.recover_admin.keyless_mode is
