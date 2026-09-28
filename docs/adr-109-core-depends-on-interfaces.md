@@ -1,6 +1,9 @@
 # ADR-109: `internal/core` depends on interfaces, not on connectors and backends
 
-**Status:** Accepted (Andrei, 2026-09-23). It gets a repo ADR number when committed to `docs/`. Implementation is sequenced after the CLI/server split.
+**Status:** Implemented (closeout 2026-09-28 — see the Step 6/Step 7 sections and the
+"Definition of done" checklist below; all three DoD bullets verified against `#2223`'s
+branch tip, not yet merged to `main` as of this closeout — see that section for why this
+is still accurate). Implementation is sequenced after the CLI/server split.
 **Companion ADR:** `ADR-108 (`docs/adr-108-cli-server-split.md`)` (thin CLI, `keyorix-server admin`, `/system` proxy removal). Neither ADR is a prerequisite for the other. Both are sequenced in (Keyorix planning notes, claude/2026-09-23-refactor-program-plan-cli-server-split.md), where this one is Phase 7, after the split.
 **Evidence:** (Keyorix planning notes, claude/2026-09-23-coverage-map-leaf-package-ab-results.md); the coupling section of (Keyorix planning notes, claude/2026-09-22-ssdlc-fuzzing-report-gap-analysis.md).
 
@@ -67,9 +70,15 @@ The CLI/server split removes the SDKs from the *client*. This ADR is about the *
 
 ## Definition of done
 
-- `go list -deps ./internal/core` (production) contains no cloud SDK and no integration package.
-- A lean build exists in CI with a published SBOM diff.
-- Core's coverage map and the server's binary size are reported before and after in the program plan's measurement point M4.
+- [x] `go list -deps ./internal/core` (production) contains no cloud SDK and no integration
+      package. Machine-checked by `internal/core/dependency_guard_test.go`'s
+      `TestCoreIntegrationDepsAllowlistIsEmpty`/`TestCoreIntegrationDepsMatchADR109Allowlist`
+      (Step 5, extended to delivery/license by B5/#2223 — see Step 6 section).
+- [x] A lean build exists in CI with a published SBOM diff. `release-dry-run.yml`'s
+      full-vs-air-gapped SBOM/dependency-count diff (B4/#2221) — see Step 6 section.
+- [x] Core's coverage map and the server's binary size are reported before and after in the
+      program plan's measurement point M4 — see the Step 0-5 table, Step 6's full-vs-air-gapped
+      binary-size table, and Step 7's fresh coverage-map baseline.
 
 ## Decisions on the open questions (Andrei, 2026-09-23)
 
@@ -328,6 +337,54 @@ would. The binary-size delta (−3,448 B) stays flat for the same reason steps 1
 `server/main.go` still wires the real `internal/encryption` implementation unconditionally, so a
 full server build is unaffected until the lean/air-gapped build (step 6) drops the cloud KMS
 providers via build tags.
+
+## Step 6 (Session B, 2026-09-27/28): build tags, the air-gapped build, CI, and the SBOM diff
+
+Five stacked PRs (`adr109-airgap-b1` through `b4`, #2218→#2219→#2220→#2221, plus the "last
+decoupling" follow-up #2223 that finishes the zero-integration-imports DoD bullet above): fail-closed
+startup tests per `no<x>` build tag (B1/#2218), the `noaws,noazure,nogcp` air-gapped profile plus
+`scripts/airgap-dependency-guard.sh` (B2/#2219), release cross-compilation + a
+`keyorix-server-airgap` image replacing the old, materially-narrower `-tags lean` build (B3/#2220),
+and wiring both into `release-dry-run.yml` with a full-vs-air-gapped SBOM/dependency-count diff
+posted to the job summary (B4/#2221). As of this closeout none of #2218–#2223 have merged to `main`
+yet (this document's own PR is stacked on #2223's branch, per SESSION-D's STACK-DON'T-WAIT rule) —
+the measurements below are what that stack produces once it lands, not a "will produce" estimate.
+
+**Measured (full vs. air-gapped, `go build -trimpath -s -w`, `linux/amd64`):**
+
+| Metric | Full | Air-gapped (`-tags noaws,noazure,nogcp`) |
+|---|---|---|
+| `go list -deps ./server`, total packages | 999 | 662 |
+| ...of which aws-sdk-go-v2 / azure-sdk-for-go / cloud.google.com | 145 | **0** |
+| ...of which hashicorp/vault, k8s.io/client-go (no exclusion tag for either — Vault has no official Go SDK; the k8s dynamic-secrets backend is hand-rolled REST, not client-go) | 0 / 0 | 0 / 0 (unchanged — nothing to exclude) |
+| Binary size | 67.8 MB | **46.0 MB** |
+
+The full-build 67.8 MB figure matches this ADR's own Context-section baseline (97 MB) once the same
+`-s -w` symbol/debug stripping is applied — the earlier M4 table above (Step 0-5) measured
+`-trimpath` alone (no `-s -w`), which is why that table's ~96.3 MiB and this section's 67.8 MB are
+different numbers for the same underlying full build, not a discrepancy. For comparison, the
+pre-existing `-tags lean` build (kept in source, removed only from the release/publish surface by
+B3/#2220) only ever excluded `rotation`'s AWS-IAM backend plus the evidence-sink/object-store
+connectors — 131 cloud-SDK packages remained per Session B's 2026-09-27 measurement — "not
+meaningfully cloud-free," unlike the new air-gapped profile's complete 145→0 exclusion.
+
+`scripts/airgap-dependency-guard.sh` (wired into CI by B4/#2221's `release-dry-run.yml` extension)
+fails the build if any of the three forbidden SDK prefixes appears in the air-gapped profile's
+`go list -deps ./server` output — red-proofed against a real forbidden import
+(`golang.org/x/sync`, chosen only as a stand-in dependency to trip the detector) before being
+trusted, not just asserted to work.
+
+This closes the ADR's Definition of Done in full: `go list -deps ./internal/core` has zero cloud
+SDK / integration packages (Step 5, machine-checked by `TestCoreIntegrationDepsAllowlistIsEmpty`,
+extended to also cover delivery/license by B5/#2223 — see that step's own dependency_guard_test.go
+entry); a lean (air-gapped) build exists with a CI-published SBOM diff (B2-B4 above); and both
+core's coverage map (Step 5/Step 7 below) and the server's binary size (this section) are reported
+before/after at M4.
+
+Two more PRs extend this track beyond the DoD itself, stacked after B5/#2223 (not yet in this
+closeout's own branch, so not re-verified here): **B6/#2226** adds SLSA build provenance
+(`actions/attest-build-provenance`) to every release binary and image, including both server
+variants; **B7** validates the air-gapped runbook end-to-end. Neither changes the numbers above.
 
 ## Step 7 (Session C, 2026-09-28): measured, nothing was move-eligible
 
