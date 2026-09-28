@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/license"
 )
 
 // GenerateBillingReport returns a per-project usage breakdown for the half-open
@@ -14,8 +14,8 @@ import (
 //
 // projectIDs filters the report to specific projects; pass nil for all projects.
 func (c *KeyorixCore) GenerateBillingReport(ctx context.Context, from, to time.Time, projectIDs []uint) (*storage.BillingReport, error) {
-	if !c.HasLicensedFeature(license.FeatureBilling) {
-		return nil, fmt.Errorf("billing reports require a commercial license (feature: %s)", license.FeatureBilling)
+	if !c.HasLicensedFeature(ports.FeatureBilling) {
+		return nil, fmt.Errorf("billing reports require a commercial license (feature: %s)", ports.FeatureBilling)
 	}
 	if !from.Before(to) {
 		return nil, fmt.Errorf("billing report: from (%s) must be before to (%s)", from.Format(time.RFC3339), to.Format(time.RFC3339))

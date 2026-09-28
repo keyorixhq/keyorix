@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/license"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -34,7 +34,7 @@ func (c *KeyorixCore) ScanLicenseExpiry(ctx context.Context, leadDays int) (int,
 	}
 	st := c.LicenseStatus()
 	switch st.State {
-	case license.StateActive, license.StateExpiringSoon, license.StateExpired:
+	case ports.LicenseStateActive, ports.LicenseStateExpiringSoon, ports.LicenseStateExpired:
 		// a real, signed license — proceed
 	default: // none, invalid
 		return 0, nil
@@ -72,8 +72,8 @@ func (c *KeyorixCore) ScanLicenseExpiry(ctx context.Context, leadDays int) (int,
 
 // licenseExpirySeverity ranks the license state: an already-expired license is
 // strictly more severe than merely expiring soon (#250).
-func licenseExpirySeverity(st license.Status) models.NotificationSeverity {
-	if st.State == license.StateExpired {
+func licenseExpirySeverity(st ports.LicenseStatus) models.NotificationSeverity {
+	if st.State == ports.LicenseStateExpired {
 		return models.NotificationSeverityCritical
 	}
 	return models.NotificationSeverityWarning
@@ -129,13 +129,13 @@ func (c *KeyorixCore) unreadLicenseExpiry(ctx context.Context, userID uint) *mod
 }
 
 // licenseExpiryNotice builds the admin reminder title + message for the license state.
-func licenseExpiryNotice(st license.Status) (string, string) {
+func licenseExpiryNotice(st ports.LicenseStatus) (string, string) {
 	who := st.Licensee
 	if who == "" {
 		who = "this deployment"
 	}
 	date := st.NotAfter.UTC().Format("2006-01-02")
-	if st.State == license.StateExpired {
+	if st.State == ports.LicenseStateExpired {
 		return "Keyorix license expired",
 			fmt.Sprintf("The Keyorix license for %s expired on %s — commercial features have degraded to the community baseline. Install a renewed license to restore them.", who, date)
 	}

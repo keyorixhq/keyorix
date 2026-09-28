@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/delivery"
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -50,7 +50,7 @@ const (
 // to build absolute setup links (ADR-028). The server/CLI calls this at startup from
 // the credential_delivery config. A nil deliverer means out-of-band: the link is
 // returned to the caller rather than sent.
-func (c *KeyorixCore) SetCredentialDelivery(d delivery.CredentialDelivery, baseURL string) {
+func (c *KeyorixCore) SetCredentialDelivery(d ports.CredentialDelivery, baseURL string) {
 	c.credentialDelivery = d
 	c.setupBaseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 }
@@ -111,10 +111,10 @@ func (c *KeyorixCore) provisionSetupLinkThrottled(ctx context.Context, req Issue
 func (c *KeyorixCore) deliverSetupLink(ctx context.Context, issued *IssueSetupTokenResult, req IssueSetupTokenRequest, displayName, assignmentSummary string) (*ProvisionSetupResult, error) {
 	link := c.setupBaseURL + "/auth/setup/" + issued.PlainToken
 
-	var result delivery.DeliveryResult
+	var result ports.DeliveryResult
 	if c.credentialDelivery != nil {
 		var err error
-		result, err = c.credentialDelivery.DeliverSetupLink(ctx, delivery.SetupLinkRequest{
+		result, err = c.credentialDelivery.DeliverSetupLink(ctx, ports.SetupLinkRequest{
 			RecipientEmail:    req.SubjectEmail,
 			DisplayName:       displayName,
 			Link:              link,
@@ -126,7 +126,7 @@ func (c *KeyorixCore) deliverSetupLink(ctx context.Context, issued *IssueSetupTo
 		}
 	} else {
 		// No channel configured → out-of-band: hand the link back to the caller.
-		result = delivery.DeliveryResult{Channel: delivery.ChannelOutOfBand, Delivered: false, LinkForAdmin: link}
+		result = ports.DeliveryResult{Channel: ports.ChannelOutOfBand, Delivered: false, LinkForAdmin: link}
 	}
 
 	// Audit the delivery (no token on the row).
