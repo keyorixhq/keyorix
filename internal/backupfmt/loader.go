@@ -2,7 +2,6 @@ package backupfmt
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -152,7 +151,7 @@ func loadTable(db *gorm.DB, model any, entry TableEntry, stagingDir string) (int
 			continue
 		}
 		rowPtr := reflect.New(elemType)
-		if err := json.Unmarshal(line, rowPtr.Interface()); err != nil {
+		if err := unmarshalRow(line, rowPtr.Interface()); err != nil {
 			return total, fmt.Errorf("decode row %d of %q: %w", total, entry.Name, err)
 		}
 		total++

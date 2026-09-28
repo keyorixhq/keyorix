@@ -38,7 +38,7 @@ func openTestDB(t *testing.T) *gorm.DB {
 	dbPath := filepath.Join(t.TempDir(), "backupfmt_writer_test.db")
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.User{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.User{}, &models.Role{}))
 	return db
 }
 

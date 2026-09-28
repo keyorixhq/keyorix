@@ -71,12 +71,13 @@ func walkTable(db *gorm.DB, model any, fn func(row any) error) (rowCount int64, 
 	return rowCount, nil
 }
 
-// ndjsonLine json.Marshals row and appends the trailing newline every NDJSON
-// line needs -- the one encoding used for both the hashing pass and the
-// writing pass below, so they can never disagree about what "the bytes for
-// this row" means.
+// ndjsonLine marshalRow-encodes row (every real GORM column, not gated by
+// any json:"-" tag -- see row_codec.go's doc comment) and appends the
+// trailing newline every NDJSON line needs -- the one encoding used for
+// both the hashing pass and the writing pass below, so they can never
+// disagree about what "the bytes for this row" means.
 func ndjsonLine(row any) ([]byte, error) {
-	line, err := json.Marshal(row)
+	line, err := marshalRow(row)
 	if err != nil {
 		return nil, fmt.Errorf("encode row: %w", err)
 	}
