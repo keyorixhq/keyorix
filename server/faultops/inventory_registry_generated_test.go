@@ -80,7 +80,6 @@ var knownOperations = map[string]bool{
 	"REST DELETE /api/v1/secrets/{id}/schedule":                                                       true,
 	"REST DELETE /api/v1/secrets/{id}/self-share":                                                     true,
 	"REST DELETE /api/v1/secrets/{id}/versions/{versionId}/comments/{commentId}":                      true,
-	"REST DELETE /api/v1/sessions/{id}":                                                               true,
 	"REST DELETE /api/v1/shares/{id}":                                                                 true,
 	"REST DELETE /api/v1/sod/policies/{id}":                                                           true,
 	"REST DELETE /api/v1/user-roles/":                                                                 true,

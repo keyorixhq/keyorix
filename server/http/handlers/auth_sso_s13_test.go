@@ -3,9 +3,6 @@
 //     wrong-password, UpdateProfile bad-JSON + wrong-password, PasswordReset
 //     rate-limit (429) + bad-JSON, RevokeSession bad-param + not-found,
 //     userIdentity error-path, Profile user-not-found
-//   - sessions_remote.go: GetSessionByToken no-user-ctx + empty-token + not-found,
-//     DeleteSessionByID no-user-ctx + bad-ID + not-found,
-//     package-level stubs when defaultUserHandler is nil
 //   - sso.go: BeginSSO unknown-provider, CompleteSSO unknown-provider + IdP-error-param
 //   - missing-code-or-state + core-error; fragment does NOT contain session token
 //     (#r125-H3)
@@ -249,123 +246,6 @@ func TestProfile_UserNotFound_S13(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.Profile(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-// ── sessions_remote.go: GetSessionByToken error branches ─────────────────────
-
-// TestGetSessionByToken_NoUserCtx_S13 verifies the 401 branch when there is no
-// user context in the request.
-func TestGetSessionByToken_NoUserCtx_S13(t *testing.T) {
-	uh, _, _ := freshUserHandlerS12(t)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodGet, "/api/v1/sessions/sometoken", nil),
-		"token", "sometoken",
-	)
-	w := httptest.NewRecorder()
-	uh.GetSessionByToken(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-// TestGetSessionByToken_EmptyToken_S13 verifies the 400 branch when the token
-// URL param is empty.
-func TestGetSessionByToken_EmptyToken_S13(t *testing.T) {
-	uh, _, _ := freshUserHandlerS12(t)
-	req := withUserCtx(withChiParam(
-		httptest.NewRequest(http.MethodGet, "/api/v1/sessions/", nil),
-		"token", "",
-	))
-	w := httptest.NewRecorder()
-	uh.GetSessionByToken(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestGetSessionByToken_NotFound_S13 verifies the 404 branch when no session
-// matches the supplied token.
-func TestGetSessionByToken_NotFound_S13(t *testing.T) {
-	uh, _, _ := freshUserHandlerS12(t)
-	req := withUserCtx(withChiParam(
-		httptest.NewRequest(http.MethodGet, "/api/v1/sessions/nosuchtoken", nil),
-		"token", "nosuchtoken",
-	))
-	w := httptest.NewRecorder()
-	uh.GetSessionByToken(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-// ── sessions_remote.go: DeleteSessionByID error branches ─────────────────────
-
-// TestDeleteSessionByID_NoUserCtx_S13 verifies the 401 branch when there is no
-// user context in the request.
-func TestDeleteSessionByID_NoUserCtx_S13(t *testing.T) {
-	uh, _, _ := freshUserHandlerS12(t)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/api/v1/sessions/1", nil),
-		"id", "1",
-	)
-	w := httptest.NewRecorder()
-	uh.DeleteSessionByID(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-// TestDeleteSessionByID_BadID_S13 verifies the 400 branch when the ID param is
-// not a valid integer.
-func TestDeleteSessionByID_BadID_S13(t *testing.T) {
-	uh, _, _ := freshUserHandlerS12(t)
-	req := withUserCtx(withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/api/v1/sessions/bad", nil),
-		"id", "bad",
-	))
-	w := httptest.NewRecorder()
-	uh.DeleteSessionByID(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestDeleteSessionByID_NonExistent_S13 exercises the DeleteSessionByID handler
-// for a session ID that does not exist. The underlying storage's DELETE is a
-// no-op for missing rows, so the handler succeeds (200 or no-content). This test
-// verifies the happy-path code path runs without panicking and returns a 2xx.
-func TestDeleteSessionByID_NonExistent_S13(t *testing.T) {
-	uh, _, _ := freshUserHandlerS12(t)
-	req := withUserCtx(withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/api/v1/sessions/9999", nil),
-		"id", "9999",
-	))
-	w := httptest.NewRecorder()
-	uh.DeleteSessionByID(w, req)
-	// SQLite's DELETE is a no-op for missing rows, so the handler succeeds.
-	assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusNoContent,
-		"expected 200 or 204, got %d", w.Code)
-}
-
-// ── sessions_remote.go: package-level stubs when defaultUserHandler is nil ───
-
-// TestGetSessionByToken_Stub_NilHandler_S13 verifies the 503 branch of the
-// package-level GetSessionByToken when defaultUserHandler is nil.
-func TestGetSessionByToken_Stub_NilHandler_S13(t *testing.T) {
-	saved := defaultUserHandler
-	defaultUserHandler = nil
-	t.Cleanup(func() { defaultUserHandler = saved })
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/tok", nil)
-	w := httptest.NewRecorder()
-	GetSessionByToken(w, req)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-// TestDeleteSessionByID_Stub_NilHandler_S13 verifies the 503 branch of the
-// package-level DeleteSessionByID when defaultUserHandler is nil.
-func TestDeleteSessionByID_Stub_NilHandler_S13(t *testing.T) {
-	saved := defaultUserHandler
-	defaultUserHandler = nil
-	t.Cleanup(func() { defaultUserHandler = saved })
-
-	req := withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/api/v1/sessions/1", nil),
-		"id", "1",
-	)
-	w := httptest.NewRecorder()
-	DeleteSessionByID(w, req)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 // ── sso.go: BeginSSO error branches ──────────────────────────────────────────

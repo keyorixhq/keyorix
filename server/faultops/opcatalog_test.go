@@ -4117,37 +4117,6 @@ var opCatalog = []operation{
 		},
 	},
 	{
-		// sessions_remote.go's DeleteSessionByID (RemoteStorage server-side
-		// counterpart, admin-scoped, delete-by-numeric-ID) — batch 20.
-		Key: "REST DELETE /api/v1/sessions/{id}",
-		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
-			st, body, err := httpJSON(ctx, w, http.MethodGet, fmt.Sprintf("/api/v1/sessions/%s", w.adminToken), nil)
-			if err != nil {
-				return nil, err
-			}
-			if st/100 != 2 {
-				return nil, fmt.Errorf("setup GetSessionByToken: HTTP %d: %s", st, body)
-			}
-			var decoded struct {
-				Data struct {
-					ID uint `json:"ID"`
-				} `json:"data"`
-			}
-			if err := json.Unmarshal(body, &decoded); err != nil || decoded.Data.ID == 0 {
-				return nil, fmt.Errorf("decoding GetSessionByToken response: %w (body=%s)", err, body)
-			}
-			return decoded.Data.ID, nil
-		},
-		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
-			id := state.(uint)
-			st, body, err := httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/sessions/%d", id), nil)
-			if err != nil {
-				return opResult{}, err
-			}
-			return httpResult(st, body), nil
-		},
-	},
-	{
 		// pat_handler.go's CreatePAT — batch 20.
 		Key: "REST POST /api/v1/auth/tokens",
 		Execute: func(ctx context.Context, w *faultWorld, _ any) (opResult, error) {

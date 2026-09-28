@@ -70,7 +70,6 @@ var knownUnauditedOperations = map[string]bool{
 	"REST DELETE /api/v1/secret-templates/{id}":                                  true,
 	"REST DELETE /api/v1/secrets/{id}/schedule":                                  true,
 	"REST DELETE /api/v1/secrets/{id}/versions/{versionId}/comments/{commentId}": true,
-	"REST DELETE /api/v1/sessions/{id}":                                          true,
 	"REST POST /api/v1/access-requests/bulk-approve":                             true,
 	"REST POST /api/v1/admin/jobs/anomaly-alerts":                                true,
 	"REST POST /api/v1/admin/jobs/check-read-quotas":                             true,

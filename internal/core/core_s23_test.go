@@ -1,8 +1,7 @@
 // core_s23_test.go — sprint-23 coverage blitz:
 // audit.go (LogRoleCreated/Updated/Deleted, LogSecretRead/Created/Updated/Rotated/Deleted,
-// LogAuthLogin/Failure/Logout, LookupSessionUser), auth.go (Logout,
-// GetSessionForRemoteProxy, DeleteSessionForRemoteProxy), auth_bootstrap.go
-// (IsBuiltinRole, GenerateBootstrapToken), catalog.go (CreateProjectWithEnvs),
+// LogAuthLogin/Failure/Logout, LookupSessionUser), auth.go (Logout),
+// auth_bootstrap.go (IsBuiltinRole, GenerateBootstrapToken), catalog.go (CreateProjectWithEnvs),
 // compliance_evidence.go (appendEvidenceRotations), dashboard.go
 // (mapAuditEventToActivity — remaining branches), dynamic_secrets.go
 // (ListDynamicSecretConfigs, SetDynamicSecretConfigEnabled, GetDynamicSecretLease),
@@ -235,63 +234,6 @@ func TestLogout_DeletesSession(t *testing.T) {
 	c := NewKeyorixCore(ms)
 	require.NoError(t, c.Logout(context.Background(), "valid-tok"))
 	ms.AssertCalled(t, "DeleteSession", mock.Anything, uint(42))
-}
-
-// ── auth.go — GetSessionForRemoteProxy ───────────────────────────────────────
-
-func TestGetSessionForRemoteProxy_NotFound(t *testing.T) {
-	t.Parallel()
-	ms := new(MockStorage)
-	ms.On("GetSession", mock.Anything, "bad-tok").Return(nil, errors.New("not found"))
-	c := NewKeyorixCore(ms)
-	_, err := c.GetSessionForRemoteProxy(context.Background(), "bad-tok")
-	require.Error(t, err)
-}
-
-func TestGetSessionForRemoteProxy_Found(t *testing.T) {
-	t.Parallel()
-	ms := new(MockStorage)
-	sess := &models.Session{ID: 10, UserID: 3, SessionToken: "good-tok"}
-	ms.On("GetSession", mock.Anything, "good-tok").Return(sess, nil)
-	c := NewKeyorixCore(ms)
-	got, err := c.GetSessionForRemoteProxy(context.Background(), "good-tok")
-	require.NoError(t, err)
-	assert.Equal(t, uint(10), got.ID)
-}
-
-// ── auth.go — DeleteSessionForRemoteProxy ────────────────────────────────────
-
-func TestDeleteSessionForRemoteProxy_DeleteFails(t *testing.T) {
-	t.Parallel()
-	ms := new(MockStorage)
-	// GetSessionByID may or may not be called; stub it to succeed in case it is.
-	ms.On("GetSessionByID", mock.Anything, uint(5)).Return(
-		&models.Session{ID: 5, SessionToken: "tok"}, nil)
-	ms.On("DeleteSession", mock.Anything, uint(5)).Return(errors.New("db error"))
-	c := NewKeyorixCore(ms)
-	err := c.DeleteSessionForRemoteProxy(context.Background(), 5)
-	require.Error(t, err)
-}
-
-func TestDeleteSessionForRemoteProxy_Success(t *testing.T) {
-	t.Parallel()
-	ms := new(MockStorage)
-	sess := &models.Session{ID: 6, SessionToken: "live-tok", UserID: 1}
-	ms.On("GetSessionByID", mock.Anything, uint(6)).Return(sess, nil)
-	ms.On("DeleteSession", mock.Anything, uint(6)).Return(nil)
-	c := NewKeyorixCore(ms)
-	require.NoError(t, c.DeleteSessionForRemoteProxy(context.Background(), 6))
-	ms.AssertCalled(t, "DeleteSession", mock.Anything, uint(6))
-}
-
-func TestDeleteSessionForRemoteProxy_LookupFails_StillDeletes(t *testing.T) {
-	t.Parallel()
-	// If GetSessionByID fails we still call DeleteSession (delete wins).
-	ms := new(MockStorage)
-	ms.On("GetSessionByID", mock.Anything, uint(7)).Return(nil, errors.New("not found"))
-	ms.On("DeleteSession", mock.Anything, uint(7)).Return(nil)
-	c := NewKeyorixCore(ms)
-	require.NoError(t, c.DeleteSessionForRemoteProxy(context.Background(), 7))
 }
 
 // ── auth_bootstrap.go — IsBuiltinRole ────────────────────────────────────────

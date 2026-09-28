@@ -217,43 +217,6 @@ func (c *KeyorixCore) Logout(ctx context.Context, token string) error {
 	return c.storage.DeleteSession(ctx, session.ID)
 }
 
-// GetSessionForRemoteProxy resolves a session by its presented plaintext token.
-// It is the server-side counterpart RemoteStorage.GetSession (#508) needs so a
-// storage.type: remote "spoke" deployment can validate/revoke sessions that
-// were minted upstream — the upstream server remains the sole source of truth
-// for session validity, exactly as it already is for the user record and
-// password hash (#505/#506). This performs NO credential check of its own: it
-// only ever returns a session for a caller who already presents that
-// session's own opaque token (a lookup, not a mint), so it cannot be used to
-// obtain access to an account without already holding one of its live session
-// tokens.
-func (c *KeyorixCore) GetSessionForRemoteProxy(ctx context.Context, token string) (*models.Session, error) {
-	return c.storage.GetSession(ctx, token)
-}
-
-// DeleteSessionForRemoteProxy deletes a session by its numeric ID — the
-// server-side counterpart RemoteStorage.DeleteSession (#508) needs so Logout
-// (and any other session-invalidation path) works end-to-end under
-// storage.type: remote. Gated the same way CreateUser/UnlockUser already are
-// (users.write on the RemoteStorage service credential,
-// server/http/router.go) — not a new, wider trust boundary: that credential
-// can already force-logout an arbitrary user's every session via
-// RevokeUserSessions (POST /users/{id}/revoke-sessions), so deleting a single
-// session by ID grants no capability beyond what is already accepted there.
-// Evicts the deleted session's token hash from the local auth cache too, so a
-// revoke takes effect immediately rather than lingering for the cache TTL if
-// this same process also happens to be validating that exact token directly.
-func (c *KeyorixCore) DeleteSessionForRemoteProxy(ctx context.Context, id uint) error {
-	session, lookupErr := c.storage.GetSessionByID(ctx, id)
-	if err := c.storage.DeleteSession(ctx, id); err != nil {
-		return err
-	}
-	if lookupErr == nil {
-		c.invalidateTokenCache(session.SessionToken)
-	}
-	return nil
-}
-
 // EventSessionReuseDetected audits a refresh attempt against an already-rotated
 // session token (#211) — distinct from the generic "session not found" a caller
 // sees, since a rotated-away token is either a genuine refresh-token-reuse replay

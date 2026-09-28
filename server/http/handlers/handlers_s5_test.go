@@ -2159,41 +2159,6 @@ func TestListAccessReviewCampaigns_BadIDS5(t *testing.T) {
 
 // ── misc_remote_proxy.go — LastUser*ActivityProxy ─────────────────────────────
 
-// ── sessions_remote.go — GetSessionByToken / DeleteSessionByID ────────────────
-
-func TestGetSessionByTokenRemote_MissingToken(t *testing.T) {
-	h := newUserHandlerS4(t)
-	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil))
-	w := httptest.NewRecorder()
-	h.GetSessionByToken(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestGetSessionByTokenRemote_NotFound(t *testing.T) {
-	h := newUserHandlerS4(t)
-	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil)), "token", "nonexistent-token")
-	w := httptest.NewRecorder()
-	h.GetSessionByToken(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestDeleteSessionByIDRemote_BadID(t *testing.T) {
-	h := newUserHandlerS4(t)
-	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodDelete, "/", nil)), "id", "bad")
-	w := httptest.NewRecorder()
-	h.DeleteSessionByID(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestDeleteSessionByIDRemote_HappyPath(t *testing.T) {
-	h := newUserHandlerS4(t)
-	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodDelete, "/", nil)), "id", "999999")
-	w := httptest.NewRecorder()
-	h.DeleteSessionByID(w, req)
-	// No session with that ID → still 200 (no-op delete).
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // ── dynamic_secrets_proxy.go — additional paths ───────────────────────────────
 
 // ── access_request_proxy.go — additional paths ────────────────────────────────

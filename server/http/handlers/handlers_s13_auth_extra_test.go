@@ -4,8 +4,6 @@
 //     GetSetupToken (0%), RefreshToken missing-token, ListSessions session-branches,
 //     UpdateProfile ErrUserAlreadyExists, userIdentity success-path,
 //     userProfileMap nil-roles branch, extractBearerToken cookie path
-//   - sessions_remote.go: DeleteSessionByID 500-error path,
-//     package-level GetSessionByToken + DeleteSessionByID delegation
 //   - sso.go: ListSSOProviders (0%), BeginSSO non-unknown-provider error,
 //     CompleteSSO success path, isSafeSSOError more safe strings
 package handlers
@@ -278,46 +276,6 @@ func TestListSessions_WithExpiryAndLastSeen_S13(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	data := resp["data"]
 	assert.NotNil(t, data)
-}
-
-// ── sessions_remote.go: package-level delegation ─────────────────────────────
-
-// TestGetSessionByToken_DelegatesToHandler_S13 verifies the package-level
-// GetSessionByToken delegates to defaultUserHandler when set. With a valid
-// handler but no matching session → 404 (not 503).
-func TestGetSessionByToken_DelegatesToHandler_S13(t *testing.T) {
-	uh, _, _ := freshUserHandlerS12(t)
-	saved := defaultUserHandler
-	defaultUserHandler = uh
-	t.Cleanup(func() { defaultUserHandler = saved })
-
-	req := withUserCtx(withChiParam(
-		httptest.NewRequest(http.MethodGet, "/api/v1/sessions/nosuchtoken", nil),
-		"token", "nosuchtoken",
-	))
-	w := httptest.NewRecorder()
-	GetSessionByToken(w, req)
-	// Handler is set — request reaches the real handler → 404 (not 503).
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-// TestDeleteSessionByID_DelegatesToHandler_S13 verifies the package-level
-// DeleteSessionByID delegates to defaultUserHandler when set.
-func TestDeleteSessionByID_DelegatesToHandler_S13(t *testing.T) {
-	uh, _, _ := freshUserHandlerS12(t)
-	saved := defaultUserHandler
-	defaultUserHandler = uh
-	t.Cleanup(func() { defaultUserHandler = saved })
-
-	req := withUserCtx(withChiParam(
-		httptest.NewRequest(http.MethodDelete, "/api/v1/sessions/99999", nil),
-		"id", "99999",
-	))
-	w := httptest.NewRecorder()
-	DeleteSessionByID(w, req)
-	// Handler is set; DELETE of nonexistent session is a no-op → 200.
-	assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusNoContent,
-		"expected 200 or 204, got %d", w.Code)
 }
 
 // ── sso.go: ListSSOProviders ──────────────────────────────────────────────────

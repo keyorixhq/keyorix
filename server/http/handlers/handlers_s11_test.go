@@ -1866,25 +1866,6 @@ func TestGetSetupToken_HappyPath_S11(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// ── sessions_remote.go: GetSessionByToken success path ───────────────────────
-
-// TestGetSessionByToken_HappyPath_S11 — log in and look up the session token;
-// covers the 1-statement sendSuccess at line 52 in sessions_remote.go.
-func TestGetSessionByToken_HappyPath_S11(t *testing.T) {
-	t.Parallel()
-	cs := freshCoreS11(t)
-	sessionToken := bootstrapS11(t, cs, "getsesstoken")
-	h, err := NewUserHandler(cs)
-	require.NoError(t, err)
-
-	r := withUserCtx(httptest.NewRequest(http.MethodGet,
-		"/api/v1/sessions/"+sessionToken, nil))
-	r = withChiParamS8(r, "token", sessionToken)
-	w := httptest.NewRecorder()
-	h.GetSessionByToken(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // ── groups_handler.go: DeleteGroup success path ───────────────────────────────
 
 // TestDeleteGroup_HappyPath_S11 — create and then delete a group; covers the
