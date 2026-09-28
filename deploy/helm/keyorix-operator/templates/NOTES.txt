@@ -1,7 +1,21 @@
 keyorix-operator is installed.
 
-The operator watches KeyorixSecret resources cluster-wide and materialises the
-referenced Keyorix secrets into native Kubernetes Secrets.
+{{- if .Values.rbac.clusterScoped }}
+
+This instance watches KeyorixSecret resources cluster-wide (rbac.clusterScoped=true)
+and materialises the referenced Keyorix secrets into native Kubernetes Secrets.
+{{- else if .Values.watchNamespaces }}
+
+This instance watches KeyorixSecret resources in: {{ .Values.watchNamespaces | join ", " }}
+(watchNamespaces) and materialises the referenced Keyorix secrets into native
+Kubernetes Secrets.
+{{- else }}
+
+This instance watches KeyorixSecret resources in its own release namespace only
+({{ .Release.Namespace }} — the least-privilege default, ADR-076; set watchNamespaces
+or rbac.clusterScoped=true for a broader instance) and materialises the referenced
+Keyorix secrets into native Kubernetes Secrets.
+{{- end }}
 
 1. Create a machine-identity token Secret in your app namespace, and label it as a
    Keyorix token source (required — the operator refuses to resolve an unlabeled
