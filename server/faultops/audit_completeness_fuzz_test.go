@@ -55,31 +55,56 @@ import (
 // of fixing the gap defeats the harness's purpose and must be reasoned
 // about explicitly, not done by habit.
 var knownUnauditedOperations = map[string]bool{
-	"REST DELETE /api/v1/secrets/{id}/schedule":                                  true,
-	"REST DELETE /api/v1/secrets/{id}/versions/{versionId}/comments/{commentId}": true,
-	"REST POST /api/v1/access-requests/bulk-approve":                             true,
-	"REST POST /api/v1/audit/migrate-chain-encoding":                             true,
-	"REST POST /api/v1/auth/change-password":                                     true,
-	"REST POST /api/v1/notifications/{id}/read":                                  true,
-	"REST POST /api/v1/notifications/read-all":                                   true,
-	"REST POST /api/v1/projects":                                                 true,
-	"REST POST /api/v1/projects/{id}/secrets/bulk-rotate":                        true,
-	"REST POST /api/v1/projects/{id}/secrets/extend-expiring":                    true,
-	"REST POST /api/v1/projects/{id}/secrets/reassign-owner":                     true,
-	"REST POST /api/v1/projects/{id}/secrets/render":                             true,
-	"REST POST /api/v1/projects/{id}/secrets/resume-all":                         true,
-	"REST POST /api/v1/projects/{id}/secrets/suspend-all":                        true,
-	"REST POST /api/v1/rejection-reason-templates":                               true,
-	"REST POST /api/v1/secrets/{id}/rotation/simulate":                           true,
-	"REST POST /api/v1/secrets/{id}/versions/{versionId}/comments":               true,
-	"REST POST /api/v1/users/":                                                   true,
-	"REST POST /auth/password-reset":                                             true,
-	"REST POST /auth/refresh":                                                    true,
-	"REST PUT /api/v1/auth/profile":                                              true,
-	"REST PUT /api/v1/projects/{id}":                                             true,
-	"REST PUT /api/v1/projects/{id}/members/{userId}":                            true,
-	"REST PUT /api/v1/secrets/{id}/schedule":                                     true,
-	"REST PUT /api/v1/users/{id}":                                                true,
+	// ── Still unaudited, out of F5's scope (tracked gaps; F1-F4's entries were
+	// removed by their own PRs, all merged before this rebase on 2026-09-30).
+	"REST POST /api/v1/projects":     true,
+	"REST POST /api/v1/users/":       true,
+	"REST PUT /api/v1/auth/profile":  true,
+	"REST PUT /api/v1/projects/{id}": true,
+	"REST PUT /api/v1/users/{id}":    true,
+
+	// ── Confirmed intentional (F5, 2026-09-28): reviewed and judged NOT
+	// security-relevant, or already covered by a narrower audit trail than the
+	// fuzzer's opCatalog call happens to exercise. Each reason is specific to
+	// the operation, not a blanket "low priority".
+	//
+	// A dry run computes and returns its result WITHOUT persisting anything
+	// (see MigrateAuditChainEncoding's doc comment) -- TestMigrateAuditChainEncoding_
+	// Core_DryRunPersistsNothing already asserts zero completion events after a
+	// dry run. Only a REAL run (dryRun=false) appends one, and that path is
+	// already audited.
+	"REST POST /api/v1/audit/migrate-chain-encoding": true,
+	// Marking one's own notification read/all-read is personal UI state with no
+	// security-relevant effect (no access, permission, or credential changes) --
+	// not comparable to the access-control and secret-lifecycle events this
+	// fuzzer otherwise enforces.
+	"REST POST /api/v1/notifications/{id}/read": true,
+	"REST POST /api/v1/notifications/read-all":  true,
+	// RenderSecretTemplate DOES audit each resolved secret reference as a
+	// secret.read event (see commitStagedSecretRead) -- a bulk render is not a
+	// silent exfiltration channel. A template with zero secret references
+	// resolves nothing and has nothing to audit; that's the branch the fuzzer's
+	// generic opCatalog call exercises.
+	"REST POST /api/v1/projects/{id}/secrets/render": true,
+	// SimulateRotation is a pure read-only validation/diagnostic: it never
+	// mutates state and doesn't even accept an actor parameter, unlike every
+	// other operation in this map.
+	"REST POST /api/v1/secrets/{id}/rotation/simulate": true,
+	// The security-relevant branch (a rotated-away refresh token presented
+	// again -- a possible theft/replay indicator) IS already audited via
+	// EventSessionReuseDetected (handleSessionReuse). An ordinary successful
+	// refresh is a high-volume, self-service, non-privilege-changing operation
+	// -- consistent with this codebase's existing convention that a successful
+	// login itself is not audited either.
+	"REST POST /auth/refresh": true,
+	// A real password-reset request for an existing, resettable account IS
+	// already audited (deliverSetupLink records the delivery). Requests for a
+	// nonexistent, blocked, or externally-managed (SSO/SCIM) account return the
+	// identical response by deliberate anti-enumeration design
+	// (RequestPasswordReset) and are silent by construction; abuse patterns on
+	// those are tracked via the separate per-IP rate limiter
+	// (RecordPasswordResetAttempt), not the audit log.
+	"REST POST /auth/password-reset": true,
 }
 
 func auditEventCount(w *faultWorld) int64 {
