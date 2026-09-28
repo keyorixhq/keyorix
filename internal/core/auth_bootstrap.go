@@ -8,7 +8,9 @@ package core
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"fmt"
+	"log"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -265,108 +267,16 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
 
-	// Seed permissions and roles BEFORE creating the admin user. CreateUser
-	// itself does a best-effort auto-assign of the "system_viewer" baseline
-	// role (ADR-021, see the nested tx.WithTransaction below in this file's
-	// sibling users.go) — if the admin user is created first, that lookup
-	// runs against a database that has no roles at all yet, so it
-	// deterministically fails with "Role not found" on every single fresh
-	// install, on every backend (this is a fixed code-ordering bug, not a
-	// race: GetRoleByName is called before CreateRole ever runs for
-	// "system_viewer", regardless of backend timing). Confirmed live via a
-	// fresh docker-compose Postgres bootstrap before this fix: `user_roles`
-	// held only the "admin" grant for user 1, never "system_viewer".
-	//
-	// Seeding is idempotent: a previous attempt that failed after this point
-	// (any later step, not only the password check above) may have committed
-	// some permissions / roles / role-permission links already. Reuse what
-	// exists instead of failing on a unique constraint, so a failed bootstrap
-	// stays retryable. Only default-catalog names are reused, and only while the
-	// install is still un-initialised (no marker, no users -- checked above
-	// under the bootstrap lock), so this cannot adopt anything an operator made.
-	existingPerms, err := c.storage.ListPermissions(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list existing permissions: %w", err)
-	}
-	permByName := make(map[string]*models.Permission, len(existingPerms))
-	for _, p := range existingPerms {
-		permByName[p.Name] = p
-	}
-	existingRoles, err := c.storage.ListRoles(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list existing roles: %w", err)
-	}
-	roleByFolded := make(map[string]*models.Role, len(existingRoles))
-	for _, r := range existingRoles {
-		roleByFolded[r.NameFolded] = r
-	}
-
-	permIDs := make(map[string]uint, len(defaultPermissions))
-	for _, def := range defaultPermissions {
-		if p, ok := permByName[def.Name]; ok {
-			permIDs[def.Name] = p.ID
-			continue
-		}
-		p, err := c.storage.CreatePermission(ctx, &models.Permission{
-			Name:        def.Name,
-			Description: def.Description,
-			Resource:    def.Resource,
-			Action:      def.Action,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create permission %s: %w", def.Name, err)
-		}
-		permIDs[def.Name] = p.ID
-	}
-
-	roleIDs := make(map[string]uint, len(defaultRoles))
-	for _, rdef := range defaultRoles {
-		foldedName, ferr := identity.NewFoldedName(rdef.Name)
-		if ferr != nil {
-			return nil, fmt.Errorf("failed to normalize seed role name %s: %w", rdef.Name, ferr)
-		}
-		role, reused := roleByFolded[foldedName.Folded()]
-		if !reused {
-			created, err := c.storage.CreateRole(ctx, foldedName, rdef.Description)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create role %s: %w", rdef.Name, err)
-			}
-			role = created
-		}
-		roleIDs[rdef.Name] = role.ID
-		// ADR-084: the four admin-tier seeded roles get the structural bypass
-		// flag here, at creation, via the one narrow storage primitive that
-		// exists for exactly this — never through CreateRole/UpdateRole's
-		// general (request-reachable) path. isAdminRoleName is the same
-		// fixed-name check requireAuthorityForRole uses to gate a role GRANT
-		// by requested name; using it here to decide which SEEDED roles get
-		// the flag is a one-time bootstrap decision, not an ongoing lookup.
-		if isAdminRoleName(rdef.Name) {
-			if err := c.storage.SetRoleBypassesPermissionChecks(ctx, role.ID, true); err != nil {
-				return nil, fmt.Errorf("failed to flag admin-tier role %s (ADR-084): %w", rdef.Name, err)
-			}
-		}
-		linked := map[uint]bool{}
-		if reused {
-			have, err := c.storage.GetRolePermissions(ctx, role.ID)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read permissions of role %s: %w", rdef.Name, err)
-			}
-			for _, p := range have {
-				linked[p.ID] = true
-			}
-		}
-		for _, name := range rdef.Permissions {
-			if linked[permIDs[name]] {
-				continue
-			}
-			if err := c.storage.AssignPermissionToRole(ctx, role.ID, permIDs[name]); err != nil {
-				return nil, fmt.Errorf("failed to assign permission %s to role %s: %w", name, rdef.Name, err)
-			}
-		}
-	}
-
-	user, err := c.CreateUser(ctx, &CreateUserRequest{
+	// Everything that writes happens in ONE transaction: permission / role
+	// seeding, the admin user, its baseline and admin role grants, the default
+	// project and environments, and the systemInitializedKey marker. A failure at
+	// ANY step rolls all of it back, so a failed bootstrap never leaves an admin
+	// user without the admin role (or a half-seeded catalog) behind; the next
+	// attempt starts from the same empty state. The user row is built and
+	// validated first (no writes), and the seeding below stays idempotent so
+	// installs already left half-seeded by the pre-transaction code can still
+	// complete bootstrap.
+	user, hash, err := c.buildUserForCreate(ctx, &CreateUserRequest{
 		Username:    req.Username,
 		Email:       req.Email,
 		Password:    req.Password,
@@ -376,31 +286,164 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 		return nil, fmt.Errorf("failed to create admin user: %w", err)
 	}
 
-	// The first user is the install super-user: assign the admin role globally.
-	if err := c.storage.AssignRole(ctx, user.ID, roleIDs["admin"], Scope{}); err != nil {
-		return nil, fmt.Errorf("failed to assign admin role to user: %w", err)
-	}
-
-	project, err := c.storage.CreateProject(ctx, &models.Project{
-		Name:        "default",
-		Description: "Default project",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create default project: %w", err)
-	}
-
-	envs := make([]*models.Environment, 0, len(defaultEnvironmentNames))
-	for _, name := range defaultEnvironmentNames {
-		env, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: name, ProjectID: project.ID})
+	var (
+		createdUser *models.User
+		project     *models.Project
+		envs        []*models.Environment
+	)
+	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		// Seed permissions and roles BEFORE creating the admin user, so the
+		// baseline system_viewer role exists when it is granted below (ADR-021;
+		// the original ordering bug left the first admin without it on every
+		// fresh install).
+		//
+		// Seeding is idempotent: a previous attempt that failed after this point
+		// (any later step, not only the password check above) may have committed
+		// some permissions / roles / role-permission links already. Reuse what
+		// exists instead of failing on a unique constraint, so a failed bootstrap
+		// stays retryable. Only default-catalog names are reused, and only while the
+		// install is still un-initialised (no marker, no users -- checked above
+		// under the bootstrap lock), so this cannot adopt anything an operator made.
+		existingPerms, err := tx.ListPermissions(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create environment %s: %w", name, err)
+			return fmt.Errorf("failed to list existing permissions: %w", err)
 		}
-		envs = append(envs, env)
+		permByName := make(map[string]*models.Permission, len(existingPerms))
+		for _, p := range existingPerms {
+			permByName[p.Name] = p
+		}
+		existingRoles, err := tx.ListRoles(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to list existing roles: %w", err)
+		}
+		roleByFolded := make(map[string]*models.Role, len(existingRoles))
+		for _, r := range existingRoles {
+			roleByFolded[r.NameFolded] = r
+		}
+
+		permIDs := make(map[string]uint, len(defaultPermissions))
+		for _, def := range defaultPermissions {
+			if p, ok := permByName[def.Name]; ok {
+				permIDs[def.Name] = p.ID
+				continue
+			}
+			p, err := tx.CreatePermission(ctx, &models.Permission{
+				Name:        def.Name,
+				Description: def.Description,
+				Resource:    def.Resource,
+				Action:      def.Action,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to create permission %s: %w", def.Name, err)
+			}
+			permIDs[def.Name] = p.ID
+		}
+
+		roleIDs := make(map[string]uint, len(defaultRoles))
+		for _, rdef := range defaultRoles {
+			foldedName, ferr := identity.NewFoldedName(rdef.Name)
+			if ferr != nil {
+				return fmt.Errorf("failed to normalize seed role name %s: %w", rdef.Name, ferr)
+			}
+			role, reused := roleByFolded[foldedName.Folded()]
+			if !reused {
+				created, err := tx.CreateRole(ctx, foldedName, rdef.Description)
+				if err != nil {
+					return fmt.Errorf("failed to create role %s: %w", rdef.Name, err)
+				}
+				role = created
+			}
+			roleIDs[rdef.Name] = role.ID
+			// ADR-084: the four admin-tier seeded roles get the structural bypass
+			// flag here, at creation, via the one narrow storage primitive that
+			// exists for exactly this — never through CreateRole/UpdateRole's
+			// general (request-reachable) path. isAdminRoleName is the same
+			// fixed-name check requireAuthorityForRole uses to gate a role GRANT
+			// by requested name; using it here to decide which SEEDED roles get
+			// the flag is a one-time bootstrap decision, not an ongoing lookup.
+			if isAdminRoleName(rdef.Name) {
+				if err := tx.SetRoleBypassesPermissionChecks(ctx, role.ID, true); err != nil {
+					return fmt.Errorf("failed to flag admin-tier role %s (ADR-084): %w", rdef.Name, err)
+				}
+			}
+			linked := map[uint]bool{}
+			if reused {
+				have, err := tx.GetRolePermissions(ctx, role.ID)
+				if err != nil {
+					return fmt.Errorf("failed to read permissions of role %s: %w", rdef.Name, err)
+				}
+				for _, p := range have {
+					linked[p.ID] = true
+				}
+			}
+			for _, name := range rdef.Permissions {
+				if linked[permIDs[name]] {
+					continue
+				}
+				if err := tx.AssignPermissionToRole(ctx, role.ID, permIDs[name]); err != nil {
+					return fmt.Errorf("failed to assign permission %s to role %s: %w", name, rdef.Name, err)
+				}
+			}
+		}
+
+		createdUser, err = tx.CreateUser(ctx, user, req.Password)
+		if err != nil {
+			if errors.Is(err, storage.ErrDuplicateEmail) {
+				return fmt.Errorf("failed to create admin user: %w: user with email already exists", ErrUserAlreadyExists)
+			}
+			return fmt.Errorf("failed to create admin user: %w", err)
+		}
+
+		// Baseline system_viewer (ADR-021) and the global admin role. Unlike plain
+		// CreateUser, both are fatal here: the roles were seeded a moment ago in
+		// this same transaction, so a failure is a real fault, and the whole
+		// bootstrap must roll back rather than leave an admin without rights.
+		if err := tx.AssignRole(ctx, createdUser.ID, roleIDs["system_viewer"], Scope{}); err != nil {
+			return fmt.Errorf("failed to assign system_viewer role to admin user: %w", err)
+		}
+		if err := tx.AssignRole(ctx, createdUser.ID, roleIDs["admin"], Scope{}); err != nil {
+			return fmt.Errorf("failed to assign admin role to user: %w", err)
+		}
+
+		project, err = tx.CreateProject(ctx, &models.Project{
+			Name:        "default",
+			Description: "Default project",
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create default project: %w", err)
+		}
+
+		envs = make([]*models.Environment, 0, len(defaultEnvironmentNames))
+		for _, name := range defaultEnvironmentNames {
+			env, err := tx.CreateEnvironment(ctx, &models.Environment{Name: name, ProjectID: project.ID})
+			if err != nil {
+				return fmt.Errorf("failed to create environment %s: %w", name, err)
+			}
+			envs = append(envs, env)
+		}
+
+		if err := tx.SetSystemMetadata(ctx, systemInitializedKey, "1"); err != nil {
+			return fmt.Errorf("failed to record system initialisation state: %w", err)
+		}
+		return nil
+	})
+	if txErr != nil {
+		return nil, txErr
 	}
 
-	if err := c.storage.SetSystemMetadata(ctx, systemInitializedKey, "1"); err != nil {
-		return nil, fmt.Errorf("failed to record system initialisation state: %w", err)
+	// Seed password history with the initial password (ADR-025), best-effort
+	// and after commit, exactly as CreateUser does for every other user.
+	if c.passwordPolicy.HistoryCount > 0 {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("Warning: seeding password history for bootstrap admin %d panicked (best-effort): %v", createdUser.ID, r)
+				}
+			}()
+			_ = c.storage.AddPasswordHistory(ctx, createdUser.ID, hash, c.now())
+		}()
 	}
+
 	// The bootstrap token is single-use: clear it so a captured/logged token (see
 	// GenerateBootstrapToken) can never re-open initialisation later, even before
 	// considering the marker above.
@@ -408,7 +451,7 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 
 	return &BootstrapResult{
 		AlreadyInitialized: false,
-		User:               user,
+		User:               createdUser,
 		Project:            project,
 		Environments:       envs,
 	}, nil

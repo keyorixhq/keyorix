@@ -13,6 +13,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,7 +21,9 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/identity"
+	kxstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
 const retryToken = "retry-bootstrap-token"
@@ -137,4 +140,135 @@ func TestBootstrapSystem_RetryAfterPartialSeedSucceeds(t *testing.T) {
 		names = append(names, r.Name)
 	}
 	assert.Contains(t, names, "admin")
+}
+
+// failOnceStorage makes one named storage step fail during the first
+// bootstrap attempt only, and follows WithTransaction so the failure also
+// fires on the transaction-scoped handle.
+type failOnceStorage struct {
+	storage.Storage
+	failStep string
+	armed    *bool
+}
+
+func (s *failOnceStorage) WithTransaction(ctx context.Context, fn func(storage.Storage) error) error {
+	return s.Storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		return fn(&failOnceStorage{Storage: tx, failStep: s.failStep, armed: s.armed})
+	})
+}
+
+func (s *failOnceStorage) trip(step string) error {
+	if *s.armed && s.failStep == step {
+		*s.armed = false
+		return errors.New("injected fault: " + step)
+	}
+	return nil
+}
+
+func (s *failOnceStorage) AssignRole(ctx context.Context, userID, roleID uint, scope Scope) error {
+	if err := s.trip("AssignRole"); err != nil {
+		return err
+	}
+	return s.Storage.AssignRole(ctx, userID, roleID, scope)
+}
+
+func (s *failOnceStorage) CreateProject(ctx context.Context, p *models.Project) (*models.Project, error) {
+	if err := s.trip("CreateProject"); err != nil {
+		return nil, err
+	}
+	return s.Storage.CreateProject(ctx, p)
+}
+
+func (s *failOnceStorage) SetSystemMetadata(ctx context.Context, key, value string) error {
+	if err := s.trip("SetSystemMetadata"); err != nil {
+		return err
+	}
+	return s.Storage.SetSystemMetadata(ctx, key, value)
+}
+
+// TestBootstrapSystem_FailureAfterUserCreateRollsBackEverything: a failure at
+// any write step after the admin user row is created must leave NOTHING
+// behind (no user, no seed rows, no marker), and the next attempt must produce
+// a complete admin. Red before the single-transaction change: the user row
+// survived, the retry took the "users exist, no marker" backfill path and
+// reported AlreadyInitialized with an admin lacking the admin role.
+func TestBootstrapSystem_FailureAfterUserCreateRollsBackEverything(t *testing.T) {
+	for _, step := range []string{"AssignRole", "CreateProject", "SetSystemMetadata"} {
+		t.Run(step, func(t *testing.T) {
+			base := freshBootstrapCore(t)
+			armed := true
+			c := NewKeyorixCore(&failOnceStorage{Storage: base.storage, failStep: step, armed: &armed})
+			c.SetBootstrapToken(retryToken)
+			ctx := context.Background()
+
+			_, err := c.BootstrapSystem(ctx, goodRetryReq())
+			require.Error(t, err)
+			require.False(t, armed, "the injected fault must actually have fired")
+
+			_, total, err := base.storage.ListUsers(ctx, &storage.UserFilter{Page: 1, PageSize: 1})
+			require.NoError(t, err)
+			assert.Zero(t, total, "the failed bootstrap must not leave a user behind")
+			perms, err := base.storage.ListPermissions(ctx)
+			require.NoError(t, err)
+			assert.Empty(t, perms, "the failed bootstrap must not leave seed permissions behind")
+			_, found, err := base.storage.GetSystemMetadata(ctx, systemInitializedKey)
+			require.NoError(t, err)
+			assert.False(t, found, "the failed bootstrap must not leave the initialised marker behind")
+
+			res, err := c.BootstrapSystem(ctx, goodRetryReq())
+			require.NoError(t, err)
+			require.False(t, res.AlreadyInitialized, "the retry must perform a real bootstrap, not the backfill path")
+			require.NotNil(t, res.User)
+			require.NotNil(t, res.Project)
+
+			userRoles, err := base.storage.GetUserRoles(ctx, res.User.ID)
+			require.NoError(t, err)
+			names := map[string]bool{}
+			for _, r := range userRoles {
+				names[r.Name] = true
+			}
+			assert.True(t, names["admin"], "the admin must hold the admin role")
+			assert.True(t, names["system_viewer"], "the admin must hold the system_viewer baseline")
+		})
+	}
+}
+
+// TestBootstrapSystem_FailureAfterUserCreateRollsBackEverything_Postgres runs
+// the same rollback check on a real, isolated PostgreSQL schema migrated as
+// production does. PostgreSQL aborts the whole transaction on a failed
+// statement, so this is where a partial commit would show up. Skips when
+// KEYORIX_TEST_PG_DSN is unset.
+func TestBootstrapSystem_FailureAfterUserCreateRollsBackEverything_Postgres(t *testing.T) {
+	base := pgTestDSN(t)
+	db := pgOpen(t, pgIsolatedSchemaDSN(t, base))
+	require.NoError(t, kxstorage.MigrateExisting(db))
+	st := store.NewLocalStorage(db)
+	ctx := context.Background()
+
+	armed := true
+	c := NewKeyorixCore(&failOnceStorage{Storage: st, failStep: "CreateProject", armed: &armed})
+	c.SetBootstrapToken(retryToken)
+
+	_, err := c.BootstrapSystem(ctx, goodRetryReq())
+	require.Error(t, err)
+	require.False(t, armed)
+
+	_, total, err := st.ListUsers(ctx, &storage.UserFilter{Page: 1, PageSize: 1})
+	require.NoError(t, err)
+	assert.Zero(t, total)
+	perms, err := st.ListPermissions(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, perms)
+
+	res, err := c.BootstrapSystem(ctx, goodRetryReq())
+	require.NoError(t, err)
+	require.False(t, res.AlreadyInitialized)
+	userRoles, err := st.GetUserRoles(ctx, res.User.ID)
+	require.NoError(t, err)
+	names := map[string]bool{}
+	for _, r := range userRoles {
+		names[r.Name] = true
+	}
+	assert.True(t, names["admin"])
+	assert.True(t, names["system_viewer"])
 }
