@@ -13,6 +13,10 @@ import (
 	"testing"
 )
 
+// maxResponseBytes caps how much of any single API response the smoke client
+// reads (16 MiB — far above any real response in the smoke sweep).
+const maxResponseBytes = 16 << 20
+
 // client is an authenticated HTTP client against one running server instance.
 // Every call is routed through do(), which (a) fails the test immediately on
 // any 5xx response -- SESSION-I's core assertion, "no 5xx anywhere" -- and
@@ -60,7 +64,9 @@ func (c *client) login(username, password string) {
 			Token string `json:"token"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+	// Bounded read (semgrep keyorix-unbounded-json-decoder): a test client
+	// still must not buffer an arbitrarily large response.
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&env); err != nil {
 		c.t.Fatalf("login: decode response: %v", err)
 	}
 	if !env.Success || env.Data.Token == "" {
@@ -88,7 +94,7 @@ func (c *client) call(method, routeKey, path string, body interface{}) envelope 
 	resp := c.doRaw(method, routeKey, path, raw, c.token)
 	defer resp.Body.Close() //nolint:errcheck
 
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		c.t.Fatalf("%s %s (%s): read response body: %v", method, routeKey, path, err)
 	}
