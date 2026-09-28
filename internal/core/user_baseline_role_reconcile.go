@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -196,11 +197,24 @@ func (c *KeyorixCore) usersSSOJITNonDefaultRole(ctx context.Context) (map[uint]b
 			return nil, err
 		}
 		for _, e := range events {
-			var d ssoJITProvisionDetail
-			if e.Diff == "" || json.Unmarshal([]byte(e.Diff), &d) != nil {
+			if e.UserID == nil {
 				continue
 			}
-			if d.NonDefaultRole && e.UserID != nil {
+			var d ssoJITProvisionDetail
+			if e.Diff != "" && json.Unmarshal([]byte(e.Diff), &d) == nil {
+				if d.NonDefaultRole {
+					skip[*e.UserID] = true
+				}
+				continue
+			}
+			// Legacy event (written before the structured Diff existed): every
+			// install this one-time backfill exists to repair predates it, so the
+			// Description's own "role=<name>)" suffix is the only record of which
+			// role the provider config granted. Historical rows never change
+			// format, so parsing them is stable. Fail toward skipping: an
+			// unparseable legacy row is treated as non-default (never grant
+			// system_viewer on top of a role we can't identify).
+			if m := legacySSOJITRoleRe.FindStringSubmatch(e.Description); m == nil || m[1] != ssoDefaultRole {
 				skip[*e.UserID] = true
 			}
 		}
@@ -210,6 +224,11 @@ func (c *KeyorixCore) usersSSOJITNonDefaultRole(ctx context.Context) (map[uint]b
 	}
 	return skip, nil
 }
+
+// legacySSOJITRoleRe extracts the role name from a pre-structured-Diff
+// auth.sso_jit_provisioned Description: "SSO JIT-provisioned user %d via %s
+// (externalId=%q, role=%s)".
+var legacySSOJITRoleRe = regexp.MustCompile(`, role=(.*)\)$`)
 
 func userHoldsRole(roles []*models.Role, roleID uint) bool {
 	for _, r := range roles {

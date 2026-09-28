@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -298,4 +299,49 @@ func TestReconcileUserBaselineRoles_RepairsPreFixOrdering_Postgres(t *testing.T)
 
 	require.NoError(t, c.ReconcileUserBaselineRoles(ctx))
 	assert.Equal(t, 1, countBaselineBackfillAuditEvents(t, c, admin.ID), "second restart on Postgres grants nothing new")
+}
+
+// legacySSOJITUser creates a user exactly as provisionSSOUser did BEFORE the
+// structured ssoJITProvisionDetail Diff existed: the configured role granted
+// directly, and an auth.sso_jit_provisioned event carrying the role only in
+// its free-text Description. Every install the one-time backfill exists to
+// repair holds only events of this shape.
+func legacySSOJITUser(t *testing.T, c *KeyorixCore, username, roleName string) *models.User {
+	t.Helper()
+	ctx := context.Background()
+	fu, err := identity.NewFoldedName(username)
+	require.NoError(t, err)
+	fe, err := identity.NewFoldedName(username + "@example.com")
+	require.NoError(t, err)
+	u, err := c.storage.CreateUser(ctx, &models.User{
+		Username: username, UsernameFolded: fu.Folded(),
+		Email: username + "@example.com", EmailFolded: fe.Folded(), DisplayName: username,
+		IsActive: true, AccountState: AccountActive, ExternalID: ssoExternalID("okta", username),
+	})
+	require.NoError(t, err)
+	r, err := c.storage.GetRoleByName(ctx, roleName)
+	require.NoError(t, err)
+	require.NoError(t, c.storage.AssignRole(ctx, u.ID, r.ID, Scope{}))
+	c.writeAuditEvent(ctx, EventSSOJITProvision, actorPtr(u.ID), nil,
+		fmt.Sprintf("SSO JIT-provisioned user %d via %s (externalId=%q, role=%s)", u.ID, "okta", "okta|"+username, roleName))
+	return u
+}
+
+// TestReconcileUserBaselineRoles_SkipsLegacySSOJITNonDefaultRoleUser: the
+// installs this backfill repairs predate the structured JIT Diff, so the
+// non-default-role skip must also read legacy Description-only events.
+func TestReconcileUserBaselineRoles_SkipsLegacySSOJITNonDefaultRoleUser(t *testing.T) {
+	t.Parallel()
+	c := newPreFixOrderingCore(t)
+	bootstrapWithPreFixOrdering(t, c)
+	ctx := context.Background()
+
+	nonDefault := legacySSOJITUser(t, c, "legacy-jit-admin", "admin")
+	require.False(t, userHasRoleName(t, c, nonDefault.ID, "system_viewer"), "sanity")
+
+	require.NoError(t, c.ReconcileUserBaselineRoles(ctx))
+
+	assert.False(t, userHasRoleName(t, c, nonDefault.ID, "system_viewer"),
+		"a legacy (Description-only) SSO JIT user with a non-default role must never be granted system_viewer")
+	assert.Equal(t, 0, countBaselineBackfillAuditEvents(t, c, nonDefault.ID))
 }
