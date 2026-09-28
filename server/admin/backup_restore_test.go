@@ -65,6 +65,64 @@ func buildTestManifest(dbData []byte, keyData [][]byte) backupManifest {
 	return m
 }
 
+// writeBackupArchive/writeBackupArchiveContents/writeTarEntry are v1's
+// original archive WRITER (#2099) -- production code no longer calls this
+// (backup.go writes only the v2 logical format now, design §3.6 decision
+// 6), but readBackupArchive's own defensive-parsing tests (this file,
+// backup_restore_rollback_test.go, backup_restore_fuzz_test.go) still need
+// a real v1-shaped archive to feed it. Kept here, test-only, purely as
+// fixture-construction support for the v1 reader this package still ships.
+func writeBackupArchive(outputPath string, manifest backupManifest, dbBytes []byte, keyBlobs [][]byte) error {
+	f, err := os.OpenFile(outputPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600) // #nosec G304 -- test-only fixture writer
+	if err != nil {
+		return err
+	}
+	if err := writeBackupArchiveContents(f, manifest, dbBytes, keyBlobs); err != nil {
+		_ = f.Close()
+		_ = os.Remove(outputPath)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(outputPath)
+		return err
+	}
+	return nil
+}
+
+func writeBackupArchiveContents(f *os.File, manifest backupManifest, dbBytes []byte, keyBlobs [][]byte) error {
+	gz := gzip.NewWriter(f)
+	tw := tar.NewWriter(gz)
+
+	manifestJSON, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := writeTarEntry(tw, "MANIFEST.json", manifestJSON); err != nil {
+		return err
+	}
+	if err := writeTarEntry(tw, manifest.DBFile.TarName, dbBytes); err != nil {
+		return err
+	}
+	for i, blob := range keyBlobs {
+		if err := writeTarEntry(tw, manifest.KeyFiles[i].TarName, blob); err != nil {
+			return err
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return err
+	}
+	return gz.Close()
+}
+
+func writeTarEntry(tw *tar.Writer, name string, data []byte) error {
+	hdr := &tar.Header{Name: name, Mode: 0600, Size: int64(len(data))}
+	if err := tw.WriteHeader(hdr); err != nil {
+		return err
+	}
+	_, err := tw.Write(data)
+	return err
+}
+
 func TestReadBackupArchive_ValidRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	dbData := []byte("fake-db-bytes")

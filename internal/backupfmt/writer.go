@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -23,17 +24,31 @@ import (
 // internal/storage/models/json.go) round-trip exactly like every other GORM
 // read in this codebase, with no new marshal/unmarshal logic (design §3.3).
 // Bounded memory: one row at a time, never the whole table.
+//
+// Orders by EVERY primary-key field (s.PrimaryFields, plural), not just a
+// single "id" column: several join tables here have a composite primary key
+// and no "id" column at all (RolePermission{RoleID, PermissionID}, UserRole,
+// GroupRole, UserGroup) -- s.PrioritizedPrimaryField picks (or fails to
+// pick) a single field for GORM's own internal purposes and is not a
+// reliable proxy for "the columns that actually order this table's rows."
+// Found live: an early version of this function defaulted to "id" whenever
+// PrioritizedPrimaryField was nil, which round_permissions (composite key,
+// no id column at all) hit immediately -- "no such column: id" -- confirmed
+// via TestAdminBackupRestore_RoundTrip's real, full-registry backup.
 func walkTable(db *gorm.DB, model any, fn func(row any) error) (rowCount int64, err error) {
 	s, err := parseSchema(model)
 	if err != nil {
 		return 0, fmt.Errorf("parse schema for %T: %w", model, err)
 	}
-	pkCol := "id"
-	if s.PrioritizedPrimaryField != nil {
-		pkCol = s.PrioritizedPrimaryField.DBName
+	if len(s.PrimaryFields) == 0 {
+		return 0, fmt.Errorf("%s has no primary key field(s) -- cannot derive a stable row order", s.Table)
+	}
+	orderCols := make([]string, len(s.PrimaryFields))
+	for i, f := range s.PrimaryFields {
+		orderCols[i] = f.DBName + " ASC"
 	}
 
-	rows, err := db.Model(model).Order(pkCol + " ASC").Rows()
+	rows, err := db.Model(model).Order(strings.Join(orderCols, ", ")).Rows()
 	if err != nil {
 		return 0, fmt.Errorf("query %s: %w", s.Table, err)
 	}

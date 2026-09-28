@@ -53,8 +53,25 @@ func CheckDanglingReferences(db *gorm.DB, models []any) ([]DanglingReference, er
 		// #nosec G201 -- table/column names come from referenceEdges(), which
 		// resolves them via gorm schema.Parse against storage.AllModels()'s
 		// compiled-in Go structs, never from archive or request content.
+		//
+		// child.rowid, not child.id: several child (join) tables have a
+		// composite primary key and no "id" column at all (RolePermission,
+		// UserRole, GroupRole, UserGroup) -- SQLite's implicit rowid exists
+		// on every ordinary table regardless of its declared primary key
+		// shape, so it's a reliable row identifier here even when there's no
+		// single named PK column to select. parent.id is fine as-is: every
+		// table this package's edges ever point AT (the "one" side of a
+		// reference) is a real entity table with a genuine single-column
+		// "id" primary key -- confirmed by construction, since a composite-
+		// key join table is never itself the TARGET of a reference in this
+		// schema. Found live via TestAdminBackupRestore_RoundTrip's real,
+		// full-registry backup ("no such column: child.id" on group_roles),
+		// the same class of bug walkTable's own primary-key assumption had.
+		// H4 (Postgres source) will need its own equivalent here -- ctid is
+		// NOT a stable row identifier across a VACUUM the way SQLite's rowid
+		// is, so this exact query will not port verbatim.
 		query := fmt.Sprintf(
-			`SELECT child.id AS row_id, child.%s AS missing_id FROM %s child `+
+			`SELECT child.rowid AS row_id, child.%s AS missing_id FROM %s child `+
 				`LEFT JOIN %s parent ON child.%s = parent.id `+
 				`WHERE child.%s != 0 AND parent.id IS NULL`,
 			e.ChildColumn, e.ChildTable, e.ParentTable, e.ChildColumn, e.ChildColumn,

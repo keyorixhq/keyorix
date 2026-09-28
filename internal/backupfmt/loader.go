@@ -61,6 +61,38 @@ func checkSchemaDelta(modelName string, currentColumns []string, archived TableE
 	return nil
 }
 
+// schemaEpochMetadataKey mirrors internal/storage's unexported
+// schemaEpochMetadataKey constant ("schema_epoch") -- must stay byte-for-
+// byte identical, since both read/write the exact same system_metadata row.
+// Duplicated rather than imported: internal/backupfmt cannot reach
+// internal/storage's unexported constant (server/admin's own
+// auditHighWaterMetadataKey duplicates a sibling system_metadata key key for
+// the identical reason).
+//
+// Why this needs special handling at all: migrateDatabase's
+// recordSchemaEpoch (ADR-097) unconditionally upserts THIS key into
+// system_metadata as its very last step, BEFORE LoadArchive ever runs (§3.4:
+// migrations run first) -- so the target already has a schema_epoch row
+// reflecting the CURRENT (restoring) binary's own epoch by the time loading
+// starts. The archive's OWN schema_epoch row must never overwrite it: ADR-
+// 097's whole invariant is that this value reflects "the binary that most
+// recently migrated this database," not historical/portable data -- loading
+// the archive's (possibly older) epoch here would make a fully-current-
+// schema, freshly-migrated database falsely report an old epoch. Found
+// live: a plain INSERT of the archive's system_metadata rows hit "UNIQUE
+// constraint failed: system_metadata.key" on this exact row, via
+// TestAdminBackupRestore_RoundTrip's real, full-registry restore -- every
+// OTHER system_metadata key is genuinely historical/portable data (e.g. the
+// audit high-water mark, already handled by Manifest.Checkpoint separately)
+// and loads normally; recordSchemaEpoch is the ONLY migrateDatabase call
+// site that seeds this table (confirmed by inspection), so this single,
+// named exclusion is complete, not a guess.
+const schemaEpochMetadataKey = "schema_epoch"
+
+// systemMetadataTableName is SystemMetadata's GORM table name -- the one
+// table loadTable applies the schemaEpochMetadataKey skip to.
+const systemMetadataTableName = "system_metadata"
+
 // loadTable reads stagingDir's staged NDJSON file for model (one line per
 // row, JSON keyed by column name per design §3.3) and CreateInBatches-
 // inserts every row into db, inside whatever transaction db already is.
@@ -69,6 +101,26 @@ func checkSchemaDelta(modelName string, currentColumns []string, archived TableE
 // INSERT when the column has its own DB-level default (design §8's
 // version-skipping-upgrade mechanism: "a column the backup's schema didn't
 // have yet simply takes its GORM-defined default on insert").
+//
+// The system_metadata table's own schema_epoch row is the one row this
+// function ever deliberately skips inserting -- see schemaEpochMetadataKey's
+// doc comment. Still counted toward total (the row WAS read and validated
+// against the manifest's declared row count; it just isn't loaded), so the
+// row-count sanity check below stays a check on "did the staged file match
+// what was verified," not silently weakened by this one exclusion.
+// isSystemMetadataSchemaEpochRow reports whether rowPtr (a freshly-decoded
+// row for table tableName) is system_metadata's own schema_epoch row --
+// via reflection on a "Key" field, not a models.SystemMetadata type
+// assertion, so this package doesn't need to import internal/storage/models
+// for one narrow check.
+func isSystemMetadataSchemaEpochRow(tableName string, rowPtr reflect.Value) bool {
+	if tableName != systemMetadataTableName {
+		return false
+	}
+	keyField := rowPtr.Elem().FieldByName("Key")
+	return keyField.IsValid() && keyField.Kind() == reflect.String && keyField.String() == schemaEpochMetadataKey
+}
+
 func loadTable(db *gorm.DB, model any, entry TableEntry, stagingDir string) (int64, error) {
 	path := filepath.Join(stagingDir, entry.TarName)
 	f, err := os.Open(path) // #nosec G304 -- entry.TarName is this package's own generated name, matched exactly against the manifest by ExtractArchive before staging
@@ -103,8 +155,11 @@ func loadTable(db *gorm.DB, model any, entry TableEntry, stagingDir string) (int
 		if err := json.Unmarshal(line, rowPtr.Interface()); err != nil {
 			return total, fmt.Errorf("decode row %d of %q: %w", total, entry.Name, err)
 		}
-		batch = reflect.Append(batch, rowPtr.Elem())
 		total++
+		if isSystemMetadataSchemaEpochRow(entry.Name, rowPtr) {
+			continue // schemaEpochMetadataKey's own doc comment explains why
+		}
+		batch = reflect.Append(batch, rowPtr.Elem())
 		if batch.Len() >= batchSize {
 			if err := flush(); err != nil {
 				return total, err

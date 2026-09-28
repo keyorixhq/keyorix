@@ -80,6 +80,14 @@ func chdirTest(t *testing.T, dir string) {
 func TestAdminBackupRestore_RoundTrip(t *testing.T) {
 	resetBackupRestoreFlags(t)
 	require.NoError(t, i18n.InitializeForTesting())
+	// admin backup/restore now independently resolve the passphrase
+	// themselves (to derive the KEK-derived manifest-signing key, design
+	// §5.2/§5.3) rather than only trusting an already-initialized
+	// encryption.Service -- ResolvePassphrase falls back to this env var
+	// when no --passphrase-* flag is set (backupPassphraseSource/
+	// restorePassphraseSource stay their cobra-unregistered zero value in
+	// this direct-RunE-call test, same as every other flag here).
+	t.Setenv("KEYORIX_MASTER_PASSWORD", "test-passphrase-1234")
 
 	srcDir := t.TempDir()
 	chdirTest(t, srcDir)
@@ -147,7 +155,11 @@ func TestAdminRestore_FailsOnFormatVersionMismatch(t *testing.T) {
 
 	dbData := []byte("db")
 	manifest := buildTestManifest(dbData, nil)
-	manifest.FormatVersion = backupFormatVersion + 1
+	// A version neither backupFormatVersion (1, v1) nor backupfmt.FormatVersion
+	// (2, v2) -- genuinely unrecognized by either dispatch branch, not just
+	// "the other" of the two real ones runAdminRestore's peek-based dispatch
+	// now recognizes.
+	manifest.FormatVersion = 999
 
 	dir := t.TempDir()
 	archivePath := filepath.Join(dir, "backup.tar.gz")
