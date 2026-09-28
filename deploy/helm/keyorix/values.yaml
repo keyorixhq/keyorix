@@ -8,7 +8,19 @@ auth:
   # The encryption master passphrase. REQUIRED unless existingSecret is set.
   masterPassword: ""
   # Optional first-boot admin bootstrap (idempotent). Leave password empty to
-  # run `keyorix system init` manually instead.
+  # run `keyorix system init` manually instead. Must satisfy the server's own
+  # admin-bootstrap password policy: at least 16 characters, with an
+  # uppercase letter, a lowercase letter, a digit, and a special character,
+  # AND must not contain adminUsername/adminEmail/"Administrator" as a
+  # substring (internal/core/rules/password_policy.go +
+  # internal/core/auth_bootstrap.go's CreateUser call -- the substring check
+  # is enforced separately/later than the rest of the policy). The chart
+  # fails the render if it's under 16 characters; the other rules can't be
+  # chart-checked -- get those wrong and first-boot bootstrap fails silently
+  # instead (pod comes up fine, no admin user is ever created), and per a
+  # confirmed bug (FINDINGS-inbox, Session J, 2026-09-28) a rejected password
+  # can leave the install unable to retry bootstrap at all without wiping the
+  # database.
   adminUsername: "admin"
   adminEmail: "admin@keyorix.local"
   adminPassword: ""

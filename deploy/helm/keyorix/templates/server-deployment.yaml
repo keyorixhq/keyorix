@@ -86,6 +86,19 @@ spec:
                   key: KEYORIX_ADMIN_PASSWORD
                   optional: true
             {{- end }}
+            # Required for auth.adminPassword's first-boot bootstrap to actually
+            # complete (server/main.go rejects POST /system/init without a matching
+            # token) and to make manual `keyorix system init` possible without
+            # rebooting the pod -- see keyorix.bootstrapToken in _helpers.tpl.
+            # optional: true so an auth.existingSecret that predates this key (or
+            # was hand-rolled without it) degrades to the old masked-log-only
+            # behaviour instead of crash-looping on a missing key.
+            - name: KEYORIX_BOOTSTRAP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keyorix.secretName" . }}
+                  key: KEYORIX_BOOTSTRAP_TOKEN
+                  optional: true
           volumeMounts:
             - name: config
               mountPath: /app/keyorix.yaml
