@@ -1,3 +1,5 @@
+//go:build !nogcp
+
 package connect
 
 // gcpsm_response_fuzz_test.go — FuzzGCPSMConnectorResponse fuzzes what a hostile or

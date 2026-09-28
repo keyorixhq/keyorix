@@ -1,3 +1,5 @@
+//go:build !noaws
+
 package connect
 
 // awssm_response_fuzz_test.go — FuzzAWSSMConnectorResponse fuzzes what a hostile
