@@ -285,7 +285,6 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 	if err != nil {
 		return nil, fmt.Errorf("failed to create admin user: %w", err)
 	}
-	c.LogUserCreated(ctx, 0, user.ID, user.Username)
 
 	var (
 		createdUser *models.User
@@ -431,6 +430,12 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 	if txErr != nil {
 		return nil, txErr
 	}
+
+	// Audit only AFTER the transaction has committed: an event written inside
+	// (or before) it would claim success for a bootstrap that then rolled back.
+	// actorID 0 = the system itself (no authenticated actor exists yet).
+	c.LogUserCreated(ctx, 0, createdUser.ID, createdUser.Username)
+	c.LogProjectCreated(ctx, 0, project.ID, project.Name)
 
 	// Seed password history with the initial password (ADR-025), best-effort
 	// and after commit, exactly as CreateUser does for every other user.
