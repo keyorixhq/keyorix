@@ -261,7 +261,6 @@ var operationOverrides = map[string]overrideEntry{
 	"REST POST /api/v1/auth/change-password":  {StatusFuzzed, "opCatalog[\"ChangePassword\"] — batch 20"},
 	"REST PUT /api/v1/auth/profile":           {StatusFuzzed, "opCatalog[\"UpdateProfile\"] — batch 20"},
 	"REST DELETE /api/v1/auth/sessions/{id}":  {StatusFuzzed, "opCatalog[\"RevokeSession\"] — batch 20"},
-	"REST DELETE /api/v1/sessions/{id}":       {StatusFuzzed, "opCatalog[\"DeleteSessionByID\"] — batch 20"},
 	"REST POST /api/v1/auth/tokens":           {StatusFuzzed, "opCatalog[\"CreatePAT\"] — batch 20"},
 	"REST DELETE /api/v1/auth/tokens/{id}":    {StatusFuzzed, "opCatalog[\"RevokePAT\"] — batch 20"},
 	"REST DELETE /api/v1/auth/tokens/expired": {StatusFuzzed, "opCatalog[\"BulkRevokeExpiredPATs\"] — batch 20"},
