@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -143,17 +144,32 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 		Classification:    classification,
 		CreatedAt:         c.now(),
 	}
-	created, err := c.storage.CreateMachineIdentityCredential(ctx, cred)
+	// PAT-006: create the new credential and (when rotating) revoke the replaced one
+	// in the SAME transaction. The two used to be sequential storage calls: on a
+	// revoke failure the function returned an error, but the just-created new
+	// credential was never rolled back — an orphaned row nobody could use (its plain
+	// token was discarded along with the error) while the old credential the caller
+	// believed was being replaced stayed live. Wrapping both means a revoke failure
+	// now leaves NEITHER change applied, matching the error message's own claim.
+	var created *models.MachineIdentityCredential
+	err = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		var cerr error
+		created, cerr = tx.CreateMachineIdentityCredential(ctx, cred)
+		if cerr != nil {
+			return fmt.Errorf("failed to store machine token: %w", cerr)
+		}
+		if params.ReplaceCredentialID != 0 {
+			if rerr := tx.RevokeMachineIdentityCredential(ctx, projectID, params.ReplaceCredentialID); rerr != nil {
+				return fmt.Errorf("failed to revoke old credential %d: %w", params.ReplaceCredentialID, rerr)
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to store machine token: %w", err)
+		return nil, err
 	}
 
-	// PAT-006: revoke the replaced credential after the new one is safely stored so
-	// the machine is never left without a valid credential during the rotation.
 	if params.ReplaceCredentialID != 0 {
-		if err := c.storage.RevokeMachineIdentityCredential(ctx, projectID, params.ReplaceCredentialID); err != nil {
-			return nil, fmt.Errorf("new token issued but failed to revoke old credential %d: %w", params.ReplaceCredentialID, err)
-		}
 		c.logMachineEvent(ctx, "machine_identity.token_rotated", m, actorID)
 		return &IssueMachineTokenResult{Credential: created, PlainToken: raw, ReplacedTokenHash: oldCredHash}, nil
 	}
