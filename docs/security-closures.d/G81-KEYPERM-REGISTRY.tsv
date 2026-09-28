@@ -1,0 +1,1 @@
+G81-KEYPERM-REGISTRY	./internal/keyfiles	TestRegistry_IncludesWrappedKeyPathForEveryWriteCapableType	default-ci	pending	-	TPM/cloud-KMS wrapped-KEK blob must be covered by the shared key-permission checker registry, not just DEK/salt

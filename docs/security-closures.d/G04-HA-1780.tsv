@@ -1,0 +1,1 @@
+G04-HA-1780	./internal/core	TestConcurrency_GroupRoleGrant_CrossReplicaPostgres_SoDBypass	pg-gated	f306ed7a	1780	SoD group-grant race: a group-role grant and a direct grant to one of its members took different lock keys and never serialized against each other; closed by taking each active member's own lock, ordered, before the group grant's check-then-write

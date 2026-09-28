@@ -26,11 +26,19 @@ systemd unit's `ExecStart` points at `fuzz-runner.sh`.
 
 ## What remains in this directory
 
-- **`targets.conf`** — the hand-maintained canonical list of this repo's fuzz
-  targets. The CI `fuzz-targets` drift-guard (`.github/workflows/ci.yml`) fails
-  a PR if a real `func FuzzXxx` is missing from it or a declared target no
-  longer exists in the tree. The rig discovers targets dynamically; this list
-  is the human cross-check that nothing silently drops out of coverage.
+- **`targets.d/`** — one file per fuzz target (`<pkg-slug>__<FuzzName>.conf`),
+  the hand-maintained canonical list of this repo's fuzz targets. Add a target
+  by adding a new file here — never by editing a shared file, which is what
+  made every fuzz-target PR conflict with every other one before this split.
+  See `targets.d/README.md` for the format. The CI `fuzz-targets` drift-guard
+  (`.github/workflows/ci.yml`) fails a PR if a real `func FuzzXxx` is missing
+  from it or a declared target no longer exists in the tree. The rig discovers
+  targets dynamically; this list is the human cross-check that nothing
+  silently drops out of coverage.
+- **`targets.conf`** — GENERATED from `targets.d/*.conf` by
+  `gen-targets-conf.sh`; exists only because the external `fuzz-harness` rig
+  repo still reads this flat file directly (see `targets.d/README.md`). Never
+  edit it by hand — `gen-targets-conf.sh --check` fails CI if it drifts.
 - **`race-pass.sh`** — runs the fuzz corpus under `-race` (needs cgo; dev/CI
   only, since the rigs are `CGO_ENABLED=0`). Backs the data-race closure (#1870).
 - **`harness-acceptance.sh`** — reach-check + coverage-delta gate for *in-wall*
@@ -70,4 +78,5 @@ FalseCrashReducer's feasibility triage).
 
 - **Weekly / per-PR**: see `.github/workflows/` (`fuzz*.yml`) — bounded
   regression fuzzing seeded from the committed corpus; deep discovery is the rig.
-- **Drift guard**: `fuzz-targets` job — keeps `targets.conf` honest against the tree.
+- **Drift guard**: `fuzz-targets` job — keeps `targets.d/` honest against the
+  tree, and `targets.conf` honest against `targets.d/`.

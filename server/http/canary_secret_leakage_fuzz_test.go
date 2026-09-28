@@ -155,7 +155,8 @@ package http
 //
 // See docs/findings/ for any confirmed leak this harness's red-proofs or live runs
 // surface in the public repo, keyorix-private/adversarial-review/ for the private
-// finding above, and scripts/fuzzing/targets.conf for this target's soak tier.
+// finding above, and scripts/fuzzing/targets.d/server-http__FuzzCanarySecretLeakage.conf
+// for this target's soak tier.
 
 import (
 	"bytes"

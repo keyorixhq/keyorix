@@ -355,6 +355,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Verify docs/security-closures.tsv is generated from security-closures.d/*.tsv
+        run: scripts/gen-security-closures-tsv.sh --check
+
       - name: Self-test the closure guard (must be able to go red)
         run: ./scripts/check-closures.sh --self-test
 
@@ -1596,18 +1599,21 @@ jobs:
           [ -x ~/go/bin/gosec ] || go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}" # NOSONAR githubactions:S8545 -- version is pinned via GOSEC_VERSION env var
           gosec -severity medium -exclude-generated ./...
 
-  # scripts/fuzzing/targets.conf is the hand-maintained canonical list of this
-  # repo's fuzz targets (scripts/fuzzing/README.md) -- it has NO automated link
-  # to what `func FuzzXxx` targets actually exist in the tree. (The rig itself
+  # scripts/fuzzing/targets.d/*.conf (one file per target -- see
+  # scripts/fuzzing/targets.d/README.md) is the hand-maintained canonical list
+  # of this repo's fuzz targets; scripts/fuzzing/targets.conf is GENERATED from
+  # it (gen-targets-conf.sh) purely for the external fuzz-harness rig, which
+  # still reads the flat file. Neither has an automated link to what
+  # `func FuzzXxx` targets actually exist in the tree. (The rig itself
   # discovers targets dynamically via the fuzz-harness runner; this list is the
   # human cross-check.) A sibling project hit exactly this failure mode for months with no
   # signal anything was wrong: an identical hand-maintained list silently
   # missed 18 of 44 real fuzz functions. This job closes that gap by diffing
   # the list of FuzzXxx functions `go test -list` finds in the tree (ground
-  # truth) against what targets.conf declares, failing on ANY divergence:
+  # truth) against what targets.d declares, failing on ANY divergence:
   #   - a real FuzzXxx exists but isn't declared -- it would silently never
   #     get continuously fuzzed (the sibling-project failure mode above).
-  #   - targets.conf declares a FuzzXxx that no longer exists -- a stale
+  #   - targets.d declares a FuzzXxx that no longer exists -- a stale
   #     entry (e.g. after a rename/removal) that no longer matches any target
   #     in the tree.
   # Also skipped on web_only PRs: every target here is a Go `func FuzzXxx` in
@@ -1632,6 +1638,9 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.1'
+
+      - name: Verify targets.conf is generated from targets.d/*.conf
+        run: scripts/fuzzing/gen-targets-conf.sh --check
 
       - name: Verify targets.conf matches the real FuzzXxx functions in the tree
         run: |
@@ -1677,7 +1686,7 @@ jobs:
           # cli is also a separate Go module (see the `cli` job above, which
           # sets GOWORK: off for the same reason), and not listed in go.work's
           # `use` directives -- without this pass, any FuzzXxx function added
-          # under cli/ is invisible to this check and its targets.conf entry
+          # under cli/ is invisible to this check and its targets.d entry
           # is wrongly reported as stale.
           echo "== true FuzzXxx functions: cli module (GOWORK=off) =="
           (cd cli && GOWORK=off go test -list '^Fuzz' ./...) | tee cli-fuzz-list.txt
@@ -1687,24 +1696,25 @@ jobs:
           extract_fuzz_targets < cli-fuzz-list.txt >> true-targets.txt
           sort -u true-targets.txt -o true-targets.txt
 
-          grep -vE '^[[:space:]]*(#|$)' scripts/fuzzing/targets.conf \
+          cat scripts/fuzzing/targets.d/*.conf \
+            | grep -vE '^[[:space:]]*(#|$)' \
             | awk -F'|' '{print $1"|"$2}' \
             | sort -u > declared-targets.txt
 
           echo "--- true FuzzXxx targets in the tree ---"; cat true-targets.txt
-          echo "--- targets declared in scripts/fuzzing/targets.conf ---"; cat declared-targets.txt
+          echo "--- targets declared in scripts/fuzzing/targets.d/*.conf ---"; cat declared-targets.txt
 
           missing=$(comm -23 true-targets.txt declared-targets.txt)
           stale=$(comm -13 true-targets.txt declared-targets.txt)
 
           status=0
           if [ -n "$missing" ]; then
-            echo "::error::FuzzXxx functions exist in the tree but are NOT declared in scripts/fuzzing/targets.conf -- they would never be picked up by the continuous-fuzzing rig:"
+            echo "::error::FuzzXxx functions exist in the tree but are NOT declared in scripts/fuzzing/targets.d/ -- they would never be picked up by the continuous-fuzzing rig:"
             echo "$missing"
             status=1
           fi
           if [ -n "$stale" ]; then
-            echo "::error::scripts/fuzzing/targets.conf declares FuzzXxx targets that no longer exist in the tree (stale entry, e.g. after a rename/removal):"
+            echo "::error::scripts/fuzzing/targets.d/ declares FuzzXxx targets that no longer exist in the tree (stale entry, e.g. after a rename/removal):"
             echo "$stale"
             status=1
           fi

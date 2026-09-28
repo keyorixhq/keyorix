@@ -1,0 +1,1 @@
+cli-rbac-002	-	-	manual	76dbc529	-	SURFACE REMOVED (ADR-108 Phase 6 step 14b-1): internal/cli deleted entirely, including runRemoveRoleFromGroup's embedded-mode raw-storage path this fixed. The new CLI (cli/) has no embedded mode and cannot call storage directly, only the server's REST API, which always enforces guardLastGlobalAdminGroupRole.

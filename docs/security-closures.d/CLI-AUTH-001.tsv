@@ -1,0 +1,1 @@
+CLI-AUTH-001	-	-	manual	5158f913	-	SURFACE REMOVED (ADR-108 Phase 6 step 14b-1): internal/cli (the old, thick CLI) deleted entirely, including runLogin and the untrusted CWD-relative keyorix.yaml auto-fill this fixed. The new CLI (cli/) has no analogous config auto-discovery from an arbitrary CWD file, so this bug class cannot recur.

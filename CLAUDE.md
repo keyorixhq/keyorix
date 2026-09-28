@@ -324,11 +324,16 @@ same idea applied to a mechanism already in front of you.
 
 ## Closing a security fix
 
-- Add a row to `docs/security-closures.tsv`: claim id, package, proving test,
-  **verification**, commit, **issue**. `scripts/check-closures.sh` fails the
-  build if the named test does not exist, or does not produce a `--- PASS`
-  line in the environment its `verification` column claims. Verify by test,
-  never by commit — this repo squash-merges.
+- Add a file to `docs/security-closures.d/<claim_id>.tsv` (one row: claim id,
+  package, proving test, **verification**, commit, **issue** — see
+  `docs/security-closures.d/README.md`), then run
+  `scripts/gen-security-closures-tsv.sh` and commit the regenerated
+  `docs/security-closures.tsv` alongside it — CI fails if it drifts. Added
+  2026-09-28 (C1) so two closure PRs open at once no longer conflict on one
+  shared file. `scripts/check-closures.sh` fails the build if the named test
+  does not exist, or does not produce a `--- PASS` line in the environment its
+  `verification` column claims. Verify by test, never by commit — this repo
+  squash-merges.
 - `verification` is `default-ci` (runs and passes with no special environment
   — a skip is always a failure), `pg-gated` (needs `KEYORIX_TEST_PG_DSN`, e.g.
   a cross-replica race only real Postgres can demonstrate — a skip is

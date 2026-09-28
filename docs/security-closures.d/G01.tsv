@@ -1,0 +1,1 @@
+G01	./internal/core	TestCheckGroupPermissions_ProjectScopedMembershipDoesNotCrossProjects	default-ci	e6f018a0	-	project-scoped group membership must not grant cross-project secret read

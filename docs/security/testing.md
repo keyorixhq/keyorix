@@ -24,7 +24,7 @@ Eleven required status checks, no bypass, including for maintainers:
 | `CodeQL` | Cross-function-boundary taint-flow analysis, both Go modules (root + Kubernetes operator) |
 | `checkov` | Helm chart *security-policy* scanning (non-root, dropped capabilities, no privilege escalation, seccomp) — distinct from `kubeconform`'s schema-only validation |
 | `go-licenses` | Dependency license compliance; the allowlist (MIT/Apache-2.0/BSD-2/3-Clause/ISC/MPL-2.0) was derived from the actual dependency tree and verified to fail on an injected AGPL test dependency |
-| Fuzz-target staleness | A `func FuzzXxx` that exists but isn't declared in `scripts/fuzzing/targets.conf` (or vice versa) — checked in both directions, because a target that silently drops out of the declared list gets no coverage signal at all |
+| Fuzz-target staleness | A `func FuzzXxx` that exists but isn't declared in `scripts/fuzzing/targets.d/` (or vice versa) — checked in both directions, because a target that silently drops out of the declared list gets no coverage signal at all |
 | DCO sign-off | Every commit carries a `Signed-off-by` trailer matching its author |
 
 Full detail and the hardening log behind each gate (what each one has actually
@@ -49,10 +49,10 @@ Two distinct tiers, deliberately not conflated:
   parsing) — not blanket coverage of every declared target.
 
 **Scale, stated precisely rather than as one headline number:**
-`scripts/fuzzing/targets.conf` declares **77** `FuzzXxx` targets across the
+`scripts/fuzzing/targets.d/` declares **93** `FuzzXxx` targets across the
 tree as of this writing — the CI drift-guard's complete, bidirectionally-checked
-list (a target existing in code but missing from this file fails CI, and vice
-versa). This is the full declared population subject to per-PR/weekly bounded
+list (a target existing in code but missing from this directory fails CI, and
+vice versa). This is the full declared population subject to per-PR/weekly bounded
 fuzzing; it is a materially larger number than, and should not be confused
 with, the smaller rotation the continuous discovery rig runs at any one time
 on dedicated hardware.

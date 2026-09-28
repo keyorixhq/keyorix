@@ -1,0 +1,1 @@
+AWS-CONN-ACCOUNTID	./internal/connect	TestAWSSM_AccountPin	default-ci	pending	-	pinned aws-secrets-manager connector must refuse an ARN naming a different AWS account

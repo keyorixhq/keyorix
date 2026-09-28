@@ -47,7 +47,8 @@ go run scripts/fuzzing/autofuzzgen/main.go -tuples targets.json -out /tmp/afg
 #    for its invariant family, red-proof it (weaken the code under test → the oracle must fire),
 #    rename to <pkg>_<name>_fuzz_test.go in the target package.
 
-# 4. Add a scripts/fuzzing/targets.conf row so the rig discovers it; open a PR (DCO -s, no attribution).
+# 4. Add a scripts/fuzzing/targets.d/<pkg-slug>__<FuzzName>.conf file so the rig discovers it
+#    (run scripts/fuzzing/gen-targets-conf.sh and commit targets.conf too); open a PR (DCO -s, no attribution).
 ```
 
 The model is a **lead generator**, never gating: an LLM's "looks wrong" never gates a finding, and
@@ -59,4 +60,4 @@ a generated harness is only trusted after a human red-proofs its oracle.
   the `source → sink` path).
 - Assert only the non-false-positing direction (deny / bounded / equality / reject), per the
   invariant-fuzzing playbook.
-- Every landed target gets a `targets.conf` row and is scoped to keyorix's actual call path.
+- Every landed target gets a `targets.d/` file and is scoped to keyorix's actual call path.
