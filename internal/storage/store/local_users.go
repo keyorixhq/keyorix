@@ -373,7 +373,24 @@ func (ls *LocalStorage) ListUsers(ctx context.Context, filter *storage.UserFilte
 
 	if filter.Search != nil {
 		pattern := "%" + escapeLike(*filter.Search) + "%"
-		query = query.Where("username ILIKE ? ESCAPE '\\' OR email ILIKE ? ESCAPE '\\' OR display_name ILIKE ? ESCAPE '\\'", pattern, pattern, pattern)
+		// ILIKE is Postgres-only syntax -- SQLite's query parser rejects it outright
+		// ("near "ILIKE": syntax error"), so GET /api/v1/users/search (and anything
+		// else reaching this filter) 500ed on every SQLite-backed deployment, the
+		// zero-config default (configs/keyorix.yaml.tpl: "storage: type: sqlite").
+		// Found live by SESSION-I's fresh-install API smoke driver. SQLite's plain
+		// LIKE is already case-insensitive for ASCII by default (unlike Postgres's
+		// LIKE, which is case-sensitive -- ILIKE exists there specifically to get
+		// case-insensitivity), so branching the operator by dialect (same
+		// ls.db.Dialector.Name() == "postgres" idiom LockUserForUpdate above already
+		// uses) preserves case-insensitive matching on both backends without a
+		// second, dialect-specific query path.
+		op := "LIKE"
+		if ls.db.Dialector.Name() == "postgres" {
+			op = "ILIKE"
+		}
+		query = query.Where(
+			fmt.Sprintf("username %s ? ESCAPE '\\' OR email %s ? ESCAPE '\\' OR display_name %s ? ESCAPE '\\'", op, op, op),
+			pattern, pattern, pattern)
 	}
 	if filter.Username != nil {
 		query = query.Where("username LIKE ? ESCAPE '\\'", "%"+escapeLike(*filter.Username)+"%")
