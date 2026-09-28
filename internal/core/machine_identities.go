@@ -32,9 +32,12 @@ const (
 	MachineTypeAutomation = "automation"
 	MachineTypeOther      = "other"
 	// MachineTypeNode identifies a credential issued to a downstream Keyorix node
-	// (storage.type: remote) — see #G79. This type is the SOLE gate on the
-	// server/http/handlers/*_proxy.go RemoteStorage-sync surface
-	// (server/middleware/node_credential.go's RequireNodeCredential); it carries no
+	// (storage.type: remote) — see #G79. RETAINED per ADR-085 even though the
+	// RemoteStorage-sync proxy tree it originally gated is deleted and
+	// server/middleware/node_credential.go's RequireNodeCredential has never
+	// actually gated any real route (see that file's own doc) — `keyorix machine
+	// create --type node` remains a valid command, and removing the type
+	// forecloses a real node component being built properly later. It carries no
 	// implicit RBAC permission of its own and must never be included in any role's
 	// default/admin permission bundle.
 	MachineTypeNode = "node"
