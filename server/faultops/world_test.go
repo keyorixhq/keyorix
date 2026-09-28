@@ -144,6 +144,7 @@ func mustExec(t *testing.T, db *gorm.DB, sql string) {
 type faultWorld struct {
 	t          *testing.T
 	db         *gorm.DB
+	backend    string // "sqlite" or "postgres" -- set by buildReusableFaultWorld (world_reuse_test.go); zero-value ("") unused by newFaultWorld's own callers
 	core       *core.KeyorixCore
 	faulty     *faultstorage.FaultyStorage
 	httpServer *httptest.Server
@@ -151,6 +152,7 @@ type faultWorld struct {
 	adminToken string
 	grpcConn   *grpc.ClientConn
 	grpcCtx    context.Context
+	grpcSrv    *grpc.Server // set by buildReusableFaultWorld (world_reuse_test.go); zero-value (nil) unused by newFaultWorld's own callers
 
 	encryptOnce sync.Once
 	encryptErr  error
