@@ -308,6 +308,35 @@ func TestAWSSTSEngine_Issue_NilCredentials(t *testing.T) {
 	assert.Contains(t, err.Error(), "no credentials")
 }
 
+// TestAWSSTSEngine_Issue_EmptyCredentialFields is a regression test (fuzz-confirmed,
+// #2210): AssumeRoleOutput.Credentials' string fields are non-nil *string pointers to
+// "" on a degenerate/misbehaving response, which a `Credentials == nil` check alone
+// lets through as a successful lease. Emptiness, not nilness, is what must gate.
+func TestAWSSTSEngine_Issue_EmptyCredentialFields(t *testing.T) {
+	exp := time.Now().Add(time.Hour)
+	cases := map[string]*ststypes.Credentials{
+		"empty access key id": {
+			AccessKeyId: aws.String(""), SecretAccessKey: aws.String("S"), SessionToken: aws.String("T"), Expiration: &exp,
+		},
+		"empty secret access key": {
+			AccessKeyId: aws.String("K"), SecretAccessKey: aws.String(""), SessionToken: aws.String("T"), Expiration: &exp,
+		},
+		"empty session token": {
+			AccessKeyId: aws.String("K"), SecretAccessKey: aws.String("S"), SessionToken: aws.String(""), Expiration: &exp,
+		},
+	}
+	for name, creds := range cases {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeSTS{out: &sts.AssumeRoleOutput{Credentials: creds}}
+			eng := newFakeSTSEngine(fake)
+			_, _, err := eng.Issue(context.Background(),
+				`{"role_arn":"arn:aws:iam::1:role/r","region":"us-east-1"}`, "", time.Hour)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "incomplete credentials")
+		})
+	}
+}
+
 // ── AWSSTSEngine Issue: ExternalID and explicit duration ─────────────────────
 
 func TestAWSSTSEngine_Issue_ExternalID(t *testing.T) {

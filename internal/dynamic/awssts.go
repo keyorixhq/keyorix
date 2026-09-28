@@ -181,6 +181,9 @@ func (e *AWSSTSEngine) Issue(ctx context.Context, adminDSN, creationTemplate str
 	if out.Credentials == nil {
 		return Credential{}, "", fmt.Errorf("aws-sts: assume role returned no credentials")
 	}
+	if aws.ToString(out.Credentials.AccessKeyId) == "" || aws.ToString(out.Credentials.SecretAccessKey) == "" || aws.ToString(out.Credentials.SessionToken) == "" {
+		return Credential{}, "", fmt.Errorf("aws-sts: assume role returned incomplete credentials")
+	}
 	return Credential{Fields: stsCredentialFields(cfg, out)}, sessionName, nil
 }
 
