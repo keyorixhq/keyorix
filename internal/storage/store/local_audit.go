@@ -519,7 +519,22 @@ func (ls *LocalStorage) GetSecretReadCounts(ctx context.Context, secretID uint, 
 		Select("CAST(ae.user_id AS TEXT) AS actor_id, COALESCE(u.username, '') AS actor_username, COUNT(*) AS read_count, MAX(ae.event_time) AS last_read_at").
 		Joins("LEFT JOIN users u ON u.id = ae.user_id AND u.deleted_at IS NULL").
 		Where("ae.secret_node_id = ? AND ae.event_type = ? AND ae.event_time >= ? AND ae.event_time < ?", secretID, "secret.read", since, until).
-		Group("ae.user_id").
+		// Postgres enforces the SQL standard's GROUP BY functional-dependency
+		// rule strictly: every selected column must either be aggregated or
+		// appear in GROUP BY, and it does NOT infer that u.username depends on
+		// ae.user_id through the join condition (that inference only applies
+		// when GROUP BY names the JOINED table's own primary key, u.id -- not
+		// a column of the other table that merely equals it). SQLite has no
+		// such check at all (it silently picks an arbitrary row's value for
+		// any ungrouped column), so this passed there and 500ed only on
+		// Postgres ("column \"u.username\" must appear in the GROUP BY clause
+		// or be used in an aggregate function") -- found by SESSION-I's
+		// fresh-install API smoke driver running the identical flow against
+		// both backends. u.id is a primary key and the join condition
+		// (u.id = ae.user_id) means at most one users row matches per
+		// ae.user_id, so grouping by both columns changes nothing about the
+		// result -- it only satisfies the stricter validator.
+		Group("ae.user_id, u.username").
 		Order("read_count DESC").
 		Limit(clampPageSize(limit)).
 		Scan(&rows).Error

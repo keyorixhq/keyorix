@@ -4,13 +4,16 @@ package store
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -179,4 +182,64 @@ func TestGetSecretReadCounts_UsernameResolved(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	assert.Equal(t, "alice", entries[0].ActorUsername)
+}
+
+// newReadAggPGStore is newReadAggStore's PostgreSQL counterpart, isolated in
+// its own dedicated schema (same pattern as local_transaction_pg_savepoint_test.go's
+// newPGTxStore) so concurrent test runs sharing one Postgres instance don't
+// collide. Skips (not fails) when KEYORIX_TEST_PG_DSN is unset, per this
+// repo's "pg-gated" verification convention (docs/security-closures.tsv).
+func newReadAggPGStore(t *testing.T) (*LocalStorage, *gorm.DB) {
+	t.Helper()
+	dsn := os.Getenv("KEYORIX_TEST_PG_DSN")
+	if dsn == "" {
+		t.Skip("KEYORIX_TEST_PG_DSN not set — PostgreSQL-only test")
+	}
+	schema := "readagg_test"
+	admin, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, admin.Exec("DROP SCHEMA IF EXISTS "+schema+" CASCADE").Error)
+	require.NoError(t, admin.Exec("CREATE SCHEMA "+schema).Error)
+	t.Cleanup(func() {
+		_ = admin.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE").Error
+		if sqlDB, e := admin.DB(); e == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	db, err := gorm.Open(postgres.Open(pgdsn.PGSearchPathDSN(dsn, schema)), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.AuditEvent{}))
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	return NewLocalStorage(db), db
+}
+
+// TestGetSecretReadCounts_PostgresUsernameResolved is SESSION-I's regression:
+// GetSecretReadCounts' query SELECTs the LEFT-JOINed users.username column
+// but only grouped by ae.user_id -- Postgres enforces the SQL standard's
+// GROUP BY functional-dependency rule strictly and rejects that outright
+// ("column \"u.username\" must appear in the GROUP BY clause or be used in
+// an aggregate function"); SQLite has no such check at all, so every
+// existing test in this file (all SQLite-only) passed regardless of whether
+// the query was actually valid on Postgres. Confirmed live via SESSION-I's
+// fresh-install API smoke driver running GET /api/v1/secrets/{id}/read-summary
+// against a real Postgres backend -- it 500ed there and nowhere else.
+func TestGetSecretReadCounts_PostgresUsernameResolved(t *testing.T) {
+	ls, db := newReadAggPGStore(t)
+	now := time.Now().UTC()
+
+	user := &models.User{Username: "alice"}
+	require.NoError(t, db.Create(user).Error)
+
+	since := now.Add(-24 * time.Hour)
+	until := now.Add(time.Hour)
+	seedReadEvent(t, db, 10, user.ID, now.Add(-1*time.Hour))
+
+	entries, err := ls.GetSecretReadCounts(context.Background(), 10, since, until, 10)
+	require.NoError(t, err, "GetSecretReadCounts must not error on Postgres")
+	require.Len(t, entries, 1)
+	assert.Equal(t, "alice", entries[0].ActorUsername)
+	assert.Equal(t, int64(1), entries[0].ReadCount)
 }
