@@ -66,22 +66,65 @@ verbs:     [get, list, create, patch, delete]
 resources: [secrets]
 ```
 
-`list` and `delete` are used **only** by orphan cleanup (below); with `cleanup` off the
-agent exercises just `get`, `create`, and `patch`. Bind a `Role` with these permissions
-in every target namespace (or a `ClusterRole` with namespace-scoped `RoleBinding`s). The
-Helm chart further restricts `get`/`patch`/`delete` with `resourceNames` to exactly the
-Secret names in `mappings` — `create` and `list` can't be `resourceNames`-scoped (a
-Kubernetes RBAC limitation: those verbs don't target a single named object), so they
-remain granted on the `secrets` resource type as a whole. The agent uses Server-Side
-Apply with the field manager `keyorix-sync`, so it owns the `data` it writes and prunes
-keys it no longer maps.
+`list` is used **only** by orphan cleanup (below) — with `cleanup` off, the agent never
+lists. `delete` is used by orphan cleanup **and** by `pruneOnRevoke` (default **true** —
+see "Fetch failures" below) whenever every mapping for a target is confirmed gone or
+revoked at once, so a default install (`cleanup` off, `pruneOnRevoke` on) still needs
+it — only `get`, `create`, `patch` are guaranteed with BOTH features off. Bind a `Role`
+with these permissions in every target namespace (or a `ClusterRole` with
+namespace-scoped `RoleBinding`s). The Helm chart further restricts `get`/`patch`/`delete`
+with `resourceNames` to exactly the Secret names in `mappings` — `create` and `list`
+can't be `resourceNames`-scoped (a Kubernetes RBAC limitation: those verbs don't target
+a single named object), so they remain granted on the `secrets` resource type as a
+whole. The agent uses Server-Side Apply with the field manager `keyorix-sync`, so it
+owns the `data` it writes and prunes keys it no longer maps.
+
+## Fetch failures: transient vs. confirmed gone/revoked (`pruneOnRevoke`)
+
+A **transient** failure (network error, timeout, 5xx from Keyorix) leaves the target
+Secret completely untouched — every key it currently holds, not just the one that
+failed to fetch — and retries next pass. This is always true, regardless of
+`pruneOnRevoke` below.
+
+A **confirmed** gone-or-revoked result (Keyorix returns 404/403 — the secret was
+deleted or this agent's access to it was removed — or 401, which in practice means the
+machine-identity token was revoked or rotated) is a different signal: the upstream has
+*affirmatively* said this value is no longer available, not just "ask again later."
+`pruneOnRevoke` (default **`true`** — the secure default, since a confirmed-gone or
+confirmed-revoked value must not stay readable in the cluster indefinitely) acts on it:
+
+- If some but not all of a target's mappings are confirmed gone/revoked, the affected
+  key(s) are dropped from the target Secret; keys that still fetched fine stay.
+- If *every* mapping for a target is confirmed gone/revoked, the whole target Secret is
+  removed.
+- **Mass-revocation circuit breaker**: if more than one target AND more than 20% of
+  every target this agent manages are confirmed gone/revoked in the *same* pass, none
+  of them are pruned — this looks like one shared event (e.g. the agent's own token was
+  rotated, which reads as 401 on every fetch at once), not N independent per-secret
+  revocations. The pass instead reports `MASS REVOCATION SUSPECTED` (see `/status` and
+  the `keyorix_k8s_sync_secrets_total{outcome="mass_revocation_suspected"}` metric).
+  Acknowledge an expected event (a planned credential rotation) by setting
+  `massPruneAck` to an RFC3339 timestamp (valid for 1 hour) to let the next pass
+  proceed; a permanently-set `massPruneAck` defeats the breaker for every future
+  incident, not just the one you're acknowledging.
+- Set `pruneOnRevoke: false` to opt out entirely: a confirmed gone/revoked reference is
+  still surfaced (as a `revoked` count/metric) but never acted on — the target Secret's
+  last-known value is always left untouched, favoring availability over immediate reap.
+
+`pruneOnRevoke`'s delete path needs `delete` RBAC on the target Secret names, which the
+chart grants whenever `cleanup` **or** `pruneOnRevoke` is enabled (see below) — since
+`pruneOnRevoke` defaults on, a default install already has it.
 
 ## Orphan cleanup (`cleanup`)
 
-Removing a *key* from a target Secret is handled automatically: the agent owns the
-Secret's `data` via Server-Side Apply, so a no-longer-mapped key is pruned on the next
-pass. But removing **every** mapping for a target leaves the whole Secret behind — the
-agent simply stops reconciling it, and its now-stale values linger forever.
+`pruneOnRevoke` above handles a target whose *upstream* secret became inaccessible.
+This is a different case: removing a mapping from the *agent's own config* (the ref is
+still perfectly valid in Keyorix, you just stopped syncing it here) leaves the whole
+Secret behind if it was the target's last remaining mapping — the agent simply stops
+reconciling it, and its now-stale values linger forever. (A single key within a
+still-referenced Secret is unaffected by this — the agent owns the Secret's `data` via
+Server-Side Apply, so a no-longer-mapped key on an otherwise-still-mapped target is
+pruned on the very next pass, same as `pruneOnRevoke`'s per-key case above.)
 
 Set `cleanup: true` (or pass `-cleanup`) to reap these orphans. Every Secret the agent
 creates is stamped `app.kubernetes.io/managed-by: keyorix-sync`; after the apply phase,
@@ -93,11 +136,9 @@ and **deletes those whose target is no longer mapped**. It is deliberately conse
 - **Config-scoped** — it only scans namespaces still present in the config. Dropping a
   namespace from the config entirely leaves its Secrets unreaped (remove the mappings
   first, let one pass reap, then drop the namespace).
-- **Fail-safe on upstream errors** — a target still in the config is kept even if its
-  Keyorix fetch failed this pass, so a transient 404 can never delete a live Secret. A
-  ref deleted *in Keyorix* (while its mapping remains) fails that target closed and
-  leaves the existing Secret in place; remove the mapping to retire it.
 - **Off by default** — deleting Secrets is destructive, so cleanup must be opted into.
+  (`pruneOnRevoke` above is the separate, default-on mechanism for an upstream secret
+  that's actually gone or revoked, as opposed to a mapping simply removed from config.)
 
 > Cleanup assumes a **single sync agent owns each managed namespace**. Do not point two
 > agents with different mapping sets at the same namespace with cleanup on — each would
