@@ -56,7 +56,7 @@ The CLI/server split removes the SDKs from the *client*. This ADR is about the *
 4. `connect`, the largest surface.
 5. The encryption/KMS provider. This is the most security-sensitive, so it gets an adversarial review.
 6. Build tags, the lean/air-gapped build in CI, and the SBOM diff.
-7. Move the remaining core fuzz targets that core's lighter map now allows, carrying their corpus with them.
+7. Move the remaining core fuzz targets that core's lighter map now allows, carrying their corpus with them. **Measured 2026-09-28 (Session C) — see the "Step 7" section below: zero targets qualified for an immediate move; the blocker is a production-code move, handed off to Session A.**
 
 ## Consequences
 
@@ -328,3 +328,80 @@ would. The binary-size delta (−3,448 B) stays flat for the same reason steps 1
 `server/main.go` still wires the real `internal/encryption` implementation unconditionally, so a
 full server build is unaffected until the lean/air-gapped build (step 6) drops the cloud KMS
 providers via build tags.
+
+## Step 7 (Session C, 2026-09-28): measured, nothing was move-eligible
+
+Step 6 (build tags / lean build) has not landed yet — step 7 was assigned independently of it
+(Session C's fuzzing-infrastructure track, not the ADR-109 track), and the two don't block each
+other: step 7 is about which fuzz *targets* build against core's package, not about which cloud
+SDKs a *production* build links.
+
+**Precondition re-verified, not assumed:** `grep -rlE "aws-sdk-go|azure-sdk-for-go|cloud\.google\.com"
+internal/core/*.go` returns zero matches — step 5's "no cloud SDK in core" claim still holds.
+
+**Coverage-map measurement** (`scripts/fuzzing/mapsize_of_bin.sh ./internal/core
+FuzzCoreOperationSequence`, same methodology as every prior step): **480,683 B** (~469.4 KiB) as
+of this measurement. This is **not a clean delta against step 5's 486,254 B** the way steps
+1–5 were against each other — `internal/core` has gained multiple new `_test.go` fixtures and
+Fuzz targets since step 5 (`FuzzUpgradeMigration`, `FuzzClockJumpNeverAuthorizesExpired`,
+`FuzzOIDCIDTokenSingleConstraintViolation`, `FuzzSSOIDTokenSingleConstraintViolation` among them),
+each contributing its own coverage counters to the same shared map regardless of ADR-109's own
+work — so this number is recorded as a **fresh baseline for whatever step 7's own successor
+measures against**, not evidence that ~5,500 B left the map because of anything this step did.
+
+**The move: every `internal/core`-package Fuzz target was checked against the "already outside
+core, move now" test the item's own text sets — and none of them pass it.**
+
+`scripts/fuzzing/targets.d/` names "22 Fuzz targets still in `internal/core`", but 9 of those 22
+have package `internal/core/rules` — a genuinely separate Go package, already moved out of `core`
+by an earlier change (#2001), confirmed by `grep -rlE "keyorixhq/keyorix/internal/core\"" internal/core/rules/*.go`
+returning zero matches (no production file in `rules` imports `core` at all). Their own fuzz
+binaries never link core's graph regardless of this step — there is nothing to move, and the
+"22" count is the union of two already-resolved sets, not 22 live candidates.
+
+That leaves the 13 targets whose package really is `internal/core`:
+
+| Target | What it fuzzes | Verdict |
+|---|---|---|
+| `FuzzCoreOperationSequence` | `NewKeyorixCore` + real storage, full grant/revoke/read model | **Stays** — real core state |
+| `FuzzClockJumpNeverAuthorizesExpired` | `NewKeyorixCore`, `SetClockForTesting` | **Stays** — real core state |
+| `FuzzPATValidateLifecycle` | `NewKeyorixCore`, real storage-backed PAT lifecycle | **Stays** — real core state, by its own doc comment |
+| `FuzzVerifyIDToken` | `c.verifyIDToken(...)`, a `*KeyorixCore` method | **Stays** — real core method |
+| `FuzzVerifyIDTokenClaims` | `c.verifyIDToken(...)` | **Stays** — real core method |
+| `FuzzUpgradeMigration` | `storage.NewStorageFactory().CreateStorage` + `NewKeyorixCore`, the real production migration path | **Stays** — by design, exercises the real startup path |
+| `FuzzOIDCIDTokenSingleConstraintViolation` | `c.SetClockForTesting` + core verify path | **Stays** — real core state |
+| `FuzzSSOIDTokenSingleConstraintViolation` | same file, core clock | **Stays** — real core state |
+| `FuzzOIDCVerifierVerify` | `core.NewOIDCVerifier(...)` — a standalone struct with no `KeyorixCore` reference, but declared in `internal/core/oidc.go` (`package core`) | **HANDOFF** — architecturally pure, but its own type is still physically resident in `core`; this item's own instruction is "move only those whose code is ALREADY outside core," and `oidc.go`'s `package core` line means it isn't, yet |
+| `FuzzOIDCVerifierClaims` | same `NewOIDCVerifier` | **HANDOFF** — same as above |
+| `FuzzPATRestrictionAllows` | `PATRestriction.Allows(...)` — a pure struct/method, no core state, but `PATRestriction` is declared in `internal/core/authz.go` (`package core`) | **HANDOFF** — same shape as the OIDC pair |
+| `FuzzAdminDSNHostSSRFGuard` | `validateAdminDSNHost(dsn)` — unexported, pure string/DSN parse, `internal/core/dynamic_secrets.go` (`package core`) | **HANDOFF** — same shape, and shares its blocker with the next row |
+| `FuzzSSRFGuardDifferential` | `validateAdminDSNHost` (+ `netutil.IsPrivateOrLinkLocal`, already outside core) | **HANDOFF** — identical blocker to `FuzzAdminDSNHostSSRFGuard`; one HANDOFF item covers both |
+
+**Zero targets moved.** Every one of the 13 either genuinely needs live `KeyorixCore`/storage state
+(8 targets — moving these would defeat their own purpose, not just be hard), or tests a type/function
+that is architecturally pure but still physically declared with `package core` (5 targets across 3
+distinct production symbols). The task's own criterion — move code that is *already* outside core —
+correctly excludes all 5 of the second group: moving only the `_test.go` file without first moving
+`OIDCVerifier`/`PATRestriction`/`validateAdminDSNHost` out of `core` would just make the fuzz test
+import `internal/core` from a different package, adding an import rather than removing one.
+
+**HANDOFF for Session A** (production moves, none of which are Session C's to make):
+
+1. **`OIDCVerifier` + `OIDCTrustedIssuer` + `JWKSResolver`** (`internal/core/oidc.go`) → a new
+   package (e.g. `internal/oidcverify`, mirroring this ADR's own `ports`-interface pattern). Safe:
+   the type's own methods take no `*KeyorixCore` receiver and reference no other `core`-internal
+   symbol — confirmed by reading `oidc.go` in full. Unblocks `FuzzOIDCVerifierVerify` and
+   `FuzzOIDCVerifierClaims`.
+2. **`PATRestriction`** (`internal/core/authz.go`) → a new or existing pure package (e.g.
+   `internal/core/rules`, which already holds the sibling PAT scope/CIDR decoders
+   `FuzzDecodePATScopes`/`FuzzDecodePATCIDRs` fuzz) — its `Allows` method is pure, no `core` state.
+   Unblocks `FuzzPATRestrictionAllows`.
+3. **`validateAdminDSNHost`** (`internal/core/dynamic_secrets.go`) → export and move to a pure
+   package (e.g. alongside `internal/netutil`, which it already calls into for
+   `IsPrivateOrLinkLocal`) — needs to become exported first (`ValidateAdminDSNHost`) since only
+   package-`core` code can call it as an unexported symbol today. Unblocks both
+   `FuzzAdminDSNHostSSRFGuard` and `FuzzSSRFGuardDifferential`.
+
+No code in `internal/core` was changed to produce this list — it comes entirely from reading the
+13 targets' own Setup/Execute bodies and the production symbols they call, per this item's own
+"You must NOT edit production code in internal/core" constraint.
