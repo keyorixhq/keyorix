@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/envflag"
 )
 
@@ -40,33 +41,43 @@ const (
 	ModeLog = "log"
 )
 
-// Channel identifiers reported on a DeliveryResult.
+// Channel identifiers reported on a DeliveryResult. ChannelOutOfBand is a bare
+// alias of ports.ChannelOutOfBand (ADR-109 "last decoupling", B5) — the
+// canonical declaration moved to internal/core/ports since
+// internal/core/setup_delivery.go constructs a DeliveryResult with this
+// channel directly in its own unwired fallback path; ChannelSMTP/ChannelLog
+// have no internal/core caller and stay declared here unchanged.
 const (
 	ChannelSMTP      = "smtp"
-	ChannelOutOfBand = "out_of_band"
+	ChannelOutOfBand = ports.ChannelOutOfBand
 	ChannelLog       = "log"
 )
 
-// SetupLinkRequest is the transport-agnostic payload for delivering a setup link.
-type SetupLinkRequest struct {
-	RecipientEmail    string
-	DisplayName       string
-	Link              string // fully-formed https URL containing the single-use token
-	Purpose           string
-	InstallName       string // e.g. "Acme Corporation Keyorix"
-	Message           string // optional inviter note
-	AssignmentSummary string // e.g. "developer on mobile-app, viewer on payment-svc"
-}
+// SetupLinkRequest is the transport-agnostic payload for delivering a setup
+// link. A type alias of ports.SetupLinkRequest (ADR-109 "last decoupling",
+// B5) — the canonical declaration moved to internal/core/ports (neither
+// struct has methods of its own, so — like step 1's NotaryReceipt/
+// SAMLAssertion — aliasing this direction was a free choice, not a
+// constraint), so every existing caller/test that builds a SetupLinkRequest
+// literal here keeps compiling unchanged.
+type SetupLinkRequest = ports.SetupLinkRequest
 
-// DeliveryResult reports how a setup link was delivered.
-type DeliveryResult struct {
-	Channel      string // ChannelSMTP | ChannelOutOfBand | ChannelLog
-	Delivered    bool   // true if actually sent; false if returned for manual relay
-	LinkForAdmin string // populated for out-of-band — the link to show the admin once
-}
+// DeliveryResult reports how a setup link was delivered. A type alias of
+// ports.DeliveryResult (ADR-109 "last decoupling", B5) — see
+// SetupLinkRequest's doc comment above.
+type DeliveryResult = ports.DeliveryResult
 
 // CredentialDelivery delivers a setup link (or one-time secret) to a new principal.
 // Implementations never see the password; they transport the single-use link only.
+//
+// Structurally identical to ports.CredentialDelivery (ADR-109 "last
+// decoupling", B5) — not a type alias of it, unlike SetupLinkRequest/
+// DeliveryResult above: Go satisfies an interface by method-set shape, and
+// once SetupLinkRequest/DeliveryResult are the SAME type on both sides (via
+// the aliases above), the two interface declarations are already identical
+// in every method signature, so no alias is needed for the interface itself
+// — every implementation here (SMTPDelivery, OutOfBandDelivery, LogDelivery)
+// already satisfies ports.CredentialDelivery with no adapter.
 type CredentialDelivery interface {
 	// DeliverSetupLink delivers the link to the recipient. For out-of-band mode it
 	// returns the link to the caller (for the admin to relay) instead of sending.

@@ -4,21 +4,21 @@ BINARY_SERVER=keyorix-server
 # A separate Go module with its own release cadence -- see migrate/Makefile's
 # own header for why it isn't folded into keyorix-server or the CLI.
 BINARY_MIGRATE=keyorix-migrate
-# Lightweight/air-gapped release variant (-tags lean): drops
-# aws-sdk-go-v2/service/{iam,s3} (see internal/rotation/awsiam_lean.go,
-# internal/evidencesink/objectstore_lean.go) for installs that don't use the
-# AWS IAM rotation backend or the S3-compatible evidence sink. Linux only —
-# this variant targets air-gapped production servers, not local dev on macOS.
-# Being replaced by the AIR-GAPPED profile below (ADR-109 step 6, B3/S4 decides
-# whether this becomes an alias or is removed).
-BINARY_SERVER_LEAN=$(BINARY_SERVER)-lean
 # AIR-GAPPED release variant (-tags noaws,noazure,nogcp — ADR-109 step 6):
 # drops every AWS/Azure/GCP SDK package from the binary (measured 0 remaining,
 # scripts/airgap-dependency-guard.sh enforces this). Vault and Kubernetes STAY
 # (ADR-109's open-questions decision: on-prem Vault read-through and on-prem
-# k8s are legitimate air-gapped uses) — this is a deliberate superset of the
-# old `lean` tag's scope (lean only ever dropped rotation/awsiam +
-# evidencesink/objectstore), not a synonym for it.
+# k8s are legitimate air-gapped uses). Linux only, same as the release variant
+# it replaces (B3/S4 decision, see the release-notes line in RELEASING.md):
+# `keyorix-server-lean` (-tags lean, a much narrower exclusion — only
+# rotation/awsiam + evidencesink/objectstore, still 131 cloud SDK packages
+# per the ADR109-AIRGAP track's own 2026-09-27 measurement) is REMOVED from
+# `make release`/`make sbom`, not aliased — the two tags have never excluded
+# the same set of packages, so treating one as a synonym for the other would
+# misrepresent what the "lean" name has actually meant to anyone relying on
+# it. `-tags lean` itself (internal/rotation/awsiam_lean.go,
+# internal/evidencesink/objectstore_lean.go) is untouched in Go source — only
+# the release/SBOM/publish surface changes here.
 BINARY_SERVER_AIRGAP=$(BINARY_SERVER)-airgap
 BUILD_DIR=./bin
 VERSION?=dev
@@ -166,7 +166,7 @@ dev: install-cli
 # on build-ui here would mean every one of the 10 `go build`s below embeds a
 # placeholder index.html alongside the real hashed JS/CSS bundles
 # populate-webui-dist copies in, since nothing would rebuild dist/ in
-# between. The 6 server-family builds (4 full + 2 lean) are the ones that
+# between. The 6 server-family builds (4 full + 2 air-gapped) are the ones that
 # actually embed it (server/webui/embed.go), but populating once up front is
 # simplest and harmless for the 4 CLI builds. The placeholder is restored
 # once, at the very end, after every build that needs the real dist/ has
@@ -182,8 +182,8 @@ release: populate-webui-dist
 	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_linux_arm64  ./server
 	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_amd64 ./server
 	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_arm64 ./server
-	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build -tags lean $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER_LEAN)_linux_amd64 ./server
-	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build -tags lean $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER_LEAN)_linux_arm64 ./server
+	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build -tags noaws,noazure,nogcp $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER_AIRGAP)_linux_amd64 ./server
+	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build -tags noaws,noazure,nogcp $(RELEASE_LDFLAGS) -trimpath -o dist/$(BINARY_SERVER_AIRGAP)_linux_arm64 ./server
 	(cd migrate && GOWORK=off GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build $(MIGRATE_RELEASE_LDFLAGS) -trimpath -o $(CURDIR)/dist/$(BINARY_MIGRATE)_linux_amd64  .)
 	(cd migrate && GOWORK=off GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(MIGRATE_RELEASE_LDFLAGS) -trimpath -o $(CURDIR)/dist/$(BINARY_MIGRATE)_linux_arm64  .)
 	(cd migrate && GOWORK=off GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(MIGRATE_RELEASE_LDFLAGS) -trimpath -o $(CURDIR)/dist/$(BINARY_MIGRATE)_darwin_amd64 .)
@@ -249,16 +249,16 @@ _sbom-generate:
 	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_linux_arm64_sbom.cdx.json  .
 	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_darwin_amd64_sbom.cdx.json .
 	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_darwin_arm64_sbom.cdx.json .
-	@echo "→ Generating per-binary Go CycloneDX SBOMs for the lean release variant"
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 GOFLAGS=-tags=lean cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER_LEAN)_linux_amd64_sbom.cdx.json .
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 GOFLAGS=-tags=lean cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER_LEAN)_linux_arm64_sbom.cdx.json .
+	@echo "→ Generating per-binary Go CycloneDX SBOMs for the air-gapped release variant"
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 GOFLAGS=-tags=noaws,noazure,nogcp cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER_AIRGAP)_linux_amd64_sbom.cdx.json .
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 GOFLAGS=-tags=noaws,noazure,nogcp cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER_AIRGAP)_linux_arm64_sbom.cdx.json .
 	@echo "→ Linking frontend SBOM into the six server Go SBOMs (ADR-073)"
 	node scripts/link-sbom.mjs dist/$(BINARY_SERVER)_linux_amd64_sbom.cdx.json  dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
 	node scripts/link-sbom.mjs dist/$(BINARY_SERVER)_linux_arm64_sbom.cdx.json  dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
 	node scripts/link-sbom.mjs dist/$(BINARY_SERVER)_darwin_amd64_sbom.cdx.json dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
 	node scripts/link-sbom.mjs dist/$(BINARY_SERVER)_darwin_arm64_sbom.cdx.json dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
-	node scripts/link-sbom.mjs dist/$(BINARY_SERVER_LEAN)_linux_amd64_sbom.cdx.json dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
-	node scripts/link-sbom.mjs dist/$(BINARY_SERVER_LEAN)_linux_arm64_sbom.cdx.json dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
+	node scripts/link-sbom.mjs dist/$(BINARY_SERVER_AIRGAP)_linux_amd64_sbom.cdx.json dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
+	node scripts/link-sbom.mjs dist/$(BINARY_SERVER_AIRGAP)_linux_arm64_sbom.cdx.json dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
 	@echo "→ Verifying frontend SBOM hash matches all six server SBOM links (ADR-073 decision #5)"
 	node scripts/verify-sbom-links.mjs \
 		dist/$(BINARY_SERVER)_frontend_sbom.cdx.json \
@@ -266,8 +266,8 @@ _sbom-generate:
 		dist/$(BINARY_SERVER)_linux_arm64_sbom.cdx.json \
 		dist/$(BINARY_SERVER)_darwin_amd64_sbom.cdx.json \
 		dist/$(BINARY_SERVER)_darwin_arm64_sbom.cdx.json \
-		dist/$(BINARY_SERVER_LEAN)_linux_amd64_sbom.cdx.json \
-		dist/$(BINARY_SERVER_LEAN)_linux_arm64_sbom.cdx.json
+		dist/$(BINARY_SERVER_AIRGAP)_linux_amd64_sbom.cdx.json \
+		dist/$(BINARY_SERVER_AIRGAP)_linux_arm64_sbom.cdx.json
 
 # smoke: the CI + release gate for the SHIPPED $(BINARY_CLI) binary (Phase 5, ADR-108).
 # Executes the documented QUICK_START.md flow -- keyorix-server admin init, start the

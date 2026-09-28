@@ -14,8 +14,6 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/delivery"
-	"github.com/keyorixhq/keyorix/internal/license"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/pkg/trust"
 )
@@ -323,7 +321,7 @@ type KeyorixCore struct {
 	sessionAbsoluteTTL time.Duration
 	// credentialDelivery transports setup links (ADR-028). nil = out-of-band: the
 	// link is returned to the caller. Set from config via SetCredentialDelivery.
-	credentialDelivery delivery.CredentialDelivery
+	credentialDelivery ports.CredentialDelivery
 	// setupBaseURL is the absolute base (e.g. https://keyorix.acme.internal) used to
 	// build setup links. Required to mint a link; a relative link is a misconfig.
 	setupBaseURL string
@@ -374,7 +372,7 @@ type KeyorixCore struct {
 	// licenseGate evaluates the installed offline commercial license (ADR-065). nil =
 	// no license configured → the community baseline. Evaluation is fail-safe (it never
 	// denies access or stops the server) and fresh on every call. Set via SetLicenseGate.
-	licenseGate *license.Gate
+	licenseGate ports.LicenseGate
 	// impersonationCeilingCache caches requireEqualOrGreaterAdminAuthority results
 	// by "actorID:targetID" to reduce per-request DB load on the auth hot path for
 	// impersonation sessions (IMP-001). Zero value is ready to use (sync.Map).
@@ -516,15 +514,31 @@ func (c *KeyorixCore) AuditForwarder() AuditForwarder {
 }
 
 // SetLicenseGate wires the offline-license feature gate built at startup from the
-// installed token. nil = no license (community baseline). Safe to leave unset.
-func (c *KeyorixCore) SetLicenseGate(g *license.Gate) {
+// installed token (ADR-109 "last decoupling", B5: g is any ports.LicenseGate, in
+// production always *pkg/licenseverify.Gate via server/main.go's DefaultIntegrations).
+// nil = no license (community baseline). Safe to leave unset.
+func (c *KeyorixCore) SetLicenseGate(g ports.LicenseGate) {
 	c.licenseGate = g
 }
 
+// licenseStatusUnconfigured is what *licenseverify.Gate's own nil-receiver
+// Status() used to return before licenseGate became an interface (ADR-109
+// "last decoupling", B5): a nil ports.LicenseGate is now a normal Go nil
+// INTERFACE value, and calling a method on one panics (unlike a nil
+// *licenseverify.Gate, which the old concrete-pointer field tolerated) — so
+// the nil check moves here, to the one place internal/core reads the gate,
+// rather than relying on the wired implementation's own nil-receiver safety.
+var licenseStatusUnconfigured = ports.LicenseStatus{
+	State:  ports.LicenseStateNone,
+	Reason: "no license configured — running the community baseline",
+}
+
 // LicenseStatus returns the freshly-evaluated license entitlement. It never errors; an
-// unset gate or a degraded license reports the community baseline with a reason. The gate
-// is nil-safe, so this is valid even when no license is configured.
-func (c *KeyorixCore) LicenseStatus() license.Status {
+// unset gate or a degraded license reports the community baseline with a reason.
+func (c *KeyorixCore) LicenseStatus() ports.LicenseStatus {
+	if c.licenseGate == nil {
+		return licenseStatusUnconfigured
+	}
 	return c.licenseGate.Status()
 }
 
@@ -532,6 +546,9 @@ func (c *KeyorixCore) LicenseStatus() license.Status {
 // single gate a future commercial-only capability checks; it is false under any degraded,
 // expired, missing, or unconfigured license.
 func (c *KeyorixCore) HasLicensedFeature(f string) bool {
+	if c.licenseGate == nil {
+		return false
+	}
 	return c.licenseGate.HasFeature(f)
 }
 

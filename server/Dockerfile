@@ -18,12 +18,20 @@ ARG GIT_COMMIT=none
 # release Makefile already uses (modernc.org/sqlite is pure Go, no cgo needed).
 ARG TARGETOS
 ARG TARGETARCH
+# BUILD_TAGS (ADR-109 step 6, B3/S4): empty builds the FULL server (default,
+# every existing caller of this Dockerfile is unaffected); the docker-publish
+# workflow's air-gapped job passes "noaws,noazure,nogcp" for the AIR-GAPPED
+# image variant (<ver>-airgap) -- Vault and Kubernetes stay in that profile
+# per ADR-109's open-questions decision. Never "lean" -- that older, narrower
+# tag is a separate, smaller exclusion (rotation/awsiam + evidencesink/
+# objectstore only) this image has never built with.
+ARG BUILD_TAGS=
 RUN set -- \
     "-s -w" \
     "-X github.com/keyorixhq/keyorix/internal/cli.version=${VERSION}" \
     "-X github.com/keyorixhq/keyorix/internal/version.Version=${VERSION}" \
     "-X github.com/keyorixhq/keyorix/internal/version.Commit=${GIT_COMMIT}" && \
-    GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -ldflags "$*" \
+    GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -tags "${BUILD_TAGS}" -ldflags "$*" \
     -o bin/keyorix-server ./server
 
 # Runtime stage

@@ -519,15 +519,6 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		log.Printf("RBAC permission reconciliation: %v (continuing)", err)
 	}
 
-	// Repair an install bootstrapped before #2188 fixed the seeding-order bug
-	// that made every fresh install (any backend) miss the system_viewer
-	// baseline-role grant on its first user. No-op pre-bootstrap and
-	// best-effort (never blocks startup); a no-op on every subsequent restart
-	// once every user holds the role.
-	if err := coreService.ReconcileUserBaselineRoles(context.Background()); err != nil {
-		log.Printf("Baseline role reconciliation: %v (continuing)", err)
-	}
-
 	// Wire the bootstrap token that gates POST /system/init. Prefer an operator-set
 	// KEYORIX_BOOTSTRAP_TOKEN (for automation); otherwise generate one and, while the
 	// install is still empty, log it so the operator can complete first-boot init. This
@@ -2527,7 +2518,7 @@ func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) error {
 			}
 			conn, ok := connect.NewCloudConnector(cn.Type, connect.ConnectorParams{Name: cn.Name, Region: cn.Region, AccountID: cn.AccountID, AllowedRefs: cn.AllowedRefs})
 			if !ok {
-				return fmt.Errorf("keyorix connect: connector %q has type %q, which this server binary was not built with (excluded by the no%s build tag) — rebuild without -tags no%s, or remove this connector", cn.Name, cn.Type, cloudProviderTag(cn.Type), cloudProviderTag(cn.Type))
+				return fmt.Errorf("connect: connector %q has type %q, which this server binary was not built with (excluded by the no%s build tag) — rebuild without -tags no%s, or remove this connector", cn.Name, cn.Type, cloudProviderTag(cn.Type), cloudProviderTag(cn.Type))
 			}
 			connectors = append(connectors, conn)
 		case "gcp-secret-manager":
@@ -2546,13 +2537,13 @@ func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) error {
 			}
 			conn, ok := connect.NewCloudConnector(cn.Type, connect.ConnectorParams{Name: cn.Name, ProjectID: cn.ProjectID, AllowedRefs: cn.AllowedRefs})
 			if !ok {
-				return fmt.Errorf("keyorix connect: connector %q has type %q, which this server binary was not built with (excluded by the no%s build tag) — rebuild without -tags no%s, or remove this connector", cn.Name, cn.Type, cloudProviderTag(cn.Type), cloudProviderTag(cn.Type))
+				return fmt.Errorf("connect: connector %q has type %q, which this server binary was not built with (excluded by the no%s build tag) — rebuild without -tags no%s, or remove this connector", cn.Name, cn.Type, cloudProviderTag(cn.Type), cloudProviderTag(cn.Type))
 			}
 			connectors = append(connectors, conn)
 		case "azure-key-vault":
 			conn, ok := connect.NewCloudConnector(cn.Type, connect.ConnectorParams{Name: cn.Name, Address: cn.Address, AllowedRefs: cn.AllowedRefs})
 			if !ok {
-				return fmt.Errorf("keyorix connect: connector %q has type %q, which this server binary was not built with (excluded by the no%s build tag) — rebuild without -tags no%s, or remove this connector", cn.Name, cn.Type, cloudProviderTag(cn.Type), cloudProviderTag(cn.Type))
+				return fmt.Errorf("connect: connector %q has type %q, which this server binary was not built with (excluded by the no%s build tag) — rebuild without -tags no%s, or remove this connector", cn.Name, cn.Type, cloudProviderTag(cn.Type), cloudProviderTag(cn.Type))
 			}
 			connectors = append(connectors, conn)
 		case "vault":
