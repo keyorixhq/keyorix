@@ -43,9 +43,48 @@ addition).
 scenario23_sqlite.sh <server-bin> <cli-bin> [work-dir]
 ```
 
+## scenario_version_skip_postgres.sh
+
+design-b3-backup-v2.md §11.1/H6's version-skipping upgrade proof: `admin backup`
+with a REAL OLD release binary (v0.95.0 or v0.94.0, SQLite — that's all the v1
+physical format ever supported), then HEAD gets that data into a REAL, separate
+Postgres database, then proves secrets decrypt identically, the audit chain
+verifies, and authz answers (both an ALLOWED and a DENIED probe) match what the
+old binary computed for the identical stored grants.
+
+```
+scenario_version_skip_postgres.sh <old-server-bin> <old-cli-bin> \
+    <new-server-bin> <new-cli-bin> <postgres-dsn> [work-dir]
+```
+
+- `<postgres-dsn>` must point at an EMPTY, dedicated Postgres database — restore
+  refuses a non-empty target by design.
+- The OLD binary's `admin backup` writes the v1 (physical, SQLite-only) format —
+  v1 archives can only restore into SQLite (design §3.6 decision 3; there is no
+  "raw SQLite file bytes" equivalent on Postgres). The script proves the real
+  operator procedure this implies: HEAD restores the v1 archive into an
+  intermediate SQLite database first, takes a fresh v2 backup of THAT, and
+  restores the v2 archive into Postgres — the actual SQLite→Postgres leg.
+- Download an old release binary once via `gh release download <version> -R
+  keyorixhq/keyorix -p "keyorix-server_<os>_<arch>"` (and the matching
+  `keyorix_<os>_<arch>` CLI) — deliberately not automated in this script itself,
+  matching COMMON-RULES' "download in the test setup script, not in CI."
+- Found and fixed two real bugs while building this harness (both landed as
+  their own PRs before this script could pass): `internal/backupfmt`'s NDJSON
+  row encoding was silently dropping every `json:"-"`-tagged column (encrypted
+  secret values, password hashes, token hashes — present since the format was
+  introduced), and Postgres restore never resynced a table's auto-increment
+  sequence after loading rows with explicit primary keys (pg_dump/pg_restore's
+  own well-known fixup, missing here), which also poisoned the very first
+  request against a freshly-restored server with a spurious 401.
+- Calls `clear_cli_credentials` before each phase's login — the script
+  deliberately reuses the SAME server URL for both the old and new server (it's
+  simulating one host upgrading in place), and the CLI caches its session token
+  by server URL; without clearing it, the new binary's login can fail against a
+  stale cached token from the old binary's session.
+
 ## Not yet covered here (exercised manually during the campaign; good follow-ups)
 
-- Postgres backup/restore (`pg_dump`/`pg_restore`), see RELEASE-QA report step 9.
 - Docker Compose / Helm chart boot checks — deliberately NOT added here yet,
   since both currently fail to boot at all (see FINDINGS-inbox.md); a
   `docker compose up -d && curl .../health` / `kind`+`helm install`+wait-for-ready
