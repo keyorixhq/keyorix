@@ -391,8 +391,15 @@ const EventSessionReuseFamilyRevokeFailed = "auth.session_reuse_family_revoke_fa
 // the very next request rather than lingering for the cache TTL.
 func (c *KeyorixCore) handleSessionReuse(ctx context.Context, old *models.Session) {
 	uid := old.UserID
+	// Worded as a fact about what was DETECTED, not what the revoke below will
+	// accomplish (txscan2/scratch/txscan2, Session O follow-up 2026-09-29): the
+	// original "— revoking the session family" phrasing asserted an outcome
+	// that hadn't happened yet at the point this event is written, and could
+	// still fail (EventSessionReuseFamilyRevokeFailed below is the event that
+	// actually reports whether it did). An operator reading only this event
+	// must not conclude the family was revoked.
 	c.writeAuditEventFull(ctx, EventSessionReuseDetected, &uid, nil, nil, old.IPAddress,
-		fmt.Sprintf("refresh attempted with an already-rotated session token for user %d — revoking the session family", old.UserID))
+		fmt.Sprintf("refresh attempted with an already-rotated session token for user %d", old.UserID))
 	if old.FamilyID == "" {
 		// Legacy row predating FamilyID — fall back to revoking just this one row.
 		if err := c.storage.DeleteSession(ctx, old.ID); err != nil {
