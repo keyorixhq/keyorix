@@ -4,8 +4,8 @@
 // Covers: CreateSession, GetSession, DeleteSession, CleanupExpiredSessions,
 // personal access tokens (ADR-027), and setup tokens (ADR-028).
 //
-// All operations use direct GORM queries.
-// For the remote (HTTP) equivalent see remote_auth.go.
+// All operations use direct GORM queries. LocalStorage is the sole Storage
+// implementation; the former remote (HTTP) equivalent, RemoteStorage, is deleted.
 package store
 
 import (
