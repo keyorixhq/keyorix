@@ -1230,6 +1230,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	groupsExists := tableExists(db, "groups")
 	secretACLExists := tableExists(db, "secret_acls")
 	scheduleExists := tableExists(db, "secret_access_schedules")
+	secretTemplateExists := tableExists(db, "secret_templates")
+	alertEscalationExists := tableExists(db, "alert_escalation_policies")
+	notificationChannelExists := tableExists(db, "notification_channels")
+	secretVersionCommentExists := tableExists(db, "secret_version_comments")
+	mfaStepupTokenExists := tableExists(db, "mfa_stepup_tokens")
+	hygieneTrendExists := tableExists(db, "hygiene_trend_snapshots")
+	compliancePostureExists := tableExists(db, "compliance_posture_snapshots")
 
 	// Create rotation_policies if missing (additive, safe on existing DBs).
 	if !rotationExists {
@@ -1672,6 +1679,56 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 			}
 		}
 	}
+	// Seven models with live, wired handler code (alert_escalation.go,
+	// notification_channels.go, secret_templates.go, secret_version_comments.go,
+	// mfa_stepup.go, hygiene_trends.go, compliance_snapshots_handler.go) were never
+	// reachable from ANY db.AutoMigrate call in this function -- confirmed by
+	// grepping the entire repo for AutoMigrate(&models.<each type>) and finding
+	// matches only in _test.go files, never in server/http/handlers or here. Every
+	// fresh install AND every existing install upgrading onto a binary with this
+	// handler code would hit "no such table"/"relation does not exist" the first
+	// time any of these seven features was used -- found while building
+	// storage.AllModels() for design-b3-backup-v2.md §3.2, whose whole premise is
+	// that AutoMigrate coverage and the backup table-walk share one real list;
+	// these were silently absent from both. None of the seven carries a GORM
+	// relationship tag (plain uint reference columns, not `gorm:"foreignKey"`), so
+	// each is a standalone table with no create-order dependency on another model.
+	if !secretTemplateExists {
+		if err := db.AutoMigrate(&models.SecretTemplate{}); err != nil {
+			return fmt.Errorf("failed to migrate secret_templates table: %w", err)
+		}
+	}
+	if !alertEscalationExists {
+		if err := db.AutoMigrate(&models.AlertEscalationPolicy{}); err != nil {
+			return fmt.Errorf("failed to migrate alert_escalation_policies table: %w", err)
+		}
+	}
+	if !notificationChannelExists {
+		if err := db.AutoMigrate(&models.NotificationChannel{}); err != nil {
+			return fmt.Errorf("failed to migrate notification_channels table: %w", err)
+		}
+	}
+	if !secretVersionCommentExists {
+		if err := db.AutoMigrate(&models.SecretVersionComment{}); err != nil {
+			return fmt.Errorf("failed to migrate secret_version_comments table: %w", err)
+		}
+	}
+	if !mfaStepupTokenExists {
+		if err := db.AutoMigrate(&models.MFAStepupToken{}); err != nil {
+			return fmt.Errorf("failed to migrate mfa_stepup_tokens table: %w", err)
+		}
+	}
+	if !hygieneTrendExists {
+		if err := db.AutoMigrate(&models.HygieneTrendSnapshot{}); err != nil {
+			return fmt.Errorf("failed to migrate hygiene_trend_snapshots table: %w", err)
+		}
+	}
+	if !compliancePostureExists {
+		if err := db.AutoMigrate(&models.CompliancePostureSnapshot{}); err != nil {
+			return fmt.Errorf("failed to migrate compliance_posture_snapshots table: %w", err)
+		}
+	}
+
 	// At most one unread rotation/expiry reminder may stand per (user, project) at a
 	// time — closing the #488 TOCTOU: the admin-jobs HTTP trigger for these two jobs
 	// runs with no lock at all (unlike the scheduled path, single-replica-gated via
