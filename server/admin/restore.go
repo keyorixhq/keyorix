@@ -201,7 +201,21 @@ func runAdminRestore(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("read existing destination database's audit event count: %w", err)
 	}
-	rollbackCheck, err := checkRollbackProtection(manifest.AuditHighWater, dbPath, destinationFloor)
+	// Compare like with like: the destination's raw audit_events count against
+	// the ARCHIVED database's own raw count (read from the archive bytes, not
+	// the manifest), and the witness's signed high-water against the
+	// archive's signed high-water. Mixing them (raw destination count vs the
+	// archive's signed high-water, which lags until a checkpoint runs) refused
+	// a restore of a backup taken seconds earlier from the same database.
+	archiveRaw, err := auditEventCountFromDBBytes(dbBytes)
+	if err != nil {
+		return fmt.Errorf("read the archived database's audit event count: %w", err)
+	}
+	newerSubstantive, err := destinationEventsNewerThan(dbPath, archiveRaw)
+	if err != nil {
+		return fmt.Errorf("read existing destination database's newer audit events: %w", err)
+	}
+	rollbackCheck, err := checkRollbackProtection(manifest.AuditHighWater, dbPath, destinationFloor, archiveRaw, newerSubstantive)
 	if err != nil {
 		return err
 	}
@@ -320,8 +334,8 @@ type rollbackCheckOutcome struct {
 // unparseable) are BOTH treated as hard errors, never silently downgraded to
 // "absent" -- deleting or corrupting either one must not be a way to evade
 // this check.
-func checkRollbackProtection(highWaterEncoded, dbPath string, destinationFloor int64) (rollbackCheckOutcome, error) {
-	var archiveEvents int64
+func checkRollbackProtection(highWaterEncoded, dbPath string, destinationFloor, archiveRaw, newerSubstantive int64) (rollbackCheckOutcome, error) {
+	var archiveSigned int64
 	if highWaterEncoded != "" {
 		archiveCP, _, ok := auditverify.ParseHighWater(highWaterEncoded)
 		if !ok {
@@ -329,7 +343,7 @@ func checkRollbackProtection(highWaterEncoded, dbPath string, destinationFloor i
 				"backup archive's manifest carries an audit high-water value that does not parse -- " +
 					"the manifest may be corrupted or tampered with; restore refuses rather than treat this as if the archive had no recorded history")
 		}
-		archiveEvents = archiveCP.ChainedEvents
+		archiveSigned = archiveCP.ChainedEvents
 	}
 
 	witnessPath := auditverify.WitnessPath(dbPath)
@@ -339,22 +353,27 @@ func checkRollbackProtection(highWaterEncoded, dbPath string, destinationFloor i
 			"could not read the rollback-protection witness file %q: %w -- investigate before proceeding "+
 				"(a corrupted witness is not treated as absent)", witnessPath, err)
 	}
-	reference := destinationFloor
-	if found && witnessCP.ChainedEvents > reference {
-		reference = witnessCP.ChainedEvents
+
+	// Two independent comparisons, each between values of the same kind:
+	//   - raw: the live destination database's MAX(audit_events.id) vs the
+	//     archived database's own MAX(audit_events.id);
+	//   - signed: the host witness's certified high-water vs the archive's
+	//     certified high-water.
+	// The archive is behind if EITHER says so; the reported gap is the larger.
+	var gap, archiveEvents, reference int64
+	// Raw: only events newer than the archive's own head that are NOT the
+	// backup tool's own bookkeeping count (admin backup writes
+	// admin.backup_created AFTER taking its snapshot, so the source database
+	// is always one bookkeeping event ahead of its own freshest backup).
+	if newerSubstantive > 0 {
+		gap, archiveEvents, reference = newerSubstantive, archiveRaw, destinationFloor
 	}
-	if reference == 0 {
-		// Fresh host, first restore ever run here, AND no pre-existing
-		// destination database with its own history: nothing to compare
-		// against.
+	if found && witnessCP.ChainedEvents > archiveSigned && witnessCP.ChainedEvents-archiveSigned > gap {
+		gap, archiveEvents, reference = witnessCP.ChainedEvents-archiveSigned, archiveSigned, witnessCP.ChainedEvents
+	}
+	if gap == 0 {
 		return rollbackCheckOutcome{archiveEncoded: highWaterEncoded}, nil
 	}
-
-	if archiveEvents >= reference {
-		return rollbackCheckOutcome{archiveEncoded: highWaterEncoded}, nil
-	}
-
-	gap := reference - archiveEvents
 	if !restoreAllowRollback {
 		return rollbackCheckOutcome{}, fmt.Errorf(
 			"refusing to restore: this backup's audit trail (%d event(s)) is %d event(s) BEHIND this host's own "+
@@ -377,6 +396,62 @@ func checkRollbackProtection(highWaterEncoded, dbPath string, destinationFloor i
 // checkpoint high-water: it needs to reflect changes made moments ago, with
 // no checkpoint-interval delay, since it is read immediately before this
 // exact database would be overwritten.
+// rollbackBookkeepingEventTypes are audit events the admin tool itself writes
+// around a backup; they never represent a revocation or any access change,
+// so they do not make a destination "newer" than an archive.
+var rollbackBookkeepingEventTypes = []string{"admin.backup_created"}
+
+// destinationEventsNewerThan counts audit events in the existing destination
+// database with id > archiveHead, excluding rollbackBookkeepingEventTypes.
+// 0 when there is no destination database or no audit_events table.
+func destinationEventsNewerThan(dbPath string, archiveHead int64) (int64, error) {
+	info, statErr := os.Stat(dbPath)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("stat %q: %w", dbPath, statErr)
+	}
+	if info.Size() == 0 {
+		return 0, nil
+	}
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+	if err != nil {
+		return 0, fmt.Errorf("open %q read-only: %w", dbPath, err)
+	}
+	defer db.Close() //nolint:errcheck
+	var n int64
+	q := "SELECT COUNT(*) FROM audit_events WHERE id > ? AND event_type NOT IN (" +
+		strings.TrimSuffix(strings.Repeat("?,", len(rollbackBookkeepingEventTypes)), ",") + ")"
+	args := []any{archiveHead}
+	for _, et := range rollbackBookkeepingEventTypes {
+		args = append(args, et)
+	}
+	if err := db.QueryRow(q, args...).Scan(&n); err != nil {
+		if strings.Contains(err.Error(), "no such table") {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("count newer audit events in %q: %w", dbPath, err)
+	}
+	return n, nil
+}
+
+// auditEventCountFromDBBytes returns MAX(audit_events.id) of an archived
+// SQLite database image, read from a private temp copy (0 when the table is
+// absent, e.g. an archive from an install that never logged an event).
+func auditEventCountFromDBBytes(data []byte) (int64, error) {
+	dir, err := os.MkdirTemp("", "keyorix-restore-audit-*")
+	if err != nil {
+		return 0, fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(dir) //nolint:errcheck
+	p := filepath.Join(dir, "archive.db")
+	if err := os.WriteFile(p, data, 0o600); err != nil {
+		return 0, fmt.Errorf("write temp copy: %w", err)
+	}
+	return readExistingDatabaseAuditEventCount(p)
+}
+
 func readExistingDatabaseAuditEventCount(dbPath string) (int64, error) {
 	info, statErr := os.Stat(dbPath)
 	if statErr != nil {
