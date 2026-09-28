@@ -530,6 +530,31 @@ func (c *KeyorixCore) assignUserRoleSystemGrant(ctx context.Context, actorID, us
 	})
 }
 
+// grantBaselineRoleBackfill grants roleID to userID at global scope on behalf
+// of the startup baseline-role reconcile (ReconcileUserBaselineRoles,
+// user_baseline_role_reconcile.go), recording the grant via
+// LogRoleAssignedBackfill rather than LogRoleAssigned. Like
+// assignUserRoleSystemGrant, it deliberately skips the roles.assign ceiling
+// check AssignUserRole applies to an authenticated caller — the authorization
+// root here is not any acting principal's own roles.assign-derived authority,
+// it is the install's own fixed baseline-role definition (ADR-021), the same
+// as bootstrap's own unchecked grant of system_viewer to the first user. The
+// #419 separation-of-duties check still applies: if system_viewer somehow
+// conflicts with a role the user already holds under an install's own SoD
+// policy, the grant is skipped (logged, not fatal) rather than forced through.
+func (c *KeyorixCore) grantBaselineRoleBackfill(ctx context.Context, userID, roleID uint) error {
+	return c.storage.WithNamedLock(ctx, sodGrantLockKey("user", userID), func(ctx context.Context) error {
+		if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
+			return err
+		}
+		if err := c.storage.AssignRole(ctx, userID, roleID, Scope{}); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		c.LogRoleAssignedBackfill(ctx, 0, userID, roleID, Scope{})
+		return nil
+	})
+}
+
 // RemoveUserRole removes a role from a user at the given scope and records an
 // RBAC audit event. See AssignUserRole for actorID semantics. It refuses to remove
 // the last install administrator (see RemoveGlobalAdminRoleGuarded). This is the
