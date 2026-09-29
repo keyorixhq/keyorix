@@ -60,14 +60,38 @@ var excludedFields = map[string]string{
 // field whose name ends in Hash/Enc, or that holds WebAuthn credential material
 // (2026-09-21) — not guessed; extend this list the same way if a new one
 // appears, per CLAUDE.md's "state which call forms the enumeration recognizes."
+//
+// 2026-09-29 (Session Z, Z1): that enumeration only knew "ends in Hash/Enc" and
+// missed each *Enc field's own metadata sibling. c.encryptAuthSecret's callers
+// (internal/core/service.go) marshal an EncryptionMetadata struct
+// (internal/encryption/encryption.go) into a `*Meta []byte` column alongside
+// every `*Enc` column it produces; that struct embeds a random per-encryption
+// Nonce AND a wall-clock EncryptedAt timestamp, JSON-encoded into a []byte
+// field the structural time.Time exclusion above cannot see. SecretMeta
+// (models.go:525) was found live: FuzzStorageFaultOperations
+// (op="REST POST /api/v1/auth/mfa/enroll", fault=LogAuditEvent#1/error)
+// reported ORACLE (a) VIOLATION, "Differing tables: [MFASecret AuditEvent]" —
+// but BeginMFAEnrollment's MFASecret write is not in the fault's path at all
+// (it already committed before the faulted LogAuditEvent call); the MFASecret
+// diff was entirely this gap, confirmed by toggling SecretMeta into this map
+// and rerunning the exact same input, which then correctly resolves to
+// ACCEPTABLE-BY-DESIGN with the diff reduced to [AuditEvent] alone (LogAuditEvent
+// is best-effort everywhere it's called; see bestEffortTables below). The other
+// two `*Meta []byte` fields sharing the identical EncryptionMetadata shape
+// (AdminDSNMeta/CredentialMeta, dynamic_secrets.go's own encryptAuthSecret
+// callers) have the same gap and are added alongside SecretMeta rather than
+// left for the next fuzz burst to find one at a time.
 var presenceOnlyFields = map[string]string{
 	"PasswordHash":   "bcrypt includes a random salt per hash",
 	"TokenHash":      "the raw token is randomly generated before hashing",
 	"CodeHash":       "the raw MFA recovery code is randomly generated before hashing",
 	"TokenPrefix":    "leading characters of the same randomly generated raw token TokenHash hashes (PAT and machine credentials, models.go) -- two independently bootstrapped worlds never mint the same token, so never the same prefix; found by FuzzStorageFaultOperations (REST DELETE machine token, GetUser#1 error) on PR #2195's CI",
 	"SecretEnc":      "AEAD ciphertext includes a random nonce",
+	"SecretMeta":     "EncryptionMetadata JSON blob embeds a random per-encryption Nonce plus a wall-clock EncryptedAt timestamp (internal/encryption/encryption.go) -- found by FuzzStorageFaultOperations (REST POST /api/v1/auth/mfa/enroll, LogAuditEvent#1/error), Session Z Z1",
 	"AdminDSNEnc":    "AEAD ciphertext includes a random nonce",
+	"AdminDSNMeta":   "same EncryptionMetadata shape as SecretMeta -- see that entry",
 	"CredentialEnc":  "AEAD ciphertext includes a random nonce",
+	"CredentialMeta": "same EncryptionMetadata shape as SecretMeta -- see that entry",
 	"CredentialID":   "authenticator-generated WebAuthn credential identifier",
 	"CredentialBlob": "authenticator-generated WebAuthn public key material",
 	"SessionToken":   "SHA-256 hash of a randomly generated per-login session token (models.go:1217) — two independent bootstrap logins (reference world vs fault world) never produce the same raw token, so never the same hash",
