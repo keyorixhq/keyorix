@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"runtime/debug"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -249,7 +250,26 @@ func (c *KeyorixCore) DeleteProject(ctx context.Context, id uint, force bool) er
 // expiry sweep) — a target-side revoke failure is recorded per-lease (revoke_failed,
 // retryable) by RevokeLeasesForConfig and must not fail project deletion itself, which
 // has already committed by the time this runs.
+//
+// A panic from this cascade (ListDynamicSecretConfigs or RevokeLeasesForConfig) is
+// recovered here rather than left to propagate: DeleteProject's own transaction has
+// already committed by the time this runs, so a panic escaping to the HTTP/gRPC
+// handler would misreport a project that is, in fact, already deleted as a failed
+// request (oracle (a) — same class of fix as CreateProject's seeding recover above).
+// Un-revoked leases stay discoverable exactly as for the existing per-config error
+// path: recorded via dynamic_secret.project_cascade_failed and left revoke_failed/
+// retryable via the sweep or a manual retry. A panic BEFORE commit (inside
+// DeleteProject's own transaction) is deliberately NOT covered by this recover — it
+// must still roll back and surface as an error, which is why this recover lives here
+// and not around DeleteProject as a whole.
 func (c *KeyorixCore) revokeProjectDynamicSecretLeases(ctx context.Context, projectID uint) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.writeAuditEventFull(ctx, "dynamic_secret.project_cascade_failed", nil, nil, &projectID, "",
+				fmt.Sprintf("panic revoking dynamic-secret leases after project %d deletion: %v — revoke them manually", projectID, r))
+			log.Printf("project %d dynamic-secret lease revocation cascade panicked: %v\n%s", projectID, r, debug.Stack())
+		}
+	}()
 	configs, err := c.storage.ListDynamicSecretConfigs(ctx, projectID, 0)
 	if err != nil {
 		c.writeAuditEventFull(ctx, "dynamic_secret.project_cascade_failed", nil, nil, &projectID, "",
