@@ -183,7 +183,7 @@ func TestSecretTemplateUpdate_StorageError(t *testing.T) {
 // the handler must return 500 rather than 404.
 func TestSecretTemplateDelete_StorageError(t *testing.T) {
 	h := newFailingSTHandler(t, failingSecretTemplateStore{failDelete: true})
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "1")
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodDelete, "/", nil)), "id", "1")
 	w := httptest.NewRecorder()
 	h.Delete(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -195,7 +195,7 @@ func TestSecretTemplateDelete_StorageError(t *testing.T) {
 func TestSecretTemplateApply_StorageError(t *testing.T) {
 	h := newFailingSTHandler(t, failingSecretTemplateStore{failGet: true})
 	body := bytes.NewBufferString(`{"classification":"internal"}`)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", body), "id", "1")
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodPost, "/", body)), "id", "1")
 	w := httptest.NewRecorder()
 	h.Apply(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)

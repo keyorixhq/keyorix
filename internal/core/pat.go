@@ -30,6 +30,14 @@ const (
 	patTouchInterval = 30 * time.Second
 )
 
+// EventPATCreated/EventPATRevoked are audited on every self-service PAT
+// create/revoke (F3, audit-completeness campaign). Descriptions carry only
+// the token id/name, never the raw token or its hash.
+const (
+	EventPATCreated = "pat.created"
+	EventPATRevoked = "pat.revoked"
+)
+
 // CreatePATResult carries the freshly created token plus its one-time plaintext.
 // The plaintext is never persisted and never returned again.
 type CreatePATResult struct {
@@ -84,6 +92,10 @@ func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	// Description never carries the raw token or its hash — only the id/name,
+	// same discipline as every other credential-creation audit event.
+	c.writeAuditEvent(ctx, EventPATCreated, actorPtr(userID), nil,
+		fmt.Sprintf("user %d created PAT %d (%q)", userID, created.ID, created.Name))
 	return &CreatePATResult{Token: created, PlainToken: raw}, nil
 }
 
@@ -111,6 +123,8 @@ func (c *KeyorixCore) RevokeOwnPAT(ctx context.Context, userID, tokenID uint) (t
 	if err := c.storage.RevokePersonalAccessToken(ctx, tokenID); err != nil {
 		return "", err
 	}
+	c.writeAuditEvent(ctx, EventPATRevoked, actorPtr(userID), nil,
+		fmt.Sprintf("user %d revoked PAT %d (%q)", userID, pat.ID, pat.Name))
 	return pat.TokenHash, nil
 }
 

@@ -53,6 +53,33 @@ func validateTemplateClassification(label string) error {
 	return nil
 }
 
+// Secret-template audit events (F3, audit-completeness campaign).
+// LogSecretTemplateUpdated/Deleted/Applied are standalone methods — like
+// LogRoleCreated/LogRoleUpdated/LogRoleDeleted (audit.go) — since
+// UpdateSecretTemplate/DeleteSecretTemplate/ApplyTemplate take no actor
+// parameter; the REST handler calls them explicitly once it has the actor.
+const (
+	EventSecretTemplateCreated = "secret_template.created"
+	EventSecretTemplateUpdated = "secret_template.updated"
+	EventSecretTemplateDeleted = "secret_template.deleted"
+	EventSecretTemplateApplied = "secret_template.applied"
+)
+
+func (c *KeyorixCore) LogSecretTemplateUpdated(ctx context.Context, actorID, templateID uint, name string) {
+	c.writeAuditEvent(ctx, EventSecretTemplateUpdated, actorPtr(actorID), nil,
+		fmt.Sprintf("secret template %d (%q) updated", templateID, name))
+}
+
+func (c *KeyorixCore) LogSecretTemplateDeleted(ctx context.Context, actorID, templateID uint) {
+	c.writeAuditEvent(ctx, EventSecretTemplateDeleted, actorPtr(actorID), nil,
+		fmt.Sprintf("secret template %d deleted", templateID))
+}
+
+func (c *KeyorixCore) LogSecretTemplateApplied(ctx context.Context, actorID, templateID uint) {
+	c.writeAuditEvent(ctx, EventSecretTemplateApplied, actorPtr(actorID), nil,
+		fmt.Sprintf("secret template %d applied", templateID))
+}
+
 // CreateSecretTemplate creates a new secret template.
 func (c *KeyorixCore) CreateSecretTemplate(ctx context.Context, req *CreateSecretTemplateRequest) (*models.SecretTemplate, error) {
 	if strings.TrimSpace(req.Name) == "" {
@@ -91,6 +118,8 @@ func (c *KeyorixCore) CreateSecretTemplate(ctx context.Context, req *CreateSecre
 	if err := c.storage.CreateSecretTemplate(ctx, tmpl); err != nil {
 		return nil, fmt.Errorf("failed to create secret template: %w", err)
 	}
+	c.writeAuditEvent(ctx, EventSecretTemplateCreated, actorPtr(req.CreatedBy), nil,
+		fmt.Sprintf("secret template %d (%q) created", tmpl.ID, tmpl.Name))
 	return tmpl, nil
 }
 

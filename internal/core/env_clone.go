@@ -76,6 +76,14 @@ func (c *KeyorixCore) CloneEnvironment(ctx context.Context, projectID, srcEnvID,
 		}
 	}
 
+	// Written unconditionally, not just per-secret via CopySecret above: a clone
+	// of an empty source environment (zero secrets to copy) would otherwise
+	// leave this whole operation with no audit trail at all (F3, audit-
+	// completeness campaign).
+	pid := projectID
+	c.writeAuditEventFull(ctx, "environment.cloned", actorPtr(actorID), nil, &pid, "",
+		fmt.Sprintf("environment %d (%s) cloned into %d (%s): %d secret(s) copied, %d skipped",
+			srcEnvID, srcEnv.Name, dstEnvID, dstEnv.Name, result.SecretsCloned, result.SecretsSkipped))
 	return result, nil
 }
 

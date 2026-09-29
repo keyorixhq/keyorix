@@ -65,5 +65,12 @@ func (c *KeyorixCore) CopyEnvironmentSecrets(ctx context.Context, projectID, sou
 			break
 		}
 	}
+	// Written unconditionally, not just per-secret via CopySecret above: copying
+	// from an empty source environment (zero secrets) would otherwise leave this
+	// whole operation with no audit trail at all (F3, audit-completeness campaign).
+	pid := projectID
+	c.writeAuditEventFull(ctx, "environment.secrets_copied", actorPtr(actorID), nil, &pid, ip,
+		fmt.Sprintf("environment %d (%s) secrets copied into %d (%s): %d copied, %d skipped",
+			sourceEnvID, srcEnv.Name, targetEnvID, tgtEnv.Name, copied, skipped))
 	return copied, skipped, nil
 }

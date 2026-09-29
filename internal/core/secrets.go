@@ -647,6 +647,9 @@ func (c *KeyorixCore) CreateFolder(
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	pid := projectID
+	c.writeAuditEventFull(ctx, "folder.created", actorPtr(actorID), nil, &pid, "",
+		fmt.Sprintf("folder %d (%q) created in project %d environment %d", created.ID, name, projectID, envID))
 	return created, nil
 }
 
