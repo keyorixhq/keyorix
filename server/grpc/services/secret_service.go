@@ -547,6 +547,14 @@ func mapSecretError(err error) error {
 	if errors.As(err, &tooLarge) {
 		return status.Error(codes.ResourceExhausted, tooLarge.Error()) // nosemgrep: keyorix-raw-error-to-client -- SecretValueTooLargeError.Error() is a fixed-format string carrying only the submitted size and configured limit (both already known to the caller), never secret content
 	}
+	// W3 (Session W, 2026-09-29): under sustained heavy concurrent writes to the
+	// SAME secret, the version-number retry loop can legitimately exhaust — this
+	// is expected contention, not a server malfunction. codes.Aborted is gRPC's
+	// canonical "concurrency issue, retry the whole operation" status (matches
+	// the HTTP side's 409, see secrets_crud.go's sendUpdateSecretError).
+	if errors.Is(err, core.ErrSecretVersionContentionExhausted) {
+		return status.Error(codes.Aborted, "high write contention on this secret; retry the request")
+	}
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "not found"):

@@ -618,6 +618,17 @@ func (h *SecretHandler) sendUpdateSecretError(w http.ResponseWriter, err error) 
 	if h.trySendSecretSizeError(w, err) {
 		return
 	}
+	// W3 (Session W, 2026-09-29): under sustained heavy concurrent writes to the
+	// SAME secret, updateSecretWithNewVersion's retry loop can legitimately
+	// exhaust — this is expected contention, not a server malfunction, and must
+	// tell the caller to retry (409), not report a generic 500. Checked before
+	// the generic i18n ErrorStorageFailed fallback below (this error wraps that
+	// same i18n prefix too, so it would otherwise fall all the way to the
+	// InternalError branch).
+	if errors.Is(err, core.ErrSecretVersionContentionExhausted) {
+		h.sendError(w, "Conflict", "High write contention on this secret; retry the request", http.StatusConflict, nil)
+		return
+	}
 	if strings.Contains(err.Error(), "not found") {
 		h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 	} else if strings.Contains(err.Error(), "permission denied") {
