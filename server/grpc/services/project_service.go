@@ -174,6 +174,7 @@ func (s *ProjectGRPCService) CreateProject(ctx context.Context, req *pb.CreatePr
 	if err != nil {
 		return nil, mapProjectError(err)
 	}
+	s.core.LogProjectCreated(ctx, user.UserID, project.ID, project.Name)
 	return projectToProto(project), nil
 }
 
@@ -203,6 +204,7 @@ func (s *ProjectGRPCService) UpdateProject(ctx context.Context, req *pb.UpdatePr
 	if err != nil {
 		return nil, mapProjectError(err)
 	}
+	s.core.LogProjectUpdated(ctx, user.UserID, project.ID, project.Name)
 	return projectToProto(project), nil
 }
 
@@ -217,9 +219,11 @@ func (s *ProjectGRPCService) DeleteProject(ctx context.Context, req *pb.DeletePr
 	if err := authorizeScoped(ctx, s.core, user, "secrets.delete", core.Scope{ProjectID: uint(req.GetId())}); err != nil {
 		return nil, err
 	}
-	if err := s.core.DeleteProject(ctx, uint(req.GetId()), req.GetForce()); err != nil {
+	force := req.GetForce()
+	if err := s.core.DeleteProject(ctx, uint(req.GetId()), force); err != nil {
 		return nil, mapProjectError(err)
 	}
+	s.core.LogProjectDeleted(ctx, user.UserID, uint(req.GetId()), force)
 	return &emptypb.Empty{}, nil
 }
 

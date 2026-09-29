@@ -141,9 +141,40 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 	return user, string(hash), nil
 }
 
+// EventUserCreated/EventUserUpdated are audited on every user create/update,
+// REST and gRPC alike (F2, audit-completeness campaign) — previously CreateUser/
+// CreateUserWithAssignments/UpdateUser wrote no audit event of their own at all,
+// despite EventUserDeleted/EventUserRestored below already following this
+// exact convention for delete/restore.
+//
+// CreateUser itself takes no actorID (many callers construct it directly with
+// no caller identity in scope, e.g. BootstrapSystem's first-admin create, the
+// self-service invite-consumption path) — same reasoning LogRoleCreated/
+// LogRoleUpdated/LogRoleDeleted are standalone methods rather than parameters
+// baked into CreateRole/UpdateRole/DeleteRole's own signatures. Every REST/gRPC
+// path that reaches a user create/update calls LogUserCreated/LogUserUpdated
+// explicitly once it knows the real actor — see auth_bootstrap.go,
+// setup_consume.go, setup_delivery.go (both wrappers), users_crud.go, and
+// CreateUserWithAssignments/UpdateUser below (which already had an actorID
+// parameter and so call it directly rather than needing an external call site).
+const (
+	EventUserCreated = "user.created"
+	EventUserUpdated = "user.updated"
+)
+
+// LogUserCreated records a user creation. actorID is the creating admin (0 =
+// none, e.g. BootstrapSystem's first-admin create or self-service invite
+// consumption). See the EventUserCreated doc comment above for why this is a
+// standalone method rather than a CreateUser parameter.
+func (c *KeyorixCore) LogUserCreated(ctx context.Context, actorID, userID uint, username string) {
+	c.writeAuditEvent(ctx, EventUserCreated, actorPtr(actorID), nil,
+		fmt.Sprintf("created user %d (%s)", userID, username))
+}
+
 // CreateUser creates a new user with business logic validation. It auto-assigns
 // the system_viewer baseline role (best-effort). For atomic create-with-role and
-// project assignments see CreateUserWithAssignments.
+// project assignments see CreateUserWithAssignments. Callers must call
+// LogUserCreated once they know the real actor — see that method's doc comment.
 func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*models.User, error) {
 	user, hash, err := c.buildUserForCreate(ctx, req)
 	if err != nil {
@@ -347,6 +378,7 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 		_ = c.storage.AddPasswordHistory(ctx, created.ID, hash, c.now())
 	}
 
+	c.LogUserCreated(ctx, actorID, created.ID, created.Username)
 	return created, nil
 }
 
@@ -650,6 +682,8 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 		c.invalidateTokenCache(sessionHashes...)
 		c.invalidateTokenCache(patHashes...)
 	}
+	c.writeAuditEvent(ctx, EventUserUpdated, actorPtr(req.ActorID), nil,
+		fmt.Sprintf("updated user %d (%s)", updated.ID, updated.Username))
 	return updated, nil
 }
 

@@ -29,6 +29,48 @@ const (
 	maxEnvironmentNameLen = 200
 )
 
+// EventProjectCreated/EventProjectUpdated/EventProjectDeleted are audited on
+// every project create/update/delete, REST and gRPC alike (F2, audit-
+// completeness campaign) — previously CreateProject/CreateProjectWithEnvs/
+// UpdateProject/DeleteProject wrote no audit event of their own at all,
+// despite RestoreProject/environment.restored (both in this same file)
+// already following this exact convention.
+//
+// Like EventUserCreated/EventUserUpdated (users.go), these are written via
+// standalone LogProjectCreated/LogProjectUpdated/LogProjectDeleted methods
+// rather than parameters baked into CreateProject/CreateProjectWithEnvs/
+// UpdateProject/DeleteProject's own signatures — same reasoning as
+// LogRoleCreated/LogRoleUpdated/LogRoleDeleted (audit.go): those four
+// functions are called from many existing test fixtures with no caller
+// identity in scope, and every real REST/gRPC call site already knows the
+// actor at the point it calls them.
+const (
+	EventProjectCreated = "project.created"
+	EventProjectUpdated = "project.updated"
+	EventProjectDeleted = "project.deleted"
+)
+
+// LogProjectCreated/LogProjectUpdated/LogProjectDeleted record a project
+// create/update/delete. actorID is the acting admin (0 = none). See the
+// EventProjectCreated doc comment above for why these are standalone methods.
+func (c *KeyorixCore) LogProjectCreated(ctx context.Context, actorID, projectID uint, name string) {
+	pid := projectID
+	c.writeAuditEventFull(ctx, EventProjectCreated, actorPtr(actorID), nil, &pid, "",
+		fmt.Sprintf("project %d (%q) created", projectID, name))
+}
+
+func (c *KeyorixCore) LogProjectUpdated(ctx context.Context, actorID, projectID uint, name string) {
+	pid := projectID
+	c.writeAuditEventFull(ctx, EventProjectUpdated, actorPtr(actorID), nil, &pid, "",
+		fmt.Sprintf("project %d (%q) updated", projectID, name))
+}
+
+func (c *KeyorixCore) LogProjectDeleted(ctx context.Context, actorID, projectID uint, force bool) {
+	pid := projectID
+	c.writeAuditEventFull(ctx, EventProjectDeleted, actorPtr(actorID), nil, &pid, "",
+		fmt.Sprintf("project %d deleted (force=%t)", projectID, force))
+}
+
 // identifierRegex is the anti-homograph/anti-spoofing charset guard (G38):
 // letters, digits, spaces, hyphens, and underscores only — no zero-width
 // characters, no mixed-script confusables, no control characters. Ported

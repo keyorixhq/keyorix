@@ -431,6 +431,12 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 		return nil, txErr
 	}
 
+	// Audit only AFTER the transaction has committed: an event written inside
+	// (or before) it would claim success for a bootstrap that then rolled back.
+	// actorID 0 = the system itself (no authenticated actor exists yet).
+	c.LogUserCreated(ctx, 0, createdUser.ID, createdUser.Username)
+	c.LogProjectCreated(ctx, 0, project.ID, project.Name)
+
 	// Seed password history with the initial password (ADR-025), best-effort
 	// and after commit, exactly as CreateUser does for every other user.
 	if c.passwordPolicy.HistoryCount > 0 {
