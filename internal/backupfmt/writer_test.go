@@ -50,7 +50,7 @@ func TestWriteBackup_RoundTripsRowsAndManifest(t *testing.T) {
 	require.NoError(t, db.Create(&models.Project{Name: "proj-1"}).Error)
 
 	var buf bytes.Buffer
-	manifest, err := writeBackupModels(db, []any{&models.Project{}, &models.Environment{}, &models.User{}}, 1, "", testManifestKey(), &buf)
+	manifest, err := writeBackupModels(db, []any{&models.Project{}, &models.Environment{}, &models.User{}}, 1, "", testManifestKey(), nil, nil, &buf)
 	require.NoError(t, err)
 
 	require.Equal(t, FormatVersion, manifest.FormatVersion)
@@ -122,7 +122,7 @@ func TestWriteBackup_RoundTripsRowsAndManifest(t *testing.T) {
 func TestWriteBackup_EmptyTableProducesZeroRowEntry(t *testing.T) {
 	db := openTestDB(t)
 	var buf bytes.Buffer
-	manifest, err := writeBackupModels(db, []any{&models.Environment{}}, 1, "", testManifestKey(), &buf)
+	manifest, err := writeBackupModels(db, []any{&models.Environment{}}, 1, "", testManifestKey(), nil, nil, &buf)
 	require.NoError(t, err)
 	require.Len(t, manifest.Tables, 1)
 	require.Equal(t, int64(0), manifest.Tables[0].RowCount)
@@ -144,7 +144,7 @@ func TestWriteBackup_DetectsDanglingReference(t *testing.T) {
 	require.NoError(t, db.Create(&env).Error)
 
 	var buf bytes.Buffer
-	manifest, err := writeBackupModels(db, []any{&models.Project{}, &models.Environment{}}, 1, "", testManifestKey(), &buf)
+	manifest, err := writeBackupModels(db, []any{&models.Project{}, &models.Environment{}}, 1, "", testManifestKey(), nil, nil, &buf)
 	require.NoError(t, err)
 
 	require.Len(t, manifest.DanglingReferences, 1)

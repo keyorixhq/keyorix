@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/keyorixhq/keyorix/internal/auditverify"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
 
@@ -119,6 +120,12 @@ func (km *KeyManager) RotateKEKPassphrase(oldPassphrase, newPassphrase string) e
 		wipeBytes(newESK)
 		return fmt.Errorf("rotate KEK: re-derive audit-checkpoint key: %w", err)
 	}
+	newBMK, newBMKID, err := auditverify.DeriveBackupManifestKey(newKEK)
+	if err != nil {
+		wipeBytes(newESK)
+		wipeBytes(newACK)
+		return fmt.Errorf("rotate KEK: re-derive backup-manifest key: %w", err)
+	}
 
 	// Update in-memory state under the already-held mu.Lock.
 	wipeBytes(km.evidenceSignKey)
@@ -128,6 +135,10 @@ func (km *KeyManager) RotateKEKPassphrase(oldPassphrase, newPassphrase string) e
 	wipeBytes(km.auditCheckpointKey)
 	km.auditCheckpointKey = newACK
 	km.auditCheckpointKeyID = newACKID
+
+	wipeBytes(km.backupManifestKey)
+	km.backupManifestKey = newBMK
+	km.backupManifestKeyID = newBMKID
 
 	km.dekSnapshot = append([]byte(nil), newWrappedDEK...)
 

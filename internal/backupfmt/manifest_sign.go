@@ -46,6 +46,18 @@ func SignManifest(m *Manifest, key []byte) error {
 // other secret/signature comparison. Returns false (never panics or errors)
 // for a manifest with no Signature at all, which is exactly "invalid" for
 // this check's purpose.
+//
+// Known, harmless property (found by this package's own exhaustive tamper
+// test): corrupting a JSON KEY NAME (not its value) for a field whose value
+// was already empty/absent -- e.g. Checkpoint when the source install never
+// wrote a checkpoint, or DanglingReferences (`omitempty`) on a clean
+// database -- unmarshals to the SAME zero value the field already had, so
+// re-marshaling produces byte-identical canonical bytes and verification
+// still (correctly) succeeds. This is not a tamper of anything meaningful:
+// there was no content there to alter either way. It is NOT possible for a
+// field that carries real content (every Tables/KeyFiles entry always does)
+// -- corrupting ITS key name loses that content on unmarshal, producing a
+// different canonical encoding and failing verification as expected.
 func VerifyManifestSignature(m Manifest, key []byte) bool {
 	if m.Signature == "" {
 		return false

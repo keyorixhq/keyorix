@@ -1,10 +1,10 @@
-// restore.go implements `keyorix-server admin restore` (ADR-108 §B3): the
-// other half of admin backup. Writes the database and every encryption
-// key-material file back from an archive backup.go created, then applies
-// pending migrations the same way `admin migrate` does -- covering the
-// "version-skipping upgrade" case ADR-108 §B3 names alongside backup/restore:
-// restoring an old backup onto a newer binary must leave the database ready
-// to boot, not merely restored to its old schema.
+// restore.go implements `keyorix-server admin restore` (ADR-108 §B3,
+// design-b3-backup-v2.md): the other half of admin backup. Dispatches on
+// the archive's own declared format_version: v2 (backupfmt, the only format
+// `admin backup` writes now) is the normal path; v1 (physical, SQLite-only,
+// #2099) is read-only-supported until Keyorix 1.0 (design §3.6 decision 3),
+// implemented in backup_v1_legacy.go's readBackupArchive plus this file's
+// runAdminRestoreV1.
 //
 // Refuses, rather than silently overwriting, an existing non-empty database
 // or key file unless --overwrite-existing is given -- restoring into
@@ -14,13 +14,11 @@ package admin
 
 import (
 	"archive/tar"
+	"bufio"
 	"compress/gzip"
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -29,10 +27,13 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/auditverify"
+	"github.com/keyorixhq/keyorix/internal/backupfmt"
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/spf13/cobra"
+	"gorm.io/gorm"
 )
 
 // restoreFileMode is the mode every restored file (database and key files
@@ -42,12 +43,12 @@ import (
 const restoreFileMode = 0600
 
 // defaultMaxRestoreEntryBytes/defaultMaxRestoreTotalBytes bound how much
-// decompressed data readBackupArchive will hold in memory for a single tar
-// entry, and across the whole archive, before refusing it -- an archive
-// (gzip+tar) can decompress to far more bytes than it occupies on disk, and
-// an operator restoring from removable/untrusted media has no independent
-// way to know an archive is hostile before restore reads it. 1 GiB per file
-// is generous headroom for a keyorix secrets database or key-material file;
+// decompressed data restore will hold (per staged file, and in total) before
+// refusing an archive -- an archive (gzip+tar) can decompress to far more
+// bytes than it occupies on disk, and an operator restoring from
+// removable/untrusted media has no independent way to know an archive is
+// hostile before restore reads it. 1 GiB per file is generous headroom for
+// a keyorix secrets database table or key-material file;
 // --max-entry-bytes/--max-total-bytes raise it for a legitimately larger
 // deployment.
 const (
@@ -61,6 +62,7 @@ var (
 	restoreAllowRollback     bool
 	restoreMaxEntryBytes     int64
 	restoreMaxTotalBytes     int64
+	restorePassphraseSource  crypto.PassphraseSource
 )
 
 var restoreCmd = &cobra.Command{
@@ -71,17 +73,13 @@ var restoreCmd = &cobra.Command{
 'admin migrate' does -- so an old backup restored under a newer binary ends
 up ready to start, not merely restored to its old schema.
 
-Every file in the archive is checksum-verified before anything is written,
-and the archive's key-file set must match this config's encryption settings
-exactly (internal/keyfiles.Registry) -- a partial or mismatched key-file
-restore would leave the database permanently undecryptable. Checksums catch
-CORRUPTION (a bad copy, a truncated transfer, bit rot) -- not TAMPERING:
-anyone who can edit the archive can recompute them to match, so a passing
-checksum is not proof the archive is authentic. Restore therefore also runs
+The archive's manifest is signature-verified (HMAC-SHA256, KEK-derived key,
+design-b3-backup-v2.md §5) BEFORE any byte reaches the real target -- an
+authenticity check a plain checksum cannot provide, since anyone who can
+edit the archive can recompute a checksum to match. Restore also runs
 'admin verify-audit' automatically against the restored database once
 migrations are applied, and fails (non-zero exit) if it reports the audit
-chain BROKEN -- tamper evidence comes from that hash chain, not the backup
-manifest.
+chain BROKEN.
 
 Each restored file is written atomically (temp file + fsync + rename into
 the target directory, which is itself fsynced afterward), so a failure or
@@ -107,8 +105,10 @@ recovery restore of an intentionally older backup -- this writes an audit
 event to the restored database recording exactly how far back the restore
 went, once the chain is writable again.
 
-Only local/sqlite storage is supported today. For a Postgres-backed
-deployment, restore with psql directly (see docs/SELF_HOSTING.md §5).`,
+An archive taken under the old (v1, pre-2026-09-28) physical/SQLite-only
+format still restores, with a deprecation notice -- take a fresh backup
+under the current format when convenient. Only local/sqlite storage is
+supported as a restore TARGET today; restoring into Postgres is H4.`,
 	RunE: runAdminRestore,
 }
 
@@ -117,9 +117,10 @@ func init() {
 	restoreCmd.Flags().BoolVar(&restoreOverwriteExisting, "overwrite-existing", false, "Overwrite an existing, non-empty database or key file (dangerous)")
 	restoreCmd.Flags().BoolVar(&restoreAllowRollback, "allow-rollback", false, "Proceed even though this backup is behind this host's own audit trail (dangerous -- see the rollback-protection note above)")
 	restoreCmd.Flags().Int64Var(&restoreMaxEntryBytes, "max-entry-bytes", defaultMaxRestoreEntryBytes,
-		"Reject the archive if any single entry (the database or a key file) decompresses to more than this many bytes")
+		"Reject the archive if any single entry decompresses to more than this many bytes")
 	restoreCmd.Flags().Int64Var(&restoreMaxTotalBytes, "max-total-bytes", defaultMaxRestoreTotalBytes,
 		"Reject the archive if its total decompressed size across all entries exceeds this many bytes")
+	registerPassphraseFlags(restoreCmd, &restorePassphraseSource)
 	rootCmd.AddCommand(restoreCmd)
 }
 
@@ -133,7 +134,7 @@ func runAdminRestore(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if cfg.Storage.Type != "local" && cfg.Storage.Type != "sqlite" {
-		return fmt.Errorf("admin restore only supports local/sqlite storage today (got %q) -- "+
+		return fmt.Errorf("admin restore only supports local/sqlite storage as a restore target today (got %q) -- "+
 			"for Postgres, restore with psql directly (see docs/SELF_HOSTING.md §5)", cfg.Storage.Type)
 	}
 
@@ -143,6 +144,374 @@ func runAdminRestore(cmd *cobra.Command, args []string) error {
 	}
 	defer lock.Release() //nolint:errcheck
 
+	version, err := peekFormatVersion(restoreInput)
+	if err != nil {
+		return fmt.Errorf("read backup archive %q: %w", restoreInput, err)
+	}
+	switch version {
+	case backupFormatVersion: // 1
+		fmt.Println("NOTE: this archive uses the deprecated v1 (physical, pre-2026-09-28) backup format -- " +
+			"it still restores, but take a fresh backup under the current format when convenient.")
+		return runAdminRestoreV1(cfg)
+	case backupfmt.FormatVersion: // 2
+		return runAdminRestoreV2(cfg)
+	default:
+		return fmt.Errorf("backup archive format version %d is not supported by this binary (supports version %d or %d)",
+			version, backupFormatVersion, backupfmt.FormatVersion)
+	}
+}
+
+// peekFormatVersion reads just enough of the archive (its first tar entry,
+// which must be MANIFEST.json in either format) to learn which format
+// reader to dispatch to -- both backupManifest (v1) and backupfmt.Manifest
+// (v2) declare format_version as their first JSON field, at the same
+// top-level position, so this generic probe works against either without
+// needing to know which one it's looking at yet.
+func peekFormatVersion(path string) (int, error) {
+	f, err := os.Open(path) // #nosec G304 -- operator-supplied input path, the whole point of this flag
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close() //nolint:errcheck
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return 0, fmt.Errorf("not a valid backup archive (gzip): %w", err)
+	}
+	defer gz.Close() //nolint:errcheck
+	tr := tar.NewReader(gz)
+
+	hdr, err := tr.Next()
+	if err != nil {
+		return 0, fmt.Errorf("read tar entry: %w", err)
+	}
+	if hdr.Name != "MANIFEST.json" {
+		return 0, fmt.Errorf("archive's first entry is %q, expected MANIFEST.json -- not a keyorix-server admin backup", hdr.Name)
+	}
+	// A generous but bounded cap for the peek alone -- the real per-format
+	// reader (readBackupArchive or ExtractArchive) re-applies the
+	// operator-configured --max-entry-bytes immediately after this returns.
+	data, err := io.ReadAll(io.LimitReader(tr, 64<<20))
+	if err != nil {
+		return 0, fmt.Errorf("read manifest: %w", err)
+	}
+	var probe struct {
+		FormatVersion int `json:"format_version"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return 0, fmt.Errorf("parse manifest: %w", err)
+	}
+	return probe.FormatVersion, nil
+}
+
+// runAdminRestoreV2 is the current (design-b3-backup-v2.md) restore path.
+func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive complexity, orchestrates §5.3's full stage-then-verify-then-commit sequence in one place deliberately
+	dbPath := cfg.Storage.Database.Path
+	if dbPath == "" {
+		dbPath = "./secrets.db"
+	}
+	if err := refuseNonEmptyExisting("database", dbPath); err != nil {
+		return err
+	}
+	targetKeyPaths, err := expectedKeyFilePaths(cfg)
+	if err != nil {
+		return err
+	}
+	for _, p := range targetKeyPaths {
+		if err := refuseNonEmptyExisting("key file", p); err != nil {
+			return err
+		}
+	}
+
+	archiveInfo, err := os.Stat(restoreInput)
+	if err != nil {
+		return fmt.Errorf("stat %q: %w", restoreInput, err)
+	}
+	// Staging needs roughly the uncompressed archive size again on top of
+	// what's already on disk (the compressed archive itself); 4x the
+	// compressed size is a deliberately generous, simple estimate (design
+	// §7.4 doesn't mandate a precise compression-ratio calculation).
+	if err := backupfmt.CheckFreeSpace(restoreInput, archiveInfo.Size()*4); err != nil {
+		return fmt.Errorf("preflight free-space check (design §7.4): %w", err)
+	}
+
+	stagingDir, err := os.MkdirTemp("", "keyorix-admin-restore-*")
+	if err != nil {
+		return fmt.Errorf("create staging directory: %w", err)
+	}
+	defer os.RemoveAll(stagingDir) //nolint:errcheck
+
+	archiveFile, err := os.Open(restoreInput) // #nosec G304 -- operator-supplied input path, the whole point of this flag
+	if err != nil {
+		return fmt.Errorf("open %q: %w", restoreInput, err)
+	}
+	manifest, err := backupfmt.ExtractArchive(archiveFile, stagingDir, restoreMaxEntryBytes, restoreMaxTotalBytes)
+	_ = archiveFile.Close()
+	if err != nil {
+		return fmt.Errorf("extract backup archive %q: %w", restoreInput, err)
+	}
+
+	if manifest.Backend != backupfmt.Backend {
+		return fmt.Errorf("backup archive is format %q, this binary writes/expects %q -- restore refuses to mix formats",
+			manifest.Backend, backupfmt.Backend)
+	}
+	if storage.SchemaEpochTooNew(manifest.SchemaEpoch) {
+		return fmt.Errorf("backup archive's schema epoch %d is newer than this binary's schema epoch %d (ADR-097) -- "+
+			"this backup was taken by a newer version of Keyorix; upgrade this binary before restoring it",
+			manifest.SchemaEpoch, storage.CurrentSchemaEpoch())
+	}
+	if err := validateKeyFileSetV2(manifest.KeyFiles, targetKeyPaths); err != nil {
+		return err
+	}
+
+	// design §5.3 step 2: unwrap the KEK from the archive's own STAGED
+	// (still-wrapped) key files -- never the real target's, which has none
+	// yet on a fresh restore. kekStagingDir is laid out with the SAME
+	// relative paths cfg.Storage.Encryption expects, so the exact same
+	// internal/encryption code path `admin diagnose`/`admin backup` use
+	// works unmodified, just pointed elsewhere.
+	kekStagingDir, err := stageKeyFilesForKEKUnwrap(cfg, stagingDir, manifest.KeyFiles)
+	if err != nil {
+		return err
+	}
+	manifestKey, err := unwrapManifestKey(cfg, kekStagingDir, restorePassphraseSource)
+	if err != nil {
+		return err
+	}
+	defer crypto.WipeBytes(manifestKey)
+
+	if !backupfmt.VerifyManifestSignature(manifest, manifestKey) {
+		return fmt.Errorf("backup archive's manifest signature is invalid -- the archive may be corrupted or " +
+			"tampered with; restore refuses (design §5)")
+	}
+
+	// Rollback protection (§6.3) -- BEFORE any write to the real target,
+	// reusing checkRollbackProtection UNCHANGED (the same function #2233
+	// added and this restore path's v1 sibling still uses) by re-encoding
+	// the v2 manifest's structured Checkpoint back into the same encoded
+	// string shape ParseHighWater already knows.
+	highWaterEncoded := checkpointBundleToHighWaterString(manifest.Checkpoint)
+	destinationFloor, err := readExistingDatabaseAuditEventCount(dbPath)
+	if err != nil {
+		return fmt.Errorf("read existing destination database's audit event count: %w", err)
+	}
+	archiveRaw, err := archiveHeadFromStagedAuditEvents(stagingDir, manifest)
+	if err != nil {
+		return fmt.Errorf("read the archived database's audit event count: %w", err)
+	}
+	newerSubstantive, err := destinationEventsNewerThan(dbPath, archiveRaw)
+	if err != nil {
+		return fmt.Errorf("read existing destination database's newer audit events: %w", err)
+	}
+	rollbackCheck, err := checkRollbackProtection(highWaterEncoded, dbPath, destinationFloor, archiveRaw, newerSubstantive)
+	if err != nil {
+		return err
+	}
+
+	// Only past every check above: move staged key files into place, run
+	// migrations against the fresh target, then load the data (design §3.4).
+	restoreTS := time.Now().UTC().Format("20060102T150405Z")
+	for i, entry := range manifest.KeyFiles {
+		data, rerr := os.ReadFile(filepath.Join(stagingDir, entry.TarName)) // #nosec G304 -- our own staged file, already checksum-verified by ExtractArchive
+		if rerr != nil {
+			return fmt.Errorf("read staged key file %q: %w", entry.TarName, rerr)
+		}
+		if err := writeRestoredFile(targetKeyPaths[i], data, restoreTS); err != nil {
+			return fmt.Errorf("write key file %q: %w", targetKeyPaths[i], err)
+		}
+	}
+	// v2 loads rows into a freshly-migrated database rather than writing a
+	// whole DB file (v1), so with --overwrite-existing the existing database
+	// must be moved aside first -- migrating and loading into it in place
+	// fails on the first colliding primary key.
+	if err := moveAsideExistingSQLiteDB(dbPath, restoreTS); err != nil {
+		return err
+	}
+	if err := removeStaleSQLiteSidecars(dbPath); err != nil {
+		return fmt.Errorf("clear stale WAL sidecar files for %q: %w", dbPath, err)
+	}
+
+	fmt.Println("Running migrations against the fresh target database...")
+	if _, err := storage.NewStorageFactory().CreateStorage(cfg); err != nil {
+		return fmt.Errorf("migrate restored database: %w", err)
+	}
+
+	targetDB, err := storage.OpenGormDB(cfg)
+	if err != nil {
+		return fmt.Errorf("open freshly-migrated target database: %w", err)
+	}
+	defer closeGormDB(targetDB)
+
+	fmt.Println("Loading data into the restored database (design §3.4)...")
+	if loadErr := targetDB.Transaction(func(tx *gorm.DB) error {
+		return backupfmt.LoadArchive(tx, manifest, stagingDir)
+	}); loadErr != nil {
+		return fmt.Errorf("load backup data: %w", loadErr)
+	}
+
+	var totalRows int64
+	for _, te := range manifest.Tables {
+		totalRows += te.RowCount
+	}
+	fmt.Printf("Restored %d table(s), %d row(s), %d key file(s) from %s (backup created %s)\n",
+		len(manifest.Tables), totalRows, len(manifest.KeyFiles), restoreInput, manifest.CreatedAt.Format(time.RFC3339))
+	fmt.Println("Run 'keyorix-server admin diagnose' to further confirm the restore.")
+
+	recordAdminAction(cfg, "admin.restore_completed",
+		fmt.Sprintf("restored from backup archive %s (created %s, format v2)", restoreInput, manifest.CreatedAt.Format(time.RFC3339)), true)
+
+	if rollbackCheck.archiveEncoded != "" {
+		if _, werr := auditverify.WriteWitnessIfHigher(auditverify.WitnessPath(dbPath), rollbackCheck.archiveEncoded); werr != nil {
+			fmt.Printf("note: could not update the rollback-protection witness file: %v\n", werr)
+		}
+	}
+	if rollbackCheck.overrodeRollback {
+		recordAdminAction(cfg, "admin.restore_rollback_override",
+			fmt.Sprintf("restored a backup that is %d audit event(s) behind this host's last known state "+
+				"(--allow-rollback was used) -- any user/credential revocation recorded after that point is undone by this restore",
+				rollbackCheck.gapEvents), true)
+	}
+
+	return verifyRestoredAudit(cfg, dbPath)
+}
+
+// validateKeyFileSetV2 is validateKeyFileSetV1 (backup_v1_legacy.go) for
+// backupfmt.KeyFileEntry.
+func validateKeyFileSetV2(archived []backupfmt.KeyFileEntry, target []string) error {
+	if len(archived) != len(target) {
+		return fmt.Errorf("backup archive has %d key file(s) but this config's encryption settings expect %d -- "+
+			"restore refuses a partial/mismatched key-file set", len(archived), len(target))
+	}
+	for i, entry := range archived {
+		if entry.OriginalPath != target[i] {
+			return fmt.Errorf("backup archive's key file #%d is for path %q, this config expects %q -- "+
+				"restore refuses a mismatched key-file set (restore into the same config the backup was taken from)",
+				i, entry.OriginalPath, target[i])
+		}
+	}
+	return nil
+}
+
+// stageKeyFilesForKEKUnwrap copies each archive key file's ALREADY-STAGED,
+// checksum-verified bytes (in stagingDir/<TarName>, per ExtractArchive) to
+// a fresh subdirectory laid out with the exact relative paths
+// cfg.Storage.Encryption expects (via the same internal/keyfiles.Registry
+// call every other path in this codebase uses) -- so unwrapManifestKey can
+// point a real encryption.Service at it unmodified. Returns the new
+// subdirectory's path.
+func stageKeyFilesForKEKUnwrap(cfg *config.Config, stagingDir string, keyFileEntries []backupfmt.KeyFileEntry) (string, error) {
+	kekDir := filepath.Join(stagingDir, "kek-material")
+	if err := os.MkdirAll(kekDir, 0700); err != nil {
+		return "", fmt.Errorf("create KEK-unwrap staging directory: %w", err)
+	}
+	specs, err := keyfiles.Registry(&cfg.Storage.Encryption, kekDir)
+	if err != nil {
+		return "", fmt.Errorf("build key-file registry for staging: %w", err)
+	}
+	if len(specs) != len(keyFileEntries) {
+		return "", fmt.Errorf("internal error: %d key-file registry entries but %d archive key files", len(specs), len(keyFileEntries))
+	}
+	for i, entry := range keyFileEntries {
+		data, err := os.ReadFile(filepath.Join(stagingDir, entry.TarName)) // #nosec G304 -- our own staged file, already checksum-verified by ExtractArchive
+		if err != nil {
+			return "", fmt.Errorf("read staged key file %q: %w", entry.TarName, err)
+		}
+		// dest is specs[i].Path -- computed entirely from cfg.Storage.Encryption
+		// and kekDir via keyfiles.Registry, never from entry (the archive-
+		// controlled key-file metadata data was read from above). gosec's taint
+		// analysis (G703) flags this write because data and dest both trace
+		// back through the same loop iteration over archive-derived
+		// keyFileEntries, but dest itself never incorporates any archive
+		// content -- only its ARRAY INDEX correlates with entry, not its path
+		// value.
+		dest := specs[i].Path
+		if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
+			return "", fmt.Errorf("create directory for staged key file %q: %w", dest, err)
+		}
+		if err := os.WriteFile(dest, data, 0600); err != nil { // #nosec G703 -- dest is config-derived (see above), not archive-controlled
+			return "", fmt.Errorf("stage key file at %q: %w", dest, err)
+		}
+	}
+	return kekDir, nil
+}
+
+// checkpointBundleToHighWaterString converts a v2 manifest's structured
+// Checkpoint (design §5.4's ExternalAnchorBundle shape) back into the exact
+// encoded string shape auditverify.ParseHighWater/EncodeHighWater use --
+// letting checkRollbackProtection stay completely unchanged (and therefore
+// exactly as tested) across both the v1 and v2 restore paths. nil (no
+// checkpoint recorded -- a fresh/young source install) encodes to "".
+func checkpointBundleToHighWaterString(b *auditverify.ExternalAnchorBundle) string {
+	if b == nil {
+		return ""
+	}
+	cp := &auditverify.Checkpoint{
+		ChainedEvents: b.ChainedEvents,
+		HeadID:        b.HeadID,
+		HeadHash:      b.HeadHash,
+		KeyVersion:    b.KeyVersion,
+	}
+	return auditverify.EncodeHighWater(cp, b.Signature)
+}
+
+// archiveHeadFromStagedAuditEvents returns the archived database's raw
+// MAX(audit_events.id) -- the v2 equivalent of v1's
+// auditEventCountFromDBBytes, computed by scanning the staged
+// audit_events.ndjson file (rows are written in primary-key-ascending
+// order, design §3.3, so the LAST successfully-parsed row's ID is the
+// max) instead of querying a single-file SQLite image, since v2 has no
+// such single file. 0 if the archive has no audit_events table entry at
+// all (an install that never logged an event).
+func archiveHeadFromStagedAuditEvents(stagingDir string, manifest backupfmt.Manifest) (int64, error) {
+	var tarName string
+	for _, te := range manifest.Tables {
+		if te.Name == "audit_events" {
+			tarName = te.TarName
+			break
+		}
+	}
+	if tarName == "" {
+		return 0, nil
+	}
+	f, err := os.Open(filepath.Join(stagingDir, tarName)) // #nosec G304 -- our own staged file, already checksum-verified by ExtractArchive
+	if err != nil {
+		return 0, fmt.Errorf("open staged audit_events file: %w", err)
+	}
+	defer f.Close() //nolint:errcheck
+
+	var maxID int64
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<30)
+	for sc.Scan() {
+		line := sc.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var row struct {
+			ID uint
+		}
+		if err := json.Unmarshal(line, &row); err != nil {
+			return 0, fmt.Errorf("decode staged audit_events row: %w", err)
+		}
+		// #nosec G115 -- row.ID is an audit_events auto-increment primary key;
+		// reaching math.MaxInt64 would require over 9.2 quintillion rows, not
+		// a realistic overflow surface (the same reasoning this codebase's
+		// preflight.go already applies to a filesystem block count/size
+		// conversion).
+		if int64(row.ID) > maxID {
+			maxID = int64(row.ID)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return 0, fmt.Errorf("read staged audit_events file: %w", err)
+	}
+	return maxID, nil
+}
+
+// runAdminRestoreV1 restores an archive written by the pre-2026-09-28
+// physical (SQLite-only) format (#2099) -- unchanged from that format's
+// original restore logic, kept until Keyorix 1.0 (design §3.6 decision 3).
+func runAdminRestoreV1(cfg *config.Config) error {
 	manifest, dbBytes, keyBlobs, err := readBackupArchive(restoreInput, restoreMaxEntryBytes, restoreMaxTotalBytes)
 	if err != nil {
 		return fmt.Errorf("read backup archive %q: %w", restoreInput, err)
@@ -167,15 +536,15 @@ func runAdminRestore(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := validateKeyFileSet(manifest.KeyFiles, targetKeyPaths); err != nil {
+	if err := validateKeyFileSetV1(manifest.KeyFiles, targetKeyPaths); err != nil {
 		return err
 	}
 
-	if err := verifyChecksum(manifest.DBFile, dbBytes); err != nil {
+	if err := verifyChecksumV1(manifest.DBFile, dbBytes); err != nil {
 		return err
 	}
 	for i, entry := range manifest.KeyFiles {
-		if err := verifyChecksum(entry, keyBlobs[i]); err != nil {
+		if err := verifyChecksumV1(entry, keyBlobs[i]); err != nil {
 			return err
 		}
 		if err := refuseNonEmptyExisting("key file", entry.OriginalPath); err != nil {
@@ -183,30 +552,10 @@ func runAdminRestore(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Rollback protection (design-b3-backup-v2.md §6.3) -- BEFORE any write to
-	// disk below, so a refused restore never touches the target at all.
-	//
-	// The witness file alone only advances on a checkpoint (scheduled, default
-	// every 24h, or on-demand) or a prior restore -- a change made to THIS
-	// EXACT destination database since the last checkpoint (the literal repro
-	// this feature closes: back up, create a secret, restore the OLDER backup
-	// moments later, all well within one checkpoint interval) would not have
-	// touched the witness at all, leaving nothing to detect it. The
-	// destination database being overwritten right now is always live and
-	// current, with no checkpoint delay -- reading its OWN raw audit-event
-	// count, when --overwrite-existing means there IS an existing one, closes
-	// that gap directly. destinationFloor is 0 (no additional floor) whenever
-	// there is no pre-existing destination database to read.
 	destinationFloor, err := readExistingDatabaseAuditEventCount(dbPath)
 	if err != nil {
 		return fmt.Errorf("read existing destination database's audit event count: %w", err)
 	}
-	// Compare like with like: the destination's raw audit_events count against
-	// the ARCHIVED database's own raw count (read from the archive bytes, not
-	// the manifest), and the witness's signed high-water against the
-	// archive's signed high-water. Mixing them (raw destination count vs the
-	// archive's signed high-water, which lags until a checkpoint runs) refused
-	// a restore of a backup taken seconds earlier from the same database.
 	archiveRaw, err := auditEventCountFromDBBytes(dbBytes)
 	if err != nil {
 		return fmt.Errorf("read the archived database's audit event count: %w", err)
@@ -220,9 +569,6 @@ func runAdminRestore(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// One timestamp for the whole restore run, reused for every existing file
-	// --overwrite-existing moves aside, so they're identifiable as belonging
-	// to the same restore.
 	restoreTS := time.Now().UTC().Format("20060102T150405Z")
 
 	for i, entry := range manifest.KeyFiles {
@@ -230,19 +576,6 @@ func runAdminRestore(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("write key file %q: %w", entry.OriginalPath, err)
 		}
 	}
-	// A previous WAL-mode database at this exact path (internal/storage/
-	// factory.go's sqliteDSN always enables WAL) can leave <dbPath>-wal/-shm
-	// sidecars behind even after dbPath itself was removed -- they are not
-	// content, only replay/shared-memory state FOR the specific main-file
-	// generation that wrote them. VACUUM INTO's snapshot is plain (non-WAL)
-	// by construction, so any sidecar still sitting next to the target path
-	// belongs to a DIFFERENT database generation than the bytes about to be
-	// written; leaving it in place makes SQLite try to replay a WAL that does
-	// not correspond to the restored file, which surfaces as "database disk
-	// image is malformed" the first time anything queries it -- found via a
-	// direct repro (VACUUM INTO's own output passed PRAGMA integrity_check
-	// every time; only the WAL-mode reopen after a same-path restore failed,
-	// and only when a stale sidecar was still present).
 	if err := removeStaleSQLiteSidecars(dbPath); err != nil {
 		return fmt.Errorf("clear stale WAL sidecar files for %q: %w", dbPath, err)
 	}
@@ -260,23 +593,13 @@ func runAdminRestore(cmd *cobra.Command, args []string) error {
 	fmt.Println("Run 'keyorix-server admin diagnose' to further confirm the restore.")
 
 	recordAdminAction(cfg, "admin.restore_completed",
-		fmt.Sprintf("restored from backup archive %s (created %s)", restoreInput, manifest.CreatedAt.Format(time.RFC3339)), true)
+		fmt.Sprintf("restored from backup archive %s (created %s, format v1)", restoreInput, manifest.CreatedAt.Format(time.RFC3339)), true)
 
-	// design-b3-backup-v2.md §6.3: advance the witness file to at least the
-	// just-restored archive's own high-water mark, so a SUBSEQUENT restore on
-	// this host compares against what actually landed on disk, not stale
-	// pre-restore state. Best-effort -- a failure here degrades this host's
-	// own future rollback detection, but the restore itself already
-	// succeeded and must not be reported as failed over it.
 	if rollbackCheck.archiveEncoded != "" {
 		if _, werr := auditverify.WriteWitnessIfHigher(auditverify.WitnessPath(dbPath), rollbackCheck.archiveEncoded); werr != nil {
 			fmt.Printf("note: could not update the rollback-protection witness file: %v\n", werr)
 		}
 	}
-	// An allowed rollback needs its own explicit audit trail entry, written
-	// once the restored chain is writable again (design-b3-backup-v2.md
-	// §6.2: "using it writes an audit event recording that the override was
-	// used" -- there is no silent, warning-only path).
 	if rollbackCheck.overrodeRollback {
 		recordAdminAction(cfg, "admin.restore_rollback_override",
 			fmt.Sprintf("restored a backup that is %d audit event(s) behind this host's last known state "+
@@ -289,10 +612,10 @@ func runAdminRestore(cmd *cobra.Command, args []string) error {
 
 // rollbackCheckOutcome is checkRollbackProtection's result: whether the
 // restore was allowed to proceed past a detected rollback, the size of that
-// gap (for the audit event runAdminRestore writes once the restored chain
-// is writable again), and the archive's own raw encoded high-water value
-// (so runAdminRestore can advance the witness file to it after a successful
-// restore, without re-parsing the manifest).
+// gap (for the audit event runAdminRestoreV1/V2 write once the restored
+// chain is writable again), and the archive's own raw encoded high-water
+// value (so the caller can advance the witness file to it after a
+// successful restore, without re-parsing the manifest).
 type rollbackCheckOutcome struct {
 	overrodeRollback bool
 	gapEvents        int64
@@ -300,13 +623,15 @@ type rollbackCheckOutcome struct {
 }
 
 // checkRollbackProtection implements design-b3-backup-v2.md §6.3: compares
-// the archive's own certified audit-trail progress (highWaterEncoded, from
-// backupManifest.AuditHighWater -- empty if the source install had never
-// written a checkpoint) against this host's witness file (sibling to dbPath,
-// maintained by every server this host has run) BEFORE the caller writes
-// anything to disk. Returns an error (refusing the restore) if the archive
-// is behind and --allow-rollback was not given; any note worth printing is
-// returned alongside a nil error otherwise.
+// the archive's own certified audit-trail progress (highWaterEncoded, empty
+// if the source install had never written a checkpoint) against this host's
+// witness file (sibling to dbPath, maintained by every server this host has
+// run) BEFORE the caller writes anything to disk. Returns an error
+// (refusing the restore) if the archive is behind and --allow-rollback was
+// not given; any note worth printing is returned alongside a nil error
+// otherwise. Shared unchanged by both the v1 and v2 restore paths --
+// checkpointBundleToHighWaterString adapts v2's structured Checkpoint into
+// this same encoded-string contract rather than this function changing.
 //
 // Reference = max(witness file, destinationFloor) -- destinationFloor (see
 // readExistingDatabaseAuditEventCount) is the CURRENT destination database's
@@ -436,22 +761,6 @@ func destinationEventsNewerThan(dbPath string, archiveHead int64) (int64, error)
 	return n, nil
 }
 
-// auditEventCountFromDBBytes returns MAX(audit_events.id) of an archived
-// SQLite database image, read from a private temp copy (0 when the table is
-// absent, e.g. an archive from an install that never logged an event).
-func auditEventCountFromDBBytes(data []byte) (int64, error) {
-	dir, err := os.MkdirTemp("", "keyorix-restore-audit-*")
-	if err != nil {
-		return 0, fmt.Errorf("create temp dir: %w", err)
-	}
-	defer os.RemoveAll(dir) //nolint:errcheck
-	p := filepath.Join(dir, "archive.db")
-	if err := os.WriteFile(p, data, 0o600); err != nil {
-		return 0, fmt.Errorf("write temp copy: %w", err)
-	}
-	return readExistingDatabaseAuditEventCount(p)
-}
-
 func readExistingDatabaseAuditEventCount(dbPath string) (int64, error) {
 	info, statErr := os.Stat(dbPath)
 	if statErr != nil {
@@ -490,16 +799,14 @@ func readExistingDatabaseAuditEventCount(dbPath string) (int64, error) {
 // its own duration (see acquireDatabaseLock above; a second acquisition
 // attempt on the same config would just fail).
 //
-// verifyChecksum (above) only proves the archive was not CORRUPTED in
-// transit -- anyone who can edit the archive can recompute its checksums to
-// match, so it proves nothing about tampering. This is the step in restore
-// that actually can detect the restored database was tampered with, by
-// re-walking its ADR-029 audit hash chain -- run automatically so an
-// operator doesn't have to remember to do it by hand. Only a BROKEN verdict
-// fails restore (non-zero exit); VALID and INDETERMINATE are both reported
-// but do not, matching verify-audit's own documented semantics (a bare
-// re-walk with no --checkpoint-key-file cannot detect tail-truncation, and
-// reports that as its own limit, not as BROKEN).
+// A checksum (v1) or a manifest signature (v2) only prove the archive was
+// not corrupted/tampered IN TRANSIT -- this is the step in restore that can
+// detect the RESTORED DATABASE was tampered with (or the source itself was,
+// before backup ever ran), by re-walking its ADR-029 audit hash chain -- run
+// automatically so an operator doesn't have to remember to do it by hand.
+// Only a BROKEN verdict fails restore (non-zero exit); VALID and
+// INDETERMINATE are both reported but do not, matching verify-audit's own
+// documented semantics.
 func verifyRestoredAudit(cfg *config.Config, dbPath string) error {
 	db, err := auditverify.OpenSQLiteReadOnly(dbPath)
 	if err != nil {
@@ -556,42 +863,39 @@ func expectedKeyFilePaths(cfg *config.Config) ([]string, error) {
 	return paths, nil
 }
 
-// validateKeyFileSet refuses a partial or mismatched key-file restore (e.g.
-// a backup taken mid key-rotation, with a ".pending" sibling this config no
-// longer expects) instead of silently dropping or misplacing a file --
-// either would leave the restored database undecryptable in a way that only
-// surfaces later, at the worst possible time.
-func validateKeyFileSet(archived []backupFileEntry, target []string) error {
-	if len(archived) != len(target) {
-		return fmt.Errorf("backup archive has %d key file(s) but this config's encryption settings expect %d -- "+
-			"restore refuses a partial/mismatched key-file set", len(archived), len(target))
-	}
-	for i, entry := range archived {
-		if entry.OriginalPath != target[i] {
-			return fmt.Errorf("backup archive's key file #%d is for path %q, this config expects %q -- "+
-				"restore refuses a mismatched key-file set (restore into the same config the backup was taken from)",
-				i, entry.OriginalPath, target[i])
-		}
-	}
-	return nil
-}
-
-func verifyChecksum(entry backupFileEntry, data []byte) error {
-	if int64(len(data)) != entry.Size {
-		return fmt.Errorf("archive entry %q failed integrity check (size mismatch: got %d, want %d) -- "+
-			"the backup file may be corrupted or tampered with", entry.TarName, len(data), entry.Size)
-	}
-	sum := sha256.Sum256(data)
-	if got := hex.EncodeToString(sum[:]); got != entry.SHA256 {
-		return fmt.Errorf("archive entry %q failed integrity check (checksum mismatch) -- "+
-			"the backup file may be corrupted or tampered with", entry.TarName)
-	}
-	return nil
-}
-
 // removeStaleSQLiteSidecars removes dbPath's WAL-mode sidecar files
 // (-wal, -shm) if present. Best-effort existence-based removal: absent is
 // the common/expected case (a genuinely fresh data dir), not an error.
+// moveAsideExistingSQLiteDB renames an existing, non-empty SQLite database
+// (and its -wal/-shm sidecars, which hold committed-but-uncheckpointed pages
+// of that same database) to "<path>.pre-restore-<restoreTS>", the same
+// never-truncate convention writeRestoredFile uses for key files. Only acts
+// under --overwrite-existing; without it refuseNonEmptyExisting has already
+// refused a non-empty target, and a 0-byte placeholder is migrated in place.
+func moveAsideExistingSQLiteDB(dbPath, restoreTS string) error {
+	if !restoreOverwriteExisting {
+		return nil
+	}
+	info, err := os.Stat(dbPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("stat existing database %q: %w", dbPath, err)
+	}
+	if info.Size() == 0 {
+		return nil
+	}
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		src := dbPath + suffix
+		aside := fmt.Sprintf("%s.pre-restore-%s%s", dbPath, restoreTS, suffix)
+		if err := os.Rename(src, aside); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("move existing %q aside to %q: %w", src, aside, err)
+		}
+	}
+	return fsyncDir(filepath.Dir(dbPath))
+}
+
 func removeStaleSQLiteSidecars(dbPath string) error {
 	for _, suffix := range []string{"-wal", "-shm"} {
 		if err := os.Remove(dbPath + suffix); err != nil && !os.IsNotExist(err) {
@@ -647,7 +951,7 @@ func writeRestoredFile(path string, data []byte, restoreTS string) error {
 	// #nosec G304 -- path is either this config's own database path or one
 	// returned by keyfiles.Registry (already SafePath-sanitized) and, for key
 	// files, already matched 1:1 against the archive manifest by
-	// validateKeyFileSet -- never an attacker-controlled path from the archive.
+	// validateKeyFileSetV1/V2 -- never an attacker-controlled path from the archive.
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".restoring-*")
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
@@ -726,165 +1030,4 @@ func fsyncDir(dir string) error {
 	}
 	defer d.Close() //nolint:errcheck
 	return d.Sync()
-}
-
-// readBackupArchive parses a gzipped tar written by writeBackupArchive,
-// requiring the manifest and every entry it references to be present before
-// returning anything -- restore must never proceed on a partially-readable
-// archive. maxEntryBytes/maxTotalBytes (0 means "use the package default")
-// bound how much decompressed data this will ever hold in memory, since the
-// archive is operator-supplied input that may come from untrusted or
-// removable media (a gzip+tar decompression bomb): every read is through
-// io.LimitReader, never a bare io.ReadAll(tr).
-//
-// The first entry must be MANIFEST.json (matching writeBackupArchiveContents,
-// which always writes it first) -- every other entry's declared size in that
-// already-parsed manifest becomes ITS per-entry cap, and any entry whose name
-// the manifest does not reference is rejected as soon as its header is seen,
-// before its body is read at all. Every entry must be a regular file
-// (rejecting symlinks/hardlinks/devices), and duplicate entry names are
-// rejected.
-func readBackupArchive(path string, maxEntryBytes, maxTotalBytes int64) (backupManifest, []byte, [][]byte, error) {
-	if maxEntryBytes <= 0 {
-		maxEntryBytes = defaultMaxRestoreEntryBytes
-	}
-	if maxTotalBytes <= 0 {
-		maxTotalBytes = defaultMaxRestoreTotalBytes
-	}
-
-	f, err := os.Open(path) // #nosec G304 -- operator-supplied input path, the whole point of this flag
-	if err != nil {
-		return backupManifest{}, nil, nil, err
-	}
-	defer f.Close() //nolint:errcheck
-
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		return backupManifest{}, nil, nil, fmt.Errorf("not a valid backup archive (gzip): %w", err)
-	}
-	defer gz.Close() //nolint:errcheck
-	tr := tar.NewReader(gz)
-
-	var manifest backupManifest
-	manifestRead := false
-	var dbBytes []byte
-	keyBlobsByName := make(map[string][]byte)
-	seenNames := make(map[string]bool)
-	var totalRead int64
-	first := true
-
-	// readCapped reads at most cap bytes of the current tar entry (never
-	// more, regardless of what the entry claims to decompress to), and never
-	// lets the running total across the whole archive exceed maxTotalBytes.
-	readCapped := func(name string, limit int64) ([]byte, error) {
-		remaining := maxTotalBytes - totalRead
-		if remaining < 0 {
-			remaining = 0
-		}
-		effLimit := limit
-		if remaining < effLimit {
-			effLimit = remaining
-		}
-		data, err := io.ReadAll(io.LimitReader(tr, effLimit+1))
-		if err != nil {
-			return nil, fmt.Errorf("read tar entry %q: %w", name, err)
-		}
-		if int64(len(data)) > effLimit {
-			if effLimit < limit {
-				return nil, fmt.Errorf("archive exceeds the %d-byte total decompressed size limit (--max-total-bytes)", maxTotalBytes)
-			}
-			return nil, fmt.Errorf("archive entry %q exceeds the %d-byte per-entry size limit (--max-entry-bytes)", name, limit)
-		}
-		totalRead += int64(len(data))
-		return data, nil
-	}
-
-	for {
-		hdr, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return backupManifest{}, nil, nil, fmt.Errorf("read tar entry: %w", err)
-		}
-
-		if hdr.Typeflag != tar.TypeReg {
-			return backupManifest{}, nil, nil, fmt.Errorf(
-				"archive entry %q is not a regular file (tar type %q) -- restore refuses non-regular entries",
-				hdr.Name, string(hdr.Typeflag))
-		}
-		if seenNames[hdr.Name] {
-			return backupManifest{}, nil, nil, fmt.Errorf("archive contains a duplicate entry %q", hdr.Name)
-		}
-		seenNames[hdr.Name] = true
-
-		if first {
-			first = false
-			if hdr.Name != "MANIFEST.json" {
-				return backupManifest{}, nil, nil, fmt.Errorf(
-					"archive's first entry is %q, expected MANIFEST.json -- not a keyorix-server admin backup", hdr.Name)
-			}
-			data, err := readCapped(hdr.Name, maxEntryBytes)
-			if err != nil {
-				return backupManifest{}, nil, nil, err
-			}
-			if err := json.Unmarshal(data, &manifest); err != nil {
-				return backupManifest{}, nil, nil, fmt.Errorf("parse manifest: %w", err)
-			}
-			manifestRead = true
-			continue
-		}
-
-		entry, ok := manifestEntryFor(manifest, hdr.Name)
-		if !ok {
-			return backupManifest{}, nil, nil, fmt.Errorf(
-				"archive contains entry %q, which is not referenced by its own MANIFEST.json -- restore refuses unlisted entries", hdr.Name)
-		}
-		if entry.Size < 0 || entry.Size > maxEntryBytes {
-			return backupManifest{}, nil, nil, fmt.Errorf(
-				"archive manifest declares %q at %d bytes, exceeding the %d-byte per-entry limit (--max-entry-bytes)",
-				hdr.Name, entry.Size, maxEntryBytes)
-		}
-		data, err := readCapped(hdr.Name, entry.Size)
-		if err != nil {
-			return backupManifest{}, nil, nil, err
-		}
-		if hdr.Name == manifest.DBFile.TarName {
-			dbBytes = data
-		} else {
-			keyBlobsByName[hdr.Name] = data
-		}
-	}
-
-	if !manifestRead {
-		return backupManifest{}, nil, nil, fmt.Errorf("archive has no MANIFEST.json -- not a keyorix-server admin backup")
-	}
-	if dbBytes == nil {
-		return backupManifest{}, nil, nil, fmt.Errorf("archive has no %s entry", manifest.DBFile.TarName)
-	}
-	keyBlobs := make([][]byte, len(manifest.KeyFiles))
-	for i, entry := range manifest.KeyFiles {
-		blob, ok := keyBlobsByName[entry.TarName]
-		if !ok {
-			return backupManifest{}, nil, nil, fmt.Errorf("archive manifest references %q but the archive has no such entry", entry.TarName)
-		}
-		keyBlobs[i] = blob
-	}
-	return manifest, dbBytes, keyBlobs, nil
-}
-
-// manifestEntryFor looks up the backupFileEntry a tar entry name corresponds
-// to (the database file, or one of the key files) in an already-parsed
-// manifest -- used both for each entry's declared (and therefore capped)
-// size, and to reject any tar entry the manifest does not reference.
-func manifestEntryFor(manifest backupManifest, tarName string) (backupFileEntry, bool) {
-	if tarName == manifest.DBFile.TarName {
-		return manifest.DBFile, true
-	}
-	for _, kf := range manifest.KeyFiles {
-		if tarName == kf.TarName {
-			return kf, true
-		}
-	}
-	return backupFileEntry{}, false
 }
