@@ -8,6 +8,8 @@
 package handlers
 
 import (
+	"context"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -229,6 +231,7 @@ func TestCompleteSAML_SuccessNoExpiry_S13(t *testing.T) {
 		info: &samlpkg.AssertionInfo{Subject: "sub-s13a", Email: "auto-s13a@example.com", Name: "Auto S13"},
 	}
 	cs, db := freshCoreS12WithAdmin(t)
+	seedSSODefaultRoleS13(t, cs)
 	cs.SetSSOProviders(map[string]*core.SSOProvider{
 		"corp": {
 			Name:          "corp",
@@ -278,6 +281,7 @@ func TestCompleteSAML_SuccessWithReturnTo_S13(t *testing.T) {
 		info: &samlpkg.AssertionInfo{Subject: "sub-rto-s13", Email: "rto-s13@example.com", Name: "RTO S13"},
 	}
 	cs, db := freshCoreS12WithAdmin(t)
+	seedSSODefaultRoleS13(t, cs)
 	cs.SetSSOProviders(map[string]*core.SSOProvider{
 		"corp": {
 			Name:          "corp",
@@ -315,4 +319,19 @@ func TestCompleteSAML_SuccessWithReturnTo_S13(t *testing.T) {
 	loc := w.Header().Get("Location")
 	assert.Contains(t, loc, "return_to=")
 	assert.Contains(t, loc, "dashboard")
+}
+
+// seedSSODefaultRoleS13 seeds the SSO JIT default role. Provisioning grants it in
+// the same transaction as the user create and fails closed if it is missing
+// (#2303), so these success-path tests need it the way every real install has
+// it from bootstrap.
+func seedSSODefaultRoleS13(t *testing.T, cs *core.KeyorixCore) {
+	t.Helper()
+	name, err := identity.NewFoldedName("system_viewer")
+	require.NoError(t, err)
+	if _, err := cs.Storage().GetRoleByName(context.Background(), "system_viewer"); err == nil {
+		return
+	}
+	_, err = cs.Storage().CreateRole(context.Background(), name, "baseline read-only role")
+	require.NoError(t, err)
 }
