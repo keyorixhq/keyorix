@@ -55,7 +55,7 @@ TARGETS=(
   'FuzzOIDCVerifierClaims;./internal/core;;internal/core/oidc\.go:[0-9]+:.*Verify;FuzzOIDCVerifierVerify;50'
   'FuzzVerifyIDTokenClaims;./internal/core;;internal/core/sso\.go:[0-9]+:.*verifyIDToken;FuzzVerifyIDToken;50'
   'FuzzParseResponseContent;./internal/saml;;extractAssertion|attrMatches|attributeValues;FuzzParseResponse;1'
-  'FuzzWebAuthnCredentialResponse;./server/http/handlers;github.com/go-webauthn/webauthn/protocol;ParseCredential(Creation|Request)ResponseBytes;;1'
+  'FuzzWebAuthnCredentialResponse;./server/http/handlers/webauthnparse;github.com/go-webauthn/webauthn/protocol;ParseCredential(Creation|Request)ResponseBytes;;1'
 )
 
 WORK="$(mktemp -d)"
