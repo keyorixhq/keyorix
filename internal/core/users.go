@@ -984,20 +984,31 @@ func (c *KeyorixCore) RestoreUser(ctx context.Context, actorID, id uint) error {
 			return err
 		}
 	}
-	if err := c.storage.RestoreUser(ctx, id); err != nil {
+	// RestoreUser (clears deleted_at) and the follow-up UpdateUser (sets IsActive/
+	// AccountState) run in one transaction: previously sequential, a failure on the
+	// second call left the user undeleted (visible in listings again) but in a
+	// stale/inconsistent state — the caller sees an error and assumes nothing
+	// happened, when in fact the undelete already landed.
+	var user *models.User
+	err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		if terr := tx.RestoreUser(ctx, id); terr != nil {
+			return terr
+		}
+		var gerr error
+		user, gerr = tx.GetUser(ctx, id)
+		if gerr != nil {
+			return gerr
+		}
+		user.IsActive = true
+		user.AccountState = AccountPasswordResetRequired
+		user.UpdatedAt = c.now()
+		_, uerr := tx.UpdateUser(ctx, user)
+		return uerr
+	})
+	if err != nil {
 		if storage.IsUserNotFound(err) {
 			return fmt.Errorf("%s: user not found or not deleted", i18n.T("ErrorUserNotFound", nil))
 		}
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	user, err := c.storage.GetUser(ctx, id)
-	if err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	user.IsActive = true
-	user.AccountState = AccountPasswordResetRequired
-	user.UpdatedAt = c.now()
-	if _, err := c.storage.UpdateUser(ctx, user); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	c.writeAuditEvent(ctx, EventUserRestored, actorPtr(actorID), nil,
