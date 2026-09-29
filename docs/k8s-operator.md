@@ -22,8 +22,20 @@ For each `KeyorixSecret`, the controller reads the machine-identity token from t
 referenced Secret, fetches each value through the by-reference read endpoint
 (`GET /api/v1/secrets/value?ref=…`, ADR-059), and creates/updates the target Secret —
 **owned by the `KeyorixSecret`**, so deleting the CR garbage-collects the Secret. It then
-sets a `Ready` condition and requeues after `refreshInterval`. A fetch failure never
-writes a partial Secret; it records `Ready=False`/`SyncError` and backs off.
+sets a `Ready` condition and requeues after `refreshInterval`.
+
+A fetch failure is handled differently depending on what it means:
+
+- **Transient failure** (network error, timeout, 5xx from Keyorix): the target Secret is
+  left completely untouched — no partial write, no wipe. `Ready` goes `False` with
+  reason `SyncError` and the cause in the message; the controller backs off and retries.
+- **Affirmatively gone or revoked** (Keyorix returns 404/403 — the referenced secret no
+  longer exists or is no longer accessible — or 401, which in practice means the
+  machine-identity token was revoked or rotated): the target Secret is **wiped** (`Ready`
+  goes `False` with reason `UpstreamSecretGone` or `UpstreamAccessRevoked`
+  respectively), not just left stale. This is deliberate — leaving a previously-synced
+  plaintext value sitting in the cluster indefinitely after access was deliberately cut
+  would be a worse outcome than a workload losing the Secret it depends on.
 
 ## Install
 
@@ -32,9 +44,19 @@ RBAC:
 
 ```sh
 helm install keyorix-operator deploy/helm/keyorix-operator \
-  -n keyorix-system --create-namespace
+  -n keyorix-system --create-namespace \
+  --set allowedServers[0]=https://keyorix.internal
 kubectl -n keyorix-system rollout status deploy/keyorix-operator-keyorix-operator
 ```
+
+**`allowedServers` is required to sync anything.** It's the confused-deputy control: a
+`KeyorixSecret`'s `spec.server` must match one of these trusted base URLs, or the
+reconciler rejects the CR outright (fail closed) — without it, the controller starts
+fine (`helm install` succeeds, the pod goes `Ready`) but every `KeyorixSecret` fails
+with `Ready=False`/`SyncError` and a "server not in allowedServers" message, which is
+easy to miss since nothing about the install itself looks broken. Set it to every
+Keyorix base URL (`https://host`, no path) a `KeyorixSecret` in this cluster is allowed
+to point at.
 
 For HA, run multiple replicas with leader election (only one is active):
 
@@ -167,8 +189,10 @@ Deleting the `KeyorixSecret` removes the `db-creds` Secret it created (owner ref
 
 ## Status & observability
 
-- `status.conditions[Ready]` — `True` when the target Secret is up to date; `False` with
-  reason `SyncError` and the cause in the message on failure.
+- `status.conditions[Ready]` — `True` when the target Secret is up to date; `False` on
+  failure, with the cause in the message and one of three reasons: `SyncError`
+  (transient — target Secret untouched), `UpstreamSecretGone`, or
+  `UpstreamAccessRevoked` (both wipe the target Secret — see "How it works" above).
 - `status.lastSyncTime`, `status.syncedHash`, `status.observedGeneration`.
 - The manager serves Prometheus metrics on `:8080/metrics` and health probes on
   `:8081/healthz`,`/readyz` (the chart wires both).
