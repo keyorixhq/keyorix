@@ -200,13 +200,40 @@ func (s *RESTSink) Apply(ctx context.Context, namespace, name string, data map[s
 	return s.applyOwnedSecret(ctx, namespace, name, payload)
 }
 
-// createSecret POSTs a brand-new Secret to the namespace's collection endpoint. A 409
-// here means something raced into existence at this name since Apply's ownership
-// check — the create is left to fail rather than falling back to an unconditional
-// overwrite, so the race can never result in silently claiming a Secret this agent
-// never observed as its own.
+// createSecret POSTs a brand-new, EMPTY-data Secret to the namespace's collection
+// endpoint (see below for why data is withheld here), then immediately Server-Side
+// Applies the real data onto it. A 409 on the POST means something raced into
+// existence at this name since Apply's ownership check — the create is left to fail
+// rather than falling back to an unconditional overwrite, so the race can never
+// result in silently claiming a Secret this agent never observed as its own.
+//
+// The POST carries no `data` so that the resulting phantom field manager (a plain POST
+// is not a Server-Side Apply request, so the API server attributes every field it
+// creates to a synthetic manager derived from this client's unset User-Agent, not
+// fieldManager "keyorix-sync") never claims ownership of any individual key. This
+// matters because of a real, confirmed-live SSA subtlety: applying a field to the
+// SAME value it already has is not a conflict, so force=true does not transfer sole
+// ownership away from a prior claimant the way it does for a field whose value
+// actually differs — the two managers end up CO-owning it instead, and a field with
+// any remaining co-owner is never pruned no matter how many later applies drop it from
+// keyorix-sync's own intent. An earlier version of this fix had createSecret POST the
+// full payload (including data) and then immediately re-apply the identical payload —
+// which looked correct (keyorix-sync's own managedFields entry did list every key) but
+// did NOT actually fix pruning for any key whose value never changed after creation,
+// confirmed live: removing that key's mapping left it in the target Secret forever
+// regardless of how many subsequent passes ran. Withholding data from the POST means
+// the phantom manager never claims any data key in the first place, so the follow-up
+// SSA apply is always the FIRST and ONLY claimant of every key from creation onward —
+// no co-ownership possible, no special-casing needed for the "value never changed"
+// case.
 func (s *RESTSink) createSecret(ctx context.Context, namespace, name string, payload map[string]interface{}) error {
-	raw, err := json.Marshal(payload)
+	emptyDataPayload := make(map[string]interface{}, len(payload))
+	for k, v := range payload {
+		emptyDataPayload[k] = v
+	}
+	emptyDataPayload["data"] = map[string]string{}
+
+	raw, err := json.Marshal(emptyDataPayload)
 	if err != nil {
 		return fmt.Errorf("marshal secret %s/%s: %w", namespace, name, err)
 	}
@@ -223,7 +250,7 @@ func (s *RESTSink) createSecret(ctx context.Context, namespace, name string, pay
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("create secret %s/%s: HTTP %d", namespace, name, resp.StatusCode)
 	}
-	return nil
+	return s.applyOwnedSecret(ctx, namespace, name, payload)
 }
 
 // applyOwnedSecret Server-Side-Applies payload (which must already carry

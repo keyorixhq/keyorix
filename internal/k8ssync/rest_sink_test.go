@@ -51,8 +51,8 @@ func TestRESTSink_GetDecodesData(t *testing.T) {
 // write fails the POST outright (see TestRESTSink_ApplyCreateRace_Bug4) instead of
 // silently claiming/overwriting whatever is there.
 func TestRESTSink_ApplyCreatesNewSecretViaPOST(t *testing.T) {
-	var gotMethod, gotPath, gotCT string
-	var gotBody map[string]interface{}
+	var methods, paths, cts []string
+	var postBody, patchBody map[string]interface{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			// The pre-write ownership check (#139): no pre-existing Secret at this
@@ -60,11 +60,15 @@ func TestRESTSink_ApplyCreatesNewSecretViaPOST(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		gotMethod = r.Method
-		gotPath = r.URL.Path
-		gotCT = r.Header.Get("Content-Type")
+		methods = append(methods, r.Method)
+		paths = append(paths, r.URL.Path)
+		cts = append(cts, r.Header.Get("Content-Type"))
 		b, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(b, &gotBody)
+		if r.Method == http.MethodPost {
+			_ = json.Unmarshal(b, &postBody)
+		} else {
+			_ = json.Unmarshal(b, &patchBody)
+		}
 		_, _ = w.Write([]byte(`{"kind":"Secret"}`))
 	}))
 	defer srv.Close()
@@ -72,21 +76,72 @@ func TestRESTSink_ApplyCreatesNewSecretViaPOST(t *testing.T) {
 	err := testSink(srv).Apply(context.Background(), "app", "creds", map[string][]byte{"DB": []byte("p4ss")})
 	require.NoError(t, err)
 
-	assert.Equal(t, http.MethodPost, gotMethod, "a fresh create must be an atomic POST, not an unconditional force=true PATCH")
-	assert.Equal(t, "/api/v1/namespaces/app/secrets", gotPath, "POST targets the namespace's collection endpoint, not a specific object path")
-	assert.Equal(t, "application/json", gotCT)
-	assert.Equal(t, "Secret", gotBody["kind"])
-	// Value is base64-encoded in the Secret's data map.
-	data := gotBody["data"].(map[string]interface{})
-	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte("p4ss")), data["DB"])
+	require.Equal(t, []string{http.MethodPost, http.MethodPatch}, methods,
+		"a fresh create is an atomic POST (race-safe, #Bug4) immediately followed by a genuine SSA apply "+
+			"of the same object, so the created fields are actually owned by keyorix-sync and stay prunable later")
+	assert.Equal(t, "/api/v1/namespaces/app/secrets", paths[0], "POST targets the namespace's collection endpoint, not a specific object path")
+	assert.Equal(t, "application/json", cts[0])
+	assert.Equal(t, "Secret", postBody["kind"])
+	// The create POST deliberately withholds data (see createSecret's doc comment): if
+	// it carried the real values, the resulting synthetic field manager would
+	// co-own each key forever (SSA doesn't transfer sole ownership on a same-value
+	// apply), permanently breaking pruning for any key whose value never changes
+	// after creation. The follow-up PATCH below is the only place DB's real value
+	// appears.
+	postData := postBody["data"].(map[string]interface{})
+	assert.Empty(t, postData, "the create POST must not carry any data key, so the phantom field manager it registers never claims one")
 	// The Secret is stamped with the managed-by label so cleanup can find it.
-	meta := gotBody["metadata"].(map[string]interface{})
+	meta := postBody["metadata"].(map[string]interface{})
 	labels := meta["labels"].(map[string]interface{})
 	assert.Equal(t, "keyorix-sync", labels["app.kubernetes.io/managed-by"])
 	// A fresh create must never carry a resourceVersion precondition — there is
 	// nothing to pin yet.
 	_, hasRV := meta["resourceVersion"]
 	assert.False(t, hasRV, "a create must not set resourceVersion")
+
+	// The follow-up PATCH is a real SSA apply: same object path, apply-patch+yaml,
+	// force=true, and fieldManager=keyorix-sync — this is what actually registers
+	// keyorix-sync (not a synthetic client-derived manager) as the field owner.
+	assert.Equal(t, "/api/v1/namespaces/app/secrets/creds", paths[1])
+	assert.Equal(t, "application/apply-patch+yaml", cts[1])
+	assert.Equal(t, "Secret", patchBody["kind"])
+	patchData := patchBody["data"].(map[string]interface{})
+	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte("p4ss")), patchData["DB"])
+}
+
+// TestRESTSink_ApplyCreateThenPruneOwnsInitialFields is the regression test for the
+// defect this fix closes: previously, a key present at CREATE time was owned by a
+// synthetic field manager (not keyorix-sync) that never released it, so removing that
+// key from the agent's mappings could never prune it from the target Secret even
+// though keyorix-sync's own SSA apply correctly stopped listing it in its intent —
+// confirmed live on a real cluster (Session J, 2026-09-28): a key created on the first
+// pass survived every subsequent apply that dropped it from the mapping set, while a
+// key added on a LATER pass (already owned by keyorix-sync from the start) pruned
+// correctly. This test can only assert the REQUEST SHAPE createSecret now sends (a
+// real API server's actual field-ownership bookkeeping is out of this package's
+// control) — that the create path issues a genuine SSA apply-patch immediately after
+// the atomic POST, not just the atomic POST alone.
+func TestRESTSink_ApplyCreateThenPruneOwnsInitialFields(t *testing.T) {
+	var sawApplyPatchOnCreate bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet:
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"kind":"Secret"}`))
+		case r.Method == http.MethodPatch && r.Header.Get("Content-Type") == "application/apply-patch+yaml":
+			sawApplyPatchOnCreate = true
+			assert.Equal(t, "true", r.URL.Query().Get("force"))
+			assert.Equal(t, "keyorix-sync", r.URL.Query().Get("fieldManager"))
+			_, _ = w.Write([]byte(`{"kind":"Secret"}`))
+		}
+	}))
+	defer srv.Close()
+
+	err := testSink(srv).Apply(context.Background(), "app", "creds", map[string][]byte{"A": []byte("1"), "B": []byte("2")})
+	require.NoError(t, err)
+	assert.True(t, sawApplyPatchOnCreate,
+		"createSecret must SSA-apply the newly-created object so keyorix-sync (not a synthetic manager) owns every key from the start, keeping them prunable when later removed from the mapping set")
 }
 
 // TestRESTSink_ApplyCreateRace_Bug4 proves the fix for Bug4: a namespace-scoped
