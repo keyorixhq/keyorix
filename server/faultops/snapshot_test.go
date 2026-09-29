@@ -60,18 +60,43 @@ var excludedFields = map[string]string{
 // field whose name ends in Hash/Enc, or that holds WebAuthn credential material
 // (2026-09-21) — not guessed; extend this list the same way if a new one
 // appears, per CLAUDE.md's "state which call forms the enumeration recognizes."
+//
+// A second idiom, added 2026-09-29: a field ending in Meta that pairs with an
+// already-listed Enc field. internal/encryption.Service.EncryptSecretWithAAD
+// (and internal/core's three callers of it via encryptAuthSecret — mfa.go's
+// BeginMFAEnrollment, dynamic_secrets.go's RegisterConfig and IssueLease)
+// returns this metadata as json.Marshal of a struct embedding BOTH a fresh
+// random nonce and a real encrypted_at wall-clock timestamp — inside a []byte/
+// JSON blob, so neither the structural time.Time exclusion above (wrong Go
+// type) nor the sibling Enc field's own presence-only entry (different field)
+// catches it. The original grep for Hash/Enc-suffixed fields never looked for
+// this shape, so every Meta sibling of an already-listed Enc field was missed.
+// Found live: FuzzStorageFaultOperations op="REST POST /api/v1/auth/mfa/activate"
+// fault=LogAuditEvent#1/error reported oracle (a) VIOLATION with differing
+// tables [MFASecret AuditEvent] — MFASecret's ONLY difference between the
+// fault-free reference world and the faulted world was SecretMeta's embedded
+// nonce+timestamp (confirmed by dumping both rows; AuditEvent's difference was
+// the expected missing audit row, already covered by onlyOutcomeLogTables).
+// AdminDSNMeta and CredentialMeta share the exact same encryptAuthSecret call
+// path and JSON shape (confirmed by reading their assignment sites,
+// dynamic_secrets.go:417,740) and so share the same false-positive risk, even
+// though no fuzz input has hit the specific (op, method, kind) combination
+// that would currently surface it for them.
 var presenceOnlyFields = map[string]string{
 	"PasswordHash":   "bcrypt includes a random salt per hash",
 	"TokenHash":      "the raw token is randomly generated before hashing",
 	"CodeHash":       "the raw MFA recovery code is randomly generated before hashing",
-	"TokenPrefix":    "leading characters of the same randomly generated raw token TokenHash hashes (PAT and machine credentials, models.go) -- two independently bootstrapped worlds never mint the same token, so never the same prefix; found by FuzzStorageFaultOperations (REST DELETE machine token, GetUser#1 error) on PR #2195's CI",
 	"SecretEnc":      "AEAD ciphertext includes a random nonce",
 	"AdminDSNEnc":    "AEAD ciphertext includes a random nonce",
 	"CredentialEnc":  "AEAD ciphertext includes a random nonce",
+	"SecretMeta":     "encryptAuthSecret's returned metadata JSON embeds a fresh random nonce and a real encrypted_at timestamp — see this map's own doc comment for the confirmed live finding",
+	"AdminDSNMeta":   "same encryptAuthSecret metadata shape as SecretMeta — see this map's own doc comment",
+	"CredentialMeta": "same encryptAuthSecret metadata shape as SecretMeta — see this map's own doc comment",
 	"CredentialID":   "authenticator-generated WebAuthn credential identifier",
 	"CredentialBlob": "authenticator-generated WebAuthn public key material",
 	"SessionToken":   "SHA-256 hash of a randomly generated per-login session token (models.go:1217) — two independent bootstrap logins (reference world vs fault world) never produce the same raw token, so never the same hash",
 	"FamilyID":       "randomly generated per-login refresh-token family identifier (models.go:1243) — same reasoning as SessionToken; found via this file's own Session-row debug dump when the structural timestamp fix alone didn't make two independently-bootstrapped worlds' Session tables match",
+	"TokenPrefix":    "leading characters of the same randomly generated raw token TokenHash hashes (PAT and machine credentials, models.go) -- two independently bootstrapped worlds never mint the same token, so never the same prefix; found by FuzzStorageFaultOperations (REST DELETE machine token, GetUser#1 error) on PR #2195's CI",
 }
 
 // tableSnapshot is one table's canonical dump: Hash over every row's
