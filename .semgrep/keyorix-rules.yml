@@ -296,6 +296,7 @@ rules:
         - web/src/utils/index.ts
         - "**/*.test.ts"
         - "**/*.test.tsx"
+        - "**/__tests__/**"
 
   - id: keyorix-archive-entry-path-unchecked
     languages: [go]
@@ -324,7 +325,7 @@ rules:
     metadata:
       category: security
       references:
-        - internal/backupfmt/reader.go ExtractArchive/stageFile (fixed, #2270, h3/backup-v2-restore, still merging as of this rule)
+        - internal/backupfmt/reader.go ExtractArchive/stageFile (fixed, #2270, merged 2026-09-29)
     patterns:
       - pattern-either:
           - pattern: filepath.Join(..., $X.Name, ...)
