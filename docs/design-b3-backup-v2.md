@@ -144,42 +144,85 @@ computed over exactly these bytes, in this order).
 
 ### 3.4 Restore ordering and referential integrity
 
-**Decision (Andrei): FK-dependency order derived from the model registry,
-loaded inside a single transaction per backend, with deferred constraints as
-defense in depth on Postgres — and constraint checking is never disabled.**
+**Correction (2026-09-28, confirmed against the live schema during H1):** the
+mechanism originally specified below — deriving order from GORM's own
+relationship metadata, with real FK constraints deferred as defense in depth
+— assumed this schema has both. Verified directly: zero `gorm:"foreignKey"`
+tags exist anywhere in `internal/storage/models`, so
+`*gorm.Statement.Schema.Relationships` is empty for every model, and zero
+`FOREIGN KEY`/`REFERENCES` constraints exist anywhere in `factory.go`'s
+migrations (the only 4 occurrences of either term in that file are in
+comments). Neither premise holds. This section now describes the mechanism
+actually implemented instead — decided with Andrei the same day this was
+found.
 
-- **Primary mechanism, both backends: a derived topological order.** The
-  physical write order of table sections in the archive *is* the load order
-  restore replays — no separate ordering table to keep in sync with §3.2's
-  table list. Compute it from GORM's own relationship metadata
-  (`*gorm.Statement.Schema.Relationships`) at backup time, the same "derive,
-  don't hand-maintain" discipline as §3.2. A few concrete constraints this
-  ordering must satisfy, confirmed from the model inventory: `Project` before
-  `Environment`/`ProjectMembership`/`ConnectorProjectBinding`; `User`/`Role`/
-  `Group` before their join tables (`UserRole`, `GroupRole`, `UserGroup`);
-  `SecretNode` before `SecretVersion`/`SecretACL`/`SecretDependency`/tags;
-  `MachineIdentity` before its credentials/roles/OIDC bindings; `AuditEvent`
-  in strict ascending-`id` order, with `AuditCheckpoint` after the range of
-  events it certifies (a sequencing constraint, not just a foreign key). A CI
-  test asserts the derived order is a valid topological sort of the live
-  model graph — same "derive and check" discipline as §3.2, not a second
-  hand-maintained list to drift from the first.
-- **Defense in depth, Postgres: `SET CONSTRAINTS ALL DEFERRED`** for the
-  restore transaction — if the derived order above ever has a bug, a
-  same-transaction FK violation is still caught at commit rather than
-  silently accepted. SQLite's equivalent, `PRAGMA defer_foreign_keys=1`,
-  defers *within one transaction* to statement-end; enable it too, for the
-  same reason.
+**Decision: FK-dependency order derived from each model's `XxxID`-shaped
+field names by naming convention, loaded inside a single transaction per
+backend, with a mandatory application-level dangling-reference check
+replacing the deferred-constraint defense-in-depth that would otherwise have
+come from the database.**
+
+- **Primary mechanism, both backends: a derived topological order.**
+  `internal/backupfmt.RestoreOrder()` walks every model in `storage.
+  AllModels()`'s registry order (§3.2), finds every field shaped like a row
+  reference (an unsigned integer, or pointer to one, whose name ends in
+  `ID`, excluding the primary key field itself), and resolves each to its
+  referenced model by suffix-matching the field name against every real
+  model type name. A small, explicit, CI-verified exception list handles the
+  rest: `referenceOverrides` for fields whose name doesn't match their table
+  (`CreatedBy` → `User`, `SecretID` → `SecretNode`, `HeadID` on
+  `AuditCheckpoint` → `AuditEvent`, ...), `notReferences` for ID-shaped
+  fields that are genuinely polymorphic and have their own type-discriminator
+  field (`AccessReviewItem.PrincipalID`, `ShareRecord.RecipientID` — neither
+  participates in ordering or the dangling-reference check below), and
+  `selfReferences` for a field that references its own model's table
+  (`SecretNode.ParentID` — not a cycle, ordered within that table's own
+  section, never a cross-table edge). Three CI tests keep this self-checking
+  the same way §3.2's own list is: every ID-shaped field on every live model
+  must classify via the convention or one of the three exception lists (a
+  new model or field can never silently fall out of ordering); every
+  exception-list entry must still name a real (model, field) pair (no stale
+  entries); the derived order must be a valid topological sort of every
+  derived edge.
+- **No deferred-constraint defense in depth exists at the database level,
+  because no FK constraints exist to defer.** In its place: restore, inside
+  the same transaction that loads the data (§3.4 below is unchanged on this
+  point — one transaction, no partial restore), checks after loading each
+  table that every non-zero `XxxID`-shaped value it just inserted has a
+  matching row in the referenced table — for every edge `RestoreOrder()`
+  derived, not a sample. Any dangling reference refuses the whole restore
+  (rolls back the transaction) and reports the table, column, row id, and the
+  missing target id. **There is no flag to skip this check.** This is the
+  mechanism that does the job deferred FK constraints would have done on a
+  schema that had them — restore is still referentially checked throughout,
+  the failure mode is just detected in application code instead of by the
+  database.
+- `admin backup` runs the identical check read-only against the *source*
+  database and records any dangling reference it finds as a warning in the
+  manifest (never a refusal — a pre-existing orphan in a live database is a
+  fact about that database, not something `admin backup` should block on),
+  so an operator learns about it before they ever need to restore, not only
+  when a restore refuses.
 - **Never disable constraint checking to make loading easier.** No
-  `session_replication_role = replica`, no dropping and recreating foreign
-  keys, no equivalent shortcut on either backend. The derived order plus
-  deferred (not disabled) constraints means restore is FK-checked throughout
-  — a referential-integrity bug in the exporter is a load-time failure, not
-  a silently-accepted corrupt restore.
+  `session_replication_role = replica`, no equivalent shortcut on either
+  backend — moot now that there is nothing to disable, but the principle
+  (restore is referentially checked throughout, by construction, not
+  bypassed for convenience) still holds and is enforced by the mandatory
+  check above.
 
 Either way, restore runs as one transaction per backend connection — partial
 restore on failure is not an acceptable state (same principle v1 already
 applies with `refuseNonEmptyExisting` and archive-clean error handling).
+
+**Out of scope for this design:** adding real `gorm:"foreignKey"` associations
+and database-level FK constraints to this schema was considered and
+explicitly rejected for Session H — it would touch every model file, and
+retrofitting real constraints onto an existing Postgres install fails outright
+on any row that is already orphaned (a real possibility this design's own
+dangling-reference check now surfaces for the first time). Tracked as a
+separate, standalone proposal if the schema is ever meant to gain real FK
+constraints — that decision needs its own orphan-row migration plan and does
+not belong in a backup/restore feature.
 
 ### 3.5 Schema-delta refusal and the additive-only migration rule
 
@@ -829,7 +872,7 @@ section for detail and rationale.
 | 2 | Notary anchoring stays optional, off by default; reused via `--anchor` when configured. | §6.4, §6.5 |
 | 3 | `admin restore` accepts v1-physical-format archives until Keyorix 1.0, then drops that reader; new backups always write v2 (logical) once v2 ships. | §3.6 |
 | 4 | `REPEATABLE READ` is the default consistency mechanism for Postgres backup; `--exclusive` is an explicit opt-in. | §4 |
-| 5 | Restore ordering: FK-dependency order derived from the model registry, single transaction, deferred (never disabled) constraints on Postgres. | §3.4 |
+| 5 | Restore ordering: FK-dependency order derived from each model's ID-shaped field names by convention (small CI-verified exception list for the rest), single transaction, mandatory post-load dangling-reference check (no skip flag) in place of deferred constraints, since this schema has no real FK constraints to defer. Corrected 2026-09-28. | §3.4 |
 | 6 | No `--format=physical` escape hatch — logical format only, once v2 ships. | §3.6 |
 | 7 | Anti-rollback fails closed by default (witness or anchor mismatch); override only via `--allow-rollback`, which writes an audit event. | §6.2 |
 | 8 | Preflight free-space check on both commands, refusing up front rather than failing mid-run. | §7.4 |
