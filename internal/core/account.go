@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"runtime/debug"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -157,15 +158,42 @@ func (c *KeyorixCore) evictUserSessionCache(ctx context.Context, userID uint) {
 	c.invalidateTokenCache(hashes...)
 }
 
+// EventSessionRevocationPanicked audits a panic recovered inside
+// deleteSessionsForUserAndEvict. Every one of this function's 8 call sites
+// (account.go, mfa.go x2, scim.go, setup_consume.go x2, webauthn.go x2)
+// discards the returned error (`_ = c.deleteSessionsForUserAndEvict(...)`)
+// because the primary operation (password change, MFA activate/disable, SCIM
+// deprovision, setup-token consume, WebAuthn registration) has ALREADY
+// committed by the time this runs -- the same "best-effort helper, primary
+// effect already succeeded" shape evictUserSessionCache above and
+// revokeProjectDynamicSecretLeases (catalog.go, #2325) already recover from.
+// A panic here is security-relevant in a way a returned error is not: some of
+// the user's sessions may be left un-revoked with no signal anywhere else
+// that this happened, so it is both logged loudly and audited under the
+// affected user's ID, not just swallowed.
+const EventSessionRevocationPanicked = "auth.session_revocation_panicked" // #nosec G101 -- audit event type, not a credential
+
 // deleteSessionsForUserAndEvict deletes all of the user's sessions except keepID and
 // evicts the deleted sessions from the HTTP auth cache, so a revoked session stops
 // authenticating on the very NEXT request rather than lingering for the positive-cache
 // TTL. The stored session_token IS the SHA-256 cache key. keepHash (the kept session's
 // stored hash, or "") is never evicted, so the caller's own session is not disturbed.
 // Best-effort: the session deletion is the durable control; eviction is the immediacy.
-func (c *KeyorixCore) deleteSessionsForUserAndEvict(ctx context.Context, userID, keepID uint, keepHash string) error {
+//
+// A panic anywhere in this function (listing hashes, the delete itself, or the
+// cache-eviction loop) is recovered rather than left to propagate: see
+// EventSessionRevocationPanicked's doc comment for why every call site needs this.
+func (c *KeyorixCore) deleteSessionsForUserAndEvict(ctx context.Context, userID, keepID uint, keepHash string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.writeAuditEventFull(ctx, EventSessionRevocationPanicked, &userID, nil, nil, "",
+				fmt.Sprintf("panic revoking sessions for user %d: %v — sessions may not have been fully revoked, review manually", userID, r))
+			log.Printf("SECURITY: deleteSessionsForUserAndEvict panicked for user %d (best-effort, primary operation already succeeded): %v\n%s", userID, r, debug.Stack())
+			err = nil
+		}
+	}()
 	hashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, userID)
-	err := c.storage.DeleteSessionsForUserExcept(ctx, userID, keepID)
+	err = c.storage.DeleteSessionsForUserExcept(ctx, userID, keepID)
 	for _, h := range hashes {
 		if h != "" && h != keepHash {
 			c.invalidateTokenCache(h)
