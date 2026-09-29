@@ -240,6 +240,7 @@ echo "==> admin backup (--network none)"
 $ENGINE run --rm --network none --workdir /app/data \
     -v "$SRC_DIR:/app/data" \
     -e KEYORIX_CONFIG_PATH=/app/data/keyorix.yaml \
+    -e KEYORIX_MASTER_PASSWORD="$MASTER_PW" \
     --entrypoint /app/keyorix-server \
     "$IMAGE" admin --config /app/data/keyorix.yaml backup --output /app/data/backup.tar.gz \
     || fail "admin backup failed"
@@ -267,6 +268,7 @@ cp "$WORK_DIR/backup.tar.gz" "$DST_DIR/backup.tar.gz"
 $ENGINE run --rm --network none --workdir /app/data \
     -v "$DST_DIR:/app/data" \
     -e KEYORIX_CONFIG_PATH=/app/data/keyorix.yaml \
+    -e KEYORIX_MASTER_PASSWORD="$MASTER_PW" \
     --entrypoint /app/keyorix-server \
     "$IMAGE" admin --config /app/data/keyorix.yaml restore --input /app/data/backup.tar.gz \
     || fail "admin restore (positive leg) failed"
@@ -359,6 +361,7 @@ set +e
 $ENGINE run --rm --network none --workdir /app/data \
     -v "$NEG_DIR:/app/data" \
     -e KEYORIX_CONFIG_PATH=/app/data/keyorix.yaml \
+    -e KEYORIX_MASTER_PASSWORD="$MASTER_PW" \
     --entrypoint /app/keyorix-server \
     "$IMAGE" admin --config /app/data/keyorix.yaml restore --input /app/data/backup.tar.gz
 NEG_STATUS=$?
