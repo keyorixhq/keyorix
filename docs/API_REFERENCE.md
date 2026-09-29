@@ -10,6 +10,12 @@ Complete API documentation for the Keyorix secret management system.
 - **Response Format**: JSON
 - **OpenAPI Spec**: Available at `/openapi.yaml`
 
+> **Response envelope:** every success response below is actually wrapped as
+> `{"success": true, "data": <shown-body>, "message": "..."}` — the JSON bodies
+> shown in this document are the `data` field's contents, not the literal
+> top-level response. Errors are `{"success": false, "error": "...", "message": "...", "code": <http-status>}`,
+> not the nested `error.code`/`error.details` shape shown further below.
+
 ## 🌐 **Base Endpoints**
 
 ### Health Check
@@ -17,27 +23,15 @@ Complete API documentation for the Keyorix secret management system.
 GET /health
 ```
 
-**Response:**
+**Response:** a liveness signal only — it does NOT check the database or other
+dependencies (unauthenticated, and deliberately omits version/build info to avoid
+aiding CVE targeting; get the version from the `system.read`-gated
+`/api/v1/system/info` instead).
 ```json
 {
   "status": "healthy",
   "timestamp": "2025-10-08T14:17:46.801479Z",
-  "uptime": "5m0.000001541s",
-  "version": "1.0.0",
-  "checks": {
-    "database": {
-      "status": "healthy",
-      "latency": "2ms"
-    },
-    "encryption": {
-      "status": "healthy",
-      "provider": "AES-256-GCM"
-    },
-    "storage": {
-      "status": "healthy",
-      "free_space": "85%"
-    }
-  }
+  "uptime": "5m0.000001541s"
 }
 ```
 
@@ -57,10 +51,11 @@ Authorization: Bearer <token>
 ```
 
 **Query Parameters:**
-- `limit` (int): Number of secrets to return (default: 50)
-- `offset` (int): Number of secrets to skip (default: 0)
-- `project_id` (int): Project ID filter (default: 1)
-- `environment` (int): Environment ID filter (default: 1)
+- `page` (int): Page number, 1-based (default: 1)
+- `page_size` (int): Number of secrets per page, max 100 (default: 20)
+- `project_id` (int): Project ID filter
+- `environment_id` (int): Environment ID filter (a bare `environment` name filter
+  is not supported and returns 400 — use the numeric ID, together with `project_id`)
 
 **Response:**
 ```json
@@ -80,8 +75,8 @@ Authorization: Bearer <token>
     }
   ],
   "total": 14,
-  "limit": 50,
-  "offset": 0
+  "page": 1,
+  "page_size": 20
 }
 ```
 
@@ -127,7 +122,7 @@ Authorization: Bearer <token>
 ```
 
 **Query Parameters:**
-- `show_value` (bool): Include decrypted value in response (default: false)
+- `include_value` (bool): Include decrypted value in response (default: false)
 
 **Response:**
 ```json
@@ -167,27 +162,20 @@ DELETE /api/v1/secrets/{id}
 Authorization: Bearer <token>
 ```
 
-**Response:**
-```json
-{
-  "message": "Secret deleted successfully",
-  "id": 1
-}
-```
+**Response:** `204 No Content` (empty body)
 
 ## 🤝 **Secret Sharing API**
 
 ### Create Share
 ```http
-POST /api/v1/shares
+POST /api/v1/secrets/{id}/share
 Authorization: Bearer <token>
 Content-Type: application/json
 ```
 
-**Request Body:**
+**Request Body:** (the secret is identified by `{id}` in the path, not a body field)
 ```json
 {
-  "secret_id": 1,
   "recipient_id": 2,
   "permission": "read",
   "is_group": false,
@@ -247,9 +235,14 @@ Content-Type: application/json
 {
   "username": "newuser",
   "email": "user@example.com",
+  "display_name": "New User",
+  "password": "a-strong-password",
   "role": "user"
 }
 ```
+`display_name` is required. `password` is optional if `deliver_setup_link` or
+`generate_one_time_password` is set instead (the user then sets/receives their
+own initial password rather than the admin choosing one).
 
 ## 🔧 **System API**
 
@@ -294,7 +287,7 @@ Authorization: Bearer <token>
 
 ### Login
 ```http
-POST /api/v1/auth/login
+POST /auth/login
 Content-Type: application/json
 ```
 
@@ -321,43 +314,40 @@ Content-Type: application/json
 
 ### Refresh Token
 ```http
-POST /api/v1/auth/refresh
+POST /auth/refresh
 Authorization: Bearer <token>
 ```
 
 ### Logout
 ```http
-POST /api/v1/auth/logout
+POST /auth/logout
 Authorization: Bearer <token>
 ```
 
 ## 📝 **Error Responses**
 
-All API endpoints return consistent error responses:
+All API endpoints return consistent error responses (see the response-envelope
+note near the top of this document):
 
 ```json
 {
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "Secret name is required",
-    "details": {
-      "field": "name",
-      "value": "",
-      "constraint": "required"
-    }
-  },
-  "timestamp": "2025-10-08T16:30:00Z",
-  "path": "/api/v1/secrets"
+  "success": false,
+  "error": "ValidationError",
+  "message": "Secret name is required",
+  "code": 400,
+  "details": { "field": "name" }
 }
 ```
 
-### Common Error Codes
-- `VALIDATION_ERROR` - Invalid request data
-- `AUTHENTICATION_REQUIRED` - Missing or invalid token
-- `PERMISSION_DENIED` - Insufficient permissions
-- `RESOURCE_NOT_FOUND` - Requested resource doesn't exist
-- `RESOURCE_ALREADY_EXISTS` - Resource with same identifier exists
-- `INTERNAL_ERROR` - Server-side error
+`details` is only present when the handler supplies it (often omitted).
+
+### Common `error` values
+- `ValidationError` - Invalid request data
+- `Unauthorized` - Missing or invalid token
+- `Forbidden` - Insufficient permissions
+- `NotFound` - Requested resource doesn't exist
+- `ConflictError` - Resource with same identifier exists
+- `InternalError` - Server-side error
 
 ## 🌍 **Multi-Language Support**
 
