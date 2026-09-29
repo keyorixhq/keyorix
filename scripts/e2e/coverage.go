@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/scripts/e2e/harness"
 )
 
 // routeEntry mirrors server/http/route_inventory_test.go's routeInventoryEntry
@@ -29,7 +31,7 @@ func (e routeEntry) key() string { return e.Method + " " + e.Pattern }
 // loadRoutes reads scripts/e2e/routes.json (I1's generated inventory).
 func loadRoutes(t *testing.T) []routeEntry {
 	t.Helper()
-	root := repoRoot(t)
+	root := harness.RepoRoot(t)
 	path := filepath.Join(root, "scripts", "e2e", "routes.json")
 	raw, err := os.ReadFile(path) // #nosec G304 -- fixed repo-internal path
 	if err != nil {
@@ -131,11 +133,11 @@ var skipList = map[string]string{
 	// tests a "feature" here (no DB table backs them), and /metrics HANDLE
 	// registers Prometheus's own internal mux, not a chi leaf route this
 	// client can probe the same way. /health and /readyz ARE exercised
-	// directly by the harness's own boot-polling (harness.go), just not
-	// through client.call, so they're listed here rather than left unhit.
-	"GET /health":         "polled directly by harness.go's boot sequence, not through client.call",
+	// directly by the harness's own boot-polling (scripts/e2e/harness), just
+	// not through client.call, so they're listed here rather than left unhit.
+	"GET /health":         "polled directly by scripts/e2e/harness's boot sequence, not through client.call",
 	"GET /readyz":         "readiness probe, same nature as /health; not a feature route",
-	"POST /system/init":   "the bootstrap call itself, made directly by harness.go's startServer before any client exists -- this route IS exercised, just not through client.call's coverage bookkeeping",
+	"POST /system/init":   "the bootstrap call itself, made directly by harness.StartServer before any client exists -- this route IS exercised, just not through client.call's coverage bookkeeping",
 	"HANDLE /metrics":     "Prometheus's own internal mux mounted at this path, not a chi leaf route",
 	"GET /openapi.yaml":   "static generated document, no feature/DB path to exercise",
 	"MOUNT /swagger/":     "static Swagger UI asset mount, no feature/DB path to exercise",

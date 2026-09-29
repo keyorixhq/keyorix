@@ -21,6 +21,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/keyorixhq/keyorix/scripts/e2e/harness"
 )
 
 // upgradeFromReleaseTag is the release this test upgrades FROM. Deliberately
@@ -97,9 +99,9 @@ func TestAPISmoke_UpgradePath(t *testing.T) {
 		fromTag = defaultUpgradeFromReleaseTag
 	}
 	oldBinary := downloadReleaseBinary(t, fromTag)
-	newBinary, cliBin := buildBinaries(t)
+	newBinary, cliBin := harness.BuildBinaries(t)
 
-	backend := dbBackend{name: "sqlite-upgrade-from-" + fromTag}
+	backend := harness.DBBackend{Name: "sqlite-upgrade-from-" + fromTag}
 	dir := t.TempDir()
 	env := []string{
 		"HOME=" + dir,
@@ -110,7 +112,7 @@ func TestAPISmoke_UpgradePath(t *testing.T) {
 
 	runAdmin := func(binary string, args ...string) {
 		t.Helper()
-		out, err := runAdminCmd(binary, dir, env, args...)
+		out, err := harness.RunAdminCmd(binary, dir, env, args...)
 		if err != nil {
 			t.Fatalf("%s admin %v: %v\n%s", filepath.Base(binary), args, err, out)
 		}
@@ -121,16 +123,16 @@ func TestAPISmoke_UpgradePath(t *testing.T) {
 	runAdmin(oldBinary, "encryption", "init", "--config", configPath)
 	runAdmin(oldBinary, "migrate", "--config", configPath)
 
-	port := freeTCPPort(t)
-	rewritePort(t, dir, port)
+	port := harness.FreeTCPPort(t)
+	harness.RewritePort(t, dir, port)
 
 	const bootstrapToken = "e2e-upgrade-bootstrap-token-0123456789"
-	oldSrv := bootAndBootstrap(t, oldBinary, dir, env, configPath, port, bootstrapToken,
+	oldSrv := harness.BootAndBootstrap(t, oldBinary, dir, env, configPath, port, bootstrapToken,
 		"upgradeadmin", "upgradeadmin@example.invalid", upgradeAdminPassword)
 
 	// Real pre-existing data under the OLD schema: an operator's install
 	// always has data by the time it's upgraded, not just an empty schema.
-	oldClient := newClient(t, oldSrv.baseURL)
+	oldClient := newClient(t, oldSrv.BaseURL)
 	oldClient.login("upgradeadmin", upgradeAdminPassword)
 	oldClient.callExpect("POST", "POST /api/v1/projects", "/api/v1/projects",
 		map[string]string{"name": "e2e-upgrade-project"}, 200, 201)
@@ -146,21 +148,21 @@ func TestAPISmoke_UpgradePath(t *testing.T) {
 	t.Logf("upgrading with NEW (HEAD) binary")
 	runAdmin(newBinary, "migrate", "--config", configPath)
 
-	newPort := freeTCPPort(t)
-	rewritePort(t, dir, newPort)
+	newPort := harness.FreeTCPPort(t)
+	harness.RewritePort(t, dir, newPort)
 
 	serverEnv := append(append([]string{}, env...),
 		"KEYORIX_BOOTSTRAP_TOKEN="+bootstrapToken, // unused post-bootstrap, harmless to still set
 		"KEYORIX_CONFIG_PATH="+configPath,
 	)
-	newSrv := &server{
-		t: t, dir: dir, configPath: configPath, baseURL: "http://127.0.0.1:" + newPort,
-		binary: newBinary, env: serverEnv, logPath: filepath.Join(dir, "e2e-upgrade-server.log"),
-		backend: backend,
+	newSrv := &harness.Server{
+		T: t, Dir: dir, ConfigPath: configPath, BaseURL: "http://127.0.0.1:" + newPort,
+		Binary: newBinary, Env: serverEnv, LogPath: filepath.Join(dir, "e2e-upgrade-server.log"),
+		Backend: backend,
 	}
-	startBackgroundProcess(t, newSrv, serverEnv)
+	harness.StartBackgroundProcess(t, newSrv, serverEnv)
 	t.Cleanup(newSrv.Close)
-	waitHealthy(t, newSrv)
+	harness.WaitHealthy(t, newSrv)
 
 	// The full happy-path sweep, logged in as the admin the OLD binary
 	// created -- proves every route this driver covers works against a
@@ -170,6 +172,6 @@ func TestAPISmoke_UpgradePath(t *testing.T) {
 }
 
 // upgradeAdminPassword shares no substring with "upgradeadmin"/its email/
-// display name -- see harness.go's bootstrapAdminPassword for why that
+// display name -- see harness.BootstrapAdminPassword for why that
 // matters (internal/core/rules.DefaultPasswordPolicy).
 const upgradeAdminPassword = "Meridian-Cobalt-19-Ferrous!"

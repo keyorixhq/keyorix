@@ -2,7 +2,11 @@
 
 package e2e
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/keyorixhq/keyorix/scripts/e2e/harness"
+)
 
 // groupUsersRolesRBAC creates a second user, a custom role, assigns it via
 // the user-roles endpoints, then sweeps the per-user read-only report
@@ -16,7 +20,7 @@ func groupUsersRolesRBAC(ctx *smokeCtx) {
 
 	created := c.callExpect("POST", "POST /api/v1/users", "/api/v1/users", map[string]interface{}{
 		"username": "e2esmokeuser", "email": "e2esmokeuser@smoke.local",
-		"display_name": "E2E Smoke User", "password": smokeUserPassword,
+		"display_name": "E2E Smoke User", "password": harness.SmokeUserPassword,
 	}, 201)
 	var user idOnly
 	c.unmarshalData(created, &user, "create user")

@@ -1,36 +1,28 @@
 //go:build e2e
 
-// Package e2e is SESSION-I's fresh-install feature smoke driver (see
-// docs/TESTING_GUIDE.md's "Fresh-install / real-backend E2E smoke" section).
-// It boots a REAL keyorix-server binary (built from this checkout) against a
-// freshly migrated database -- SQLite by default, PostgreSQL when
-// KEYORIX_TEST_PG_DSN is set -- bootstraps an admin exactly the way a real
-// operator would (admin init / admin encryption init / admin migrate / start
-// / POST system/init, the same sequence scripts/smoke.sh and
+// Package harness is the shared fresh-install boot/bootstrap/port/cleanup
+// mechanism for this repo's Go-based e2e drivers: SESSION-I's feature smoke
+// suite (scripts/e2e) and SESSION-N's customer-journey suite
+// (scripts/e2e/journeys). It boots a REAL keyorix-server binary (built from
+// this checkout) against a freshly migrated database -- SQLite by default,
+// PostgreSQL when the caller supplies a DBBackend with a postgres
+// configExtra -- bootstraps an admin exactly the way a real operator would
+// (admin init / admin encryption init / admin migrate / start / POST
+// system/init, the same sequence scripts/smoke.sh and
 // server/admin_recover_admin_integration_test.go's bootstrapAdminViaHTTP
-// already use and have proven works), then drives one happy-path
-// create/read/list/update/delete per feature group through the public REST
-// API.
+// already use and have proven works).
 //
-// WHY this exists: PR #2258 found 7 shipped features that fail with "no such
-// table" on every fresh install, because no existing test exercised them
-// against a database that was actually migrated from empty -- unit/handler
-// tests use an in-process sqlite/mock storage seeded however the test
-// author's fixture happens to seed it, not the real `admin migrate` path a
-// real operator runs once. This package is the mechanism that would have
-// caught that: build the real binary, migrate a real empty database, start
-// the real server, and hit the real HTTP surface.
+// Extracted from scripts/e2e/harness.go (a pure move, no behavior change) so
+// two independent test packages share one boot sequence instead of each
+// maintaining its own -- see docs/TESTING_GUIDE.md's "Fresh-install /
+// real-backend E2E smoke" and "Customer journeys" sections.
 //
 // Excluded from the default build (this whole package requires the `e2e`
 // build tag) because it shells out to `go build`, spawns real server
 // subprocesses, binds real TCP ports, and (for the PostgreSQL leg) requires
 // a real Postgres instance -- unsuitable for `go test ./...`'s default fast
-// inner loop. Run it explicitly: `make e2e-smoke` (see the Makefile target
-// added alongside this package), or directly:
-//
-//	go test -tags e2e ./scripts/e2e/... -run TestAPISmoke_SQLite -v
-//	KEYORIX_TEST_PG_DSN=... go test -tags e2e ./scripts/e2e/... -run TestAPISmoke_Postgres -v
-package e2e
+// inner loop.
+package harness
 
 import (
 	"bytes"
@@ -58,10 +50,10 @@ var (
 	buildErr     error
 )
 
-// repoRoot walks up from this file's own directory to find go.mod, so the
+// RepoRoot walks up from this file's own directory to find go.mod, so the
 // build works regardless of how `go test` was invoked (cwd-independent, same
 // approach as server/admin_integration_test.go's findServerRepoRoot).
-func repoRoot(t *testing.T) string {
+func RepoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
 	if err != nil {
@@ -73,20 +65,20 @@ func repoRoot(t *testing.T) string {
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			t.Fatal("could not find repo root (go.mod) walking up from scripts/e2e")
+			t.Fatal("could not find repo root (go.mod) walking up from caller's package")
 		}
 		dir = parent
 	}
 }
 
-// buildBinaries compiles the real keyorix-server and keyorix (CLI) binaries
+// BuildBinaries compiles the real keyorix-server and keyorix (CLI) binaries
 // exactly once for the whole `go test` run -- every smoke leg (SQLite,
 // Postgres) exercises the identical build; paying the build cost twice would
 // only slow the suite down, never change what's tested.
-func buildBinaries(t *testing.T) (server, cli string) {
+func BuildBinaries(t *testing.T) (server, cli string) {
 	t.Helper()
 	buildOnce.Do(func() {
-		root := repoRoot(t)
+		root := RepoRoot(t)
 		dir, err := os.MkdirTemp("", "keyorix-e2e-bin-*")
 		if err != nil {
 			buildErr = fmt.Errorf("create build tmpdir: %w", err)
@@ -120,41 +112,41 @@ func buildBinaries(t *testing.T) (server, cli string) {
 
 // ── Server lifecycle ──────────────────────────────────────────────────────
 
-// dbBackend describes which storage backend a smoke leg targets.
-type dbBackend struct {
-	name string // "sqlite" or "postgres", used only in test/failure output
-	// configYAML is the storage: block appended to the generated config,
+// DBBackend describes which storage backend a smoke leg targets.
+type DBBackend struct {
+	Name string // "sqlite" or "postgres", used only in test/failure output
+	// ConfigExtra is the storage: block appended to the generated config,
 	// e.g. "storage:\n  type: sqlite\n  database:\n    path: keyorix.db\n"
 	// for sqlite, or the postgres field-by-field form for postgres. Empty
 	// means keep whatever `admin init` generated (sqlite default).
-	configExtra string
-	// extraEnv carries backend-specific secrets that must never land in the
+	ConfigExtra string
+	// ExtraEnv carries backend-specific secrets that must never land in the
 	// config file (e.g. KEYORIX_DB_PASSWORD for postgres).
-	extraEnv []string
-	// verifyAuditFlag is the --db or --pg-dsn flag verifyAudit needs to open
+	ExtraEnv []string
+	// VerifyAuditFlag is the --db or --pg-dsn flag verify-audit needs to open
 	// the same database directly, without the running server's lock.
-	verifyAuditFlag func(dir string) []string
+	VerifyAuditFlag func(dir string) []string
 }
 
-// server is a running keyorix-server subprocess plus everything the test
+// Server is a running keyorix-server subprocess plus everything the caller
 // needs to talk to it and clean it up.
-type server struct {
-	t          *testing.T
-	cmd        *exec.Cmd
-	dir        string
-	configPath string
-	baseURL    string
-	binary     string
-	env        []string
-	logPath    string
-	backend    dbBackend
+type Server struct {
+	T          *testing.T
+	Cmd        *exec.Cmd
+	Dir        string
+	ConfigPath string
+	BaseURL    string
+	Binary     string
+	Env        []string
+	LogPath    string
+	Backend    DBBackend
 }
 
-// freeTCPPort returns a port number no listener is bound to (same approach
+// FreeTCPPort returns a port number no listener is bound to (same approach
 // as server/admin_integration_test.go's freeTCPPort) -- avoids hardcoding a
 // port that could collide with a real dev server, another test run, or the
 // SQLite and Postgres legs running back to back.
-func freeTCPPort(t *testing.T) string {
+func FreeTCPPort(t *testing.T) string {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -168,46 +160,46 @@ func freeTCPPort(t *testing.T) string {
 // the "enabled: true" line immediately above it in the generated template
 // (configs/keyorix.yaml.tpl), not a bare `port: "\d+"` pattern. A bare
 // pattern also matches storage.database.port (written by a PostgreSQL
-// backend's configExtra, e.g. `port: "15433"`) and server.grpc.port (whose
+// backend's ConfigExtra, e.g. `port: "15433"`) and server.grpc.port (whose
 // own "enabled: false" line would need excluding some other way) -- both
 // at the exact same indentation depth as server.http.port, so a
 // content-blind regex silently rewrites the WRONG port whenever a Postgres
-// backend or a second rewrite (upgrade_test.go picks a second free port for
-// the NEW binary after the OLD binary already rewrote it once) is in play.
-// grpc defaults to "enabled: false", so anchoring to "enabled: true"
-// uniquely selects http's port even though grpc has the identical
-// enabled/port shape.
+// backend or a second rewrite (the upgrade-path test picks a second free
+// port for the NEW binary after the OLD binary already rewrote it once) is
+// in play. grpc defaults to "enabled: false", so anchoring to
+// "enabled: true" uniquely selects http's port even though grpc has the
+// identical enabled/port shape.
 var portLineRe = regexp.MustCompile(`(enabled: true\n\s*port: )"\d+"`)
 
-// bootstrapAdminPassword deliberately shares no substring with the
-// bootstrap admin's username/email/display_name (see startServer's
+// BootstrapAdminPassword deliberately shares no substring with the
+// bootstrap admin's username/email/display_name (see StartServer's
 // /system/init call) -- internal/core/rules.DefaultPasswordPolicy rejects
 // any password containing the account's username/email/display name.
-const bootstrapAdminPassword = "Quartz-Falcon-77-Ridge!"
+const BootstrapAdminPassword = "Quartz-Falcon-77-Ridge!"
 
-// smokeUserPassword is the second (non-admin) test user's password, same
+// SmokeUserPassword is the second (non-admin) test user's password, same
 // "shares no substring with username/email/display_name" constraint as
-// bootstrapAdminPassword above -- that account is named "e2esmokeuser".
-const smokeUserPassword = "Cobalt-Harbor-42-Ember!"
+// BootstrapAdminPassword above -- that account is named "e2esmokeuser".
+const SmokeUserPassword = "Cobalt-Harbor-42-Ember!"
 
-// startServer runs the exact operator-facing bootstrap sequence QUICK_START.md
+// StartServer runs the exact operator-facing bootstrap sequence QUICK_START.md
 // documents and scripts/smoke.sh already proves works end to end: admin init
 // -> admin encryption init -> admin migrate -> start the server -> poll
-// /health -> POST /system/init. Returns a *server the caller must Close().
-func startServer(t *testing.T, binary string, backend dbBackend) *server {
+// /health -> POST /system/init. Returns a *Server the caller must Close().
+func StartServer(t *testing.T, binary string, backend DBBackend) *Server {
 	t.Helper()
 	dir := t.TempDir()
 	env := append([]string{
 		"HOME=" + dir,
 		"PATH=" + os.Getenv("PATH"),
-		"KEYORIX_MASTER_PASSWORD=e2e-smoke-master-password-" + backend.name,
-	}, backend.extraEnv...)
+		"KEYORIX_MASTER_PASSWORD=e2e-smoke-master-password-" + backend.Name,
+	}, backend.ExtraEnv...)
 
 	configPath := "./keyorix.yaml"
 
 	run := func(args ...string) {
 		t.Helper()
-		out, err := runAdminCmd(binary, dir, env, args...)
+		out, err := RunAdminCmd(binary, dir, env, args...)
 		if err != nil {
 			t.Fatalf("keyorix-server admin %s: %v\n%s", strings.Join(args, " "), err, out)
 		}
@@ -215,7 +207,7 @@ func startServer(t *testing.T, binary string, backend dbBackend) *server {
 
 	run("init", "--config", configPath)
 
-	if backend.configExtra != "" {
+	if backend.ConfigExtra != "" {
 		raw, err := os.ReadFile(filepath.Join(dir, "keyorix.yaml"))
 		if err != nil {
 			t.Fatalf("read generated config: %v", err)
@@ -235,17 +227,17 @@ func startServer(t *testing.T, binary string, backend dbBackend) *server {
 		if end < 0 {
 			t.Fatalf("generated config's storage: block has no following secrets: key:\n%s", text)
 		}
-		newText := text[:start] + backend.configExtra + rest[end+1:]
-		if err := os.WriteFile(filepath.Join(dir, "keyorix.yaml"), []byte(newText), 0o600); err != nil {
-			t.Fatalf("rewrite config for backend %s: %v", backend.name, err)
+		newText := text[:start] + backend.ConfigExtra + rest[end+1:]
+		if err := os.WriteFile(filepath.Join(dir, "keyorix.yaml"), []byte(newText), 0o600); err != nil { // #nosec G703 -- dir is always t.TempDir(), never attacker input; flagged only because StartServer is now exported across the harness package boundary (gosec's taint check treats exported-function string params as untrusted, unlike the identical unexported call this had before the extraction)
+			t.Fatalf("rewrite config for backend %s: %v", backend.Name, err)
 		}
 	}
 
 	run("encryption", "init", "--config", configPath)
 	run("migrate", "--config", configPath)
 
-	port := freeTCPPort(t)
-	rewritePort(t, dir, port)
+	port := FreeTCPPort(t)
+	RewritePort(t, dir, port)
 
 	const bootstrapToken = "e2e-smoke-bootstrap-token-0123456789"
 	// Password is deliberately unrelated to username/email/display_name --
@@ -254,17 +246,16 @@ func startServer(t *testing.T, binary string, backend dbBackend) *server {
 	// was rejected because it embeds the "e2e" prefix of the username
 	// "e2eadmin"), same trap scripts/smoke.sh's own header comment warns
 	// about for its admin password.
-	s := bootAndBootstrap(t, binary, dir, env, configPath, port, bootstrapToken,
-		"smoketestadmin", "smoketestadmin@example.invalid", bootstrapAdminPassword)
-	s.backend = backend
+	s := BootAndBootstrap(t, binary, dir, env, configPath, port, bootstrapToken,
+		"smoketestadmin", "smoketestadmin@example.invalid", BootstrapAdminPassword)
+	s.Backend = backend
 	return s
 }
 
-// runAdminCmd runs `binary admin <args...>` in dir with env, returning its
-// combined output. Shared by startServer (fresh install) and
-// upgrade_test.go's TestAPISmoke_UpgradePath (old-binary provisioning +
-// new-binary in-place migrate).
-func runAdminCmd(binary, dir string, env []string, args ...string) (string, error) {
+// RunAdminCmd runs `binary admin <args...>` in dir with env, returning its
+// combined output. Shared by StartServer (fresh install) and the
+// upgrade-path test's old-binary provisioning + new-binary in-place migrate.
+func RunAdminCmd(binary, dir string, env []string, args ...string) (string, error) {
 	cmd := exec.Command(binary, append([]string{"admin"}, args...)...) // #nosec G204 -- binary/args are this test's own fixed, non-attacker-controlled arguments nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- runs the keyorix binary this e2e harness itself built or downloaded, with the harness's own fixed arguments; no external input reaches it
 	cmd.Dir = dir
 	cmd.Env = env
@@ -272,11 +263,11 @@ func runAdminCmd(binary, dir string, env []string, args ...string) (string, erro
 	return string(out), err
 }
 
-// rewritePort overwrites the generated config's listen port in place --
+// RewritePort overwrites the generated config's listen port in place --
 // admin init's template always listens on 8080, which every parallel test
 // leg (SQLite, Postgres, the upgrade path) needs its own free port instead
 // of, to avoid colliding with each other or a real dev server.
-func rewritePort(t *testing.T, dir, port string) {
+func RewritePort(t *testing.T, dir, port string) {
 	t.Helper()
 	path := filepath.Join(dir, "keyorix.yaml")
 	raw, err := os.ReadFile(path) // #nosec G304 -- fixed test-tmpdir path
@@ -284,41 +275,41 @@ func rewritePort(t *testing.T, dir, port string) {
 		t.Fatalf("read config before port rewrite: %v", err)
 	}
 	rewritten := portLineRe.ReplaceAllString(string(raw), fmt.Sprintf(`${1}"%s"`, port))
-	if err := os.WriteFile(path, []byte(rewritten), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(rewritten), 0o600); err != nil { // #nosec G703 -- path is derived from dir, always t.TempDir(), never attacker input; flagged only because RewritePort is now exported across the harness package boundary (gosec's taint check treats exported-function string params as untrusted, unlike the identical unexported call this had before the extraction)
 		t.Fatalf("rewrite config port: %v", err)
 	}
 }
 
-// startBackgroundProcess starts s.binary as a subprocess (cwd s.dir, the
+// StartBackgroundProcess starts s.Binary as a subprocess (cwd s.Dir, the
 // given serverEnv -- which must already carry KEYORIX_CONFIG_PATH/
-// KEYORIX_BOOTSTRAP_TOKEN if needed, unlike s.env which does not), logging
-// to s.logPath, and records the running *exec.Cmd on s for Close/
-// waitHealthy to use. Does not wait for readiness -- call waitHealthy next.
-func startBackgroundProcess(t *testing.T, s *server, serverEnv []string) {
+// KEYORIX_BOOTSTRAP_TOKEN if needed, unlike s.Env which does not), logging
+// to s.LogPath, and records the running *exec.Cmd on s for Close/
+// WaitHealthy to use. Does not wait for readiness -- call WaitHealthy next.
+func StartBackgroundProcess(t *testing.T, s *Server, serverEnv []string) {
 	t.Helper()
-	logFile, err := os.Create(s.logPath) // #nosec G304 -- fixed test-tmpdir path
+	logFile, err := os.Create(s.LogPath) // #nosec G304 -- fixed test-tmpdir path
 	if err != nil {
 		t.Fatalf("create server log: %v", err)
 	}
-	cmd := exec.Command(s.binary) // #nosec G204 -- s.binary is this test's own built/downloaded fixed path nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- runs the keyorix binary this e2e harness itself built or downloaded, with the harness's own fixed arguments; no external input reaches it
-	cmd.Dir = s.dir
+	cmd := exec.Command(s.Binary) // #nosec G204 -- s.Binary is this test's own built/downloaded fixed path nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- runs the keyorix binary this e2e harness itself built or downloaded, with the harness's own fixed arguments; no external input reaches it
+	cmd.Dir = s.Dir
 	cmd.Env = serverEnv
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("start keyorix-server (%s): %v", s.backend.name, err)
+		t.Fatalf("start keyorix-server (%s): %v", s.Backend.Name, err)
 	}
-	s.cmd = cmd
+	s.Cmd = cmd
 }
 
-// waitHealthy polls s.baseURL/health until it reports 200 or 30s elapses,
+// WaitHealthy polls s.BaseURL/health until it reports 200 or 30s elapses,
 // fatally killing the process and dumping its log on timeout.
-func waitHealthy(t *testing.T, s *server) {
+func WaitHealthy(t *testing.T, s *Server) {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	healthy := false
 	for time.Now().Before(deadline) {
-		resp, herr := http.Get(s.baseURL + "/health") // #nosec G107 -- fixed localhost test URL
+		resp, herr := http.Get(s.BaseURL + "/health") // #nosec G107 -- fixed localhost test URL
 		if herr == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -329,37 +320,37 @@ func waitHealthy(t *testing.T, s *server) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	if !healthy {
-		logBytes, _ := os.ReadFile(s.logPath)
-		if s.cmd != nil && s.cmd.Process != nil {
-			_ = s.cmd.Process.Kill()
+		logBytes, _ := os.ReadFile(s.LogPath)
+		if s.Cmd != nil && s.Cmd.Process != nil {
+			_ = s.Cmd.Process.Kill()
 		}
-		t.Fatalf("keyorix-server (%s) never became healthy; log:\n%s", s.backend.name, logBytes)
+		t.Fatalf("keyorix-server (%s) never became healthy; log:\n%s", s.Backend.Name, logBytes)
 	}
 }
 
-// bootAndBootstrap starts binary as a background server (serving at
+// BootAndBootstrap starts binary as a background server (serving at
 // 127.0.0.1:port, config at configPath inside dir), waits for it to become
 // healthy, then claims the first admin via POST /system/init (bootstrapToken
-// via header, InitSystem's preferred path). Returns the running *server
+// via header, InitSystem's preferred path). Returns the running *Server
 // (caller must eventually Close it).
-func bootAndBootstrap(t *testing.T, binary, dir string, env []string, configPath, port, bootstrapToken, username, email, password string) *server {
+func BootAndBootstrap(t *testing.T, binary, dir string, env []string, configPath, port, bootstrapToken, username, email, password string) *Server {
 	t.Helper()
 	serverEnv := append(append([]string{}, env...),
 		"KEYORIX_BOOTSTRAP_TOKEN="+bootstrapToken,
 		"KEYORIX_CONFIG_PATH="+configPath,
 	)
-	s := &server{
-		t: t, dir: dir, configPath: configPath, baseURL: "http://127.0.0.1:" + port,
-		binary: binary, env: env, logPath: filepath.Join(dir, "e2e-server-"+filepath.Base(binary)+".log"),
-		backend: dbBackend{name: username},
+	s := &Server{
+		T: t, Dir: dir, ConfigPath: configPath, BaseURL: "http://127.0.0.1:" + port,
+		Binary: binary, Env: env, LogPath: filepath.Join(dir, "e2e-server-"+filepath.Base(binary)+".log"),
+		Backend: DBBackend{Name: username},
 	}
-	startBackgroundProcess(t, s, serverEnv)
-	waitHealthy(t, s)
+	StartBackgroundProcess(t, s, serverEnv)
+	WaitHealthy(t, s)
 
 	body, _ := json.Marshal(map[string]string{
 		"username": username, "email": email, "password": password, "display_name": username,
 	})
-	req, err := http.NewRequest(http.MethodPost, s.baseURL+"/system/init", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, s.BaseURL+"/system/init", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("build /system/init request: %v", err)
 	}
@@ -367,30 +358,40 @@ func bootAndBootstrap(t *testing.T, binary, dir string, env []string, configPath
 	req.Header.Set("X-Keyorix-Bootstrap-Token", bootstrapToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		s.dumpLogAndFatal("POST /system/init failed: %v", err)
+		s.DumpLogAndFatal("POST /system/init failed: %v", err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := readAll(resp)
-		s.dumpLogAndFatal("POST /system/init returned %d: %s", resp.StatusCode, respBody)
+		s.DumpLogAndFatal("POST /system/init returned %d: %s", resp.StatusCode, respBody)
 	}
 
 	return s
 }
 
-func (s *server) dumpLogAndFatal(format string, args ...interface{}) {
-	s.t.Helper()
-	logBytes, _ := os.ReadFile(s.logPath)
+// DumpLogAndFatal fails the test with msg plus the server's captured log --
+// used whenever a step after boot fails and the log might explain why.
+func (s *Server) DumpLogAndFatal(format string, args ...interface{}) {
+	s.T.Helper()
+	logBytes, _ := os.ReadFile(s.LogPath)
 	msg := fmt.Sprintf(format, args...)
-	s.t.Fatalf("%s\nserver log:\n%s", msg, logBytes)
+	s.T.Fatalf("%s\nserver log:\n%s", msg, logBytes)
 }
 
 // Close stops the server subprocess. Registered via t.Cleanup by the caller.
-func (s *server) Close() {
-	if s.cmd != nil && s.cmd.Process != nil {
-		_ = s.cmd.Process.Kill()
-		_, _ = s.cmd.Process.Wait()
+func (s *Server) Close() {
+	if s.Cmd != nil && s.Cmd.Process != nil {
+		_ = s.Cmd.Process.Kill()
+		_, _ = s.Cmd.Process.Wait()
 	}
+}
+
+// CLIEnv returns the environment a `keyorix` CLI invocation needs to talk to
+// this running server: isolated HOME (so it never touches a real
+// ~/.keyorix/cli.yaml -- see the repo's own "Local ~/.keyorix/cli.yaml breaks
+// CLI tests" lesson) plus PATH.
+func (s *Server) CLIEnv() []string {
+	return []string{"HOME=" + s.Dir, "PATH=" + os.Getenv("PATH")}
 }
 
 func readAll(resp *http.Response) (string, error) {

@@ -5,6 +5,8 @@ package e2e
 import (
 	"fmt"
 	"time"
+
+	"github.com/keyorixhq/keyorix/scripts/e2e/harness"
 )
 
 // groupMachineIdentities creates a machine identity in the smoke project,
@@ -164,7 +166,7 @@ func groupDynamicSecrets(ctx *smokeCtx) {
 func groupAccessRequests(ctx *smokeCtx) {
 	c := ctx.c
 	userClient := newClient(ctx.t, c.baseURL)
-	userClient.login("e2esmokeuser", smokeUserPassword)
+	userClient.login("e2esmokeuser", harness.SmokeUserPassword)
 
 	// suggested_role/granted_role here is deliberately "project_admin", NOT
 	// "project_viewer" -- ctx.userID already holds project_viewer (granted
