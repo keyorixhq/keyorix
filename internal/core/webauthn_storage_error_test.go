@@ -83,6 +83,23 @@ func (s *webauthnStorageErrStub) SetUserWebAuthnEnabled(ctx context.Context, use
 	return s.Storage.SetUserWebAuthnEnabled(ctx, userID, enabled)
 }
 
+// WithTransaction re-wraps itself across the transaction boundary so an
+// injected error still fires when the target call happens on the tx handle
+// (FinishWebAuthnRegistration/DeleteWebAuthnCredential's credential-row +
+// WebAuthnEnabled-flag writes, Session O's atomicity fix) — without this
+// override, the closure would receive the REAL underlying tx handle and every
+// injected error above would silently stop firing once those calls moved
+// inside WithTransaction.
+func (s *webauthnStorageErrStub) WithTransaction(ctx context.Context, fn func(corestorage.Storage) error) error {
+	return s.Storage.WithTransaction(ctx, func(tx corestorage.Storage) error {
+		return fn(&webauthnStorageErrStub{
+			Storage: tx, createSessionErr: s.createSessionErr, listCredsErr: s.listCredsErr,
+			createCredErr: s.createCredErr, deleteCredErr: s.deleteCredErr,
+			countCredsErr: s.countCredsErr, setEnabledErr: s.setEnabledErr,
+		})
+	})
+}
+
 // ── storeWebAuthnSession ──────────────────────────────────────────────────
 
 func TestStoreWebAuthnSession_StorageErrorPropagates(t *testing.T) {
@@ -210,6 +227,44 @@ func TestFinishWebAuthnRegistration_CreateCredentialStorageFails(t *testing.T) {
 	assert.Zero(t, count, "a failed store must not leave a partial credential row")
 }
 
+// Red-proof, other direction of Session O's O2 item 4: a failure enabling
+// WebAuthnEnabled after the credential row is created must roll back the
+// credential too -- not leave a phantom row Login's user.WebAuthnEnabled gate
+// never enforces (the user believes they registered a working passkey; they
+// didn't, and every retry would only accumulate more orphaned rows). Before
+// the fix (sequential, non-transactional calls) the credential row was
+// already committed by the time SetUserWebAuthnEnabled ran, so this exact
+// zero-count assertion failed.
+func TestFinishWebAuthnRegistration_SetEnabledStorageFails(t *testing.T) {
+	t.Parallel()
+	c, db := newWebAuthnSpecTestCore(t)
+	ctx := context.Background()
+
+	parsed, challenge := specRegistrationAttestation(t)
+	sd := &webauthn.SessionData{
+		Challenge:  challenge,
+		UserID:     specWebAuthnID(1),
+		CredParams: []protocol.CredentialParameter{{Type: protocol.PublicKeyCredentialType, Algorithm: webauthncose.AlgES256}},
+	}
+	token, err := c.storeWebAuthnSession(ctx, 1, "register", sd)
+	require.NoError(t, err)
+
+	wantErr := errors.New("db down")
+	c.storage = &webauthnStorageErrStub{Storage: c.storage, setEnabledErr: wantErr}
+
+	_, err = c.FinishWebAuthnRegistration(ctx, 1, token, "yubikey", webauthnTestPassword, parsed)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, wantErr)
+
+	var count int64
+	require.NoError(t, db.Model(&models.WebAuthnCredential{}).Count(&count).Error)
+	assert.Zero(t, count, "a failed flag-set must roll back the credential row too -- no orphaned phantom credential")
+
+	var user models.User
+	require.NoError(t, db.First(&user, 1).Error)
+	assert.False(t, user.WebAuthnEnabled)
+}
+
 // ── DeleteWebAuthnCredential ─────────────────────────────────────────────
 
 func TestDeleteWebAuthnCredential_GetUserFails(t *testing.T) {
@@ -280,6 +335,14 @@ func TestDeleteWebAuthnCredential_CountFails(t *testing.T) {
 	assert.ErrorIs(t, err, wantErr)
 }
 
+// Red-proof for Session O's O2 item 4 (WebAuthn enable-flag consistency): a
+// failure clearing WebAuthnEnabled after the last credential is deleted must
+// roll back the delete too, not leave WebAuthnEnabled=true with ZERO
+// credentials -- Login's user.WebAuthnEnabled gate would then require a
+// WebAuthn assertion the account has no way to produce, a permanent lockout.
+// Before the fix (sequential, non-transactional calls) the credential row was
+// already gone by the time SetUserWebAuthnEnabled ran, so this exact
+// assertion failed: 0 remaining credentials with the flag still true.
 func TestDeleteWebAuthnCredential_SetEnabledFalseFails(t *testing.T) {
 	t.Parallel()
 	c, db := newWebAuthnTestCore(t, true)
@@ -294,6 +357,14 @@ func TestDeleteWebAuthnCredential_SetEnabledFalseFails(t *testing.T) {
 	err := c.DeleteWebAuthnCredential(context.Background(), 1, cred.ID, webauthnTestPassword)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, wantErr)
+
+	var remaining int64
+	require.NoError(t, db.Model(&models.WebAuthnCredential{}).Where("user_id = ?", 1).Count(&remaining).Error)
+	assert.Equal(t, int64(1), remaining, "a failed flag-clear must roll back the credential delete too -- no orphaned zero-credential-but-enabled state")
+
+	var user models.User
+	require.NoError(t, db.First(&user, 1).Error)
+	assert.True(t, user.WebAuthnEnabled, "the flag must be unchanged (the whole transaction rolled back)")
 }
 
 // ── loadWebAuthnUser ──────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -190,14 +191,18 @@ func (c *KeyorixCore) FinishWebAuthnRegistration(ctx context.Context, userID uin
 		CredentialBlob: blob,
 		CreatedAt:      c.now(),
 	}
-	if err := c.storage.CreateWebAuthnCredential(ctx, row); err != nil {
-		return nil, fmt.Errorf("failed to store credential: %w", err)
-	}
-	// On the first passkey, enable WebAuthn and purge any pre-enrolment sessions so
-	// a session minted before the security upgrade cannot outlive it (same hygiene
-	// as MFA activation).
+	// The credential row and the WebAuthnEnabled flag run in one transaction: a
+	// credential surviving a failed flag-set is a phantom row Login's
+	// user.WebAuthnEnabled gate never enforces (fails safe, but the user believes
+	// they registered a passkey that in fact does nothing, and a retry would only
+	// accumulate more orphaned rows).
 	firstEnrol := !wu.user.WebAuthnEnabled
-	if err := c.storage.SetUserWebAuthnEnabled(ctx, userID, true); err != nil {
+	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		if err := tx.CreateWebAuthnCredential(ctx, row); err != nil {
+			return fmt.Errorf("failed to store credential: %w", err)
+		}
+		return tx.SetUserWebAuthnEnabled(ctx, userID, true)
+	}); err != nil {
 		return nil, err
 	}
 	if firstEnrol {
@@ -230,20 +235,35 @@ func (c *KeyorixCore) DeleteWebAuthnCredential(ctx context.Context, userID, id u
 	if err := c.requireReauth(ctx, user, codeOrPassword, "webauthn_delete"); err != nil {
 		return err
 	}
-	if err := c.storage.DeleteWebAuthnCredential(ctx, userID, id); err != nil {
-		return err
-	}
-	n, err := c.storage.CountWebAuthnCredentials(ctx, userID)
-	if err != nil {
+	// The credential delete and the (conditional) WebAuthnEnabled clear run in one
+	// transaction: a delete surviving a failed flag-clear leaves WebAuthnEnabled=true
+	// with ZERO credentials — Login's user.WebAuthnEnabled gate then requires a
+	// WebAuthn assertion the account has no way to produce, a permanent lockout
+	// (fails closed, not a bypass, but still a real availability bug). The count
+	// read runs on the SAME tx handle so it sees the delete that just happened,
+	// not a stale pre-delete count.
+	var n int64
+	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		if err := tx.DeleteWebAuthnCredential(ctx, userID, id); err != nil {
+			return err
+		}
+		var cerr error
+		n, cerr = tx.CountWebAuthnCredentials(ctx, userID)
+		if cerr != nil {
+			return cerr
+		}
+		if n == 0 {
+			return tx.SetUserWebAuthnEnabled(ctx, userID, false)
+		}
+		return nil
+	}); err != nil {
 		return err
 	}
 	if n == 0 {
-		if err := c.storage.SetUserWebAuthnEnabled(ctx, userID, false); err != nil {
-			return err
-		}
 		// Last passkey removed — security downgrade. Purge all sessions so a session
 		// minted under WebAuthn enforcement cannot outlive the second-factor removal,
 		// symmetric with FinishWebAuthnRegistration's session purge on first enrolment.
+		// Best-effort, same as that call: the credential removal has already committed.
 		_ = c.deleteSessionsForUserAndEvict(ctx, userID, 0, "")
 	}
 	uid := userID
