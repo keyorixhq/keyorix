@@ -27,12 +27,12 @@ helm install keyorix oci://ghcr.io/keyorixhq/charts/keyorix \
 > under 16 characters; the other rules aren't chart-checkable — get those
 > wrong and the first-boot bootstrap fails instead (the pod comes up,
 > `helm install`/`helm test` succeed, but no admin user is ever created —
-> see `kubectl logs` for the server pod for the actual reason). **A rejected
-> password can leave the install permanently unable to retry bootstrap at
-> all** (filed to FINDINGS-inbox, Session J, 2026-09-28) — if `kubectl logs`
-> shows a `duplicate key value violates unique constraint
-> "uni_permissions_name"` error, the DB must be wiped and the install redone
-> from scratch; there is no in-place recovery today.
+> see `kubectl logs` for the server pod for the actual reason). First-boot
+> bootstrap is atomic and retryable: a rejected password writes nothing, so
+> simply retrying `keyorix system init` (or `helm upgrade` with a corrected
+> `auth.adminPassword`, since bootstrap re-runs on every restart until the
+> install is initialised) with a compliant password completes the install —
+> no DB wipe needed.
 
 Or from a source checkout, swap the chart reference for `./deploy/helm/keyorix`.
 
