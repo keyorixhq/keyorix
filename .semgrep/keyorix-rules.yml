@@ -297,3 +297,59 @@ rules:
         - "**/*.test.ts"
         - "**/*.test.tsx"
         - "**/__tests__/**"
+
+  - id: keyorix-archive-entry-path-unchecked
+    languages: [go]
+    severity: ERROR
+    message: >-
+      A filesystem path is built directly from an archive entry's own name
+      ($X.Name of a *tar.Header, or $X.Name of a *zip.File/zip.FileHeader) via
+      filepath.Join, path.Join, os.Create, os.OpenFile, os.WriteFile, or
+      os.MkdirAll, and this function has no filepath.IsLocal (or equivalent
+      Rel/HasPrefix containment) check anywhere in it. An archive entry name
+      is attacker-controlled input -- it can contain ".." segments or be an
+      absolute path (tar-slip / zip-slip) -- so a crafted archive can write
+      (or create directories) outside the intended extraction directory. Add
+      a filepath.IsLocal(name) check that refuses the entry before building
+      any path from it -- see internal/backupfmt/reader.go's
+      ExtractArchive/stageFile (Session P review, #2270) for the pattern.
+      KNOWN GAP: this rule is intentionally scoped to the direct, same-function
+      shape (free Semgrep has no interprocedural taint tracking -- confirmed
+      empirically while building this rule) -- it will not catch the name
+      flowing into a helper through an untyped, unsuggestively-named string
+      parameter (the exact shape #2270's original bug took: ExtractArchive
+      passed hdr.Name into stageFile(stagingDir, name string, data []byte),
+      which joined the bare "name" parameter with no local re-check). Review
+      any new helper that takes a bare string parameter and builds a path
+      from it by hand; this rule cannot see across that boundary.
+    metadata:
+      category: security
+      references:
+        - internal/backupfmt/reader.go ExtractArchive/stageFile (fixed, #2270, merged 2026-09-29)
+    patterns:
+      - pattern-either:
+          - pattern: filepath.Join(..., $X.Name, ...)
+          - pattern: path.Join(..., $X.Name, ...)
+          - pattern: os.Create($X.Name)
+          - pattern: os.OpenFile($X.Name, ...)
+          - pattern: os.WriteFile($X.Name, ...)
+          - pattern: os.MkdirAll($X.Name, ...)
+      - pattern-not-inside: |
+          func $FUNC(...) $RET {
+            ...
+            if !filepath.IsLocal(...) {
+              ...
+            }
+            ...
+          }
+      - pattern-not-inside: |
+          func $FUNC(...) $RET {
+            ...
+            if filepath.IsLocal(...) {
+              ...
+            }
+            ...
+          }
+    paths:
+      exclude:
+        - "**/*_test.go"
