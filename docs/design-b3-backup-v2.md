@@ -1,14 +1,12 @@
 # Design: `keyorix-server admin backup`/`restore` v2 — backend-neutral, authenticated, streaming
 
-**Status:** Decided (Andrei, 2026-09-25). Canonical design for ADR-108 §B3's
+**Status:** Implemented (2026-09-28). Canonical design for ADR-108 §B3's
 remaining scope — supersedes the parallel draft `docs/design-b3-offline-
 backup-restore.md` (#2101); this document folds in everything from that draft
 worth keeping (§2 threat model, §7 schema-delta refusal, §9 automatic
 post-restore verification, and several §11 test-plan items), noted inline as
 "folded from #2101" where relevant. Follow-up to PR #2099 (v1: SQLite-only,
-`VACUUM INTO`-based). No code in this PR. Does not touch
-`server/admin/backup.go` or `server/admin/restore.go` — those are v1's files,
-in flight in #2099. **Implementation starts once #2099 merges.**
+`VACUUM INTO`-based). §13 tracks the implementation PRs.
 
 Every open question from both drafts has been resolved by Andrei (2026-09-25)
 and is recorded below as a **Decision**, not a recommendation. §12 is a
@@ -881,4 +879,26 @@ section for detail and rationale.
 | 11 | SQLite → Postgres move and version-skipping upgrade are documented usage patterns of `admin backup`/`admin restore` — no new subcommands. | §1, §8 |
 | 12 | v1 (and this redesign) supports full-database backup only — no selective/partial export. | §1 |
 
-**Implementation starts once #2099 merges.**
+## 13. Implementation status
+
+Implemented across a stacked PR series (2026-09-28). Two real bugs surfaced
+while building the version-skipping upgrade proof (§8's real-binary
+validation, below) landed as their own `fix` PRs, stacked in the order the
+work actually needed them, per this repo's "a real bug found along the way
+gets its own PR" convention — neither is a design change, both are noted
+here for traceability.
+
+| PR | What | Section(s) |
+|---|---|---|
+| #2261 | Logical format writer: `storage.AllModels()`, table-walk NDJSON writer, manifest v2, restore-order derivation, preflight free-space check | §3, §7.4 |
+| #2263 | Authenticated manifest: KEK-derived signing key, HMAC-SHA256 sign/verify | §5 |
+| #2270 | Full CLI wiring: `admin backup` writes v2 only, `admin restore` dispatches v1/v2, stage-then-verify-then-commit, rollback protection reused unchanged | §3.6, §5.3, §6 |
+| #2280 | Postgres backup source: `REPEATABLE READ` default, `--exclusive` opt-in | §4 |
+| #2284 | Core property test: `restore(backup(state))==state` across all 4 backend directions, registry-driven seeding | §11.1 |
+| #2288 (fix) | `internal/backupfmt`'s row encoding was silently dropping every `json:"-"`-tagged column (encrypted secret values, password hashes, token hashes) — present since #2261, found via the version-skip proof below | §3.3 |
+| #2291 (fix) | Postgres restore never resynced a table's auto-increment sequence after loading rows with explicit primary keys — also the root cause of a spurious first-request auth failure on a freshly-restored server | implementation gap, not itself a design decision above |
+| #2293 | Version-skipping upgrade proof: a real old release binary backs up, HEAD restores onto Postgres, secrets/audit/authz all confirmed unchanged -- validates §8's reuse claim empirically, beyond §11.2's unit-test-level cross-backend check | §8 |
+
+**Implemented, not built:** §6.4's externally-anchored rollback check
+(notary/anchor-based, beyond the host-local witness file) — §6.5 states this
+limitation explicitly; still open.

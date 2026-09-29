@@ -118,13 +118,57 @@ A complete backup is **two** things — the database *and* the encryption keys.
 Neither alone is sufficient: the DB without the keys is unreadable ciphertext;
 the keys without the DB are useless.
 
-**Backup:**
+`keyorix-server admin backup --output <path>` / `admin restore --input <path>`
+bundle both into one archive, on **either** storage backend — SQLite or
+Postgres. Unlike a raw `pg_dump`/SQLite-file copy, the archive is
+authenticated (HMAC-signed, KEK-derived key, `docs/design-b3-backup-v2.md`
+§5) and its checksums catch corruption (a bad copy, a truncated transfer, bit
+rot); tampering is a different property a checksum alone can't provide, since
+anyone with write access to the archive can recompute one to match — so
+`admin restore` also runs `admin verify-audit` automatically against the
+restored database and fails if it reports the audit chain BROKEN. Also record
+`KEYORIX_MASTER_PASSWORD` separately (it is required to derive the KEK that
+unwraps the backed-up DEK).
+
+**Backup** (run inside the `backend` container, against whichever storage
+this stack is configured for):
 
 ```sh
-# 1. Database
-docker compose exec -T postgres pg_dump -U keyorix keyorix | gzip > keyorix-db-$(date +%F).sql.gz
+docker compose exec backend keyorix-server admin backup --output /tmp/backup.tar.gz
+docker compose cp backend:/tmp/backup.tar.gz ./keyorix-backup-$(date +%F).tar.gz
+```
 
-# 2. Encryption keys (the keyorix_keys volume). The example below assumes your
+On Postgres, this reads through a single `REPEATABLE READ` snapshot
+transaction by default — every table sees the identical point-in-time view,
+without taking the database offline. Pass `--exclusive` instead to take the
+same host-level exclusive lock a SQLite backup always holds, if you'd rather
+trade availability for that stronger guarantee.
+
+**Restore** (with the *same* `KEYORIX_MASTER_PASSWORD` and the same storage
+config the backup was taken from). `admin restore` always takes this
+database's own exclusive lock and refuses if a live server already holds it
+— stop the `backend` service first, and run restore via `docker compose run`
+(a fresh, throwaway container) rather than `exec` (which needs an already-
+running one):
+
+```sh
+docker compose stop backend
+docker compose cp ./keyorix-backup-YYYY-MM-DD.tar.gz backend:/tmp/backup.tar.gz
+docker compose run --rm backend keyorix-server admin restore --input /tmp/backup.tar.gz
+docker compose up -d backend
+```
+
+Restore refuses a non-empty target by default (`--overwrite-existing` to
+proceed anyway on a genuine disaster-recovery restore) — the normal flow is
+restoring into a fresh database, not overwriting a live one.
+
+**Manual `pg_dump`/`psql`** is still a reasonable choice if you already have
+a Postgres backup pipeline built around it and don't need the archive's
+built-in authentication/audit-verification — it works exactly as before:
+
+```sh
+docker compose exec -T postgres pg_dump -U keyorix keyorix | gzip > keyorix-db-$(date +%F).sql.gz
+# Encryption keys (the keyorix_keys volume). The example below assumes your
 # Compose project is named "keyorix" (true for a plain `git clone .../keyorix`
 # checkout run from that directory) -- Compose prefixes every named volume
 # with the project name, so the actual volume is <project>_keyorix_keys. If
@@ -136,10 +180,7 @@ docker run --rm -v keyorix_keyorix_keys:/keys -v "$PWD":/backup alpine \
   tar czf /backup/keyorix-keys-$(date +%F).tar.gz -C /keys .
 ```
 
-Also record `KEYORIX_MASTER_PASSWORD` separately (it is required to derive the KEK
-that unwraps the backed-up DEK).
-
-**Restore** (into a fresh stack, with the *same* `KEYORIX_MASTER_PASSWORD`):
+To restore a manual dump (into a fresh stack, with the *same* `KEYORIX_MASTER_PASSWORD`):
 
 ```sh
 docker compose up -d postgres
@@ -157,14 +198,30 @@ down -v`), restore into fresh volumes via `psql`/keys-volume-extract, and
 database — the secret value round-tripped correctly and the audit chain
 carried across the dump/restore boundary intact.
 
-**Single-binary (local/sqlite) deployments** can use `keyorix-server admin
-backup --output <path>` / `admin restore --input <path>` instead, which
-bundle both the database and the encryption keys into one archive. The
-archive's checksums catch corruption (a bad copy, a truncated transfer, bit
-rot), not tampering -- anyone with write access to the archive can recompute
-them to match -- so `admin restore` also runs `admin verify-audit`
-automatically against the restored database and fails if it reports the
-audit chain BROKEN.
+### Moving from SQLite to Postgres
+
+`admin restore` doesn't care which backend a backup came from — only which
+one the *target* config points at. Take a backup from a SQLite (single-binary)
+deployment, point a fresh config at a Postgres database instead, and restore
+into it: same command, same code path as any other restore, no separate
+migration tool or conversion step (`docs/design-b3-backup-v2.md` §8). This
+works directly for any archive a v2-writing binary produced (every release
+from the one that introduced this backup format onward). An archive from an
+*older* release that only ever wrote the v1 (physical, SQLite-only) format
+can only restore into SQLite — restore it there first with the current
+binary (which also upgrades its schema), take a fresh backup of that, and
+restore *that* into Postgres.
+
+### Version-skipping upgrades
+
+The same property makes skipping releases safe: `admin restore` always
+migrates its target to the current schema *before* loading any row, so a
+backup taken on an old release restores cleanly on a much newer one in one
+step, with no per-version upgrade path to walk through manually. Test it as
+a drill before relying on it in production: back up on the old release, spin
+up the new release against a fresh database/config, restore, and confirm
+`admin verify-audit` reports VALID and a known secret still decrypts to the
+expected value.
 
 **Restoring an older backup than this host has already progressed past is
 refused by default.** Restoring genuinely can undo history: any revocation
