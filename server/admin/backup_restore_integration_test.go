@@ -29,12 +29,14 @@ import (
 func resetBackupRestoreFlags(t *testing.T) {
 	t.Helper()
 	origBackupOutput := backupOutput
-	origInput, origOverwrite, origMaxEntry, origMaxTotal := restoreInput, restoreOverwriteExisting, restoreMaxEntryBytes, restoreMaxTotalBytes
+	origInput, origOverwrite, origAllowRollback, origMaxEntry, origMaxTotal :=
+		restoreInput, restoreOverwriteExisting, restoreAllowRollback, restoreMaxEntryBytes, restoreMaxTotalBytes
 	origCfgPath := configPathFlag
 	origForce := forceFlag
 	t.Cleanup(func() {
 		backupOutput = origBackupOutput
-		restoreInput, restoreOverwriteExisting, restoreMaxEntryBytes, restoreMaxTotalBytes = origInput, origOverwrite, origMaxEntry, origMaxTotal
+		restoreInput, restoreOverwriteExisting, restoreAllowRollback, restoreMaxEntryBytes, restoreMaxTotalBytes =
+			origInput, origOverwrite, origAllowRollback, origMaxEntry, origMaxTotal
 		configPathFlag = origCfgPath
 		forceFlag = origForce
 	})

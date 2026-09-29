@@ -17,6 +17,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/auditverify"
@@ -56,6 +58,7 @@ const (
 var (
 	restoreInput             string
 	restoreOverwriteExisting bool
+	restoreAllowRollback     bool
 	restoreMaxEntryBytes     int64
 	restoreMaxTotalBytes     int64
 )
@@ -91,6 +94,19 @@ SAME config (same key-material paths) the backup was taken from. With
 <path>.pre-restore-<timestamp> rather than truncated or overwritten in
 place, so an unrecoverable mistake during the restore still has a way back.
 
+Rollback protection (design-b3-backup-v2.md §6): restoring an OLDER backup
+than this host has already progressed past can silently resurrect access an
+admin has since revoked (a suspended account, a deleted machine credential,
+a rotated role grant) -- the restored database simply doesn't know the
+revocation happened. Restore compares the archive's own certified audit
+high-water mark against a host-local witness file
+(<data-dir>/.audit-highwater-witness, sibling to the database, maintained by
+every server this host has run) BEFORE writing anything to disk, and refuses
+if the archive is behind. Pass --allow-rollback for a genuine disaster-
+recovery restore of an intentionally older backup -- this writes an audit
+event to the restored database recording exactly how far back the restore
+went, once the chain is writable again.
+
 Only local/sqlite storage is supported today. For a Postgres-backed
 deployment, restore with psql directly (see docs/SELF_HOSTING.md §5).`,
 	RunE: runAdminRestore,
@@ -99,6 +115,7 @@ deployment, restore with psql directly (see docs/SELF_HOSTING.md §5).`,
 func init() {
 	restoreCmd.Flags().StringVar(&restoreInput, "input", "", "Path to the backup archive to restore from (required)")
 	restoreCmd.Flags().BoolVar(&restoreOverwriteExisting, "overwrite-existing", false, "Overwrite an existing, non-empty database or key file (dangerous)")
+	restoreCmd.Flags().BoolVar(&restoreAllowRollback, "allow-rollback", false, "Proceed even though this backup is behind this host's own audit trail (dangerous -- see the rollback-protection note above)")
 	restoreCmd.Flags().Int64Var(&restoreMaxEntryBytes, "max-entry-bytes", defaultMaxRestoreEntryBytes,
 		"Reject the archive if any single entry (the database or a key file) decompresses to more than this many bytes")
 	restoreCmd.Flags().Int64Var(&restoreMaxTotalBytes, "max-total-bytes", defaultMaxRestoreTotalBytes,
@@ -166,6 +183,43 @@ func runAdminRestore(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Rollback protection (design-b3-backup-v2.md §6.3) -- BEFORE any write to
+	// disk below, so a refused restore never touches the target at all.
+	//
+	// The witness file alone only advances on a checkpoint (scheduled, default
+	// every 24h, or on-demand) or a prior restore -- a change made to THIS
+	// EXACT destination database since the last checkpoint (the literal repro
+	// this feature closes: back up, create a secret, restore the OLDER backup
+	// moments later, all well within one checkpoint interval) would not have
+	// touched the witness at all, leaving nothing to detect it. The
+	// destination database being overwritten right now is always live and
+	// current, with no checkpoint delay -- reading its OWN raw audit-event
+	// count, when --overwrite-existing means there IS an existing one, closes
+	// that gap directly. destinationFloor is 0 (no additional floor) whenever
+	// there is no pre-existing destination database to read.
+	destinationFloor, err := readExistingDatabaseAuditEventCount(dbPath)
+	if err != nil {
+		return fmt.Errorf("read existing destination database's audit event count: %w", err)
+	}
+	// Compare like with like: the destination's raw audit_events count against
+	// the ARCHIVED database's own raw count (read from the archive bytes, not
+	// the manifest), and the witness's signed high-water against the
+	// archive's signed high-water. Mixing them (raw destination count vs the
+	// archive's signed high-water, which lags until a checkpoint runs) refused
+	// a restore of a backup taken seconds earlier from the same database.
+	archiveRaw, err := auditEventCountFromDBBytes(dbBytes)
+	if err != nil {
+		return fmt.Errorf("read the archived database's audit event count: %w", err)
+	}
+	newerSubstantive, err := destinationEventsNewerThan(dbPath, archiveRaw)
+	if err != nil {
+		return fmt.Errorf("read existing destination database's newer audit events: %w", err)
+	}
+	rollbackCheck, err := checkRollbackProtection(manifest.AuditHighWater, dbPath, destinationFloor, archiveRaw, newerSubstantive)
+	if err != nil {
+		return err
+	}
+
 	// One timestamp for the whole restore run, reused for every existing file
 	// --overwrite-existing moves aside, so they're identifiable as belonging
 	// to the same restore.
@@ -208,7 +262,225 @@ func runAdminRestore(cmd *cobra.Command, args []string) error {
 	recordAdminAction(cfg, "admin.restore_completed",
 		fmt.Sprintf("restored from backup archive %s (created %s)", restoreInput, manifest.CreatedAt.Format(time.RFC3339)), true)
 
+	// design-b3-backup-v2.md §6.3: advance the witness file to at least the
+	// just-restored archive's own high-water mark, so a SUBSEQUENT restore on
+	// this host compares against what actually landed on disk, not stale
+	// pre-restore state. Best-effort -- a failure here degrades this host's
+	// own future rollback detection, but the restore itself already
+	// succeeded and must not be reported as failed over it.
+	if rollbackCheck.archiveEncoded != "" {
+		if _, werr := auditverify.WriteWitnessIfHigher(auditverify.WitnessPath(dbPath), rollbackCheck.archiveEncoded); werr != nil {
+			fmt.Printf("note: could not update the rollback-protection witness file: %v\n", werr)
+		}
+	}
+	// An allowed rollback needs its own explicit audit trail entry, written
+	// once the restored chain is writable again (design-b3-backup-v2.md
+	// §6.2: "using it writes an audit event recording that the override was
+	// used" -- there is no silent, warning-only path).
+	if rollbackCheck.overrodeRollback {
+		recordAdminAction(cfg, "admin.restore_rollback_override",
+			fmt.Sprintf("restored a backup that is %d audit event(s) behind this host's last known state "+
+				"(--allow-rollback was used) -- any user/credential revocation recorded after that point is undone by this restore",
+				rollbackCheck.gapEvents), true)
+	}
+
 	return verifyRestoredAudit(cfg, dbPath)
+}
+
+// rollbackCheckOutcome is checkRollbackProtection's result: whether the
+// restore was allowed to proceed past a detected rollback, the size of that
+// gap (for the audit event runAdminRestore writes once the restored chain
+// is writable again), and the archive's own raw encoded high-water value
+// (so runAdminRestore can advance the witness file to it after a successful
+// restore, without re-parsing the manifest).
+type rollbackCheckOutcome struct {
+	overrodeRollback bool
+	gapEvents        int64
+	archiveEncoded   string
+}
+
+// checkRollbackProtection implements design-b3-backup-v2.md §6.3: compares
+// the archive's own certified audit-trail progress (highWaterEncoded, from
+// backupManifest.AuditHighWater -- empty if the source install had never
+// written a checkpoint) against this host's witness file (sibling to dbPath,
+// maintained by every server this host has run) BEFORE the caller writes
+// anything to disk. Returns an error (refusing the restore) if the archive
+// is behind and --allow-rollback was not given; any note worth printing is
+// returned alongside a nil error otherwise.
+//
+// Reference = max(witness file, destinationFloor) -- destinationFloor (see
+// readExistingDatabaseAuditEventCount) is the CURRENT destination database's
+// own live raw audit-event count, read moments ago, right before this
+// restore would overwrite it (0 when there is no pre-existing destination
+// database). The witness file alone only advances on a checkpoint
+// (scheduled, default every 24h, or on-demand) or a prior restore -- a
+// change made to the destination since the last checkpoint would not have
+// touched the witness at all. destinationFloor closes that gap: it has no
+// checkpoint delay, because it is read directly, right now, from the exact
+// database this restore is about to destroy.
+//
+// Three cases, per §6.3 (reference substituted for "witness" throughout):
+//   - reference is 0 (no witness AND no pre-existing destination database):
+//     nothing to compare against (a genuinely fresh host, or the first
+//     restore ever run on this one) -- proceed. This is the legitimate
+//     bootstrap case, not a gap to close.
+//   - archive's high-water >= reference: this backup is at least as current
+//     as anything this host has certified or the destination itself
+//     contains -- proceed normally.
+//   - archive's high-water < reference: refuse unless --allow-rollback.
+//
+// A malformed manifest.AuditHighWater (non-empty but unparseable -- a
+// tampered or corrupted manifest) and a malformed witness file (exists but
+// unparseable) are BOTH treated as hard errors, never silently downgraded to
+// "absent" -- deleting or corrupting either one must not be a way to evade
+// this check.
+func checkRollbackProtection(highWaterEncoded, dbPath string, destinationFloor, archiveRaw, newerSubstantive int64) (rollbackCheckOutcome, error) {
+	var archiveSigned int64
+	if highWaterEncoded != "" {
+		archiveCP, _, ok := auditverify.ParseHighWater(highWaterEncoded)
+		if !ok {
+			return rollbackCheckOutcome{}, fmt.Errorf(
+				"backup archive's manifest carries an audit high-water value that does not parse -- " +
+					"the manifest may be corrupted or tampered with; restore refuses rather than treat this as if the archive had no recorded history")
+		}
+		archiveSigned = archiveCP.ChainedEvents
+	}
+
+	witnessPath := auditverify.WitnessPath(dbPath)
+	witnessCP, _, found, err := auditverify.ReadWitness(witnessPath)
+	if err != nil {
+		return rollbackCheckOutcome{}, fmt.Errorf(
+			"could not read the rollback-protection witness file %q: %w -- investigate before proceeding "+
+				"(a corrupted witness is not treated as absent)", witnessPath, err)
+	}
+
+	// Two independent comparisons, each between values of the same kind:
+	//   - raw: the live destination database's MAX(audit_events.id) vs the
+	//     archived database's own MAX(audit_events.id);
+	//   - signed: the host witness's certified high-water vs the archive's
+	//     certified high-water.
+	// The archive is behind if EITHER says so; the reported gap is the larger.
+	var gap, archiveEvents, reference int64
+	// Raw: only events newer than the archive's own head that are NOT the
+	// backup tool's own bookkeeping count (admin backup writes
+	// admin.backup_created AFTER taking its snapshot, so the source database
+	// is always one bookkeeping event ahead of its own freshest backup).
+	if newerSubstantive > 0 {
+		gap, archiveEvents, reference = newerSubstantive, archiveRaw, destinationFloor
+	}
+	if found && witnessCP.ChainedEvents > archiveSigned && witnessCP.ChainedEvents-archiveSigned > gap {
+		gap, archiveEvents, reference = witnessCP.ChainedEvents-archiveSigned, archiveSigned, witnessCP.ChainedEvents
+	}
+	if gap == 0 {
+		return rollbackCheckOutcome{archiveEncoded: highWaterEncoded}, nil
+	}
+	if !restoreAllowRollback {
+		return rollbackCheckOutcome{}, fmt.Errorf(
+			"refusing to restore: this backup's audit trail (%d event(s)) is %d event(s) BEHIND this host's own "+
+				"last known state (%d event(s)) -- restoring it would silently un-revoke any user/credential access "+
+				"revoked since this backup was taken. Pass --allow-rollback if this is a genuine disaster-recovery "+
+				"restore of an intentionally older backup", archiveEvents, gap, reference)
+	}
+	fmt.Printf("WARNING: --allow-rollback is in effect. This backup's audit trail (%d event(s)) is %d event(s) "+
+		"behind this host's own last known state (%d event(s)) -- proceeding will silently un-revoke any "+
+		"user/credential access revoked since this backup was taken. Recording this override to the audit trail.\n",
+		archiveEvents, gap, reference)
+	return rollbackCheckOutcome{overrodeRollback: true, gapEvents: gap, archiveEncoded: highWaterEncoded}, nil
+}
+
+// readExistingDatabaseAuditEventCount opens dbPath (a SQLite file that may
+// or may not exist yet) read-only and returns the raw, live MAX(id) from its
+// audit_events table -- 0 when the file does not exist, is empty, or the
+// table itself does not exist yet (a genuinely fresh/pre-migration database,
+// not an error). This is deliberately a raw, unsigned count, not the signed
+// checkpoint high-water: it needs to reflect changes made moments ago, with
+// no checkpoint-interval delay, since it is read immediately before this
+// exact database would be overwritten.
+// rollbackBookkeepingEventTypes are audit events the admin tool itself writes
+// around a backup; they never represent a revocation or any access change,
+// so they do not make a destination "newer" than an archive.
+var rollbackBookkeepingEventTypes = []string{"admin.backup_created"}
+
+// destinationEventsNewerThan counts audit events in the existing destination
+// database with id > archiveHead, excluding rollbackBookkeepingEventTypes.
+// 0 when there is no destination database or no audit_events table.
+func destinationEventsNewerThan(dbPath string, archiveHead int64) (int64, error) {
+	info, statErr := os.Stat(dbPath)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("stat %q: %w", dbPath, statErr)
+	}
+	if info.Size() == 0 {
+		return 0, nil
+	}
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+	if err != nil {
+		return 0, fmt.Errorf("open %q read-only: %w", dbPath, err)
+	}
+	defer db.Close() //nolint:errcheck
+	var n int64
+	q := "SELECT COUNT(*) FROM audit_events WHERE id > ? AND event_type NOT IN (" +
+		strings.TrimSuffix(strings.Repeat("?,", len(rollbackBookkeepingEventTypes)), ",") + ")"
+	args := []any{archiveHead}
+	for _, et := range rollbackBookkeepingEventTypes {
+		args = append(args, et)
+	}
+	if err := db.QueryRow(q, args...).Scan(&n); err != nil { // nosemgrep: go.lang.security.audit.sqli.gosql-sqli.gosql-sqli -- q's dynamic part is only a "?,?,..." placeholder run sized off len(rollbackBookkeepingEventTypes) (a package-level literal slice); every actual value (archiveHead, et) is passed as a parameterized arg, never interpolated into q
+		if strings.Contains(err.Error(), "no such table") {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("count newer audit events in %q: %w", dbPath, err)
+	}
+	return n, nil
+}
+
+// auditEventCountFromDBBytes returns MAX(audit_events.id) of an archived
+// SQLite database image, read from a private temp copy (0 when the table is
+// absent, e.g. an archive from an install that never logged an event).
+func auditEventCountFromDBBytes(data []byte) (int64, error) {
+	dir, err := os.MkdirTemp("", "keyorix-restore-audit-*")
+	if err != nil {
+		return 0, fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(dir) //nolint:errcheck
+	p := filepath.Join(dir, "archive.db")
+	if err := os.WriteFile(p, data, 0o600); err != nil {
+		return 0, fmt.Errorf("write temp copy: %w", err)
+	}
+	return readExistingDatabaseAuditEventCount(p)
+}
+
+func readExistingDatabaseAuditEventCount(dbPath string) (int64, error) {
+	info, statErr := os.Stat(dbPath)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("stat %q: %w", dbPath, statErr)
+	}
+	if info.Size() == 0 {
+		return 0, nil
+	}
+
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+	if err != nil {
+		return 0, fmt.Errorf("open %q read-only: %w", dbPath, err)
+	}
+	defer db.Close() //nolint:errcheck
+
+	var count sql.NullInt64
+	if err := db.QueryRow("SELECT MAX(id) FROM audit_events").Scan(&count); err != nil {
+		// A missing audit_events table (a database created but never
+		// migrated) is the fresh-database case, not a hard error -- every
+		// other error (a genuinely corrupt or unreadable file) is.
+		if strings.Contains(err.Error(), "no such table") {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("read audit_events count from %q: %w", dbPath, err)
+	}
+	return count.Int64, nil
 }
 
 // verifyRestoredAudit runs the same offline audit-chain re-walk

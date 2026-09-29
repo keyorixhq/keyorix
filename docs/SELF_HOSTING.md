@@ -151,6 +151,29 @@ them to match -- so `admin restore` also runs `admin verify-audit`
 automatically against the restored database and fails if it reports the
 audit chain BROKEN.
 
+**Restoring an older backup than this host has already progressed past is
+refused by default.** Restoring genuinely can undo history: any revocation
+that happened *after* the backup was taken (a suspended account, a deleted
+machine credential, a rotated role grant) doesn't exist in that backup's
+database, so restoring it silently un-revokes that access. `admin restore`
+compares the archive's own certified audit-trail progress against a
+host-local witness file (`.audit-highwater-witness`, sibling to the
+database, maintained automatically by every server this host runs) *before*
+writing anything to disk, and refuses if the archive is behind. This is a
+genuine, host-local-only check — it protects against restoring a stale
+backup back onto ITS OWN host, but a fresh replacement host (or one whose
+data directory, witness file included, was wiped) has nothing to compare
+against and cannot be protected by this mechanism alone (see
+`docs/design-b3-backup-v2.md` §6.5's stated limitation; a stronger,
+externally-anchored check independent of the restoring host's own state is
+designed in §6.4 but not yet implemented).
+
+For a genuine disaster-recovery restore of an intentionally older backup,
+pass `--allow-rollback`. This proceeds, but writes an explicit audit event
+to the restored database (once its chain is writable again) recording how
+many events behind the restore went — there is no silent, warning-only
+path.
+
 ## 6. Upgrades
 
 ```sh

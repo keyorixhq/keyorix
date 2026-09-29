@@ -15,9 +15,11 @@ package core
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/auditverify"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
@@ -676,6 +678,46 @@ func TestAdvanceAuditHighWater_DoesNotLowerMark(t *testing.T) {
 	c.advanceAuditHighWater(context.Background(), cp)
 	// Watermark must remain at 100, not drop to 3.
 	assert.Equal(t, int64(100), c.watermark())
+}
+
+// TestAdvanceAuditHighWater_WritesWitnessFile proves design-b3-backup-v2.md
+// §6.3's wiring: once SetAuditHighWaterWitnessPath is set, every checkpoint
+// write mirrors the persisted high-water mark to the witness file `admin
+// restore` later compares an archive against.
+func TestAdvanceAuditHighWater_WritesWitnessFile(t *testing.T) {
+	t.Parallel()
+	ms := new(MockStorage)
+	ms.On("GetSystemMetadata", mock.Anything, auditHighWaterKey).Return("", false, nil)
+	ms.On("SetSystemMetadata", mock.Anything, auditHighWaterKey, mock.AnythingOfType("string")).Return(nil)
+	c := NewKeyorixCore(ms)
+	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
+
+	witnessPath := filepath.Join(t.TempDir(), auditverify.AuditHighWaterWitnessFileName)
+	c.SetAuditHighWaterWitnessPath(witnessPath)
+
+	cp := &models.AuditCheckpoint{ChainedEvents: 7, HeadID: 1, HeadHash: "abc", KeyVersion: "v1"}
+	c.advanceAuditHighWater(context.Background(), cp)
+
+	parsedCP, _, found, err := auditverify.ReadWitness(witnessPath)
+	require.NoError(t, err)
+	require.True(t, found, "witness file must exist after a checkpoint write with the path set")
+	assert.Equal(t, int64(7), parsedCP.ChainedEvents)
+}
+
+// TestAdvanceAuditHighWater_NoWitnessPathIsANoop proves the default
+// (auditHighWaterWitnessPath unset) does not attempt to write anything —
+// the common case for any deployment `admin backup`/`admin restore` don't
+// support, and every existing test core that never calls the setter.
+func TestAdvanceAuditHighWater_NoWitnessPathIsANoop(t *testing.T) {
+	t.Parallel()
+	ms := new(MockStorage)
+	ms.On("GetSystemMetadata", mock.Anything, auditHighWaterKey).Return("", false, nil)
+	ms.On("SetSystemMetadata", mock.Anything, auditHighWaterKey, mock.AnythingOfType("string")).Return(nil)
+	c := NewKeyorixCore(ms)
+	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
+
+	cp := &models.AuditCheckpoint{ChainedEvents: 7, HeadID: 1, HeadHash: "abc", KeyVersion: "v1"}
+	require.NotPanics(t, func() { c.advanceAuditHighWater(context.Background(), cp) })
 }
 
 // ── access_review_revoke.go — verifyAccessReviewGrantExists branches ─────────

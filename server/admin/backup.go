@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,13 +28,26 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
+	"gorm.io/gorm"
 )
 
 // backupFormatVersion guards forward compatibility: a backup taken by a
 // newer binary with a format this binary's restore does not understand must
 // refuse explicitly, not misinterpret the archive.
 const backupFormatVersion = 1
+
+// auditHighWaterMetadataKey is the system_metadata key internal/core's
+// advanceAuditHighWater (audit_checkpoint.go) writes under -- must stay
+// byte-for-byte identical to that unexported constant and to
+// internal/auditverify's own copy (verify.go), since all three read/write
+// the exact same row. Duplicated rather than imported: server/admin cannot
+// reach internal/core's unexported constant, and this package already has
+// its own direct-SQL access pattern to the raw DB (unlike restore.go, which
+// goes through internal/auditverify.ParseHighWater for the VALUE format,
+// this only needs the KEY string to look the row up).
+const auditHighWaterMetadataKey = "audit_checkpoint_highwater" // #nosec G101 -- metadata key name, not a credential
 
 // backupManifest is the archive's MANIFEST.json -- everything admin restore
 // needs to validate an archive before touching disk: what backend it is for,
@@ -49,6 +63,15 @@ type backupManifest struct {
 	Backend       string            `json:"backend"` // always "sqlite" today
 	DBFile        backupFileEntry   `json:"db_file"`
 	KeyFiles      []backupFileEntry `json:"key_files"`
+	// AuditHighWater is the raw system_metadata "audit_checkpoint_highwater"
+	// value at backup time (internal/core's own auditHighWaterValue encoding —
+	// no new signing scheme; see internal/auditverify.ParseHighWater, which
+	// already knows this exact format offline) — empty when no checkpoint has
+	// ever been written on this install. design-b3-backup-v2.md §6.3's
+	// rollback-protection restore check reads this field to compare the
+	// archive's own certified audit-trail progress against the restore
+	// target's witness file, BEFORE writing anything to disk.
+	AuditHighWater string `json:"audit_high_water,omitempty"`
 }
 
 // backupFileEntry describes one file bundled into the archive: where it came
@@ -122,11 +145,12 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 		Backend:       "sqlite",
 	}
 
-	dbEntry, dbBytes, err := snapshotSQLiteDatabase(cfg)
+	dbEntry, dbBytes, highWater, err := snapshotSQLiteDatabase(cfg)
 	if err != nil {
 		return fmt.Errorf("snapshot database: %w", err)
 	}
 	manifest.DBFile = dbEntry
+	manifest.AuditHighWater = highWater
 
 	specs, err := keyfiles.Registry(&cfg.Storage.Encryption, ".")
 	if err != nil {
@@ -166,17 +190,32 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 // storage.OpenGormDB every other raw-DB admin path uses (DSN construction,
 // permission tightening) and takes a consistent snapshot via VACUUM INTO --
 // SQLite's own built-in equivalent of pg_dump, safe here because the caller
-// already holds the exclusive database lock for the duration.
-func snapshotSQLiteDatabase(cfg *config.Config) (backupFileEntry, []byte, error) {
+// already holds the exclusive database lock for the duration. Also reads the
+// raw audit high-water value (design-b3-backup-v2.md §6.3) from the SAME
+// connection, under the SAME exclusive lock, so it reflects exactly the
+// state being snapshotted -- empty if no checkpoint has ever been written on
+// this install (a fresh/young install, not an error).
+func snapshotSQLiteDatabase(cfg *config.Config) (backupFileEntry, []byte, string, error) {
 	gdb, err := storage.OpenGormDB(cfg)
 	if err != nil {
-		return backupFileEntry{}, nil, err
+		return backupFileEntry{}, nil, "", err
 	}
 	defer closeGormDB(gdb)
 
+	var meta models.SystemMetadata
+	highWater := ""
+	switch merr := gdb.Where("key = ?", auditHighWaterMetadataKey).Take(&meta).Error; {
+	case merr == nil:
+		highWater = meta.Value
+	case errors.Is(merr, gorm.ErrRecordNotFound):
+		// No checkpoint has ever been written -- leave highWater empty.
+	default:
+		return backupFileEntry{}, nil, "", fmt.Errorf("read audit high-water mark: %w", merr)
+	}
+
 	sqlDB, err := gdb.DB()
 	if err != nil {
-		return backupFileEntry{}, nil, fmt.Errorf("get raw db handle: %w", err)
+		return backupFileEntry{}, nil, "", fmt.Errorf("get raw db handle: %w", err)
 	}
 	// The configured DSN enables WAL mode (internal/storage/factory.go's
 	// sqliteDSN). GORM's pool can hand VACUUM INTO a different physical
@@ -189,12 +228,12 @@ func snapshotSQLiteDatabase(cfg *config.Config) (backupFileEntry, []byte, error)
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
 	if _, err := sqlDB.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
-		return backupFileEntry{}, nil, fmt.Errorf("checkpoint WAL before snapshot: %w", err)
+		return backupFileEntry{}, nil, "", fmt.Errorf("checkpoint WAL before snapshot: %w", err)
 	}
 
 	tmpDir, err := os.MkdirTemp("", "keyorix-admin-backup-*")
 	if err != nil {
-		return backupFileEntry{}, nil, fmt.Errorf("create temp dir: %w", err)
+		return backupFileEntry{}, nil, "", fmt.Errorf("create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tmpDir) //nolint:errcheck
 
@@ -202,16 +241,16 @@ func snapshotSQLiteDatabase(cfg *config.Config) (backupFileEntry, []byte, error)
 	// above only creates the directory, not this file, so the path is free.
 	tmpPath := filepath.Join(tmpDir, "snapshot.db")
 	if _, err := sqlDB.Exec("VACUUM INTO ?", tmpPath); err != nil {
-		return backupFileEntry{}, nil, fmt.Errorf("VACUUM INTO snapshot: %w", err)
+		return backupFileEntry{}, nil, "", fmt.Errorf("VACUUM INTO snapshot: %w", err)
 	}
 
 	if err := verifySQLiteIntegrity(tmpPath); err != nil {
-		return backupFileEntry{}, nil, fmt.Errorf("snapshot failed its own integrity check: %w", err)
+		return backupFileEntry{}, nil, "", fmt.Errorf("snapshot failed its own integrity check: %w", err)
 	}
 
 	data, err := os.ReadFile(tmpPath) // #nosec G304 -- our own just-created temp file
 	if err != nil {
-		return backupFileEntry{}, nil, fmt.Errorf("read snapshot: %w", err)
+		return backupFileEntry{}, nil, "", fmt.Errorf("read snapshot: %w", err)
 	}
 
 	dbPath := cfg.Storage.Database.Path
@@ -225,7 +264,7 @@ func snapshotSQLiteDatabase(cfg *config.Config) (backupFileEntry, []byte, error)
 		Mode:         0600,
 		SHA256:       hex.EncodeToString(sum[:]),
 		Size:         int64(len(data)),
-	}, data, nil
+	}, data, highWater, nil
 }
 
 // verifySQLiteIntegrity opens path with a FRESH, independent connection

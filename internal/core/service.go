@@ -86,9 +86,17 @@ type KeyorixCore struct {
 	dynamicAllowPrivateTargets bool
 	// webauthnRP is the WebAuthn relying party (ADR-036); nil = WebAuthn disabled.
 	// Set from config at startup via SetWebAuthn.
-	webauthnRP     *webauthn.WebAuthn
-	now            func() time.Time // For testability
-	passwordPolicy PasswordPolicy
+	webauthnRP *webauthn.WebAuthn
+	// auditHighWaterWitnessPath is where advanceAuditHighWater (audit_checkpoint.go)
+	// mirrors the signed audit high-water mark it just persisted to
+	// system_metadata (design-b3-backup-v2.md §6.3's rollback-protection witness
+	// file). Empty = disabled (no witness maintained) — the default for any
+	// deployment `admin backup`/`admin restore` don't support (Postgres) or a
+	// test core with no on-disk database at all. Set from config at startup via
+	// SetAuditHighWaterWitnessPath, to auditverify.WitnessPath(dbPath).
+	auditHighWaterWitnessPath string
+	now                       func() time.Time // For testability
+	passwordPolicy            PasswordPolicy
 	// bootstrapToken gates POST /system/init (BootstrapSystem). The first-boot admin
 	// claim is otherwise unauthenticated, so a fresh, network-reachable instance could
 	// be seized by whoever calls /system/init first. The server sets this at startup
@@ -950,6 +958,18 @@ func (c *KeyorixCore) WebAuthnEnabled() bool { return c.webauthnRP != nil }
 // configures a password_policy block.
 func (c *KeyorixCore) SetPasswordPolicy(p PasswordPolicy) {
 	c.passwordPolicy = p
+}
+
+// SetAuditHighWaterWitnessPath sets where advanceAuditHighWater
+// (audit_checkpoint.go) mirrors the audit high-water mark it persists —
+// design-b3-backup-v2.md §6.3's rollback-protection witness file. The server
+// calls this at startup with auditverify.WitnessPath(dbPath) for a
+// local/sqlite deployment (the only backend `admin backup`/`admin restore`
+// support); leaving it unset (empty string) disables witness maintenance
+// entirely, e.g. for Postgres deployments or a test core with no real
+// database file.
+func (c *KeyorixCore) SetAuditHighWaterWitnessPath(path string) {
+	c.auditHighWaterWitnessPath = path
 }
 
 // SetBootstrapToken sets the token that POST /system/init must present to seed the
