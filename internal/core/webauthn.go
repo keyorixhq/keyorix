@@ -295,6 +295,14 @@ func (c *KeyorixCore) BeginWebAuthnReauth(ctx context.Context, userID uint) (*pr
 	return assertion, token, nil
 }
 
+// atomicity: consume-first by design (Session O, O4) — the WebAuthn reauth
+// session is consumed BEFORE the MFAStepUpGrant is created. A later
+// grant-creation failure must not un-consume it: verified by
+// TestFinishWebAuthnReauth_GrantFailureAfterConsume_FailsClosed
+// (consume_first_fails_closed_test.go), which injects a CreateMFAStepUpGrant
+// failure after a successful consume and confirms no grant is issued and the
+// session stays consumed.
+//
 // FinishWebAuthnReauth verifies the assertion begun by BeginWebAuthnReauth and,
 // on success, mints an MFAStepUpGrant with Purpose == MFAStepUpPurposeReauth —
 // the ONLY way a WebAuthn-only account can satisfy requireReauth's
@@ -411,6 +419,14 @@ func (c *KeyorixCore) checkWebAuthnAccountGates(wu *webauthnUser) error {
 	return nil
 }
 
+// atomicity: consume-first by design (Session O, O4) — the MFA challenge and
+// the WebAuthn ceremony session are both consumed BEFORE mintSession runs. A
+// later mint failure must not un-consume either: verified by
+// TestFinishWebAuthnLogin_MintFailureAfterConsume_FailsClosed
+// (consume_first_fails_closed_test.go), which injects a CreateSession failure
+// after a successful consume and confirms no session is issued and both
+// values stay consumed.
+//
 // FinishWebAuthnLogin consumes the challenge + webauthn session, verifies the
 // assertion, updates the credential's signature counter, and mints the session.
 func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessionToken, userAgent, ip string, parsed *protocol.ParsedCredentialAssertionData) (*models.Session, *models.User, error) {
@@ -527,6 +543,13 @@ func (c *KeyorixCore) BeginWebAuthnPasswordlessLogin(ctx context.Context) (*prot
 	return assertion, token, nil
 }
 
+// atomicity: consume-first by design (Session O, O4) — the WebAuthn ceremony
+// session is consumed BEFORE mintSession runs. A later mint failure must not
+// un-consume it: verified by
+// TestFinishWebAuthnPasswordlessLogin_MintFailureAfterConsume_FailsClosed
+// (consume_first_fails_closed_test.go), which injects a CreateSession failure
+// after a successful consume and confirms no session is issued.
+//
 // FinishWebAuthnPasswordlessLogin verifies a discoverable assertion, resolves the
 // user from the credential's user handle, enforces account state, and mints a
 // session — a full login from a single passkey, no password.
