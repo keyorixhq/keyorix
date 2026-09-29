@@ -321,6 +321,36 @@ describe('SecretsListPage — search / filter / sort / page-size controls', () =
         expect(handlePageSizeChangeMock).toHaveBeenCalledWith(50);
     });
 
+    // SESSION-I regression: useSecretsList's `environments` is the GLOBAL,
+    // cross-project list (query key ['environments'], no project scope), so
+    // any two projects sharing an environment name (the common case --
+    // "development"/"staging"/"production" is every new project's default
+    // env set) produce multiple environment ROWS with the same name. The
+    // environment filter Select previously mapped one <option> per ROW,
+    // keyed by name -- React's reconciler warns "Encountered two children
+    // with the same key" and (per React's own docs on duplicate keys) may
+    // duplicate or omit affected children, found live against a real
+    // multi-project backend by web/e2e/real/pages.spec.ts. This filter is
+    // itself name-based (onFilterChange('environment', name) filters
+    // secrets by environment NAME across every project), so the correct
+    // fix is deduping by name before mapping to options, not switching the
+    // value to an id.
+    it('deduplicates same-named environments from different projects in the environment filter', () => {
+        listState.environments = [
+            { id: 1, name: 'production' },
+            { id: 2, name: 'staging' },
+            { id: 3, name: 'production' }, // same name, different project
+            { id: 4, name: 'staging' }, // same name, different project
+        ];
+        render(<SecretsListPage />);
+        const [, , environmentSelect] = screen.getAllByRole('combobox');
+
+        const optionLabels = within(environmentSelect!)
+            .getAllByRole('option')
+            .map((o) => o.textContent);
+        expect(optionLabels).toEqual(['All Environments', 'Production', 'Staging']);
+    });
+
     it('toggles the advanced filters section', () => {
         render(<SecretsListPage />);
         expect(screen.getByRole('button', { name: /more filters/i })).toBeInTheDocument();
