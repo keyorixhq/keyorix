@@ -75,5 +75,25 @@ func AllTestModels() []any {
 		&SecretVersionComment{},
 		&RejectionReasonTemplate{},
 		&SecretTemplate{},
+		// Added by SESSION-U guard U1 (all_models_migration_guard_test.go's
+		// TestAllTestModels_MatchesModelsGoStructSet): each of these already had
+		// a production migration in migrateDatabase but was missing from this
+		// list, so SQLite-backed integration tests set up a schema that didn't
+		// match what a real install actually gets.
+		&AuditCheckpoint{},
+		&APIClient{},
+		&APIToken{},
+		&APICallLog{},
+		&ConnectorProjectBinding{},
+		&ExternalIdentity{},
+		&GRPCService{},
+		&IdentityProvider{},
+		&MFAStepUpGrant{},
+		&PasswordReset{},
+		&RateLimit{},
+		&RecoveryKeyRecord{},
+		&SecretAccessLog{},
+		&SecretMetadataHistory{},
+		&Setting{},
 	}
 }
