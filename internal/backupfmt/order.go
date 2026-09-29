@@ -388,6 +388,12 @@ type referenceEdge struct {
 	ChildTable  string
 	ChildColumn string
 	ParentTable string
+	// ChildHasIDColumn is false for the small set of composite-primary-key
+	// join tables (RolePermission, UserRole, GroupRole, UserGroup) that have
+	// no single "id" column at all -- CheckDanglingReferences (checks.go)
+	// needs a backend-specific fallback for identifying a row in those,
+	// since "id" doesn't exist to select there on either backend.
+	ChildHasIDColumn bool
 }
 
 // referenceEdges resolves classifyAll()'s classified cross-table references
@@ -425,9 +431,10 @@ func referenceEdges() ([]referenceEdge, error) {
 			return nil, fmt.Errorf("referenced model %q (from %s.%s) not found in registry", c.Refs, c.Model, c.Field)
 		}
 		edges = append(edges, referenceEdge{
-			ChildTable:  childSchema.Table,
-			ChildColumn: field.DBName,
-			ParentTable: parentSchema.Table,
+			ChildTable:       childSchema.Table,
+			ChildColumn:      field.DBName,
+			ParentTable:      parentSchema.Table,
+			ChildHasIDColumn: childSchema.LookUpField("ID") != nil,
 		})
 	}
 	return edges, nil
