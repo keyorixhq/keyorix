@@ -265,9 +265,21 @@ func (h *CatalogHandler) CreateAccessRequest(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
-		if strings.Contains(msg, errUnknownRole) || strings.Contains(msg, "required") {
+		switch {
+		case strings.Contains(msg, errUnknownRole) || strings.Contains(msg, "required"):
 			status = http.StatusBadRequest
-		} else {
+		case strings.Contains(msg, "already have a pending access request"):
+			// #G82's own duplicate-pending-request guard (internal/core/invitations.go's
+			// RequestProjectAccess) -- an ordinary, expected outcome (the caller's own
+			// prior request is still pending), not a server fault. Found by SESSION-I's
+			// fresh-install API smoke driver: a second request for the same (user,
+			// project) pair 500ed instead of returning 409 Conflict.
+			status = http.StatusConflict
+		case strings.Contains(msg, errNotFound):
+			// The target project doesn't exist (or was soft-deleted) -- see
+			// RequestProjectAccess's own GetProject check.
+			status = http.StatusNotFound
+		default:
 			log.Printf("Error creating access request for project %d: %v", id, err)
 			msg = clientSafe(err)
 		}
