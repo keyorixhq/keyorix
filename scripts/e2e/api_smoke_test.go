@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/scripts/e2e/harness"
 )
 
 // TestAPISmoke_SQLite is I2: boot a real keyorix-server against a freshly
@@ -15,8 +17,8 @@ import (
 // assert no 5xx anywhere, assert every route.json route is exercised or
 // explicitly skipped-with-reason, and verify the audit hash chain at the end.
 func TestAPISmoke_SQLite(t *testing.T) {
-	serverBin, cliBin := buildBinaries(t)
-	backend := dbBackend{name: "sqlite"} // admin init's own default (configs/keyorix.yaml.tpl)
+	serverBin, cliBin := harness.BuildBinaries(t)
+	backend := harness.DBBackend{Name: "sqlite"} // admin init's own default (configs/keyorix.yaml.tpl)
 	runAPISmoke(t, serverBin, cliBin, backend)
 }
 
@@ -33,16 +35,16 @@ func TestAPISmoke_Postgres(t *testing.T) {
 	if dbPassword == "" {
 		dbPassword = "keyorix-e2e-smoke"
 	}
-	serverBin, cliBin := buildBinaries(t)
-	backend := dbBackend{
-		name: "postgres",
+	serverBin, cliBin := harness.BuildBinaries(t)
+	backend := harness.DBBackend{
+		Name: "postgres",
 		// Field-by-field form (configs/dev.yaml's own shape) rather than a
 		// bare dsn: line, so KEYORIX_DB_PASSWORD stays out of the config
 		// file entirely, matching this repo's own "credentials never in the
 		// committed config" convention (configs/dev.yaml's header comment).
-		configExtra: fmt.Sprintf("storage:\n  type: postgres\n  database:\n%s\n  encryption:\n    enabled: true\n    dek_path: keys/dek.key\n    salt_path: keys/kek.salt\n", pgDatabaseYAML(dsn)),
-		extraEnv:    []string{"KEYORIX_DB_PASSWORD=" + dbPassword},
-		verifyAuditFlag: func(_ string) []string {
+		ConfigExtra: fmt.Sprintf("storage:\n  type: postgres\n  database:\n%s\n  encryption:\n    enabled: true\n    dek_path: keys/dek.key\n    salt_path: keys/kek.salt\n", pgDatabaseYAML(dsn)),
+		ExtraEnv:    []string{"KEYORIX_DB_PASSWORD=" + dbPassword},
+		VerifyAuditFlag: func(_ string) []string {
 			return []string{"--pg-dsn", dsn}
 		},
 	}
@@ -80,11 +82,11 @@ func pgDatabaseYAML(dsn string) string {
 		host, port, name, user, sslMode)
 }
 
-func runAPISmoke(t *testing.T, serverBin, cliBin string, backend dbBackend) {
+func runAPISmoke(t *testing.T, serverBin, cliBin string, backend harness.DBBackend) {
 	t.Helper()
-	srv := startServer(t, serverBin, backend)
+	srv := harness.StartServer(t, serverBin, backend)
 	t.Cleanup(srv.Close)
-	runAPISmokeAgainstServer(t, srv, cliBin, backend, "smoketestadmin", bootstrapAdminPassword)
+	runAPISmokeAgainstServer(t, srv, cliBin, backend, "smoketestadmin", harness.BootstrapAdminPassword)
 }
 
 // runAPISmokeAgainstServer is runAPISmoke's group-running half, split out so
@@ -95,11 +97,11 @@ func runAPISmoke(t *testing.T, serverBin, cliBin string, backend dbBackend) {
 // adminUsername/adminPassword let the upgrade-path caller log in as the
 // admin IT already bootstrapped with the OLD binary, rather than this
 // function bootstrapping a new one.
-func runAPISmokeAgainstServer(t *testing.T, srv *server, cliBin string, backend dbBackend, adminUsername, adminPassword string) {
+func runAPISmokeAgainstServer(t *testing.T, srv *harness.Server, cliBin string, backend harness.DBBackend, adminUsername, adminPassword string) {
 	t.Helper()
 	routes := loadRoutes(t)
 
-	c := newClient(t, srv.baseURL)
+	c := newClient(t, srv.BaseURL)
 	c.login(adminUsername, adminPassword)
 
 	// Each groupXxx function drives one feature group's happy-path
@@ -112,7 +114,7 @@ func runAPISmokeAgainstServer(t *testing.T, srv *server, cliBin string, backend 
 	// inline (e.g. groupSecrets must run before groupShares, which shares the
 	// secret it created).
 	ctx := &smokeCtx{
-		t: t, c: c, cli: cliBin, cliEnv: srv.cliEnv(),
+		t: t, c: c, cli: cliBin, cliEnv: srv.CLIEnv(),
 		adminUsername: adminUsername, adminPassword: adminPassword,
 	}
 
@@ -167,14 +169,6 @@ func runAPISmokeAgainstServer(t *testing.T, srv *server, cliBin string, backend 
 	assertRouteCoverage(t, routes, c)
 
 	verifyAuditChain(t, srv, backend)
-}
-
-// cliEnv returns the environment a `keyorix` CLI invocation needs to talk to
-// this running server: isolated HOME (so it never touches a real
-// ~/.keyorix/cli.yaml -- see the repo's own "Local ~/.keyorix/cli.yaml breaks
-// CLI tests" lesson) plus PATH.
-func (s *server) cliEnv() []string {
-	return []string{"HOME=" + s.dir, "PATH=" + os.Getenv("PATH")}
 }
 
 // smokeCtx bundles what every groupXxx function needs: the test handle, the

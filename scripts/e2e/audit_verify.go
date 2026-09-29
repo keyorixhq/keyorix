@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/scripts/e2e/harness"
 )
 
 // verifyAuditChain runs `keyorix-server admin verify-audit` directly against
@@ -18,29 +20,29 @@ import (
 // above writes an audit event) verifies clean. Exit code 0 = VALID; any
 // other code (1 BROKEN, 2 INDETERMINATE, 3 usage error) fails the test --
 // this smoke run should never produce anything but a clean, complete chain.
-func verifyAuditChain(t *testing.T, srv *server, backend dbBackend) {
+func verifyAuditChain(t *testing.T, srv *harness.Server, backend harness.DBBackend) {
 	t.Helper()
 	args := []string{"admin", "verify-audit", "--json"}
-	if backend.verifyAuditFlag != nil {
-		args = append(args, backend.verifyAuditFlag(srv.dir)...)
+	if backend.VerifyAuditFlag != nil {
+		args = append(args, backend.VerifyAuditFlag(srv.Dir)...)
 	} else {
 		// SQLite default: admin init wrote storage.database.path relative to
-		// srv.dir (configs/keyorix.yaml.tpl's "keyorix.db" default).
-		args = append(args, "--db", filepath.Join(srv.dir, "keyorix.db"))
+		// srv.Dir (configs/keyorix.yaml.tpl's "keyorix.db" default).
+		args = append(args, "--db", filepath.Join(srv.Dir, "keyorix.db"))
 	}
-	cmd := exec.Command(srv.binary, args...) // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- runs the keyorix binary this e2e harness itself built or downloaded, with the harness's own fixed arguments; no external input reaches it
-	cmd.Dir = srv.dir
-	cmd.Env = srv.env
+	cmd := exec.Command(srv.Binary, args...) // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- runs the keyorix binary this e2e harness itself built or downloaded, with the harness's own fixed arguments; no external input reaches it
+	cmd.Dir = srv.Dir
+	cmd.Env = srv.Env
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("keyorix-server admin verify-audit (%s) did not report VALID: %v\n%s",
-			backend.name, err, out)
+			backend.Name, err, out)
 	}
 	if !strings.Contains(string(out), `"verdict"`) && !strings.Contains(string(out), "VALID") {
 		t.Fatalf("keyorix-server admin verify-audit (%s): unexpected output, no VALID verdict found:\n%s",
-			backend.name, out)
+			backend.Name, out)
 	}
-	t.Logf("verify-audit (%s): %s", backend.name, out)
+	t.Logf("verify-audit (%s): %s", backend.Name, out)
 }
 
 // parseLibpqDSN does a minimal, deliberately-not-exhaustive parse of a
