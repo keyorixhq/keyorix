@@ -21,8 +21,12 @@ import (
 func TestRoundTrip_WriteExtractVerifyLoad(t *testing.T) {
 	src := openTestDB(t)
 	require.NoError(t, src.Create(&models.Project{Name: "proj-1"}).Error)
-	require.NoError(t, src.Create(&models.User{Username: "alice", Email: "a@example.com", PasswordHash: "x"}).Error)
-	require.NoError(t, src.Create(&models.User{Username: "bob", Email: "b@example.com", PasswordHash: "x"}).Error)
+	// PasswordHash is json:"-" -- deliberately DISTINCT per user (not the
+	// same literal "x" for both) so a bug that drops this field is visible
+	// as "value went missing/became empty", not masked by both rows
+	// happening to share one value regardless.
+	require.NoError(t, src.Create(&models.User{Username: "alice", Email: "a@example.com", PasswordHash: "alice-hash"}).Error)
+	require.NoError(t, src.Create(&models.User{Username: "bob", Email: "b@example.com", PasswordHash: "bob-hash"}).Error)
 
 	testModels := []any{&models.Project{}, &models.Environment{}, &models.User{}}
 	key := testManifestKey()
@@ -54,11 +58,62 @@ func TestRoundTrip_WriteExtractVerifyLoad(t *testing.T) {
 	require.Len(t, users, 2)
 	require.Equal(t, "alice", users[0].Username)
 	require.Equal(t, "bob", users[1].Username)
+	// PasswordHash is json:"-" -- must still survive the backup/restore row
+	// encoding. Found live (H6): a version-skip upgrade proof restoring a
+	// real, multi-role database into Postgres hit a UNIQUE constraint
+	// violation on Role.NameFolded (also json:"-") because every restored
+	// role's NameFolded came back "" -- json.Marshal(row) silently drops any
+	// json:"-" field, and json:"-" exists to hide a field from HTTP API
+	// responses, not to exempt it from being backed up.
+	require.Equal(t, "alice-hash", users[0].PasswordHash, "json:\"-\" field PasswordHash must survive the backup/restore round trip")
+	require.Equal(t, "bob-hash", users[1].PasswordHash, "json:\"-\" field PasswordHash must survive the backup/restore round trip")
 
 	var projects []models.Project
 	require.NoError(t, dst.Find(&projects).Error)
 	require.Len(t, projects, 1)
 	require.Equal(t, "proj-1", projects[0].Name)
+}
+
+// TestRoundTrip_MultipleRowsWithJSONDashUniqueColumn is the exact production
+// shape that first surfaced this class of bug (H6's version-skip upgrade
+// proof, restoring a real multi-role database into Postgres): several rows
+// in the SAME table, each with a DIFFERENT value in a json:"-"-tagged,
+// uniquely-indexed column (Role.NameFolded). Before the row_codec.go fix,
+// json.Marshal(row) dropped NameFolded from every archived row, so every
+// restored row loaded with NameFolded="" -- the first insert succeeded, the
+// second violated the table's UNIQUE(name_folded) index. A single-row test
+// (or two rows sharing one value) cannot distinguish "field preserved" from
+// "field dropped but nothing collided" -- this needs >=2 rows with genuinely
+// different values in the same uniquely-constrained column.
+func TestRoundTrip_MultipleRowsWithJSONDashUniqueColumn(t *testing.T) {
+	src := openTestDB(t)
+	require.NoError(t, src.Exec("CREATE UNIQUE INDEX uniq_roles_name_folded_test ON roles(name_folded)").Error)
+	require.NoError(t, src.Create(&models.Role{Name: "Admin", NameFolded: "admin"}).Error)
+	require.NoError(t, src.Create(&models.Role{Name: "Viewer", NameFolded: "viewer"}).Error)
+	require.NoError(t, src.Create(&models.Role{Name: "Editor", NameFolded: "editor"}).Error)
+
+	testModels := []any{&models.Role{}}
+	var archive bytes.Buffer
+	_, err := writeBackupModels(src, testModels, 5, "", testManifestKey(), nil, nil, &archive)
+	require.NoError(t, err)
+
+	stagingDir := t.TempDir()
+	extractedManifest, err := ExtractArchive(&archive, stagingDir, 0, 0)
+	require.NoError(t, err)
+
+	dst := openTestDB(t)
+	require.NoError(t, dst.Exec("CREATE UNIQUE INDEX uniq_roles_name_folded_test ON roles(name_folded)").Error)
+	require.NoError(t, dst.Transaction(func(tx *gorm.DB) error {
+		return LoadArchive(tx, extractedManifest, stagingDir)
+	}), "restore must not fail with a UNIQUE constraint violation on a json:\"-\" column -- "+
+		"each row's real, distinct name_folded value must be preserved, not dropped to \"\"")
+
+	var roles []models.Role
+	require.NoError(t, dst.Order("id ASC").Find(&roles).Error)
+	require.Len(t, roles, 3)
+	require.Equal(t, "admin", roles[0].NameFolded)
+	require.Equal(t, "viewer", roles[1].NameFolded)
+	require.Equal(t, "editor", roles[2].NameFolded)
 }
 
 // TestLoadArchive_RefusesDanglingReferenceInLoadedData is the mandatory,
