@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -37,8 +38,9 @@ const (
 	BreakGlassExpired = "expired"
 	BreakGlassRevoked = "revoked"
 
-	EventBreakGlassActivated = "break_glass.activated" // #nosec G101 -- audit event type, not a credential
-	EventBreakGlassRevoked   = "break_glass.revoked"   // #nosec G101 -- audit event type, not a credential
+	EventBreakGlassActivated      = "break_glass.activated"       // #nosec G101 -- audit event type, not a credential
+	EventBreakGlassRevoked        = "break_glass.revoked"         // #nosec G101 -- audit event type, not a credential
+	EventBreakGlassNotifyPanicked = "break_glass.notify_panicked" // #nosec G101 -- audit event type, not a credential
 )
 
 // BreakGlassPolicy is the deployment configuration for emergency access, wired from
@@ -423,7 +425,24 @@ func (c *KeyorixCore) LogBreakGlassRevoked(ctx context.Context, actorID, project
 // others), but a failure to even LIST the project's members is a distinct, louder
 // failure mode — it means NO admin was considered for the alert at all — so that
 // case is returned as an error (#166) rather than swallowed silently.
-func (c *KeyorixCore) notifyBreakGlassAdmins(ctx context.Context, actorID, projectID uint, roleName string, expiresAt time.Time) error {
+//
+// Called strictly after the break-glass grant is already committed and audited
+// (ActivateBreakGlass, above) — a notification failure is a detection-latency
+// gap, not a control failure. A panic here is recovered rather than left to
+// propagate, for the same reason: it must not turn an already-succeeded
+// activation into a failed response. Unlike a plain returned error (which
+// ActivateBreakGlass's own caller just logs), a panic is additionally audited
+// under EventBreakGlassNotifyPanicked, since a panic mid-fan-out can leave an
+// unknown subset of admins un-notified with no other signal that happened.
+func (c *KeyorixCore) notifyBreakGlassAdmins(ctx context.Context, actorID, projectID uint, roleName string, expiresAt time.Time) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.auditProjectScoped(ctx, EventBreakGlassNotifyPanicked, actorID, projectID,
+				fmt.Sprintf("break-glass admin notification failed: panic notifying project %d admins: %v — emergency access is active but admins may not have been alerted, review manually", projectID, r))
+			log.Printf("SECURITY: notifyBreakGlassAdmins panicked for project %d (break-glass grant already committed and audited): %v\n%s", projectID, r, debug.Stack())
+			err = nil
+		}
+	}()
 	members, err := c.storage.ListProjectMembers(ctx, projectID)
 	if err != nil {
 		return fmt.Errorf("list project %d members: %w", projectID, err)
