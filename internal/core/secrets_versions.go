@@ -54,6 +54,19 @@ func (c *KeyorixCore) storeSecretVersion(ctx context.Context, db storage.Storage
 // traffic.
 const maxRotateVersionAttempts = 20
 
+// ErrSecretVersionContentionExhausted is returned when storeNextSecretVersion or
+// updateSecretWithNewVersion exhausts maxRotateVersionAttempts racing OTHER
+// concurrent writers for the same secret's next version number (W3, Session W,
+// 2026-09-29: reproduced at ~54% of writes failing at concurrency 50 against one
+// secret on Postgres, ~1% on SQLite — a real, load-bearing outcome under sustained
+// heavy contention, not a hypothetical). The retry loop itself is working as
+// designed (see maxRotateVersionAttempts's doc comment) — this signals "the whole
+// operation should be retried," the same as a database serialization-failure
+// class, not "something is broken." Callers (HTTP/gRPC) must map this to 409/
+// Aborted with a retry hint, never a generic 500 — see secrets_crud.go's
+// sendUpdateSecretError and secrets_versions.go's RotateSecret handler.
+var ErrSecretVersionContentionExhausted = errors.New("exceeded retry attempts resolving the next secret version number under concurrent writes to this secret")
+
 // isVersionConflict reports whether err is the sentinel storage.ErrDuplicateSecretVersion
 // (which storeSecretVersion's storage write wraps explicitly) or looks like a raw
 // unique-constraint violation from either backing DB driver (matched directly too, as
@@ -110,7 +123,7 @@ func (c *KeyorixCore) storeNextSecretVersion(ctx context.Context, secret *models
 		// Lost the race to another concurrent rotation of the same secret — re-read the
 		// now-current latest version and retry.
 	}
-	return fmt.Errorf("exceeded %d attempts resolving the next secret version number: %w", maxRotateVersionAttempts, lastErr)
+	return fmt.Errorf("%w (exceeded %d attempts): %v", ErrSecretVersionContentionExhausted, maxRotateVersionAttempts, lastErr)
 }
 
 // updateSecretWithNewVersion resolves the next version number, then stores that
@@ -172,5 +185,5 @@ func (c *KeyorixCore) updateSecretWithNewVersion(ctx context.Context, secret *mo
 		// Lost the race to another concurrent rotation of the same secret — re-read the
 		// now-current latest version and retry.
 	}
-	return nil, fmt.Errorf("exceeded %d attempts resolving the next secret version number: %w", maxRotateVersionAttempts, lastErr)
+	return nil, fmt.Errorf("%w (exceeded %d attempts): %v", ErrSecretVersionContentionExhausted, maxRotateVersionAttempts, lastErr)
 }

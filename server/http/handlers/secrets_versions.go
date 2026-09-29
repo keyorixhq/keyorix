@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -104,6 +105,10 @@ func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch {
+		case errors.Is(err, core.ErrSecretVersionContentionExhausted):
+			// W3 (Session W, 2026-09-29): see secrets_crud.go's sendUpdateSecretError
+			// for why this is 409-and-retry, not a generic 500.
+			h.sendError(w, "Conflict", "High write contention on this secret; retry the request", http.StatusConflict, nil)
 		case strings.Contains(err.Error(), errNotFound):
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 		case strings.Contains(err.Error(), "backend"):
@@ -162,6 +167,11 @@ func (h *SecretHandler) RollbackSecret(w http.ResponseWriter, r *http.Request) {
 	secret, err := h.coreService.RollbackSecret(r.Context(), uint(id), reqBody.Version, userCtx.UserID, userCtx.Username)
 	if err != nil {
 		switch {
+		case errors.Is(err, core.ErrSecretVersionContentionExhausted):
+			// W3 (Session W, 2026-09-29): RollbackSecret calls RotateSecret internally,
+			// which shares UpdateSecret's contention-exhaustion path — see
+			// secrets_crud.go's sendUpdateSecretError for why this is 409, not 500.
+			h.sendError(w, "Conflict", "High write contention on this secret; retry the request", http.StatusConflict, nil)
 		case strings.Contains(err.Error(), errNotFound):
 			h.sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
 		case strings.Contains(err.Error(), "already the current version"), strings.Contains(err.Error(), "version number must be positive"):
