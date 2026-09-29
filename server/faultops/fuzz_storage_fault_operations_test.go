@@ -620,10 +620,10 @@ func checkOracles(t *testing.T, in oracleInput) {
 			// oracle (c) above already ran first and would have caught the
 			// dangerous case (a fault on an authz-resolution read producing
 			// a false success) before execution ever reaches this branch.
-			if len(diff) == 1 && diff[0] == "AuditEvent" {
-				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in AuditEvent — oracle (c) already "+
+			if onlyOutcomeLogTables(diff) {
+				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in outcome-log tables %v — oracle (c) already "+
 					"ruled out a fail-open authz cause, and every traced instance of this shape has been "+
-					"benign audit-content degradation, not a business-state inconsistency", label)
+					"benign audit-content degradation, not a business-state inconsistency", label, diff)
 				return
 			}
 			report("%s: ORACLE (a) VIOLATION — reported SUCCESS but final state does not match the "+
@@ -638,9 +638,14 @@ func checkOracles(t *testing.T, in oracleInput) {
 		// resource state matches the "new" (effect-applied) state exactly —
 		// that is the GOAL's own "model audit instead of dropping it" case,
 		// not a partial/mixed commit of application state.
-		nonAuditBefore := hashExcluding(in.before, "AuditEvent")
-		nonAuditAfter := hashExcluding(in.after, "AuditEvent")
-		nonAuditRef := hashExcluding(in.refAfter, "AuditEvent")
+		// SecretAccessLog is excluded for the same reason as AuditEvent: it is
+		// written by the handler/core only for the REPORTED outcome (best-effort
+		// writeAccessLog), so an effect-then-error delete legitimately has the
+		// secret gone but no access-log row. It only became visible to this
+		// oracle once secret_access_logs was migrated on every install (#2314).
+		nonAuditBefore := hashExcluding(in.before, outcomeLogTables...)
+		nonAuditAfter := hashExcluding(in.after, outcomeLogTables...)
+		nonAuditRef := hashExcluding(in.refAfter, outcomeLogTables...)
 		if nonAuditAfter != nonAuditBefore && nonAuditAfter != nonAuditRef {
 			if multiStepFirstCallAmbiguousCommit(in.op, in.method, in.nth) {
 				t.Logf("FLAG FOR REVIEW (not auto-fixed, not silently accepted): %s: state matches neither "+
@@ -661,6 +666,30 @@ func checkOracles(t *testing.T, in oracleInput) {
 				"(partial commit). Differing tables: %v", label, diffTables(in.before, in.after))
 		}
 	}
+}
+
+// outcomeLogTables record what the caller was TOLD happened (audit trail, secret
+// access log), not application state; the oracles compare them separately.
+var outcomeLogTables = []string{"AuditEvent", "SecretAccessLog"}
+
+// onlyOutcomeLogTables reports whether every differing table is an outcome log.
+func onlyOutcomeLogTables(diff []string) bool {
+	if len(diff) == 0 {
+		return false
+	}
+	for _, d := range diff {
+		ok := false
+		for _, o := range outcomeLogTables {
+			if d == o {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func diffTables(before, after dbSnapshot) []string {

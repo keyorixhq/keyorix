@@ -1256,6 +1256,32 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	mfaStepupTokenExists := tableExists(db, "mfa_stepup_tokens")
 	hygieneTrendExists := tableExists(db, "hygiene_trend_snapshots")
 	compliancePostureExists := tableExists(db, "compliance_posture_snapshots")
+	// SESSION-U guard U1: these 11 were only ever reached via the fresh-install-only
+	// bulk AutoMigrate loop below (guarded on !projectsExists), so an install that
+	// upgrades from any older binary — i.e. every existing production deployment —
+	// never gets these tables at all. secret_access_logs is the live one that
+	// matters most: writeAccessLog (internal/core/audit.go) is called on every
+	// secret read/create/update/rotate/delete and only logs the failure, so the
+	// entire secret-access audit trail silently stops recording on any upgraded
+	// install, forever, with no error surfaced to a caller. api_clients/api_tokens/
+	// password_resets back the `keyorix admin encryption` sweep/rotate/validate
+	// commands (internal/encryptionops/auth_encryption.go), which would hard-fail
+	// with "no such table" the first time an operator ran them post-upgrade. The
+	// rest (api_call_logs, external_identities, g_rpc_services, identity_providers,
+	// rate_limits, secret_metadata_histories, settings) have no live caller left
+	// anywhere in the tree today, but get the same fix for consistency and because
+	// the guard test treats every models.go struct alike.
+	apiClientExists := tableExists(db, "api_clients")
+	apiTokenExists := tableExists(db, "api_tokens")
+	apiCallLogExists := tableExists(db, "api_call_logs")
+	externalIdentityExists := tableExists(db, "external_identities")
+	grpcServiceExists := tableExists(db, "g_rpc_services")
+	identityProviderExists := tableExists(db, "identity_providers")
+	passwordResetExists := tableExists(db, "password_resets")
+	rateLimitExists := tableExists(db, "rate_limits")
+	secretAccessLogExists := tableExists(db, "secret_access_logs")
+	secretMetadataHistoryExists := tableExists(db, "secret_metadata_histories")
+	settingExists := tableExists(db, "settings")
 
 	// Create rotation_policies if missing (additive, safe on existing DBs).
 	if !rotationExists {
@@ -1944,6 +1970,67 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		}
 	}
 
+	// SESSION-U guard U1: create these 11 tables unconditionally (not only on a
+	// fresh install) -- see the existence-flag block above for why. Each is a
+	// brand new table with no legacy columns to conditionally backfill, so a
+	// plain gated AutoMigrate is enough, matching MFAStepUpGrant/AuditCheckpoint
+	// above.
+	if !apiClientExists {
+		if err := db.AutoMigrate(&models.APIClient{}); err != nil {
+			return fmt.Errorf("failed to migrate api_clients table: %w", err)
+		}
+	}
+	if !apiTokenExists {
+		if err := db.AutoMigrate(&models.APIToken{}); err != nil {
+			return fmt.Errorf("failed to migrate api_tokens table: %w", err)
+		}
+	}
+	if !apiCallLogExists {
+		if err := db.AutoMigrate(&models.APICallLog{}); err != nil {
+			return fmt.Errorf("failed to migrate api_call_logs table: %w", err)
+		}
+	}
+	if !externalIdentityExists {
+		if err := db.AutoMigrate(&models.ExternalIdentity{}); err != nil {
+			return fmt.Errorf("failed to migrate external_identities table: %w", err)
+		}
+	}
+	if !grpcServiceExists {
+		if err := db.AutoMigrate(&models.GRPCService{}); err != nil {
+			return fmt.Errorf("failed to migrate g_rpc_services table: %w", err)
+		}
+	}
+	if !identityProviderExists {
+		if err := db.AutoMigrate(&models.IdentityProvider{}); err != nil {
+			return fmt.Errorf("failed to migrate identity_providers table: %w", err)
+		}
+	}
+	if !passwordResetExists {
+		if err := db.AutoMigrate(&models.PasswordReset{}); err != nil {
+			return fmt.Errorf("failed to migrate password_resets table: %w", err)
+		}
+	}
+	if !rateLimitExists {
+		if err := db.AutoMigrate(&models.RateLimit{}); err != nil {
+			return fmt.Errorf("failed to migrate rate_limits table: %w", err)
+		}
+	}
+	if !secretAccessLogExists {
+		if err := db.AutoMigrate(&models.SecretAccessLog{}); err != nil {
+			return fmt.Errorf("failed to migrate secret_access_logs table: %w", err)
+		}
+	}
+	if !secretMetadataHistoryExists {
+		if err := db.AutoMigrate(&models.SecretMetadataHistory{}); err != nil {
+			return fmt.Errorf("failed to migrate secret_metadata_histories table: %w", err)
+		}
+	}
+	if !settingExists {
+		if err := db.AutoMigrate(&models.Setting{}); err != nil {
+			return fmt.Errorf("failed to migrate settings table: %w", err)
+		}
+	}
+
 	// Skip full AutoMigrate if already initialised (projects table present).
 	if projectsExists {
 		return nil
@@ -1969,11 +2056,8 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		&models.GroupRole{},
 		&models.SecretNode{},
 		&models.SecretVersion{},
-		&models.SecretAccessLog{},
-		&models.SecretMetadataHistory{},
 		&models.ShareRecord{},
 		&models.Session{},
-		&models.PasswordReset{},
 		&models.Tag{},
 		&models.SecretTag{},
 		&models.AuditEvent{},
@@ -1981,15 +2065,15 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		// by the dedicated block above (guarded by auditCkptExists). Listing it
 		// again re-inspects the just-created table and trips the pgx
 		// "insufficient arguments" bug (same hazard as Notification/RotationPolicy).
-		&models.Setting{},
+		//
+		// SESSION-U guard U1: SecretAccessLog, SecretMetadataHistory, PasswordReset,
+		// Setting, APIClient, APIToken, RateLimit, APICallLog, GRPCService,
+		// IdentityProvider and ExternalIdentity are likewise intentionally NOT listed
+		// here any more — each is now migrated unconditionally by its own
+		// existence-gated block above (apiClientExists et al.), so a database
+		// upgrading from an older schema gets them too, not only a truly fresh
+		// install. Re-listing any of them here would re-trip the same pgx hazard.
 		&models.SystemMetadata{},
-		&models.APIClient{},
-		&models.APIToken{},
-		&models.RateLimit{},
-		&models.APICallLog{},
-		&models.GRPCService{},
-		&models.IdentityProvider{},
-		&models.ExternalIdentity{},
 		&models.AnomalyAlert{},
 		&models.AnomalyConfigRecord{},
 		&models.StatsSnapshot{},
