@@ -74,6 +74,7 @@ func freshCoreS12(t *testing.T) *core.KeyorixCore {
 		&models.PasswordHistory{},
 		&models.SecretVersion{},
 		&models.SecretACL{}, &models.SecretAccessSchedule{},
+		&models.RecoveryKeyRecord{},
 	)
 	require.NoError(t, err)
 	return core.NewKeyorixCore(store.NewLocalStorage(db))
@@ -116,6 +117,7 @@ func freshCoreS12WithAdmin(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 		&models.PasswordHistory{},
 		&models.SecretVersion{},
 		&models.SecretACL{}, &models.SecretAccessSchedule{},
+		&models.RecoveryKeyRecord{},
 	)
 	require.NoError(t, err)
 

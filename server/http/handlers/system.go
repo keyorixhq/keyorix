@@ -6,9 +6,16 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/version"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
+
+// permSystemWrite mirrors router.go's own constant of the same name/value —
+// the admin-tier permission (held by admin/system_admin, NOT the universal
+// system_viewer baseline system.read) used to gate the recovery-key status
+// field below to global admins only.
+const permSystemWrite = "system.write"
 
 // SystemInfo represents system information
 type SystemInfo struct {
@@ -52,6 +59,12 @@ type SecurityInfo struct {
 	// escape hatch -- one of the three places design §5 requires this to be
 	// flagged (alongside the startup warning and the startup audit event).
 	KeylessRecoveryMode bool `json:"keyless_recovery_mode"`
+	// RecoveryKey is a read-only recovery-key configuration status (F6,
+	// recovery-key visibility) -- nil for any caller who does not hold
+	// system.write (global-admin tier). Never carries the key or its hash,
+	// only whether one exists and its generation; see
+	// core.KeyorixCore.GetRecoveryKeyStatus.
+	RecoveryKey *core.RecoveryKeyStatus `json:"recovery_key,omitempty"`
 }
 
 // SystemMetrics represents system performance metrics
@@ -129,12 +142,22 @@ var startTime = time.Now()
 // Note: HealthCheck is implemented in health.go
 
 // MakeSystemInfoHandler returns a handler that serves real system info from config.
-func MakeSystemInfoHandler(cfg *config.Config) http.HandlerFunc {
+func MakeSystemInfoHandler(cfg *config.Config, coreService *core.KeyorixCore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userCtx := middleware.GetUserFromContext(r.Context())
 		if userCtx == nil {
 			sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
 			return
+		}
+
+		// Recovery-key status (F6): global-admin-only, per Andrei's decision
+		// this must not be visible to non-admins even though the rest of
+		// this endpoint is system.read-gated (the universal baseline).
+		var recoveryKeyStatus *core.RecoveryKeyStatus
+		if middleware.AuthorizedAtGlobalScope(r.Context(), coreService, userCtx, permSystemWrite) {
+			if status, err := coreService.GetRecoveryKeyStatus(r.Context()); err == nil {
+				recoveryKeyStatus = status
+			}
 		}
 
 		tlsEnabled := cfg.Server.HTTP.TLS.Enabled
@@ -175,6 +198,7 @@ func MakeSystemInfoHandler(cfg *config.Config) http.HandlerFunc {
 				EncryptionMethod:    "AES-256-GCM",
 				AuditEnabled:        true,
 				KeylessRecoveryMode: cfg.Security.RecoverAdmin.KeylessMode,
+				RecoveryKey:         recoveryKeyStatus,
 			},
 		}
 

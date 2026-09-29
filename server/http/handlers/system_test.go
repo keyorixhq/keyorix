@@ -26,7 +26,9 @@ func TestMakeSystemInfoHandler_Unauthenticated(t *testing.T) {
 	cfg := &config.Config{}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil)
 	rr := httptest.NewRecorder()
-	MakeSystemInfoHandler(cfg)(rr, req)
+	// nil coreService is safe here: the handler returns 401 before ever
+	// dereferencing it (no user context present).
+	MakeSystemInfoHandler(cfg, nil)(rr, req)
 
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
 }
@@ -39,7 +41,11 @@ func TestMakeSystemInfoHandler_Authenticated(t *testing.T) {
 	cfg.Storage.Type = "sqlite"
 	req := userCtxForTest(httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil))
 	rr := httptest.NewRecorder()
-	MakeSystemInfoHandler(cfg)(rr, req)
+	// freshCoreS12: UserID=1 holds no role in this fresh core, so
+	// AuthorizedAtGlobalScope(system.write) is false and recovery_key stays
+	// omitted -- covered explicitly by TestMakeSystemInfoHandler_RecoveryKey*
+	// below.
+	MakeSystemInfoHandler(cfg, freshCoreS12(t))(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code)
 	assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
@@ -58,6 +64,45 @@ func TestMakeSystemInfoHandler_Authenticated(t *testing.T) {
 	assert.Contains(t, data, "security")
 }
 
+// TestMakeSystemInfoHandler_RecoveryKeyOmittedForNonAdmin verifies the
+// recovery_key status field (F6) is absent from the response for a caller
+// who does not hold system.write, even though the rest of the endpoint is
+// visible to them (system.read is the universal baseline).
+func TestMakeSystemInfoHandler_RecoveryKeyOmittedForNonAdmin(t *testing.T) {
+	cfg := &config.Config{}
+	req := userCtxForTest(httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil))
+	rr := httptest.NewRecorder()
+	// freshCoreS12: UserID=1 holds no role at all in this fresh core.
+	MakeSystemInfoHandler(cfg, freshCoreS12(t))(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	data := resp["data"].(map[string]interface{})
+	security := data["security"].(map[string]interface{})
+	assert.NotContains(t, security, "recovery_key", "a non-admin must not see recovery-key status")
+}
+
+// TestMakeSystemInfoHandler_RecoveryKeyVisibleForAdmin verifies a caller who
+// holds system.write (global admin) sees the recovery_key status field, and
+// that it correctly reports "not configured" when no key has been generated.
+func TestMakeSystemInfoHandler_RecoveryKeyVisibleForAdmin(t *testing.T) {
+	cfg := &config.Config{}
+	cs, _ := freshCoreS12WithAdmin(t)
+	req := userCtxForTest(httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil))
+	rr := httptest.NewRecorder()
+	MakeSystemInfoHandler(cfg, cs)(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	data := resp["data"].(map[string]interface{})
+	security := data["security"].(map[string]interface{})
+	require.Contains(t, security, "recovery_key", "a global admin must see recovery-key status")
+	recoveryKey := security["recovery_key"].(map[string]interface{})
+	assert.Equal(t, false, recoveryKey["configured"], "no key was generated in this fresh core")
+}
+
 // TestMakeSystemInfoHandler_TLSFeaturesReflectConfig verifies that TLS-related feature
 // flags in the response reflect the config.
 func TestMakeSystemInfoHandler_TLSFeaturesReflectConfig(t *testing.T) {
@@ -67,7 +112,7 @@ func TestMakeSystemInfoHandler_TLSFeaturesReflectConfig(t *testing.T) {
 
 	req := userCtxForTest(httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil))
 	rr := httptest.NewRecorder()
-	MakeSystemInfoHandler(cfg)(rr, req)
+	MakeSystemInfoHandler(cfg, freshCoreS12(t))(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code)
 
 	var resp map[string]interface{}
@@ -88,7 +133,7 @@ func TestMakeSystemInfoHandler_KeylessRecoveryModeReflectsConfig(t *testing.T) {
 
 	req := userCtxForTest(httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil))
 	rr := httptest.NewRecorder()
-	MakeSystemInfoHandler(cfg)(rr, req)
+	MakeSystemInfoHandler(cfg, freshCoreS12(t))(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code)
 
 	var resp map[string]interface{}
@@ -101,7 +146,7 @@ func TestMakeSystemInfoHandler_KeylessRecoveryModeReflectsConfig(t *testing.T) {
 	cfg2 := &config.Config{}
 	req2 := userCtxForTest(httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil))
 	rr2 := httptest.NewRecorder()
-	MakeSystemInfoHandler(cfg2)(rr2, req2)
+	MakeSystemInfoHandler(cfg2, freshCoreS12(t))(rr2, req2)
 	var resp2 map[string]interface{}
 	require.NoError(t, json.NewDecoder(rr2.Body).Decode(&resp2))
 	data2 := resp2["data"].(map[string]interface{})
