@@ -326,23 +326,24 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 // namespaced to each background job, so on PostgreSQL only one replica runs a
 // given scheduler per tick. Distinct from the audit-chain key (0x4B455941_55444954).
 const (
-	schedLockAnomaly       int64 = 0x4B455953_414E4F4D // "KEYSANOM"
-	schedLockPurge         int64 = 0x4B455953_50555247 // "KEYSPURG"
-	schedLockDynamicSweep  int64 = 0x4B455953_44594E53 // "KEYSDYNS"
-	schedLockLoginPrune    int64 = 0x4B455953_4C474E50 // "KEYSLGNP"
-	schedLockRotationRmdr  int64 = 0x4B455953_524F5452 // "KEYSROTR"
-	schedLockExpiryRmdr    int64 = 0x4B455953_45585052 // "KEYSEXPR"
-	schedLockCertExpiry    int64 = 0x4B455953_43455254 // "KEYSCERT"
-	schedLockAutoRotate    int64 = 0x4B455953_4155544F // "KEYSAUTO"
-	schedLockAuditCkpt     int64 = 0x4B455953_41434B50 // "KEYSACKP"
-	schedLockJITExpiry     int64 = 0x4B455953_4A495445 // "KEYSJITE"
-	schedLockRetention     int64 = 0x4B455953_52455445 // "KEYSRETE"
-	schedLockEvidence      int64 = 0x4B455953_45564944 // "KEYSEVID"
-	schedLockRecertify     int64 = 0x4B455953_52454354 // "KEYSRECT"
-	schedLockDigest        int64 = 0x4B455953_44494753 // "KEYSDIGS"
-	schedLockLicenseExp    int64 = 0x4B455953_4C494345 // "KEYSLICE"
-	schedLockReadQuota     int64 = 0x4B455953_52445154 // "KEYSRDQT"
-	schedLockMFAGrantPrune int64 = 0x4B455953_4D464147 // "KEYSMFAG"
+	schedLockAnomaly           int64 = 0x4B455953_414E4F4D // "KEYSANOM"
+	schedLockPurge             int64 = 0x4B455953_50555247 // "KEYSPURG"
+	schedLockDynamicSweep      int64 = 0x4B455953_44594E53 // "KEYSDYNS"
+	schedLockLoginPrune        int64 = 0x4B455953_4C474E50 // "KEYSLGNP"
+	schedLockRotationRmdr      int64 = 0x4B455953_524F5452 // "KEYSROTR"
+	schedLockExpiryRmdr        int64 = 0x4B455953_45585052 // "KEYSEXPR"
+	schedLockCertExpiry        int64 = 0x4B455953_43455254 // "KEYSCERT"
+	schedLockAutoRotate        int64 = 0x4B455953_4155544F // "KEYSAUTO"
+	schedLockAuditCkpt         int64 = 0x4B455953_41434B50 // "KEYSACKP"
+	schedLockJITExpiry         int64 = 0x4B455953_4A495445 // "KEYSJITE"
+	schedLockRetention         int64 = 0x4B455953_52455445 // "KEYSRETE"
+	schedLockEvidence          int64 = 0x4B455953_45564944 // "KEYSEVID"
+	schedLockRecertify         int64 = 0x4B455953_52454354 // "KEYSRECT"
+	schedLockDigest            int64 = 0x4B455953_44494753 // "KEYSDIGS"
+	schedLockLicenseExp        int64 = 0x4B455953_4C494345 // "KEYSLICE"
+	schedLockReadQuota         int64 = 0x4B455953_52445154 // "KEYSRDQT"
+	schedLockMFAGrantPrune     int64 = 0x4B455953_4D464147 // "KEYSMFAG"
+	schedLockRecoverAdminAlert int64 = 0x4B455953_52435652 // "KEYSRCVR"
 )
 
 // initializeEncryption sources the KEK per the configured key provider (ADR-038)
@@ -1657,6 +1658,28 @@ func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.
 		return lockedRun(ctx, coreService.Storage(), schedLockMFAGrantPrune, "MFA step-up grant prune", func() error {
 			_, perr := coreService.PruneMFAStepUpGrants(ctx, mfaGrantRetention, time.Time{})
 			return perr
+		})
+	})
+
+	// Alert on recover-admin use (F7, Akeyless-style) — ALWAYS runs, not
+	// opt-in: `recover-admin` bypasses RBAC by design (host access + the
+	// recovery key alone), so an install must not be able to silently turn
+	// off being notified when it's used. Runs once immediately on startup
+	// (the primary trigger — recover-admin is an offline CLI command, so
+	// the next server start after it ran is normally the first chance to
+	// alert) and every 10 minutes thereafter as a safety net (e.g. an HA
+	// replica whose own process never restarted). Single-replica-gated
+	// (ADR-039) so admins aren't notified N times in an HA deployment.
+	runScheduler(ctx, "recover_admin_alert", 10*time.Minute, func() middleware.SchedulerOutcome {
+		return lockedRun(ctx, coreService.Storage(), schedLockRecoverAdminAlert, "Recover-admin alert", func() error {
+			n, aerr := coreService.RunRecoverAdminAlerting(ctx)
+			if aerr != nil {
+				return aerr
+			}
+			if n > 0 {
+				log.Printf("Recover-admin alert: notified %d recover-admin use(s)", n)
+			}
+			return nil
 		})
 	})
 
