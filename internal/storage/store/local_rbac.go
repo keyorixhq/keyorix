@@ -73,6 +73,13 @@ func (ls *LocalStorage) CreatePermission(ctx context.Context, permission *models
 func (ls *LocalStorage) AssignPermissionToRole(ctx context.Context, roleID, permissionID uint) error {
 	rp := models.RolePermission{RoleID: roleID, PermissionID: permissionID}
 	if err := ls.db.WithContext(ctx).Create(&rp).Error; err != nil {
+		if isUniqueViolation(err) {
+			// role_permissions' composite primary key (role_id, permission_id) is
+			// already held -- see storage.ErrDuplicateRolePermission's doc comment
+			// for why this needs to be distinguishable from any other storage
+			// failure (a generic 500 instead of 409 Conflict).
+			return fmt.Errorf("%w: %v", storage.ErrDuplicateRolePermission, err)
+		}
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return nil

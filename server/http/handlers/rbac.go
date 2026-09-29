@@ -677,6 +677,12 @@ func (h *RBACHandler) AssignPermissionToRole(w http.ResponseWriter, r *http.Requ
 		case strings.Contains(err.Error(), "do not hold it yourself"):
 			// #169: the actor doesn't hold the permission being bundled — 403, not 500.
 			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
+		case strings.Contains(err.Error(), "already has permission"):
+			// storage.ErrDuplicateRolePermission (role_permissions' composite primary
+			// key already held) — 409, not 500. Found by SESSION-I's fresh-install API
+			// smoke driver: a re-assign of an already-held permission (a plausible
+			// idempotent-retry shape, not an attack) 500ed before this case existed.
+			sendError(w, "Conflict", err.Error(), http.StatusConflict, nil)
 		default:
 			sendError(w, "InternalError", "Failed to assign permission", http.StatusInternalServerError, nil)
 		}
