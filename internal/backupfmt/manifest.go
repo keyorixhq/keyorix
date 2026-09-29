@@ -1,6 +1,10 @@
 package backupfmt
 
-import "time"
+import (
+	"time"
+
+	"github.com/keyorixhq/keyorix/internal/auditverify"
+)
 
 // FormatVersion is v2's manifest format version -- restore refuses any
 // FormatVersion it doesn't recognize (design-b3-backup-v2.md §3.6), the same
@@ -15,9 +19,8 @@ const FormatVersion = 2
 // database produced it.
 const Backend = "logical-v1"
 
-// Manifest is the archive's MANIFEST.json (v2). Every field except
-// Signature is covered by H2's manifest HMAC once that lands (design §5.4);
-// Signature itself is added by H2, not here.
+// Manifest is the archive's MANIFEST.json (v2). Signature covers every
+// other field (design §5.4) -- see SignManifest/VerifyManifestSignature.
 type Manifest struct {
 	FormatVersion int       `json:"format_version"`
 	Backend       string    `json:"backend"`
@@ -36,17 +39,25 @@ type Manifest struct {
 	// backupFileEntry) verbatim -- key-material handling is unchanged by
 	// the logical-format switch, only the database payload's shape changes.
 	KeyFiles []KeyFileEntry `json:"key_files"`
-	// AuditHighWater is the source install's raw
-	// "audit_checkpoint_highwater" system_metadata value at backup time --
-	// identical contract to v1's own field of the same name and purpose
-	// (design §6.3's rollback-protection restore check).
-	AuditHighWater string `json:"audit_high_water,omitempty"`
+	// Checkpoint is the source install's signed audit high-water mark at
+	// backup time, in the SAME JSON shape auditverify.ExternalAnchorBundle
+	// already uses (design §5.4) -- not a bespoke encoding, so this
+	// manifest can be handed directly to `admin verify-audit --anchor` with
+	// zero translation (§5.4, §6.4). nil when the source install had never
+	// written a checkpoint (a fresh/young install, not an error).
+	Checkpoint *auditverify.ExternalAnchorBundle `json:"checkpoint,omitempty"`
 	// DanglingReferences lists any reference (per RestoreOrder()'s derived
 	// edges) found, read-only, in the SOURCE database at backup time whose
 	// target row does not exist -- a pre-existing orphan, not something
 	// admin backup blocks on (design §3.4's corrected text). Empty on a
 	// clean database, which is the common case.
 	DanglingReferences []DanglingReference `json:"dangling_references,omitempty"`
+	// Signature is this manifest's own HMAC-SHA256, under the
+	// auditverify.DeriveBackupManifestKey-derived key, over every field
+	// above (design §5.2, §5.4) -- computed last, over everything else
+	// already being final; never included in what it signs (see
+	// canonicalManifestBytes).
+	Signature string `json:"signature,omitempty"`
 }
 
 // TableEntry describes one table's NDJSON tar entry -- everything restore

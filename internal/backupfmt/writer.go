@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/auditverify"
 )
 
 // walkTable streams every row of model's table, in primary-key-ascending
@@ -148,12 +150,12 @@ func writeTableEntry(db *gorm.DB, model any, entry TableEntry, tw *tar.Writer) e
 // "audit_checkpoint_highwater" value respectively) -- reading Either is
 // backend/connection-specific enough that this package leaves it to the
 // caller rather than re-deriving it here.
-func WriteBackup(db *gorm.DB, schemaEpoch int, auditHighWater string, w io.Writer) (Manifest, error) {
+func WriteBackup(db *gorm.DB, schemaEpoch int, auditHighWater string, manifestKey []byte, w io.Writer) (Manifest, error) {
 	order, err := RestoreOrder()
 	if err != nil {
 		return Manifest{}, fmt.Errorf("derive restore order: %w", err)
 	}
-	return writeBackupModels(db, modelsInOrder(order), schemaEpoch, auditHighWater, w)
+	return writeBackupModels(db, modelsInOrder(order), schemaEpoch, auditHighWater, manifestKey, w)
 }
 
 // writeBackupModels is WriteBackup's actual implementation, parameterized
@@ -161,13 +163,27 @@ func WriteBackup(db *gorm.DB, schemaEpoch int, auditHighWater string, w io.Write
 // the live registry -- WriteBackup itself always passes RestoreOrder()'s
 // full result; tests use a small explicit subset so they can exercise this
 // exact code path without paying for a full 78-table migration per test.
-func writeBackupModels(db *gorm.DB, models []any, schemaEpoch int, auditHighWater string, w io.Writer) (Manifest, error) {
+func writeBackupModels(db *gorm.DB, models []any, schemaEpoch int, auditHighWater string, manifestKey []byte, w io.Writer) (Manifest, error) {
 	manifest := Manifest{
-		FormatVersion:  FormatVersion,
-		Backend:        Backend,
-		CreatedAt:      time.Now().UTC(),
-		SchemaEpoch:    schemaEpoch,
-		AuditHighWater: auditHighWater,
+		FormatVersion: FormatVersion,
+		Backend:       Backend,
+		CreatedAt:     time.Now().UTC(),
+		SchemaEpoch:   schemaEpoch,
+	}
+
+	if auditHighWater != "" {
+		cp, sig, ok := auditverify.ParseHighWater(auditHighWater)
+		if !ok {
+			return Manifest{}, fmt.Errorf("audit high-water value does not parse -- refusing rather than " +
+				"write a manifest with a malformed checkpoint")
+		}
+		manifest.Checkpoint = &auditverify.ExternalAnchorBundle{
+			ChainedEvents: cp.ChainedEvents,
+			HeadID:        cp.HeadID,
+			HeadHash:      cp.HeadHash,
+			KeyVersion:    cp.KeyVersion,
+			Signature:     sig,
+		}
 	}
 
 	for _, m := range models {
@@ -183,6 +199,10 @@ func writeBackupModels(db *gorm.DB, models []any, schemaEpoch int, auditHighWate
 		return Manifest{}, fmt.Errorf("check dangling references: %w", err)
 	}
 	manifest.DanglingReferences = dangling
+
+	if err := SignManifest(&manifest, manifestKey); err != nil {
+		return Manifest{}, fmt.Errorf("sign manifest: %w", err)
+	}
 
 	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)

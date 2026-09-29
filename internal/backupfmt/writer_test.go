@@ -18,6 +18,13 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 )
 
+// testManifestKey is a fixed stand-in for auditverify.DeriveBackupManifestKey's
+// output -- these tests exercise WriteBackup's own mechanics, not key
+// derivation itself (covered by internal/auditverify's own tests).
+func testManifestKey() []byte {
+	return bytes.Repeat([]byte{0x5a}, 32)
+}
+
 // openTestDB opens a fresh SQLite database and runs the SAME migration path
 // the rest of the storage package's tests use (via DefaultStorageFactory,
 // exercised indirectly through package storage's own tests) -- reached here
@@ -43,12 +50,16 @@ func TestWriteBackup_RoundTripsRowsAndManifest(t *testing.T) {
 	require.NoError(t, db.Create(&models.Project{Name: "proj-1"}).Error)
 
 	var buf bytes.Buffer
-	manifest, err := writeBackupModels(db, []any{&models.Project{}, &models.Environment{}, &models.User{}}, 1, "", &buf)
+	manifest, err := writeBackupModels(db, []any{&models.Project{}, &models.Environment{}, &models.User{}}, 1, "", testManifestKey(), &buf)
 	require.NoError(t, err)
 
 	require.Equal(t, FormatVersion, manifest.FormatVersion)
 	require.Equal(t, Backend, manifest.Backend)
 	require.Len(t, manifest.Tables, 3)
+	require.NotEmpty(t, manifest.Signature)
+	require.True(t, VerifyManifestSignature(manifest, testManifestKey()))
+	require.False(t, VerifyManifestSignature(manifest, testManifestKey()[:31]),
+		"a different key must not verify")
 
 	var userEntry, projectEntry TableEntry
 	for _, te := range manifest.Tables {
@@ -77,6 +88,8 @@ func TestWriteBackup_RoundTripsRowsAndManifest(t *testing.T) {
 	var parsedManifest Manifest
 	require.NoError(t, json.Unmarshal(manifestBytes, &parsedManifest))
 	require.Equal(t, manifest.Tables, parsedManifest.Tables)
+	require.True(t, VerifyManifestSignature(parsedManifest, testManifestKey()),
+		"the manifest bytes actually written into the archive must themselves verify, not just the in-memory struct")
 
 	foundUsersEntry := false
 	for {
@@ -109,7 +122,7 @@ func TestWriteBackup_RoundTripsRowsAndManifest(t *testing.T) {
 func TestWriteBackup_EmptyTableProducesZeroRowEntry(t *testing.T) {
 	db := openTestDB(t)
 	var buf bytes.Buffer
-	manifest, err := writeBackupModels(db, []any{&models.Environment{}}, 1, "", &buf)
+	manifest, err := writeBackupModels(db, []any{&models.Environment{}}, 1, "", testManifestKey(), &buf)
 	require.NoError(t, err)
 	require.Len(t, manifest.Tables, 1)
 	require.Equal(t, int64(0), manifest.Tables[0].RowCount)
@@ -131,7 +144,7 @@ func TestWriteBackup_DetectsDanglingReference(t *testing.T) {
 	require.NoError(t, db.Create(&env).Error)
 
 	var buf bytes.Buffer
-	manifest, err := writeBackupModels(db, []any{&models.Project{}, &models.Environment{}}, 1, "", &buf)
+	manifest, err := writeBackupModels(db, []any{&models.Project{}, &models.Environment{}}, 1, "", testManifestKey(), &buf)
 	require.NoError(t, err)
 
 	require.Len(t, manifest.DanglingReferences, 1)
