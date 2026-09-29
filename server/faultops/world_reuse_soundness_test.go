@@ -215,19 +215,22 @@ func TestWorldReuseSoundness(t *testing.T) {
 
 // assertVerdictsMatch compares category, fired, and the three snapshot
 // hashes -- with ONE deliberate tolerance, mirroring checkOracles' own
-// oracle-(a) carve-out at fuzz_storage_fault_operations_test.go:648 ("state
-// diverges only in AuditEvent... never a real business-state
-// inconsistency"): a reused-world run's AuditEvent rows carry the reused
-// httptest.Server's own ephemeral port (rebuildTransport spins up a fresh
-// httptest.Server on every reset -- see world_reuse_test.go), which will not
-// match the separately-built fresh-world baseline's port. That is a property
-// of comparing two independently-constructed httptest.Server instances, not
-// a reuse-soundness defect -- the SAME divergence would occur between any
-// two fresh-per-call worlds. Using hashExcluding (the exact helper
-// checkOracles itself uses for this) rather than inventing new comparison
-// logic keeps this gate's notion of "acceptable" identical to production's.
-// Everything else -- category, fired, and every non-AuditEvent table's
-// content -- is compared with NO tolerance.
+// oracle-(a) carve-out ("state diverges only in outcome-log tables...
+// never a real business-state inconsistency", onlyOutcomeLogTables): a
+// reused-world run's outcomeLogTables rows (AuditEvent, SecretAccessLog)
+// carry the reused httptest.Server's own ephemeral port (rebuildTransport
+// spins up a fresh httptest.Server on every reset -- see world_reuse_test.go),
+// which will not match the separately-built fresh-world baseline's port.
+// That is a property of comparing two independently-constructed
+// httptest.Server instances, not a reuse-soundness defect -- the SAME
+// divergence would occur between any two fresh-per-call worlds. Using
+// hashExcluding(outcomeLogTables...) -- the exact table set checkOracles
+// itself now tolerates, not a hardcoded "AuditEvent" this gate would drift
+// out of sync with the moment production adds another outcome-log table (as
+// it did with SecretAccessLog, #2314) -- keeps this gate's notion of
+// "acceptable" identical to production's. Everything else -- category,
+// fired, and every non-outcome-log table's content -- is compared with NO
+// tolerance.
 func assertVerdictsMatch(t *testing.T, i int, pass string, got, want verdict) {
 	t.Helper()
 	if got.category != want.category || got.fired != want.fired {
@@ -240,8 +243,8 @@ func assertVerdictsMatch(t *testing.T, i int, pass string, got, want verdict) {
 	}
 	if !verdictsMatch(got, want) {
 		t.Errorf("input %d (%s pass): reused verdict {before:%s after:%s refAfter:%s} != "+
-			"fresh-world baseline {before:%s after:%s refAfter:%s} (diverges outside AuditEvent)",
-			i, pass, got.beforeH, got.afterH, got.refAfterH, want.beforeH, want.afterH, want.refAfterH)
+			"fresh-world baseline {before:%s after:%s refAfter:%s} (diverges outside %v)",
+			i, pass, got.beforeH, got.afterH, got.refAfterH, want.beforeH, want.afterH, want.refAfterH, outcomeLogTables)
 		diffSnapshots(t, "before", got.oi.before, want.oi.before)
 		diffSnapshots(t, "after", got.oi.after, want.oi.after)
 		diffSnapshots(t, "refAfter", got.oi.refAfter, want.oi.refAfter)
@@ -249,8 +252,8 @@ func assertVerdictsMatch(t *testing.T, i int, pass string, got, want verdict) {
 	}
 	if got.beforeH != want.beforeH || got.afterH != want.afterH || got.refAfterH != want.refAfterH {
 		t.Logf("ACCEPTABLE-BY-DESIGN: input %d (%s pass): reused vs fresh-world snapshots diverge only in "+
-			"AuditEvent (independent httptest.Server ephemeral ports) -- matches checkOracles' own "+
-			"AuditEvent-only carve-out, not a reuse-soundness defect", i, pass)
+			"outcome-log tables %v (independent httptest.Server ephemeral ports) -- matches checkOracles' own "+
+			"onlyOutcomeLogTables carve-out, not a reuse-soundness defect", i, pass, outcomeLogTables)
 	}
 }
 
@@ -278,9 +281,9 @@ func verdictsMatch(got, want verdict) bool {
 	if !got.fired {
 		return true
 	}
-	return hashExcluding(got.oi.before, "AuditEvent") == hashExcluding(want.oi.before, "AuditEvent") &&
-		hashExcluding(got.oi.after, "AuditEvent") == hashExcluding(want.oi.after, "AuditEvent") &&
-		hashExcluding(got.oi.refAfter, "AuditEvent") == hashExcluding(want.oi.refAfter, "AuditEvent")
+	return hashExcluding(got.oi.before, outcomeLogTables...) == hashExcluding(want.oi.before, outcomeLogTables...) &&
+		hashExcluding(got.oi.after, outcomeLogTables...) == hashExcluding(want.oi.after, outcomeLogTables...) &&
+		hashExcluding(got.oi.refAfter, outcomeLogTables...) == hashExcluding(want.oi.refAfter, outcomeLogTables...)
 }
 
 // TestWorldReuseSoundness_CatchesPlantedStateLeak is the mandatory red half
