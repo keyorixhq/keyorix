@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 )
@@ -67,8 +68,7 @@ func (h *SecretVersionCommentHandler) CreateComment(w http.ResponseWriter, r *ht
 		Username:  userCtx.Username,
 	})
 	if err != nil {
-		log.Printf("Error creating version comment: %v", err)
-		sendError(w, "InternalError", "Failed to create comment", http.StatusInternalServerError, nil)
+		sendVersionCommentError(w, "creating", secretID, versionID, err)
 		return
 	}
 
@@ -93,8 +93,7 @@ func (h *SecretVersionCommentHandler) ListComments(w http.ResponseWriter, r *htt
 
 	comments, err := h.coreService.ListSecretVersionComments(r.Context(), secretID, versionID)
 	if err != nil {
-		log.Printf("Error listing version comments: %v", err)
-		sendError(w, "InternalError", "Failed to list comments", http.StatusInternalServerError, nil)
+		sendVersionCommentError(w, "listing", secretID, versionID, err)
 		return
 	}
 
@@ -122,10 +121,34 @@ func (h *SecretVersionCommentHandler) DeleteComment(w http.ResponseWriter, r *ht
 	}
 
 	if err := h.coreService.DeleteSecretVersionComment(r.Context(), secretID, versionID, commentID); err != nil {
-		log.Printf("Error deleting version comment: %v", err)
-		sendError(w, "InternalError", "Failed to delete comment", http.StatusInternalServerError, nil)
+		sendVersionCommentError(w, "deleting", secretID, versionID, err)
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// sendVersionCommentError classifies an error from the three
+// SecretVersionComment core calls above and responds with the right status
+// code, instead of blanket-mapping every failure (including the ordinary,
+// expected "this version doesn't belong to this secret" case
+// versionBelongsToSecret returns -- internal/core/secret_version_comments.go)
+// to 500. Matches the errNotFound-substring-check convention already used
+// throughout this package (e.g. machine_identities.go's changeMachineRole/
+// TransitionMachineIdentity) -- CreateSecretVersionComment/
+// ListSecretVersionComments/DeleteSecretVersionComment were the one file in
+// this package that never adopted it, so every caller who referenced a
+// stale or mistyped version ID got an opaque 500 instead of a 404. Found by
+// SESSION-I's fresh-install API smoke driver (scripts/e2e).
+func sendVersionCommentError(w http.ResponseWriter, verb string, secretID, versionID uint, err error) {
+	status := http.StatusInternalServerError
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, errNotFound):
+		status = http.StatusNotFound
+	default:
+		log.Printf("Error %s version comment (secret %d, version %d): %v", verb, secretID, versionID, err)
+		msg = clientSafe(err)
+	}
+	sendError(w, "Error", msg, status, nil)
 }
