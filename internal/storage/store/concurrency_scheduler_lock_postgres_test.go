@@ -147,8 +147,13 @@ func TestConcurrency_SchedulerLockLease_MultiInstancePostgres(t *testing.T) {
 	// unrenewed past expiry, must become reclaimable by a different holder —
 	// and only by one at a time, same as above.
 	const handoverKey = key + 1
+	// handoverTTL must comfortably exceed the time it takes holder-B to open its own
+	// Postgres connection and attempt the acquire below: at 100ms a slow CI runner
+	// let holder-A's lease expire first and holder-B legitimately won (flaked in the
+	// #2319 merge group, 2026-09-29). 1s keeps the expiry-handover assertion intact.
+	const handoverTTL = time.Second
 	holderA := NewLocalStorage(pgOpen(t, dsn))
-	acquiredA, err := holderA.TryAcquireSchedulerLock(context.Background(), handoverKey, "holder-A", 100*time.Millisecond)
+	acquiredA, err := holderA.TryAcquireSchedulerLock(context.Background(), handoverKey, "holder-A", handoverTTL)
 	require.NoError(t, err)
 	require.True(t, acquiredA)
 
@@ -158,7 +163,7 @@ func TestConcurrency_SchedulerLockLease_MultiInstancePostgres(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, acquiredB, "holder-B must not acquire while holder-A's lease is still valid")
 
-	time.Sleep(200 * time.Millisecond) // past holder-A's 100ms TTL, never renewed (simulates a crashed replica)
+	time.Sleep(handoverTTL + 500*time.Millisecond) // past holder-A's TTL, never renewed (simulates a crashed replica)
 
 	// Multiple late claimants race the now-expired lease; exactly one may
 	// reclaim it.
