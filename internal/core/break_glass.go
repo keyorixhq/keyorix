@@ -205,7 +205,17 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 	if err := c.assignUserRoleWithExpirySkipSoD(ctx, userID, userID, role.ID, scope, expiresAt); err != nil {
 		activation.State = BreakGlassRevoked
 		activation.RevokedAt = &now
-		_ = c.storage.UpdateBreakGlassActivation(ctx, activation)
+		// Not best-effort: if THIS reconcile itself fails, the activation row is stuck
+		// "active" with no corresponding role grant — the partial unique index
+		// (ensureBreakGlassActiveIndex) then blocks the user's retry, indefinitely,
+		// with no signal anywhere that anything is wrong. Audit loudly instead of
+		// silently swallowing, mirroring revertFailedActivation's identical
+		// "MANUAL CLEANUP REQUIRED" pattern (membership_lifecycle.go) for the same
+		// shape: a compensating action whose own failure must not go unnoticed.
+		if rerr := c.storage.UpdateBreakGlassActivation(ctx, activation); rerr != nil {
+			c.auditProjectScoped(ctx, "break_glass.activation_revert_failed", userID, projectID,
+				fmt.Sprintf("break-glass activation %d for user %d in project %d could not be reconciled to revoked after a role-grant failure: %v — MANUAL CLEANUP REQUIRED (the user cannot retry until this row is fixed)", activation.ID, userID, projectID, rerr))
+		}
 		return nil, fmt.Errorf("failed to grant emergency role: %w", err)
 	}
 
