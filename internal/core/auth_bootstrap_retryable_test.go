@@ -272,3 +272,37 @@ func TestBootstrapSystem_FailureAfterUserCreateRollsBackEverything_Postgres(t *t
 	assert.True(t, names["admin"])
 	assert.True(t, names["system_viewer"])
 }
+
+// TestBootstrapSystem_RetryAfterRejectedPasswordSucceeds_Postgres is
+// TestBootstrapSystem_RetryAfterRejectedPasswordSucceeds's real-Postgres
+// counterpart — Session W (2026-09-29), verifying BUGS-FOUND.md's Bug 1
+// against current main on the backend the original repro's duplicate-key
+// error (SQLSTATE 23505) actually came from. The SQLite-only version above
+// already covers the same code path (backend-agnostic), but Postgres is
+// where the pre-#2295 bug's failure signature was actually observed, so it
+// gets its own gated proof rather than relying solely on the shared logic
+// argument. Skips when KEYORIX_TEST_PG_DSN is unset.
+func TestBootstrapSystem_RetryAfterRejectedPasswordSucceeds_Postgres(t *testing.T) {
+	base := pgTestDSN(t)
+	db := pgOpen(t, pgIsolatedSchemaDSN(t, base))
+	require.NoError(t, kxstorage.MigrateExisting(db))
+	st := store.NewLocalStorage(db)
+	ctx := context.Background()
+
+	c := NewKeyorixCore(st)
+	c.SetBootstrapToken(retryToken)
+
+	_, err := c.BootstrapSystem(ctx, personalInfoPasswordReq())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not contain your username, email, or display name")
+
+	perms, err := st.ListPermissions(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, perms, "a rejected bootstrap must not have seeded any permission")
+
+	res, err := c.BootstrapSystem(ctx, goodRetryReq())
+	require.NoError(t, err, "a corrected password on the same fresh install must bootstrap, not 500 on a duplicate-key error")
+	require.NotNil(t, res.User)
+	assert.False(t, res.AlreadyInitialized)
+	assert.Equal(t, "admin", res.User.Username)
+}
