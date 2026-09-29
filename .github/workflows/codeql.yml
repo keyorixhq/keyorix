@@ -3,12 +3,23 @@ name: CodeQL
 on:
   push:
     branches: [main]
-  # No pull_request trigger (2026-09-28, runner-cap relief): CodeQL is not a
-  # required check (ruleset "Require core CI checks on main"), and it still
-  # runs on every merge_group before anything reaches main, on push to main,
-  # and weekly. Dropping the per-push PR run saves ~13 runner-minutes and 5
-  # jobs per push against the 20-job concurrency cap. For an early read on a
-  # PR branch, run it by hand (workflow_dispatch below).
+  # pull_request: Go-only, and only when the PR actually changes Go code
+  # (2026-09-29). Dropped on 2026-09-28 for runner-cap relief, re-added after
+  # a probe proved the gap: the backup-v2 tar-slip (#2270, Session P review)
+  # lived only on an unmerged PR branch, so CodeQL never saw it -- yet
+  # CodeQL's built-in go/zipslip DOES flag it (verified by running this
+  # workflow on the pre-fix commit: alert at internal/backupfmt/reader.go,
+  # traced into the stageFile helper, which free Semgrep cannot do). To keep
+  # the runner cost down, on pull_request: the JS/TS leg never runs (it still
+  # runs on merge_group/push/schedule), each Go leg runs only when its own
+  # module's Go code changed (see the `changes` job), and a new push to the
+  # PR cancels the in-flight run (concurrency below). The upload also
+  # produces GitHub's "Code scanning results / CodeQL" check on the PR, which
+  # fails when the PR introduces a new alert at or above the repo's
+  # code-scanning failure threshold -- ~/proj/prompts' merge driver treats
+  # that check (not this workflow's own "CodeQL" summary job) as blocking.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
   # Merge queue. Every REQUIRED status check must also report on the
   # merge_group event or the queue never merges anything -- a check that
@@ -77,6 +88,13 @@ jobs:
       # (Analyze (server)) or web/'s (Analyze (javascript-typescript))
       # findings. Deliberately does NOT gate Analyze (operator) itself.
       operator_only: ${{ steps.filter.outputs.operator_only }}
+      # pull_request only: true when the PR changes Go in the ROOT module
+      # (any *.go, go.mod, go.sum, go.work* outside operator/), or the custom
+      # query pack, or this file. Always true for every other event, so
+      # merge_group/push/schedule keep their full scan unchanged.
+      root_go_changed: ${{ steps.filter.outputs.root_go_changed }}
+      # pull_request only: same, for the separate operator/ module.
+      operator_go_changed: ${{ steps.filter.outputs.operator_go_changed }}
     steps:
       - name: Detect docs-only / go-unaffected / operator-only changes
         id: filter
@@ -88,6 +106,8 @@ jobs:
               echo "docs_only=false"
               echo "go_unaffected=false"
               echo "operator_only=false"
+              echo "root_go_changed=true"
+              echo "operator_go_changed=true"
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -114,6 +134,19 @@ jobs:
           else
             echo "operator_only=true" >> "$GITHUB_OUTPUT"
           fi
+          # An empty file list (API hiccup) fails safe to "changed".
+          always='^(\.github/workflows/codeql\.yml|\.github/codeql/)'
+          gofile='(\.go$|(^|/)go\.(mod|sum|work|work\.sum)$)'
+          if [ -z "$changed" ] || echo "$changed" | grep -qE "$always" || echo "$changed" | grep -vE '^operator/' | grep -qE "$gofile"; then
+            echo "root_go_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "root_go_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -z "$changed" ] || echo "$changed" | grep -qE "$always" || echo "$changed" | grep -E '^operator/' | grep -qE "$gofile"; then
+            echo "operator_go_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "operator_go_changed=false" >> "$GITHUB_OUTPUT"
+          fi
 
   # Was a single matrixed `analyze` job (server + operator legs). Split into
   # two jobs because a job-level `if:` cannot reference the `matrix` context
@@ -127,7 +160,7 @@ jobs:
     needs: [changes]
     # Additionally skips when operator_only -- an operator-only diff can't
     # affect root-module CodeQL findings.
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && needs.changes.outputs.root_go_changed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -177,7 +210,7 @@ jobs:
   analyze-operator:
     name: Analyze (operator)
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_go_changed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -224,7 +257,9 @@ jobs:
   analyze-web:
     name: Analyze (javascript-typescript)
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    # Never on pull_request (Go-only there, runner-cost decision 2026-09-29);
+    # still runs on merge_group/push/schedule.
+    if: github.event_name != 'pull_request' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
