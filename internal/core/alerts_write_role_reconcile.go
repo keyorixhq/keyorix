@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/identity"
 )
 
@@ -118,6 +119,17 @@ func (c *KeyorixCore) ReconcileAlertsWriteRole(ctx context.Context) error {
 // error here — not-found or a genuine storage failure — is treated the same
 // way: attempt creation, which itself fails loudly (logged by the caller) if the
 // storage layer is actually broken.
+//
+// Creating the role and granting it alerts.write must move together (#G08
+// shape, mfa.go's ActivateMFA): a storage failure between the two previously
+// left the role permanently stuck with zero permissions, because GetRoleByName
+// treats "role exists" as "already seeded" regardless of whether the grant
+// ever landed — and the CALLER (ReconcileAlertsWriteRole) sets its own
+// completion marker unconditionally on the way out, so a partial failure here
+// was never retried. Found by internal/core/atomicity_guard_test.go
+// (TestAtomicityGuard_UnclassifiedMultiWriteFunction) during the F1 rebase
+// (PR #2244); the guard test itself didn't exist when F1 was originally
+// written.
 func (c *KeyorixCore) seedAlertOperatorRole(ctx context.Context, alertsWriteID uint) error {
 	if existing, err := c.storage.GetRoleByName(ctx, "alert_operator"); err == nil && existing != nil {
 		return nil
@@ -126,13 +138,18 @@ func (c *KeyorixCore) seedAlertOperatorRole(ctx context.Context, alertsWriteID u
 	if err != nil {
 		return fmt.Errorf("normalize alert_operator role name: %w", err)
 	}
-	role, err := c.storage.CreateRole(ctx, foldedName,
-		"Manages notification channels, escalation policies, and on-demand alert/reminder jobs")
-	if err != nil {
-		return fmt.Errorf("create alert_operator role: %w", err)
-	}
-	if err := c.storage.AssignPermissionToRole(ctx, role.ID, alertsWriteID); err != nil {
-		return fmt.Errorf("assign alerts.write to alert_operator role: %w", err)
+	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		role, err := tx.CreateRole(ctx, foldedName,
+			"Manages notification channels, escalation policies, and on-demand alert/reminder jobs")
+		if err != nil {
+			return fmt.Errorf("create alert_operator role: %w", err)
+		}
+		if err := tx.AssignPermissionToRole(ctx, role.ID, alertsWriteID); err != nil {
+			return fmt.Errorf("assign alerts.write to alert_operator role: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	return nil
 }

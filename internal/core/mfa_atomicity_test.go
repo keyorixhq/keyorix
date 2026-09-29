@@ -75,6 +75,16 @@ func (f *failingStorage) DeleteMFARecoveryCodes(ctx context.Context, userID uint
 	return f.Storage.DeleteMFARecoveryCodes(ctx, userID)
 }
 
+// AssignPermissionToRole: used by alerts_write_role_reconcile_test.go's
+// TestSeedAlertOperatorRole_AtomicOnPermissionGrantFailure (same package, same
+// failingStorage wrapper — not MFA-specific despite this file's name).
+func (f *failingStorage) AssignPermissionToRole(ctx context.Context, roleID, permissionID uint) error {
+	if f.failMethod == "AssignPermissionToRole" {
+		return errInjectedFailure
+	}
+	return f.Storage.AssignPermissionToRole(ctx, roleID, permissionID)
+}
+
 // TestActivateMFA_AtomicOnRecoveryCodesFailure: CreateMFARecoveryCodes (the LAST of
 // the three writes) fails — ActivateMFASecret and SetUserMFAEnabled must both roll
 // back too, or the account would end up MFA-enabled with zero recovery codes and no

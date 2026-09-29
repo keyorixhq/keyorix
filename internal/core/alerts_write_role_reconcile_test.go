@@ -132,3 +132,33 @@ func TestReconcileAlertsWriteRole_SeedsRoleAndBackfillsExistingSystemWriteHolder
 			"the one-time marker must prevent a second run from re-granting alerts.write after a deliberate revocation")
 	})
 }
+
+// TestSeedAlertOperatorRole_AtomicOnPermissionGrantFailure: AssignPermissionToRole
+// (the second write) fails — CreateRole must roll back too, via the WithTransaction
+// wrapping added alongside this test (internal/core/atomicity_guard_test.go's
+// TestAtomicityGuard_UnclassifiedMultiWriteFunction caught this during the F1
+// rebase, PR #2244). Before the fix, GetRoleByName's existence check treated
+// "alert_operator exists" as "already fully seeded" regardless of whether the
+// permission grant ever landed, so a role stuck at zero permissions by a failed
+// grant would never be retried or repaired — reusing the same failingStorage
+// wrapper mfa_atomicity_test.go's #G08 tests use (same package, same pattern).
+func TestSeedAlertOperatorRole_AtomicOnPermissionGrantFailure(t *testing.T) {
+	t.Parallel()
+	c, db := newAlertsWriteReconcileCore(t)
+	seedPreF1Catalog(t, c, db)
+	ctx := context.Background()
+
+	require.NoError(t, c.ReconcileRBACPermissions(ctx))
+
+	c.storage = &failingStorage{Storage: c.storage, failMethod: "AssignPermissionToRole"}
+	err := c.ReconcileAlertsWriteRole(ctx)
+	// seedAlertOperatorRole's own error is logged, not propagated by its caller
+	// (best-effort, matching ReconcileRBACPermissions' contract) — the backfill
+	// loop still runs and the function can still return nil. What this test
+	// actually asserts is the DB state, not the return value.
+	_ = err
+
+	_, roleErr := c.storage.GetRoleByName(ctx, "alert_operator")
+	require.Error(t, roleErr,
+		"alert_operator must NOT exist after a failed permission grant — CreateRole must have rolled back inside the same transaction, not left a zero-permission role behind for GetRoleByName's existence check to wrongly treat as fully seeded")
+}
