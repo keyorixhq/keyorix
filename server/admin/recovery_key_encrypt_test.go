@@ -136,10 +136,14 @@ func TestParseRecoveryKeyRecipient_MissingFile(t *testing.T) {
 	}
 }
 
-func TestWriteRecoveryKeyOutputFile_WritesWithMode0600(t *testing.T) {
+func TestReserveAndFinishRecoveryKeyOutputFile_WritesWithMode0600(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "out.age")
-	if err := writeRecoveryKeyOutputFile(path, []byte("ciphertext")); err != nil {
-		t.Fatalf("writeRecoveryKeyOutputFile: %v", err)
+	f, err := reserveRecoveryKeyOutputFile(path)
+	if err != nil {
+		t.Fatalf("reserveRecoveryKeyOutputFile: %v", err)
+	}
+	if err := finishRecoveryKeyOutputFile(f, path, []byte("ciphertext")); err != nil {
+		t.Fatalf("finishRecoveryKeyOutputFile: %v", err)
 	}
 	info, err := os.Stat(path)
 	if err != nil {
@@ -157,12 +161,12 @@ func TestWriteRecoveryKeyOutputFile_WritesWithMode0600(t *testing.T) {
 	}
 }
 
-func TestWriteRecoveryKeyOutputFile_RefusesToOverwrite(t *testing.T) {
+func TestReserveRecoveryKeyOutputFile_RefusesToOverwrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "out.age")
 	if err := os.WriteFile(path, []byte("pre-existing"), 0o600); err != nil {
 		t.Fatalf("seed existing file: %v", err)
 	}
-	err := writeRecoveryKeyOutputFile(path, []byte("new-content"))
+	_, err := reserveRecoveryKeyOutputFile(path)
 	if err == nil {
 		t.Fatal("expected an error when the output file already exists, got nil")
 	}

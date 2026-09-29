@@ -11,6 +11,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"filippo.io/age"
@@ -56,7 +57,10 @@ key is never written to the terminal at all in this mode. Decrypt with:
 age -d -i <identity file> <output>. --output <file> writes the encrypted
 result to that file (mode 0600, refuses to overwrite an existing file)
 instead of stdout; --output requires --recipient (this command never
-writes the PLAINTEXT key to a file).`,
+writes the PLAINTEXT key to a file). --output's path is checked (and
+reserved) BEFORE the key is rotated, so an --output failure -- the path
+already exists, or its parent directory isn't writable -- leaves the OLD
+key valid instead of burning a rotation you never received.`,
 	RunE: runRotateRecoveryKey,
 }
 
@@ -84,6 +88,30 @@ func runRotateRecoveryKey(cmd *cobra.Command, args []string) error {
 		if rerr != nil {
 			return fmt.Errorf("--recipient: %w", rerr)
 		}
+	}
+
+	// Reserve --output BEFORE rotating too, for the same reason: an --output
+	// failure (the path already exists, or its parent directory isn't
+	// writable) must leave the OLD key valid, not be discovered only after
+	// the key has already been rotated. See reserveRecoveryKeyOutputFile's
+	// own doc comment for why O_EXCL-creating now is the right shape. Removed
+	// again on any later failure (the deferred cleanup below) so a retry
+	// doesn't immediately hit a stale "already exists" against this run's own
+	// empty reservation.
+	var outputFile *os.File
+	outputCommitted := false
+	if rotateRecoveryKeyOutput != "" {
+		var operr error
+		outputFile, operr = reserveRecoveryKeyOutputFile(rotateRecoveryKeyOutput)
+		if operr != nil {
+			return fmt.Errorf("--output: %w", operr)
+		}
+		defer func() {
+			if !outputCommitted {
+				_ = outputFile.Close()
+				_ = os.Remove(rotateRecoveryKeyOutput)
+			}
+		}()
 	}
 
 	cfg, err := loadConfig()
@@ -148,9 +176,10 @@ func runRotateRecoveryKey(cmd *cobra.Command, args []string) error {
 				"but could not be delivered encrypted): %w", newVersion, eerr)
 		}
 		if rotateRecoveryKeyOutput != "" {
-			if werr := writeRecoveryKeyOutputFile(rotateRecoveryKeyOutput, encrypted); werr != nil {
+			if werr := finishRecoveryKeyOutputFile(outputFile, rotateRecoveryKeyOutput, encrypted); werr != nil {
 				return fmt.Errorf("recovery key WAS rotated (generation %d) but could not be written to --output: %w", newVersion, werr)
 			}
+			outputCommitted = true
 			fmt.Printf("The age-encrypted key was written to %s (mode 0600).\n", rotateRecoveryKeyOutput)
 		} else {
 			fmt.Println("=====================================================================")

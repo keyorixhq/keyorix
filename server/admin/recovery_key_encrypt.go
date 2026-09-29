@@ -76,22 +76,34 @@ func encryptRecoveryKeyForRecipient(rawKey string, recipient age.Recipient) ([]b
 	return buf.Bytes(), nil
 }
 
-// writeRecoveryKeyOutputFile writes data to path with mode 0600, refusing
-// to overwrite an existing file (O_EXCL) -- an operator re-running rotate
-// with the same --output path by mistake must not silently clobber
-// whatever is already there (which could itself be a still-needed prior
-// encrypted key).
-func writeRecoveryKeyOutputFile(path string, data []byte) error {
+// reserveRecoveryKeyOutputFile O_EXCL-creates path (mode 0600), refusing to
+// overwrite an existing file, and returns the open handle for
+// finishRecoveryKeyOutputFile to write the encrypted key into once it's
+// ready. Split into reserve/finish (rather than one open+write+close call)
+// so the CALLER can reserve --output BEFORE rotating the key: an --output
+// failure (the path already exists, or its parent directory isn't writable)
+// must be caught before any state changes, exactly like a bad --recipient --
+// not discovered only after the OLD key has already been invalidated (F8
+// coordinator follow-up). O_EXCL-creating now, rather than a separate
+// exists-check followed by a later open, also closes the TOCTOU gap a
+// two-step check-then-open would leave.
+func reserveRecoveryKeyOutputFile(path string) (*os.File, error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304 -- operator-supplied output path
 	if err != nil {
 		if os.IsExist(err) {
-			return fmt.Errorf("output file %q already exists -- refusing to overwrite", path)
+			return nil, fmt.Errorf("output file %q already exists -- refusing to overwrite", path)
 		}
-		return fmt.Errorf("create output file %q: %w", path, err)
+		return nil, fmt.Errorf("create output file %q: %w", path, err)
 	}
-	defer func() { _ = f.Close() }()
+	return f, nil
+}
+
+// finishRecoveryKeyOutputFile writes data into f (opened by
+// reserveRecoveryKeyOutputFile) and closes it.
+func finishRecoveryKeyOutputFile(f *os.File, path string, data []byte) error {
 	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
 		return fmt.Errorf("write output file %q: %w", path, err)
 	}
-	return nil
+	return f.Close()
 }
