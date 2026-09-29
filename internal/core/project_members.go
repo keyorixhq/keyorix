@@ -143,21 +143,37 @@ func (c *KeyorixCore) RemoveProjectMember(ctx context.Context, actorID, projectI
 		if err != nil {
 			return fmt.Errorf("failed to list project role assignments: %w", err)
 		}
-		if err := c.storage.RemoveAllProjectRoleGrants(ctx, userID, projectID); err != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		// All three removals run in one transaction: RemoveAllProjectRoleGrants alone
+		// is not sufficient protection (see below), so a partial failure here must
+		// roll back rather than leave the member's role grants gone but their
+		// secret-level access still live.
+		if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+			if err := tx.RemoveAllProjectRoleGrants(ctx, userID, projectID); err != nil {
+				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+			}
+			// Clear owner_id on secrets this user owned in the project (RBAC-002):
+			// without this the stale owner tag would grant them owner-level access via
+			// CheckSecretPermission's owner short-circuit even after all role grants
+			// are gone. NOT best-effort: fatal, same transaction as the role-grant
+			// removal above.
+			if err := tx.ClearProjectSecretOwnership(ctx, userID, projectID); err != nil {
+				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+			}
+			// Revoke per-secret ACL grants in this project (CWE-284): without this a
+			// removed member retains access to any secret they held a SecretACL grant
+			// for, because AuthorizeSecret checks ACL grants BEFORE project-scope RBAC
+			// and short-circuits on the first match — this is NOT defense-in-depth
+			// (a prior version's comment claimed it was; it is the only protection
+			// against stale per-secret ACL access surviving a removed member), so a
+			// failure here must roll back the role-grant removal above too, not be
+			// silently swallowed.
+			if err := tx.DeleteSecretACLsByUserAndProject(ctx, userID, projectID); err != nil {
+				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+			}
+			return nil
+		}); err != nil {
+			return err
 		}
-		// Clear owner_id on secrets this user owned in the project (RBAC-002): without
-		// this the stale owner tag would grant them owner-level access via
-		// CheckSecretPermission's owner short-circuit even after all role grants are gone.
-		// Best-effort: a failure here is logged at the storage layer but does not roll back
-		// the role removal, because the RBAC-001 membership check in CheckSecretPermission
-		// already blocks access — this is defense-in-depth, not a hard gate.
-		_ = c.storage.ClearProjectSecretOwnership(ctx, userID, projectID)
-		// Revoke per-secret ACL grants in this project (CWE-284): without this a removed
-		// member retains access to any secret they held a SecretACL grant for, because
-		// AuthorizeSecret checks ACL grants before project-scope RBAC and short-circuits
-		// on the first match — the role removal above provides no protection against stale ACLs.
-		_ = c.storage.DeleteSecretACLsByUserAndProject(ctx, userID, projectID)
 		for _, a := range assignments {
 			if a.PrincipalType != "user" || a.PrincipalID != userID {
 				continue
