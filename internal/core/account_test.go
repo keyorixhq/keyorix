@@ -163,6 +163,40 @@ func TestChangePassword(t *testing.T) {
 		assert.ElementsMatch(t, []string{"hash-a", "hash-b"}, evicted, "revoked PAT hashes are evicted from the auth cache")
 	})
 
+	// Red-proof for Session O's O2 item 2: applyNewPassword's PAT-revoke failure used
+	// to be `_ =` -- the password change succeeded (correctly, it must not roll back
+	// just because cleanup failed) but nothing signaled that an old PAT, possibly
+	// minted from the exact compromised session that forced this reset, was still
+	// live. Before the fix this test's EventPasswordChangePATRevokeFailed assertion
+	// could never pass (no second audit event was ever written).
+	t.Run("PAT revoke failure is audited loudly, password change still succeeds", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := NewKeyorixCore(ms)
+		user := &models.User{ID: 1, Username: acctTestUser, PasswordHash: string(oldHash)}
+
+		ms.On("GetUser", ctx, uint(1)).Return(user, nil)
+		ms.On("SetPasswordHash", ctx, uint(1), mock.AnythingOfType("string"), mock.Anything).Return(nil)
+		ms.On("GetSession", ctx, "current-token").Return(&models.Session{ID: 7, UserID: 1}, nil)
+		ms.On("ListSessionTokenHashesForUser", ctx, uint(1)).Return([]string{}, nil)
+		ms.On("DeleteSessionsForUserExcept", ctx, uint(1), uint(7)).Return(nil)
+		ms.On("RevokeAllPersonalAccessTokensForUser", ctx, uint(1)).Return(nil, assert.AnError)
+		ms.On("RecentPasswordHashes", ctx, uint(1), 5).Return([]string{}, nil)
+		ms.On("AddPasswordHistory", ctx, uint(1), mock.AnythingOfType("string"), mock.Anything).Return(nil)
+		ms.On("PrunePasswordHistory", ctx, uint(1), 5).Return(nil)
+		var loggedTypes []string
+		ms.On("LogAuditEvent", mock.Anything, mock.AnythingOfType("*models.AuditEvent")).
+			Run(func(args mock.Arguments) {
+				loggedTypes = append(loggedTypes, args.Get(1).(*models.AuditEvent).EventType)
+			}).
+			Return(nil)
+
+		err := c.ChangePassword(ctx, 1, "oldpassword", "Brandnew#Passw0rd!", "current-token")
+		require.NoError(t, err, "a failed PAT revoke must not roll back an already-succeeded password change")
+		assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte("Brandnew#Passw0rd!")))
+		assert.Contains(t, loggedTypes, EventPasswordChangePATRevokeFailed,
+			"a failed PAT revoke after a password change must be audited distinctly, not silently swallowed")
+	})
+
 	t.Run("rejects reuse of a recent password", func(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)

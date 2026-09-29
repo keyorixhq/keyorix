@@ -240,13 +240,28 @@ func (c *KeyorixCore) applyNewPassword(ctx context.Context, user *models.User, n
 
 	// Revoke the user's PATs too. A credential change must invalidate EVERY bearer class,
 	// not just sessions — otherwise a thief who minted a (possibly non-expiring) PAT from a
-	// stolen session survives the victim's reset. Best-effort; evict each from the auth
-	// cache immediately so a revoked PAT can't keep authenticating for the cache TTL.
-	if hashes, herr := c.storage.RevokeAllPersonalAccessTokensForUser(ctx, user.ID); herr == nil {
+	// stolen session survives the victim's reset. The password change itself has already
+	// succeeded (unlike the hash/state pair above, this is not rolled back on failure —
+	// the user must not be told their new password didn't take just because PAT cleanup
+	// failed) but a failure here is loud, not silently swallowed: an old, un-revoked PAT
+	// surviving a compromise-driven password reset is exactly the attack this step exists
+	// to close, so it must be visible for operator follow-up, not indistinguishable from
+	// "nothing to revoke."
+	hashes, herr := c.storage.RevokeAllPersonalAccessTokensForUser(ctx, user.ID)
+	if herr != nil {
+		uid := user.ID
+		c.writeAuditEventFailed(ctx, EventPasswordChangePATRevokeFailed, &uid, nil, "",
+			fmt.Sprintf("password changed for user %d, but FAILED to revoke their personal access tokens: %v — any PAT minted from a compromised session remains live, investigate immediately", user.ID, herr))
+	} else {
 		c.invalidateTokenCache(hashes...)
 	}
 	return nil
 }
+
+// EventPasswordChangePATRevokeFailed fires when applyNewPassword's PAT
+// revocation fails after the password hash/state change already committed.
+// #nosec G101 -- audit event type, not a credential
+const EventPasswordChangePATRevokeFailed = "user.password_change_pat_revoke_failed"
 
 // passwordReused reports whether newPassword matches the user's current password
 // or any of the most recent HistoryCount stored hashes (ADR-025 history_count).

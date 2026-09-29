@@ -371,6 +371,17 @@ func ensureFamilyID(existing string) (string, error) {
 	return generateSecureToken()
 }
 
+// EventSessionReuseFamilyRevokeFailed fires when handleSessionReuse's
+// DeleteSessionsByFamily call itself fails: unlike the deactivation-cleanup
+// case (RevokeUserCredentialsForDeactivation, UpdateUser), there is no
+// independent gate protecting a live sibling session here — the account is
+// still active, this function exists specifically because reuse of an
+// already-rotated token was detected (a suspected-compromise signal) — so a
+// failure to revoke the family leaves a live, unrevoked session for an
+// attacker who is actively replaying a stale token. This must be loud, not
+// swallowed. #nosec G101 -- audit event type, not a credential
+const EventSessionReuseFamilyRevokeFailed = "auth.session_reuse_family_revoke_failed"
+
 // handleSessionReuse responds to a refresh attempt that targeted an already-rotated
 // session token (#211): audits it distinctly from ordinary "not found"/expiry, and
 // revokes every session descended from the same login (FamilyID) — not just the one
@@ -380,15 +391,37 @@ func ensureFamilyID(existing string) (string, error) {
 // the very next request rather than lingering for the cache TTL.
 func (c *KeyorixCore) handleSessionReuse(ctx context.Context, old *models.Session) {
 	uid := old.UserID
+	// Worded as a fact about what was DETECTED, not what the revoke below will
+	// accomplish (txscan2/scratch/txscan2, Session O follow-up 2026-09-29): the
+	// original "— revoking the session family" phrasing asserted an outcome
+	// that hadn't happened yet at the point this event is written, and could
+	// still fail (EventSessionReuseFamilyRevokeFailed below is the event that
+	// actually reports whether it did). An operator reading only this event
+	// must not conclude the family was revoked.
 	c.writeAuditEventFull(ctx, EventSessionReuseDetected, &uid, nil, nil, old.IPAddress,
-		fmt.Sprintf("refresh attempted with an already-rotated session token for user %d — revoking the session family", old.UserID))
+		fmt.Sprintf("refresh attempted with an already-rotated session token for user %d", old.UserID))
 	if old.FamilyID == "" {
 		// Legacy row predating FamilyID — fall back to revoking just this one row.
-		_ = c.storage.DeleteSession(ctx, old.ID)
+		if err := c.storage.DeleteSession(ctx, old.ID); err != nil {
+			c.writeAuditEventFailed(ctx, EventSessionReuseFamilyRevokeFailed, &uid, nil, old.IPAddress,
+				fmt.Sprintf("FAILED to revoke the reused session (legacy row, no family) for user %d: %v — the session may still be live, investigate immediately", old.UserID, err))
+		}
 		return
 	}
-	hashes, _ := c.storage.ListSessionTokenHashesByFamily(ctx, old.FamilyID)
-	_ = c.storage.DeleteSessionsByFamily(ctx, old.FamilyID)
+	hashes, herr := c.storage.ListSessionTokenHashesByFamily(ctx, old.FamilyID)
+	derr := c.storage.DeleteSessionsByFamily(ctx, old.FamilyID)
+	if derr != nil {
+		c.writeAuditEventFailed(ctx, EventSessionReuseFamilyRevokeFailed, &uid, nil, old.IPAddress,
+			fmt.Sprintf("FAILED to revoke session family %q for user %d after reuse was detected: %v — the family may still be live, investigate immediately", old.FamilyID, old.UserID, derr))
+	}
+	if herr != nil {
+		// The revocation above still ran (DeleteSessionsByFamily doesn't depend on
+		// this list) — only the cache-eviction step below is degraded, leaving
+		// revoked-but-still-cached tokens valid for up to the auth-cache TTL.
+		c.writeAuditEventFailed(ctx, EventSessionReuseFamilyRevokeFailed, &uid, nil, old.IPAddress,
+			fmt.Sprintf("failed to read session hashes for family %q (user %d) after reuse was detected: %v — DB rows were still revoked, but the auth cache could not be evicted and stale tokens may authenticate for up to the cache TTL", old.FamilyID, old.UserID, herr))
+		return
+	}
 	for _, h := range hashes {
 		if h != "" {
 			c.invalidateTokenCache(h)
