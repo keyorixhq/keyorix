@@ -1,3 +1,5 @@
+//go:build !noazure
+
 package connect
 
 // azurekv_response_fuzz_test.go — FuzzAzureKVConnectorResponse fuzzes what a

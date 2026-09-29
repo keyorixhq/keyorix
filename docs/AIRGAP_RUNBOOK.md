@@ -159,6 +159,18 @@ image and the real HTTP-driven flow, which takes real wall-clock time
 (tens of seconds, to wait out a checkpoint interval) and a real container
 engine CI shouldn't need for every push.
 
+**Verified against the real air-gapped image (2026-09-28, ADR-109 step 6, B7):**
+built `server/Dockerfile` with `--build-arg BUILD_TAGS=noaws,noazure,nogcp` (the
+same air-gapped profile `make build-server-airgap`/the `<ver>-airgap` published
+image use), pointed this script at it (`KEYORIX_AIRGAP_E2E_IMAGE=<tag>
+./scripts/airgap-e2e.sh`), and it passed end to end — bootstrap, secret
+create, backup, restore into a fresh data directory, `admin verify-audit`
+(bare and anchor-cross-checked), the restored secret value round-tripping
+correctly, and the negative leg (tampered archive) correctly refused. No
+doc or behavior differences found between the full and air-gapped images for
+this flow — expected, since none of `admin backup`/`admin restore`/`admin
+verify-audit`'s own code paths touch any cloud SDK.
+
 **Resolved (2026-09-25):** `docker build -f server/Dockerfile .` previously
 failed on a clean checkout — `server/admin/init.go` imports
 `github.com/keyorixhq/keyorix/configs`, but `.dockerignore` excluded
@@ -169,6 +181,63 @@ with `no required module provides package .../configs`. Fixed by #2108
 with a clean `docker build -f server/Dockerfile .` against current `main`.
 `KEYORIX_AIRGAP_E2E_IMAGE=<your-tag> ./scripts/airgap-e2e.sh` still works if
 you'd rather pre-build the image yourself and skip the build step entirely.
+
+## Estimate: adding PostgreSQL support to `admin backup`/`admin restore`
+
+Not built — an estimate only (ADR-109 step 6, B7). Today, `admin backup`/`admin
+restore` refuse non-sqlite storage outright (verified live: `admin backup`
+against a Postgres-backed install fails immediately with "admin backup only
+supports local/sqlite storage today ... for Postgres, back up with pg_dump
+directly"); Postgres users follow the manual `pg_dump`/`psql` procedure
+[above](SELF_HOSTING.md#5-backup-and-restore), which this runbook validated
+works correctly, including `admin verify-audit` on the restored database.
+
+**Already reusable, no new work:** the exclusive-lock mechanism
+(`internal/serverguard.AcquireExclusive`) already branches on storage type and
+has a Postgres advisory-lock implementation (`acquirePostgresExclusive`) — the
+same lock every other admin command already takes against a Postgres backend
+works today. The archive manifest/checksum/key-file-bundling scaffolding
+(`server/admin/backup.go`'s `backupManifest`) is already backend-agnostic; only
+its `Backend` field and how `DBFile` is captured/restored are SQLite-specific.
+
+**New work required:**
+1. **Backup**: SQLite's `VACUUM INTO` (a single, self-consistent snapshot with
+   no external tool) has no Postgres equivalent built into the database
+   itself. Two paths: (a) shell out to `pg_dump` — fast to build (~1 week) but
+   reintroduces an external binary dependency into what is otherwise a
+   single-binary, self-contained tool, working against the exact positioning
+   ADR-109 (this track) exists to strengthen; or (b) a pure-Go dump (e.g. via
+   `pgx`, `COPY`-based table streaming inside one `REPEATABLE READ`
+   transaction) — no external binary, consistent with the single-binary/
+   air-gapped goal, but meaningfully more work (schema introspection,
+   sequences, indexes, constraints, correct quoting/escaping — essentially
+   reimplementing the subset of `pg_dump` this tool needs).
+2. **Restore**: SQLite restore writes a file into an empty directory; Postgres
+   restore needs an already-reachable, already-created (but empty) target
+   database — the "fresh, empty data directory" precondition becomes "the
+   target database has no application tables," checked before writing
+   (mirroring `--overwrite-existing`'s existing sqlite semantics: refuse
+   unless explicitly overridden). `admin verify-audit` running automatically
+   after restore already works against Postgres (verified live in this
+   runbook check) and needs no changes.
+3. **Testing**: this repo already has a `KEYORIX_TEST_PG_DSN`-gated
+   integration-test pattern for admin commands
+   (`admin_integration_postgres_test.go`, `admin_encryption_integration_postgres_test.go`)
+   — extending it to backup/restore reuses existing harness code, but still
+   needs new fixtures and (for the pure-Go path) new fuzz coverage over
+   whatever dump format that path introduces, matching this codebase's
+   existing `FuzzReadBackupArchive` coverage for the sqlite path.
+4. **Docs**: update this runbook and `docs/SELF_HOSTING.md` §5 once `admin
+   backup`/`admin restore` support Postgres — the manual `pg_dump`/`psql`
+   procedure would become the fallback, not the only path.
+
+**Rough estimate**: ~1 week for the shell-out-to-`pg_dump` version;
+2-3 weeks for a pure-Go, no-external-binary version consistent with this
+track's own air-gapped goals — plus this codebase's typical adversarial-review
+pass for a backup/restore code path (see `docs/g80-remediation-notes.md`'s own
+engineering-practices section on why a first green test here is not the same
+as a proven-correct one), realistically putting a production-ready version at
+3-4 weeks total.
 
 ## What this runbook does NOT cover
 

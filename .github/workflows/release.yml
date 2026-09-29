@@ -29,6 +29,11 @@ jobs:
       # long-lived signing key; GitHub's OIDC token proves this exact workflow run
       # produced the release, recorded in Sigstore's public Rekor transparency log.
       id-token: write
+      # SLSA build provenance (ADR-109 step 6, B6): actions/attest-build-provenance
+      # writes to GitHub's own Attestations API, verifiable with `gh attestation
+      # verify` — a separate mechanism from cosign's keyless signing above (which
+      # stays, for customers already using cosign).
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -98,6 +103,24 @@ jobs:
       # substituted by the shell, never re-parsed as YAML/template syntax.
       - name: Cross-compile release binaries + SBOMs
         run: make release VERSION="$GITHUB_REF_NAME"
+
+      # SLSA build provenance (ADR-109 step 6, B6): one in-toto attestation per
+      # binary, naming this exact workflow run, its inputs (repo, ref, commit),
+      # and the builder identity — posted to GitHub's Attestations API. Only the
+      # actual executables are named as subjects (glob exclusions below) — the
+      # per-binary SBOMs and checksums.txt/.sig/.pem are already covered by
+      # checksums.txt's own cosign signature (the step after this one), not by a
+      # build-provenance claim of their own (they are generated FILES, not
+      # binaries the provenance's build-definition step actually produced).
+      - name: Generate SLSA build provenance (binaries)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/keyorix*
+            !dist/*.json
+            !dist/*.txt
+            !dist/*.sig
+            !dist/*.pem
 
       # cosign-release pinned: latest (v3.1.1) defaults sign-blob to its new
       # bundle format and silently drops --output-signature/--output-certificate;
