@@ -574,11 +574,31 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 	if ferr != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
 	}
-	created, err := c.storage.CreateUser(ctx, &models.User{
-		Username: username, UsernameFolded: foldedUsername.Folded(),
-		Email: email, EmailFolded: foldedEmail.Folded(), DisplayName: displayName,
-		PasswordHash: hash, IsActive: true, AccountState: AccountActive, ExternalID: ssoExternalID(p.Name, sub),
-		PasswordChangedAt: &now, CreatedAt: now, UpdatedAt: now,
+	roleName := strings.TrimSpace(p.DefaultRole)
+	if roleName == "" {
+		roleName = ssoDefaultRole
+	}
+	// The user row and its baseline role grant run in one transaction — identical
+	// bootstrap shape to ProvisionSCIMUser (scim.go) and #2295's first-boot fix: a
+	// role-assign failure after a best-effort create used to leave a JIT-provisioned
+	// SSO user with zero roles, unable to do anything until an admin noticed.
+	var created *models.User
+	err = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		var cerr error
+		created, cerr = tx.CreateUser(ctx, &models.User{
+			Username: username, UsernameFolded: foldedUsername.Folded(),
+			Email: email, EmailFolded: foldedEmail.Folded(), DisplayName: displayName,
+			PasswordHash: hash, IsActive: true, AccountState: AccountActive, ExternalID: ssoExternalID(p.Name, sub),
+			PasswordChangedAt: &now, CreatedAt: now, UpdatedAt: now,
+		})
+		if cerr != nil {
+			return cerr
+		}
+		r, rerr := tx.GetRoleByName(ctx, roleName)
+		if rerr != nil {
+			return fmt.Errorf("failed to resolve default role %q: %w", roleName, rerr)
+		}
+		return tx.AssignRole(ctx, created.ID, r.ID, Scope{})
 	})
 	if err != nil {
 		// #117: the FindSCIMUser reuse-check above races with a concurrent JIT-provision
@@ -591,13 +611,7 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
-	role := strings.TrimSpace(p.DefaultRole)
-	if role == "" {
-		role = ssoDefaultRole
-	}
-	if r, rerr := c.storage.GetRoleByName(ctx, role); rerr == nil {
-		_ = c.storage.AssignRole(ctx, created.ID, r.ID, Scope{})
-	}
+	role := roleName
 	detail, _ := json.Marshal(ssoJITProvisionDetail{Role: role, NonDefaultRole: role != ssoDefaultRole})
 	c.writeAuditEventDiff(ctx, EventSSOJITProvision, actorPtr(created.ID), nil, nil, "",
 		fmt.Sprintf("SSO JIT-provisioned user %d via %s (externalId=%q, role=%s)", created.ID, p.Name, sub, role),

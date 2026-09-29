@@ -87,8 +87,9 @@ func TestProvisionSCIMUser_Success(t *testing.T) {
 	// CreateUser.
 	created := &models.User{ID: 10, Username: "bob", Email: "bob@x.com", AccountState: "pending_first_login"}
 	ms.On("CreateUser", mock.Anything, mock.AnythingOfType("*models.User")).Return(created, nil)
-	// Best-effort role assignment (system_viewer) — GetRoleByName returns not found → skipped.
-	ms.On("GetRoleByName", mock.Anything, "system_viewer").Return(nil, errors.New("not found"))
+	// The baseline role assignment (system_viewer) is fatal, not best-effort (Session O).
+	ms.On("GetRoleByName", mock.Anything, "system_viewer").Return(&models.Role{ID: 1, Name: "system_viewer"}, nil)
+	ms.On("AssignRole", mock.Anything, mock.Anything, uint(1), mock.Anything).Return(nil)
 	// LogAuditEvent for writeAuditEvent.
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)
@@ -122,7 +123,8 @@ func TestProvisionSCIMUser_EmailFallback(t *testing.T) {
 	ms.On("GetUserByUsername", mock.Anything, "charlie").Return(nil, storage.ErrUserNotFound)
 	created := &models.User{ID: 11, Username: "charlie", Email: "charlie@x.com"}
 	ms.On("CreateUser", mock.Anything, mock.AnythingOfType("*models.User")).Return(created, nil)
-	ms.On("GetRoleByName", mock.Anything, "system_viewer").Return(nil, errors.New("not found"))
+	ms.On("GetRoleByName", mock.Anything, "system_viewer").Return(&models.Role{ID: 1, Name: "system_viewer"}, nil)
+	ms.On("AssignRole", mock.Anything, mock.Anything, uint(1), mock.Anything).Return(nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)
 	u, err := c.ProvisionSCIMUser(context.Background(), 0, "charlie@x.com", "", "", "ext-2", true)
@@ -139,7 +141,8 @@ func TestProvisionSCIMUser_Inactive(t *testing.T) {
 	ms.On("GetUserByUsername", mock.Anything, "dave").Return(nil, storage.ErrUserNotFound)
 	created := &models.User{ID: 12, Username: "dave", Email: "dave@x.com", AccountState: "deprovisioned"}
 	ms.On("CreateUser", mock.Anything, mock.AnythingOfType("*models.User")).Return(created, nil)
-	ms.On("GetRoleByName", mock.Anything, "system_viewer").Return(nil, errors.New("not found"))
+	ms.On("GetRoleByName", mock.Anything, "system_viewer").Return(&models.Role{ID: 1, Name: "system_viewer"}, nil)
+	ms.On("AssignRole", mock.Anything, mock.Anything, uint(1), mock.Anything).Return(nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)
 	u, err := c.ProvisionSCIMUser(context.Background(), 0, "dave@x.com", "", "dave@x.com", "ext-3", false)

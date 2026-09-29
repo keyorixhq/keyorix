@@ -157,11 +157,28 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 	if ferr != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
 	}
-	created, err := c.storage.CreateUser(ctx, &models.User{
-		Username: username, UsernameFolded: foldedUsername.Folded(),
-		Email: email, EmailFolded: foldedEmail.Folded(), DisplayName: displayName,
-		PasswordHash: hash, IsActive: active, AccountState: state, ExternalID: externalID,
-		PasswordChangedAt: &now, CreatedAt: now, UpdatedAt: now,
+	// The user row and its baseline role grant run in one transaction — the same
+	// "user created, then role assign fails, leaves a user with zero roles" bootstrap
+	// shape #2295 fixes for first-boot; best-effort here meant a SCIM-provisioned user
+	// could end up with no role at all, unable to do anything until an admin noticed
+	// and manually granted one.
+	var created *models.User
+	err = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		var cerr error
+		created, cerr = tx.CreateUser(ctx, &models.User{
+			Username: username, UsernameFolded: foldedUsername.Folded(),
+			Email: email, EmailFolded: foldedEmail.Folded(), DisplayName: displayName,
+			PasswordHash: hash, IsActive: active, AccountState: state, ExternalID: externalID,
+			PasswordChangedAt: &now, CreatedAt: now, UpdatedAt: now,
+		})
+		if cerr != nil {
+			return cerr
+		}
+		role, rerr := tx.GetRoleByName(ctx, "system_viewer")
+		if rerr != nil {
+			return fmt.Errorf("failed to resolve baseline role: %w", rerr)
+		}
+		return tx.AssignRole(ctx, created.ID, role.ID, Scope{})
 	})
 	if err != nil {
 		// #117: the FindSCIMUser dedup check above races with a concurrent provision call
@@ -173,10 +190,6 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 			return nil, fmt.Errorf("a user already exists for this externalId/email")
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	// Minimal install-wide baseline role (ADR-021), best-effort.
-	if role, rerr := c.storage.GetRoleByName(ctx, "system_viewer"); rerr == nil {
-		_ = c.storage.AssignRole(ctx, created.ID, role.ID, Scope{})
 	}
 	c.writeAuditEvent(ctx, EventSCIMUserProvisioned, actorPtr(actorID), nil,
 		fmt.Sprintf("SCIM provisioned user %d (username=%s, externalId=%q, active=%t)", created.ID, username, externalID, active))
