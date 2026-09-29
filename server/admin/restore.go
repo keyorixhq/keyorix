@@ -320,6 +320,13 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 			return fmt.Errorf("write key file %q: %w", targetKeyPaths[i], err)
 		}
 	}
+	// v2 loads rows into a freshly-migrated database rather than writing a
+	// whole DB file (v1), so with --overwrite-existing the existing database
+	// must be moved aside first -- migrating and loading into it in place
+	// fails on the first colliding primary key.
+	if err := moveAsideExistingSQLiteDB(dbPath, restoreTS); err != nil {
+		return err
+	}
 	if err := removeStaleSQLiteSidecars(dbPath); err != nil {
 		return fmt.Errorf("clear stale WAL sidecar files for %q: %w", dbPath, err)
 	}
@@ -859,6 +866,36 @@ func expectedKeyFilePaths(cfg *config.Config) ([]string, error) {
 // removeStaleSQLiteSidecars removes dbPath's WAL-mode sidecar files
 // (-wal, -shm) if present. Best-effort existence-based removal: absent is
 // the common/expected case (a genuinely fresh data dir), not an error.
+// moveAsideExistingSQLiteDB renames an existing, non-empty SQLite database
+// (and its -wal/-shm sidecars, which hold committed-but-uncheckpointed pages
+// of that same database) to "<path>.pre-restore-<restoreTS>", the same
+// never-truncate convention writeRestoredFile uses for key files. Only acts
+// under --overwrite-existing; without it refuseNonEmptyExisting has already
+// refused a non-empty target, and a 0-byte placeholder is migrated in place.
+func moveAsideExistingSQLiteDB(dbPath, restoreTS string) error {
+	if !restoreOverwriteExisting {
+		return nil
+	}
+	info, err := os.Stat(dbPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("stat existing database %q: %w", dbPath, err)
+	}
+	if info.Size() == 0 {
+		return nil
+	}
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		src := dbPath + suffix
+		aside := fmt.Sprintf("%s.pre-restore-%s%s", dbPath, restoreTS, suffix)
+		if err := os.Rename(src, aside); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("move existing %q aside to %q: %w", src, aside, err)
+		}
+	}
+	return fsyncDir(filepath.Dir(dbPath))
+}
+
 func removeStaleSQLiteSidecars(dbPath string) error {
 	for _, suffix := range []string{"-wal", "-shm"} {
 		if err := os.Remove(dbPath + suffix); err != nil && !os.IsNotExist(err) {

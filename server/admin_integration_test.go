@@ -704,7 +704,7 @@ func TestAdminBackupRestore_SQLite_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("admin restore failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "Restored database") {
+	if !strings.Contains(out, "Restored ") || !strings.Contains(out, "table(s)") {
 		t.Errorf("expected restore to report success, got:\n%s", out)
 	}
 
@@ -799,6 +799,14 @@ func TestAdminRestore_RefusesNonEmptyTargetWithoutOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("admin restore --overwrite-existing failed: %v\n%s", err, out)
 	}
+	// The replaced database must be kept aside, never deleted or truncated.
+	aside, _ := filepath.Glob(filepath.Join(dir, "keyorix.db.pre-restore-*"))
+	if len(aside) == 0 {
+		t.Errorf("expected the pre-restore database to be moved aside as keyorix.db.pre-restore-*, found none")
+	}
+	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin diagnose after --overwrite-existing restore failed: %v\n%s", err, out)
+	}
 }
 
 func TestAdminRestore_ChecksumMismatchDetected(t *testing.T) {
@@ -830,16 +838,17 @@ func TestAdminRestore_ChecksumMismatchDetected(t *testing.T) {
 
 	out, err := runAdmin(t, bin, dir, env, "restore", "--config", "./keyorix.yaml", "--input", "./backup.tar.gz")
 	if err == nil {
-		t.Fatalf("expected admin restore to detect the tampered db.sqlite entry, got success:\n%s", out)
+		t.Fatalf("expected admin restore to detect the tampered table entry, got success:\n%s", out)
 	}
 	if !strings.Contains(out, "integrity check") {
 		t.Errorf("expected the integrity-check failure message, got:\n%s", out)
 	}
 }
 
-// corruptBackupDBEntry rewrites path's db.sqlite tar entry with one flipped
-// byte, leaving every other entry (including MANIFEST.json's recorded
-// checksum) untouched -- the minimal change that should make restore's
+// corruptBackupDBEntry rewrites the first non-empty table entry
+// (tables/<name>.ndjson, backup format v2) of path with one flipped byte,
+// leaving every other entry (including MANIFEST.json's recorded checksum)
+// untouched -- the minimal change that should make restore's
 // checksum verification fail without otherwise breaking archive parsing.
 func corruptBackupDBEntry(t *testing.T, path string) {
 	t.Helper()
@@ -856,6 +865,7 @@ func corruptBackupDBEntry(t *testing.T, path string) {
 
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
+	corrupted := false
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -868,8 +878,9 @@ func corruptBackupDBEntry(t *testing.T, path string) {
 		if err != nil {
 			t.Fatalf("read tar entry %q: %v", hdr.Name, err)
 		}
-		if hdr.Name == "db.sqlite" && len(data) > 0 {
+		if !corrupted && strings.HasPrefix(hdr.Name, "tables/") && len(data) > 0 {
 			data[0] ^= 0xFF
+			corrupted = true
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
 			t.Fatalf("write tar header: %v", err)
@@ -880,6 +891,9 @@ func corruptBackupDBEntry(t *testing.T, path string) {
 	}
 	if err := tw.Close(); err != nil {
 		t.Fatalf("close tar writer: %v", err)
+	}
+	if !corrupted {
+		t.Fatalf("backup archive has no non-empty tables/*.ndjson entry to corrupt")
 	}
 
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0600)
@@ -896,28 +910,31 @@ func corruptBackupDBEntry(t *testing.T, path string) {
 	}
 }
 
-func TestAdminBackupRestore_PostgresStorageType_Refused(t *testing.T) {
+// Backup format v2 is backend-neutral; with no reachable Postgres server both
+// commands must fail closed (non-zero exit, no archive left behind, no
+// success message) rather than producing or consuming an empty backup.
+func TestAdminBackupRestore_PostgresUnreachable_FailsClosed(t *testing.T) {
 	bin := buildServerBinary(t)
 	dir := t.TempDir()
 	env := baseEnv(dir)
-	cfg := "storage:\n  type: postgres\n  database:\n    host: 127.0.0.1\n    name: keyorix\n    user: keyorix\n"
+	cfg := "storage:\n  type: postgres\n  database:\n    host: 127.0.0.1\n    port: 1\n    name: keyorix\n    user: keyorix\n"
 	if err := os.WriteFile(filepath.Join(dir, "keyorix.yaml"), []byte(cfg), 0600); err != nil {
 		t.Fatalf("write postgres config: %v", err)
 	}
 
 	out, err := runAdmin(t, bin, dir, env, "backup", "--config", "./keyorix.yaml", "--output", "./backup.tar.gz")
 	if err == nil {
-		t.Fatalf("expected admin backup to refuse postgres storage, got success:\n%s", out)
+		t.Fatalf("expected admin backup against an unreachable Postgres to fail, got success:\n%s", out)
 	}
-	if !strings.Contains(out, "only supports local/sqlite storage") {
-		t.Errorf("expected the local/sqlite-only refusal message, got:\n%s", out)
+	if _, statErr := os.Stat(filepath.Join(dir, "backup.tar.gz")); statErr == nil {
+		t.Errorf("admin backup failed but still left ./backup.tar.gz behind")
 	}
 
 	out, err = runAdmin(t, bin, dir, env, "restore", "--config", "./keyorix.yaml", "--input", "./backup.tar.gz")
 	if err == nil {
-		t.Fatalf("expected admin restore to refuse postgres storage, got success:\n%s", out)
+		t.Fatalf("expected admin restore against an unreachable Postgres to fail, got success:\n%s", out)
 	}
-	if !strings.Contains(out, "only supports local/sqlite storage") {
-		t.Errorf("expected the local/sqlite-only refusal message, got:\n%s", out)
+	if strings.Contains(out, "Restored ") {
+		t.Errorf("failed restore must not report success, got:\n%s", out)
 	}
 }
