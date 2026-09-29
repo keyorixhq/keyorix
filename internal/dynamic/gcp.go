@@ -97,6 +97,9 @@ func (e *GCPEngine) Issue(ctx context.Context, adminDSN, _ string, ttl time.Dura
 	if err != nil {
 		return Credential{}, "", fmt.Errorf("gcp: generate access token: %w", err)
 	}
+	if strings.TrimSpace(token) == "" {
+		return Credential{}, "", fmt.Errorf("gcp: generate access token returned no token")
+	}
 
 	suffix, err := randString(12)
 	if err != nil {

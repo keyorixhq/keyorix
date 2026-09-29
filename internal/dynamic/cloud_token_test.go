@@ -73,6 +73,18 @@ func TestGCPEngine_ConfigValidation(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestGCPEngine_Issue_EmptyAccessToken is a regression test (fuzz-confirmed, #2208):
+// generateAccessToken can return a nil error alongside an empty access_token (a
+// degenerate/misbehaving response), which Issue previously accepted as a successful
+// lease because it only checked the error, never the token's content.
+func TestGCPEngine_Issue_EmptyAccessToken(t *testing.T) {
+	fake := &fakeGCPMinter{token: ""}
+	eng := &GCPEngine{minter: fake}
+	_, _, err := eng.Issue(context.Background(), `{"service_account":"sa@proj.iam.gserviceaccount.com"}`, "", time.Hour)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no token")
+}
+
 // --- Azure ---
 
 type fakeAzureMinter struct {

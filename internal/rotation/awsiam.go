@@ -143,7 +143,7 @@ func (e *AWSIAMExecutor) GenerateUpstream(ctx context.Context, ref string) (stri
 	if err != nil {
 		return "", fmt.Errorf("aws-iam: create access key for %q: %w", ref, err)
 	}
-	if created.AccessKey == nil || created.AccessKey.AccessKeyId == nil || created.AccessKey.SecretAccessKey == nil {
+	if created.AccessKey == nil || aws.ToString(created.AccessKey.AccessKeyId) == "" || aws.ToString(created.AccessKey.SecretAccessKey) == "" {
 		return "", fmt.Errorf("aws-iam: create access key for %q returned no credential", ref)
 	}
 	newID := *created.AccessKey.AccessKeyId

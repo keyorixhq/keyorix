@@ -183,6 +183,22 @@ func TestAWSIAM_GenerateUpstream_Errors(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "LimitExceeded")
 	})
+	// TestAWSIAM_GenerateUpstream_Errors/empty credential fields is a regression test
+	// (fuzz-confirmed, #2209): CreateAccessKey's response fields are non-nil *string
+	// pointers to "" on a degenerate/misbehaving response, which a nil-check alone lets
+	// through as a "successful" rotation. Emptiness, not nilness, is what must gate.
+	t.Run("empty access key id rejected", func(t *testing.T) {
+		fake := &fakeIAM{newID: "", newSecret: "s3cr3t"}
+		_, err := iamWith(fake, "svc-").GenerateUpstream(context.Background(), "svc-app")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no credential")
+	})
+	t.Run("empty secret access key rejected", func(t *testing.T) {
+		fake := &fakeIAM{newID: "AKIANEW", newSecret: ""}
+		_, err := iamWith(fake, "svc-").GenerateUpstream(context.Background(), "svc-app")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no credential")
+	})
 }
 
 // NOTE on the g05 concurrency finding: this file used to carry
