@@ -236,6 +236,21 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	// (resendable / revocable) rather than being falsely marked accepted with no
 	// grants behind it.
 	if err := c.applyInvitationGrants(ctx, inv, user.ID); err != nil {
+		// Session O follow-up (2026-09-29, coordinator hand-found candidate): the
+		// account just created above has zero grants and the setup token that led
+		// here is already spent (single-use, by design) -- without reverting the
+		// account, the invitee is stuck permanently: the SAME link can't be
+		// replayed (token consumed), and a resent link (a fresh token for this
+		// same still-pending invitation) hits the "account already exists" guard
+		// above on the very next attempt, with no self-service way out. Soft-delete
+		// the orphaned account so a resend starts clean — both the email and
+		// username uniqueness indexes are partial (`WHERE deleted_at IS NULL`,
+		// see models.User's own doc comments), so this is safe: a subsequent
+		// CreateUser for the same address does not collide with the deleted row.
+		if derr := c.storage.DeleteUser(ctx, user.ID); derr != nil {
+			c.auditProjectScoped(ctx, "invitation.accept_orphaned_account_cleanup_failed", user.ID, inv.ProjectID,
+				fmt.Sprintf("invitation %d: grants failed for %s (user %d): %v -- AND cleaning up the resulting ungranted account also failed: %v -- MANUAL CLEANUP REQUIRED (delete or complete this account by hand, or the invitee is stuck)", inv.ID, inv.Email, user.ID, err, derr))
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 
