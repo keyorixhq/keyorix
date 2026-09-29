@@ -178,12 +178,32 @@ var multiStepAmbiguousCommitExceptions = []nonLoadBearingException{}
 // resolveProjectRoleGrant) are unreachable from plain CreateUser, so this
 // entry cannot mask a fault on a load-bearing GetRoleByName call the way a
 // method-only bestEffortTables entry would risk.
+//
+// REST POST /api/v1/projects, WithTransaction: CreateProject
+// (internal/core/catalog.go) wraps the project-row create and its default-
+// environment seeding in one outer WithTransaction, with EACH environment
+// seeded via its own NESTED tx.WithTransaction (a SAVEPOINT) — deliberately,
+// per that function's own extensive comment: a per-environment seeding
+// failure is caught, logged ("created without its default environment ...:
+// %v"), and non-fatal by design, so the project itself still commits. Found
+// live: FuzzStorageFaultOperations op="REST POST /api/v1/projects"
+// fault=WithTransaction#4/error (CI, PR #2252) — NthCall=4 lands on one of
+// the per-environment SAVEPOINT calls (call #1 is the outer wrap; #2+ are
+// one per defaultEnvironmentNames entry), producing exactly the documented
+// "committed project, missing one environment" state and nothing else. Not a
+// blanket suppression of WithTransaction faults for this op: a fault on call
+// #1 (the OUTER transaction) rolls back the whole create and the op reports
+// FAILURE, never reaching this success-branch check at all — only an INNER,
+// per-environment SAVEPOINT fault can produce a reported SUCCESS with an
+// Environment-only diff, and that is precisely the case this function's own
+// comment already documents as accepted.
 var opScopedBestEffortTables = []struct {
 	op, method string
 	tables     []string
 }{
 	{op: "REST POST /api/v1/users/", method: "AssignRole", tables: []string{"UserRole"}},
 	{op: "REST POST /api/v1/users/", method: "GetRoleByName", tables: []string{"UserRole"}},
+	{op: "REST POST /api/v1/projects", method: "WithTransaction", tables: []string{"Environment"}},
 }
 
 func opScopedAcceptableByDesign(op, method string, diff []string) bool {
