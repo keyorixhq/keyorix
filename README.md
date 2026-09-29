@@ -110,15 +110,22 @@ imports over the Keyorix REST API. See
 ## SDKs
 
 Fetch secrets directly from your application at startup. Zero hardcoded credentials.
+Go, Python, Node.js, and Java SDKs live together in
+[keyorixhq/keyorix-sdks](https://github.com/keyorixhq/keyorix-sdks)
+(`github.com/keyorixhq/keyorix-go` is archived — superseded by the `go/`
+directory there). Recommended for an app running unattended: authenticate
+with a machine identity token (`keyorix machine token issue <name|id>`),
+not a user's password — see [docs/sdks.md](docs/sdks.md) for the full
+picture, including PATs, error handling, and TLS with a private CA.
 
 **Go**
 ```bash
-go get github.com/keyorixhq/keyorix-go
+go get github.com/keyorixhq/keyorix-sdks/go
 ```
 ```go
-token, _ := keyorix.Login(ctx, "http://your-server:8080", "admin", "password")
-client := keyorix.New("http://your-server:8080", token)
-dbPassword, _ := client.GetSecret(ctx, "db-password", "production")
+client, _ := keyorix.New("https://your-server:8443", os.Getenv("KEYORIX_TOKEN"))
+dbPassword, _ := client.GetSecretScoped(ctx, "db-password",
+    keyorix.ProjectByName("my-project"), keyorix.EnvironmentByName("production"))
 ```
 
 **Python**
@@ -126,22 +133,37 @@ dbPassword, _ := client.GetSecret(ctx, "db-password", "production")
 pip install keyorix
 ```
 ```python
-token = keyorix.login("http://your-server:8080", "admin", "password")
-client = keyorix.Client("http://your-server:8080", token)
-db_password = client.get_secret("db-password", "production")
+client = keyorix.Client("https://your-server:8443", os.environ["KEYORIX_TOKEN"])
+db_password = client.get_secret_scoped("db-password", "my-project", "production")
 ```
 
 **Node.js**
 ```bash
-npm install keyorix
+npm install @keyorixhq/sdk
 ```
 ```javascript
-const token = await keyorix.login("http://your-server:8080", "admin", "password");
-const client = new keyorix.Client("http://your-server:8080", token);
-const dbPassword = await client.getSecret("db-password", "production");
+const client = new keyorix.Client("https://your-server:8443", process.env.KEYORIX_TOKEN);
+const dbPassword = await client.getSecretScoped("db-password", "my-project", "production");
 ```
 
-See [example apps](https://github.com/keyorixhq/keyorix-go/tree/main/examples/petstore) for full working demos with Docker Compose.
+**Java**
+```xml
+<dependency>
+    <groupId>com.keyorix</groupId>
+    <artifactId>keyorix-sdk</artifactId>
+    <version>0.3.0</version>
+</dependency>
+```
+```java
+KeyorixClient client = Keyorix.newClient("https://your-server:8443", System.getenv("KEYORIX_TOKEN"));
+String dbPassword = client.getSecretScoped("db-password", "my-project", "production");
+```
+
+Each language's `examples/petstore/` directory in
+[keyorix-sdks](https://github.com/keyorixhq/keyorix-sdks) has a full
+working demo with Docker Compose. No release has been tagged for
+`keyorix-sdks` yet — see that repo's own `COMPATIBILITY.md` for the
+current verified-compatible state.
 
 ---
 
