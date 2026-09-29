@@ -53,6 +53,12 @@ All notable changes to Keyorix are documented here. This project follows
   pulling the air-gapped image must update their image reference. (`2bc79ce2`,
   `ddadf47c`)
 
+### Added
+- `keyorix-migrate vault scan` — a free, strictly read-only health check for an existing Vault
+  (or OpenBao) install: version/EOL, seal configuration, audit devices, auth methods, policy
+  sprawl, TTL hygiene, secrets-engine inventory, TLS listener config, and a "migration readiness"
+  summary. Ships in the same `keyorix-migrate` binary. See `docs/vault-health-scan.md`.
+
 ## v0.95.1 — 2026-09-27
 
 ### Security
