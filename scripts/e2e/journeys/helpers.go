@@ -104,10 +104,9 @@ func restCall(t *testing.T, s *harness.Server, token, method, path string, body 
 	}
 	var env restEnvelope
 	env.StatusCode = resp.StatusCode
+	env.Raw = respBytes // always the full raw body, regardless of whether it parses as an envelope -- callers asserting a denial leaks nothing need this even when the body DID parse cleanly
 	if len(respBytes) > 0 {
-		if jerr := json.Unmarshal(respBytes, &env); jerr != nil {
-			env.Raw = respBytes
-		}
+		_ = json.Unmarshal(respBytes, &env) // best-effort; env.Raw above already covers the non-JSON/decode-failure case
 	}
 	return env
 }
@@ -159,16 +158,26 @@ func runCLIRaw(cliBin string, env []string, args ...string) (string, error) {
 	return string(out), err
 }
 
+// tokenEnv returns the environment a `keyorix` CLI invocation needs to act
+// under ANY bearer token -- human session or machine credential alike, the
+// CLI/server don't distinguish the two by shape. adminEnv/machineEnv/
+// tokenEnv (used directly by N2 for its editor/viewer/outsider HUMAN
+// session tokens, which are neither "the admin" nor a machine identity) are
+// all the same env shape under a more call-site-accurate name.
+func tokenEnv(s *harness.Server, token string) []string {
+	return append(s.CLIEnv(), "KEYORIX_SERVER="+s.BaseURL, "KEYORIX_TOKEN="+token)
+}
+
 // adminEnv returns the environment a `keyorix` CLI invocation needs to act
 // as the admin session token (project/secret/machine setup steps).
 func adminEnv(s *harness.Server, adminToken string) []string {
-	return append(s.CLIEnv(), "KEYORIX_SERVER="+s.BaseURL, "KEYORIX_TOKEN="+adminToken)
+	return tokenEnv(s, adminToken)
 }
 
 // machineEnv returns the environment a `keyorix` CLI invocation needs to act
 // as a machine identity's issued bearer token (the three-readers steps).
 func machineEnv(s *harness.Server, machineToken string) []string {
-	return append(s.CLIEnv(), "KEYORIX_SERVER="+s.BaseURL, "KEYORIX_TOKEN="+machineToken)
+	return tokenEnv(s, machineToken)
 }
 
 // ── ID resolution (admin REST lookups after a CLI mutation) ────────────────
