@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -105,14 +106,6 @@ func (c *KeyorixCore) IssueSetupToken(ctx context.Context, req IssueSetupTokenRe
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "subject email is required")
 	}
 
-	// Supersede any prior active token for this subject+purpose first, so the old
-	// link dies the instant the new one is issued (safe "resend"). SupersedeProjectID,
-	// when set, additionally confines this to the issuing project's own invitations
-	// (CORE-INVITATIONS-003) rather than every project's.
-	if err := c.storage.SupersedeActiveSetupTokens(ctx, req.Purpose, email, req.SupersedeProjectID); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -137,7 +130,26 @@ func (c *KeyorixCore) IssueSetupToken(ctx context.Context, req IssueSetupTokenRe
 		CreatedByMachineIdentityID: req.CreatedByMachineIdentityID,
 		CreatedAt:                  now,
 	}
-	created, err := c.storage.CreateSetupToken(ctx, tok)
+
+	// Supersede any prior active token for this subject+purpose and create the
+	// replacement in one transaction: a resend must never kill a still-working
+	// link without also successfully minting its replacement (Session O
+	// follow-up, 2026-09-29 -- matches CI's FuzzStorageFaultOperations shard 2
+	// finding, op=REST POST /api/v1/projects/{id}/invitations
+	// fault=CreateSetupToken: an old-link-superseded/new-link-never-created
+	// split permanently locks the invitee out with no working link and no
+	// self-service recovery). SupersedeProjectID, when set, additionally
+	// confines this to the issuing project's own invitations
+	// (CORE-INVITATIONS-003) rather than every project's.
+	var created *models.SetupToken
+	err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		if err := tx.SupersedeActiveSetupTokens(ctx, req.Purpose, email, req.SupersedeProjectID); err != nil {
+			return err
+		}
+		var cerr error
+		created, cerr = tx.CreateSetupToken(ctx, tok)
+		return cerr
+	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
