@@ -32,6 +32,7 @@ require (
 	github.com/google/go-tpm-tools v0.4.10
 	github.com/googleapis/gax-go/v2 v2.24.1
 	github.com/jackc/pgx/v5 v5.11.0
+	github.com/keyorixhq/keyorix-go v0.2.1
 	github.com/mattermost/xml-roundtrip-validator v0.1.0
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
 	github.com/pquerna/otp v1.5.0
