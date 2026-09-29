@@ -2,6 +2,12 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
     testDir: './e2e',
+    // e2e/real/ holds SESSION-I's real-backend specs (playwright.config.real.ts,
+    // driven by scripts/e2e/web-real-smoke.sh) -- they need a real
+    // keyorix-server behind VITE_API_BASE_URL, not this config's own
+    // `pnpm dev` (no backend) + mocked-route fixtures. Excluded here so the
+    // default `pnpm test:e2e` never silently tries to run them against mocks.
+    testIgnore: ['real/**'],
     fullyParallel: true,
     forbidOnly: !!process.env.CI,
     retries: process.env.CI ? 2 : 0,
