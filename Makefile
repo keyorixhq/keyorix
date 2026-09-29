@@ -285,6 +285,59 @@ smoke: build-cli build-server
 airgap-e2e:
 	@./scripts/airgap-e2e.sh
 
+# e2e-smoke: SESSION-I's fresh-install FEATURE smoke, distinct from `smoke`
+# above -- that target proves the QUICK_START.md happy path (project/secret/
+# share/machine, one CRUD each) on the SHIPPED CLI binary; this one proves
+# every route in scripts/e2e/routes.json (I1) is reachable, with no 5xx
+# anywhere, on a genuinely freshly-`admin migrate`d database, real server,
+# real HTTP -- the class of gap PR #2258 found (7 shipped features 500ing
+# with "no such table" on fresh install because no test ever exercised them
+# against a really-empty database). Build-tag e2e, excluded from `make test`/
+# `go test ./...`'s default inner loop -- see scripts/e2e's own package doc.
+# SQLite only; add KEYORIX_TEST_PG_DSN for the PostgreSQL leg too (see
+# e2e-smoke-postgres below for the docker incantation).
+e2e-smoke:
+	go test -tags e2e ./scripts/e2e/... -run TestAPISmoke_SQLite -v -timeout 300s
+
+# e2e-smoke-postgres: same, against a real PostgreSQL backend. Requires
+# docker and KEYORIX_TEST_PG_DSN pointed at it:
+#   docker run -d --name keyorix-e2e-pg -e POSTGRES_PASSWORD=keyorix-e2e \
+#     -e POSTGRES_DB=keyorix -e POSTGRES_USER=keyorix -p 15432:5432 postgres:16
+#   KEYORIX_TEST_PG_DSN="host=localhost user=keyorix password=keyorix-e2e dbname=keyorix port=15432 sslmode=disable" \
+#     make e2e-smoke-postgres
+e2e-smoke-postgres:
+	@if [ -z "$$KEYORIX_TEST_PG_DSN" ]; then \
+		echo "KEYORIX_TEST_PG_DSN is not set -- see this target's own comment in the Makefile for the docker incantation" >&2; \
+		exit 1; \
+	fi
+	go test -tags e2e ./scripts/e2e/... -run TestAPISmoke_Postgres -v -timeout 300s
+
+# e2e-smoke-upgrade: I3 -- downloads the previous release's server binary,
+# provisions a database with it, then migrates and boots that SAME database
+# with the binary just built from HEAD (an in-place upgrade, exactly like a
+# real operator's stop/migrate/start), and re-runs the full smoke sweep
+# against it -- catches "table missing on an upgraded install" as well as a
+# fresh one. Requires network access to GitHub's release-asset URLs; skips
+# (not fails) if that's unavailable, or if no release binary is published
+# for this GOOS/GOARCH. Override the release it upgrades FROM with
+# KEYORIX_E2E_UPGRADE_FROM_TAG (defaults to the immediately-prior release).
+e2e-smoke-upgrade:
+	go test -tags e2e ./scripts/e2e/... -run TestAPISmoke_UpgradePath -v -timeout 300s
+
+# e2e-web-smoke: I4 -- the same fresh-install premise, driving the real web
+# UI (not the API directly) against a real backend with Playwright. See
+# scripts/e2e/web-real-smoke.sh's own header for the full boot sequence.
+# Requires pnpm; Playwright browsers must already be installed
+# (`cd web && pnpm exec playwright install` once, if scripts/e2e/
+# web-real-smoke.sh's own run reports a missing-executable error).
+e2e-web-smoke:
+	@./scripts/e2e/web-real-smoke.sh
+
+# e2e-smoke-all: everything above in one run -- SQLite, the upgrade path,
+# and the web UI (NOT the Postgres leg, which needs a docker container the
+# other three don't -- run e2e-smoke-postgres separately once one is up).
+e2e-smoke-all: e2e-smoke e2e-smoke-upgrade e2e-web-smoke
+
 
 clean:
 	rm -rf $(BUILD_DIR) dist/
