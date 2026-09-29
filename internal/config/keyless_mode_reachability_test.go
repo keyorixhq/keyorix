@@ -58,6 +58,10 @@ var keylessModeAllowedFiles = map[string]string{
 		"are required for THIS invocation of the offline, host-side `recover-admin` CLI command — never writes " +
 		"it. No HTTP or gRPC transport is involved in reaching this code path at all (ADR-108 §B: no admin " +
 		"command starts a network listener).",
+	"server/admin/diagnose.go": "reads it once in diagnoseRecoveryKey, after config.Load, to report [SKIP] " +
+		"instead of [WARN] for a missing recovery key on keyless-mode installs, inside the offline, host-side " +
+		"`diagnose` CLI command -- never writes it. No HTTP or gRPC transport reaches this code path (ADR-108 " +
+		"section B: no admin command starts a network listener).",
 }
 
 // repoRootForKeylessModeScan resolves the main module's repo root from this
