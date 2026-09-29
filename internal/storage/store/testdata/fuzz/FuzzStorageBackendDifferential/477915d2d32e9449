@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("c21 \xda,\x1f\x06!\x0e\xa30!:\xa50\xfam'\b\xfcF\xdf090z")
