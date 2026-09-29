@@ -1386,12 +1386,23 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
 
+      # The admin password must satisfy the server's bootstrap policy (>=16
+      # chars, upper/lower/digit/special, must not contain the username
+      # "admin" or "Administrator"); the chart now fails the render below 16
+      # chars (#2271). Generated per run so no literal credential lives in
+      # the repo, and exported for the bootstrap assertion further down.
+      - name: Generate a policy-compliant admin password
+        run: |
+          pw="Ci-Boot-$(openssl rand -hex 8)-Kx9!"
+          echo "::add-mask::$pw"
+          echo "KX_ADMIN_PW=$pw" >> "$GITHUB_ENV"
+
       - name: helm install with chart defaults
         run: |
           helm install kx deploy/helm/keyorix \
             --set auth.masterPassword=ci-boot-smoke \
             --set postgresql.auth.password=ci-boot-smoke \
-            --set auth.adminPassword=ci-boot-smoke \
+            --set auth.adminPassword="$KX_ADMIN_PW" \
             --set server.image.repository=keyorix-server \
             --set server.image.tag=boot-smoke \
             --set server.image.pullPolicy=IfNotPresent \
@@ -1404,6 +1415,27 @@ jobs:
           kubectl wait --for=condition=Ready pod \
             -l app.kubernetes.io/instance=kx,app.kubernetes.io/component=server \
             --timeout=300s
+
+      # Pod readiness alone never proved first-boot bootstrap worked: a
+      # silently skipped or rejected bootstrap still leaves a Ready pod
+      # (exactly how the missing KEYORIX_BOOTSTRAP_TOKEN went unnoticed until
+      # #2271). Log in as the bootstrapped admin; retry for up to 90 s because
+      # the entrypoint bootstraps only after the server reports healthy.
+      - name: Assert the admin bootstrap actually completed (real login)
+        run: |
+          pod=$(kubectl get pod -l app.kubernetes.io/instance=kx,app.kubernetes.io/component=server -o name | head -n1)
+          kubectl port-forward "$pod" 18080:8080 >/tmp/pf.log 2>&1 &
+          pf=$!
+          trap 'kill $pf 2>/dev/null || true' EXIT
+          body=$(jq -n --arg p "$KX_ADMIN_PW" '{username:"admin",password:$p}')
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /tmp/login.json -w '%{http_code}' -H 'Content-Type: application/json' \
+              -d "$body" http://127.0.0.1:18080/auth/login || true)
+            if [ "$code" = "200" ]; then echo "admin login OK after ${i} attempt(s)"; exit 0; fi
+            sleep 3
+          done
+          echo "::error::admin login never succeeded (last HTTP status: ${code:-none}) -- first-boot bootstrap did not complete"
+          exit 1
 
       - name: Describe pods and dump logs on failure
         if: failure()
@@ -1936,7 +1968,7 @@ jobs:
           # the Kubernetes schema.
           helm template kx deploy/helm/keyorix \
             --set auth.masterPassword=ci --set postgresql.auth.password=ci \
-            --set auth.adminPassword=ci --set ingress.enabled=true \
+            --set auth.adminPassword=Ci-Render-Only-Pw1! --set ingress.enabled=true \
             | ./kubeconform -strict -summary -kubernetes-version 1.29.0
           helm template kx deploy/helm/keyorix \
             --set auth.masterPassword=ci --set postgresql.enabled=false \
@@ -1953,7 +1985,7 @@ jobs:
           APP_VERSION="$(sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' deploy/helm/keyorix/Chart.yaml)"
           helm template kx deploy/helm/keyorix \
             --set auth.masterPassword=ci --set postgresql.auth.password=ci \
-            --set auth.adminPassword=ci > default-render.yaml
+            --set auth.adminPassword=Ci-Render-Only-Pw1! > default-render.yaml
           if grep -q ':latest' default-render.yaml; then
             echo "expected no ':latest' image tag in the default render"; exit 1
           fi
@@ -2215,7 +2247,7 @@ jobs:
           # so an unpinned render would fail it regardless of chart capability.
           helm template kx deploy/helm/keyorix \
             --set auth.masterPassword=ci --set postgresql.auth.password=ci \
-            --set auth.adminPassword=ci --set ingress.enabled=true \
+            --set auth.adminPassword=Ci-Render-Only-Pw1! --set ingress.enabled=true \
             --set server.image.digest=sha256:1111111111111111111111111111111111111111111111111111111111111111 \
             --set web.image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
             > keyorix-render.yaml

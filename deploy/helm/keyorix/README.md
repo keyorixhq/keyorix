@@ -14,8 +14,25 @@ From a published release (the chart is pushed to GHCR as an OCI artifact on each
 helm install keyorix oci://ghcr.io/keyorixhq/charts/keyorix \
   --set auth.masterPassword='change-me-and-keep-it' \
   --set postgresql.auth.password='a-strong-db-password' \
-  --set auth.adminPassword='Admin123!'
+  --set auth.adminPassword='S3cure-Passphrase!9'
 ```
+
+> `auth.adminPassword` must satisfy the server's own admin-bootstrap password
+> policy (`POST /system/init`): **at least 16 characters, with an uppercase
+> letter, a lowercase letter, a digit, and a special character — and it must
+> not contain the admin username, email, or display name as a substring**
+> (the default username is literally `admin`, so a password like
+> `Admin-Something123!` fails this even though it looks strong). The chart
+> fails the render early (a clear `helm install`/`template` error) if it's
+> under 16 characters; the other rules aren't chart-checkable — get those
+> wrong and the first-boot bootstrap fails instead (the pod comes up,
+> `helm install`/`helm test` succeed, but no admin user is ever created —
+> see `kubectl logs` for the server pod for the actual reason). **A rejected
+> password can leave the install permanently unable to retry bootstrap at
+> all** (filed to FINDINGS-inbox, Session J, 2026-09-28) — if `kubectl logs`
+> shows a `duplicate key value violates unique constraint
+> "uni_permissions_name"` error, the DB must be wiped and the install redone
+> from scratch; there is no in-place recovery today.
 
 Or from a source checkout, swap the chart reference for `./deploy/helm/keyorix`.
 
@@ -37,7 +54,7 @@ helm test keyorix
 |-------|---------|-------|
 | `auth.masterPassword` | — | **Required** (or `auth.existingSecret`). KEK passphrase. |
 | `auth.existingSecret` | — | Bring your own Secret (`KEYORIX_MASTER_PASSWORD`, `KEYORIX_DB_PASSWORD`, opt. `KEYORIX_ADMIN_PASSWORD`). |
-| `auth.adminPassword` | — | Optional first-boot admin bootstrap (idempotent). |
+| `auth.adminPassword` | — | Optional first-boot admin bootstrap (idempotent). ≥16 chars, upper+lower+digit+special — see quick start note above. |
 | `server.image.tag` | chart `appVersion` | Server image tag (empty pins to the chart's own `appVersion`; `server.image.digest` takes precedence if set). |
 | `web.image.tag` | chart `appVersion` | Web UI image tag (same default/precedence as `server.image.tag`). |
 | `server.keysPersistence.*` | 1Gi RWO | The encryption-keys PVC (`resource-policy: keep`). |

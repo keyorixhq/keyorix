@@ -15,9 +15,26 @@
 {{- define "keyorix.web.fullname" -}}{{ printf "%s-web" (include "keyorix.fullname" .) | trunc 63 | trimSuffix "-" }}{{- end -}}
 {{- define "keyorix.postgresql.fullname" -}}{{ printf "%s-postgresql" (include "keyorix.fullname" .) | trunc 63 | trimSuffix "-" }}{{- end -}}
 
-{{/* The Secret holding KEYORIX_MASTER_PASSWORD / KEYORIX_DB_PASSWORD / admin. */}}
+{{/* The Secret holding KEYORIX_MASTER_PASSWORD / KEYORIX_DB_PASSWORD / admin / bootstrap token. */}}
 {{- define "keyorix.secretName" -}}
 {{- if .Values.auth.existingSecret -}}{{ .Values.auth.existingSecret }}{{- else -}}{{ include "keyorix.fullname" . }}{{- end -}}
+{{- end -}}
+
+{{/*
+The token gating POST /system/init (server/main.go, KEYORIX_BOOTSTRAP_TOKEN).
+Re-read from the already-rendered Secret via `lookup` so it survives
+`helm upgrade` unchanged -- the standard idempotent-random-value pattern
+(`lookup` sees nothing under `helm template`/`--dry-run`/`helm install
+--dry-run`, so those always mint a fresh value; that's expected, since there
+is no live Secret yet for it to diverge from).
+*/}}
+{{- define "keyorix.bootstrapToken" -}}
+{{- $existing := (lookup "v1" "Secret" .Release.Namespace (include "keyorix.fullname" .)) -}}
+{{- if and $existing $existing.data (index $existing.data "KEYORIX_BOOTSTRAP_TOKEN") -}}
+{{- index $existing.data "KEYORIX_BOOTSTRAP_TOKEN" | b64dec -}}
+{{- else -}}
+{{- randAlphaNum 32 -}}
+{{- end -}}
 {{- end -}}
 
 {{/* Database host: the bundled Postgres service, or the external host. */}}
