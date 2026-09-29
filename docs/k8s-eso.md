@@ -49,11 +49,19 @@ All example manifests live in [`deploy/eso/`](../deploy/eso/).
 ### 1. Store the token (and CA)
 
 Create the token Secret in the namespace your `ClusterSecretStore` will reference (the
-examples use `external-secrets`). Never commit a real token:
+examples use `external-secrets`). Never commit a real token. The token Secret **must**
+carry the label `external-secrets.io/type: webhook` — ESO's webhook provider refuses
+to read a `secrets[].secretRef` Secret without it (a confused-deputy guard: a
+`SecretStore` author can't point `secrets[]` at an arbitrary pre-existing Secret they
+don't otherwise have RBAC to read). Skip this and every sync fails with `secret does
+not contain needed label 'external-secrets.io/type: webhook'` — confirmed live
+(Session J, 2026-09-28). The label is **not** needed on the CA Secret below (only on
+`secrets[]` entries):
 
 ```sh
 kubectl -n external-secrets create secret generic keyorix-machine-token \
   --from-literal=token="$KEYORIX_MACHINE_TOKEN"
+kubectl -n external-secrets label secret keyorix-machine-token external-secrets.io/type=webhook
 
 # Only if Keyorix uses a private CA:
 kubectl -n external-secrets create secret generic keyorix-ca \
@@ -77,7 +85,13 @@ provider:
     url: "https://keyorix.internal/api/v1/secrets/value?ref={{ .remoteRef.key }}"
     headers:
       Accept: "application/json"
-      Authorization: "Bearer {{ .keyorixToken }}"
+      # .keyorixToken is the WHOLE decoded Secret data map ({token: "kx_machine_..."}),
+      # not just the token string -- index into the specific key (.token, matching
+      # secrets[].secretRef.key below). A bare {{ .keyorixToken }} sends Go's default
+      # map stringification ("map[token:kx_machine_...]") as the bearer token instead
+      # of the token itself -- the request reaches Keyorix fine but gets a 401,
+      # confirmed live (Session J, 2026-09-28).
+      Authorization: "Bearer {{ .keyorixToken.token }}"
     result:
       jsonPath: "$.data.value"   # Keyorix wraps as {"data":{"value":…}}
     secrets:
@@ -154,7 +168,8 @@ envFrom:
 | Symptom | Likely cause |
 |---|---|
 | `SecretStore` not `Ready` | Token Secret missing or wrong `namespace` in `secretRef`. |
-| `ExternalSecret` `SecretSyncedError`, 401/403 | Token invalid, or its identity lacks `secrets.read` for that secret. |
+| `secret does not contain needed label 'external-secrets.io/type: webhook'` | The `secrets[].secretRef` Secret (the token) is missing the required `external-secrets.io/type: webhook` label — see Install step 1. |
+| `ExternalSecret` `SecretSyncedError`, 401/403 | Token invalid, its identity lacks `secrets.read` for that secret, **or** the Authorization header template uses `{{ .keyorixToken }}` instead of `{{ .keyorixToken.token }}` (sends the whole Secret data map, not the token — see Install step 2). |
 | 404 from the webhook | Wrong `remoteRef.key` (no such `project/environment/name`) or wrong `url`. |
 | 400 from the webhook | `remoteRef.key` is not a three-part `project/environment/name` reference. |
 | `x509: certificate signed by unknown authority` | Missing/incorrect `caProvider` CA bundle. |
