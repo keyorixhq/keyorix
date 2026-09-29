@@ -454,6 +454,14 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
+	// Machine principals (ADR-030) are already authorized at the secret's scope
+	// by the route's RequireScopedSecretPermission(permSecretsWrite) gate; the
+	// per-user owner/sharing check (and its user-id requirement — a machine
+	// caller's userCtx.UserID is always 0) does not apply to them, so update
+	// directly. Mirrors the isMachine split GetSecret/GetSecretByName/
+	// GetSecretValueByRef/DeleteSecret already use in this file — UpdateSecret
+	// was the one CRUD handler missing it (W1, machine-identity-write gap).
+	isMachine := userCtx.MachineIdentityID != nil
 
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
@@ -528,7 +536,12 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 	// side effect). Best-effort: a miss just yields an empty diff.
 	oldSecret, _ := h.coreService.Storage().GetSecret(r.Context(), uint(id))
 
-	response, err := h.coreService.UpdateSecretWithPermissionCheck(r.Context(), req)
+	var response *models.SecretNode
+	if isMachine {
+		response, err = h.coreService.UpdateSecret(r.Context(), req)
+	} else {
+		response, err = h.coreService.UpdateSecretWithPermissionCheck(r.Context(), req)
+	}
 	if err != nil {
 		log.Printf("Error updating secret: %v", err)
 		h.sendUpdateSecretError(w, err)

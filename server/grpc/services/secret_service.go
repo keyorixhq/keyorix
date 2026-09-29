@@ -105,7 +105,18 @@ func (s *SecretGRPCService) GetSecret(ctx context.Context, req *pb.GetSecretRequ
 	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsRead); err != nil {
 		return nil, err
 	}
-	secret, err := s.core.GetSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
+	// Machine principals (ADR-030) are already authorized above by
+	// authorizeSecretScoped; the per-user owner/sharing check (and its
+	// user-id requirement — a machine caller's user.UserID is always 0) does
+	// not apply to them, so fetch directly. Mirrors the isMachine split the
+	// HTTP handlers use (W1: this gRPC service was missing it entirely,
+	// blocking every machine-token read/write/delete over gRPC).
+	var secret *models.SecretNode
+	if user.ActorKind() == core.ActorTypeMachine {
+		secret, err = s.core.GetSecret(ctx, uint(req.GetId()))
+	} else {
+		secret, err = s.core.GetSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
+	}
 	if err != nil {
 		return nil, mapSecretError(err)
 	}
@@ -157,12 +168,26 @@ func (s *SecretGRPCService) GetSecretValue(ctx context.Context, req *pb.GetSecre
 	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsRead); err != nil {
 		return nil, err
 	}
+	// Machine principals are already authorized above by authorizeSecretScoped;
+	// the per-user owner/sharing check does not apply to them (W1 — see GetSecret).
+	isMachine := user.ActorKind() == core.ActorTypeMachine
+
 	// Resolve the name first (metadata read, no read-count side effect).
-	secret, err := s.core.GetSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
+	var secret *models.SecretNode
+	if isMachine {
+		secret, err = s.core.GetSecret(ctx, uint(req.GetId()))
+	} else {
+		secret, err = s.core.GetSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
+	}
 	if err != nil {
 		return nil, mapSecretError(err)
 	}
-	value, err := s.core.GetSecretValueWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
+	var value []byte
+	if isMachine {
+		value, err = s.core.GetSecretValue(ctx, uint(req.GetId()))
+	} else {
+		value, err = s.core.GetSecretValueWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
+	}
 	if err != nil {
 		return nil, mapSecretError(err)
 	}
@@ -215,7 +240,15 @@ func (s *SecretGRPCService) UpdateSecret(ctx context.Context, req *pb.UpdateSecr
 	// effect). Best-effort: a miss just yields an empty diff — same as the HTTP path.
 	oldSecret, _ := s.core.Storage().GetSecret(ctx, uint(req.GetId()))
 
-	secret, err := s.core.UpdateSecretWithPermissionCheck(ctx, updateReq)
+	// Machine principals are already authorized above by authorizeSecretScoped;
+	// the per-user owner/sharing check (and its user-id requirement) does not
+	// apply to them (W1 — see GetSecret).
+	var secret *models.SecretNode
+	if user.ActorKind() == core.ActorTypeMachine {
+		secret, err = s.core.UpdateSecret(ctx, updateReq)
+	} else {
+		secret, err = s.core.UpdateSecretWithPermissionCheck(ctx, updateReq)
+	}
 	if err != nil {
 		return nil, mapSecretError(err)
 	}
@@ -255,7 +288,15 @@ func (s *SecretGRPCService) DeleteSecret(ctx context.Context, req *pb.DeleteSecr
 		secretName = sec.Name
 		secretProjectID = sec.ProjectID
 	}
-	if err := s.core.DeleteSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID); err != nil {
+	// Machine principals are already authorized above by authorizeSecretScoped;
+	// the per-user owner/sharing check (and its user-id requirement) does not
+	// apply to them (W1 — see GetSecret).
+	if user.ActorKind() == core.ActorTypeMachine {
+		err = s.core.DeleteSecret(ctx, uint(req.GetId()))
+	} else {
+		err = s.core.DeleteSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
+	}
+	if err != nil {
 		return nil, mapSecretError(err)
 	}
 	// Audit the delete the same way the HTTP handler does — the core method does not
@@ -359,7 +400,15 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsRead); err != nil {
 		return nil, err
 	}
-	versions, err := s.core.GetSecretVersionsWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
+	// Machine principals are already authorized above by authorizeSecretScoped;
+	// the per-user owner/sharing check (and its user-id requirement) does not
+	// apply to them (W1 — see GetSecret).
+	var versions []*models.SecretVersion
+	if user.ActorKind() == core.ActorTypeMachine {
+		versions, err = s.core.GetSecretVersions(ctx, uint(req.GetId()))
+	} else {
+		versions, err = s.core.GetSecretVersionsWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
+	}
 	if err != nil {
 		return nil, mapSecretError(err)
 	}

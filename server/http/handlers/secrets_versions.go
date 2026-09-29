@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -34,7 +35,20 @@ func (h *SecretHandler) GetSecretVersions(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	versions, err := h.coreService.GetSecretVersionsWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
+	// Machine principals (ADR-030) are already authorized at the secret's scope
+	// by the route's RequireScopedSecretPermission(permSecretsRead) gate; the
+	// per-user owner/sharing check (and its user-id requirement — a machine
+	// caller's userCtx.UserID is always 0) does not apply to them, so fetch
+	// directly. Mirrors the isMachine split secrets_crud.go's GetSecret uses
+	// (W1, machine-identity-read gap: this was the one versions.go entry point
+	// an HTTP handler still called unconditionally).
+	isMachine := userCtx.MachineIdentityID != nil
+	var versions []*models.SecretVersion
+	if isMachine {
+		versions, err = h.coreService.GetSecretVersions(r.Context(), uint(id))
+	} else {
+		versions, err = h.coreService.GetSecretVersionsWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
+	}
 	if err != nil {
 		log.Printf("Error getting secret versions: %v", err)
 		if strings.Contains(err.Error(), errNotFound) {
