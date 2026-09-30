@@ -180,27 +180,47 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	// produce. This REPLACES the old compensating DeleteSecret cleanup below: a
 	// rollback achieves the same "as if nothing happened" outcome without a
 	// second best-effort delete that could itself fail and leave the orphan behind.
+	// SESSION-AT AT1/AT3: re-verify the environment still exists, and serialize
+	// against a concurrent DeleteEnvironment on it, via the SAME named lock
+	// DeleteEnvironment holds for its own active-secret guard
+	// (environmentSecretGuardLockKey, local_secrets.go's DeleteEnvironment doc
+	// comment). The GetEnvironment check earlier in this function happens
+	// BEFORE this lock and is not enough on its own: DeleteEnvironment could
+	// commit in the window between that check and the create below, silently
+	// orphaning this secret (environment_id pointing at a row that no longer
+	// exists) -- confirmed empirically with a real concurrency test before
+	// this lock was added. The lock alone is also not enough on its own: it
+	// only prevents the two operations from interleaving, not from running in
+	// the legitimate order "delete wins the lock first, finds zero secrets,
+	// commits; create then acquires the lock and blindly inserts anyway" --
+	// hence the second existence check INSIDE the lock, immediately before
+	// the transaction.
 	var createdSecret *models.SecretNode
-	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
-		var err error
-		createdSecret, err = tx.CreateSecret(ctx, secret, string(req.Value))
-		if err != nil {
-			return err
+	lockErr := c.storage.WithNamedLock(ctx, environmentSecretGuardLockKey(req.EnvironmentID), func(ctx context.Context) error {
+		if _, err := c.storage.GetEnvironment(ctx, req.EnvironmentID); err != nil {
+			return fmt.Errorf("environment %d not found", req.EnvironmentID)
 		}
-		// Skip the separate version-creation call when the backend already stored the
-		// value atomically as part of CreateSecret itself (#499): calling storeSecretVersion
-		// again here would try to mint a conflicting duplicate version 1 against a secret
-		// that already has one. LocalStorage never sets ValueStored, so this call remains
-		// exactly as before for it.
-		if !createdSecret.ValueStored {
-			if err := c.storeSecretVersion(ctx, tx, createdSecret, req.Value, 1); err != nil {
+		return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+			var err error
+			createdSecret, err = tx.CreateSecret(ctx, secret, string(req.Value))
+			if err != nil {
 				return err
 			}
-		}
-		return nil
+			// Skip the separate version-creation call when the backend already stored the
+			// value atomically as part of CreateSecret itself (#499): calling storeSecretVersion
+			// again here would try to mint a conflicting duplicate version 1 against a secret
+			// that already has one. LocalStorage never sets ValueStored, so this call remains
+			// exactly as before for it.
+			if !createdSecret.ValueStored {
+				if err := c.storeSecretVersion(ctx, tx, createdSecret, req.Value, 1); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
 	})
-	if txErr != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), txErr)
+	if lockErr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), lockErr)
 	}
 
 	// Apply the create-time tags (#390) now that the secret and its first version both

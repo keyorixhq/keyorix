@@ -354,9 +354,26 @@ func (c *KeyorixCore) requireAuthorityToReinstateProjectRoles(ctx context.Contex
 	return c.requireGlobalAdminToReinstateAdminRoles(ctx, actorID, roleIDs, objectDesc)
 }
 
-// DeleteEnvironment deletes an environment by ID.
+// DeleteEnvironment deletes an environment by ID. The active-secret guard
+// and its serialization against a concurrent CreateSecret both live in the
+// storage layer (LocalStorage.DeleteEnvironment's own doc comment,
+// internal/storage/store/local_secrets.go) -- this core wrapper is
+// deliberately thin.
 func (c *KeyorixCore) DeleteEnvironment(ctx context.Context, id uint) error {
 	return c.storage.DeleteEnvironment(ctx, id)
+}
+
+// environmentSecretGuardLockKey is the WithNamedLock key serializing
+// CreateSecret's environment-existence re-check against a concurrent
+// DeleteEnvironment. MUST produce the identical string to
+// LocalStorage.DeleteEnvironment's own copy of this function
+// (internal/storage/store/local_secrets.go) -- the two packages don't share
+// an import path for it (internal/core deliberately depends on the
+// storage.Storage INTERFACE, not the concrete store package), so the format
+// is duplicated by convention rather than a shared symbol. Both sides
+// comment-cross-reference this one.
+func environmentSecretGuardLockKey(environmentID uint) string {
+	return fmt.Sprintf("environment-secret-guard:%d", environmentID)
 }
 
 // EventEnvironmentCreated/EventEnvironmentDeleted are audited on every
