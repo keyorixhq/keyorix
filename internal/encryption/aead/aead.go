@@ -65,13 +65,18 @@ func (es *EncryptionService) WipeDEK() {
 	}
 }
 
-// DEKBytes returns the service's live DEK backing slice (not a copy) — an
-// accessor mirroring KeyManager.GetDEK() elsewhere in internal/encryption.
-// internal/encryption's g62_dek_safety_test.go uses this to capture a
-// reference to the exact backing array WipeDEK must zero in place, the same
-// memory-scan-style regression shape as every other DEK-wipe test in this
-// codebase.
-func (es *EncryptionService) DEKBytes() []byte { return es.dek }
+// IsDEKWiped reports whether every byte of this service's DEK copy is zero,
+// i.e. whether WipeDEK has run on it. It exposes one bit, never key
+// material: internal/encryption's G62 tests hold the *EncryptionService
+// that Shutdown/rotation must wipe and check this on that same object.
+func (es *EncryptionService) IsDEKWiped() bool {
+	for _, b := range es.dek {
+		if b != 0 {
+			return false
+		}
+	}
+	return true
+}
 
 // EncryptionMetadata contains metadata about encrypted data
 type EncryptionMetadata struct {

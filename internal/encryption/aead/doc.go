@@ -19,10 +19,15 @@
 //   - It must stay a leaf: it may import only the standard library — nothing
 //     else from this module. TestAEADStaysALeaf enforces this.
 //   - Package encryption keeps its public API via type aliases and thin
-//     wrapper functions (encryption/aead_compat.go), so callers don't change.
+//     wrapper functions (internal/encryption/encryption.go), so callers don't change.
 //   - WipeDEK exists because internal/encryption/service_rotation.go zeroes
 //     an EncryptionService's DEK directly on rotation/shutdown; dek is
 //     unexported, so that access can no longer cross the package boundary
 //     once EncryptionService lives here — WipeDEK is the same zeroing loop,
-//     exported.
+//     exported. IsDEKWiped lets internal/encryption's G62 tests check the
+//     wipe without any exported accessor for the key bytes themselves.
+//   - The leaf guard covers non-test files only. aead_context_binding_fuzz_test.go
+//     imports internal/core/ports (for the real SecretAAD) and internal/fuzzutil,
+//     so this package's test binary links those two plus pkg/trust and
+//     pkg/licenseverify: ~221 packages vs ~798 for internal/encryption's.
 package aead
