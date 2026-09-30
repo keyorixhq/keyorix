@@ -73,10 +73,7 @@ func PrefixAllowed(allowed []string, ref string) bool {
 		if !strings.HasPrefix(ref, p) {
 			continue
 		}
-		if !isAlnumByte(p[len(p)-1]) {
-			return true
-		}
-		if len(ref) > len(p) && !isAlnumByte(ref[len(p)]) {
+		if !isAlnumByte(p[len(p)-1]) || !isAlnumByte(ref[len(p)]) {
 			return true
 		}
 	}
