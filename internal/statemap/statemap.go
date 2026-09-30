@@ -101,13 +101,21 @@ type routeInterval struct {
 // with fully composed mounted paths.
 func RESTRoutes(repoRoot string) ([]Entry, error) {
 	path := filepath.Join(repoRoot, "server", "http", "router.go")
+	relPath, _ := filepath.Rel(repoRoot, path)
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, 0)
 	if err != nil {
 		return nil, err
 	}
-	relPath, _ := filepath.Rel(repoRoot, path)
+	return restRoutesFromAST(f, fset, relPath), nil
+}
 
+// restRoutesFromAST is RESTRoutes' actual extraction logic, split out from
+// file I/O so a test can exercise the position-interval nested-Route
+// composition (and its duplicate-detection consequence) against a small,
+// FIXED fixture source instead of depending on router.go's current
+// contents — see rest_composition_test.go.
+func restRoutesFromAST(f *ast.File, fset *token.FileSet, relPath string) []Entry {
 	consts := collectStringConsts(f)
 
 	var intervals []routeInterval
@@ -174,7 +182,7 @@ func RESTRoutes(repoRoot string) ([]Entry, error) {
 			Handler: handler,
 		})
 	}
-	return dedupSortEntries(entries), nil
+	return dedupSortEntries(entries)
 }
 
 // collectStringConsts returns every top-level `const Name = "literal"`
@@ -222,6 +230,10 @@ func resolveStringExpr(e ast.Expr, consts map[string]string) string {
 			return s
 		}
 		return "<" + v.Name + ">"
+	case *ast.BinaryExpr:
+		if v.Op == token.ADD {
+			return resolveStringExpr(v.X, consts) + resolveStringExpr(v.Y, consts)
+		}
 	}
 	return "<dynamic>"
 }
@@ -616,6 +628,36 @@ func MCPTools(repoRoot string) ([]Entry, error) {
 	return dedupSortEntries(entries), nil
 }
 
+// KnownGapRows are entry-point CATEGORIES this generator does NOT enumerate
+// at all (as opposed to individual entries within an enumerated category
+// that couldn't be classified, which get class "REVIEW"). Each is a
+// considered decision, not an oversight -- reasons state why, per the
+// coordinator's B3 review comment on PR #2336 ("Either enumerate them or
+// list each as an explicit known-gap row"). Exported (not local to
+// cmd/statemapgen) so completeness_test.go can assert these exact rows are
+// still present in the checked-in TSV -- deleting a gap row must fail the
+// guard the same way deleting a real entry point does.
+func KnownGapRows() []Entry {
+	return []Entry{
+		{
+			Kind: "gap", ID: "operator/ reconcile loops", File: "operator/", Line: 0,
+			Class: "gap", Reason: "operator/ is a separate Go module (its own go.mod, controller-runtime reconcile-loop entry points, not REST/gRPC/CLI/job in this codebase's sense) and is on SESSION-AT's MUST-NOT-EDIT list. Not enumerated here; recommend a follow-up session scoped to operator/ specifically, using its own entry-point shape (Reconcile methods on each controller).",
+		},
+		{
+			Kind: "gap", ID: "server startup/shutdown sequence", File: "server/main.go", Line: 0,
+			Class: "gap", Reason: "main()'s own linear startup (config load, storage init, migration check, startSchedulers, listener start) and shutdown (signal handling, graceful drain) is a single run-once sequence per process, not a repeatable/lookupable entry point the way a route or CLI command is -- there is no clean registration point to enumerate \"hooks\" from (unlike runScheduler's own named-call pattern, which IS enumerated under kind=job). Scheduled jobs themselves (the repeatable part of startup) ARE enumerated (kind=job). Recommend a manual, one-time trace of main()'s own sequence rather than a generator, if this needs auditing.",
+		},
+		{
+			Kind: "gap", ID: "SSO/SAML callbacks", File: "server/http/router.go", Line: 0,
+			Class: "gap", Reason: "NOT actually a gap -- checked explicitly per the coordinator's review: /auth/sso/{provider}/callback, /auth/saml/{provider}/acs, and similar IdP-callback routes are plain chi routes already captured by the kind=rest extractor (confirmed: grep -n callback server/http/router.go shows them registered exactly like any other route, inside the same unauthenticated r.Group). Listed here only so this decision is visible in the TSV itself, not just in a PR body someone has to go find.",
+		},
+		{
+			Kind: "gap", ID: "outbound webhook delivery (notification channels)", File: "internal/core", Line: 0,
+			Class: "gap", Reason: "distinct from SSO/SAML callbacks above -- this is Keyorix CALLING OUT to an operator-configured webhook URL as a notification channel (internal/core notification dispatch, internal/evidencesink/webhook.go), not an inbound entry point at all. No REST/gRPC/CLI/job registration exists to enumerate; it is reachable only as a side effect of other already-enumerated entries (e.g. an access-request approval triggering a notification send). Listed as a curated external-system row in stores.tsv (\"notification channel delivery target\"), not here as an entry point, since it never STARTS a transition on its own.",
+		},
+	}
+}
+
 // AllEntries runs every extractor and returns the union.
 func AllEntries(repoRoot string) ([]Entry, error) {
 	var all []Entry
@@ -667,7 +709,7 @@ func DBTables(repoRoot string) ([]DBTable, error) {
 	return tables, nil
 }
 
-var fileWriteRe = regexp.MustCompile(`\b(os\.WriteFile|os\.Create|securefiles\.SecureWriteFile|securefiles\.SecureWriteFileSync|securefiles\.SecureCreateFile|securefiles\.SecureCreateFileSync|securefiles\.SecureCreateFileHandle)\(`)
+var fileWriteRe = regexp.MustCompile(`\b(os\.WriteFile|os\.Create|os\.OpenFile|securefiles\.SecureWriteFile|securefiles\.SecureWriteFileSync|securefiles\.SecureCreateFile|securefiles\.SecureCreateFileSync|securefiles\.SecureCreateFileHandle)\(`)
 
 // FileWriteSites walks the whole repo (excluding vendored/generated/test
 // paths) for calls to a file-creating primitive, to support the AT4 guard
@@ -723,4 +765,18 @@ func FileWriteSites(repoRoot string) ([]FileWriteSite, error) {
 		return sites[i].Line < sites[j].Line
 	})
 	return sites, nil
+}
+
+// AggregateFileWriteSites counts occurrences per (File,Func) pair, DROPPING
+// line numbers from the key. A line-numbered key would make stores.tsv churn
+// (and conflict across unrelated PRs) on every edit above one of these
+// call sites that merely shifts later lines -- a file+func COUNT is exactly
+// as capable of catching a genuinely new/removed call site (the count
+// changes) without that false-churn cost.
+func AggregateFileWriteSites(sites []FileWriteSite) map[string]int {
+	out := map[string]int{}
+	for _, s := range sites {
+		out[s.File+"\t"+s.Func]++
+	}
+	return out
 }

@@ -57,8 +57,8 @@ func TestSmoke_DBTables(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("tables: %d", len(tables))
-	if len(tables) < 50 {
-		t.Errorf("expected >=50 DB tables, got %d", len(tables))
+	if len(tables) < 70 {
+		t.Errorf("expected >=70 DB tables, got %d", len(tables))
 	}
 }
 
@@ -68,7 +68,7 @@ func TestSmoke_FileWriteSites(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("file write sites: %d", len(sites))
-	if len(sites) == 0 {
-		t.Errorf("expected at least one file write site")
+	if len(sites) < 45 {
+		t.Errorf("expected >=45 file-write call sites (os.WriteFile/os.Create/os.OpenFile/securefiles.Secure*), got %d", len(sites))
 	}
 }

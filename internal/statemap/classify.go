@@ -247,7 +247,13 @@ func jobClosureBodies(repoRoot string) (map[string]*ast.BlockStmt, error) {
 			return true
 		}
 		id, ok := call.Fun.(*ast.Ident)
-		if !ok || id.Name != "runScheduler" || len(call.Args) < 3 {
+		// runScheduler(ctx, name string, interval time.Duration, tick func() ...) --
+		// 4 args; the tick closure is Args[3], NOT Args[2] (a real bug this
+		// session's own coordinator review caught: the interval argument was
+		// missed, so this matched nothing for any of the 18 real call sites and
+		// every job silently fell through to the "could not re-locate" REVIEW
+		// path in Classify).
+		if !ok || id.Name != "runScheduler" || len(call.Args) < 4 {
 			return true
 		}
 		lit, ok := call.Args[1].(*ast.BasicLit)
@@ -258,7 +264,7 @@ func jobClosureBodies(repoRoot string) (map[string]*ast.BlockStmt, error) {
 		if uerr != nil {
 			return true
 		}
-		if fn, ok := call.Args[2].(*ast.FuncLit); ok && fn.Body != nil {
+		if fn, ok := call.Args[3].(*ast.FuncLit); ok && fn.Body != nil {
 			out[label] = fn.Body
 		}
 		return true
