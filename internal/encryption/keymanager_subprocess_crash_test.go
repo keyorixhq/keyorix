@@ -93,11 +93,11 @@ const (
 func canaryPath(keyDir string) string { return filepath.Join(keyDir, "canary.enc.json") }
 
 // childEnv builds the subprocess environment from the CURRENT process's own
-// environment with every KEYORIX_CRASHTEST_*/KEYORIX_TEST_CRASH_AT_STEP
-// variable stripped first, then this call's own values added back — so a
-// crash var inherited from an unrelated outer invocation (e.g. this whole
-// test binary itself having been launched with one of these set, however
-// unlikely) can never leak into a child that wasn't given it explicitly.
+// environment with every KEYORIX_CRASHTEST_* variable (including envCrashAt)
+// stripped first, then this call's own values added back — so a crash var
+// inherited from an unrelated outer invocation (e.g. this whole test binary
+// itself having been launched with one of these set, however unlikely)
+// can never leak into a child that wasn't given it explicitly.
 func childEnv(pairs ...string) []string {
 	var out []string
 	for _, kv := range os.Environ() {

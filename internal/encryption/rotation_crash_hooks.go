@@ -26,20 +26,12 @@
 // In production rotationCheckpoint is nil and rotationCheckpointHook is a
 // no-op, so this adds nothing to the hot path and changes no behavior.
 //
-// SESSION-AT AT2 (keymanager_subprocess_crash_test.go) reuses this EXACT
-// seam for a real subprocess crash harness — TestCrashHelperProcess installs
-// rotationCheckpoint itself (a real os.Exit(137) on label match) when it is
-// invoked as the crash-test subprocess, the same way
-// FuzzKEKRotationCrashConsistency installs one that panics. No production
-// code changes for that harness at all — the seam already existed and was
-// already nil-in-production; the FIRST version of this comment (before a
-// coordinator review caught it) wired a package-level, env-var-activated
-// os.Exit(137) directly into this function, which — having no build tag —
-// shipped in every release binary and let anyone who could set
-// KEYORIX_TEST_CRASH_AT_STEP in a production server's environment crash it
-// mid-DEK-rotation on demand. Reverted; the lesson is the point of this
-// paragraph, not the mechanism (which is back to exactly what it was
-// before AT2 touched this file).
+// A subprocess-level crash harness (keymanager_subprocess_crash_test.go)
+// reuses this EXACT seam: TestCrashHelperProcess installs rotationCheckpoint
+// itself (a real os.Exit(137) on label match) when it is invoked as the
+// crash-test subprocess, the same way FuzzKEKRotationCrashConsistency
+// installs one that panics. No production code change for that harness at
+// all — the seam already existed and was already nil-in-production.
 package encryption
 
 // rotationCheckpoint, when non-nil, is invoked at each durability checkpoint during
