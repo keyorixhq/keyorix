@@ -354,7 +354,11 @@ func (c *KeyorixCore) requireAuthorityToReinstateProjectRoles(ctx context.Contex
 	return c.requireGlobalAdminToReinstateAdminRoles(ctx, actorID, roleIDs, objectDesc)
 }
 
-// DeleteEnvironment deletes an environment by ID.
+// DeleteEnvironment deletes an environment by ID. The active-secret guard
+// and its serialization against a concurrent CreateSecret both live in the
+// storage layer (LocalStorage.DeleteEnvironment's own doc comment,
+// internal/storage/store/local_secrets.go) -- this core wrapper is
+// deliberately thin.
 func (c *KeyorixCore) DeleteEnvironment(ctx context.Context, id uint) error {
 	return c.storage.DeleteEnvironment(ctx, id)
 }
