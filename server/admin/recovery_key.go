@@ -177,7 +177,22 @@ func runRotateRecoveryKey(cmd *cobra.Command, args []string) error {
 		}
 		if rotateRecoveryKeyOutput != "" {
 			if werr := finishRecoveryKeyOutputFile(outputFile, rotateRecoveryKeyOutput, encrypted); werr != nil {
-				return fmt.Errorf("recovery key WAS rotated (generation %d) but could not be written to --output: %w", newVersion, werr)
+				// The key IS rotated and the ciphertext is sitting in memory --
+				// losing the write (ENOSPC, EIO, permissions changing mid-run)
+				// must not also lose the only copy of it. The deferred cleanup
+				// above removes the failed/partial --output file, so print the
+				// armored ciphertext to stdout now: it's already safe to display
+				// (age-encrypted, not plaintext) and this is the operator's last
+				// chance to capture it before the process exits.
+				fmt.Println("=====================================================================")
+				fmt.Println("  --output WRITE FAILED, BUT THE KEY WAS ALREADY ROTATED. RECORD THIS")
+				fmt.Println("  ENCRYPTED KEY NOW -- it is shown exactly once. Decrypt with:")
+				fmt.Println("  age -d -i <identity file> <this output>")
+				fmt.Println()
+				fmt.Print(string(encrypted))
+				fmt.Println("=====================================================================")
+				return fmt.Errorf("recovery key WAS rotated (generation %d) but could not be written to --output "+
+					"(printed the encrypted key to stdout instead -- record it now): %w", newVersion, werr)
 			}
 			outputCommitted = true
 			fmt.Printf("The age-encrypted key was written to %s (mode 0600).\n", rotateRecoveryKeyOutput)

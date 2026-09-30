@@ -273,6 +273,82 @@ func TestAdminRecoveryKey_OutputWithoutRecipient_Refused(t *testing.T) {
 	}
 }
 
+// TestAdminRecoveryKey_InvalidRecipient_LeavesOldKeyValid is the coordinator-
+// requested pre-flight regression for a bad --recipient (PR #2257 review): an
+// invalid age recipient string, and a recipients-file path that doesn't
+// exist, must both be caught BEFORE the key is rotated -- exactly like the
+// pre-existing --output checks above -- not discovered only after the OLD
+// key has already been invalidated.
+func TestAdminRecoveryKey_InvalidRecipient_LeavesOldKeyValid(t *testing.T) {
+	bin := buildServerBinary(t)
+	dir := t.TempDir()
+	env := baseEnv(dir)
+
+	if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin init failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "migrate", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin migrate failed: %v\n%s", err, out)
+	}
+
+	// First rotate: no --recipient, establishes generation 1 and its key.
+	firstOut, err := runAdmin(t, bin, dir, env, "recovery-key", "rotate", "--config", "./keyorix.yaml")
+	if err != nil {
+		t.Fatalf("first recovery-key rotate failed: %v\n%s", err, firstOut)
+	}
+	if !strings.Contains(firstOut, "Recovery key generated (generation 1)") {
+		t.Fatalf("expected first run to report generation 1, got:\n%s", firstOut)
+	}
+	firstKey := groupedRecoveryKeyForm.FindString(firstOut)
+	if firstKey == "" {
+		t.Fatalf("expected a grouped recovery key in the output, got:\n%s", firstOut)
+	}
+
+	// A malformed age1... string must fail with NO rotation.
+	badAgeOut, err := runAdmin(t, bin, dir, env, "recovery-key", "rotate", "--config", "./keyorix.yaml",
+		"--recipient", "age1notarealrecipient")
+	if err == nil {
+		t.Fatalf("expected rotate with an invalid age recipient to fail, got success:\n%s", badAgeOut)
+	}
+	if !strings.Contains(badAgeOut, "--recipient") {
+		t.Errorf("expected a --recipient-scoped error, got:\n%s", badAgeOut)
+	}
+	if strings.Contains(badAgeOut, "WAS rotated") {
+		t.Fatalf("the failure message claims the key WAS rotated -- the pre-flight --recipient check should catch this BEFORE rotation:\n%s", badAgeOut)
+	}
+
+	// A recipients-file path that doesn't exist must also fail with NO rotation.
+	badFileOut, err := runAdmin(t, bin, dir, env, "recovery-key", "rotate", "--config", "./keyorix.yaml",
+		"--recipient", filepath.Join(dir, "does-not-exist.pub"))
+	if err == nil {
+		t.Fatalf("expected rotate with a non-existent recipient file to fail, got success:\n%s", badFileOut)
+	}
+	if !strings.Contains(badFileOut, "--recipient") {
+		t.Errorf("expected a --recipient-scoped error, got:\n%s", badFileOut)
+	}
+	if strings.Contains(badFileOut, "WAS rotated") {
+		t.Fatalf("the failure message claims the key WAS rotated -- the pre-flight --recipient check should catch this BEFORE rotation:\n%s", badFileOut)
+	}
+
+	// The OLD key must still be valid: a THIRD (plain) rotate must report
+	// generation 2 -- proving neither failed --recipient attempt above ever
+	// advanced the generation counter (never touched storage at all).
+	thirdOut, err := runAdmin(t, bin, dir, env, "recovery-key", "rotate", "--config", "./keyorix.yaml")
+	if err != nil {
+		t.Fatalf("third recovery-key rotate failed: %v\n%s", err, thirdOut)
+	}
+	if !strings.Contains(thirdOut, "Recovery key rotated (generation 2)") {
+		t.Fatalf("expected both failed --recipient attempts to have left the key at generation 1 (so this rotates to generation 2), got:\n%s", thirdOut)
+	}
+	thirdKey := groupedRecoveryKeyForm.FindString(thirdOut)
+	if thirdKey == "" {
+		t.Fatalf("expected a grouped recovery key in the third run's output, got:\n%s", thirdOut)
+	}
+	if thirdKey == firstKey {
+		t.Fatalf("expected the third rotate to produce a DIFFERENT key than the first, got the same value twice: %q", firstKey)
+	}
+}
+
 // TestAdminRecoveryKey_ConcurrentRotateRefusesWhileLockHeld exercises design
 // §6's own adversarial-review checklist item: "Two concurrent recover-admin
 // (or one recover-admin racing one rotate-key) invocations: the exclusive
