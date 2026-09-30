@@ -29,6 +29,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	grpcservices "github.com/keyorixhq/keyorix/server/grpc/services"
 	resthandlers "github.com/keyorixhq/keyorix/server/http/handlers"
+	"github.com/stretchr/testify/assert"
 )
 
 var errFuzzInjected = errors.New("fault-fuzz injected failure")
@@ -178,17 +179,51 @@ var multiStepAmbiguousCommitExceptions = []nonLoadBearingException{}
 // resolveProjectRoleGrant) are unreachable from plain CreateUser, so this
 // entry cannot mask a fault on a load-bearing GetRoleByName call the way a
 // method-only bestEffortTables entry would risk.
+//
+// REST POST /api/v1/projects, WithTransaction: CreateProject
+// (internal/core/catalog.go) wraps the project-row create and its default-
+// environment seeding in one outer WithTransaction, with EACH environment
+// seeded via its own NESTED tx.WithTransaction (a SAVEPOINT) — deliberately,
+// per that function's own extensive comment: a per-environment seeding
+// failure is caught, logged ("created without its default environment ...:
+// %v"), and non-fatal by design, so the project itself still commits. Found
+// live: FuzzStorageFaultOperations op="REST POST /api/v1/projects"
+// fault=WithTransaction#4/error (CI, PR #2252) — NthCall=4 lands on one of
+// the per-environment SAVEPOINT calls (call #1 is the outer wrap; #2+ are
+// one per defaultEnvironmentNames entry), producing exactly the documented
+// "committed project, missing one environment" state and nothing else. Not a
+// blanket suppression of WithTransaction faults for this op: a fault on call
+// #1 (the OUTER transaction) rolls back the whole create and the op reports
+// FAILURE, never reaching this success-branch check at all — only an INNER,
+// per-environment SAVEPOINT fault can produce a reported SUCCESS with an
+// Environment-only diff, and that is precisely the case this function's own
+// comment already documents as accepted. minNthCall: 2 makes this explicit
+// rather than relying only on the implicit "call #1 always fails the op"
+// argument above (coordinator review, PR #2252 split-out): a fault on call #1
+// is asserted to report FAILURE elsewhere in this function (the `in.result.
+// Success` branch above never reaches this check on that path), but pinning
+// the restriction here too means a regression in that assumption gets caught
+// by TestOpScopedAcceptableByDesign_ProjectWithTransaction_RequiresNthCallTwo
+// directly, not silently masked by this exemption.
 var opScopedBestEffortTables = []struct {
 	op, method string
 	tables     []string
+	// minNthCall restricts this exemption to fault injections at or after this
+	// 1-indexed call number; 0 means unrestricted (every pre-existing entry's
+	// behavior, unchanged).
+	minNthCall int
 }{
 	{op: "REST POST /api/v1/users/", method: "AssignRole", tables: []string{"UserRole"}},
 	{op: "REST POST /api/v1/users/", method: "GetRoleByName", tables: []string{"UserRole"}},
+	{op: "REST POST /api/v1/projects", method: "WithTransaction", tables: []string{"Environment"}, minNthCall: 2},
 }
 
-func opScopedAcceptableByDesign(op, method string, diff []string) bool {
+func opScopedAcceptableByDesign(op, method string, nth int, diff []string) bool {
 	for _, e := range opScopedBestEffortTables {
 		if e.op != op || e.method != method {
+			continue
+		}
+		if e.minNthCall > 0 && nth < e.minNthCall {
 			continue
 		}
 		allowedSet := make(map[string]bool, len(e.tables))
@@ -603,7 +638,7 @@ func checkOracles(t *testing.T, in oracleInput) {
 					"as best-effort/non-fatal (see acceptableByDesign's doc comment)", label, diff, in.method)
 				return
 			}
-			if opScopedAcceptableByDesign(in.op, in.method, diff) {
+			if opScopedAcceptableByDesign(in.op, in.method, in.nth, diff) {
 				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in %v, which this op/method pair "+
 					"explicitly documents as best-effort/non-fatal (see opScopedBestEffortTables' doc comment)",
 					label, diff)
@@ -721,4 +756,41 @@ func hashExcluding(snap dbSnapshot, excludeTables ...string) string {
 	sort.Strings(lines)
 	h := sha256.Sum256([]byte(strings.Join(lines, "\n")))
 	return hex.EncodeToString(h[:])
+}
+
+// TestOpScopedAcceptableByDesign_ProjectWithTransaction_RequiresNthCallTwo is
+// the coordinator-requested split-out check (PR #2252 review) for the
+// "REST POST /api/v1/projects"/WithTransaction/[Environment] exemption above:
+// it must not accept a fault on WithTransaction call #1 (the OUTER
+// transaction wrapping the whole CreateProject) as this well-understood
+// per-environment-SAVEPOINT tradeoff — only call #2+ (a per-environment
+// SAVEPOINT) is the documented, accepted case. Red without minNthCall (or
+// with it reverted to 0): NthCall=1 would also return true here, silently
+// widening the exemption to the outer transaction fault this entry's own doc
+// comment says never even reaches this success-branch check in practice —
+// this test pins that assumption as an explicit, checked invariant rather
+// than an implicit one.
+func TestOpScopedAcceptableByDesign_ProjectWithTransaction_RequiresNthCallTwo(t *testing.T) {
+	const op = "REST POST /api/v1/projects"
+	const method = "WithTransaction"
+
+	assert.False(t, opScopedAcceptableByDesign(op, method, 1, []string{"Environment"}),
+		"NthCall=1 (the OUTER transaction) must NOT be exempted -- only an inner per-environment SAVEPOINT fault (NthCall>=2) is the documented, accepted tradeoff")
+	assert.True(t, opScopedAcceptableByDesign(op, method, 2, []string{"Environment"}),
+		"NthCall=2 (the first per-environment SAVEPOINT) with an Environment-only diff must be exempted")
+	assert.True(t, opScopedAcceptableByDesign(op, method, 5, []string{"Environment"}),
+		"a later per-environment SAVEPOINT (NthCall=5) must be exempted the same way as NthCall=2")
+	assert.False(t, opScopedAcceptableByDesign(op, method, 2, []string{"Environment", "Project"}),
+		"a diff touching a table OUTSIDE the allowed set must never be exempted, regardless of NthCall")
+	assert.False(t, opScopedAcceptableByDesign("REST POST /api/v1/other", method, 2, []string{"Environment"}),
+		"an unrelated op must never match this op-scoped entry")
+}
+
+// TestOpScopedAcceptableByDesign_UnrestrictedEntriesIgnoreNthCall proves the
+// two pre-existing opScopedBestEffortTables entries (minNthCall: 0, the zero
+// value) are unaffected by adding minNthCall to the struct -- they must keep
+// matching at every NthCall, exactly as before this field existed.
+func TestOpScopedAcceptableByDesign_UnrestrictedEntriesIgnoreNthCall(t *testing.T) {
+	assert.True(t, opScopedAcceptableByDesign("REST POST /api/v1/users/", "AssignRole", 1, []string{"UserRole"}))
+	assert.True(t, opScopedAcceptableByDesign("REST POST /api/v1/users/", "GetRoleByName", 99, []string{"UserRole"}))
 }
