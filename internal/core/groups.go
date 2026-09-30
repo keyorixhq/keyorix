@@ -93,26 +93,35 @@ func (c *KeyorixCore) UpdateGroup(ctx context.Context, actorID uint, req *Update
 // role grant (#107; see guardLastGlobalAdminGroupDelete) OR any project's last
 // roles.assign-conferring grant (see guardLastProjectAdminGroupDelete) —
 // deleting a group cascades to remove every role grant it holds, at every scope.
+//
+// SESSION-AT: the guard-then-delete sequence must run under the SAME lock
+// acquisition, across every replica of an HA deployment, not just within this
+// process — mirroring DeleteUser's own lastAdminGuardLockKey wrap (#1646).
+// Without it, two concurrent DeleteGroup calls on two DIFFERENT admin-holding
+// groups can each observe "the other group's grant still covers the install"
+// and both pass their guard, jointly leaving zero admins.
 func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
 	}
-	group, err := c.storage.GetGroup(ctx, id)
-	if err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
-	}
-	if err := c.guardLastGlobalAdminGroupDelete(ctx, id); err != nil {
-		return err
-	}
-	if err := c.guardLastProjectAdminGroupDelete(ctx, id); err != nil {
-		return err
-	}
-	if err := c.storage.DeleteGroup(ctx, id); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	c.writeAuditEvent(ctx, EventGroupDeleted, actorPtr(actorID), nil,
-		fmt.Sprintf("group %q (id %d) deleted", group.Name, id))
-	return nil
+	return c.storage.WithNamedLock(ctx, lastAdminGuardLockKey, func(ctx context.Context) error {
+		group, err := c.storage.GetGroup(ctx, id)
+		if err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		if err := c.guardLastGlobalAdminGroupDelete(ctx, id); err != nil {
+			return err
+		}
+		if err := c.guardLastProjectAdminGroupDelete(ctx, id); err != nil {
+			return err
+		}
+		if err := c.storage.DeleteGroup(ctx, id); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		c.writeAuditEvent(ctx, EventGroupDeleted, actorPtr(actorID), nil,
+			fmt.Sprintf("group %q (id %d) deleted", group.Name, id))
+		return nil
+	})
 }
 
 // RestoreGroup reverses a soft-delete, bringing the group back with the role grants
