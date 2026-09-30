@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"runtime/debug"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -231,27 +232,72 @@ func (c *KeyorixCore) TransitionMachineIdentity(ctx context.Context, projectID, 
 	// the eviction into the core so gRPC callers (which have no HTTP middleware
 	// reference) get the same guarantee automatically (#r124).
 	if to == MachineSuspended || to == MachineRevoked {
-		hashes, herr := c.MachineTokenHashes(ctx, id)
-		if herr != nil {
-			// CMI-3: one immediate retry before giving up — a missed eviction here
-			// is not just defence-in-depth for gRPC-originated transitions (unlike
-			// the HTTP handler, server/grpc/services/machine_identity_service.go's
-			// TransitionMachineIdentity has no independent fallback eviction), so
-			// it's worth absorbing a single transient storage blip.
-			hashes, herr = c.MachineTokenHashes(ctx, id)
-		}
-		if herr != nil {
-			// Give up rather than block the already-committed state transition on
-			// storage retries, but a silently-missed eviction here leaves revoked/
-			// suspended credentials live in the shared auth cache for up to
-			// validTokenTTL (30s) — that must be visible to operators, not swallowed.
-			log.Printf("SECURITY: machine identity %d: failed to evict credentials from the auth cache after transition to %q: %v — tokens may remain valid for up to validTokenTTL", id, to, herr)
-		} else {
-			c.invalidateTokenCache(hashes...)
-		}
+		c.evictMachineIdentityCacheOrFlush(ctx, id, to)
 	}
 	c.logMachineEvent(ctx, "machine_identity."+machineVerb(to), result, actorID)
 	return result, nil
+}
+
+// evictMachineIdentityCacheOrFlush evicts machine identity id's credentials from the HTTP
+// auth cache after its state transition to `to` has ALREADY committed (called only from
+// TransitionMachineIdentity, after its WithTransaction has returned successfully) — this
+// is best-effort cache immediacy, not the durable control; the transition itself already
+// succeeded regardless of what happens in here.
+//
+// Found live by FuzzStorageFaultOperations (kind=panic on ListMachineIdentityCredentials's
+// first call, input ff58003231): the previous version of this logic had no recover(), so a
+// panic here — not just an error return — unwound past the already-committed transition,
+// through the HTTP handler, and was caught by the outer Recovery middleware as a generic
+// 500, misreporting a successful revoke/suspend as a failure (oracle (a) violation). The
+// panic itself is fault-injection-only (internal/faultstorage's KindPanic, a deliberate
+// resilience probe -- the fuzz harness's own way of asking "what if a storage call panics
+// instead of erroring", not evidence of a real nil-pointer bug in ListMachineIdentityCredentials
+// itself), but the missing recover() was real: any future genuine panic in the storage layer
+// (a nil driver, a corrupted-row type assertion, anything) would have hit the exact same gap.
+// This is the same failure shape evictUserSessionCache (account.go) was fixed for after
+// docs/findings/2026-09-23-FINDING-breakglass-revoke-half-commit.md -- that fix recovers and
+// logs but otherwise gives up on eviction; this one goes further (see below) because a missed
+// machine-token eviction is reachable over gRPC too, which has no independent fallback evictor.
+//
+// Fail-closed on top of best-effort: when the exact credential hashes can't be determined
+// (the lookup errored after one retry, or panicked), evicting nothing would leave EVERY
+// credential of this identity live in cache for up to validTokenTTL after a revoke/suspend
+// that already took effect in storage. Instead, flush every machine-token cache entry
+// system-wide (c.machineTokenCacheFlusher) -- broader than this one identity, but bounded to
+// machine principals only (human sessions/PATs are untouched), and self-healing: every
+// machine principal simply re-validates against the DB (which will correctly see this
+// identity's new state) on its next request.
+func (c *KeyorixCore) evictMachineIdentityCacheOrFlush(ctx context.Context, id uint, to string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: machine identity %d: eviction after transition to %q panicked (state transition already committed, unaffected): %v — flushing all machine-token cache entries\n%s", id, to, r, debug.Stack())
+			if c.machineTokenCacheFlusher != nil {
+				c.machineTokenCacheFlusher()
+			}
+		}
+	}()
+	hashes, herr := c.MachineTokenHashes(ctx, id)
+	if herr != nil {
+		// CMI-3: one immediate retry before giving up — a missed eviction here
+		// is not just defence-in-depth for gRPC-originated transitions (unlike
+		// the HTTP handler, server/grpc/services/machine_identity_service.go's
+		// TransitionMachineIdentity has no independent fallback eviction), so
+		// it's worth absorbing a single transient storage blip.
+		hashes, herr = c.MachineTokenHashes(ctx, id)
+	}
+	if herr != nil {
+		// Give up on a precise eviction rather than block the already-committed state
+		// transition on further storage retries, but fail CLOSED: flush every
+		// machine-token cache entry so nothing of this identity's can be served from a
+		// stale positive cache hit, visible to operators via the SECURITY log rather
+		// than silently swallowed.
+		log.Printf("SECURITY: machine identity %d: failed to evict credentials from the auth cache after transition to %q: %v — flushing all machine-token cache entries", id, to, herr)
+		if c.machineTokenCacheFlusher != nil {
+			c.machineTokenCacheFlusher()
+		}
+		return
+	}
+	c.invalidateTokenCache(hashes...)
 }
 
 // ClassifyMachineIdentity sets (or clears, with "") the data-classification label

@@ -118,6 +118,12 @@ func (c *KeyorixCore) SetTokenCacheInvalidator(fn func(hash string)) {
 	c.tokenCacheInvalidator = fn
 }
 
+// SetMachineTokenCacheFlusher wires the HTTP auth-cache's fail-closed, all-machine-tokens
+// eviction function. Called once at startup, alongside SetTokenCacheInvalidator.
+func (c *KeyorixCore) SetMachineTokenCacheFlusher(fn func()) {
+	c.machineTokenCacheFlusher = fn
+}
+
 // invalidateTokenCache evicts the given token hashes from the auth cache when an
 // invalidator is wired (a no-op otherwise — e.g. tests, where the cache doesn't exist).
 func (c *KeyorixCore) invalidateTokenCache(hashes ...string) {
