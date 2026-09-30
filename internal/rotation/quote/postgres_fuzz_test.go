@@ -1,4 +1,4 @@
-package rotation
+package quote
 
 import (
 	"strings"
@@ -7,7 +7,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
-// FuzzPostgresQuoting fuzzes quoteIdentifier and quoteLiteral (postgres.go) —
+// FuzzPostgresQuoting fuzzes QuoteIdentifier and QuoteLiteral (quote.go, moved from
 // hand-rolled SQL escaping at the same trust boundary (an admin-configured
 // rotation_ref) that already produced one real, shipped, fixed vulnerability
 // in this codebase (FuzzAzureGenerateUpstreamRef's subject). Neither function
@@ -29,7 +29,7 @@ import (
 // character, both round-trips are asserted per fuzzed input from a single
 // fuzz target, rather than two near-identical targets.
 
-// decodePGQuoted reverses quoteIdentifier/quoteLiteral's transform: strip the
+// decodePGQuoted reverses QuoteIdentifier/QuoteLiteral's transform: strip the
 // leading/trailing delim, then collapse every doubled delim to one.
 func decodePGQuoted(quoted string, delim byte) (string, bool) {
 	if len(quoted) < 2 || quoted[0] != delim || quoted[len(quoted)-1] != delim {
@@ -40,8 +40,8 @@ func decodePGQuoted(quoted string, delim byte) (string, bool) {
 	return strings.ReplaceAll(inner, doubled, string(delim)), true
 }
 
-// FuzzPostgresQuoting round-trips both quoteIdentifier (double-quote delim)
-// and quoteLiteral (single-quote delim) via decodePGQuoted; each must
+// FuzzPostgresQuoting round-trips both QuoteIdentifier (double-quote delim)
+// and QuoteLiteral (single-quote delim) via decodePGQuoted; each must
 // exactly recover any fuzzed input.
 //
 // NUL bytes and other control characters: PostgreSQL's wire protocol itself
@@ -50,7 +50,7 @@ func decodePGQuoted(quoted string, delim byte) (string, bool) {
 // functions do — so a round-trip failure specifically and only on inputs
 // containing 0x00 would not indicate a SQL-injection-relevant escaping bug.
 // The round-trip is still asserted for NUL/control-byte seeds below because
-// quoteIdentifier/quoteLiteral operate purely at the Go string level (no
+// QuoteIdentifier/QuoteLiteral operate purely at the Go string level (no
 // NUL-stripping), so the escaping itself must still be lossless even though
 // the underlying driver would separately refuse to transmit such a value.
 func FuzzPostgresQuoting(f *testing.F) {
@@ -73,15 +73,15 @@ func FuzzPostgresQuoting(f *testing.F) {
 	f.Fuzz(func(t *testing.T, s string) {
 		var idQuoted, litQuoted string
 		fuzzutil.Guard(t.Fatalf, "postgres.quote", func() {
-			idQuoted = quoteIdentifier(s)
-			litQuoted = quoteLiteral(s)
+			idQuoted = QuoteIdentifier(s)
+			litQuoted = QuoteLiteral(s)
 		})
 		idGot, ok := decodePGQuoted(idQuoted, '"')
 		if !ok {
-			t.Fatalf("quoteIdentifier(%q) = %q is not delimiter-wrapped", s, idQuoted)
+			t.Fatalf("QuoteIdentifier(%q) = %q is not delimiter-wrapped", s, idQuoted)
 		}
 		if idGot != s {
-			t.Fatalf("round-trip mismatch: quoteIdentifier(%q) = %q, decoded back to %q", s, idQuoted, idGot)
+			t.Fatalf("round-trip mismatch: QuoteIdentifier(%q) = %q, decoded back to %q", s, idQuoted, idGot)
 		}
 		// The escaped identifier must never contain an UNPAIRED delimiter —
 		// every '"' in the quoted output must be part of a doubled pair or one
@@ -92,10 +92,10 @@ func FuzzPostgresQuoting(f *testing.F) {
 
 		litGot, ok := decodePGQuoted(litQuoted, '\'')
 		if !ok {
-			t.Fatalf("quoteLiteral(%q) = %q is not delimiter-wrapped", s, litQuoted)
+			t.Fatalf("QuoteLiteral(%q) = %q is not delimiter-wrapped", s, litQuoted)
 		}
 		if litGot != s {
-			t.Fatalf("round-trip mismatch: quoteLiteral(%q) = %q, decoded back to %q", s, litQuoted, litGot)
+			t.Fatalf("round-trip mismatch: QuoteLiteral(%q) = %q, decoded back to %q", s, litQuoted, litGot)
 		}
 	})
 }

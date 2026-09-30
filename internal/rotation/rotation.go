@@ -9,9 +9,9 @@ package rotation
 import (
 	"fmt"
 	"regexp"
-	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core/ports"
+	"github.com/keyorixhq/keyorix/internal/rotation/quote"
 )
 
 // PartialRotationError reports that the upstream rotation minted the new credential
@@ -80,17 +80,12 @@ func (m *Manager) Names() []string {
 	return names
 }
 
-// isAlnumByte reports whether b is an ASCII letter or digit. Anything else — '_', '-',
-// '.', '/', ':', a quote, a space — counts as an explicit boundary between identifier
-// segments for prefixAllowed below.
-func isAlnumByte(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
-}
-
 // prefixAllowed reports whether ref is permitted by an allowed-refs prefix allowlist: an
 // empty list places no restriction; otherwise ref must equal one of the entries, or
 // extend one at an explicit segment boundary — never merely share a prefix with one. A
-// guardrail on top of the backend admin identity's own privileges.
+// guardrail on top of the backend admin identity's own privileges. Thin wrapper over
+// quote.PrefixAllowed (internal/rotation/quote), moved there so this logic can be fuzzed
+// cheaply as a leaf package — see that package's doc.go.
 //
 // #G46: a raw strings.HasPrefix let an allowed_refs entry of "myapp" also admit
 // "myapp2"/"myappadmin" — an unintended superset an operator who configured "myapp"
@@ -99,26 +94,7 @@ func isAlnumByte(b byte) bool {
 // non-alphanumeric (the pre-existing convention of e.g. "app_" already relies on this —
 // the operator's own choice already delimits it), or ref's very next character after the
 // prefix is.
-func prefixAllowed(allowed []string, ref string) bool {
-	if len(allowed) == 0 {
-		return true
-	}
-	for _, p := range allowed {
-		if p == "" {
-			continue
-		}
-		if ref == p {
-			return true
-		}
-		if !strings.HasPrefix(ref, p) {
-			continue
-		}
-		if !isAlnumByte(p[len(p)-1]) || !isAlnumByte(ref[len(p)]) {
-			return true
-		}
-	}
-	return false
-}
+func prefixAllowed(allowed []string, ref string) bool { return quote.PrefixAllowed(allowed, ref) }
 
 // sqlStringLiteral matches a single-quoted SQL string literal, including the
 // standard ”-doubling escape for an embedded quote (used by both PostgreSQL

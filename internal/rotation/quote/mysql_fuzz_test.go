@@ -1,4 +1,4 @@
-package rotation
+package quote
 
 import (
 	"strings"
@@ -7,15 +7,15 @@ import (
 	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
-// FuzzMySQLQuoteString fuzzes quoteMySQLString (mysql.go) — hand-rolled SQL
-// escaping at the same trust boundary (an admin-configured rotation_ref)
-// that already produced one real, shipped, fixed vulnerability in this
-// codebase (FuzzAzureGenerateUpstreamRef's subject). See the doc comment on
+// FuzzMySQLQuoteString fuzzes QuoteMySQLString (quote.go, moved from mysql.go) —
+// hand-rolled SQL escaping at the same trust boundary (an admin-configured
+// rotation_ref) that already produced one real, shipped, fixed vulnerability
+// in this codebase (FuzzAzureGenerateUpstreamRef's subject). See the doc comment on
 // FuzzPostgresQuoteIdentifier (postgres_fuzz_test.go) for why a round-trip
 // invariant is the strongest available proxy for "no input can escape the
 // quoted context" without a live SQL parser.
 //
-// quoteMySQLString's encode order is: (1) double every backslash, THEN (2)
+// QuoteMySQLString's encode order is: (1) double every backslash, THEN (2)
 // double every single-quote, then wrap in single quotes. Decoding must undo
 // these in the OPPOSITE order — undo (2) first (un-double quotes), THEN
 // undo (1) (un-double backslashes) — or the reconstruction is wrong.
@@ -27,7 +27,7 @@ import (
 //	s          = B Q                          (2 bytes)
 //	encode (1): double every B  -> B B Q       (3 bytes)
 //	encode (2): double every Q  -> B B Q Q     (4 bytes)
-//	wrap        -> Q B B Q Q Q                 (6 bytes: quoteMySQLString(`\'`) == `'\\'''`)
+//	wrap        -> Q B B Q Q Q                 (6 bytes: QuoteMySQLString(`\'`) == `'\\'''`)
 //
 //	decode, stripped of the wrapping quotes -> B B Q Q (4 bytes)
 //	decode (2) undo quote-doubling first: "QQ"->"Q"  -> B B Q   (3 bytes)
@@ -49,7 +49,7 @@ func decodeMySQLQuoted(quoted string) (string, bool) {
 	return inner, true
 }
 
-// FuzzMySQLQuoteString round-trips quoteMySQLString: decodeMySQLQuoted must
+// FuzzMySQLQuoteString round-trips QuoteMySQLString: decodeMySQLQuoted must
 // exactly recover any fuzzed input.
 //
 // NUL bytes and other control characters: MySQL's own wire protocol/text
@@ -57,7 +57,7 @@ func decodeMySQLQuoted(quoted string) (string, bool) {
 // independent of application-level quoting — so, as with the Postgres
 // targets, a round-trip failure specifically and only on NUL/control-byte
 // input would be a protocol-level scope boundary, not a SQL-injection-
-// relevant escaping bug. quoteMySQLString itself operates purely at the Go
+// relevant escaping bug. QuoteMySQLString itself operates purely at the Go
 // string level (no NUL-stripping), so the round-trip is still asserted for
 // these seeds below — the escaping itself must remain lossless.
 func FuzzMySQLQuoteString(f *testing.F) {
@@ -81,13 +81,13 @@ func FuzzMySQLQuoteString(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, s string) {
 		var quoted string
-		fuzzutil.Guard(t.Fatalf, "quoteMySQLString", func() { quoted = quoteMySQLString(s) })
+		fuzzutil.Guard(t.Fatalf, "QuoteMySQLString", func() { quoted = QuoteMySQLString(s) })
 		got, ok := decodeMySQLQuoted(quoted)
 		if !ok {
-			t.Fatalf("quoteMySQLString(%q) = %q is not quote-wrapped", s, quoted)
+			t.Fatalf("QuoteMySQLString(%q) = %q is not quote-wrapped", s, quoted)
 		}
 		if got != s {
-			t.Fatalf("round-trip mismatch: quoteMySQLString(%q) = %q, decoded back to %q", s, quoted, got)
+			t.Fatalf("round-trip mismatch: QuoteMySQLString(%q) = %q, decoded back to %q", s, quoted, got)
 		}
 	})
 }

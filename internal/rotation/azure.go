@@ -27,8 +27,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/rotation/quote"
 )
 
 const (
@@ -95,9 +96,6 @@ func (e *AzureAppSecretExecutor) client(ctx context.Context) (azureGraphAPI, err
 // GenerateUpstream rotates application `ref` (its object id): mint a fresh client secret
 // and delete the app's prior secrets, returning the new secret text.
 func (e *AzureAppSecretExecutor) GenerateUpstream(ctx context.Context, ref string) (string, error) {
-	if ref == "" {
-		return "", fmt.Errorf("azure-app: application object id (ref) is required")
-	}
 	// ref is interpolated into the Graph URL path; an app object id is a GUID, so reject
 	// any path/query metacharacter. Without this, a crafted ref that begins with an
 	// allowed prefix (e.g. "<allowed-guid>/../<victim-guid>") could path-traverse to a
@@ -106,14 +104,12 @@ func (e *AzureAppSecretExecutor) GenerateUpstream(ctx context.Context, ref strin
 	// which already rejects this same "/?#%" class (plus SQL metacharacters and control
 	// characters) at configuration time, before the ref is ever persisted. Keep both —
 	// this check must not be removed just because the earlier layer also covers it.
-	if strings.ContainsAny(ref, "/?#%") {
-		return "", fmt.Errorf("azure-app: invalid application object id %q (must be a bare GUID)", ref)
-	}
-	if len(e.allowedRefs) == 0 {
-		return "", fmt.Errorf("azure-app: backend %q has no allowed_refs configured — refusing to rotate (fail-closed)", e.name)
-	}
-	if !prefixAllowed(e.allowedRefs, ref) {
-		return "", fmt.Errorf("azure-app: application %q is not permitted by this backend's allowed_refs", ref)
+	//
+	// quote.ValidateAzureRef (internal/rotation/quote) holds this validation — moved there
+	// so it can be fuzzed cheaply as a pure leaf-package function (FuzzAzureRefValidation)
+	// — while GenerateUpstream itself stays here because it also performs real Graph I/O.
+	if err := quote.ValidateAzureRef(e.name, ref, e.allowedRefs); err != nil {
+		return "", err
 	}
 	cl, err := e.client(ctx)
 	if err != nil {

@@ -7,9 +7,10 @@ package rotation
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/keyorixhq/keyorix/internal/rotation/quote"
 )
 
 // pgConn is the slice of a pgx connection the executor uses — an interface seam so the
@@ -89,24 +90,22 @@ func (e *PostgresExecutor) Rotate(ctx context.Context, ref, newValue string) err
 }
 
 // quoteIdentifier renders s as a double-quoted PostgreSQL identifier (internal quotes
-// doubled), so a crafted role name cannot break out into SQL. This is layer TWO of
+// doubled), so a crafted role name cannot break out into SQL. Thin wrapper over
+// quote.QuoteIdentifier (internal/rotation/quote), moved there so the escaping logic can
+// be fuzzed cheaply as a leaf package — see that package's doc.go. This is layer TWO of
 // defense in depth: layer ONE is core.validateRotationRef
 // (internal/core/rotation_executor.go), which already rejects quotes/backslashes/
 // semicolons (plus path/query metacharacters and control characters) in the ref at
 // configuration time, before it is ever persisted. Keep both — this quoting must not be
 // removed just because the earlier layer also covers it; this function is the only
 // defense against a role name reaching this backend through any future write path.
-func quoteIdentifier(s string) string {
-	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
-}
+func quoteIdentifier(s string) string { return quote.QuoteIdentifier(s) }
 
 // quoteLiteral renders s as a single-quoted PostgreSQL string literal (internal quotes
 // doubled). Relies on standard_conforming_strings (the default), so backslashes are
-// literal. See quoteIdentifier's comment above: this is layer TWO of defense in depth
-// alongside core.validateRotationRef.
-func quoteLiteral(s string) string {
-	return `'` + strings.ReplaceAll(s, `'`, `''`) + `'`
-}
+// literal. Thin wrapper over quote.QuoteLiteral — see quoteIdentifier's comment above:
+// this is layer TWO of defense in depth alongside core.validateRotationRef.
+func quoteLiteral(s string) string { return quote.QuoteLiteral(s) }
 
 // pgxConn adapts *pgx.Conn to the pgConn seam.
 type pgxConn struct{ c *pgx.Conn }
