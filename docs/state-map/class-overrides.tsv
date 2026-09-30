@@ -1,0 +1,16 @@
+# Human-reviewed class decisions for docs/state-map/entrypoints.tsv, read and
+# applied by cmd/statemapgen ON TOP OF Classify's freshly computed class for
+# any matching (kind,id) row -- so a triage decision survives regeneration.
+# See internal/statemap/overrides.go's package doc for the full rationale
+# (a coordinator review on SESSION-AT's AT0 PR caught the FIRST version of
+# this generator silently overwriting human classifications on every run).
+#
+# Columns: kind <TAB> id <TAB> class <TAB> reason
+#
+# Empty so far -- SESSION-AT's own time budget went to building the
+# mechanism (this file + the REVIEW ratchet in completeness_test.go) rather
+# than hand-triaging the ~178 rows Classify currently flags REVIEW. That
+# triage is real follow-up work; see the SESSION-AT report's hand-back
+# section. Add a row here, lower internal/statemap/completeness_test.go's
+# maxReviewRows by one, and re-run `go run ./cmd/statemapgen` for each row
+# triaged.
