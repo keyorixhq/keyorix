@@ -370,30 +370,29 @@ func (ls *LocalStorage) GetEnvironment(ctx context.Context, id uint) (*models.En
 	return &env, nil
 }
 
-// environmentSecretGuardLockKey is the WithNamedLock key serializing
-// DeleteEnvironment's active-secret guard against CreateSecret, per
-// environment (SESSION-AT AT1/AT3). A plain `db.Transaction` wrapping the
-// count-then-delete was NOT sufficient on its own: a transaction that opens
-// with a read-only SELECT does not make SQLite acquire a write lock until
-// its first actual write statement, so a concurrent CreateSecret's insert
-// could still land inside that window -- confirmed empirically (up to
-// 7/100 trials still orphaned a secret with the transaction-only fix, both
-// count-then-delete and delete-then-count orderings). WithNamedLock is this
-// codebase's own proven mechanism for exactly this check-then-act shape
-// (#1646 and its many call sites) -- an in-process mutex on SQLite
-// (single-process by construction) and a real cross-replica advisory lock
-// on Postgres, neither of which depends on subtle raw-transaction-isolation
-// behavior the way the SQLite-only fix attempt did.
-func environmentSecretGuardLockKey(environmentID uint) string {
-	return fmt.Sprintf("environment-secret-guard:%d", environmentID)
-}
-
 // DeleteEnvironment refuses to delete an environment holding active secrets.
-// See environmentSecretGuardLockKey's doc comment for why this and
-// CreateSecret share one named lock per environment, not just a DB
-// transaction.
+// Serialized against every operation that creates or re-activates a
+// secret_nodes row for this environment (CreateSecret, CreateFolder,
+// RestoreSecret) via storage.EnvironmentSecretGuardLockKey, a single named
+// lock per environment (SESSION-AT AT1/AT3) -- see that function's doc
+// comment (internal/core/storage/environment_secret_guard.go) for why both a
+// lock AND a re-check inside it are required; a plain db.Transaction alone
+// was NOT sufficient (confirmed empirically: up to 7/100 trials still
+// orphaned a secret with a transaction-only fix, regardless of statement
+// order, since SQLite doesn't take a write lock until the transaction's
+// first actual write).
+//
+// MUST NEVER be called from inside an already-open WithTransaction/write
+// transaction: WithNamedLock on SQLite is an in-process mutex held for the
+// lock's full duration, and a CreateSecret/CreateFolder/RestoreSecret on a
+// DIFFERENT goroutine already holding that same mutex while THIS call's own
+// enclosing transaction holds a DB write lock would deadlock the two
+// goroutines against each other until busy_timeout expires. No caller does
+// this today (checked: only the core.DeleteEnvironment wrapper and the HTTP
+// handler call this, neither inside a transaction) -- flagging the
+// constraint explicitly so it stays true.
 func (ls *LocalStorage) DeleteEnvironment(ctx context.Context, id uint) error {
-	return ls.WithNamedLock(ctx, environmentSecretGuardLockKey(id), func(ctx context.Context) error {
+	return ls.WithNamedLock(ctx, storage.EnvironmentSecretGuardLockKey(id), func(ctx context.Context) error {
 		var secretCount int64
 		if err := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
 			Where("environment_id = ? AND status = 'active'", id).
@@ -437,25 +436,26 @@ func (ls *LocalStorage) RestoreEnvironment(ctx context.Context, projectID, id ui
 
 // --- Secrets ---
 
-// CreateSecret creates a new secret in the database.
-// CreateSecret ignores the optional plaintextValue variadic (#499): the value
-// continues to flow through the existing, unchanged CreateSecretVersion path —
-// this is a no-op parameter here, never read, never persisted. secret.ValueStored
-// is deliberately left false (the zero value): the caller (core.CreateSecret)
-// must still make its own CreateSecretVersion call for LocalStorage.
-// CreateSecret inserts a new secret node. Deliberately a raw, unchecked
-// Create -- no environment-existence check, no lock -- matching this
-// store's established "thin, unchecked" layering (validation belongs at
-// the core layer, e.g. core.CreateSecret's own GetEnvironment check; see
+// CreateSecret inserts a new secret node. Ignores the optional
+// plaintextValue variadic (#499): the value continues to flow through the
+// existing, unchanged CreateSecretVersion path -- this is a no-op parameter
+// here, never read, never persisted. secret.ValueStored is deliberately left
+// false (the zero value): the caller (core.CreateSecret) must still make its
+// own CreateSecretVersion call for LocalStorage.
+//
+// Deliberately a raw, unchecked Create -- no environment-existence check, no
+// lock -- matching this store's established "thin, unchecked" layering
+// (validation belongs at the core layer, e.g. core.CreateSecret's own
+// GetEnvironment check; see
 // TestMigrateDatabase_ConcurrentCreateSecret_SameNameOnFirstBoot_ExactlyOneSurvives's
-// own doc comment, which exercises this exact contract directly). An
-// earlier version of this SESSION-AT fix added the existence check and a
-// WithNamedLock HERE instead of at the core layer -- reverted after it
-// broke that first-boot test (which intentionally creates a secret against
-// an environment ID that was never seeded, to prove the DB unique index
-// alone is the backstop at this layer). The environment-liveness guard
-// against a concurrent DeleteEnvironment now lives in core.CreateSecret
-// instead -- see its own doc comment.
+// own doc comment, which exercises this exact contract directly). An earlier
+// version of this SESSION-AT fix added the existence check and a
+// WithNamedLock HERE instead of at the core layer -- reverted after it broke
+// that first-boot test (which intentionally creates a secret against an
+// environment ID that was never seeded, to prove the DB unique index alone
+// is the backstop at this layer). The environment-liveness guard against a
+// concurrent DeleteEnvironment lives in core.CreateSecret and core.CreateFolder
+// instead -- see their own doc comments.
 func (ls *LocalStorage) CreateSecret(ctx context.Context, secret *models.SecretNode, _ ...string) (*models.SecretNode, error) {
 	if err := ls.db.WithContext(ctx).Create(secret).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -623,6 +623,17 @@ func (ls *LocalStorage) GetSecretIncludingDeleted(ctx context.Context, id uint) 
 // a project an admin deleted to revoke access (the project delete does not revoke role
 // grants). To bring such a secret back, restore the parent project first (which
 // cascade-restores its children).
+//
+// SESSION-AT AT1/AT3 (coordinator review on PR #2353): un-deleting a secret
+// re-activates a secret_nodes row exactly like CreateSecret/CreateFolder do,
+// so it races DeleteEnvironment the identical way -- a secret restored into
+// an environment that gets deleted in the same window would be silently
+// orphaned. The initial lookup (which environment does this secret belong
+// to) has to happen before the lock, since the lock key needs that answer;
+// requireLiveEnvironment is then re-run INSIDE the lock, immediately before
+// the actual restore, closing the same two gaps DeleteEnvironment's own doc
+// comment describes (interleaving, and "delete legitimately wins the lock
+// first, then restore blindly proceeds against a target already gone").
 func (ls *LocalStorage) RestoreSecret(ctx context.Context, id uint) error {
 	var secret models.SecretNode
 	if err := ls.db.WithContext(ctx).Unscoped().Select("id", "project_id", "environment_id").First(&secret, id).Error; err != nil {
@@ -631,20 +642,28 @@ func (ls *LocalStorage) RestoreSecret(ctx context.Context, id uint) error {
 	if err := ls.requireLiveProject(ctx, secret.ProjectID); err != nil {
 		return err
 	}
-	if secret.EnvironmentID != 0 {
+
+	restore := func(ctx context.Context) error {
+		result := ls.db.WithContext(ctx).Unscoped().Model(&models.SecretNode{}).
+			Where("id = ? AND deleted_at IS NOT NULL", id).Update("deleted_at", nil)
+		if result.Error != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+		}
+		return nil
+	}
+
+	if secret.EnvironmentID == 0 {
+		return restore(ctx)
+	}
+	return ls.WithNamedLock(ctx, storage.EnvironmentSecretGuardLockKey(secret.EnvironmentID), func(ctx context.Context) error {
 		if err := ls.requireLiveEnvironment(ctx, secret.EnvironmentID); err != nil {
 			return err
 		}
-	}
-	result := ls.db.WithContext(ctx).Unscoped().Model(&models.SecretNode{}).
-		Where("id = ? AND deleted_at IS NOT NULL", id).Update("deleted_at", nil)
-	if result.Error != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
-	}
-	return nil
+		return restore(ctx)
+	})
 }
 
 // requireLiveProject returns an error when the project is missing or soft-deleted.

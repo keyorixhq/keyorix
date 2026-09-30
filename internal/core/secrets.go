@@ -19,6 +19,54 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+// isEnvironmentNotFoundErr reports whether err is LocalStorage.GetEnvironment's
+// own genuine "no such row" sentinel text ("environment not found",
+// internal/storage/store/local_secrets.go), as distinct from a real storage
+// failure (DB down, timeout, ...) that GetEnvironment also returns as an
+// error. SESSION-AT AT1/AT3 (coordinator review, PR #2353): CreateSecret
+// previously collapsed BOTH cases into "environment %d not found"
+// unconditionally, so a transient storage failure during secret creation
+// surfaced to the caller as a clean 422 validation error instead of the 500
+// it actually is. No sentinel error type exists to check via errors.Is --
+// GetEnvironment returns a plain fmt.Errorf either way -- so this compares
+// the exact literal text GetEnvironment uses for the not-found case.
+func isEnvironmentNotFoundErr(err error) bool {
+	return err != nil && err.Error() == "environment not found"
+}
+
+// withEnvironmentSecretGuard acquires storage.EnvironmentSecretGuardLockKey
+// for environmentID, re-verifies the environment still exists INSIDE that
+// lock, and only then runs fn -- the shared shape CreateSecret and
+// CreateFolder both need against a concurrent DeleteEnvironment (SESSION-AT
+// AT1/AT3, coordinator review PR #2353: these were originally two
+// independently-written copies of this exact logic, which is exactly the
+// kind of drift risk the coordinator's review flagged for the lock-key
+// itself). On a genuine "environment is gone" outcome, returns the same
+// bare, unwrapped "environment %d not found" error the pre-lock
+// GetEnvironment check uses, so the HTTP handler's not-found -> 422 mapping
+// still matches; any other failure (a real storage error, or fn's own
+// error) is wrapped with ErrorStorageFailed.
+func (c *KeyorixCore) withEnvironmentSecretGuard(ctx context.Context, environmentID uint, fn func(ctx context.Context) error) error {
+	var envGone bool
+	lockErr := c.storage.WithNamedLock(ctx, storage.EnvironmentSecretGuardLockKey(environmentID), func(ctx context.Context) error {
+		if _, err := c.storage.GetEnvironment(ctx, environmentID); err != nil {
+			if !isEnvironmentNotFoundErr(err) {
+				return fmt.Errorf("failed to verify target environment %d: %w", environmentID, err)
+			}
+			envGone = true
+			return fmt.Errorf("environment %d not found", environmentID)
+		}
+		return fn(ctx)
+	})
+	if lockErr != nil {
+		if envGone {
+			return lockErr
+		}
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), lockErr)
+	}
+	return nil
+}
+
 // CreateSecretRequest represents a request to create a new secret.
 type CreateSecretRequest struct {
 	Name          string            `json:"name" validate:"required,min=1,max=255"`
@@ -101,6 +149,14 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	// Verify the environment belongs to the stated project.
 	env, err := c.storage.GetEnvironment(ctx, req.EnvironmentID)
 	if err != nil {
+		if !isEnvironmentNotFoundErr(err) {
+			// A REAL storage failure (DB down, timeout, ...), not "no such row" --
+			// SESSION-AT AT1/AT3 (coordinator review, PR #2353): this used to be
+			// collapsed into "environment %d not found" unconditionally, so a
+			// transient storage failure during CreateSecret surfaced to the caller
+			// as a clean validation error instead of the 500 it actually is.
+			return nil, fmt.Errorf("failed to verify target environment %d: %w", req.EnvironmentID, err)
+		}
 		return nil, fmt.Errorf("environment %d not found", req.EnvironmentID)
 	}
 	if env.ProjectID != req.ProjectID {
@@ -181,25 +237,22 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	// rollback achieves the same "as if nothing happened" outcome without a
 	// second best-effort delete that could itself fail and leave the orphan behind.
 	// SESSION-AT AT1/AT3: re-verify the environment still exists, and serialize
-	// against a concurrent DeleteEnvironment on it, via the SAME named lock
-	// DeleteEnvironment holds for its own active-secret guard
-	// (environmentSecretGuardLockKey, local_secrets.go's DeleteEnvironment doc
-	// comment). The GetEnvironment check earlier in this function happens
-	// BEFORE this lock and is not enough on its own: DeleteEnvironment could
-	// commit in the window between that check and the create below, silently
-	// orphaning this secret (environment_id pointing at a row that no longer
-	// exists) -- confirmed empirically with a real concurrency test before
-	// this lock was added. The lock alone is also not enough on its own: it
-	// only prevents the two operations from interleaving, not from running in
-	// the legitimate order "delete wins the lock first, finds zero secrets,
-	// commits; create then acquires the lock and blindly inserts anyway" --
-	// hence the second existence check INSIDE the lock, immediately before
-	// the transaction.
+	// against a concurrent DeleteEnvironment (and CreateFolder/RestoreSecret,
+	// which race it the identical way) via storage.EnvironmentSecretGuardLockKey,
+	// the same named lock DeleteEnvironment holds for its own active-secret
+	// guard (see its doc comment, internal/storage/store/local_secrets.go).
+	// The GetEnvironment check earlier in this function happens BEFORE this
+	// lock and is not enough on its own: DeleteEnvironment could commit in the
+	// window between that check and the create below, silently orphaning this
+	// secret (environment_id pointing at a row that no longer exists) --
+	// confirmed empirically with a real concurrency test before this lock was
+	// added. The lock alone is also not enough on its own: it only prevents
+	// the two operations from interleaving, not from running in the legitimate
+	// order "delete wins the lock first, finds zero secrets, commits; create
+	// then acquires the lock and blindly inserts anyway" -- hence the second
+	// existence check INSIDE the lock, immediately before the transaction.
 	var createdSecret *models.SecretNode
-	lockErr := c.storage.WithNamedLock(ctx, environmentSecretGuardLockKey(req.EnvironmentID), func(ctx context.Context) error {
-		if _, err := c.storage.GetEnvironment(ctx, req.EnvironmentID); err != nil {
-			return fmt.Errorf("environment %d not found", req.EnvironmentID)
-		}
+	if err := c.withEnvironmentSecretGuard(ctx, req.EnvironmentID, func(ctx context.Context) error {
 		return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
 			var err error
 			createdSecret, err = tx.CreateSecret(ctx, secret, string(req.Value))
@@ -218,9 +271,8 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 			}
 			return nil
 		})
-	})
-	if lockErr != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), lockErr)
+	}); err != nil {
+		return nil, err
 	}
 
 	// Apply the create-time tags (#390) now that the secret and its first version both
@@ -663,9 +715,18 @@ func (c *KeyorixCore) CreateFolder(
 		UpdatedAt:     time.Now(),
 	}
 
-	created, err := c.storage.CreateSecret(ctx, node, "")
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	// SESSION-AT AT1/AT3 (coordinator review, PR #2353): a folder counts
+	// toward DeleteEnvironment's active-secret guard exactly like a secret
+	// does, so this races a concurrent DeleteEnvironment the identical way
+	// CreateSecret does -- same lock, same in-lock re-check, same reasoning;
+	// see CreateSecret's own doc comment on this pattern.
+	var created *models.SecretNode
+	if err := c.withEnvironmentSecretGuard(ctx, envID, func(ctx context.Context) error {
+		var cerr error
+		created, cerr = c.storage.CreateSecret(ctx, node, "")
+		return cerr
+	}); err != nil {
+		return nil, err
 	}
 	pid := projectID
 	c.writeAuditEventFull(ctx, "folder.created", actorPtr(actorID), nil, &pid, "",

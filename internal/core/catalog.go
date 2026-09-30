@@ -363,19 +363,6 @@ func (c *KeyorixCore) DeleteEnvironment(ctx context.Context, id uint) error {
 	return c.storage.DeleteEnvironment(ctx, id)
 }
 
-// environmentSecretGuardLockKey is the WithNamedLock key serializing
-// CreateSecret's environment-existence re-check against a concurrent
-// DeleteEnvironment. MUST produce the identical string to
-// LocalStorage.DeleteEnvironment's own copy of this function
-// (internal/storage/store/local_secrets.go) -- the two packages don't share
-// an import path for it (internal/core deliberately depends on the
-// storage.Storage INTERFACE, not the concrete store package), so the format
-// is duplicated by convention rather than a shared symbol. Both sides
-// comment-cross-reference this one.
-func environmentSecretGuardLockKey(environmentID uint) string {
-	return fmt.Sprintf("environment-secret-guard:%d", environmentID)
-}
-
 // EventEnvironmentCreated/EventEnvironmentDeleted are audited on every
 // environment create/delete (F3, audit-completeness campaign). Standalone
 // methods, not parameters on CreateEnvironment/DeleteEnvironment themselves
