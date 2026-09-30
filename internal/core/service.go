@@ -351,6 +351,12 @@ type KeyorixCore struct {
 	// token (e.g. revoking PATs on a password change) take effect immediately rather than
 	// after the positive-cache TTL. core cannot import the middleware directly (cycle).
 	tokenCacheInvalidator func(hash string)
+	// machineTokenCacheFlusher tombstones every machine-token entry in the HTTP auth
+	// cache. Wired at startup (SetMachineTokenCacheFlusher); nil in tests/remote mode,
+	// same as tokenCacheInvalidator above. Fail-closed fallback for
+	// TransitionMachineIdentity when it cannot determine exactly which credential
+	// hashes to evict individually (see evictMachineIdentityCacheOrFlush's doc comment).
+	machineTokenCacheFlusher func()
 	// auditMaxCertified is an in-memory monotonic high-water mark of the greatest
 	// chained-events count this process has ever certified or verified. It backstops
 	// the persistent signed high-water (SystemMetadata) against an online attacker who

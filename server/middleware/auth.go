@@ -1574,3 +1574,27 @@ func InvalidateTokenCacheByHash(hash string) {
 	tokenCache[hash] = tokenCacheEntry{userCtx: nil, expiresAt: now.Add(invalidTokenTTL), revokedAt: now}
 	tokenCacheMu.Unlock()
 }
+
+// InvalidateAllMachineTokenCache tombstones every cache entry currently attributed to a
+// machine identity (ActorType core.ActorTypeMachine), leaving human session/PAT entries
+// untouched. Fail-closed fallback for TransitionMachineIdentity (internal/core/
+// machine_identities.go): when it can't determine exactly which credential hashes belong
+// to the machine identity it just suspended/revoked (the hash lookup itself errored or
+// panicked, after the state transition already committed), it can't evict precisely --
+// but it must not silently leave every machine token live in cache for up to
+// validTokenTTL either. This is the blunt instrument that closes that gap: every machine
+// principal re-validates against the DB on its next request, at the cost of a one-time
+// cache-miss burst across all of them, not just the one identity that actually changed.
+// Same tombstone shape as InvalidateTokenCacheByHash, for the same revocation-resurrection
+// reason (a positive validation already in flight when this runs must not resurrect the
+// entry it raced against).
+func InvalidateAllMachineTokenCache() {
+	tokenCacheMu.Lock()
+	defer tokenCacheMu.Unlock()
+	now := time.Now()
+	for k, e := range tokenCache {
+		if e.userCtx != nil && e.userCtx.ActorType == core.ActorTypeMachine {
+			tokenCache[k] = tokenCacheEntry{userCtx: nil, expiresAt: now.Add(invalidTokenTTL), revokedAt: now}
+		}
+	}
+}

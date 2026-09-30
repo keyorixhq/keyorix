@@ -549,6 +549,9 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	// Let core token-revocation paths (e.g. revoking PATs on a password change) evict the
 	// HTTP auth cache immediately, rather than waiting out the positive-cache TTL.
 	coreService.SetTokenCacheInvalidator(middleware.InvalidateTokenCacheByHash)
+	// Fail-closed fallback for TransitionMachineIdentity when it can't determine exactly
+	// which credential hashes to evict individually (see evictMachineIdentityCacheOrFlush).
+	coreService.SetMachineTokenCacheFlusher(middleware.InvalidateAllMachineTokenCache)
 	if needs, berr := coreService.SystemNeedsBootstrap(context.Background()); berr == nil && needs && bootstrapToken != "" {
 		if bootstrapTokenGenerated {
 			masked := bootstrapToken[:8] + "***" + bootstrapToken[len(bootstrapToken)-4:]
