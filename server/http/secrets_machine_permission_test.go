@@ -28,6 +28,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/server/http/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -65,6 +66,16 @@ func doMachineRequest(t *testing.T, srv *httptest.Server, token, method, path st
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
+	// Each request fires its audit write from a detached goroutine (handlers.goSafe
+	// and core.goSafe). The test DB is a shared-cache in-memory SQLite, where a
+	// write that overlaps the previous request's still-running audit write fails
+	// with SQLITE_LOCKED_SHAREDCACHE ("database table is locked (262)") -- which
+	// _busy_timeout never retries -- surfacing as a 500 on rotate/rollback. Drain
+	// both before returning so sequential requests in these tests really are
+	// sequential. Production (file DB, no shared cache) gets SQLITE_BUSY instead,
+	// which busy_timeout does retry.
+	handlers.DrainBackgroundGoroutines()
+	core.DrainBackgroundGoroutines()
 	return resp.StatusCode, string(raw)
 }
 
