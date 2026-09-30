@@ -77,6 +77,14 @@ var defaultPermissions = []bootstrapPermissionDef{
 	// deleted; system.write's actual footprint is now exactly the narrow use case
 	// this description names.
 	{"system.write", "Manage audit checkpoints/alerts, legal holds, risk exceptions, SoD policies, and admin job triggers", "system", "write"},
+	// F1 (ADR-110 follow-up, Andrei 2026-09-28): split off the alerting-operator
+	// slice of system.write's footprint into its own permission — notification
+	// channels, escalation policies, and the on-demand job triggers that only
+	// ever emit/dispatch a notification (never mutate account/role/audit state).
+	// system.write remains a strict superset: every current system.write holder
+	// also gets alerts.write via ReconcileAlertsWriteRole's one-time backfill
+	// (alerts_write_role_reconcile.go), so no existing holder loses access.
+	{permAlertsWrite, "Manage notification channels, escalation policies, and on-demand alert/reminder job triggers", "alerts", "write"},
 	{"connect.read", "Read secrets from external stores via Keyorix Connect (ADR-043)", "connect", "read"},
 	// ADR-082 branch 4: narrows scope: platform connector reads, which connect.read
 	// alone permitted for any holder through branch 3 (an interim fail-open, marked
@@ -92,8 +100,16 @@ var adminPermissions = []string{
 	permUsersRead, "users.write", "users.delete",
 	permRolesRead, "roles.write", permRolesAssign,
 	permAuditRead, permSystemRead, "system.write",
+	permAlertsWrite,
 	"connect.read", "connect.platform.use",
 }
+
+// alertOperatorPermissions lists the permission names granted to the
+// alert_operator role (F1, ADR-110 follow-up): the narrower "alerting
+// operator" persona — notification channels, escalation policies, and
+// on-demand alert/reminder job triggers — without the compliance/legal/
+// risk/SoD/audit-checkpoint authority the rest of system.write still covers.
+var alertOperatorPermissions = []string{permAlertsWrite}
 
 // editorPermissions lists the permission names granted to the editor role.
 // Editor is the canonical "can change secrets, but not manage users/roles" role
@@ -143,6 +159,13 @@ var defaultRoles = []bootstrapRoleDef{
 		[]string{permSecretsRead, permUsersRead}},
 	{"project_auditor", "Read-only access to a project's secrets plus its audit log",
 		[]string{permSecretsRead, permUsersRead, permAuditRead}},
+
+	// F1 (ADR-110 follow-up) — a global-scope (project 0) alerting-operator
+	// persona: manages notification channels, escalation policies, and
+	// on-demand alert/reminder job triggers, without system.write's broader
+	// compliance/legal/risk/SoD/audit-checkpoint authority.
+	{"alert_operator", "Manages notification channels, escalation policies, and on-demand alert/reminder jobs",
+		alertOperatorPermissions},
 }
 
 // builtinRoleNames are the roles that ship with the product and must not be
@@ -164,6 +187,7 @@ var builtinRoleNames = map[string]bool{
 	"project_developer": true,
 	"project_viewer":    true,
 	"project_auditor":   true,
+	"alert_operator":    true,
 }
 
 // IsBuiltinRole reports whether a role name is a product built-in that the API

@@ -61,6 +61,12 @@ const (
 	permSystemWrite               = "system.write"
 	permUsersRead                 = "users.read"
 	permUsersWrite                = "users.write"
+	// permAlertsWrite (F1, ADR-110 follow-up, Andrei 2026-09-28): the narrower
+	// "alerting operator" persona split off system.write — notification
+	// channels, escalation policies, and the on-demand job triggers that only
+	// ever emit/dispatch a notification. system.write remains a strict
+	// superset (see internal/core/alerts_write_role_reconcile.go).
+	permAlertsWrite = "alerts.write"
 )
 
 // NewRouter creates and configures the HTTP router
@@ -388,21 +394,24 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Post("/notifications/read-all", notificationHandler.MarkAllRead)
 		r.Post("/notifications/{id}/read", notificationHandler.MarkRead)
 
-		// Notification channel management — admin-only (system.write).
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/notification-channels", notificationChannelHandler.List)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/notification-channels", notificationChannelHandler.Create)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get(pathNotificationChannelsID, notificationChannelHandler.Get)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathNotificationChannelsID, notificationChannelHandler.Update)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete(pathNotificationChannelsID, notificationChannelHandler.Delete)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/notification-channels/{id}/retry-policy", notificationChannelHandler.SetRetryPolicy)
+		// Notification channel management — alerting-operator (alerts.write, F1/
+		// ADR-110 follow-up). system.write holders keep access via the one-time
+		// backfill (internal/core/alerts_write_role_reconcile.go).
+		r.With(customMiddleware.RequirePermission(permAlertsWrite)).Get("/notification-channels", notificationChannelHandler.List)
+		r.With(customMiddleware.RequirePermission(permAlertsWrite)).Post("/notification-channels", notificationChannelHandler.Create)
+		r.With(customMiddleware.RequirePermission(permAlertsWrite)).Get(pathNotificationChannelsID, notificationChannelHandler.Get)
+		r.With(customMiddleware.RequirePermission(permAlertsWrite)).Put(pathNotificationChannelsID, notificationChannelHandler.Update)
+		r.With(customMiddleware.RequirePermission(permAlertsWrite)).Delete(pathNotificationChannelsID, notificationChannelHandler.Delete)
+		r.With(customMiddleware.RequirePermission(permAlertsWrite)).Put("/notification-channels/{id}/retry-policy", notificationChannelHandler.SetRetryPolicy)
 		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/notification-channels/{id}/retry-policy", notificationChannelHandler.GetRetryPolicy)
 
-		// Alert escalation policy management — admin-only (system.write).
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post(pathAlertEscalationPolicies, alertEscalationHandler.Create)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get(pathAlertEscalationPolicies, alertEscalationHandler.List)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get(pathAlertEscalationPoliciesID, alertEscalationHandler.Get)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathAlertEscalationPoliciesID, alertEscalationHandler.Update)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete(pathAlertEscalationPoliciesID, alertEscalationHandler.Delete)
+		// Alert escalation policy management — alerting-operator (alerts.write,
+		// same F1 split as notification channels immediately above).
+		r.With(customMiddleware.RequirePermission(permAlertsWrite)).Post(pathAlertEscalationPolicies, alertEscalationHandler.Create)
+		r.With(customMiddleware.RequirePermission(permAlertsWrite)).Get(pathAlertEscalationPolicies, alertEscalationHandler.List)
+		r.With(customMiddleware.RequirePermission(permAlertsWrite)).Get(pathAlertEscalationPoliciesID, alertEscalationHandler.Get)
+		r.With(customMiddleware.RequirePermission(permAlertsWrite)).Put(pathAlertEscalationPoliciesID, alertEscalationHandler.Update)
+		r.With(customMiddleware.RequirePermission(permAlertsWrite)).Delete(pathAlertEscalationPoliciesID, alertEscalationHandler.Delete)
 
 		// Dashboard endpoints
 		// GetStats is the caller's OWN home dashboard (their secret/share counts,
@@ -1200,21 +1209,53 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 		// On-demand triggers for the notification/alert jobs that otherwise run only on
 		// their background schedulers — dispatch immediately after an incident or config
-		// change. Deployment-wide admin actions, gated by system.write.
+		// change. F1 (ADR-110 follow-up) split this group's single gate per-route:
+		// every trigger that only ever emits/dispatches a notification AND carries no
+		// anomaly/compliance-derived data moved to alerts.write; the rest — three that
+		// mutate account/data state (suspend-inactive-users, purge-audit-logs,
+		// record-hygiene-snapshot), plus anomaly-alerts, compliance-digest, and
+		// run-alert-escalation — stayed on system.write. Those three are
+		// notification-only but deliberately excluded from the split: an
+		// alert_operator (no audit/compliance authority by design) could point a
+		// notification channel they control at any of them and exfiltrate
+		// anomaly-detection findings or compliance posture — an SSRF path from
+		// air-gapped hosts too. (Note: if the scheduled anomaly/digest jobs already
+		// send to every configured channel on their normal schedule, an operator-
+		// controlled channel already receives that data regardless of this gate —
+		// gating the on-demand trigger only removes the ability to force an
+		// immediate send, not the underlying exposure. See
+		// docs/adr-110-system-write-scope.md's Decision section for the per-route
+		// classification.)
 		r.Route("/admin/jobs", func(r chi.Router) {
-			r.Use(customMiddleware.RequirePermission(permSystemWrite))
-			r.Post("/anomaly-alerts", adminJobsHandler.RunAnomalyAlerts)
-			r.Post("/rotation-reminders", adminJobsHandler.RunRotationReminders)
-			r.Post("/expiry-reminders", adminJobsHandler.RunExpiryReminders)
-			r.Post("/compliance-digest", adminJobsHandler.RunComplianceDigest)
-			// Persist today's credential-hygiene counts for trend queries.
-			r.Post("/record-hygiene-snapshot", hygieneTrendsHandler.RecordHygieneSnapshot)
-			r.Post("/role-expiry-check", adminJobsHandler.RunRoleExpiryCheck)
-			r.Post("/check-read-quotas", adminJobsHandler.RunReadQuotaCheck)
-			r.Post("/run-alert-escalation", alertEscalationHandler.RunEscalation)
-			r.Post("/token-expiry-check", adminJobsHandler.RunTokenExpiryCheck)
-			r.Post("/suspend-inactive-users", adminJobsHandler.SuspendInactiveUsers)
-			r.Post("/purge-audit-logs", adminJobsHandler.PurgeAuditLogsJob)
+			// Broadcasts anomaly-detection findings to configured notification
+			// channels — kept on system.write, not alerts.write: see the group
+			// comment above.
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/anomaly-alerts", adminJobsHandler.RunAnomalyAlerts)
+			r.With(customMiddleware.RequirePermission(permAlertsWrite)).Post("/rotation-reminders", adminJobsHandler.RunRotationReminders)
+			r.With(customMiddleware.RequirePermission(permAlertsWrite)).Post("/expiry-reminders", adminJobsHandler.RunExpiryReminders)
+			// Broadcasts the compliance digest to configured notification channels —
+			// kept on system.write, not alerts.write: see the group comment above.
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/compliance-digest", adminJobsHandler.RunComplianceDigest)
+			// Persists a HygieneTrendSnapshot row (data persistence, not a
+			// notification) — stays on system.write.
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/record-hygiene-snapshot", hygieneTrendsHandler.RecordHygieneSnapshot)
+			// CheckRoleExpiry only emits Notification rows (no revocation — a
+			// separate sweep removes expired grants); verified by reading
+			// internal/core/role_expiry_notify.go.
+			r.With(customMiddleware.RequirePermission(permAlertsWrite)).Post("/role-expiry-check", adminJobsHandler.RunRoleExpiryCheck)
+			// CheckReadQuotas only emits Notification rows (no read-blocking/
+			// enforcement here); verified by reading internal/core/read_quota_alerts.go.
+			r.With(customMiddleware.RequirePermission(permAlertsWrite)).Post("/check-read-quotas", adminJobsHandler.RunReadQuotaCheck)
+			// Dispatches unacknowledged anomaly alerts to configured notification
+			// channels — same anomaly-detection-data exfiltration risk as
+			// anomaly-alerts above, so kept on system.write, not alerts.write.
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/run-alert-escalation", alertEscalationHandler.RunEscalation)
+			r.With(customMiddleware.RequirePermission(permAlertsWrite)).Post("/token-expiry-check", adminJobsHandler.RunTokenExpiryCheck)
+			// Suspends user accounts — a real account-state mutation — stays on
+			// system.write.
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/suspend-inactive-users", adminJobsHandler.SuspendInactiveUsers)
+			// Deletes audit events — stays on system.write.
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/purge-audit-logs", adminJobsHandler.PurgeAuditLogsJob)
 		})
 
 		// Runtime anomaly detection configuration — read/write the DB-persisted

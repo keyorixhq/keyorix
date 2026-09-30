@@ -9,8 +9,15 @@
 // rationale).
 //
 // Verified RED against a reverted allowlist (emptied it to {}): every one of
-// the 25 current permSystemWrite call sites reported as unallowed. GREEN
-// with the real allowlist below restored.
+// the current permSystemWrite call sites reported as unallowed. GREEN with
+// the real allowlist below restored. F1 (ADR-110 follow-up, Andrei
+// 2026-09-28) split notification channels, escalation policies, and 5 of the
+// 11 /admin/jobs triggers off onto alerts.write; anomaly-alerts,
+// compliance-digest, and run-alert-escalation are notification-only but
+// deliberately stayed here (see their entries below) — see
+// alerts_write_scope_test.go for the alerts.write allowlist, and
+// docs/adr-110-system-write-scope.md's Decision section for the current,
+// post-split route table.
 package http
 
 import (
@@ -31,31 +38,25 @@ import (
 // review's enforcement mechanism, not a duplicate of it; see that ADR for
 // the full reasoning per row.
 var systemWriteScopeAllowlist = map[string]string{
-	"GET /api/v1/notification-channels":                   "Notification-channel config (webhook/Slack/Teams/email URLs where alerts go). No narrower permission exists in the catalog for this resource family — see ADR-110.",
-	"POST /api/v1/notification-channels":                  "Same family as GET immediately above — creates a channel.",
-	"GET /api/v1/notification-channels/{id}":              "Same family — reads one channel's config.",
-	"PUT /api/v1/notification-channels/{id}":              "Same family — updates one channel's config.",
-	"DELETE /api/v1/notification-channels/{id}":           "Same family — deletes a channel.",
-	"PUT /api/v1/notification-channels/{id}/retry-policy": "Same family — tunes one channel's retry policy.",
-	"POST /api/v1/alert-escalation-policies":              "Escalation-policy definitions (severity threshold, minutes-until-escalate, target channels). Same reasoning as notification channels — no narrower permission exists.",
-	"GET /api/v1/alert-escalation-policies":               "Same family — lists policies.",
-	"GET /api/v1/alert-escalation-policies/{id}":          "Same family — reads one policy.",
-	"PUT /api/v1/alert-escalation-policies/{id}":          "Same family — updates one policy.",
-	"DELETE /api/v1/alert-escalation-policies/{id}":       "Same family — deletes one policy.",
-	"POST /api/v1/audit/checkpoint":                       "Writes a new audit-hash-chain checkpoint — mutates the tamper-evidence dataset itself, one tier above the group's own audit.read baseline.",
-	"POST /api/v1/audit/migrate-chain-encoding":           "One-time migration of the audit hash chain's on-disk encoding — same bar as /checkpoint immediately above.",
-	"POST /api/v1/audit/anomalies/{id}/acknowledge":       "Dismisses a security-detection record. Sits inside the /audit group's own audit.read r.Use(), so this route effectively requires BOTH audit.read and system.write (chi's With() adds to, not replaces, the group's Use()) — the same reasoning permissionSweepAllowlist's sibling 'GET /api/v1/audit/anomalies' entry documents.",
-	"GET /api/v1/admin/scheduler-metrics":                 "A GET gated on a WRITE permission, deliberately: exact scheduler-tick timestamps let an unauthenticated caller predict a security-relevant job's next execution (a timing side channel, per the route's own adjacent comment) — moving this to system.read (the universal auto-granted baseline) would WIDEN who can read it, not narrow it. See ADR-110's row #15 for the full reasoning.",
-	"POST /api/v1/compliance/snapshots":                   "Triggers a full compliance-posture evaluation and persists a snapshot row. The GET sibling (ListComplianceSnapshots) is correctly audit.read; POST is deliberately one tier up.",
-	"POST /api/v1/legal-hold":                             "Places a legal hold (ISO A.5.34) — an admin action, not a read disclosure (the GET sibling is audit.read).",
-	"DELETE /api/v1/legal-hold":                           "Lifts a legal hold — same reasoning as POST immediately above.",
-	"POST /api/v1/risk-exceptions":                        "Creates a risk-register entry (ISO A.5.8) — the GET sibling (list) is audit.read; create/approve/revoke is deliberately system.write.",
-	"POST /api/v1/risk-exceptions/{id}/approve":           "Approves a risk-register entry — same family as create immediately above.",
-	"DELETE /api/v1/risk-exceptions/{id}":                 "Revokes a risk-register entry — same family as create above.",
-	"POST /api/v1/sod/policies":                           "Creates a separation-of-duties policy (which permission pairs conflict) — the GET sibling (policy definitions, no PII) is baseline system.read; create/delete the rule other RBAC grants get checked against is deliberately one tier up.",
-	"DELETE /api/v1/sod/policies/{id}":                    "Deletes an SoD policy — same family as create immediately above.",
-	"USE /api/v1/admin/jobs":                              "On-demand triggers for background jobs that otherwise only run on their own schedulers (anomaly-alerts, rotation-reminders, expiry-reminders, compliance-digest, record-hygiene-snapshot, role-expiry-check, check-read-quotas, token-expiry-check, suspend-inactive-users, purge-audit-logs) — a deployment-wide administrative action with no narrower existing permission family; every handler wraps a core function with no additional in-handler authorization, so the route gate is the only check.",
-	"PUT /api/v1/admin/anomaly-config":                    "Persists DB-backed anomaly-detection thresholds — the GET sibling is correctly system.read (config values, no per-tenant data); the PUT is a deployment-wide detection-tuning mutation with no narrower fit.",
+	"POST /api/v1/audit/checkpoint":                   "Writes a new audit-hash-chain checkpoint — mutates the tamper-evidence dataset itself, one tier above the group's own audit.read baseline.",
+	"POST /api/v1/audit/migrate-chain-encoding":       "One-time migration of the audit hash chain's on-disk encoding — same bar as /checkpoint immediately above.",
+	"POST /api/v1/audit/anomalies/{id}/acknowledge":   "Dismisses a security-detection record. Sits inside the /audit group's own audit.read r.Use(), so this route effectively requires BOTH audit.read and system.write (chi's With() adds to, not replaces, the group's Use()) — the same reasoning permissionSweepAllowlist's sibling 'GET /api/v1/audit/anomalies' entry documents.",
+	"GET /api/v1/admin/scheduler-metrics":             "A GET gated on a WRITE permission, deliberately: exact scheduler-tick timestamps let an unauthenticated caller predict a security-relevant job's next execution (a timing side channel, per the route's own adjacent comment) — moving this to system.read (the universal auto-granted baseline) would WIDEN who can read it, not narrow it. See ADR-110's row #15 for the full reasoning.",
+	"POST /api/v1/compliance/snapshots":               "Triggers a full compliance-posture evaluation and persists a snapshot row. The GET sibling (ListComplianceSnapshots) is correctly audit.read; POST is deliberately one tier up.",
+	"POST /api/v1/legal-hold":                         "Places a legal hold (ISO A.5.34) — an admin action, not a read disclosure (the GET sibling is audit.read).",
+	"DELETE /api/v1/legal-hold":                       "Lifts a legal hold — same reasoning as POST immediately above.",
+	"POST /api/v1/risk-exceptions":                    "Creates a risk-register entry (ISO A.5.8) — the GET sibling (list) is audit.read; create/approve/revoke is deliberately system.write.",
+	"POST /api/v1/risk-exceptions/{id}/approve":       "Approves a risk-register entry — same family as create immediately above.",
+	"DELETE /api/v1/risk-exceptions/{id}":             "Revokes a risk-register entry — same family as create above.",
+	"POST /api/v1/sod/policies":                       "Creates a separation-of-duties policy (which permission pairs conflict) — the GET sibling (policy definitions, no PII) is baseline system.read; create/delete the rule other RBAC grants get checked against is deliberately one tier up.",
+	"DELETE /api/v1/sod/policies/{id}":                "Deletes an SoD policy — same family as create immediately above.",
+	"POST /api/v1/admin/jobs/anomaly-alerts":          "F1 (ADR-110 follow-up) split the /admin/jobs group's single gate per-route. RunAnomalyAlerts is notification-only, but deliberately excluded from the alerts.write split: an alert_operator (no audit/compliance authority by design) could point a notification channel they control at this trigger and exfiltrate anomaly-detection findings — an SSRF path from air-gapped hosts too. Stays on system.write.",
+	"POST /api/v1/admin/jobs/compliance-digest":       "Same F1 split, same reasoning as anomaly-alerts immediately above — RunComplianceDigest is notification-only but would let an alert_operator exfiltrate compliance posture via a channel they control. Stays on system.write.",
+	"POST /api/v1/admin/jobs/run-alert-escalation":    "Same F1 split, same reasoning as anomaly-alerts above — RunEscalation dispatches unacknowledged ANOMALY alerts (the same data class anomaly-alerts sends), so it stays on system.write for the identical exfiltration-path reason rather than moving to alerts.write.",
+	"POST /api/v1/admin/jobs/record-hygiene-snapshot": "Same F1 split. This one persists a HygieneTrendSnapshot row (data persistence, not a notification) — verified by reading hygiene_trends.go's RecordHygieneSnapshot — so it stays on system.write; the pure notification/reminder triggers in this same group moved to alerts.write (see alertsWriteScopeAllowlist in alerts_write_scope_test.go).",
+	"POST /api/v1/admin/jobs/suspend-inactive-users":  "Same F1 split — SuspendInactiveUsers mutates account state (inactivity_suspend.go), a real account-state mutation, not a notification.",
+	"POST /api/v1/admin/jobs/purge-audit-logs":        "Same F1 split — PurgeAuditLogsJob deletes audit events (audit_retention_handler.go), a data mutation, not a notification.",
+	"PUT /api/v1/admin/anomaly-config":                "Persists DB-backed anomaly-detection thresholds — the GET sibling is correctly system.read (config values, no per-tenant data); the PUT is a deployment-wide detection-tuning mutation with no narrower fit.",
 }
 
 // TestSystemWriteRouteAllowlistCoversEveryGateSite is ADR-110's guard: every

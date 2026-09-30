@@ -47,6 +47,24 @@ All notable changes to Keyorix are documented here. This project follows
   first use of any of them. Fixed for fresh and upgraded installs alike.
   (`0b6bb65a`)
 
+### Added
+- **New `alerts.write` permission and `alert_operator` built-in role** (ADR-110
+  follow-up): notification-channel/escalation-policy management and 5 of the 11
+  `/admin/jobs` on-demand triggers (the ones that only emit/dispatch a
+  notification AND carry no compliance/audit-derived data — rotation/expiry/
+  token-expiry reminders, role-expiry-check, check-read-quotas) moved off
+  `system.write` onto this narrower permission. `system.write` remains a
+  strict superset: existing holders keep access via a one-time backfill on
+  upgrade. `record-hygiene-snapshot`, `suspend-inactive-users`, and
+  `purge-audit-logs` stayed on `system.write` (they mutate account/data state,
+  not just send a notification); `anomaly-alerts`, `compliance-digest`, and
+  `run-alert-escalation` also stayed on `system.write` despite being
+  notification-only, because they all dispatch anomaly/compliance-derived
+  data and an `alert_operator` could point a notification channel at a URL
+  they control to exfiltrate it (an SSRF path from air-gapped hosts too). See
+  `docs/adr-110-system-write-scope.md`'s Decision section for the full
+  per-route table. (#2244)
+
 ### Changed
 - **The air-gapped build profile ships, and the published air-gapped image
   is renamed** `keyorix-server-lean` → `keyorix-server-airgap`. Operators
