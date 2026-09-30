@@ -156,15 +156,45 @@ func (ls *LocalStorage) UpdateRole(ctx context.Context, role *models.Role) (*mod
 	return role, nil
 }
 
+// DeleteRole hard-deletes a role and, in the SAME transaction, every row in
+// another table that references it by RoleID (UserRole, GroupRole,
+// MachineIdentityRole, RolePermission, ConnectRefGrant). Role has no
+// DeletedAt column (it is not soft-deletable like Group/User), and none of
+// these RoleID columns are GORM associations -- AutoMigrate creates no FK
+// constraint on either backend -- so without this cascade a deleted role
+// left every one of those tables holding an orphaned row pointing at a
+// nonexistent role ID (SESSION-AT AT1 row 2). Confirmed separately that
+// this was inert, not a privilege-inheritance hole (role-ID reuse is
+// impossible: GORM's AUTOINCREMENT never reissues a deleted role's ID, and
+// every authorization query joins against the live roles table, so an
+// orphaned grant row matches nothing) -- this fix is data hygiene, not a
+// security closure.
 func (ls *LocalStorage) DeleteRole(ctx context.Context, id uint) error {
-	result := ls.db.WithContext(ctx).Delete(&models.Role{}, id)
-	if result.Error != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorRoleNotFound", nil))
-	}
-	return nil
+	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Delete(&models.Role{}, id)
+		if result.Error != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("%s", i18n.T("ErrorRoleNotFound", nil))
+		}
+		if err := tx.Where("role_id = ?", id).Delete(&models.UserRole{}).Error; err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		if err := tx.Where("role_id = ?", id).Delete(&models.GroupRole{}).Error; err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		if err := tx.Where("role_id = ?", id).Delete(&models.MachineIdentityRole{}).Error; err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		if err := tx.Where("role_id = ?", id).Delete(&models.RolePermission{}).Error; err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		if err := tx.Where("role_id = ?", id).Delete(&models.ConnectRefGrant{}).Error; err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		return nil
+	})
 }
 
 func (ls *LocalStorage) ListRoles(ctx context.Context) ([]*models.Role, error) {
