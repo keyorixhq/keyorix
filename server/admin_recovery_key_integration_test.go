@@ -7,12 +7,17 @@ package main
 // (admin_integration_test.go).
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"filippo.io/age"
+	"filippo.io/age/armor"
 )
 
 var groupedRecoveryKeyForm = regexp.MustCompile(`[A-HJ-NP-Z2-9]{5}(-[A-HJ-NP-Z2-9]{5}){9}-[A-HJ-NP-Z2-9]{2}`)
@@ -67,6 +72,280 @@ func TestAdminRecoveryKey_GenerateThenRotate_SQLite(t *testing.T) {
 	}
 	if !strings.Contains(thirdOut, "Recovery key rotated (generation 3)") {
 		t.Errorf("expected third run to report rotation to generation 3, got:\n%s", thirdOut)
+	}
+}
+
+// TestAdminRecoveryKey_RotateWithRecipient_EncryptedOutputOnly is F8's own
+// acceptance shape: `rotate --recipient <age1...> --output <file>` must
+// write an age-armored ciphertext file (mode 0600) that decrypts back to
+// the real recovery key, WITHOUT ever printing that key in plaintext to
+// stdout -- the whole point of the flag.
+func TestAdminRecoveryKey_RotateWithRecipient_EncryptedOutputOnly(t *testing.T) {
+	bin := buildServerBinary(t)
+	dir := t.TempDir()
+	env := baseEnv(dir)
+
+	if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin init failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "migrate", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin migrate failed: %v\n%s", err, out)
+	}
+
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatalf("generate age identity: %v", err)
+	}
+	outputPath := filepath.Join(dir, "recovery-key.age")
+
+	out, err := runAdmin(t, bin, dir, env, "recovery-key", "rotate", "--config", "./keyorix.yaml",
+		"--recipient", identity.Recipient().String(), "--output", outputPath)
+	if err != nil {
+		t.Fatalf("recovery-key rotate --recipient --output failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Recovery key generated (generation 1)") {
+		t.Errorf("expected the generation line, got:\n%s", out)
+	}
+	if groupedRecoveryKeyForm.FindString(out) != "" {
+		t.Fatalf("plaintext recovery key leaked to stdout despite --recipient:\n%s", out)
+	}
+	if strings.Contains(out, "-----BEGIN AGE ENCRYPTED FILE-----") {
+		t.Fatalf("armored ciphertext was printed to stdout even though --output was given:\n%s", out)
+	}
+
+	info, err := os.Stat(outputPath)
+	if err != nil {
+		t.Fatalf("stat output file: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("expected output file mode 0600, got %v", info.Mode().Perm())
+	}
+
+	encrypted, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read output file: %v", err)
+	}
+	ar := armor.NewReader(bytes.NewReader(encrypted))
+	dr, err := age.Decrypt(ar, identity)
+	if err != nil {
+		t.Fatalf("age.Decrypt the output file: %v", err)
+	}
+	plaintext, err := io.ReadAll(dr)
+	if err != nil {
+		t.Fatalf("read decrypted plaintext: %v", err)
+	}
+	if !groupedRecoveryKeyForm.MatchString(string(plaintext)) {
+		t.Fatalf("decrypted output file does not look like a recovery key: %q", plaintext)
+	}
+
+	// Re-running with the SAME --output path must refuse to overwrite --
+	// and, per the pre-flight fix below, must not have rotated the key either.
+	out2, err2 := runAdmin(t, bin, dir, env, "recovery-key", "rotate", "--config", "./keyorix.yaml",
+		"--recipient", identity.Recipient().String(), "--output", outputPath)
+	if err2 == nil {
+		t.Fatalf("expected the second rotate with the same --output path to fail, got success:\n%s", out2)
+	}
+	if !strings.Contains(out2, "already exists") {
+		t.Errorf("expected an 'already exists' refusal, got:\n%s", out2)
+	}
+	if strings.Contains(out2, "WAS rotated") {
+		t.Fatalf("the failure message claims the key WAS rotated -- the pre-flight --output check should catch this BEFORE rotation:\n%s", out2)
+	}
+
+	// Confirm the failed attempt actually left generation 1 untouched: a
+	// plain rotate now must report generation 2, not 3.
+	out3, err3 := runAdmin(t, bin, dir, env, "recovery-key", "rotate", "--config", "./keyorix.yaml")
+	if err3 != nil {
+		t.Fatalf("third recovery-key rotate failed: %v\n%s", err3, out3)
+	}
+	if !strings.Contains(out3, "Recovery key rotated (generation 2)") {
+		t.Fatalf("expected the failed --output re-run to have made no persisted change (still generation 1, so this rotates to generation 2), got:\n%s", out3)
+	}
+}
+
+// TestAdminRecoveryKey_OutputAlreadyExists_LeavesOldKeyValid is the F8
+// coordinator-requested regression: an --output path that already exists
+// must be caught BEFORE the key is rotated, not discovered only after --
+// an operator hitting this must be able to retry with a correct --output
+// path using the SAME (still-valid) key, not be left holding a new key they
+// never received.
+func TestAdminRecoveryKey_OutputAlreadyExists_LeavesOldKeyValid(t *testing.T) {
+	bin := buildServerBinary(t)
+	dir := t.TempDir()
+	env := baseEnv(dir)
+
+	if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin init failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "migrate", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin migrate failed: %v\n%s", err, out)
+	}
+
+	// First rotate: no --output, establishes generation 1 and its key.
+	firstOut, err := runAdmin(t, bin, dir, env, "recovery-key", "rotate", "--config", "./keyorix.yaml")
+	if err != nil {
+		t.Fatalf("first recovery-key rotate failed: %v\n%s", err, firstOut)
+	}
+	if !strings.Contains(firstOut, "Recovery key generated (generation 1)") {
+		t.Fatalf("expected first run to report generation 1, got:\n%s", firstOut)
+	}
+	firstKey := groupedRecoveryKeyForm.FindString(firstOut)
+	if firstKey == "" {
+		t.Fatalf("expected a grouped recovery key in the output, got:\n%s", firstOut)
+	}
+
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatalf("generate age identity: %v", err)
+	}
+	outputPath := filepath.Join(dir, "pre-existing.age")
+	if err := os.WriteFile(outputPath, []byte("something already here"), 0o600); err != nil {
+		t.Fatalf("seed pre-existing output file: %v", err)
+	}
+
+	// Second rotate targets the pre-existing --output path -- must fail
+	// WITHOUT rotating the key.
+	secondOut, err := runAdmin(t, bin, dir, env, "recovery-key", "rotate", "--config", "./keyorix.yaml",
+		"--recipient", identity.Recipient().String(), "--output", outputPath)
+	if err == nil {
+		t.Fatalf("expected rotate with a pre-existing --output path to fail, got success:\n%s", secondOut)
+	}
+	if !strings.Contains(secondOut, "already exists") {
+		t.Errorf("expected an 'already exists' refusal, got:\n%s", secondOut)
+	}
+	if strings.Contains(secondOut, "WAS rotated") {
+		t.Fatalf("the failure message claims the key WAS rotated -- the pre-flight check should have caught this BEFORE rotation:\n%s", secondOut)
+	}
+
+	// The pre-existing file's content must be untouched.
+	got, rerr := os.ReadFile(outputPath)
+	if rerr != nil {
+		t.Fatalf("read back pre-existing output file: %v", rerr)
+	}
+	if string(got) != "something already here" {
+		t.Fatalf("pre-existing output file content was overwritten: got %q", got)
+	}
+
+	// The OLD key must still be valid: a THIRD (plain) rotate must report
+	// generation 2 -- proving the failed --output attempt never advanced the
+	// generation counter (never touched storage at all).
+	thirdOut, err := runAdmin(t, bin, dir, env, "recovery-key", "rotate", "--config", "./keyorix.yaml")
+	if err != nil {
+		t.Fatalf("third recovery-key rotate failed: %v\n%s", err, thirdOut)
+	}
+	if !strings.Contains(thirdOut, "Recovery key rotated (generation 2)") {
+		t.Fatalf("expected the failed --output attempt to have left the key at generation 1 (so this rotates to generation 2), got:\n%s", thirdOut)
+	}
+	thirdKey := groupedRecoveryKeyForm.FindString(thirdOut)
+	if thirdKey == "" {
+		t.Fatalf("expected a grouped recovery key in the third run's output, got:\n%s", thirdOut)
+	}
+	if thirdKey == firstKey {
+		t.Fatalf("expected the third rotate to produce a DIFFERENT key than the first, got the same value twice: %q", firstKey)
+	}
+}
+
+// TestAdminRecoveryKey_OutputWithoutRecipient_Refused verifies --output
+// alone (no --recipient) is refused outright -- this command must never
+// write the PLAINTEXT key to a file.
+func TestAdminRecoveryKey_OutputWithoutRecipient_Refused(t *testing.T) {
+	bin := buildServerBinary(t)
+	dir := t.TempDir()
+	env := baseEnv(dir)
+
+	if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin init failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "migrate", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin migrate failed: %v\n%s", err, out)
+	}
+
+	out, err := runAdmin(t, bin, dir, env, "recovery-key", "rotate", "--config", "./keyorix.yaml",
+		"--output", filepath.Join(dir, "should-not-be-created.age"))
+	if err == nil {
+		t.Fatalf("expected --output without --recipient to fail, got success:\n%s", out)
+	}
+	if !strings.Contains(out, "--output requires --recipient") {
+		t.Errorf("expected the specific refusal message, got:\n%s", out)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "should-not-be-created.age")); statErr == nil {
+		t.Fatal("--output file was created despite the command failing")
+	}
+}
+
+// TestAdminRecoveryKey_InvalidRecipient_LeavesOldKeyValid is the coordinator-
+// requested pre-flight regression for a bad --recipient (PR #2257 review): an
+// invalid age recipient string, and a recipients-file path that doesn't
+// exist, must both be caught BEFORE the key is rotated -- exactly like the
+// pre-existing --output checks above -- not discovered only after the OLD
+// key has already been invalidated.
+func TestAdminRecoveryKey_InvalidRecipient_LeavesOldKeyValid(t *testing.T) {
+	bin := buildServerBinary(t)
+	dir := t.TempDir()
+	env := baseEnv(dir)
+
+	if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin init failed: %v\n%s", err, out)
+	}
+	if out, err := runAdmin(t, bin, dir, env, "migrate", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("admin migrate failed: %v\n%s", err, out)
+	}
+
+	// First rotate: no --recipient, establishes generation 1 and its key.
+	firstOut, err := runAdmin(t, bin, dir, env, "recovery-key", "rotate", "--config", "./keyorix.yaml")
+	if err != nil {
+		t.Fatalf("first recovery-key rotate failed: %v\n%s", err, firstOut)
+	}
+	if !strings.Contains(firstOut, "Recovery key generated (generation 1)") {
+		t.Fatalf("expected first run to report generation 1, got:\n%s", firstOut)
+	}
+	firstKey := groupedRecoveryKeyForm.FindString(firstOut)
+	if firstKey == "" {
+		t.Fatalf("expected a grouped recovery key in the output, got:\n%s", firstOut)
+	}
+
+	// A malformed age1... string must fail with NO rotation.
+	badAgeOut, err := runAdmin(t, bin, dir, env, "recovery-key", "rotate", "--config", "./keyorix.yaml",
+		"--recipient", "age1notarealrecipient")
+	if err == nil {
+		t.Fatalf("expected rotate with an invalid age recipient to fail, got success:\n%s", badAgeOut)
+	}
+	if !strings.Contains(badAgeOut, "--recipient") {
+		t.Errorf("expected a --recipient-scoped error, got:\n%s", badAgeOut)
+	}
+	if strings.Contains(badAgeOut, "WAS rotated") {
+		t.Fatalf("the failure message claims the key WAS rotated -- the pre-flight --recipient check should catch this BEFORE rotation:\n%s", badAgeOut)
+	}
+
+	// A recipients-file path that doesn't exist must also fail with NO rotation.
+	badFileOut, err := runAdmin(t, bin, dir, env, "recovery-key", "rotate", "--config", "./keyorix.yaml",
+		"--recipient", filepath.Join(dir, "does-not-exist.pub"))
+	if err == nil {
+		t.Fatalf("expected rotate with a non-existent recipient file to fail, got success:\n%s", badFileOut)
+	}
+	if !strings.Contains(badFileOut, "--recipient") {
+		t.Errorf("expected a --recipient-scoped error, got:\n%s", badFileOut)
+	}
+	if strings.Contains(badFileOut, "WAS rotated") {
+		t.Fatalf("the failure message claims the key WAS rotated -- the pre-flight --recipient check should catch this BEFORE rotation:\n%s", badFileOut)
+	}
+
+	// The OLD key must still be valid: a THIRD (plain) rotate must report
+	// generation 2 -- proving neither failed --recipient attempt above ever
+	// advanced the generation counter (never touched storage at all).
+	thirdOut, err := runAdmin(t, bin, dir, env, "recovery-key", "rotate", "--config", "./keyorix.yaml")
+	if err != nil {
+		t.Fatalf("third recovery-key rotate failed: %v\n%s", err, thirdOut)
+	}
+	if !strings.Contains(thirdOut, "Recovery key rotated (generation 2)") {
+		t.Fatalf("expected both failed --recipient attempts to have left the key at generation 1 (so this rotates to generation 2), got:\n%s", thirdOut)
+	}
+	thirdKey := groupedRecoveryKeyForm.FindString(thirdOut)
+	if thirdKey == "" {
+		t.Fatalf("expected a grouped recovery key in the third run's output, got:\n%s", thirdOut)
+	}
+	if thirdKey == firstKey {
+		t.Fatalf("expected the third rotate to produce a DIFFERENT key than the first, got the same value twice: %q", firstKey)
 	}
 }
 
