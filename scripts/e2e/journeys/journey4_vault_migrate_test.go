@@ -1,13 +1,12 @@
-//go:build e2e_containers
+//go:build e2e && e2e_containers
 
 // Package journeys, journey 4: migrate from Vault/OpenBao. Containers,
 // nightly tier (per the SESSION-N brief: journeys 1-3 are merge-queue
-// candidates, 4-6 use containers and run nightly) -- gated on its OWN build
-// tag (e2e_containers, not e2e) so `go test -tags e2e ./scripts/e2e/
-// journeys/...` (the fast/merge-queue tier) never builds or runs this file
-// at all, regardless of whether the runner happens to have Docker --
-// `make e2e-journeys` uses `-tags e2e`, `make e2e-journeys-containers` uses
-// `-tags e2e_containers` (N7 wires both targets).
+// candidates, 4-6 use containers and run nightly) -- gated on BOTH build tags (e2e && e2e_containers) so the fast/merge-queue
+// tier (`go test -tags e2e ./scripts/e2e/journeys/...`) never builds or
+// runs this file, while the container tier builds it together with the
+// shared e2e helpers: run it with `-tags e2e,e2e_containers`
+// (`make e2e-journeys-containers`, wired in N7).
 package journeys
 
 import (
