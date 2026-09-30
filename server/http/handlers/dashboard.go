@@ -103,6 +103,11 @@ func (h *DashboardHandler) VerifyComplianceEvidence(w http.ResponseWriter, r *ht
 		return
 	}
 	result := h.coreService.VerifyEvidenceSignature(body.Filename, data, body.Signature)
+	var actorID uint
+	if userCtx := middleware.GetUserFromContext(r.Context()); userCtx != nil {
+		actorID = userCtx.UserID
+	}
+	h.coreService.LogComplianceEvidenceVerified(r.Context(), actorID, body.Filename, result)
 	sendSuccess(w, result, "")
 }
 

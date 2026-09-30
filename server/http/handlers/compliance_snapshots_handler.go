@@ -11,6 +11,8 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+
+	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
 // TakeComplianceSnapshot handles POST /api/v1/compliance/snapshots.
@@ -21,6 +23,11 @@ func (h *DashboardHandler) TakeComplianceSnapshot(w http.ResponseWriter, r *http
 		sendError(w, "InternalError", "Failed to take compliance snapshot", http.StatusInternalServerError, nil)
 		return
 	}
+	var actorID uint
+	if userCtx := middleware.GetUserFromContext(r.Context()); userCtx != nil {
+		actorID = userCtx.UserID
+	}
+	h.coreService.LogComplianceSnapshotTaken(r.Context(), actorID, snap)
 	sendSuccess(w, snap, "")
 }
 

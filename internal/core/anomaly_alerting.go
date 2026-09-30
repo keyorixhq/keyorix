@@ -90,6 +90,15 @@ func (c *KeyorixCore) AlertNewAnomalies(ctx context.Context) (int, error) {
 		}
 		announced++
 	}
+	if len(alerts) == 0 {
+		// No unalerted anomalies is the common case (this job runs on a schedule),
+		// but a run producing zero per-anomaly EventAnomalyDetected events above
+		// must still leave SOME audit trail that the job ran (F4, audit-
+		// completeness campaign) — otherwise an on-demand trigger of an empty
+		// queue is indistinguishable from the job never running at all.
+		auditCtx, userID := adminJobAuditContext(ctx)
+		c.writeAuditEvent(auditCtx, "admin_job.anomaly_alerts_run", userID, nil, "anomaly-alerts job ran: 0 unalerted anomalies")
+	}
 	return announced, nil
 }
 

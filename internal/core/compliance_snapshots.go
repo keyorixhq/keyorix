@@ -30,6 +30,22 @@ func (c *KeyorixCore) TakeComplianceSnapshot(ctx context.Context) (*models.Compl
 	return buildCompliancePostureSnapshot(posture, today), nil
 }
 
+// EventComplianceSnapshotTaken is audited on every explicit POST
+// /compliance/snapshots trigger (F4, audit-completeness campaign).
+// GetCompliancePosture persists a snapshot row as a side effect on every call
+// (including the plain GET dashboard view), so this event is written only
+// from the explicit on-demand trigger path, not from inside
+// GetCompliancePosture itself — an audit event on every dashboard view would
+// misrepresent routine reads as compliance-evidence-capture actions.
+const EventComplianceSnapshotTaken = "compliance.snapshot_taken"
+
+// LogComplianceSnapshotTaken records an explicit compliance-snapshot trigger.
+// actorID is the requesting caller (0 = none, e.g. a scheduled trigger).
+func (c *KeyorixCore) LogComplianceSnapshotTaken(ctx context.Context, actorID uint, snap *models.CompliancePostureSnapshot) {
+	c.writeAuditEvent(ctx, EventComplianceSnapshotTaken, actorPtr(actorID), nil,
+		fmt.Sprintf("compliance posture snapshot taken for %s", snap.SnapshotDate.Format("2006-01-02")))
+}
+
 // ListComplianceSnapshots returns up to limit saved CompliancePostureSnapshots
 // ordered by snapshot_date descending. Passing limit ≤ 0 uses a default of 90.
 func (c *KeyorixCore) ListComplianceSnapshots(ctx context.Context, limit int) ([]*models.CompliancePostureSnapshot, error) {

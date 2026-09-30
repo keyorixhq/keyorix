@@ -103,5 +103,12 @@ func (c *KeyorixCore) SuspendInactiveUsers(ctx context.Context, cfg InactivitySu
 		result.Suspended = append(result.Suspended, u.ID)
 	}
 
+	// Written unconditionally: SuspendUser audits each individual suspension,
+	// but a run with zero inactive users (the common case) would otherwise
+	// leave no trail that this job ran at all (F4, audit-completeness campaign).
+	auditCtx, userID := adminJobAuditContext(ctx)
+	c.writeAuditEvent(auditCtx, "admin_job.suspend_inactive_users_run", userID, nil,
+		fmt.Sprintf("suspend-inactive-users job ran: %d total examined, %d suspended, %d skipped",
+			result.Total, len(result.Suspended), result.Skipped))
 	return result, nil
 }

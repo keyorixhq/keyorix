@@ -30,6 +30,9 @@ func (c *KeyorixCore) SendRotationReminders(ctx context.Context) (int, error) { 
 		return 0, err
 	}
 	if len(evals) == 0 {
+		auditCtx, userID := adminJobAuditContext(ctx)
+		c.writeAuditEvent(auditCtx, "admin_job.rotation_reminders_run", userID, nil,
+			"rotation-reminders job ran: 0 rotation policies evaluated")
 		return 0, nil
 	}
 
@@ -83,6 +86,13 @@ func (c *KeyorixCore) SendRotationReminders(ctx context.Context) (int, error) { 
 			sent++
 		}
 	}
+	// Written unconditionally: this job only ever creates in-app Notification
+	// rows, never an audit_events row of its own, so a run with nothing to
+	// remind about (or where every reminder is deduped away) leaves no trail
+	// that the job ran at all (F4, audit-completeness campaign).
+	auditCtx, userID := adminJobAuditContext(ctx)
+	c.writeAuditEvent(auditCtx, "admin_job.rotation_reminders_run", userID, nil,
+		fmt.Sprintf("rotation-reminders job ran: %d reminder(s) sent/escalated", sent))
 	return sent, nil
 }
 

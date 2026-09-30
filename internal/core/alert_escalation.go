@@ -128,6 +128,9 @@ func (c *KeyorixCore) RunAlertEscalation(ctx context.Context) (*EscalationResult
 
 	active := activePolicies(policies)
 	if len(active) == 0 {
+		auditCtx, userID := adminJobAuditContext(ctx)
+		c.writeAuditEvent(auditCtx, "admin_job.run_alert_escalation_run", userID, nil,
+			"run-alert-escalation job ran: 0 active escalation policies")
 		return &EscalationResult{}, nil
 	}
 
@@ -154,6 +157,14 @@ func (c *KeyorixCore) RunAlertEscalation(ctx context.Context) (*EscalationResult
 	// Alerts evaluated but with no matching policy also count as skipped.
 	// (result.Evaluated already covers them; Skipped + Escalated should equal
 	// the number of candidates returned by the store query.)
+	// Written unconditionally: this job otherwise leaves no audit trail at all
+	// of its own (F4, audit-completeness campaign) -- per-channel dispatch
+	// failures are logged, not audited, and a run with zero candidate alerts
+	// would leave no trace it ran.
+	auditCtx, userID := adminJobAuditContext(ctx)
+	c.writeAuditEvent(auditCtx, "admin_job.run_alert_escalation_run", userID, nil,
+		fmt.Sprintf("run-alert-escalation job ran: %d evaluated, %d escalated, %d skipped",
+			result.Evaluated, result.Escalated, result.Skipped))
 	return result, nil
 }
 
@@ -278,6 +289,76 @@ func (c *KeyorixCore) postJSONToURL(_ context.Context, rawURL string, payload an
 }
 
 // --- CRUD for AlertEscalationPolicy ---
+
+// Alert-escalation-policy audit event types (F4, audit-completeness
+// campaign) -- same convention as notification_channels.go's
+// EventNotificationChannelCreated/Updated/Deleted, its sibling feature in the
+// same alerting-config domain. CreateAlertEscalationPolicy/
+// UpdateAlertEscalationPolicy/DeleteAlertEscalationPolicy take no actor
+// parameter (many pre-existing tests construct them directly with no caller
+// identity in scope), so these are standalone methods the REST handler calls
+// explicitly once it has the actor -- same reasoning as LogRoleCreated/
+// LogRoleUpdated/LogRoleDeleted (audit.go).
+const (
+	EventAlertEscalationPolicyCreated = "alert_escalation_policy.created"
+	EventAlertEscalationPolicyUpdated = "alert_escalation_policy.updated"
+	EventAlertEscalationPolicyDeleted = "alert_escalation_policy.deleted"
+)
+
+// alertEscalationPolicyAuditView is the audit-safe projection of an
+// AlertEscalationPolicy (coordinator review, PR #2249): ChannelIDs names the
+// specific NotificationChannels this policy dispatches to, which can be
+// webhook/Slack/Teams endpoints whose URL embeds a secret token
+// (dispatchToChannel/postJSONToURL above); logging the raw struct as the
+// audit before/after state -- as writeConfigChangeAuditEvent's callers
+// otherwise do verbatim -- would let a policy's wiring topology, and via
+// cross-reference with a channel's own audit trail its target, leak into
+// audit rows, SIEM exports, and evidence packs. Every other field is safe
+// (no secrets), so this allowlists them and reports only a channel COUNT in
+// place of the raw ChannelIDs.
+type alertEscalationPolicyAuditView struct {
+	ID                   uint   `json:"id"`
+	Name                 string `json:"name"`
+	MinSeverity          string `json:"min_severity"`
+	EscalateAfterMinutes int    `json:"escalate_after_minutes"`
+	ChannelCount         int    `json:"channel_count"`
+	Enabled              bool   `json:"enabled"`
+}
+
+func newAlertEscalationPolicyAuditView(p *models.AlertEscalationPolicy) alertEscalationPolicyAuditView {
+	return alertEscalationPolicyAuditView{
+		ID:                   p.ID,
+		Name:                 p.Name,
+		MinSeverity:          p.MinSeverity,
+		EscalateAfterMinutes: p.EscalateAfterMinutes,
+		ChannelCount:         len(splitChannelIDs(p.ChannelIDs)),
+		Enabled:              p.Enabled,
+	}
+}
+
+func (c *KeyorixCore) LogAlertEscalationPolicyCreated(ctx context.Context, actorID uint, p *models.AlertEscalationPolicy) {
+	c.writeConfigChangeAuditEvent(ctx, EventAlertEscalationPolicyCreated, actorID,
+		fmt.Sprintf("alert escalation policy %d (%q) created", p.ID, p.Name), nil, newAlertEscalationPolicyAuditView(p))
+}
+
+// LogAlertEscalationPolicyUpdated audits an update. before is the policy's
+// state as read prior to the mutation (coordinator review, PR #2249: the
+// prior version of this function hardcoded a nil before, losing the diff
+// entirely) -- the caller must fetch it before calling
+// UpdateAlertEscalationPolicy, since that call mutates the row in place.
+func (c *KeyorixCore) LogAlertEscalationPolicyUpdated(ctx context.Context, actorID uint, before, after *models.AlertEscalationPolicy) {
+	var beforeView any
+	if before != nil {
+		beforeView = newAlertEscalationPolicyAuditView(before)
+	}
+	c.writeConfigChangeAuditEvent(ctx, EventAlertEscalationPolicyUpdated, actorID,
+		fmt.Sprintf("alert escalation policy %d (%q) updated", after.ID, after.Name), beforeView, newAlertEscalationPolicyAuditView(after))
+}
+
+func (c *KeyorixCore) LogAlertEscalationPolicyDeleted(ctx context.Context, actorID, policyID uint) {
+	c.writeAuditEvent(ctx, EventAlertEscalationPolicyDeleted, actorPtr(actorID), nil,
+		fmt.Sprintf("alert escalation policy %d deleted", policyID))
+}
 
 // CreateAlertEscalationPolicy validates and persists a new escalation policy.
 func (c *KeyorixCore) CreateAlertEscalationPolicy(ctx context.Context, p *models.AlertEscalationPolicy) (*models.AlertEscalationPolicy, error) {

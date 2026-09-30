@@ -16,6 +16,13 @@ import (
 
 const EventComplianceDigestSent = "compliance.digest_sent"
 
+// EventComplianceDigestSkippedNoChannel is audited when the job runs but no
+// notification channel is configured at all -- distinct from
+// EventComplianceDigestSent (coordinator review, PR #2249) so a SIEM query
+// for "digest_sent" events can't mistake a run that delivered nothing for one
+// that actually broadcast the digest.
+const EventComplianceDigestSkippedNoChannel = "compliance.digest_skipped_no_channel"
+
 // BuildComplianceDigest assembles the digest from the current posture + control
 // matrix. Returns a title and a plaintext body.
 func (c *KeyorixCore) BuildComplianceDigest(ctx context.Context) (title, body string, err error) {
@@ -105,7 +112,15 @@ func plural(n int) string {
 // "send now" was indistinguishable from the scheduled run in the audit trail.
 func (c *KeyorixCore) SendComplianceDigest(ctx context.Context, actorID uint) (bool, error) {
 	if c.notificationSink == nil {
-		return false, nil // nowhere to deliver — no channel configured
+		// Nowhere to deliver — no channel configured. Still a successful run of
+		// the job (nothing failed), so it must still leave a trail that it ran
+		// (F4, audit-completeness campaign) — the same reasoning as the
+		// !attempted branch below, just one step earlier. A distinct event type
+		// (not EventComplianceDigestSent): nothing was actually sent here.
+		auditCtx, userID := adminJobAuditContext(WithAuditActor(ctx, actorID))
+		c.writeAuditEvent(auditCtx, EventComplianceDigestSkippedNoChannel, userID, nil,
+			"compliance digest job ran but no notification channel is configured")
+		return false, nil
 	}
 	title, body, err := c.BuildComplianceDigest(ctx)
 	if err != nil {
@@ -117,14 +132,7 @@ func (c *KeyorixCore) SendComplianceDigest(ctx context.Context, actorID uint) (b
 		Message: body,
 		Link:    "/compliance",
 	})
-	auditCtx := ctx
-	var userID *uint
-	if actorID != 0 {
-		uid := actorID
-		userID = &uid
-	} else {
-		auditCtx = WithActorType(ctx, ActorTypeSystem)
-	}
+	auditCtx, userID := adminJobAuditContext(WithAuditActor(ctx, actorID))
 	if !attempted {
 		log.Printf("compliance digest: notification channel(s) configured but none accepted the broadcast (e.g. email-only with no broadcast destination) — digest was NOT delivered")
 		c.writeAuditEventFailed(auditCtx, EventComplianceDigestSent, userID, nil, "", "compliance digest broadcast attempted but no configured channel could accept it")

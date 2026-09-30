@@ -160,7 +160,7 @@ func TestAlertEscalationHandler_Get_InvalidID(t *testing.T) {
 
 func TestAlertEscalationHandler_Update_BadJSON(t *testing.T) {
 	h, _ := newAlertEscalationHandlerDB(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", bytes.NewBufferString(`not json`)), "id", "1")
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodPut, "/", bytes.NewBufferString(`not json`))), "id", "1")
 	w := httptest.NewRecorder()
 	h.Update(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -169,7 +169,7 @@ func TestAlertEscalationHandler_Update_BadJSON(t *testing.T) {
 func TestAlertEscalationHandler_Update_NotFound(t *testing.T) {
 	h, _ := newAlertEscalationHandlerDB(t)
 	body, _ := json.Marshal(map[string]interface{}{"name": "new-name"})
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body)), "id", "999")
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body))), "id", "999")
 	w := httptest.NewRecorder()
 	h.Update(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -181,7 +181,7 @@ func TestAlertEscalationHandler_Update_ValidationError(t *testing.T) {
 	require.NoError(t, db.Create(pol).Error)
 	// min_severity to invalid value → validation error
 	body, _ := json.Marshal(map[string]interface{}{"min_severity": "extreme"})
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body)), "id", fmt.Sprintf("%d", pol.ID))
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body))), "id", fmt.Sprintf("%d", pol.ID))
 	w := httptest.NewRecorder()
 	h.Update(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -192,7 +192,7 @@ func TestAlertEscalationHandler_Update_Success(t *testing.T) {
 	pol := &models.AlertEscalationPolicy{Name: "before", MinSeverity: "low", EscalateAfterMinutes: 10, Enabled: true}
 	require.NoError(t, db.Create(pol).Error)
 	body, _ := json.Marshal(map[string]interface{}{"name": "after"})
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body)), "id", fmt.Sprintf("%d", pol.ID))
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body))), "id", fmt.Sprintf("%d", pol.ID))
 	w := httptest.NewRecorder()
 	h.Update(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -204,7 +204,7 @@ func TestAlertEscalationHandler_Update_Success(t *testing.T) {
 
 func TestAlertEscalationHandler_Delete_NotFound(t *testing.T) {
 	h, _ := newAlertEscalationHandlerDB(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "999")
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodDelete, "/", nil)), "id", "999")
 	w := httptest.NewRecorder()
 	h.Delete(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -214,7 +214,7 @@ func TestAlertEscalationHandler_Delete_Success(t *testing.T) {
 	h, db := newAlertEscalationHandlerDB(t)
 	pol := &models.AlertEscalationPolicy{Name: "del-me", MinSeverity: "low", EscalateAfterMinutes: 5, Enabled: true}
 	require.NoError(t, db.Create(pol).Error)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", fmt.Sprintf("%d", pol.ID))
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodDelete, "/", nil)), "id", fmt.Sprintf("%d", pol.ID))
 	w := httptest.NewRecorder()
 	h.Delete(w, req)
 	assert.Equal(t, http.StatusNoContent, w.Code)
@@ -298,7 +298,7 @@ func TestAlertEscalationHandler_Get_InternalError(t *testing.T) {
 func TestAlertEscalationHandler_Update_InvalidID(t *testing.T) {
 	h, _ := newAlertEscalationHandlerDB(t)
 	body, _ := json.Marshal(map[string]interface{}{"name": "x"})
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body)), "id", "abc")
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body))), "id", "abc")
 	w := httptest.NewRecorder()
 	h.Update(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -307,7 +307,7 @@ func TestAlertEscalationHandler_Update_InvalidID(t *testing.T) {
 func TestAlertEscalationHandler_Update_InternalError(t *testing.T) {
 	h := newAlertEscalationHandlerClosedDB(t)
 	body, _ := json.Marshal(map[string]interface{}{"name": "x"})
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body)), "id", "1")
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body))), "id", "1")
 	w := httptest.NewRecorder()
 	h.Update(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -317,7 +317,7 @@ func TestAlertEscalationHandler_Update_InternalError(t *testing.T) {
 
 func TestAlertEscalationHandler_Delete_InvalidID(t *testing.T) {
 	h, _ := newAlertEscalationHandlerDB(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "abc")
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodDelete, "/", nil)), "id", "abc")
 	w := httptest.NewRecorder()
 	h.Delete(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -325,7 +325,7 @@ func TestAlertEscalationHandler_Delete_InvalidID(t *testing.T) {
 
 func TestAlertEscalationHandler_Delete_InternalError(t *testing.T) {
 	h := newAlertEscalationHandlerClosedDB(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "1")
+	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodDelete, "/", nil)), "id", "1")
 	w := httptest.NewRecorder()
 	h.Delete(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)

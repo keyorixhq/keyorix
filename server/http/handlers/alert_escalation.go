@@ -92,6 +92,7 @@ func (h *AlertEscalationHandler) Create(w http.ResponseWriter, r *http.Request) 
 		sendError(w, "InternalError", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
+	h.coreService.LogAlertEscalationPolicyCreated(r.Context(), u.UserID, created)
 	sendCreated(w, policyToAPI(created), "")
 }
 
@@ -131,6 +132,11 @@ func (h *AlertEscalationHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Update handles PUT /api/v1/alert-escalation-policies/{id}.
 func (h *AlertEscalationHandler) Update(w http.ResponseWriter, r *http.Request) {
+	u := middleware.GetUserFromContext(r.Context())
+	if u == nil {
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
 	id, ok := parseUintParam(w, r, "id")
 	if !ok {
 		return
@@ -140,6 +146,12 @@ func (h *AlertEscalationHandler) Update(w http.ResponseWriter, r *http.Request) 
 		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
 		return
 	}
+	// Fetched BEFORE the mutation so the audit event can carry a real diff --
+	// UpdateAlertEscalationPolicy mutates the row in place, so this is the
+	// only chance to observe the pre-update state (coordinator review, PR
+	// #2249). Best-effort: a failure here must not block the update itself,
+	// it only means the audit event's before side is empty.
+	before, _ := h.coreService.GetAlertEscalationPolicy(r.Context(), id)
 	updated, err := h.coreService.UpdateAlertEscalationPolicy(r.Context(), id, body)
 	if err != nil {
 		if strings.Contains(err.Error(), escalationNotFound) {
@@ -154,11 +166,17 @@ func (h *AlertEscalationHandler) Update(w http.ResponseWriter, r *http.Request) 
 		sendError(w, "InternalError", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
+	h.coreService.LogAlertEscalationPolicyUpdated(r.Context(), u.UserID, before, updated)
 	sendSuccess(w, policyToAPI(updated), "")
 }
 
 // Delete handles DELETE /api/v1/alert-escalation-policies/{id}.
 func (h *AlertEscalationHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	u := middleware.GetUserFromContext(r.Context())
+	if u == nil {
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
 	id, ok := parseUintParam(w, r, "id")
 	if !ok {
 		return
@@ -172,16 +190,18 @@ func (h *AlertEscalationHandler) Delete(w http.ResponseWriter, r *http.Request) 
 		sendError(w, "InternalError", "Failed to delete alert escalation policy", http.StatusInternalServerError, nil)
 		return
 	}
+	h.coreService.LogAlertEscalationPolicyDeleted(r.Context(), u.UserID, id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // RunEscalation handles POST /api/v1/system/admin/jobs/run-alert-escalation.
 func (h *AlertEscalationHandler) RunEscalation(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	u := middleware.GetUserFromContext(r.Context())
+	if u == nil {
 		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
-	result, err := h.coreService.RunAlertEscalation(r.Context())
+	result, err := h.coreService.RunAlertEscalation(core.WithAuditActor(r.Context(), u.UserID))
 	if err != nil {
 		log.Printf("Error running alert escalation job: %v", err)
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)

@@ -27,11 +27,12 @@ func NewAdminJobsHandler(coreService *core.KeyorixCore) *AdminJobsHandler {
 // RunAnomalyAlerts handles POST /api/v1/admin/jobs/anomaly-alerts — broadcast alerts
 // for any new (unalerted) anomaly findings now. Returns {alerted}.
 func (h *AdminJobsHandler) RunAnomalyAlerts(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	u := middleware.GetUserFromContext(r.Context())
+	if u == nil {
 		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
-	n, err := h.coreService.AlertNewAnomalies(r.Context())
+	n, err := h.coreService.AlertNewAnomalies(core.WithAuditActor(r.Context(), u.UserID))
 	if err != nil {
 		log.Printf("Error running anomaly alerts job: %v", err)
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
@@ -43,11 +44,12 @@ func (h *AdminJobsHandler) RunAnomalyAlerts(w http.ResponseWriter, r *http.Reque
 // RunRotationReminders handles POST /api/v1/admin/jobs/rotation-reminders — send
 // rotation-due reminders now. Returns {sent}.
 func (h *AdminJobsHandler) RunRotationReminders(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	u := middleware.GetUserFromContext(r.Context())
+	if u == nil {
 		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
-	n, err := h.coreService.SendRotationReminders(r.Context())
+	n, err := h.coreService.SendRotationReminders(core.WithAuditActor(r.Context(), u.UserID))
 	if err != nil {
 		log.Printf("Error running rotation reminders job: %v", err)
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
@@ -60,7 +62,8 @@ func (h *AdminJobsHandler) RunRotationReminders(w http.ResponseWriter, r *http.R
 // send expiry reminders for secrets expiring within the lead window (default 14 when
 // lead_days is omitted or non-positive). Returns {sent}.
 func (h *AdminJobsHandler) RunExpiryReminders(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	u := middleware.GetUserFromContext(r.Context())
+	if u == nil {
 		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
@@ -70,7 +73,7 @@ func (h *AdminJobsHandler) RunExpiryReminders(w http.ResponseWriter, r *http.Req
 			leadDays = d
 		}
 	}
-	n, err := h.coreService.SendExpiryReminders(r.Context(), leadDays)
+	n, err := h.coreService.SendExpiryReminders(core.WithAuditActor(r.Context(), u.UserID), leadDays)
 	if err != nil {
 		log.Printf("Error running expiry reminders job: %v", err)
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
@@ -101,11 +104,12 @@ func (h *AdminJobsHandler) RunComplianceDigest(w http.ResponseWriter, r *http.Re
 // expiring within 7 days (warning) or 1 day (critical). Returns {warnings, criticals}.
 // Requires system.write (enforced by the router).
 func (h *AdminJobsHandler) RunRoleExpiryCheck(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	u := middleware.GetUserFromContext(r.Context())
+	if u == nil {
 		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
-	result, err := h.coreService.CheckRoleExpiry(r.Context())
+	result, err := h.coreService.CheckRoleExpiry(core.WithAuditActor(r.Context(), u.UserID))
 	if err != nil {
 		log.Printf("Error running role-expiry-check job: %v", err)
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
@@ -119,11 +123,12 @@ func (h *AdminJobsHandler) RunRoleExpiryCheck(w http.ResponseWriter, r *http.Req
 // approaching or reaching their read limit. Returns {warnings, criticals, exhausted, checked}.
 // Requires system.write (enforced by the router).
 func (h *AdminJobsHandler) RunReadQuotaCheck(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	u := middleware.GetUserFromContext(r.Context())
+	if u == nil {
 		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
-	result, err := h.coreService.CheckReadQuotas(r.Context())
+	result, err := h.coreService.CheckReadQuotas(core.WithAuditActor(r.Context(), u.UserID))
 	if err != nil {
 		log.Printf("Error running check-read-quotas job: %v", err)
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
@@ -143,11 +148,12 @@ func (h *AdminJobsHandler) RunReadQuotaCheck(w http.ResponseWriter, r *http.Requ
 // Returns {pat_warnings, pat_criticals, machine_warnings, machine_criticals}.
 // Requires system.write (enforced by the router).
 func (h *AdminJobsHandler) RunTokenExpiryCheck(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	u := middleware.GetUserFromContext(r.Context())
+	if u == nil {
 		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
-	result, err := h.coreService.CheckTokenExpiry(r.Context())
+	result, err := h.coreService.CheckTokenExpiry(core.WithAuditActor(r.Context(), u.UserID))
 	if err != nil {
 		log.Printf("Error running token-expiry-check job: %v", err)
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
