@@ -108,16 +108,24 @@ skip.
   unwraps the KEK from the **archive's own staged key files**, never the
   live target's — so an archive's manifest stays verifiable on its own
   terms regardless of what happens to the target's keys afterward.
-- **What happens after a KEK rotation (`keyorix encryption rotate`):** a
-  rotation re-wraps the DEK under a new KEK on the *live* install. It does
-  **not** retroactively touch any existing backup archive — an archive taken
-  before the rotation carries its own pre-rotation KEK-derived keys inside
-  it and restores/verifies exactly as it did before. Rotate, then take a
-  fresh backup afterward if you want your most recent backup to reflect the
-  new KEK; you do not need to re-take or migrate old backups because of a
-  rotation. **UNVERIFIED**: not yet exercised against a real rotation +
-  restore cycle — confirm with a real `encryption rotate` → `admin backup`
-  → `admin restore` cycle before relying on it operationally.
+- **What happens after `keyorix-server admin encryption rotate`:** this
+  command rotates the **DEK** (the key that encrypts your data), not the
+  KEK — the KEK is derived from `KEYORIX_MASTER_PASSWORD`, which this
+  product has no supported "rotate" operation for at all (changing the
+  master password after first boot makes every stored secret
+  undecryptable; see `docs/SELF_HOSTING.md` §4). Since the backup manifest
+  signing key is HKDF-derived from the KEK alone — never the DEK — a DEK
+  rotation does not change it, and does not retroactively affect any
+  existing backup archive: an archive taken before the rotation carries its
+  own pre-rotation staged key files and restores/verifies exactly as it did
+  before, decrypting under the very same (unchanged) KEK. You do not need
+  to re-take or migrate old backups because of a DEK rotation.
+  **VERIFIED** — ran a real `admin encryption rotate --confirm` against a
+  live install (real v0.95.2 binary), then restored a backup taken *before*
+  that rotation: the restore's manifest-signature verification succeeded
+  using the same `KEYORIX_MASTER_PASSWORD`, `verify-audit` reported VALID,
+  and the pre-rotation secret was readable, byte-identical, after booting
+  against the restored data.
 - **Tamper detection:** v1's archive-level checksums only catch corruption
   (a bad copy, a truncated transfer, bit rot) — anyone with write access to
   the archive can recompute them to match tampered content. v2's HMAC-signed
@@ -153,29 +161,40 @@ bootstrap token (byte-identical) and preserved existing data.
 
 ## 6. Air-gapped image rename
 
-The published air-gapped image is renamed from `keyorix-server-lean` to
-`keyorix-server-airgap`. If you pull this image by tag in a CI pipeline, a
-compose override, or a Helm values override, update the repository name
-before your next pull — `keyorix-server-lean` does not receive new tags
-going forward.
+The published air-gapped image tag is renamed from `keyorix-server-lean` to
+`keyorix-server-airgap` **and moved onto the main `keyorix-server` image
+repository as a `-airgap` tag suffix** — it is not a separate repository.
+If you pull this image by tag in a CI pipeline, a compose override, or a
+Helm values override, update both the repository and the tag shape before
+your next pull.
 
 ```sh
 # old
-ghcr.io/keyorixhq/keyorix-server-lean:v0.95.1
+ghcr.io/keyorixhq/keyorix-server-lean:0.95.1
 
 # new
-ghcr.io/keyorixhq/keyorix-server-airgap:v0.95.2
+ghcr.io/keyorixhq/keyorix-server:0.95.2-airgap
 ```
 
-**VERIFIED (build + drill)**, **UNVERIFIED (the actual `docker pull` of a
-published `-airgap` tag)** — that image doesn't exist on GHCR until this
-version is tagged and released, so the pull step itself can't be exercised
-before then. What was verified: building the exact same profile locally
-(`docker build --build-arg BUILD_TAGS=noaws,noazure,nogcp`) and running the
-full `scripts/airgap-e2e.sh` disaster-recovery drill against it end to end
-— real bootstrap, real secret, `admin backup`/`admin restore` with the
+**VERIFIED** — both the pre-release build+drill and, after v0.95.2 was
+tagged and its release workflow finished, the real published artifact:
+`docker pull ghcr.io/keyorixhq/keyorix-server:0.95.2-airgap` succeeded, its
+SLSA provenance attestation verified (`gh attestation verify
+oci://ghcr.io/keyorixhq/keyorix-server:0.95.2-airgap --repo
+keyorixhq/keyorix`, subject digest matched the pulled image exactly), and
+it booted healthy under `docker run --network none` (genuine air-gapped
+mode), bootstrapped, and served a real secret create/read. Earlier,
+pre-tag: building the exact same profile locally (`docker build
+--build-arg BUILD_TAGS=noaws,noazure,nogcp`) and running the full
+`scripts/airgap-e2e.sh` disaster-recovery drill against it end to end —
+real bootstrap, real secret, `admin backup`/`admin restore` with the
 checkpoint anchor cross-check, secret value round-tripped, and the
 tampered-archive negative leg correctly refused.
+
+Also confirmed the air-gapped profile links **zero** AWS/Azure/GCP SDK
+packages (`go list -tags "noaws noazure nogcp" -deps ./server`, 666 total
+packages, none matching; cross-checked those three SDK families ARE
+present in the unfiltered dependency graph, so this isn't a vacuous pass).
 
 ## 7. Rollback
 
