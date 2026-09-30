@@ -348,6 +348,12 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	logoutUserID, logoutUsername := h.coreService.LookupSessionUser(r.Context(), token)
 
 	if err := h.coreService.Logout(r.Context(), token); err != nil {
+		if errors.Is(err, core.ErrSessionNotFound) {
+			// A prior logout (double-click, two tabs, a client retry) already
+			// deleted this session -- an ordinary 401, not a server fault.
+			sendError(w, "Unauthorized", "Session not found or already logged out", http.StatusUnauthorized, nil)
+			return
+		}
 		sendError(w, "InternalError", "Failed to logout", http.StatusInternalServerError, nil)
 		return
 	}

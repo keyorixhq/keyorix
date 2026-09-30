@@ -208,11 +208,18 @@ func (c *KeyorixCore) RecordLogin(ctx context.Context, userID uint) error {
 	return c.storage.UpdateLastLogin(ctx, userID, c.now().UTC())
 }
 
+// ErrSessionNotFound means token names no live session -- either it was
+// never valid, or (the case this exists to distinguish, #N5) a PRIOR logout
+// (a genuine double-click, two tabs, or a client retry) already deleted it.
+// Either way this is a caller-facing 401, never a 500: the token is not
+// valid, which is an ordinary authentication outcome, not a server fault.
+var ErrSessionNotFound = errors.New("session not found")
+
 // Logout invalidates the session identified by token.
 func (c *KeyorixCore) Logout(ctx context.Context, token string) error {
 	session, err := c.storage.GetSession(ctx, token)
 	if err != nil {
-		return fmt.Errorf("session not found")
+		return ErrSessionNotFound
 	}
 	return c.storage.DeleteSession(ctx, session.ID)
 }

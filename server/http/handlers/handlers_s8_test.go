@@ -770,17 +770,19 @@ func TestLogout_NoToken_S8(t *testing.T) {
 }
 
 // TestLogout_InvalidToken_S8 tests Logout with a token that does not exist in
-// the DB → internal error.
+// the DB → 401, not 500 (#N5: previously blanket-mapped ANY Logout error to
+// 500, including "session not found" -- a prior logout (double-click, two
+// tabs, a client retry) hitting this exact path is an ordinary
+// authentication outcome, not a server fault. core.ErrSessionNotFound +
+// errors.Is in the handler now distinguish it from a genuine internal
+// error.)
 func TestLogout_InvalidToken_S8(t *testing.T) {
 	h := newAuthHandlerS8(t)
 	req := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
 	req.Header.Set("Authorization", "Bearer notarealsessiontoken")
 	w := httptest.NewRecorder()
 	h.Logout(w, req)
-	// LookupSessionUser returns "" for an unknown token; Logout itself returns
-	// an error → 500. Some implementations may accept it if the row is absent
-	// and return 200 (idempotent logout). Accept either non-success or 200.
-	assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusInternalServerError, "unexpected status %d", w.Code)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 // TestLogout_HappyPath_S8 tests Logout with a valid session token → 200.
