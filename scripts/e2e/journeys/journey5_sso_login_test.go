@@ -208,6 +208,16 @@ func TestJourney_SSOLogin(t *testing.T) {
 		// or race where the client still holds the old value.
 		staleSessionValue, staleCSRFValue := sessionAndCSRFCookieValues(t, s, jar1b)
 
+		// Positive control: the SAME session, while still valid, must get
+		// something other than 401 on the exact endpoint the post-logout
+		// checks below use -- without this, an exact-401 assertion could
+		// just as easily mean the test's own auth wiring (cookie name,
+		// CSRF header) is broken, not that the session was specifically
+		// invalidated by logout.
+		if controlStatus := getWithStaleSession(t, s, staleSessionValue, "/api/v1/users"); controlStatus == http.StatusUnauthorized {
+			t.Fatal("positive control: the session is already unauthorized BEFORE logout -- the 401 checks below would prove nothing")
+		}
+
 		status1 := ssoPost(t, s, jar1b, "/auth/logout", nil)
 		if status1 < 200 || status1 >= 300 {
 			t.Fatalf("first logout: want 2xx, got %d", status1)
