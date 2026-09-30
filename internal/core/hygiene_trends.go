@@ -105,7 +105,7 @@ func (k *KeyorixCore) RecordHygieneTrendPoint(ctx context.Context) (*HygieneTren
 	if err := k.storage.SaveHygieneTrendSnapshot(ctx, snap); err != nil {
 		return nil, fmt.Errorf("save hygiene trend snapshot: %w", err)
 	}
-	k.writeAuditEvent(ctx, "admin_job.record_hygiene_snapshot_run", nil, nil,
+	k.writeAuditEvent(ctx, "admin_job.record_hygiene_snapshot_run", auditActorPtr(ctx), nil,
 		fmt.Sprintf("record-hygiene-snapshot job ran: %d stale PAT(s), %d expired PAT(s), %d stale machine(s)",
 			point.StalePATs, point.ExpiredPATs, point.StaleMachines))
 	return point, nil

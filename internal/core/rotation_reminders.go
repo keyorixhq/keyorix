@@ -30,7 +30,7 @@ func (c *KeyorixCore) SendRotationReminders(ctx context.Context) (int, error) { 
 		return 0, err
 	}
 	if len(evals) == 0 {
-		c.writeAuditEvent(ctx, "admin_job.rotation_reminders_run", nil, nil,
+		c.writeAuditEvent(ctx, "admin_job.rotation_reminders_run", auditActorPtr(ctx), nil,
 			"rotation-reminders job ran: 0 rotation policies evaluated")
 		return 0, nil
 	}

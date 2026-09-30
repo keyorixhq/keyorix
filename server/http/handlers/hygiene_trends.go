@@ -58,12 +58,13 @@ func (h *HygieneTrendsHandler) GetCredentialTrends(w http.ResponseWriter, r *htt
 // RecordHygieneSnapshot handles POST /api/v1/system/admin/jobs/record-hygiene-snapshot.
 // Computes today's hygiene counts and persists them as a HygieneTrendSnapshot row.
 func (h *HygieneTrendsHandler) RecordHygieneSnapshot(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	u := middleware.GetUserFromContext(r.Context())
+	if u == nil {
 		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
-	point, err := h.coreService.RecordHygieneTrendPoint(r.Context())
+	point, err := h.coreService.RecordHygieneTrendPoint(core.WithAuditActor(r.Context(), u.UserID))
 	if err != nil {
 		log.Printf("Error recording hygiene trend snapshot: %v", err)
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)

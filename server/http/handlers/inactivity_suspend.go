@@ -27,7 +27,8 @@ type suspendInactiveUsersRequest struct {
 // Body: {"inactive_days": N}
 // Response: {"suspended": [...], "skipped": N, "total": N}
 func (h *AdminJobsHandler) SuspendInactiveUsers(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	u := middleware.GetUserFromContext(r.Context())
+	if u == nil {
 		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
@@ -47,7 +48,7 @@ func (h *AdminJobsHandler) SuspendInactiveUsers(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	result, err := h.coreService.SuspendInactiveUsers(r.Context(), core.InactivitySuspendConfig{
+	result, err := h.coreService.SuspendInactiveUsers(core.WithAuditActor(r.Context(), u.UserID), core.InactivitySuspendConfig{
 		InactiveDays: req.InactiveDays,
 		DryRun:       req.DryRun,
 	})

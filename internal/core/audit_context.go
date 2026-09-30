@@ -43,6 +43,8 @@ type actorTypeKey struct{}
 
 type machineActorKey struct{}
 
+type auditActorKey struct{}
+
 // WithActorType tags ctx with the principal kind for the current request
 // (ActorTypeUser/ActorTypeMachine/ActorTypeSystem). The auth middleware sets it
 // per request; writeAuditEvent* reads it and stamps ActorType on the row. An
@@ -81,6 +83,44 @@ func WithMachineActor(ctx context.Context, machineID uint) context.Context {
 func machineActorFromContext(ctx context.Context) (uint, bool) {
 	machineID, ok := ctx.Value(machineActorKey{}).(uint)
 	return machineID, ok && machineID != 0
+}
+
+// WithAuditActor tags ctx with the human caller ID that explicitly triggered
+// the current operation (PR #2249 coordinator review: the /admin/jobs
+// on-demand triggers -- anomaly-alerts, rotation/expiry/token-expiry
+// reminders, role-expiry-check, check-read-quotas, run-alert-escalation,
+// record-hygiene-snapshot, suspend-inactive-users -- share their core
+// function with a background scheduler that has no caller at all, so those
+// functions can't take an actor as a hard parameter; a zero-value default
+// would make every manual trigger indistinguishable from the scheduler in
+// the audit trail). The admin-jobs HTTP handlers tag ctx with the
+// authenticated caller before invoking the shared core function; the
+// scheduler invokes it with a plain, untagged context, so its own runs
+// legitimately report no actor. A zero userID is treated as "no actor",
+// same shape as WithMachineActor/WithImpersonation.
+func WithAuditActor(ctx context.Context, userID uint) context.Context {
+	if userID == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, auditActorKey{}, userID)
+}
+
+// auditActorFromContext returns the tagged caller ID and whether ctx carries
+// one -- see WithAuditActor.
+func auditActorFromContext(ctx context.Context) (uint, bool) {
+	userID, ok := ctx.Value(auditActorKey{}).(uint)
+	return userID, ok && userID != 0
+}
+
+// auditActorPtr returns a *uint for writeAuditEvent's userID param from
+// whatever caller ID WithAuditActor tagged ctx with (nil when untagged --
+// the background scheduler's own runs).
+func auditActorPtr(ctx context.Context) *uint {
+	userID, ok := auditActorFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	return &userID
 }
 
 // WithImpersonation tags ctx with the admin user ID that initiated the current

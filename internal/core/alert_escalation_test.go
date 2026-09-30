@@ -899,3 +899,121 @@ func TestRunAlertEscalation_MultiPolicyMinDelayUpdate(t *testing.T) {
 	assert.Equal(t, 1, result.Escalated)
 	store.AssertExpectations(t)
 }
+
+// ---- coordinator review, PR #2249: real actor on admin-job "ran" events ----
+
+// TestRunAlertEscalation_AttributesRealActorFromContext proves the
+// run-alert-escalation "job ran" summary event carries the REAL triggering
+// caller's ID when one exists (WithAuditActor, set by the admin-jobs HTTP
+// handler before invoking this shared core function) -- before this fix,
+// every one of these summary events hardcoded a nil actor regardless of
+// caller, so a manual admin trigger of this security-relevant job was
+// indistinguishable from an unattributed scheduler run.
+func TestRunAlertEscalation_AttributesRealActorFromContext(t *testing.T) {
+	store := new(MockStorage)
+	store.On("ListAlertEscalationPolicies", mock.Anything).Return([]models.AlertEscalationPolicy{}, nil)
+	var captured *models.AuditEvent
+	store.On("LogAuditEvent", mock.Anything, mock.AnythingOfType("*models.AuditEvent")).
+		Run(func(args mock.Arguments) { captured = args.Get(1).(*models.AuditEvent) }).
+		Return(nil)
+	c := NewKeyorixCore(store)
+
+	const actorID = uint(4242)
+	_, err := c.RunAlertEscalation(WithAuditActor(context.Background(), actorID))
+	require.NoError(t, err)
+
+	require.NotNil(t, captured, "a zero-policy run must still leave an audit trail")
+	require.NotNil(t, captured.UserID, "an admin-triggered run must attribute the real actor, not nil")
+	assert.Equal(t, actorID, *captured.UserID)
+}
+
+// TestRunAlertEscalation_NoActorTag_NilActor proves the scheduler's own
+// untagged-context runs still correctly report no actor -- the fix above
+// must not force attribution onto a run that genuinely has no human caller.
+func TestRunAlertEscalation_NoActorTag_NilActor(t *testing.T) {
+	store := new(MockStorage)
+	store.On("ListAlertEscalationPolicies", mock.Anything).Return([]models.AlertEscalationPolicy{}, nil)
+	var captured *models.AuditEvent
+	store.On("LogAuditEvent", mock.Anything, mock.AnythingOfType("*models.AuditEvent")).
+		Run(func(args mock.Arguments) { captured = args.Get(1).(*models.AuditEvent) }).
+		Return(nil)
+	c := NewKeyorixCore(store)
+
+	_, err := c.RunAlertEscalation(context.Background())
+	require.NoError(t, err)
+
+	require.NotNil(t, captured)
+	assert.Nil(t, captured.UserID, "an untagged (scheduler) run must not fabricate an actor")
+}
+
+// ---- coordinator review, PR #2249: escalation-policy audit redaction ----
+
+// TestLogAlertEscalationPolicyCreated_RedactsChannelIDs proves the audit
+// event for a policy CREATE never carries the raw ChannelIDs -- a policy's
+// wiring reveals which NotificationChannels (webhook/Slack/Teams targets,
+// potentially secret-bearing URLs) it dispatches to, so the audit view
+// reports only a channel COUNT.
+func TestLogAlertEscalationPolicyCreated_RedactsChannelIDs(t *testing.T) {
+	store := new(MockStorage)
+	var captured *models.AuditEvent
+	store.On("LogAuditEvent", mock.Anything, mock.AnythingOfType("*models.AuditEvent")).
+		Run(func(args mock.Arguments) { captured = args.Get(1).(*models.AuditEvent) }).
+		Return(nil)
+	c := NewKeyorixCore(store)
+
+	p := &models.AlertEscalationPolicy{
+		ID: 7, Name: "sev1-page", MinSeverity: "critical", EscalateAfterMinutes: 5,
+		ChannelIDs: "3,4,5", Enabled: true,
+	}
+	c.LogAlertEscalationPolicyCreated(context.Background(), 100, p)
+
+	require.NotNil(t, captured)
+	assert.Contains(t, captured.Diff, "sev1-page", "non-secret fields must still be audited")
+	assert.Contains(t, captured.Diff, `"channel_count":3`, "channel wiring must be reported as a count")
+	assert.NotContains(t, captured.Diff, "3,4,5", "the raw channel_ids must never appear in the audit trail")
+	assert.NotContains(t, captured.Diff, "channel_ids", "the channel_ids field name itself must not appear -- confirms the allowlisted view, not a redacted-value substitution")
+}
+
+// TestLogAlertEscalationPolicyUpdated_CarriesBeforeDiff proves before is a
+// real prior snapshot, not the hardcoded nil the original implementation
+// passed -- an incident investigation needs to see what a policy's severity
+// threshold or delay changed FROM, not just what it changed to.
+func TestLogAlertEscalationPolicyUpdated_CarriesBeforeDiff(t *testing.T) {
+	store := new(MockStorage)
+	var captured *models.AuditEvent
+	store.On("LogAuditEvent", mock.Anything, mock.AnythingOfType("*models.AuditEvent")).
+		Run(func(args mock.Arguments) { captured = args.Get(1).(*models.AuditEvent) }).
+		Return(nil)
+	c := NewKeyorixCore(store)
+
+	before := &models.AlertEscalationPolicy{ID: 8, Name: "sev1-page", MinSeverity: "high", EscalateAfterMinutes: 30, ChannelIDs: "1", Enabled: true}
+	after := &models.AlertEscalationPolicy{ID: 8, Name: "sev1-page", MinSeverity: "critical", EscalateAfterMinutes: 5, ChannelIDs: "1,2", Enabled: true}
+	c.LogAlertEscalationPolicyUpdated(context.Background(), 100, before, after)
+
+	require.NotNil(t, captured)
+	assert.Contains(t, captured.Diff, `"min_severity":"high"`, "the diff must carry the PRIOR min_severity")
+	assert.Contains(t, captured.Diff, `"min_severity":"critical"`, "the diff must carry the NEW min_severity")
+	assert.Contains(t, captured.Diff, `"escalate_after_minutes":30`, "the diff must carry the PRIOR delay")
+	assert.Contains(t, captured.Diff, `"escalate_after_minutes":5`, "the diff must carry the NEW delay")
+}
+
+// TestLogAlertEscalationPolicyUpdated_NilBefore_OmitsBeforeSide proves a nil
+// before (the handler's best-effort pre-fetch failed) degrades to an
+// after-only diff rather than panicking on a nil dereference.
+func TestLogAlertEscalationPolicyUpdated_NilBefore_OmitsBeforeSide(t *testing.T) {
+	store := new(MockStorage)
+	var captured *models.AuditEvent
+	store.On("LogAuditEvent", mock.Anything, mock.AnythingOfType("*models.AuditEvent")).
+		Run(func(args mock.Arguments) { captured = args.Get(1).(*models.AuditEvent) }).
+		Return(nil)
+	c := NewKeyorixCore(store)
+
+	after := &models.AlertEscalationPolicy{ID: 9, Name: "sev1-page", MinSeverity: "critical", EscalateAfterMinutes: 5, Enabled: true}
+	require.NotPanics(t, func() {
+		c.LogAlertEscalationPolicyUpdated(context.Background(), 100, nil, after)
+	})
+
+	require.NotNil(t, captured)
+	assert.NotContains(t, captured.Diff, `"before"`, "a nil before must be omitted (omitempty), not serialized as an empty/zero-value struct")
+	assert.Contains(t, captured.Diff, `"min_severity":"critical"`)
+}

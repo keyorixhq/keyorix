@@ -96,7 +96,7 @@ func (c *KeyorixCore) AlertNewAnomalies(ctx context.Context) (int, error) {
 		// must still leave SOME audit trail that the job ran (F4, audit-
 		// completeness campaign) — otherwise an on-demand trigger of an empty
 		// queue is indistinguishable from the job never running at all.
-		c.writeAuditEvent(ctx, "admin_job.anomaly_alerts_run", nil, nil, "anomaly-alerts job ran: 0 unalerted anomalies")
+		c.writeAuditEvent(ctx, "admin_job.anomaly_alerts_run", auditActorPtr(ctx), nil, "anomaly-alerts job ran: 0 unalerted anomalies")
 	}
 	return announced, nil
 }

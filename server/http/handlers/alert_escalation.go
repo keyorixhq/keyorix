@@ -146,6 +146,12 @@ func (h *AlertEscalationHandler) Update(w http.ResponseWriter, r *http.Request) 
 		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
 		return
 	}
+	// Fetched BEFORE the mutation so the audit event can carry a real diff --
+	// UpdateAlertEscalationPolicy mutates the row in place, so this is the
+	// only chance to observe the pre-update state (coordinator review, PR
+	// #2249). Best-effort: a failure here must not block the update itself,
+	// it only means the audit event's before side is empty.
+	before, _ := h.coreService.GetAlertEscalationPolicy(r.Context(), id)
 	updated, err := h.coreService.UpdateAlertEscalationPolicy(r.Context(), id, body)
 	if err != nil {
 		if strings.Contains(err.Error(), escalationNotFound) {
@@ -160,7 +166,7 @@ func (h *AlertEscalationHandler) Update(w http.ResponseWriter, r *http.Request) 
 		sendError(w, "InternalError", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
-	h.coreService.LogAlertEscalationPolicyUpdated(r.Context(), u.UserID, updated)
+	h.coreService.LogAlertEscalationPolicyUpdated(r.Context(), u.UserID, before, updated)
 	sendSuccess(w, policyToAPI(updated), "")
 }
 
@@ -190,11 +196,12 @@ func (h *AlertEscalationHandler) Delete(w http.ResponseWriter, r *http.Request) 
 
 // RunEscalation handles POST /api/v1/system/admin/jobs/run-alert-escalation.
 func (h *AlertEscalationHandler) RunEscalation(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	u := middleware.GetUserFromContext(r.Context())
+	if u == nil {
 		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
-	result, err := h.coreService.RunAlertEscalation(r.Context())
+	result, err := h.coreService.RunAlertEscalation(core.WithAuditActor(r.Context(), u.UserID))
 	if err != nil {
 		log.Printf("Error running alert escalation job: %v", err)
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)

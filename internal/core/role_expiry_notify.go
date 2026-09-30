@@ -91,7 +91,7 @@ func (k *KeyorixCore) CheckRoleExpiry(ctx context.Context) (*RoleExpiryCheckResu
 	// Written unconditionally: this job only ever creates in-app Notification
 	// rows, never an audit_events row of its own (F4, audit-completeness
 	// campaign).
-	k.writeAuditEvent(ctx, "admin_job.role_expiry_check_run", nil, nil,
+	k.writeAuditEvent(ctx, "admin_job.role_expiry_check_run", auditActorPtr(ctx), nil,
 		fmt.Sprintf("role-expiry-check job ran: %d warning(s), %d critical(s)", result.Warnings, result.Criticals))
 	return result, nil
 }
