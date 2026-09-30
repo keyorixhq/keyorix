@@ -26,6 +26,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	keyorixgrpc "github.com/keyorixhq/keyorix/server/grpc"
+	"github.com/keyorixhq/keyorix/server/grpc/services"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -144,6 +145,7 @@ func TestSecretGRPC_UpdateSecret_MachineActor_AuditAttributedToMachine(t *testin
 	_, err := secrets.UpdateSecret(bearerCtx(token), &pb.UpdateSecretRequest{Id: uint32(secretID), Value: &newValue})
 	require.NoError(t, err, "machine with secrets.write must be able to UpdateSecret")
 
+	services.DrainBackgroundGoroutines()
 	core.DrainBackgroundGoroutines()
 
 	events, err := c.ListSecretAuditEvents(context.Background(), secretID, adminID, 10)
@@ -168,6 +170,7 @@ func TestSecretGRPC_DeleteSecret_MachineActor_AuditAttributedToMachine(t *testin
 	_, err := secrets.DeleteSecret(bearerCtx(token), &pb.DeleteSecretRequest{Id: uint32(secretID)})
 	require.NoError(t, err, "machine with secrets.delete must be able to DeleteSecret")
 
+	services.DrainBackgroundGoroutines()
 	core.DrainBackgroundGoroutines()
 
 	// DeleteSecret is a hard delete, so the secret row is gone and
