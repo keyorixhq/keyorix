@@ -22,13 +22,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/stretchr/testify/require"
 )
@@ -70,6 +73,40 @@ func miepAuthedRequest(srv *httptest.Server, method, path, token string, body []
 //     that would tell it panicked), so it must flush every machine-token cache entry
 //     rather than silently leaving this one live.
 func TestTransitionMachineIdentity_EvictionPanicStillRevokesAndFailsClosed(t *testing.T) {
+	t.Run("panic", func(t *testing.T) {
+		miepRunEvictionFailureCase(t, func(faulty *faultstorage.FaultyStorage, _ *miepAlwaysFailCreds) {
+			faulty.Arm(&faultstorage.FaultSpec{
+				Method:  "ListMachineIdentityCredentials",
+				NthCall: 1,
+				Kind:    faultstorage.KindPanic,
+				Err:     errors.New("fault-fuzz injected failure"),
+			})
+		})
+	})
+	// Both the lookup and its one retry fail with an error (no panic): the
+	// non-recover() branch of evictMachineIdentityCacheOrFlush must flush too.
+	t.Run("persistent_error", func(t *testing.T) {
+		miepRunEvictionFailureCase(t, func(_ *faultstorage.FaultyStorage, creds *miepAlwaysFailCreds) {
+			creds.fail.Store(true)
+		})
+	})
+}
+
+// miepAlwaysFailCreds makes every ListMachineIdentityCredentials call fail once
+// armed, so the eviction lookup AND its retry both error.
+type miepAlwaysFailCreds struct {
+	corestorage.Storage
+	fail atomic.Bool
+}
+
+func (s *miepAlwaysFailCreds) ListMachineIdentityCredentials(ctx context.Context, machineID uint) ([]*models.MachineIdentityCredential, error) {
+	if s.fail.Load() {
+		return nil, errors.New("injected persistent credential-lookup failure")
+	}
+	return s.Storage.ListMachineIdentityCredentials(ctx, machineID)
+}
+
+func miepRunEvictionFailureCase(t *testing.T, arm func(*faultstorage.FaultyStorage, *miepAlwaysFailCreds)) {
 	require.NoError(t, i18n.InitializeForTesting())
 	t.Cleanup(i18n.ResetForTesting)
 
@@ -84,8 +121,9 @@ func TestTransitionMachineIdentity_EvictionPanicStillRevokesAndFailsClosed(t *te
 	real, err := appstorage.NewStorageFactory().CreateStorage(cfg)
 	require.NoError(t, err)
 	faulty := faultstorage.NewFaultyStorage(real, nil) // unarmed: setup runs fault-free
+	creds := &miepAlwaysFailCreds{Storage: faulty}
 
-	c := core.NewKeyorixCore(faulty)
+	c := core.NewKeyorixCore(creds)
 	c.SetTokenCacheInvalidator(customMiddleware.InvalidateTokenCacheByHash)
 	c.SetMachineTokenCacheFlusher(customMiddleware.InvalidateAllMachineTokenCache)
 	ctx := context.Background()
@@ -117,12 +155,6 @@ func TestTransitionMachineIdentity_EvictionPanicStillRevokesAndFailsClosed(t *te
 	})
 	require.NoError(t, err)
 
-	mi, err := c.CreateMachineIdentity(ctx, proj.ID, "miep-runner", "ci", "", "", admin.ID, 0)
-	require.NoError(t, err)
-	tok, err := c.IssueMachineToken(ctx, proj.ID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: "miep-token"})
-	require.NoError(t, err)
-	token := tok.PlainToken
-
 	roles, err := c.Storage().ListRoles(ctx)
 	require.NoError(t, err)
 	var roleID uint
@@ -133,7 +165,17 @@ func TestTransitionMachineIdentity_EvictionPanicStillRevokesAndFailsClosed(t *te
 		}
 	}
 	require.NotZero(t, roleID, "builtin role project_developer must exist")
-	require.NoError(t, c.AssignMachineRole(ctx, mi.ID, roleID, core.Scope{ProjectID: proj.ID}, admin.ID, false))
+
+	newMachine := func(name string) (uint, string) {
+		mi, err := c.CreateMachineIdentity(ctx, proj.ID, name, "ci", "", "", admin.ID, 0)
+		require.NoError(t, err)
+		tok, err := c.IssueMachineToken(ctx, proj.ID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: name + "-token"})
+		require.NoError(t, err)
+		require.NoError(t, c.AssignMachineRole(ctx, mi.ID, roleID, core.Scope{ProjectID: proj.ID}, admin.ID, false))
+		return mi.ID, tok.PlainToken
+	}
+	miID, token := newMachine("miep-runner")
+	_, otherToken := newMachine("miep-bystander")
 
 	router, err := NewRouter(&config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}}}, c)
 	require.NoError(t, err)
@@ -142,42 +184,36 @@ func TestTransitionMachineIdentity_EvictionPanicStillRevokesAndFailsClosed(t *te
 
 	probePath := "/api/v1/secrets/" + strconv.FormatUint(uint64(secret.ID), 10) + "/versions"
 
-	// Positive control: prime the auth cache with a genuine positive entry for token,
-	// via a real authenticated, permission-checked request (an unverified token would
-	// make the later "still authenticated" observation vacuous).
+	// Positive controls: prime the auth cache with genuine positive entries for both
+	// machine tokens via real authenticated, permission-checked requests.
 	if got := miepAuthedRequest(srv, http.MethodGet, probePath, token, nil); got != http.StatusOK {
 		t.Fatalf("positive control: fresh machine token did not authenticate (got %d)", got)
 	}
-
-	// Arm the exact fault the fuzz crasher found: the FIRST call to
-	// ListMachineIdentityCredentials panics. This fires inside
-	// evictMachineIdentityCacheOrFlush's post-commit MachineTokenHashes call, strictly
-	// after TransitionMachineIdentity's own WithTransaction has already committed the
-	// state change.
-	faulty.Arm(&faultstorage.FaultSpec{
-		Method:  "ListMachineIdentityCredentials",
-		NthCall: 1,
-		Kind:    faultstorage.KindPanic,
-		Err:     errors.New("fault-fuzz injected failure"),
-	})
-
-	revokePath := "/api/v1/projects/" + strconv.FormatUint(uint64(proj.ID), 10) + "/machine-identities/" + strconv.FormatUint(uint64(mi.ID), 10)
-	status := miepAuthedRequest(srv, http.MethodPut, revokePath, adminSess.SessionToken, []byte(`{"action":"revoke"}`))
-
-	// Half 1: the already-committed transition must NOT be reported as a failure. The
-	// panic happens strictly after commit; the caller must see success.
-	if status != http.StatusOK {
-		t.Errorf("expected 200 (transition already committed before the eviction panic), got %d", status)
+	if got := miepAuthedRequest(srv, http.MethodGet, probePath, otherToken, nil); got != http.StatusOK {
+		t.Fatalf("positive control: bystander machine token did not authenticate (got %d)", got)
 	}
 
-	// Half 2 (THE ASSERTION): the machine token, warm in cache from the positive control
-	// above, must be refused on the VERY NEXT request. RED on the unfixed code (no
-	// recover(), no fail-closed flush): the panic would have crashed this test outright
-	// via the *first* half's HTTP round-trip (no Recovery-caught 500 to even observe) —
-	// or, if only the recover() half of the fix were present without the fail-closed
-	// flush, this next line would still authenticate, since nothing ever told the cache
-	// this credential's hash to evict.
-	if got := miepAuthedRequest(srv, http.MethodGet, probePath, token, nil); got == http.StatusOK {
-		t.Error("revoked machine token still authenticated on the request immediately after revoke — eviction-panic fail-closed flush did not fire")
+	arm(faulty, creds)
+
+	revokePath := "/api/v1/projects/" + strconv.FormatUint(uint64(proj.ID), 10) + "/machine-identities/" + strconv.FormatUint(uint64(miID), 10)
+	status := miepAuthedRequest(srv, http.MethodPut, revokePath, adminSess.SessionToken, []byte(`{"action":"revoke"}`))
+
+	// Half 1: the already-committed transition must NOT be reported as a failure.
+	if status != http.StatusOK {
+		t.Errorf("expected 200 (transition already committed before the eviction failure), got %d", status)
+	}
+
+	// Half 2: the revoked token, warm in cache, must be refused on the very next
+	// request. Without the fail-closed flush, nothing tells the cache which hash to
+	// evict and this still returns 200.
+	if got := miepAuthedRequest(srv, http.MethodGet, probePath, token, nil); got != http.StatusUnauthorized {
+		t.Errorf("revoked machine token on the request right after revoke: want 401, got %d", got)
+	}
+
+	// Control: the flush must not lock out UNRELATED machine principals. They miss
+	// the cache, re-validate against the DB and succeed immediately; a tombstone-based
+	// flush would answer them 401 for invalidTokenTTL.
+	if got := miepAuthedRequest(srv, http.MethodGet, probePath, otherToken, nil); got != http.StatusOK {
+		t.Errorf("bystander machine token right after the flush: want 200, got %d", got)
 	}
 }

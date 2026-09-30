@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"runtime/debug"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -269,7 +270,7 @@ func (c *KeyorixCore) TransitionMachineIdentity(ctx context.Context, projectID, 
 func (c *KeyorixCore) evictMachineIdentityCacheOrFlush(ctx context.Context, id uint, to string) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("SECURITY: machine identity %d: eviction after transition to %q panicked (state transition already committed, unaffected): %v — flushing all machine-token cache entries", id, to, r)
+			log.Printf("SECURITY: machine identity %d: eviction after transition to %q panicked (state transition already committed, unaffected): %v — flushing all machine-token cache entries\n%s", id, to, r, debug.Stack())
 			if c.machineTokenCacheFlusher != nil {
 				c.machineTokenCacheFlusher()
 			}

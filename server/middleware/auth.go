@@ -197,6 +197,9 @@ type tokenCacheEntry struct {
 	// It lets a positive write that was already in flight when the revoke landed know it
 	// must NOT resurrect the entry (see cacheSetValidated).
 	revokedAt time.Time
+	// machineGen is machineCacheGen at the time a positive machine entry was
+	// validated. An entry from an older generation is a miss (see cacheGet).
+	machineGen uint64
 }
 
 // tokenCache is a process-wide cache keyed by SHA-256(token).
@@ -205,7 +208,24 @@ var (
 	tokenCacheMu sync.Mutex
 	tokenCache   = map[string]tokenCacheEntry{}
 	lastPurge    = time.Now()
+	// machineCacheGen is bumped by InvalidateAllMachineTokenCache. Positive
+	// machine entries validated under an older generation are treated as
+	// misses, and a slow-path validation that began before a bump never
+	// caches its result. Guarded by tokenCacheMu.
+	machineCacheGen uint64
 )
+
+// currentMachineCacheGen returns the machine-cache generation. The slow path
+// captures it together with validatedAt, before its DB read.
+func currentMachineCacheGen() uint64 {
+	tokenCacheMu.Lock()
+	defer tokenCacheMu.Unlock()
+	return machineCacheGen
+}
+
+func isMachineEntry(u *UserContext) bool {
+	return u != nil && u.ActorType == core.ActorTypeMachine
+}
 
 // tokenKey returns a safe cache key (SHA-256 hex of the raw token).
 func tokenKey(token string) string {
@@ -225,6 +245,10 @@ func cacheGet(key string) (tokenCacheEntry, bool) {
 		delete(tokenCache, key)
 		return tokenCacheEntry{}, false
 	}
+	if isMachineEntry(e.userCtx) && e.machineGen != machineCacheGen {
+		delete(tokenCache, key)
+		return tokenCacheEntry{}, false
+	}
 	return e, true
 }
 
@@ -241,12 +265,28 @@ func cacheSet(key string, entry tokenCacheEntry) {
 // was written after validatedAt (the moment the slow path began, before its DB read), the
 // revoke wins and the positive entry is dropped. Closes the revocation-resurrection race.
 func cacheSetValidated(key string, userCtx *UserContext, validatedAt time.Time, expiresAt time.Time) {
+	cacheSetValidatedGen(key, userCtx, validatedAt, currentMachineCacheGen(), expiresAt)
+}
+
+// cacheSetValidatedGen is cacheSetValidated with the machine-cache generation
+// captured when validation began. A machine entry is dropped if
+// InvalidateAllMachineTokenCache ran since then: its DB read may predate a
+// revoke that the flush was standing in for, and no per-key tombstone exists
+// for a key that wasn't cached at flush time.
+func cacheSetValidatedGen(key string, userCtx *UserContext, validatedAt time.Time, gen uint64, expiresAt time.Time) {
 	tokenCacheMu.Lock()
 	defer tokenCacheMu.Unlock()
 	if existing, ok := tokenCache[key]; ok && existing.revokedAt.After(validatedAt) {
 		return // revoked during our validation — do not re-cache the now-stale positive
 	}
-	tokenCache[key] = tokenCacheEntry{userCtx: userCtx, expiresAt: expiresAt}
+	entry := tokenCacheEntry{userCtx: userCtx, expiresAt: expiresAt}
+	if isMachineEntry(userCtx) {
+		if gen != machineCacheGen {
+			return // machine cache flushed during our validation
+		}
+		entry.machineGen = gen
+	}
+	tokenCache[key] = entry
 	pruneLocked()
 }
 
@@ -321,6 +361,7 @@ func handleAuthRequest(next http.Handler, w http.ResponseWriter, r *http.Request
 	// concurrent revoke landing during validation is recognized as "after" us and
 	// can't be resurrected by our positive cache write (see cacheSetValidated).
 	validatedAt := time.Now()
+	validatedGen := currentMachineCacheGen()
 	userCtx, err := validateToken(r.Context(), validator, token)
 	if err != nil {
 		// #G-transient: a TRANSIENT infrastructure failure (DB timeout, connection
@@ -395,7 +436,7 @@ func handleAuthRequest(next http.Handler, w http.ResponseWriter, r *http.Request
 	}
 
 	// Cache the positive result (race-safe: dropped if revoked mid-validation).
-	cacheSetValidated(key, userCtx, validatedAt, cacheExpiry)
+	cacheSetValidatedGen(key, userCtx, validatedAt, validatedGen, cacheExpiry)
 
 	if !tokenNetworkAllowed(r, userCtx) {
 		forbiddenResponse(w, "token not permitted from this network")
@@ -1575,26 +1616,29 @@ func InvalidateTokenCacheByHash(hash string) {
 	tokenCacheMu.Unlock()
 }
 
-// InvalidateAllMachineTokenCache tombstones every cache entry currently attributed to a
-// machine identity (ActorType core.ActorTypeMachine), leaving human session/PAT entries
-// untouched. Fail-closed fallback for TransitionMachineIdentity (internal/core/
-// machine_identities.go): when it can't determine exactly which credential hashes belong
-// to the machine identity it just suspended/revoked (the hash lookup itself errored or
-// panicked, after the state transition already committed), it can't evict precisely --
-// but it must not silently leave every machine token live in cache for up to
-// validTokenTTL either. This is the blunt instrument that closes that gap: every machine
-// principal re-validates against the DB on its next request, at the cost of a one-time
-// cache-miss burst across all of them, not just the one identity that actually changed.
-// Same tombstone shape as InvalidateTokenCacheByHash, for the same revocation-resurrection
-// reason (a positive validation already in flight when this runs must not resurrect the
-// entry it raced against).
+// InvalidateAllMachineTokenCache drops every positive cache entry attributed to a
+// machine identity (ActorType core.ActorTypeMachine), leaving human session/PAT
+// entries untouched. Fail-closed fallback for TransitionMachineIdentity
+// (internal/core/machine_identities.go): when it can't determine which credential
+// hashes belong to the identity it just suspended/revoked (the hash lookup errored
+// or panicked after the transition committed), every machine principal must
+// re-validate against the DB on its next request.
+//
+// It bumps machineCacheGen rather than writing tombstones:
+//   - a slow-path validation already in flight (DB read before the revoke) for a
+//     key that was NOT cached at flush time captured the old generation, so
+//     cacheSetValidatedGen drops its write — a per-key tombstone can't cover a
+//     key that isn't in the map;
+//   - unrelated machine tokens just miss the cache and re-validate (200 if still
+//     valid) instead of being answered 401 by a negative entry for
+//     invalidTokenTTL.
 func InvalidateAllMachineTokenCache() {
 	tokenCacheMu.Lock()
 	defer tokenCacheMu.Unlock()
-	now := time.Now()
+	machineCacheGen++
 	for k, e := range tokenCache {
-		if e.userCtx != nil && e.userCtx.ActorType == core.ActorTypeMachine {
-			tokenCache[k] = tokenCacheEntry{userCtx: nil, expiresAt: now.Add(invalidTokenTTL), revokedAt: now}
+		if isMachineEntry(e.userCtx) {
+			delete(tokenCache, k)
 		}
 	}
 }
