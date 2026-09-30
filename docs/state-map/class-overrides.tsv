@@ -7,10 +7,10 @@
 #
 # Columns: kind <TAB> id <TAB> class <TAB> reason
 #
-# Empty so far -- SESSION-AT's own time budget went to building the
-# mechanism (this file + the REVIEW ratchet in completeness_test.go) rather
-# than hand-triaging the ~178 rows Classify currently flags REVIEW. That
-# triage is real follow-up work; see the SESSION-AT report's hand-back
-# section. Add a row here, lower internal/statemap/completeness_test.go's
-# maxReviewRows by one, and re-run `go run ./cmd/statemapgen` for each row
-# triaged.
+# SESSION-AT's own time budget went to building the mechanism (this file +
+# the REVIEW ratchet in completeness_test.go) rather than hand-triaging every
+# row Classify currently flags REVIEW. That triage is real follow-up work;
+# see the SESSION-AT report's hand-back section. Add a row here, lower
+# internal/statemap/completeness_test.go's maxReviewRows by one, and re-run
+# `go run ./cmd/statemapgen` for each row triaged.
+cli	keyorix recovery-key rotate	C	Read server/admin/recovery_key.go in full (runRotateRecoveryKey). The 3 flagged calls are: outputFile.Close/os.Remove (a DEFERRED CLEANUP of the --output file reservation on ANY later failure, not a state write -- exists specifically so a retry after failure doesn't hit a stale "already exists" from this run's own empty reservation) and store.SetRecoveryKeyRecord (the ONE real write). Already reference-quality F1/F2/F8 handling, explicitly documented inline: --recipient parsed and --output reserved BEFORE any state mutation (F1: an early failure leaves the OLD key valid, never a half-rotated state); held under acquireDatabaseLock for the WHOLE run (design doc §2: "so a concurrent recover-admin run can't observe a half-rotated state"); once SetRecoveryKeyRecord commits, every later step (encrypt-for-recipient, write --output) is written to never lose the only copy of the new key even on failure (prints the already-safe ciphertext to stdout with an unmissable banner rather than silently losing it); F8 explicitly designed for and stated in the command's own --help text ("losing it just means running 'rotate' again"). Self-healing/independent by design -- class C, not a gap.

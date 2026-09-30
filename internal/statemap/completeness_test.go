@@ -30,7 +30,7 @@ var validClasses = map[string]bool{
 // just re-running the generator after an unrelated code change. Set to the
 // actual count after this round's classifier fixes (the job classifier was
 // off-by-one before this round and flagged all scheduled jobs; see the PR).
-const maxReviewRows = 182 // +1: `recovery-key rotate` gained an O_EXCL output-file write alongside the DB rotation in #2257 (F8); REVIEW pending AT triage
+const maxReviewRows = 181 // SESSION-AT triaged `recovery-key rotate` (class C, class-overrides.tsv) -- ratchet lowered back down
 
 // TestCompletenessGuard_EntrypointsAndStoresMatchCode is AT0(f): re-runs the
 // same extractors/classifier cmd/statemapgen uses and fails if
