@@ -338,6 +338,34 @@ e2e-web-smoke:
 # other three don't -- run e2e-smoke-postgres separately once one is up).
 e2e-smoke-all: e2e-smoke e2e-smoke-upgrade e2e-web-smoke
 
+# e2e-journeys: SESSION-N's customer-journey E2E -- N1-N3 and N6 (disaster
+# recovery needs no containers, so it's plain `e2e`-tagged and runs here
+# too), distinct from e2e-smoke above. scripts/e2e's own smoke driver
+# asserts "no 5xx anywhere"; these assert the RESULT of a realistic
+# end-to-end scenario (read-back values, exact audit event counts, denial
+# status codes) through the real keyorix-server binary and keyorix CLI, on
+# a freshly bootstrapped install. SQLite only, no Docker -- fast enough for
+# the merge-queue tier (each journey ~6-19s; ~35-40s combined, measured
+# live). Build tag e2e (same as e2e-smoke) plus the shared
+# scripts/e2e/harness package -- see docs/TESTING_GUIDE.md's "Customer
+# journeys" section for the full picture, including N4/N5 below.
+e2e-journeys:
+	go test -tags e2e ./scripts/e2e/journeys/... -v -timeout 300s
+
+# e2e-journeys-containers: N4-N6 -- migrate from Vault/OpenBao, SSO login via
+# a real Keycloak, and disaster recovery (backup/restore/KEK rotation).
+# Needs BOTH the e2e and e2e_containers build tags together (N4/N5 are
+# gated on e2e_containers alone so `make e2e-journeys`/`-tags e2e` never
+# builds or runs them regardless of whether the runner has Docker; they
+# still depend on scripts/e2e/harness, itself gated on e2e). N4/N5 need
+# Docker (skip cleanly if absent, UNLESS KEYORIX_E2E_CONTAINERS is set --
+# see journey4/5's own doc comments); N6 is plain SQLite, no containers.
+# Nightly tier -- Keycloak's own startup dominates N5's runtime (measured
+# 16-56s across runs); N4 and N6 are each ~13-19s. ~50-90s combined,
+# measured live.
+e2e-journeys-containers:
+	KEYORIX_E2E_CONTAINERS=1 go test -tags e2e,e2e_containers ./scripts/e2e/journeys/... -run 'TestJourney_(VaultMigrate|SSOLogin|DisasterRecovery)' -v -timeout 600s
+
 # k8s-e2e: MANUAL target only, not run in CI by default (needs Docker + kind,
 # builds 4 images, installs a real External Secrets Operator, takes several
 # minutes) -- see scripts/k8s-e2e/run.sh's own header for the full flow.
