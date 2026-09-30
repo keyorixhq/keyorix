@@ -2,6 +2,7 @@ package faultops
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 )
@@ -66,4 +67,42 @@ func TestProfileNewFaultWorldSubphases(t *testing.T) {
 			_ = w
 		})
 	}
+}
+
+// TestProfileWorldReuseSpeedup is M5's before/after measurement: N
+// iterations built the OLD way (a fresh newFaultWorld per iteration, the
+// per-input cost every other runOneFuzzIteration caller still pays) versus N
+// iterations reusing ONE world pair (one buildReusableFaultWorld, then
+// resetForReuse per iteration -- the path runOneFuzzIterationWithWorlds
+// takes when given non-nil worlds, exactly as TestWorldReuseSoundness
+// exercises it). Not a correctness test -- logs only; the soundness gate is
+// what proves correctness.
+func TestProfileWorldReuseSpeedup(t *testing.T) {
+	if os.Getenv("KEYORIX_FAULTOPS_PROFILE") == "" {
+		t.Skip("profiling only; set KEYORIX_FAULTOPS_PROFILE=1 to run (builds 16 worlds)")
+	}
+	const n = 15
+
+	freshStart := time.Now()
+	for i := 0; i < n; i++ {
+		w := newFaultWorld(t, nil)
+		_ = w
+	}
+	freshTotal := time.Since(freshStart)
+	t.Logf("PROFILE fresh-per-iteration: %d worlds in %v (%v/world)", n, freshTotal, freshTotal/n)
+
+	reusedStart := time.Now()
+	w := buildReusableFaultWorld(t, nil)
+	buildTotal := time.Since(reusedStart)
+	resetStart := time.Now()
+	for i := 0; i < n; i++ {
+		w.resetForReuse(t, nil)
+	}
+	resetTotal := time.Since(resetStart)
+	reusedTotal := time.Since(reusedStart)
+	t.Logf("PROFILE reused-world: 1 build (%v) + %d resets in %v (%v/reset) = %v total (%v/iteration incl. amortized build)",
+		buildTotal, n, resetTotal, resetTotal/n, reusedTotal, reusedTotal/n)
+
+	t.Logf("PROFILE speedup: %.2fx per-iteration (fresh %v/iter vs reused %v/iter, both amortized over %d)",
+		float64(freshTotal)/float64(reusedTotal), freshTotal/n, reusedTotal/n, n)
 }

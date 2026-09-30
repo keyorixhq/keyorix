@@ -56,5 +56,13 @@ func TestReplayStorageFaultInput(t *testing.T) {
 		t.Fatalf("REPLAY_HEX is not valid hex: %v", err)
 	}
 	t.Log(traceFuzzOp(data))
-	runOneFuzzIteration(t, data)
+	t.Run("fresh", func(t *testing.T) { runOneFuzzIteration(t, data) })
+	// The fuzz loop runs inputs through reused worlds (world_reuse_test.go).
+	// resetForReuse rebuilds the core and wipes the DB, so the two paths should
+	// agree; replaying both makes a disagreement visible during triage.
+	t.Run("reused", func(t *testing.T) {
+		ref := buildReusableFaultWorld(t, nil)
+		w := buildReusableFaultWorld(t, nil)
+		runOneFuzzIterationWithWorlds(t, data, ref, w, nil)
+	})
 }

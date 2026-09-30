@@ -353,8 +353,20 @@ func FuzzStorageFaultOperations(f *testing.F) {
 	if s := seedFor("REST DELETE /api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}", "GetUser", 1, 0); s != nil {
 		f.Add(s)
 	}
+	// Per-worker world reuse (M5): each `go test -fuzz` worker is a separate
+	// OS process (see world_reuse_test.go's doc comment), so building ref/w
+	// ONCE here, before f.Fuzz, is naturally scoped to one worker -- no
+	// cross-worker contention. resetForReuse restores each world to the same
+	// logical starting state a fresh newFaultWorld(t, nil) would produce
+	// before every input, without rebuilding the DB schema or HTTP/gRPC
+	// servers from scratch each time. Proven equivalent to the pre-reuse
+	// fresh-per-input behaviour by TestWorldReuseSoundness, whose own
+	// red-proof (TestWorldReuseSoundness_CatchesPlantedStateLeak) confirms
+	// the comparison actually fails on a planted state-leak bug.
+	ref := buildReusableFaultWorld(f, nil)
+	w := buildReusableFaultWorld(f, nil)
 	f.Fuzz(func(t *testing.T, data []byte) {
-		runOneFuzzIteration(t, data)
+		runOneFuzzIterationWithWorlds(t, data, ref, w, nil)
 	})
 }
 
@@ -362,6 +374,17 @@ func FuzzStorageFaultOperations(f *testing.F) {
 // TestReplayStorageFaultInput can run the identical logic against one
 // specific saved input outside of f.Fuzz.
 func runOneFuzzIteration(t *testing.T, data []byte) {
+	t.Helper()
+	runOneFuzzIterationWithWorlds(t, data, nil, nil, nil)
+}
+
+// runOneFuzzIterationWithWorlds is runOneFuzzIteration with the world pair
+// pluggable: reusedRef/reusedW nil (every existing caller) builds a fresh
+// world exactly as before -- zero behaviour change. Non-nil (Session M's
+// world-reuse soundness gate, world_reuse_soundness_test.go, and the
+// reuse-enabled fuzz loop once the gate passes) resets the given world
+// in place via resetForReuse instead of building a new one.
+func runOneFuzzIterationWithWorlds(t *testing.T, data []byte, reusedRef, reusedW *faultWorld, observe func(oracleInput)) {
 	t.Helper()
 	t.Log(traceFuzzOp(data)) // RULES: print the decoded operation/fault as a readable line, every run.
 
@@ -374,7 +397,12 @@ func runOneFuzzIteration(t *testing.T, data []byte) {
 
 	// Reference: same operation, fully unfaulted, fresh world — the
 	// expected post-state a legitimate success must match (oracle (a)).
-	ref := newFaultWorld(t, nil)
+	ref := reusedRef
+	if ref == nil {
+		ref = newFaultWorld(t, nil)
+	} else {
+		ref.resetForReuse(t, nil)
+	}
 	refResult, refErr := runOp(ctx, ref, op)
 	if refErr != nil {
 		t.Skipf("reference (fault-free) run itself errored — not a fault-injection finding: %v", refErr)
@@ -393,7 +421,12 @@ func runOneFuzzIteration(t *testing.T, data []byte) {
 	// Fault world: Setup runs UNFAULTED (spec nil at construction), so
 	// NthCall below counts only Execute's own calls, and `before` reflects
 	// post-setup state rather than the pristine pre-setup world.
-	w := newFaultWorld(t, nil)
+	w := reusedW
+	if w == nil {
+		w = newFaultWorld(t, nil)
+	} else {
+		w.resetForReuse(t, nil)
+	}
 	var state any
 	if op.Setup != nil {
 		state, err = op.Setup(ctx, w)
@@ -460,10 +493,14 @@ func runOneFuzzIteration(t *testing.T, data []byte) {
 		t.Fatalf("snapshotting post-fault world: %v", err)
 	}
 
-	checkOracles(t, oracleInput{
+	oi := oracleInput{
 		op: op.Key, method: decoded.methodName, nth: decoded.nthCall, kind: decoded.kind,
 		result: result, before: before, after: after, refAfter: refAfter,
-	})
+	}
+	if observe != nil {
+		observe(oi)
+	}
+	checkOracles(t, oi)
 }
 
 type oracleInput struct {
