@@ -9,9 +9,14 @@
 // triggers that only ever emit/dispatch a notification, never mutate account/
 // role/audit state).
 //
-// Verified RED against a reverted allowlist (emptied it to {}): all 19 current
+// Verified RED against a reverted allowlist (emptied it to {}): all 17 current
 // permAlertsWrite call sites reported as unallowed. GREEN with the real
-// allowlist below restored.
+// allowlist below restored. anomaly-alerts and compliance-digest are
+// notification-only but deliberately excluded from this split and stay on
+// system.write (see systemWriteScopeAllowlist in system_write_scope_test.go)
+// — an alert_operator could otherwise point a notification channel they
+// control at either trigger and exfiltrate anomaly-detection findings or
+// compliance posture.
 package http
 
 import (
@@ -44,10 +49,8 @@ var alertsWriteScopeAllowlist = map[string]string{
 	"GET /api/v1/alert-escalation-policies/{id}":          "Same family -- reads one policy.",
 	"PUT /api/v1/alert-escalation-policies/{id}":          "Same family -- updates one policy.",
 	"DELETE /api/v1/alert-escalation-policies/{id}":       "Same family -- deletes one policy.",
-	"POST /api/v1/admin/jobs/anomaly-alerts":              "RunAnomalyAlerts -> core.AlertNewAnomalies: broadcasts alerts for new anomaly findings. Verified by reading the core function -- emits notifications only, no state mutation.",
 	"POST /api/v1/admin/jobs/rotation-reminders":          "RunRotationReminders -> core.SendRotationReminders: sends rotation-due reminders. Notification-only.",
 	"POST /api/v1/admin/jobs/expiry-reminders":            "RunExpiryReminders -> core.SendExpiryReminders: sends secret-expiry reminders. Notification-only.",
-	"POST /api/v1/admin/jobs/compliance-digest":           "RunComplianceDigest -> core.SendComplianceDigest: broadcasts the compliance digest. Notification-only.",
 	"POST /api/v1/admin/jobs/role-expiry-check":           "RunRoleExpiryCheck -> core.CheckRoleExpiry (role_expiry_notify.go): emits in-app Notification rows for role grants nearing expiry. Verified by reading the function -- it does NOT revoke anything; its own doc comment says already-expired grants are left to a separate removal sweep. Notification-only, so it moved here despite not being on this item's original expected list.",
 	"POST /api/v1/admin/jobs/check-read-quotas":           "RunReadQuotaCheck -> core.CheckReadQuotas (read_quota_alerts.go): emits in-app Notification rows for secrets approaching their MaxReads limit. Verified by reading the function -- it does NOT block or enforce reads (that happens elsewhere, at actual read time); this job only notifies. Notification-only, so it moved here despite not being on this item's original expected list.",
 	"POST /api/v1/admin/jobs/run-alert-escalation":        "RunEscalation -> core.RunAlertEscalation (alert_escalation.go): dispatches unacknowledged anomaly alerts to configured notification channels per escalation policy. Verified by reading the function -- no alert-row mutation (no \"escalated\" flag set), pure dispatch.",

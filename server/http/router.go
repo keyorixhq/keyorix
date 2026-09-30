@@ -1210,17 +1210,27 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// On-demand triggers for the notification/alert jobs that otherwise run only on
 		// their background schedulers — dispatch immediately after an incident or config
 		// change. F1 (ADR-110 follow-up) split this group's single gate per-route:
-		// every trigger that only ever emits/dispatches a notification (verified by
-		// reading its core function — none of these revoke, suspend, or delete
-		// anything) moved to alerts.write; the three that mutate account/data state
-		// (suspend-inactive-users, purge-audit-logs, record-hygiene-snapshot) stayed
-		// on system.write. See docs/adr-110-system-write-scope.md's Decision section
-		// for the per-route classification.
+		// every trigger that only ever emits/dispatches a notification AND carries no
+		// compliance/audit-derived data moved to alerts.write; the rest — three that
+		// mutate account/data state (suspend-inactive-users, purge-audit-logs,
+		// record-hygiene-snapshot), plus anomaly-alerts and compliance-digest — stayed
+		// on system.write. anomaly-alerts/compliance-digest are notification-only but
+		// deliberately excluded from the split: an alert_operator (no audit/compliance
+		// authority by design) could point a notification channel they control at
+		// either trigger and exfiltrate anomaly-detection findings or compliance
+		// posture — an SSRF path from air-gapped hosts too. See
+		// docs/adr-110-system-write-scope.md's Decision section for the per-route
+		// classification.
 		r.Route("/admin/jobs", func(r chi.Router) {
-			r.With(customMiddleware.RequirePermission(permAlertsWrite)).Post("/anomaly-alerts", adminJobsHandler.RunAnomalyAlerts)
+			// Broadcasts anomaly-detection findings to configured notification
+			// channels — kept on system.write, not alerts.write: see the group
+			// comment above.
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/anomaly-alerts", adminJobsHandler.RunAnomalyAlerts)
 			r.With(customMiddleware.RequirePermission(permAlertsWrite)).Post("/rotation-reminders", adminJobsHandler.RunRotationReminders)
 			r.With(customMiddleware.RequirePermission(permAlertsWrite)).Post("/expiry-reminders", adminJobsHandler.RunExpiryReminders)
-			r.With(customMiddleware.RequirePermission(permAlertsWrite)).Post("/compliance-digest", adminJobsHandler.RunComplianceDigest)
+			// Broadcasts the compliance digest to configured notification channels —
+			// kept on system.write, not alerts.write: see the group comment above.
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/compliance-digest", adminJobsHandler.RunComplianceDigest)
 			// Persists a HygieneTrendSnapshot row (data persistence, not a
 			// notification) — stays on system.write.
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/record-hygiene-snapshot", hygieneTrendsHandler.RecordHygieneSnapshot)

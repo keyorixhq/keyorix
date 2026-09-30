@@ -2078,19 +2078,6 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		&models.AnomalyConfigRecord{},
 		&models.StatsSnapshot{},
 		&models.DeploymentStatsSnapshot{},
-		// NotificationChannel/AlertEscalationPolicy: found while writing F1's
-		// (ADR-110 follow-up, 2026-09-28) alert_operator behavioral test —
-		// neither was migrated ANYWHERE in this factory, on any backend, despite
-		// both having live, reviewed routes (router.go's notification-channels/
-		// alert-escalation-policies groups) since ADR-110. Same defect class as
-		// MFAStepUpGrant below: a fresh install's GET/POST/PUT/DELETE
-		// /notification-channels and /alert-escalation-policies, and the
-		// run-alert-escalation job, would all fail with "no such table"/
-		// "relation does not exist" against a real database. Plain new tables,
-		// no legacy columns to conditionally backfill, so they belong in this
-		// generic bulk list like MFAStepUpGrant.
-		&models.NotificationChannel{},
-		&models.AlertEscalationPolicy{},
 		// MFAStepUpGrant (store-mfa-002): was never migrated anywhere — a fresh
 		// install's CreateMFAStepUpGrant/GetActiveMFAStepUpGrant/
 		// PruneMFAStepUpGrants calls (VerifyMFAStepUp, the classification gate,

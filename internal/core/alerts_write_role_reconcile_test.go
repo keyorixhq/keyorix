@@ -142,6 +142,14 @@ func TestReconcileAlertsWriteRole_SeedsRoleAndBackfillsExistingSystemWriteHolder
 // permission grant ever landed, so a role stuck at zero permissions by a failed
 // grant would never be retried or repaired — reusing the same failingStorage
 // wrapper mfa_atomicity_test.go's #G08 tests use (same package, same pattern).
+//
+// Also covers a second, coordinator-found defect in the same function (PR #2244
+// review): ReconcileAlertsWriteRole used to write its one-time completion marker
+// unconditionally, even when this same injected failure caused the seed AND the
+// custom_ops_role backfill grant to fail — permanently locking the install out of
+// ever retrying, since the marker check at the top of the function short-circuits
+// every subsequent run. This test now asserts the marker is withheld on a failed
+// run, and that a second, unimpeded run completes the grant the first run missed.
 func TestSeedAlertOperatorRole_AtomicOnPermissionGrantFailure(t *testing.T) {
 	t.Parallel()
 	c, db := newAlertsWriteReconcileCore(t)
@@ -150,6 +158,7 @@ func TestSeedAlertOperatorRole_AtomicOnPermissionGrantFailure(t *testing.T) {
 
 	require.NoError(t, c.ReconcileRBACPermissions(ctx))
 
+	realStorage := c.storage
 	c.storage = &failingStorage{Storage: c.storage, failMethod: "AssignPermissionToRole"}
 	err := c.ReconcileAlertsWriteRole(ctx)
 	// seedAlertOperatorRole's own error is logged, not propagated by its caller
@@ -161,4 +170,32 @@ func TestSeedAlertOperatorRole_AtomicOnPermissionGrantFailure(t *testing.T) {
 	_, roleErr := c.storage.GetRoleByName(ctx, "alert_operator")
 	require.Error(t, roleErr,
 		"alert_operator must NOT exist after a failed permission grant — CreateRole must have rolled back inside the same transaction, not left a zero-permission role behind for GetRoleByName's existence check to wrongly treat as fully seeded")
+
+	t.Run("completion marker withheld after a failed run", func(t *testing.T) {
+		_, done, err := realStorage.GetSystemMetadata(ctx, alertsWriteRoleBackfillMarkerKey)
+		require.NoError(t, err)
+		assert.False(t, done,
+			"the completion marker must NOT be set after a run with injected failures — setting it "+
+				"unconditionally would permanently lock the install out of ever retrying the seed and "+
+				"the backfill grant this run failed to complete")
+	})
+
+	t.Run("second run, unimpeded, completes the grant the first run missed", func(t *testing.T) {
+		c.storage = realStorage
+		require.NoError(t, c.ReconcileAlertsWriteRole(ctx))
+
+		role, err := c.storage.GetRoleByName(ctx, "alert_operator")
+		require.NoError(t, err, "the second run must seed alert_operator that the first run's injected failure rolled back")
+		perms, err := c.storage.GetRolePermissions(ctx, role.ID)
+		require.NoError(t, err)
+		require.Len(t, perms, 1)
+		assert.Equal(t, permAlertsWrite, perms[0].Name)
+
+		assert.True(t, roleHasPerm(t, c, "custom_ops_role", permAlertsWrite),
+			"the second run must also complete the system.write backfill grant to custom_ops_role that the first run's injected failure left incomplete")
+
+		_, done, err := realStorage.GetSystemMetadata(ctx, alertsWriteRoleBackfillMarkerKey)
+		require.NoError(t, err)
+		assert.True(t, done, "the completion marker must be set once a run finishes with zero failures")
+	})
 }

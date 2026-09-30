@@ -64,8 +64,10 @@ func (c *KeyorixCore) ReconcileAlertsWriteRole(ctx context.Context) error {
 		return nil
 	}
 
+	failures := 0
 	if err := c.seedAlertOperatorRole(ctx, alertsWriteID); err != nil {
 		log.Printf("alerts.write role reconcile: seed alert_operator role: %v", err)
+		failures++
 	}
 
 	roles, err := c.storage.ListRoles(ctx)
@@ -78,6 +80,7 @@ func (c *KeyorixCore) ReconcileAlertsWriteRole(ctx context.Context) error {
 		rolePerms, err := c.storage.GetRolePermissions(ctx, role.ID)
 		if err != nil {
 			log.Printf("alerts.write role reconcile: list permissions for role %s: %v", role.Name, err)
+			failures++
 			continue
 		}
 		hasSystemWrite, hasAlertsWrite := false, false
@@ -97,6 +100,7 @@ func (c *KeyorixCore) ReconcileAlertsWriteRole(ctx context.Context) error {
 		// this backfill emits permission.assigned like every other grant path.
 		if err := c.AssignPermissionToRole(ctx, 0, role.ID, alertsWriteID, false); err != nil {
 			log.Printf("alerts.write role reconcile: grant alerts.write to role %s: %v", role.Name, err)
+			failures++
 			continue
 		}
 		granted++
@@ -104,6 +108,16 @@ func (c *KeyorixCore) ReconcileAlertsWriteRole(ctx context.Context) error {
 
 	if granted > 0 {
 		log.Printf("alerts.write role reconcile: granted alerts.write to %d role(s) already holding system.write", granted)
+	}
+
+	// Only mark the backfill complete once every step above succeeded — a
+	// marker written after a partial failure would permanently lock out any
+	// role that missed its grant, since the one-time marker check above skips
+	// this whole function on every subsequent startup (found by coordinator
+	// review, PR #2244; see TestReconcileAlertsWriteRole_MarkerNotSetOnPartialFailure).
+	if failures > 0 {
+		log.Printf("alerts.write role reconcile: %d failure(s) this run — completion marker withheld, will retry on next startup", failures)
+		return nil
 	}
 
 	if err := c.storage.SetSystemMetadata(ctx, alertsWriteRoleBackfillMarkerKey, "1"); err != nil {
