@@ -99,8 +99,25 @@ jobs:
       - name: Real-backend web UI smoke
         run: make e2e-web-smoke
 
+  # Customer journeys N4-N6: Vault/OpenBao migrate, Keycloak SSO, disaster
+  # recovery. Needs Docker (ubuntu-latest has it); KEYORIX_E2E_CONTAINERS=1
+  # (set by the make target) turns a missing-Docker skip into a failure.
+  e2e-journeys-containers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+      - name: Customer journeys (containers tier)
+        run: make e2e-journeys-containers
+
   alert:
-    needs: [e2e-smoke-postgres, e2e-smoke-upgrade, e2e-web-smoke]
+    needs: [e2e-smoke-postgres, e2e-smoke-upgrade, e2e-web-smoke, e2e-journeys-containers]
     # Always report, but only for runs on main (a manual dispatch on a
     # feature branch must not open or close the main-branch issue).
     if: always() && github.ref == 'refs/heads/main'
