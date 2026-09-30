@@ -35,6 +35,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/http/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -143,6 +144,9 @@ func TestUpdateSecret_MachineActor_AuditAttributedToMachine(t *testing.T) {
 	status, respBody := doMachineRequest(t, srv, token, http.MethodPut, "/api/v1/secrets/"+strconv.FormatUint(uint64(secretID), 10), body)
 	require.Equal(t, http.StatusOK, status, "machine with secrets.write must be able to update: %s", respBody)
 
+	// The REST handlers dispatch their audit writes through handlers.goSafe,
+	// which core.DrainBackgroundGoroutines does not track -- drain both.
+	handlers.DrainBackgroundGoroutines()
 	core.DrainBackgroundGoroutines()
 
 	events, err := c.ListSecretAuditEvents(context.Background(), secretID, adminID, 10)
@@ -161,6 +165,9 @@ func TestDeleteSecret_MachineActor_AuditAttributedToMachine(t *testing.T) {
 	status, respBody := doMachineRequest(t, srv, token, http.MethodDelete, "/api/v1/secrets/"+strconv.FormatUint(uint64(secretID), 10), nil)
 	require.Equal(t, http.StatusNoContent, status, "machine with secrets.delete must be able to delete: %s", respBody)
 
+	// The REST handlers dispatch their audit writes through handlers.goSafe,
+	// which core.DrainBackgroundGoroutines does not track -- drain both.
+	handlers.DrainBackgroundGoroutines()
 	core.DrainBackgroundGoroutines()
 
 	// DeleteSecret is a hard delete (core.DeleteSecret -> storage.DeleteSecret),
@@ -199,6 +206,9 @@ func TestRollbackSecret_MachineActor_AuditAttributedToMachine(t *testing.T) {
 	status, respBody = doMachineRequest(t, srv, token, http.MethodPost, path+"/rollback", rollbackBody)
 	require.Equal(t, http.StatusOK, status, "machine with secrets.write must be able to roll back: %s", respBody)
 
+	// The REST handlers dispatch their audit writes through handlers.goSafe,
+	// which core.DrainBackgroundGoroutines does not track -- drain both.
+	handlers.DrainBackgroundGoroutines()
 	core.DrainBackgroundGoroutines()
 
 	events, err := c.ListSecretAuditEvents(context.Background(), secretID, adminID, 10)
