@@ -1,9 +1,9 @@
 # Upgrading Keyorix
 
 **Verification status of this guide:** commands below are marked either
-UNVERIFIED or VERIFIED. UNVERIFIED means it has not yet been run end to end
-against a clean environment as part of this release's QA pass; treat it as
-documented-but-unproven until it's flipped to VERIFIED.
+UNVERIFIED or VERIFIED. VERIFIED means it was run end to end against a real
+environment (real binaries, a real kind cluster, or a real PostgreSQL 16
+instance) as part of this release's QA pass. UNVERIFIED means it has not.
 
 ## 1. Always back up first
 
@@ -17,7 +17,9 @@ Docker-Compose/Postgres procedure.
 keyorix-server admin backup --output backup-$(date +%F).tar.gz
 ```
 
-**UNVERIFIED**
+**VERIFIED** — run repeatedly during this release's QA (fresh install,
+rollback drill, air-gapped drill, version-skip proof), each time producing a
+valid, restorable v2 archive.
 
 ## 2. Upgrading from v0.95.x → v0.95.2
 
@@ -38,7 +40,10 @@ Schema migrations run on boot. If a rolling multi-replica upgrade hits
 expected mid-rollout (see `docs/SELF_HOSTING.md` §9 troubleshooting table) —
 not applicable to the bundled Helm chart, which is pinned to 1 replica.
 
-**UNVERIFIED**
+**VERIFIED** — a real, downloaded v0.95.1 release binary provisioned a
+SQLite database, stopped, then the v0.95.2 binary migrated and booted that
+same database in place and passed a full API smoke sweep with
+`verify-audit: VALID` afterward.
 
 ## 3. Upgrading from v0.94.x or v0.93.x (version skip)
 
@@ -71,8 +76,11 @@ keyorix-server admin backup --db ./intermediate.sqlite --output intermediate-v2.
 keyorix-server admin restore --input intermediate-v2.tar.gz --target-dsn "$POSTGRES_DSN"
 ```
 
-**UNVERIFIED** (the commands above mirror the proven harness's shape; not
-independently re-run against this exact release build yet)
+**VERIFIED** — run end to end with a real, downloaded v0.95.0 release
+binary and the actual v0.95.2 build against a real PostgreSQL 16 instance:
+the secret value decrypted byte-identical to what the old binary encrypted,
+the audit chain verified at every stage, and two authz probes (one ALLOWED,
+one DENIED) matched the old binary's answers exactly after the restore.
 
 If you're going from v0.94/v0.93 straight to v0.95.2, the same 3-hop shape
 should still apply mechanically (v1 read support doesn't change), but that
@@ -134,8 +142,14 @@ skip.
   half-seeded. The whole bootstrap runs in one transaction, so a rejected
   attempt writes nothing and retrying with a corrected password just works.
 
-**UNVERIFIED**: real `helm install`/`helm upgrade` against a kind cluster
-with the release images.
+**VERIFIED** — real `helm install` and `helm upgrade` against a kind
+cluster with locally built server/web images: the password-length gate
+correctly refuses render on a too-short password; a password that passes
+the chart's length check but still trips the server's own username-
+substring rule fails bootstrap cleanly (403, pod stays `Ready`) and a
+retry with a compliant password completes the install immediately, no
+wipe needed; `helm upgrade` with identical values regenerated no new
+bootstrap token (byte-identical) and preserved existing data.
 
 ## 6. Air-gapped image rename
 
@@ -153,10 +167,15 @@ ghcr.io/keyorixhq/keyorix-server-lean:v0.95.1
 ghcr.io/keyorixhq/keyorix-server-airgap:v0.95.2
 ```
 
-**UNVERIFIED**: image pull not yet independently re-run against the actual
-v0.95.2 release artifact; the rename and the underlying build were
-validated end-to-end against a real air-gapped image build (the SQLite
-`airgap-e2e.sh` drill and the documented Postgres manual-backup procedure).
+**VERIFIED (build + drill)**, **UNVERIFIED (the actual `docker pull` of a
+published `-airgap` tag)** — that image doesn't exist on GHCR until this
+version is tagged and released, so the pull step itself can't be exercised
+before then. What was verified: building the exact same profile locally
+(`docker build --build-arg BUILD_TAGS=noaws,noazure,nogcp`) and running the
+full `scripts/airgap-e2e.sh` disaster-recovery drill against it end to end
+— real bootstrap, real secret, `admin backup`/`admin restore` with the
+checkpoint anchor cross-check, secret value round-tripped, and the
+tampered-archive negative leg correctly refused.
 
 ## 7. Rollback
 
@@ -168,7 +187,12 @@ If an upgrade goes wrong:
    older-format archives, but restoring into a *newer* schema than the
    backup's own binary understands is not the supported direction — restore
    with the matching or a newer binary, then let migrations run forward
-   again, not backward).
+   again, not backward). **Expect `admin restore` to refuse this by
+   default** with a message about the archive being behind the host's own
+   audit high-water mark — that's the intended rollback-protection
+   behavior, not a malfunction, for exactly this scenario (the target has
+   moved on since the backup). Pass `--allow-rollback` to proceed; it
+   prints a loud warning and records the override to the audit trail.
 3. `admin verify-audit` after restore, on whichever binary you rolled back
    to, to confirm the audit chain is intact.
 4. If the new version's database has already advanced the recorded schema
@@ -178,7 +202,14 @@ If an upgrade goes wrong:
    why step 2 restores data from before the failed upgrade rather than
    attempting to run the new binary's data on the old binary.
 
-**UNVERIFIED**: no rollback drill has been run yet against this release.
+**VERIFIED** — a full rollback drill: took a backup, then simulated a bad
+upgrade (deleted the pre-backup secret, wrote a new one that should not
+survive), then restored the backup in place. The restore was correctly
+**refused** without `--allow-rollback` (the archive was behind the host's
+own audit high-water mark — exactly the rollback-protection design doing
+its job); retrying with `--allow-rollback` succeeded, recorded the override
+to the audit trail, and booting against the restored data confirmed the
+pre-upgrade secret was back and the post-upgrade one was gone.
 
 ## 8. See also
 
