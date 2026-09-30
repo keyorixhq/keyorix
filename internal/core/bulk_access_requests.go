@@ -105,6 +105,13 @@ func (k *KeyorixCore) BulkApproveAccessRequests(ctx context.Context, requestIDs 
 		}
 		result.Approved = append(result.Approved, id)
 	}
+	// Written unconditionally: ApproveAccessRequest audits each individual
+	// approval, but a batch where every item fails (or an empty/all-not-found
+	// batch) would otherwise leave no trail that this bulk operation was
+	// attempted (F5, audit-completeness campaign).
+	k.writeAuditEvent(ctx, "access_request.bulk_approve_attempted", actorPtr(approverID), nil,
+		fmt.Sprintf("bulk-approve attempted for %d access request(s): %d approved, %d failed",
+			len(requestIDs), len(result.Approved), len(result.Failed)))
 	return result, nil
 }
 
@@ -164,6 +171,12 @@ func (k *KeyorixCore) BulkRejectAccessRequests(ctx context.Context, requestIDs [
 		}
 		result.Rejected = append(result.Rejected, id)
 	}
+	// Written unconditionally, same reasoning as BulkApproveAccessRequests'
+	// own summary event above (F5, audit-completeness campaign): a sibling of
+	// bulk-approve with the identical empty/all-failed trail gap.
+	k.writeAuditEvent(ctx, "access_request.bulk_reject_attempted", actorPtr(approverID), nil,
+		fmt.Sprintf("bulk-reject attempted for %d access request(s): %d rejected, %d failed",
+			len(requestIDs), len(result.Rejected), len(result.Failed)))
 	return result, nil
 }
 
@@ -188,6 +201,8 @@ func (k *KeyorixCore) CreateRejectionReasonTemplate(ctx context.Context, created
 	if err := k.storage.CreateRejectionReasonTemplate(ctx, t); err != nil {
 		return nil, err
 	}
+	k.writeAuditEvent(ctx, "rejection_reason_template.created", actorPtr(createdBy), nil,
+		fmt.Sprintf("rejection reason template %q created", name))
 	return t, nil
 }
 

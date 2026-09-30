@@ -94,6 +94,14 @@ func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, actorID, project
 			}
 		}
 		if hasTarget {
+			// The user already held exactly roleName at this scope (no other
+			// project-scoped role to remove above, so removeUserRoleUnguarded's
+			// own LogRoleRemoved never fired either) -- a complete no-op that
+			// would otherwise leave zero trail this call was made (F5,
+			// audit-completeness campaign). AssignUserRole/removeUserRoleUnguarded
+			// already cover every branch that actually changes a role grant.
+			c.writeAuditEvent(ctx, "project_member.role_confirmed_unchanged", actorPtr(actorID), nil,
+				fmt.Sprintf("project %d member %d already held role %q; no change made", projectID, userID, roleName))
 			return nil
 		}
 		return c.AssignUserRole(ctx, actorID, userID, role.ID, scope, actorIsMachine)

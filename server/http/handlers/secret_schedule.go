@@ -19,6 +19,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
 // GetSecretSchedule handles GET /api/v1/secrets/{id}/schedule.
@@ -75,6 +76,11 @@ func (h *SecretHandler) SetSecretSchedule(w http.ResponseWriter, r *http.Request
 		h.sendError(w, "Error", msg, status, nil)
 		return
 	}
+	var actorID uint
+	if userCtx := middleware.GetUserFromContext(r.Context()); userCtx != nil {
+		actorID = userCtx.UserID
+	}
+	h.coreService.LogSecretScheduleSet(r.Context(), actorID, uint(secretID))
 	h.sendSuccess(w, sched, "schedule set")
 }
 
@@ -90,6 +96,11 @@ func (h *SecretHandler) DeleteSecretSchedule(w http.ResponseWriter, r *http.Requ
 		h.sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
+	var actorID uint
+	if userCtx := middleware.GetUserFromContext(r.Context()); userCtx != nil {
+		actorID = userCtx.UserID
+	}
+	h.coreService.LogSecretScheduleDeleted(r.Context(), actorID, uint(secretID))
 	h.sendSuccess(w, map[string]bool{"deleted": true}, "schedule removed")
 }
 

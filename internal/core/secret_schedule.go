@@ -102,6 +102,24 @@ func (c *KeyorixCore) DeleteSecretSchedule(ctx context.Context, secretID uint) e
 	return c.storage.DeleteSecretAccessSchedule(ctx, secretID)
 }
 
+// LogSecretScheduleSet/LogSecretScheduleDeleted record a temporal access
+// schedule create/update/delete (F5, audit-completeness campaign) --
+// standalone methods since SetSecretSchedule/DeleteSecretSchedule take no
+// actor parameter, same reasoning as LogRoleCreated/LogRoleUpdated/
+// LogRoleDeleted (audit.go). A schedule restricts WHEN a secret can be read,
+// so changing it is a real access-control change worth a trail.
+func (c *KeyorixCore) LogSecretScheduleSet(ctx context.Context, actorID, secretID uint) {
+	sid := secretID
+	c.writeAuditEventFull(ctx, "secret.schedule_set", actorPtr(actorID), &sid, nil, "",
+		fmt.Sprintf("access schedule set for secret %d", secretID))
+}
+
+func (c *KeyorixCore) LogSecretScheduleDeleted(ctx context.Context, actorID, secretID uint) {
+	sid := secretID
+	c.writeAuditEventFull(ctx, "secret.schedule_deleted", actorPtr(actorID), &sid, nil, "",
+		fmt.Sprintf("access schedule deleted for secret %d", secretID))
+}
+
 // validateScheduleParams checks the schedule parameters before persistence.
 func validateScheduleParams(days string, startHour, endHour int, timezone string) error {
 	if startHour < 0 || startHour > 23 {

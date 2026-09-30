@@ -92,6 +92,14 @@ func (c *KeyorixCore) SuspendProjectSecrets(ctx context.Context, projectID, acto
 			n++
 		}
 	}
+	// Written unconditionally: SuspendSecret audits each individual
+	// suspension, but a project with nothing left to suspend (all already
+	// suspended, or none owned/writable by actorID) would otherwise leave no
+	// trail that this bulk operation was attempted (F5, audit-completeness
+	// campaign).
+	pid := projectID
+	c.writeAuditEventFull(ctx, "secret.bulk_suspend_attempted", actorPtr(actorID), nil, &pid, "",
+		fmt.Sprintf("project %d bulk-suspend attempted: %d secret(s) suspended", projectID, n))
 	return n, nil
 }
 
@@ -119,6 +127,11 @@ func (c *KeyorixCore) ResumeProjectSecrets(ctx context.Context, projectID, actor
 			n++
 		}
 	}
+	// Written unconditionally, same reasoning as SuspendProjectSecrets' own
+	// summary event immediately above (F5, audit-completeness campaign).
+	pid := projectID
+	c.writeAuditEventFull(ctx, "secret.bulk_resume_attempted", actorPtr(actorID), nil, &pid, "",
+		fmt.Sprintf("project %d bulk-resume attempted: %d secret(s) resumed", projectID, n))
 	return n, nil
 }
 
