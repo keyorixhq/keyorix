@@ -1,4 +1,4 @@
-package encryption
+package aead
 
 import (
 	"testing"

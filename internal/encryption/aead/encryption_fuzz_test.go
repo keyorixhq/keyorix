@@ -1,4 +1,4 @@
-package encryption
+package aead
 
 import (
 	"encoding/json"
@@ -6,6 +6,15 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
+
+// fuzzTestAAD is a fixed, arbitrary AAD value for these two robustness targets — they
+// exercise Decrypt/DecryptChunked's tolerance of malformed blobs under SOME non-empty
+// AAD, not the specific SecretAAD construction (that's FuzzAEADContextBinding's job,
+// in aead_context_binding_fuzz_test.go, which does call the real ports.SecretAAD). A
+// local literal avoids pulling internal/core/ports — and its net/http/licenseverify
+// imports — into this leaf package's fuzz binary for a seed value that doesn't need to
+// be byte-identical to production's format.
+var fuzzTestAAD = []byte("keyorix:v2:1:2:3")
 
 // FuzzDecrypt feeds arbitrary JSON-encoded EncryptedData blobs into Decrypt and
 // DecryptWithAAD. Neither must ever panic — returning an error for any corrupt,
@@ -33,7 +42,7 @@ func FuzzDecrypt(f *testing.F) {
 	f.Add(seed)
 
 	// Seed 2: a real AAD-bound blob.
-	encAAD, err := svc.EncryptWithAAD([]byte("hello aad fuzz"), "v1", SecretAAD(1, 2, 3))
+	encAAD, err := svc.EncryptWithAAD([]byte("hello aad fuzz"), "v1", fuzzTestAAD)
 	if err != nil {
 		f.Fatal(err)
 	}
@@ -55,7 +64,7 @@ func FuzzDecrypt(f *testing.F) {
 				return // invalid JSON — expected
 			}
 			_, _ = svc.Decrypt(ed)
-			_, _ = svc.DecryptWithAAD(ed, SecretAAD(1, 2, 3))
+			_, _ = svc.DecryptWithAAD(ed, fuzzTestAAD)
 			_, _ = svc.DecryptWithAAD(ed, nil)
 		})
 	})

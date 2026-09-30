@@ -23,7 +23,7 @@
 // sound (assert only the non-false-positive direction: AAD mismatch must
 // never wrongly succeed) and tractable via ordinary fuzzing (no GHASH
 // polynomial construction needed).
-package encryption
+package aead
 
 import (
 	"bytes"

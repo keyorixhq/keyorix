@@ -141,7 +141,7 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResu
 	// already wipes) and is about to be discarded — wipe its DEK copy from memory
 	// here, like every other DEK-bearing variable in this package.
 	if s.encryptionService != nil {
-		wipeBytes(s.encryptionService.dek)
+		s.encryptionService.WipeDEK()
 	}
 	s.encryptionService = encSvc
 	return sweepResult, nil
@@ -465,7 +465,7 @@ func (s *Service) Shutdown() {
 	// separate copy (made via s.keyManager.GetDEK() in Initialize/RotateDEKWithSweep)
 	// and was never wiped, unlike every other DEK-bearing variable in this package.
 	if s.encryptionService != nil {
-		wipeBytes(s.encryptionService.dek)
+		s.encryptionService.WipeDEK()
 		s.encryptionService = nil
 	}
 	releaseKeyLock(s.serverLock)
