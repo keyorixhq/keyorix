@@ -3,6 +3,7 @@ package statemap
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -29,7 +30,7 @@ var validClasses = map[string]bool{
 // just re-running the generator after an unrelated code change. Set to the
 // actual count after this round's classifier fixes (the job classifier was
 // off-by-one before this round and flagged all scheduled jobs; see the PR).
-const maxReviewRows = 181
+const maxReviewRows = 182 // +1: `recovery-key rotate` gained an O_EXCL output-file write alongside the DB rotation in #2257 (F8); REVIEW pending AT triage
 
 // TestCompletenessGuard_EntrypointsAndStoresMatchCode is AT0(f): re-runs the
 // same extractors/classifier cmd/statemapgen uses and fails if
@@ -61,10 +62,18 @@ func TestCompletenessGuard_EntrypointsAndStoresMatchCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading checked-in entrypoints.tsv: %v", err)
 	}
-	diffEntryCounts(t, wantRows, gotClassified)
+	overrides, err := LoadOverrides(filepath.Join(root, "docs", "state-map", "class-overrides.tsv"))
+	if err != nil {
+		t.Fatalf("reading class-overrides.tsv: %v", err)
+	}
+	checkOverridesValid(t, overrides, gotClassified)
+	gotFinal := ApplyOverrides(gotClassified, overrides)
+
+	diffEntryCounts(t, wantRows, gotFinal)
 	checkClasses(t, wantRows)
+	checkClassesMatchComputed(t, wantRows, gotFinal)
 	checkGapRowsPresent(t, wantRows)
-	checkReviewRatchet(t, wantRows)
+	checkReviewRatchet(t, wantRows, gotFinal)
 
 	gotTables, err := DBTables(root)
 	if err != nil {
@@ -150,18 +159,95 @@ func checkGapRowsPresent(t *testing.T, rows []entrypointsRow) {
 	}
 }
 
-// checkReviewRatchet fails if the checked-in REVIEW-class count exceeds
-// maxReviewRows -- see that constant's own doc comment.
-func checkReviewRatchet(t *testing.T, rows []entrypointsRow) {
+// checkReviewRatchet fails if the REVIEW-class count exceeds maxReviewRows --
+// see that constant's own doc comment. It counts BOTH the checked-in TSV and
+// the classes the code computes (Classify + ApplyOverrides): counting only the
+// TSV would let a hand-edit of REVIEW->none pass CI and then silently revert on
+// the next regeneration.
+func checkReviewRatchet(t *testing.T, rows []entrypointsRow, computed []Entry) {
 	t.Helper()
-	n := 0
+	nTSV := 0
 	for _, r := range rows {
 		if r.class == "REVIEW" {
-			n++
+			nTSV++
 		}
 	}
-	if n > maxReviewRows {
-		t.Errorf("docs/state-map/entrypoints.tsv has %d class=REVIEW rows, exceeding the maxReviewRows ratchet (%d) -- a human must look at what grew this (a real new multi-write candidate needing triage, or a classifier regression) before raising the ceiling", n, maxReviewRows)
+	nCode := 0
+	for _, e := range computed {
+		if e.Class == "REVIEW" {
+			nCode++
+		}
+	}
+	for _, c := range []struct {
+		label string
+		n     int
+	}{{"docs/state-map/entrypoints.tsv", nTSV}, {"Classify+ApplyOverrides", nCode}} {
+		if c.n > maxReviewRows {
+			t.Errorf("%s has %d class=REVIEW rows, exceeding the maxReviewRows ratchet (%d) -- a human must look at what grew this (a real new multi-write candidate needing triage, or a classifier regression) before raising the ceiling", c.label, c.n, maxReviewRows)
+		}
+	}
+}
+
+// checkClassesMatchComputed fails if any (kind,id)'s checked-in class multiset
+// differs from what Classify+ApplyOverrides computes from code right now. The
+// only supported way to change a row's class is class-overrides.tsv (which the
+// generator preserves); hand-editing entrypoints.tsv's class column is exactly
+// what this catches.
+func checkClassesMatchComputed(t *testing.T, want []entrypointsRow, computed []Entry) {
+	t.Helper()
+	wantClasses := map[string][]string{}
+	for _, r := range want {
+		if r.kind == "gap" {
+			continue
+		}
+		k := r.kind + "\t" + r.id
+		wantClasses[k] = append(wantClasses[k], r.class)
+	}
+	gotClasses := map[string][]string{}
+	for _, e := range computed {
+		k := e.Kind + "\t" + e.ID
+		gotClasses[k] = append(gotClasses[k], e.Class)
+	}
+	var mismatches []string
+	for k, wc := range wantClasses {
+		gc, ok := gotClasses[k]
+		if !ok {
+			continue // presence/count drift is diffEntryCounts' job
+		}
+		sort.Strings(wc)
+		sort.Strings(gc)
+		if strings.Join(wc, ",") != strings.Join(gc, ",") {
+			mismatches = append(mismatches, k+" (checked-in: "+strings.Join(wc, ",")+", computed: "+strings.Join(gc, ",")+")")
+		}
+	}
+	if len(mismatches) > 0 {
+		sort.Strings(mismatches)
+		t.Errorf("docs/state-map/entrypoints.tsv class column disagrees with Classify+ApplyOverrides for %d key(s) -- record a human classification in class-overrides.tsv (not by editing entrypoints.tsv) and run `go run ./cmd/statemapgen` -- e.g. %v", len(mismatches), sample(mismatches, 8))
+	}
+}
+
+// checkOverridesValid fails on override rows whose class isn't a member of
+// validClasses, or whose (kind,id) no longer matches any code-derived entry
+// (a stale override for a renamed/removed route would otherwise be silently
+// ignored forever).
+func checkOverridesValid(t *testing.T, overrides map[string]Override, entries []Entry) {
+	t.Helper()
+	live := map[string]bool{}
+	for _, e := range entries {
+		live[e.Kind+"\t"+e.ID] = true
+	}
+	var bad []string
+	for k, ov := range overrides {
+		if !validClasses[ov.Class] || ov.Class == "gap" {
+			bad = append(bad, k+" (invalid class \""+ov.Class+"\")")
+		}
+		if !live[k] {
+			bad = append(bad, k+" (stale: no matching entry in code)")
+		}
+	}
+	if len(bad) > 0 {
+		sort.Strings(bad)
+		t.Errorf("docs/state-map/class-overrides.tsv has %d invalid or stale row(s) -- %v", len(bad), sample(bad, 8))
 	}
 }
 
