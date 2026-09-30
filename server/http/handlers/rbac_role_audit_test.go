@@ -31,6 +31,9 @@ func TestRBACRoleDefinitionAudit(t *testing.T) {
 		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.AuditEvent{},
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{},
+		// MachineIdentity(Role)/ConnectRefGrant: DeleteRole's cascade
+		// (SESSION-AT AT1 row 2) deletes from every RoleID-referencing table.
+		&models.MachineIdentity{}, &models.MachineIdentityRole{}, &models.ConnectRefGrant{},
 	))
 	handler := NewRBACHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
 	// CreateRole requires at least one (resolvable) permission name.

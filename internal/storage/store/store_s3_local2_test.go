@@ -577,7 +577,11 @@ func newRBACStore(t *testing.T) *LocalStorage {
 	return newStoreS3(t, "rbac_"+t.Name(),
 		&models.Project{}, &models.Environment{},
 		&models.Role{}, &models.Permission{}, &models.RolePermission{},
-		&models.User{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{})
+		&models.User{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		// MachineIdentityRole/ConnectRefGrant: DeleteRole's cascade (SESSION-AT
+		// AT1 row 2) deletes from every RoleID-referencing table, so any
+		// fixture exercising a real (non-404) DeleteRole needs all five.
+		&models.MachineIdentity{}, &models.MachineIdentityRole{}, &models.ConnectRefGrant{})
 }
 
 func TestRBAC_RolesAndPermissions(t *testing.T) {
