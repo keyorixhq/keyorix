@@ -55,13 +55,10 @@ import (
 // of fixing the gap defeats the harness's purpose and must be reasoned
 // about explicitly, not done by habit.
 var knownUnauditedOperations = map[string]bool{
-	// ── Still unaudited, out of F5's scope (tracked gaps; F1-F4's entries were
-	// removed by their own PRs, all merged before this rebase on 2026-09-30).
-	"REST POST /api/v1/projects":     true,
-	"REST POST /api/v1/users/":       true,
-	"REST PUT /api/v1/auth/profile":  true,
-	"REST PUT /api/v1/projects/{id}": true,
-	"REST PUT /api/v1/users/{id}":    true,
+	// No tracked, still-unaudited gaps remain (2026-09-30): the last five
+	// (POST projects, POST users, PUT projects/{id}, PUT users/{id}, PUT
+	// auth/profile) are audited on main now and were removed here (#2345).
+	// TestKnownUnauditedOperationsAreStillUnaudited keeps this map honest.
 
 	// ── Confirmed intentional (F5, 2026-09-28): reviewed and judged NOT
 	// security-relevant, or already covered by a narrower audit trail than the
@@ -224,6 +221,48 @@ func TestKnownUnauditedOperationsAreRealCatalogKeys(t *testing.T) {
 			t.Errorf("knownUnauditedOperations names %q, which is not (or no longer) an opCatalog key -- "+
 				"stale entry, fix or remove it", key)
 		}
+	}
+}
+
+// TestKnownUnauditedOperationsAreStillUnaudited is the reverse ratchet for
+// knownUnauditedOperations: it runs each listed operation once, exactly as
+// FuzzAuditCompleteness does, and fails if the operation succeeds AND writes
+// an audit event. Such an entry is stale (someone wired audit logging for it
+// without shrinking this map), and a stale entry silently switches oracle 1
+// off for that operation, so a later regression that drops its audit event
+// would go unnoticed. Found as #2345 (project.created / user.created).
+func TestKnownUnauditedOperationsAreStillUnaudited(t *testing.T) {
+	for _, op := range opCatalog {
+		if !knownUnauditedOperations[op.Key] {
+			continue
+		}
+		op := op
+		t.Run(op.Key, func(t *testing.T) {
+			ctx := context.Background()
+			w := newFaultWorld(t, nil)
+			var state any
+			var err error
+			if op.Setup != nil {
+				if state, err = op.Setup(ctx, w); err != nil {
+					t.Skipf("setup errored: %v", err)
+				}
+			}
+			drainAllBackgroundGoroutines()
+			before := auditEventCount(w)
+			beforeMaxID := maxAuditEventID(w)
+			result, err := op.Execute(ctx, w, state)
+			if err != nil {
+				t.Skipf("transport error: %v", err)
+			}
+			drainAllBackgroundGoroutines()
+			if result.Success && auditEventCount(w) > before {
+				var types []string
+				w.db.Table("audit_events").Where("id > ?", beforeMaxID).Order("id asc").Pluck("event_type", &types)
+				t.Errorf("%s is listed in knownUnauditedOperations but succeeded AND wrote audit event(s) %v -- "+
+					"stale entry, remove it so FuzzAuditCompleteness asserts on it again",
+					op.Key, types)
+			}
+		})
 	}
 }
 
