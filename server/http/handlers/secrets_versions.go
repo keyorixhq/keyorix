@@ -135,6 +135,7 @@ func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 		case strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)):
 			h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 		default:
+			log.Printf("rotate secret %d: unexpected error: %v", uint(id), err)
 			h.sendError(w, "InternalError", "Failed to rotate secret", http.StatusInternalServerError, nil)
 		}
 		return
@@ -191,6 +192,7 @@ func (h *SecretHandler) RollbackSecret(w http.ResponseWriter, r *http.Request) {
 		case strings.Contains(err.Error(), "already the current version"), strings.Contains(err.Error(), "version number must be positive"):
 			h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 		default:
+			log.Printf("roll back secret %d: unexpected error: %v", uint(id), err)
 			h.sendError(w, "InternalError", "Failed to roll back secret", http.StatusInternalServerError, nil)
 		}
 		return
