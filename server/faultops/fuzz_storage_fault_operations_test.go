@@ -363,16 +363,6 @@ func FuzzStorageFaultOperations(f *testing.F) {
 	// fresh-per-input behaviour by TestWorldReuseSoundness, whose own
 	// red-proof (TestWorldReuseSoundness_CatchesPlantedStateLeak) confirms
 	// the comparison actually fails on a planted state-leak bug.
-	// Per-worker world reuse (M5): each `go test -fuzz` worker is a separate
-	// OS process (see world_reuse_test.go's doc comment), so building ref/w
-	// ONCE here, before f.Fuzz, is naturally scoped to one worker -- no
-	// cross-worker contention. resetForReuse restores each world to the same
-	// logical starting state a fresh newFaultWorld(t, nil) would produce
-	// before every input, without rebuilding the DB schema or HTTP/gRPC
-	// servers from scratch each time. Proven equivalent to the pre-reuse
-	// fresh-per-input behaviour by TestWorldReuseSoundness, whose own
-	// red-proof (TestWorldReuseSoundness_CatchesPlantedStateLeak) confirms
-	// the comparison actually fails on a planted state-leak bug.
 	ref := buildReusableFaultWorld(f, nil)
 	w := buildReusableFaultWorld(f, nil)
 	f.Fuzz(func(t *testing.T, data []byte) {

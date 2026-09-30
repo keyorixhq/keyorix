@@ -35,15 +35,12 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 	grpcserver "github.com/keyorixhq/keyorix/server/grpc"
 	httpserver "github.com/keyorixhq/keyorix/server/http"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
-	"gorm.io/driver/postgres"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -71,64 +68,7 @@ var pgSchemaSeq atomic.Int64
 // call, RULES-mandated for reproducibility — see the package doc comment).
 func openWorldDB(t *testing.T) (*gorm.DB, string) {
 	t.Helper()
-	dsn := os.Getenv(pgDSNEnv)
-	if dsn == "" {
-		db, err := gorm.Open(sqlite.Open(uniqueMemDSN()), &gorm.Config{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		sqlDB, err := db.DB()
-		if err != nil {
-			t.Fatal(err)
-		}
-		sqlDB.SetMaxOpenConns(1)
-		return db, "sqlite"
-	}
-
-	n := pgSchemaSeq.Add(1)
-	schema := fmt.Sprintf("faultops_%d_%d", os.Getpid(), n)
-
-	// A short-lived admin connection per schema-management call, closed
-	// immediately after use — NOT held open for the world's lifetime. Two
-	// worlds are built per fuzz iteration and -parallel multiplies that
-	// further; holding one admin connection open per world alongside the
-	// real per-world connection doubled simultaneous connections for no
-	// reason and exhausted Postgres's default max_connections (100) under
-	// -parallel >1 (confirmed empirically: "sorry, too many clients already"
-	// after ~8 iterations at -parallel=2 before this fix).
-	pgAdminExec := func(sql string) error {
-		admin, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if sqlDB, e := admin.DB(); e == nil {
-				_ = sqlDB.Close()
-			}
-		}()
-		return admin.Exec(sql).Error
-	}
-	if err := pgAdminExec("DROP SCHEMA IF EXISTS " + schema + " CASCADE"); err != nil {
-		t.Fatalf("drop schema %s: %v", schema, err)
-	}
-	if err := pgAdminExec("CREATE SCHEMA " + schema); err != nil {
-		t.Fatalf("create schema %s: %v", schema, err)
-	}
-	t.Cleanup(func() {
-		_ = pgAdminExec("DROP SCHEMA IF EXISTS " + schema + " CASCADE")
-	})
-
-	db, err := gorm.Open(postgres.Open(pgdsn.PGSearchPathDSN(dsn, schema)), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open postgres: %v", err)
-	}
-	sqlDB, err := db.DB()
-	if err != nil {
-		t.Fatal(err)
-	}
-	sqlDB.SetMaxOpenConns(2)
-	t.Cleanup(func() { _ = sqlDB.Close() })
-	return db, "postgres"
+	return openWorldDBTB(t)
 }
 
 func mustExec(t *testing.T, db *gorm.DB, sql string) {

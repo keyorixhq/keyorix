@@ -344,7 +344,7 @@ func TestWorldReuseSoundness_CatchesPlantedStateLeak(t *testing.T) {
 	}
 
 	if mismatches == 0 {
-		t.Fatal("planted state leak (resetWorldTables silently skipping the secrets table) produced ZERO " +
+		t.Fatal("planted state leak (resetWorldTables silently skipping the secret_versions table) produced ZERO " +
 			"detected mismatches across the whole corpus -- the soundness gate would NOT have caught this " +
 			"class of bug; the gate is not trustworthy")
 	}

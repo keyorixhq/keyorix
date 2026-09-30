@@ -2,6 +2,7 @@ package faultops
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 )
@@ -77,6 +78,9 @@ func TestProfileNewFaultWorldSubphases(t *testing.T) {
 // exercises it). Not a correctness test -- logs only; the soundness gate is
 // what proves correctness.
 func TestProfileWorldReuseSpeedup(t *testing.T) {
+	if os.Getenv("KEYORIX_FAULTOPS_PROFILE") == "" {
+		t.Skip("profiling only; set KEYORIX_FAULTOPS_PROFILE=1 to run (builds 16 worlds)")
+	}
 	const n = 15
 
 	freshStart := time.Now()

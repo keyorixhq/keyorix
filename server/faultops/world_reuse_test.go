@@ -27,6 +27,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -117,6 +118,37 @@ func buildReusableFaultWorld(tb tbLite, spec *faultstorage.FaultSpec) *faultWorl
 
 	real := store.NewLocalStorage(db)
 	faulty := faultstorage.NewFaultyStorage(real, spec)
+	testCore := newWorldCore(tb, faulty)
+
+	w := &faultWorld{
+		db: db, backend: backend, core: testCore, faulty: faulty,
+		httpClient: &http.Client{Timeout: 10 * time.Second},
+	}
+	w.rebuildTransport(tb)
+	tb.Cleanup(func() {
+		if w.httpServer != nil {
+			w.httpServer.Close()
+		}
+		if w.grpcConn != nil {
+			_ = w.grpcConn.Close()
+		}
+		if w.grpcSrv != nil {
+			w.grpcSrv.Stop()
+		}
+	})
+	return w
+}
+
+// newWorldCore builds a fresh KeyorixCore over faulty with every
+// content-independent setting buildReusableFaultWorld used to apply once.
+// resetForReuse calls it on EVERY reset: KeyorixCore carries in-memory state
+// (permission/RBAC caches keyed by user ID, login-throttle and MFA-lockout
+// counters, audit-chain head, bootstrap token, encryption wiring) that
+// resetWorldTables can't see, and IDs restart at 1 each iteration, so a
+// surviving core would hand one iteration's cached state to the next.
+// Rebuilding it is cheap (no I/O); only the DB, schema and servers are reused.
+func newWorldCore(tb tbLite, faulty *faultstorage.FaultyStorage) *core.KeyorixCore {
+	tb.Helper()
 	testCore := core.NewKeyorixCore(faulty)
 
 	deliverer, err := delivery.New(delivery.Config{})
@@ -143,24 +175,7 @@ func buildReusableFaultWorld(tb tbLite, spec *faultstorage.FaultSpec) *faultWorl
 	testCore.SetDynamicEngineFactory(func(backendType string) (dynamic.CredentialEngine, error) {
 		return dynamic.New(backendType, false, false)
 	})
-
-	w := &faultWorld{
-		db: db, backend: backend, core: testCore, faulty: faulty,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-	}
-	w.rebuildTransport(tb)
-	tb.Cleanup(func() {
-		if w.httpServer != nil {
-			w.httpServer.Close()
-		}
-		if w.grpcConn != nil {
-			_ = w.grpcConn.Close()
-		}
-		if w.grpcSrv != nil {
-			w.grpcSrv.Stop()
-		}
-	})
-	return w
+	return testCore
 }
 
 // rebuildTransport (re)builds w's REST router + httptest.Server + gRPC
@@ -225,13 +240,12 @@ func (w *faultWorld) rebuildTransport(tb tbLite) {
 	w.grpcConn = conn
 }
 
-// openWorldDBTB is openWorldDB (world_test.go) generalized to tbLite instead
-// of *testing.T -- same logic, unchanged (SQLite always; PostgreSQL when
-// KEYORIX_TEST_PG_DSN is set, fresh uniquely-named schema, dropped on
-// Cleanup). Duplicated rather than changing openWorldDB's own signature: that
-// function is called from every OTHER fault-world caller in this package
-// (see this file's own doc comment), all of which pass a real *testing.T and
-// have no reason to change.
+// openWorldDBTB opens the backend for one world (SQLite always; PostgreSQL
+// when KEYORIX_TEST_PG_DSN is set: a fresh uniquely-named schema, dropped on
+// Cleanup). Takes tbLite so buildReusableFaultWorld can call it with a
+// *testing.F; openWorldDB (world_test.go) delegates here. Schema-management
+// calls use a short-lived admin connection, closed immediately, so -parallel
+// runs don't exhaust Postgres's max_connections.
 func openWorldDBTB(tb tbLite) (*gorm.DB, string) {
 	tb.Helper()
 	dsn := os.Getenv(pgDSNEnv)
@@ -374,16 +388,19 @@ func withoutLeakedTable(tables []string) []string {
 // per-method call counters and the fired latch -- faultstorage.go's own doc
 // comment on Arm).
 //
-// encryptOnce/encryptErr are DELIBERATELY not reset: ensureEncryption's
-// wiring (SetSecretValueEncryptor/SetAuthEncryptor/SetAuditCheckpointKey) is
-// content-independent core configuration, not DB row data that
-// resetWorldTables touches, so once wired it stays correctly wired -- and
-// re-deriving it every iteration would re-pay PBKDF2's deliberate ~125ms
-// work factor for no reason (see world_test.go's own comment on why it's
-// sync.Once-guarded in the first place).
+// The KeyorixCore is rebuilt (newWorldCore) and encryptOnce/encryptErr are
+// reset, so every iteration starts from the same in-memory state a fresh
+// newFaultWorld has, including lazy (not pre-wired) encryption. An iteration
+// whose op needs encryption pays PBKDF2 (~125ms) once, as it did before world
+// reuse; iterations that don't, don't. Background goroutines from the previous
+// iteration are drained first so none can write into the freshly wiped tables.
 func (w *faultWorld) resetForReuse(t *testing.T, spec *faultstorage.FaultSpec) {
 	t.Helper()
 	w.t = t
+
+	// A detached audit write from the previous iteration must not land in the
+	// tables we're about to wipe (or after the wipe, in this iteration's state).
+	drainAllBackgroundGoroutines()
 
 	// Disarm/re-arm BEFORE BootstrapSystem/Login below, not after: a fault
 	// left armed from a PRIOR iteration (this same faulty wrapper, and its
@@ -394,6 +411,11 @@ func (w *faultWorld) resetForReuse(t *testing.T, spec *faultstorage.FaultSpec) {
 	// call failed with a PRIOR iteration's injected fault before this fix
 	// (see the M5 PR body).
 	w.faulty.Arm(spec)
+
+	// Fresh core, fresh lazy encryption (see this function's doc comment).
+	w.core = newWorldCore(t, w.faulty)
+	w.encryptOnce = sync.Once{}
+	w.encryptErr = nil
 
 	// Reclaim handlers' package-level defaultUserHandler global before
 	// issuing any request against w's own httpServer -- see
