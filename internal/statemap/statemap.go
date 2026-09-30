@@ -701,7 +701,7 @@ func FileWriteSites(repoRoot string) ([]FileWriteSite, error) {
 		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
 			return nil
 		}
-		data, rerr2 := os.ReadFile(p) // #nosec G304 -- repoRoot is a caller-controlled local checkout path, not network input
+		data, rerr2 := os.ReadFile(p) // #nosec G304 G122 -- repoRoot is a caller-controlled local checkout path, not network input; symlink TOCTOU acceptable for a local developer tool
 		if rerr2 != nil {
 			return rerr2
 		}
