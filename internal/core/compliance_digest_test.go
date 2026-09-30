@@ -7,6 +7,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,10 +44,19 @@ func TestFormatComplianceDigest_AllPass(t *testing.T) {
 }
 
 func TestSendComplianceDigest_NoSinkNoOp(t *testing.T) {
-	c := &KeyorixCore{storage: new(MockStorage), now: time.Now}
+	store := new(MockStorage)
+	var captured *models.AuditEvent
+	store.On("LogAuditEvent", mock.Anything, mock.AnythingOfType("*models.AuditEvent")).
+		Run(func(args mock.Arguments) { captured = args.Get(1).(*models.AuditEvent) }).
+		Return(nil)
+	c := &KeyorixCore{storage: store, now: time.Now}
 	sent, err := c.SendComplianceDigest(context.Background(), 0)
 	require.NoError(t, err)
 	assert.False(t, sent, "no notification channel → nothing delivered")
+
+	require.NotNil(t, captured)
+	assert.Equal(t, EventComplianceDigestSkippedNoChannel, captured.EventType,
+		"no channel configured at all must use a DISTINCT event type from an actual send (coordinator review, PR #2249) -- a SIEM query for digest_sent must not count a run that delivered nothing")
 }
 
 func TestSendComplianceDigest_Broadcasts(t *testing.T) {

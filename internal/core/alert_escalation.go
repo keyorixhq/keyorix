@@ -128,7 +128,8 @@ func (c *KeyorixCore) RunAlertEscalation(ctx context.Context) (*EscalationResult
 
 	active := activePolicies(policies)
 	if len(active) == 0 {
-		c.writeAuditEvent(ctx, "admin_job.run_alert_escalation_run", auditActorPtr(ctx), nil,
+		auditCtx, userID := adminJobAuditContext(ctx)
+		c.writeAuditEvent(auditCtx, "admin_job.run_alert_escalation_run", userID, nil,
 			"run-alert-escalation job ran: 0 active escalation policies")
 		return &EscalationResult{}, nil
 	}
@@ -160,7 +161,8 @@ func (c *KeyorixCore) RunAlertEscalation(ctx context.Context) (*EscalationResult
 	// of its own (F4, audit-completeness campaign) -- per-channel dispatch
 	// failures are logged, not audited, and a run with zero candidate alerts
 	// would leave no trace it ran.
-	c.writeAuditEvent(ctx, "admin_job.run_alert_escalation_run", auditActorPtr(ctx), nil,
+	auditCtx, userID := adminJobAuditContext(ctx)
+	c.writeAuditEvent(auditCtx, "admin_job.run_alert_escalation_run", userID, nil,
 		fmt.Sprintf("run-alert-escalation job ran: %d evaluated, %d escalated, %d skipped",
 			result.Evaluated, result.Escalated, result.Skipped))
 	return result, nil

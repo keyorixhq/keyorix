@@ -58,7 +58,8 @@ func (k *KeyorixCore) CheckTokenExpiry(ctx context.Context) (*TokenExpiryCheckRe
 	// Written unconditionally: this job only ever creates in-app Notification
 	// rows, never an audit_events row of its own (F4, audit-completeness
 	// campaign).
-	k.writeAuditEvent(ctx, "admin_job.token_expiry_check_run", auditActorPtr(ctx), nil,
+	auditCtx, userID := adminJobAuditContext(ctx)
+	k.writeAuditEvent(auditCtx, "admin_job.token_expiry_check_run", userID, nil,
 		fmt.Sprintf("token-expiry-check job ran: %d PAT warning(s), %d PAT critical(s), %d machine warning(s), %d machine critical(s)",
 			result.PATWarnings, result.PATCriticals, result.MachineWarnings, result.MachineCriticals))
 	return result, nil

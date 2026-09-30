@@ -112,15 +112,20 @@ func auditActorFromContext(ctx context.Context) (uint, bool) {
 	return userID, ok && userID != 0
 }
 
-// auditActorPtr returns a *uint for writeAuditEvent's userID param from
-// whatever caller ID WithAuditActor tagged ctx with (nil when untagged --
-// the background scheduler's own runs).
-func auditActorPtr(ctx context.Context) *uint {
-	userID, ok := auditActorFromContext(ctx)
-	if !ok {
-		return nil
+// adminJobAuditContext returns the (ctx, userID) pair an /admin/jobs "ran"
+// summary event should audit with: if WithAuditActor tagged ctx with a real
+// caller (an admin's on-demand trigger), returns that caller's ID unmodified;
+// otherwise (the background scheduler's own untagged runs) tags ctx
+// ActorTypeSystem and returns nil -- the same distinction SendComplianceDigest
+// (compliance_digest.go) already makes for its own no-channel-configured
+// event, extended to every other /admin/jobs summary event (coordinator
+// review, PR #2249) so a scheduled run is never left defaulting to the
+// generic "user" ActorType merely because no caller happened to tag it.
+func adminJobAuditContext(ctx context.Context) (context.Context, *uint) {
+	if userID, ok := auditActorFromContext(ctx); ok {
+		return ctx, &userID
 	}
-	return &userID
+	return WithActorType(ctx, ActorTypeSystem), nil
 }
 
 // WithImpersonation tags ctx with the admin user ID that initiated the current

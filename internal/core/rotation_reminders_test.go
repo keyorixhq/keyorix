@@ -24,6 +24,7 @@ func newRotationReminderCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Project{},
 		&models.Environment{}, &models.SecretNode{}, &models.RotationPolicy{}, &models.Notification{},
+		&models.AuditEvent{},
 	))
 
 	now := time.Date(2026, 6, 13, 10, 0, 0, 0, time.UTC)

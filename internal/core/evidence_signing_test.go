@@ -44,6 +44,37 @@ func TestEvidenceSignature_RoundTrip(t *testing.T) {
 	assert.False(t, c.VerifyEvidenceSignature(fname, data, "garbage").Valid)
 }
 
+// TestEvidenceSignature_MismatchReasonNeverLeaksExpectedMAC is the
+// coordinator-requested confirmation (PR #2249 review) for
+// LogComplianceEvidenceVerified: it audits result.Reason verbatim
+// (evidence_signing.go's fmt.Sprintf("...reason=%q", ...)), so a Reason
+// string that embedded the SERVER'S OWN expected HMAC value would leak a
+// piece of the deployment's evidence-signing secret material into every
+// mismatch audit row. Confirms the tampered-data and wrong-key mismatch
+// paths report only the generic "does not match" reason, never the
+// hex-encoded expected/computed MAC that produced that verdict.
+func TestEvidenceSignature_MismatchReasonNeverLeaksExpectedMAC(t *testing.T) {
+	t.Parallel()
+	c := &KeyorixCore{}
+	c.SetEvidenceSignKey([]byte("0123456789abcdef0123456789abcdef"), "v1")
+	data := []byte(`{"generated_at":"2026-06-15T00:00:00Z"}`)
+	const fname = "keyorix-evidence-20260615T000000Z.json"
+
+	sig, ok := c.signEvidence(fname, data)
+	require.True(t, ok)
+	expectedMAC := strings.SplitN(sig, ":", 2)[1]
+
+	res := c.VerifyEvidenceSignature(fname, []byte(`{"generated_at":"changed"}`), sig)
+	require.False(t, res.Valid)
+	assert.NotContains(t, res.Reason, expectedMAC,
+		"the mismatch Reason must never contain the server's own expected MAC value")
+
+	res2 := c.VerifyEvidenceSignature(fname, data, "v1:"+strings.Repeat("00", 32))
+	require.False(t, res2.Valid)
+	assert.NotContains(t, res2.Reason, expectedMAC,
+		"the mismatch Reason must never contain the server's own expected MAC value")
+}
+
 // TestEvidenceSignature_WrongKeySameVersionRejected pins that the key-version label is NOT a
 // credential: a signature carrying the right version prefix but produced by a DIFFERENT key
 // (another deployment) must be rejected as a mismatch, not accepted. The HMAC's secret key is
