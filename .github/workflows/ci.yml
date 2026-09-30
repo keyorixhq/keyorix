@@ -1211,6 +1211,11 @@ jobs:
           go-version: '1.27.1'
       - name: Fresh-install API smoke (SQLite)
         run: make e2e-smoke
+      # Customer journeys N1-N3 + N6 (SQLite, no Docker, ~40s): assert end
+      # results through the real server and CLI binaries. See
+      # docs/TESTING_GUIDE.md "Customer journeys".
+      - name: Customer journeys (fast tier)
+        run: make e2e-journeys
 
   lint:
     needs: [changes]
