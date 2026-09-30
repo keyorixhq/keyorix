@@ -9,14 +9,14 @@
 // triggers that only ever emit/dispatch a notification, never mutate account/
 // role/audit state).
 //
-// Verified RED against a reverted allowlist (emptied it to {}): all 17 current
+// Verified RED against a reverted allowlist (emptied it to {}): all 16 current
 // permAlertsWrite call sites reported as unallowed. GREEN with the real
-// allowlist below restored. anomaly-alerts and compliance-digest are
-// notification-only but deliberately excluded from this split and stay on
-// system.write (see systemWriteScopeAllowlist in system_write_scope_test.go)
-// — an alert_operator could otherwise point a notification channel they
-// control at either trigger and exfiltrate anomaly-detection findings or
-// compliance posture.
+// allowlist below restored. anomaly-alerts, compliance-digest, and
+// run-alert-escalation are notification-only but deliberately excluded from
+// this split and stay on system.write (see systemWriteScopeAllowlist in
+// system_write_scope_test.go) — an alert_operator could otherwise point a
+// notification channel they control at any of the three and exfiltrate
+// anomaly-detection findings or compliance posture.
 package http
 
 import (
@@ -53,7 +53,6 @@ var alertsWriteScopeAllowlist = map[string]string{
 	"POST /api/v1/admin/jobs/expiry-reminders":            "RunExpiryReminders -> core.SendExpiryReminders: sends secret-expiry reminders. Notification-only.",
 	"POST /api/v1/admin/jobs/role-expiry-check":           "RunRoleExpiryCheck -> core.CheckRoleExpiry (role_expiry_notify.go): emits in-app Notification rows for role grants nearing expiry. Verified by reading the function -- it does NOT revoke anything; its own doc comment says already-expired grants are left to a separate removal sweep. Notification-only, so it moved here despite not being on this item's original expected list.",
 	"POST /api/v1/admin/jobs/check-read-quotas":           "RunReadQuotaCheck -> core.CheckReadQuotas (read_quota_alerts.go): emits in-app Notification rows for secrets approaching their MaxReads limit. Verified by reading the function -- it does NOT block or enforce reads (that happens elsewhere, at actual read time); this job only notifies. Notification-only, so it moved here despite not being on this item's original expected list.",
-	"POST /api/v1/admin/jobs/run-alert-escalation":        "RunEscalation -> core.RunAlertEscalation (alert_escalation.go): dispatches unacknowledged anomaly alerts to configured notification channels per escalation policy. Verified by reading the function -- no alert-row mutation (no \"escalated\" flag set), pure dispatch.",
 	"POST /api/v1/admin/jobs/token-expiry-check":          "RunTokenExpiryCheck -> core.CheckTokenExpiry (token_expiry_remind.go): emits in-app Notification rows for PATs/machine credentials nearing expiry. Notification-only, mirrors role-expiry-check's pattern exactly per its own doc comment.",
 }
 
@@ -62,7 +61,7 @@ var alertsWriteScopeAllowlist = map[string]string{
 // ...) call site in server/http/router.go must appear in
 // alertsWriteScopeAllowlist. A new route gated on alerts.write with no
 // allowlist entry fails this test -- forcing the same "what does it do, why
-// alerts.write" review this item gave the current 19 sites.
+// alerts.write" review this item gave the current 16 sites.
 func TestAlertsWriteRouteAllowlistCoversEveryGateSite(t *testing.T) {
 	routerGoPath := filepath.Join(permissionSweepRepoRoot(t), "server", "http", "router.go")
 	_, foundAll := scanRouter(t, routerGoPath)

@@ -36,7 +36,7 @@
     "gate_perms": [
       "permSystemRead"
     ],
-    "router_go_line": 1246
+    "router_go_line": 1264
   },
   {
     "method": "PUT",
@@ -49,7 +49,7 @@
     "gate_perms": [
       "permSystemWrite"
     ],
-    "router_go_line": 1247
+    "router_go_line": 1265
   },
   {
     "method": "GET",
@@ -83,9 +83,9 @@
       "RequirePermission"
     ],
     "gate_perms": [
-      "permAlertsWrite"
+      "permSystemWrite"
     ],
-    "router_go_line": 1220
+    "router_go_line": 1233
   },
   {
     "method": "POST",
@@ -98,102 +98,11 @@
     "gate_perms": [
       "permAlertsWrite"
     ],
-    "router_go_line": 1233
+    "router_go_line": 1248
   },
   {
     "method": "POST",
     "pattern": "/api/v1/admin/jobs/compliance-digest",
-    "feature_group": "admin",
-    "gated": true,
-    "gate_fns": [
-      "RequirePermission"
-    ],
-    "gate_perms": [
-      "permAlertsWrite"
-    ],
-    "router_go_line": 1223
-  },
-  {
-    "method": "POST",
-    "pattern": "/api/v1/admin/jobs/expiry-reminders",
-    "feature_group": "admin",
-    "gated": true,
-    "gate_fns": [
-      "RequirePermission"
-    ],
-    "gate_perms": [
-      "permAlertsWrite"
-    ],
-    "router_go_line": 1222
-  },
-  {
-    "method": "POST",
-    "pattern": "/api/v1/admin/jobs/purge-audit-logs",
-    "feature_group": "admin",
-    "gated": true,
-    "gate_fns": [
-      "RequirePermission"
-    ],
-    "gate_perms": [
-      "permSystemWrite"
-    ],
-    "router_go_line": 1240
-  },
-  {
-    "method": "POST",
-    "pattern": "/api/v1/admin/jobs/record-hygiene-snapshot",
-    "feature_group": "admin",
-    "gated": true,
-    "gate_fns": [
-      "RequirePermission"
-    ],
-    "gate_perms": [
-      "permSystemWrite"
-    ],
-    "router_go_line": 1226
-  },
-  {
-    "method": "POST",
-    "pattern": "/api/v1/admin/jobs/role-expiry-check",
-    "feature_group": "admin",
-    "gated": true,
-    "gate_fns": [
-      "RequirePermission"
-    ],
-    "gate_perms": [
-      "permAlertsWrite"
-    ],
-    "router_go_line": 1230
-  },
-  {
-    "method": "POST",
-    "pattern": "/api/v1/admin/jobs/rotation-reminders",
-    "feature_group": "admin",
-    "gated": true,
-    "gate_fns": [
-      "RequirePermission"
-    ],
-    "gate_perms": [
-      "permAlertsWrite"
-    ],
-    "router_go_line": 1221
-  },
-  {
-    "method": "POST",
-    "pattern": "/api/v1/admin/jobs/run-alert-escalation",
-    "feature_group": "admin",
-    "gated": true,
-    "gate_fns": [
-      "RequirePermission"
-    ],
-    "gate_perms": [
-      "permAlertsWrite"
-    ],
-    "router_go_line": 1234
-  },
-  {
-    "method": "POST",
-    "pattern": "/api/v1/admin/jobs/suspend-inactive-users",
     "feature_group": "admin",
     "gated": true,
     "gate_fns": [
@@ -206,7 +115,7 @@
   },
   {
     "method": "POST",
-    "pattern": "/api/v1/admin/jobs/token-expiry-check",
+    "pattern": "/api/v1/admin/jobs/expiry-reminders",
     "feature_group": "admin",
     "gated": true,
     "gate_fns": [
@@ -216,6 +125,97 @@
       "permAlertsWrite"
     ],
     "router_go_line": 1235
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/admin/jobs/purge-audit-logs",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1258
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/admin/jobs/record-hygiene-snapshot",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1241
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/admin/jobs/role-expiry-check",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAlertsWrite"
+    ],
+    "router_go_line": 1245
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/admin/jobs/rotation-reminders",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAlertsWrite"
+    ],
+    "router_go_line": 1234
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/admin/jobs/run-alert-escalation",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1252
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/admin/jobs/suspend-inactive-users",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permSystemWrite"
+    ],
+    "router_go_line": 1256
+  },
+  {
+    "method": "POST",
+    "pattern": "/api/v1/admin/jobs/token-expiry-check",
+    "feature_group": "admin",
+    "gated": true,
+    "gate_fns": [
+      "RequirePermission"
+    ],
+    "gate_perms": [
+      "permAlertsWrite"
+    ],
+    "router_go_line": 1253
   },
   {
     "method": "GET",
@@ -4274,7 +4274,7 @@
     "pattern": "/openapi.yaml",
     "feature_group": "root",
     "gated": false,
-    "router_go_line": 1258
+    "router_go_line": 1276
   },
   {
     "method": "GET",
@@ -4432,7 +4432,7 @@
     "pattern": "/swagger/",
     "feature_group": "root",
     "gated": false,
-    "router_go_line": 1257
+    "router_go_line": 1275
   },
   {
     "method": "POST",

@@ -122,21 +122,29 @@ F1 of the alerts/audit-gap session:
   wholesale: each of the 11 job triggers was independently verified by
   reading its core-layer function (not assumed from its name) for whether it
   only ever emits/dispatches a notification, or actually mutates
-  account/role/audit state. 6 moved to `alerts.write`
-  (`rotation-reminders`, `expiry-reminders`, `token-expiry-check`,
-  `run-alert-escalation`, and — contrary to this session's own initial
-  expectation — `role-expiry-check` and `check-read-quotas`, both confirmed
-  by reading `internal/core/role_expiry_notify.go`/`read_quota_alerts.go` to
-  only emit `Notification` rows, never revoke a role grant or block a read).
-  5 stayed on `system.write`: `record-hygiene-snapshot` (persists a data row,
-  not a notification), `suspend-inactive-users` (mutates account state),
+  account/role/audit state. 5 moved to `alerts.write`
+  (`rotation-reminders`, `expiry-reminders`, `token-expiry-check`, and —
+  contrary to this session's own initial expectation — `role-expiry-check`
+  and `check-read-quotas`, both confirmed by reading
+  `internal/core/role_expiry_notify.go`/`read_quota_alerts.go` to only emit
+  `Notification` rows, never revoke a role grant or block a read). 6 stayed
+  on `system.write`: `record-hygiene-snapshot` (persists a data row, not a
+  notification), `suspend-inactive-users` (mutates account state),
   `purge-audit-logs` (deletes audit events), and `anomaly-alerts`/
-  `compliance-digest` — both notification-only, but deliberately kept on the
-  wider permission: an `alert_operator` (no audit/compliance authority by
-  design) could point a notification channel they control at either trigger
-  and exfiltrate anomaly-detection findings or compliance posture, an SSRF
-  path from air-gapped hosts too. If that boundary changes later, it is its
-  own ADR decision, not a corollary of this one.
+  `compliance-digest`/`run-alert-escalation` — all three notification-only,
+  but deliberately kept on the wider permission because all three dispatch
+  the SAME anomaly/compliance-derived data (`run-alert-escalation` re-sends
+  unacknowledged **anomaly** alerts, the identical data class
+  `anomaly-alerts` broadcasts): an `alert_operator` (no audit/compliance
+  authority by design) could point a notification channel they control at
+  any of the three and exfiltrate anomaly-detection findings or compliance
+  posture, an SSRF path from air-gapped hosts too. (Coordinator review, PR
+  #2244: if the scheduled anomaly/digest jobs already send to every
+  configured channel on their normal schedule, an operator-controlled
+  channel already receives that data regardless of this gate — gating the
+  on-demand trigger only removes the ability to force an immediate send, not
+  the underlying exposure.) If this boundary changes later, that is its own
+  ADR decision, not a corollary of this one.
 
 ### Final route table (post-decision, 2026-09-28)
 
@@ -158,14 +166,14 @@ F1 of the alerts/audit-gap session:
 | `POST /admin/jobs/compliance-digest` | `system.write` | Notification-only, same exfiltration-path reasoning as anomaly-alerts above — kept off `alerts.write`. |
 | `POST /admin/jobs/role-expiry-check` | `alerts.write` | Verified notification-only (no revocation) — moved despite not being on this session's initial expected list. |
 | `POST /admin/jobs/check-read-quotas` | `alerts.write` | Verified notification-only (no read-blocking) — moved despite not being on this session's initial expected list. |
-| `POST /admin/jobs/run-alert-escalation` | `alerts.write` | Verified notification-dispatch-only. |
+| `POST /admin/jobs/run-alert-escalation` | `system.write` | Verified notification-dispatch-only, but re-sends unacknowledged ANOMALY alerts — the same data class as anomaly-alerts above — kept off `alerts.write` for the identical exfiltration-path reasoning (see Decision above). |
 | `POST /admin/jobs/token-expiry-check` | `alerts.write` | Notification-only. |
 | `POST /admin/jobs/record-hygiene-snapshot` | `system.write` | Persists a data row, not a notification — stayed. |
 | `POST /admin/jobs/suspend-inactive-users` | `system.write` | Mutates account state — stayed. |
 | `POST /admin/jobs/purge-audit-logs` | `system.write` | Deletes audit events — stayed. |
 | `PUT /admin/anomaly-config` | `system.write` | Unchanged (row 25). |
 
-18 `system.write` gate sites, 17 `alerts.write` gate sites (see
+19 `system.write` gate sites, 16 `alerts.write` gate sites (see
 `server/http/system_write_scope_test.go`/`alerts_write_scope_test.go` for the
 enforcing allowlists).
 
@@ -215,13 +223,13 @@ counterpart: a user holding only `alert_operator` succeeds on every
 
 ## Consequences
 
-- Notification-channel and alert-escalation-policy management, plus 6 of the
+- Notification-channel and alert-escalation-policy management, plus 5 of the
   11 `/admin/jobs` on-demand triggers, moved off `system.write` onto the new
   `alerts.write` — a real narrowing, not just a review. `system.write`
   remains a strict superset via a one-time backfill (see Decision above), so
-  no existing holder lost access. `anomaly-alerts` and `compliance-digest`
-  stayed on `system.write` despite being notification-only (see Decision
-  above for why).
+  no existing holder lost access. `anomaly-alerts`, `compliance-digest`, and
+  `run-alert-escalation` stayed on `system.write` despite being
+  notification-only (see Decision above for why).
 - Two guard tests now exist (`system_write_scope_test.go`,
   `alerts_write_scope_test.go`) so a *future* route added under either
   permission gets the same scrutiny this review gave the current 35 sites,

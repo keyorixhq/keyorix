@@ -73,7 +73,6 @@ func TestAlertOperator_PermissionTiers(t *testing.T) {
 		{http.MethodPost, "/api/v1/admin/jobs/expiry-reminders"},
 		{http.MethodPost, "/api/v1/admin/jobs/role-expiry-check"},
 		{http.MethodPost, "/api/v1/admin/jobs/check-read-quotas"},
-		{http.MethodPost, "/api/v1/admin/jobs/run-alert-escalation"},
 		{http.MethodPost, "/api/v1/admin/jobs/token-expiry-check"},
 	}
 	for _, r := range allowedRoutes {
@@ -86,15 +85,15 @@ func TestAlertOperator_PermissionTiers(t *testing.T) {
 	}
 
 	// alert_operator MUST be denied (403) on every route that remains gated on
-	// system.write — the full systemWriteScopeAllowlist surface (18 sites as of
+	// system.write — the full systemWriteScopeAllowlist surface (19 sites as of
 	// this test; see system_write_scope_test.go). Permission middleware runs
 	// before the handler body/path-param validation, so a placeholder {id} and
 	// an empty body are sufficient to prove the denial happens at the gate, not
-	// downstream. anomaly-alerts and compliance-digest are notification-only
-	// but deliberately excluded from the alerts.write split (see
-	// docs/adr-110-system-write-scope.md's Decision section: an alert_operator
-	// could otherwise exfiltrate anomaly/compliance data via a notification
-	// channel they control) — this asserts they stay denied.
+	// downstream. anomaly-alerts, compliance-digest, and run-alert-escalation
+	// are notification-only but deliberately excluded from the alerts.write
+	// split (see docs/adr-110-system-write-scope.md's Decision section: an
+	// alert_operator could otherwise exfiltrate anomaly/compliance data via a
+	// notification channel they control) — this asserts they stay denied.
 	deniedRoutes := []struct {
 		method, path string
 	}{
@@ -112,6 +111,7 @@ func TestAlertOperator_PermissionTiers(t *testing.T) {
 		{http.MethodDelete, "/api/v1/sod/policies/1"},
 		{http.MethodPost, "/api/v1/admin/jobs/anomaly-alerts"},
 		{http.MethodPost, "/api/v1/admin/jobs/compliance-digest"},
+		{http.MethodPost, "/api/v1/admin/jobs/run-alert-escalation"},
 		{http.MethodPost, "/api/v1/admin/jobs/record-hygiene-snapshot"},
 		{http.MethodPost, "/api/v1/admin/jobs/suspend-inactive-users"},
 		{http.MethodPost, "/api/v1/admin/jobs/purge-audit-logs"},

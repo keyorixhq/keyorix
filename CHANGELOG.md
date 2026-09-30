@@ -39,23 +39,31 @@ All notable changes to Keyorix are documented here. This project follows
   entirely in ADR-108 Phase 6 — the routes had no remaining legitimate caller
   but stayed live, gated only by `users.write`. (`c8bcf9dd`)
 
+### Fixed
+- **Seven tables with live handler code were never migrated on any
+  install** (secret version comments, notification channels, alert
+  escalation policies, secret templates, MFA step-up tokens, hygiene-trend
+  snapshots, compliance-posture snapshots) — every fresh install 500'd on
+  first use of any of them. Fixed for fresh and upgraded installs alike.
+  (`0b6bb65a`)
+
 ### Added
 - **New `alerts.write` permission and `alert_operator` built-in role** (ADR-110
-  follow-up): notification-channel/escalation-policy management and 6 of the 11
+  follow-up): notification-channel/escalation-policy management and 5 of the 11
   `/admin/jobs` on-demand triggers (the ones that only emit/dispatch a
   notification AND carry no compliance/audit-derived data — rotation/expiry/
-  token-expiry reminders, run-alert-escalation, role-expiry-check,
-  check-read-quotas) moved off `system.write` onto this narrower permission.
-  `system.write` remains a strict superset: existing holders keep access via a
-  one-time backfill on upgrade. `record-hygiene-snapshot`,
-  `suspend-inactive-users`, and `purge-audit-logs` stayed on `system.write`
-  (they mutate account/data state, not just send a notification);
-  `anomaly-alerts` and `compliance-digest` also stayed on `system.write`
-  despite being notification-only, because an `alert_operator` could point a
-  notification channel at a URL they control and use either trigger to
-  exfiltrate anomaly-detection findings or compliance posture (an SSRF path
-  from air-gapped hosts too). See `docs/adr-110-system-write-scope.md`'s
-  Decision section for the full per-route table. (#2244)
+  token-expiry reminders, role-expiry-check, check-read-quotas) moved off
+  `system.write` onto this narrower permission. `system.write` remains a
+  strict superset: existing holders keep access via a one-time backfill on
+  upgrade. `record-hygiene-snapshot`, `suspend-inactive-users`, and
+  `purge-audit-logs` stayed on `system.write` (they mutate account/data state,
+  not just send a notification); `anomaly-alerts`, `compliance-digest`, and
+  `run-alert-escalation` also stayed on `system.write` despite being
+  notification-only, because they all dispatch anomaly/compliance-derived
+  data and an `alert_operator` could point a notification channel at a URL
+  they control to exfiltrate it (an SSRF path from air-gapped hosts too). See
+  `docs/adr-110-system-write-scope.md`'s Decision section for the full
+  per-route table. (#2244)
 
 ### Changed
 - **The air-gapped build profile ships, and the published air-gapped image

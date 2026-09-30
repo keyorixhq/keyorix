@@ -1211,16 +1211,21 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// their background schedulers — dispatch immediately after an incident or config
 		// change. F1 (ADR-110 follow-up) split this group's single gate per-route:
 		// every trigger that only ever emits/dispatches a notification AND carries no
-		// compliance/audit-derived data moved to alerts.write; the rest — three that
+		// anomaly/compliance-derived data moved to alerts.write; the rest — three that
 		// mutate account/data state (suspend-inactive-users, purge-audit-logs,
-		// record-hygiene-snapshot), plus anomaly-alerts and compliance-digest — stayed
-		// on system.write. anomaly-alerts/compliance-digest are notification-only but
-		// deliberately excluded from the split: an alert_operator (no audit/compliance
-		// authority by design) could point a notification channel they control at
-		// either trigger and exfiltrate anomaly-detection findings or compliance
-		// posture — an SSRF path from air-gapped hosts too. See
+		// record-hygiene-snapshot), plus anomaly-alerts, compliance-digest, and
+		// run-alert-escalation — stayed on system.write. Those three are
+		// notification-only but deliberately excluded from the split: an
+		// alert_operator (no audit/compliance authority by design) could point a
+		// notification channel they control at any of them and exfiltrate
+		// anomaly-detection findings or compliance posture — an SSRF path from
+		// air-gapped hosts too. (Note: if the scheduled anomaly/digest jobs already
+		// send to every configured channel on their normal schedule, an operator-
+		// controlled channel already receives that data regardless of this gate —
+		// gating the on-demand trigger only removes the ability to force an
+		// immediate send, not the underlying exposure. See
 		// docs/adr-110-system-write-scope.md's Decision section for the per-route
-		// classification.
+		// classification.)
 		r.Route("/admin/jobs", func(r chi.Router) {
 			// Broadcasts anomaly-detection findings to configured notification
 			// channels — kept on system.write, not alerts.write: see the group
@@ -1241,7 +1246,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// CheckReadQuotas only emits Notification rows (no read-blocking/
 			// enforcement here); verified by reading internal/core/read_quota_alerts.go.
 			r.With(customMiddleware.RequirePermission(permAlertsWrite)).Post("/check-read-quotas", adminJobsHandler.RunReadQuotaCheck)
-			r.With(customMiddleware.RequirePermission(permAlertsWrite)).Post("/run-alert-escalation", alertEscalationHandler.RunEscalation)
+			// Dispatches unacknowledged anomaly alerts to configured notification
+			// channels — same anomaly-detection-data exfiltration risk as
+			// anomaly-alerts above, so kept on system.write, not alerts.write.
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/run-alert-escalation", alertEscalationHandler.RunEscalation)
 			r.With(customMiddleware.RequirePermission(permAlertsWrite)).Post("/token-expiry-check", adminJobsHandler.RunTokenExpiryCheck)
 			// Suspends user accounts — a real account-state mutation — stays on
 			// system.write.

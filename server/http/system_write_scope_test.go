@@ -11,12 +11,13 @@
 // Verified RED against a reverted allowlist (emptied it to {}): every one of
 // the current permSystemWrite call sites reported as unallowed. GREEN with
 // the real allowlist below restored. F1 (ADR-110 follow-up, Andrei
-// 2026-09-28) split notification channels, escalation policies, and 6 of the
-// 11 /admin/jobs triggers off onto alerts.write; anomaly-alerts and
-// compliance-digest are notification-only but deliberately stayed here (see
-// their entries below) — see alerts_write_scope_test.go for the
-// alerts.write allowlist, and docs/adr-110-system-write-scope.md's Decision
-// section for the current, post-split route table.
+// 2026-09-28) split notification channels, escalation policies, and 5 of the
+// 11 /admin/jobs triggers off onto alerts.write; anomaly-alerts,
+// compliance-digest, and run-alert-escalation are notification-only but
+// deliberately stayed here (see their entries below) — see
+// alerts_write_scope_test.go for the alerts.write allowlist, and
+// docs/adr-110-system-write-scope.md's Decision section for the current,
+// post-split route table.
 package http
 
 import (
@@ -51,6 +52,7 @@ var systemWriteScopeAllowlist = map[string]string{
 	"DELETE /api/v1/sod/policies/{id}":                "Deletes an SoD policy — same family as create immediately above.",
 	"POST /api/v1/admin/jobs/anomaly-alerts":          "F1 (ADR-110 follow-up) split the /admin/jobs group's single gate per-route. RunAnomalyAlerts is notification-only, but deliberately excluded from the alerts.write split: an alert_operator (no audit/compliance authority by design) could point a notification channel they control at this trigger and exfiltrate anomaly-detection findings — an SSRF path from air-gapped hosts too. Stays on system.write.",
 	"POST /api/v1/admin/jobs/compliance-digest":       "Same F1 split, same reasoning as anomaly-alerts immediately above — RunComplianceDigest is notification-only but would let an alert_operator exfiltrate compliance posture via a channel they control. Stays on system.write.",
+	"POST /api/v1/admin/jobs/run-alert-escalation":    "Same F1 split, same reasoning as anomaly-alerts above — RunEscalation dispatches unacknowledged ANOMALY alerts (the same data class anomaly-alerts sends), so it stays on system.write for the identical exfiltration-path reason rather than moving to alerts.write.",
 	"POST /api/v1/admin/jobs/record-hygiene-snapshot": "Same F1 split. This one persists a HygieneTrendSnapshot row (data persistence, not a notification) — verified by reading hygiene_trends.go's RecordHygieneSnapshot — so it stays on system.write; the pure notification/reminder triggers in this same group moved to alerts.write (see alertsWriteScopeAllowlist in alerts_write_scope_test.go).",
 	"POST /api/v1/admin/jobs/suspend-inactive-users":  "Same F1 split — SuspendInactiveUsers mutates account state (inactivity_suspend.go), a real account-state mutation, not a notification.",
 	"POST /api/v1/admin/jobs/purge-audit-logs":        "Same F1 split — PurgeAuditLogsJob deletes audit events (audit_retention_handler.go), a data mutation, not a notification.",

@@ -138,9 +138,13 @@ func (c *KeyorixCore) ReconcileAlertsWriteRole(ctx context.Context) error {
 // shape, mfa.go's ActivateMFA): a storage failure between the two previously
 // left the role permanently stuck with zero permissions, because GetRoleByName
 // treats "role exists" as "already seeded" regardless of whether the grant
-// ever landed — and the CALLER (ReconcileAlertsWriteRole) sets its own
-// completion marker unconditionally on the way out, so a partial failure here
-// was never retried. Found by internal/core/atomicity_guard_test.go
+// ever landed. The CALLER (ReconcileAlertsWriteRole) now withholds its
+// completion marker whenever this or any other step fails this run (PR #2244
+// coordinator review), so a partial failure here IS retried on the next
+// startup — but this function's own WithTransaction wrapping still matters
+// independently: without it, a failure here would leave the zero-permission
+// role behind for GetRoleByName's existence check to wrongly treat as fully
+// seeded even across retries. Found by internal/core/atomicity_guard_test.go
 // (TestAtomicityGuard_UnclassifiedMultiWriteFunction) during the F1 rebase
 // (PR #2244); the guard test itself didn't exist when F1 was originally
 // written.
