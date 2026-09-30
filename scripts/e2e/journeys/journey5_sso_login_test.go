@@ -1,7 +1,7 @@
-//go:build e2e_containers
+//go:build e2e && e2e_containers
 
 // Package journeys, journey 5: SSO login via a real Keycloak (OIDC only).
-// Containers, nightly tier -- gated on e2e_containers (not e2e), same as
+// Containers, nightly tier -- gated on e2e && e2e_containers, same as
 // journey4 -- see that file's own build-tag doc comment for why.
 package journeys
 
@@ -161,7 +161,7 @@ func TestJourney_SSOLogin(t *testing.T) {
 		client := ssoClient(jar)
 		firstResp, ferr := client.Get(callbackURL) // #nosec G107 -- callbackURL is this journey's own real, freshly-obtained value
 		if ferr != nil {
-			t.Fatalf("first (legitimate) callback completion: %v", ferr)
+			t.Fatalf("first (legitimate) callback completion: %s", redactCode(ferr.Error()))
 		}
 		_ = firstResp.Body.Close()
 		if firstResp.StatusCode != http.StatusFound {
@@ -474,6 +474,10 @@ func readAllBody(resp *http.Response) (string, error) {
 // into test/CI output regardless.
 var redactCodeRe = regexp.MustCompile(`code=[^&]+`)
 
+// oneRemovalRe matches exactly "-1" in a "+N/-M" sync description, not
+// "-10" or "-12".
+var oneRemovalRe = regexp.MustCompile(`(^|[^0-9])-1([^0-9]|$)`)
+
 // redactCode replaces a URL's code= query parameter value with a fixed
 // placeholder -- used wherever a callback/authorization URL is printed in a
 // failure message.
@@ -505,7 +509,7 @@ func assertCallbackRejectedNoSession(t *testing.T, s *harness.Server, jar *cooki
 	client := ssoClient(jar)
 	resp, err := client.Get(callbackURL) // #nosec G107 -- callbackURL is derived from this journey's own real/fabricated fixed test values
 	if err != nil {
-		t.Fatalf("GET tampered/replayed/fabricated callback: %v", err)
+		t.Fatalf("GET tampered/replayed/fabricated callback: %s", redactCode(err.Error()))
 	}
 	location := resp.Header.Get("Location")
 	_ = resp.Body.Close()
@@ -675,7 +679,7 @@ func completeSSOLogin(t *testing.T, s *harness.Server, jar *cookiejar.Jar, kcAdd
 
 	callbackResp, err := client.Get(callbackURL) // #nosec G107 -- callbackURL is Keyorix's own registered redirect_url plus Keycloak's code, both fixed test values
 	if err != nil {
-		t.Fatalf("GET keyorix callback: %v", err)
+		t.Fatalf("GET keyorix callback: %s", redactCode(err.Error()))
 	}
 	successLocation := callbackResp.Header.Get("Location")
 	_ = callbackResp.Body.Close()
@@ -846,7 +850,7 @@ func assertRoleRemovalWasSynced(t *testing.T, s *harness.Server, adminToken stri
 		t.Fatal("expected at least one auth.sso_roles_synced event after the group-removal re-login, found none")
 	}
 	for _, e := range data.Events {
-		if strings.Contains(e.Description, "-1") {
+		if oneRemovalRe.MatchString(e.Description) {
 			return
 		}
 	}
