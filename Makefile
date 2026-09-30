@@ -354,10 +354,9 @@ e2e-journeys:
 
 # e2e-journeys-containers: N4-N6 -- migrate from Vault/OpenBao, SSO login via
 # a real Keycloak, and disaster recovery (backup/restore/KEK rotation).
-# Needs BOTH the e2e and e2e_containers build tags together (N4/N5 are
-# gated on e2e_containers alone so `make e2e-journeys`/`-tags e2e` never
-# builds or runs them regardless of whether the runner has Docker; they
-# still depend on scripts/e2e/harness, itself gated on e2e). N4/N5 need
+# Needs BOTH the e2e and e2e_containers build tags: N4/N5 are gated on
+# `e2e && e2e_containers`, so `make e2e-journeys` (`-tags e2e`) never builds
+# or runs them, whether or not the runner has Docker. N4/N5 need
 # Docker (skip cleanly if absent, UNLESS KEYORIX_E2E_CONTAINERS is set --
 # see journey4/5's own doc comments); N6 is plain SQLite, no containers.
 # Nightly tier -- Keycloak's own startup dominates N5's runtime (measured
