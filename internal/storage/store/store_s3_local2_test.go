@@ -772,7 +772,8 @@ func TestRBAC_DeleteRole(t *testing.T) {
 	role, err := ls.CreateRole(ctx, tempName, "temp")
 	require.NoError(t, err)
 
-	require.NoError(t, ls.DeleteRole(ctx, role.ID))
+	_, err = ls.DeleteRole(ctx, role.ID)
+	require.NoError(t, err)
 
 	_, err = ls.GetRole(ctx, role.ID)
 	require.Error(t, err)

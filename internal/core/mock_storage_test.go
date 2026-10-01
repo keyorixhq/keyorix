@@ -1172,8 +1172,10 @@ func (m *MockStorage) UpdateRole(ctx context.Context, role *models.Role) (*model
 	return v, a.Error(1)
 }
 
-func (m *MockStorage) DeleteRole(ctx context.Context, id uint) error {
-	return m.Called(ctx, id).Error(0)
+func (m *MockStorage) DeleteRole(ctx context.Context, id uint) (storage.RoleDeleteCascadeCounts, error) {
+	a := m.Called(ctx, id)
+	v, _ := a.Get(0).(storage.RoleDeleteCascadeCounts)
+	return v, a.Error(1)
 }
 
 func (m *MockStorage) ListRoles(ctx context.Context) ([]*models.Role, error) {

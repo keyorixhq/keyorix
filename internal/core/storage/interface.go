@@ -1012,7 +1012,13 @@ type Storage interface {
 	GetRole(ctx context.Context, id uint) (*models.Role, error)
 	GetRoleByName(ctx context.Context, name string) (*models.Role, error)
 	UpdateRole(ctx context.Context, role *models.Role) (*models.Role, error)
-	DeleteRole(ctx context.Context, id uint) error
+	// DeleteRole hard-deletes a role and cascades the delete to every
+	// UserRole/GroupRole/MachineIdentityRole/RolePermission/ConnectRefGrant row
+	// referencing it (SESSION-AT AT1 row 2). The returned RoleDeleteCascadeCounts
+	// reports how many live assignments the cascade actually removed, strictly
+	// for the audit trail (PR #2357 review) -- not a correctness mechanism, so a
+	// caller that ignores it loses nothing but the audit detail.
+	DeleteRole(ctx context.Context, id uint) (RoleDeleteCascadeCounts, error)
 	ListRoles(ctx context.Context) ([]*models.Role, error)
 	// SetRoleBypassesPermissionChecks sets models.Role.BypassesPermissionChecks
 	// (ADR-084) for roleID. Deliberately NOT reachable from CreateRole/UpdateRole
@@ -2099,6 +2105,20 @@ type ProjectMember struct {
 	Email       string `json:"email"`
 	RoleID      uint   `json:"role_id"`
 	RoleName    string `json:"role_name"`
+}
+
+// RoleDeleteCascadeCounts reports how many live principal-assignment rows
+// DeleteRole's cascade removed (SESSION-AT AT1 row 2, PR #2357 review) — the
+// user/group/machine-identity grants that pointed at the deleted role.
+// Deliberately excludes RolePermission/ConnectRefGrant: those are the role's
+// OWN composition (its permission bundle, its connector grants), not another
+// principal's assignment, so their removal isn't audit-worthy in the same
+// way — it's an expected consequence of deleting the role's own definition,
+// not something a user/group/machine "lost."
+type RoleDeleteCascadeCounts struct {
+	UserAssignments    int
+	GroupAssignments   int
+	MachineAssignments int
 }
 
 // RoleAssignment is one principal↔role grant at a scope — the raw rows behind an
