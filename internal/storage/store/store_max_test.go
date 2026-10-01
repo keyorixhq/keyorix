@@ -1189,7 +1189,7 @@ func TestUpdateRole(t *testing.T) {
 // DeleteRole — not-found.
 func TestDeleteRole_NotFound(t *testing.T) {
 	ls := newRBACStoreMax(t)
-	err := ls.DeleteRole(context.Background(), 9999)
+	_, err := ls.DeleteRole(context.Background(), 9999)
 	require.Error(t, err)
 }
 

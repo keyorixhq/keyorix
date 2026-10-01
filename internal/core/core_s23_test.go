@@ -13,9 +13,11 @@ package core
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -56,9 +58,24 @@ func TestLogRoleUpdated(t *testing.T) {
 func TestLogRoleDeleted(t *testing.T) {
 	t.Parallel()
 	ms, c := auditCore(t)
-	c.LogRoleDeleted(context.Background(), 3, 9, "old-role")
+	c.LogRoleDeleted(context.Background(), 3, 9, "old-role", storage.RoleDeleteCascadeCounts{})
 	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
-		return e.EventType == EventRoleDeleted
+		return e.EventType == EventRoleDeleted && !strings.Contains(e.Description, "removed")
+	}))
+}
+
+// TestLogRoleDeleted_WithCascadeCounts: PR #2357 review -- the audit
+// description must surface how many user/group/machine assignments the
+// cascade removed, not just that the role itself is gone.
+func TestLogRoleDeleted_WithCascadeCounts(t *testing.T) {
+	t.Parallel()
+	ms, c := auditCore(t)
+	c.LogRoleDeleted(context.Background(), 3, 9, "old-role", storage.RoleDeleteCascadeCounts{
+		UserAssignments: 3, GroupAssignments: 1, MachineAssignments: 2,
+	})
+	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
+		return e.EventType == EventRoleDeleted &&
+			strings.Contains(e.Description, "removed 3 user / 1 group / 2 machine assignment(s)")
 	}))
 }
 

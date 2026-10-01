@@ -83,7 +83,11 @@ func TestDeleteRole_CascadesEveryRoleIDReference(t *testing.T) {
 		RoleID: role.ID, Connector: "vault", RefPrefix: "secret/",
 	}).Error)
 
-	require.NoError(t, ls.DeleteRole(ctx, role.ID))
+	counts, err := ls.DeleteRole(ctx, role.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, counts.UserAssignments, "DeleteRole's returned counts must reflect the one UserRole row actually removed")
+	assert.Equal(t, 1, counts.GroupAssignments, "DeleteRole's returned counts must reflect the one GroupRole row actually removed")
+	assert.Equal(t, 1, counts.MachineAssignments, "DeleteRole's returned counts must reflect the one MachineIdentityRole row actually removed")
 
 	_, err = ls.GetRole(ctx, role.ID)
 	assert.Error(t, err, "role itself must be gone")
@@ -113,6 +117,6 @@ func TestDeleteRole_NotFound_NoCascadeSideEffects(t *testing.T) {
 	ctx := context.Background()
 	ls, _ := newFullSchemaStore(t)
 
-	err := ls.DeleteRole(ctx, 999999)
+	_, err := ls.DeleteRole(ctx, 999999)
 	assert.Error(t, err)
 }

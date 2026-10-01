@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -201,8 +202,17 @@ func (c *KeyorixCore) LogRoleUpdated(ctx context.Context, actorID, roleID uint, 
 	c.logRoleDefinitionChange(ctx, EventRoleUpdated, "updated", actorID, roleID, name)
 }
 
-func (c *KeyorixCore) LogRoleDeleted(ctx context.Context, actorID, roleID uint, name string) {
-	c.logRoleDefinitionChange(ctx, EventRoleDeleted, "deleted", actorID, roleID, name)
+// LogRoleDeleted records a role deletion. counts is DeleteRole's cascade
+// result (PR #2357 review) -- the user/group/machine assignment rows that
+// were silently dropped along with the role, surfaced here so the audit
+// trail shows who lost a grant row, not just that the role itself is gone.
+func (c *KeyorixCore) LogRoleDeleted(ctx context.Context, actorID, roleID uint, name string, counts storage.RoleDeleteCascadeCounts) {
+	desc := fmt.Sprintf("role %q (id %d) deleted", name, roleID)
+	if counts.UserAssignments > 0 || counts.GroupAssignments > 0 || counts.MachineAssignments > 0 {
+		desc += fmt.Sprintf(" (removed %d user / %d group / %d machine assignment(s))",
+			counts.UserAssignments, counts.GroupAssignments, counts.MachineAssignments)
+	}
+	c.writeRBACAudit(ctx, EventRoleDeleted, desc, actorID, Scope{}, rbacAuditDetail{RoleID: roleID})
 }
 
 // LogRoleUpdateDenied / LogRoleDeleteDenied record a DENIED attempt to update

@@ -281,6 +281,16 @@ func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models
 // architectural risk (duplicated logic that could silently drift) is the
 // same one #1665 closed for the other two operations. Consolidating here
 // for the same reason, not because a gap was found live.
+// A residual check-then-act race is left deliberately unguarded (PR #2357
+// review, non-blocking): an AssignRole or AssignMachineRole whose GetRole
+// existence check reads before this function's DeleteRole commits, but whose
+// own insert lands after, can still leave an orphan UserRole/GroupRole/
+// MachineIdentityRole row pointing at the just-deleted role ID -- the same
+// check-then-act shape as DeleteEnvironment's F6 race, but inert for the
+// same reason the cascade's own orphans were inert before this PR: role-ID
+// reuse is impossible, and every authorization query joins against the live
+// roles table, so the orphan row never grants anything. Not worth a named
+// lock for an inert outcome.
 func (c *KeyorixCore) DeleteRole(ctx context.Context, actorID, id uint) error {
 	role, err := c.storage.GetRole(ctx, id)
 	if err != nil {
@@ -290,9 +300,10 @@ func (c *KeyorixCore) DeleteRole(ctx context.Context, actorID, id uint) error {
 		c.LogRoleDeleteDenied(ctx, actorID, role.ID, role.Name, "target is a built-in role")
 		return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "cannot delete built-in role: "+role.Name)
 	}
-	if err := c.storage.DeleteRole(ctx, id); err != nil {
+	counts, err := c.storage.DeleteRole(ctx, id)
+	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
-	c.LogRoleDeleted(ctx, actorID, role.ID, role.Name)
+	c.LogRoleDeleted(ctx, actorID, role.ID, role.Name, counts)
 	return nil
 }
