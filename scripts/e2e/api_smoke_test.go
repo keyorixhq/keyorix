@@ -31,7 +31,15 @@ func TestAPISmoke_Postgres(t *testing.T) {
 	if dsn == "" {
 		t.Skip("KEYORIX_TEST_PG_DSN not set -- skipping the PostgreSQL leg (see docker command in scripts/e2e's package doc / docs/TESTING_GUIDE.md)")
 	}
+	// Password precedence: KEYORIX_TEST_PG_PASSWORD, then the DSN's own
+	// password= field (what CI's e2e-nightly sets), then the local docker
+	// default. The DSN fallback matters: without it the nightly job sent
+	// the local default to a server whose password is only in the DSN, and
+	// failed SASL auth on every run.
 	dbPassword := os.Getenv("KEYORIX_TEST_PG_PASSWORD")
+	if dbPassword == "" {
+		dbPassword = parseLibpqDSN(dsn)["password"]
+	}
 	if dbPassword == "" {
 		dbPassword = "keyorix-e2e-smoke"
 	}
