@@ -5,6 +5,71 @@ All notable changes to Keyorix are documented here. This project follows
 
 ## Unreleased
 
+## v0.95.3 — 2026-10-01
+
+### Security
+- **Last-admin guard on group deletion is now race-free.** Deleting a group
+  concurrently with deleting a user could remove the last administrator; both
+  operations now serialize on the same lock (an advisory lock on Postgres, an
+  in-process lock on SQLite). Under heavy contention a deletion can now fail
+  with a lock timeout instead of racing. (#2348)
+- **Deleting an environment can no longer orphan a secret created at the
+  same moment.** Secret creation, folder creation and secret restore now take
+  the same per-environment lock as environment deletion and re-check that the
+  environment still exists. A create against an environment that was just
+  deleted returns "not found" (not a server error). (#2353)
+- **Machine identity revoke/suspend always takes effect immediately.** If the
+  post-revoke cache eviction fails, every machine token in the auth cache is
+  now flushed instead of the revoked one staying cached for up to 30s, and
+  the call reports success (the revoke had already committed). The flush no
+  longer locks out unrelated machine identities. (#2349)
+- **`POST /auth/logout` on an already-invalidated session returns 401, not
+  500.** (#2337)
+- **More operations write audit events:** alert-escalation-policy changes,
+  every on-demand admin job (including runs that find nothing to do),
+  compliance evidence verification and posture snapshots, and 13 further
+  operations found by the audit-completeness fuzzer, including bulk secret
+  owner reassignment and bulk rotation. (#2249, #2252)
+
+### Added
+- **`keyorix-server admin recovery-key rotate --recipient <age1… key | ssh-ed25519 public
+  key file>`** prints (or, with `--output <file>`, writes) the new recovery
+  key only encrypted to that recipient; the plaintext key is never shown. The
+  recipient is validated before the key is generated. (#2257)
+- **New `alerts.write` permission and `alert_operator` built-in role** (ADR-110
+  follow-up): notification-channel/escalation-policy management and 5 of the 11
+  `/admin/jobs` on-demand triggers (the ones that only emit/dispatch a
+  notification AND carry no compliance/audit-derived data — rotation/expiry/
+  token-expiry reminders, role-expiry-check, check-read-quotas) moved off
+  `system.write` onto this narrower permission. `system.write` remains a
+  strict superset: existing holders keep access via a one-time backfill on
+  upgrade. `record-hygiene-snapshot`, `suspend-inactive-users`, and
+  `purge-audit-logs` stayed on `system.write` (they mutate account/data state,
+  not just send a notification); `anomaly-alerts`, `compliance-digest`, and
+  `run-alert-escalation` also stayed on `system.write` despite being
+  notification-only, because they all dispatch anomaly/compliance-derived
+  data and an `alert_operator` could point a notification channel at a URL
+  they control to exfiltrate it (an SSRF path from air-gapped hosts too). See
+  `docs/adr-110-system-write-scope.md`'s Decision section for the full
+  per-route table. (#2244)
+
+### Fixed
+- **Deleting a custom role now also removes its user, group and machine
+  role assignments, its permissions and its connector ref grants**, in the
+  same transaction. Previously these rows were left behind. They granted
+  nothing (authorization always checks the live role), but they cluttered
+  exports and listings. Break-glass and access-review history keep their
+  references by design. (#2357)
+
+### Testing
+- End-to-end customer-journey suite (application reads a secret, access
+  control, audit trail, Vault/OpenBao migration, Keycloak SSO, disaster
+  recovery) runs against the real server and CLI binaries: the fast tier in
+  the merge queue, the container tier nightly. (#2338, #2339, #2341–#2344,
+  #2355, #2358)
+
+## v0.95.2 — 2026-09-30
+
 ### Added
 - **`admin backup`/`admin restore` now support Postgres, in addition to
   SQLite** — the same commands, same archive format, on either backend.
@@ -47,23 +112,6 @@ All notable changes to Keyorix are documented here. This project follows
   first use of any of them. Fixed for fresh and upgraded installs alike.
   (`0b6bb65a`)
 
-### Added
-- **New `alerts.write` permission and `alert_operator` built-in role** (ADR-110
-  follow-up): notification-channel/escalation-policy management and 5 of the 11
-  `/admin/jobs` on-demand triggers (the ones that only emit/dispatch a
-  notification AND carry no compliance/audit-derived data — rotation/expiry/
-  token-expiry reminders, role-expiry-check, check-read-quotas) moved off
-  `system.write` onto this narrower permission. `system.write` remains a
-  strict superset: existing holders keep access via a one-time backfill on
-  upgrade. `record-hygiene-snapshot`, `suspend-inactive-users`, and
-  `purge-audit-logs` stayed on `system.write` (they mutate account/data state,
-  not just send a notification); `anomaly-alerts`, `compliance-digest`, and
-  `run-alert-escalation` also stayed on `system.write` despite being
-  notification-only, because they all dispatch anomaly/compliance-derived
-  data and an `alert_operator` could point a notification channel at a URL
-  they control to exfiltrate it (an SSRF path from air-gapped hosts too). See
-  `docs/adr-110-system-write-scope.md`'s Decision section for the full
-  per-route table. (#2244)
 
 ### Changed
 - **The air-gapped build profile ships, and the published air-gapped image
