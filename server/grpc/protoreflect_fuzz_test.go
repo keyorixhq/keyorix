@@ -34,35 +34,32 @@ package grpc_test
 //  4. BOUNDED WORK: handling time must not be disproportionate to the
 //     request's marshaled size (checkBoundedWork).
 //
-// Oracles 2 and 3 share one mechanism (dbSnapshot/unexplainedWrite) --
+// Oracles 2 and 3 share one mechanism (dbSnapshot/unexplainedWrites) --
 // "did this one call write anything the documented best-effort channel
 // doesn't already explain" is the same question whether asked of a call that
-// returned OK (2) or one that didn't (3). This mechanism caught two REAL gaps
-// in its own exemption list live (not product bugs): the GetCompliancePosture
-// snapshot upsert and the LogSecretRead*-family secret_access_logs write --
-// both are documented, intentional best-effort side effects, now named in
-// bestEffortSideEffectTables.
+// returned OK (2) or one that didn't (3). dbSnapshot tracks a write-count
+// trigger on EVERY table in the schema (not just the exempt ones), so a
+// violation names exactly which table(s) absorbed the unaccounted write and
+// by how many write operations (see unexplainedWrites, tableDelta).
 //
-// REPRODUCIBILITY GATE (mirrors server/http's FuzzCanarySecretLeakage, same
-// reasoning): this world is long-lived and shared across every fuzz
-// iteration within one worker process. A -fuzz burst's minimization step can
-// report a failure whose window includes residual state from an earlier,
-// not-yet-minimized candidate in the SAME continuing process -- confirmed
-// live (2026-10-02): four burst-discovered ERROR-IMPLIES-NO-COMMIT /
-// AUTHZ-BYPASS(write) failures on calls that structurally cannot write
-// anything (a validation or authz rejection that returns before touching the
-// DB, traced in each case) ALL passed cleanly when replayed in total
-// isolation (go test -run=FuzzGRPCProtoreflectInvariants/<hash>), including
-// with -parallel=1 (ruling out any cross-worker-process explanation). Before
-// reporting ANY burst-discovered failure as a finding: replay its saved
-// testdata/fuzz/FuzzGRPCProtoreflectInvariants/<hash> file alone. If it
-// fails again, it's a genuine, state-independent finding. If it passes, it's
-// state-dependent noise from this class of long-lived-world fuzzing -- do
-// NOT commit it as a regression corpus entry (a replay-dependent file is
-// flaky by file-discovery order, not a real regression check), and do not
-// assert the underlying code is broken without separately confirming it
-// (read the handler; a validation/authz-rejection path that returns before
-// any storage call cannot have written anything).
+// This mechanism caught three REAL gaps in its own exemption list live, not
+// product bugs: the GetCompliancePosture snapshot upsert, the
+// LogSecretRead*-family secret_access_logs write, and -- initially
+// misdiagnosed as fuzz-minimization noise, corrected after PR #2390 review --
+// ValidateSessionToken's throttled session.last_seen_at touch
+// (internal/core/auth.go), which runs on EVERY successful authentication
+// inside authenticateRequest, BEFORE a handler's own validation/authz logic,
+// so it can fire on a call that's about to be rejected for an unrelated
+// reason. Being wall-clock-throttled (sessionTouchInterval, 30s) is exactly
+// why it fired intermittently across a long -fuzz burst and never on an
+// isolated single-input replay seconds later -- looking identical to
+// non-reproducible noise until the per-table diagnostics this file now emits
+// named "sessions" as the table that kept moving. All three are documented,
+// intentional best-effort side effects, now named in
+// bestEffortSideEffectTables; see TestUnexplainedWrites_NamesTheDifferingTable
+// and TestUnexplainedWrite_RedOnMixedExemptAndNonExemptWrite in
+// protoreflect_oracle_mechanism_test.go for direct proof the diagnostics are
+// accurate and that exempting one table never masks a write to another.
 //
 // Session E5 already covers the request-smuggling / double-parse variant for
 // gRPC; this target does not re-attempt that. Streaming RPCs are out of scope
@@ -75,6 +72,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -123,14 +121,17 @@ const prCanaryValue = "KXPROTOREFLECT-CANARY-9f21ab77c6"
 type prWorld struct {
 	srv  *grpc.Server
 	conn *grpc.ClientConn
-	db   *sql.DB // raw *sql.DB for total_changes()/COUNT(*) snapshotting -- see dbSnapshot
+	db   *sql.DB // raw *sql.DB for the per-table write-count snapshotting -- see dbSnapshot
 	c    *core.KeyorixCore
 
 	methods []grpcMethod
 
-	zeroGrantTok string
-	readOnlyTok  string
-	adminTok     string
+	zeroGrantTok  string
+	zeroGrantUID  uint
+	readOnlyTok   string
+	readOnlyUID   uint
+	auditorRoleID uint
+	adminTok      string
 
 	// reachedMu/reached track, across the whole fuzz run, which methods were
 	// actually invoked at least once -- drained in f.Cleanup to log the
@@ -163,7 +164,7 @@ func buildPRWorld(f *testing.F) *prWorld {
 	if err != nil {
 		f.Fatalf("underlying *sql.DB: %v", err)
 	}
-	installWriteCountTriggers(f, sqlDB, bestEffortSideEffectTables)
+	installWriteCountTriggers(f, sqlDB, discoverAllTables(f, sqlDB))
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(gormDB))
 	ls := store.NewLocalStorage(gormDB)
@@ -200,7 +201,7 @@ func buildPRWorld(f *testing.F) *prWorld {
 		f.Fatalf("seed canary secret: %v", err)
 	}
 
-	mint := func(uname string) string {
+	mint := func(uname string) (string, uint) {
 		u, err := c.CreateUser(ctx, &core.CreateUserRequest{Username: uname, Email: uname + "@x.io", Password: prPrincipalPassword})
 		if err != nil || u == nil {
 			f.Fatalf("create user %s: %v", uname, err)
@@ -209,10 +210,10 @@ func buildPRWorld(f *testing.F) *prWorld {
 		if err != nil || sess == nil {
 			f.Fatalf("login %s: %v", uname, err)
 		}
-		return sess.SessionToken
+		return sess.SessionToken, u.ID
 	}
-	zeroGrantTok := mint("prfuzz-zero-grant")
-	readOnlyTok := mint("prfuzz-read-only")
+	zeroGrantTok, zeroGrantUID := mint("prfuzz-zero-grant")
+	readOnlyTok, readOnlyUID := mint("prfuzz-read-only")
 
 	// system_auditor (ADR-021 built-in role): install-wide read access to
 	// secrets/users/roles/audit/system, no write permission of any kind --
@@ -222,11 +223,7 @@ func buildPRWorld(f *testing.F) *prWorld {
 	if err != nil || auditorRole == nil {
 		f.Fatalf("system_auditor role lookup: %v", err)
 	}
-	roUser, err := ls.GetUserByUsername(ctx, "prfuzz-read-only")
-	if err != nil || roUser == nil {
-		f.Fatalf("read-only user lookup: %v", err)
-	}
-	if err := c.AssignUserRole(ctx, 0, roUser.ID, auditorRole.ID, core.Scope{}, false); err != nil {
+	if err := c.AssignUserRole(ctx, 0, readOnlyUID, auditorRole.ID, core.Scope{}, false); err != nil {
 		f.Fatalf("grant system_auditor: %v", err)
 	}
 
@@ -253,7 +250,38 @@ func buildPRWorld(f *testing.F) *prWorld {
 
 	return &prWorld{
 		srv: srv, conn: conn, db: sqlDB, c: c, methods: methods,
-		zeroGrantTok: zeroGrantTok, readOnlyTok: readOnlyTok, adminTok: adminSess.SessionToken,
+		zeroGrantTok: zeroGrantTok, zeroGrantUID: zeroGrantUID,
+		readOnlyTok: readOnlyTok, readOnlyUID: readOnlyUID, auditorRoleID: auditorRole.ID,
+		adminTok: adminSess.SessionToken,
+	}
+}
+
+// resetPrincipalGrants restores the zero-grant and read-only identities to
+// their intended baseline grants before every fuzz iteration -- mirroring
+// FuzzGRPCRESTSecretReadAuthzParity's own "Per-iteration reset: drop
+// fuzz-principal grants" convention. Required because the fuzzer-generated
+// requests for RoleService.AssignRole/RemoveRole carry ARBITRARY user_id/
+// role_id fields, and the admin identity legitimately calls them too: across
+// enough iterations in one long-lived world, a fuzzed AssignRole request's
+// user_id can coincide with w.zeroGrantUID or w.readOnlyUID, LEGITIMATELY
+// granting one of them a real role -- after which every later iteration
+// would see that identity behave as something other than what its name
+// claims, for the rest of the process's life. Found live via PR #2390 review:
+// a burst-reported "zero-grant got OK" case for RoleService.RemoveRole did
+// not reproduce in isolation, and tracing it showed the request's user_id
+// happened to equal w.zeroGrantUID's real ID -- admin's OWN earlier fuzzed
+// AssignRole call (same iteration or an earlier one) had actually granted it
+// a role, so the later "zero-grant" read was, by then, true to the DB but
+// false to this harness's own label. Deleting any user_roles rows for both
+// IDs, then re-granting read-only's own baseline system_auditor role, undoes
+// that drift before each iteration's assertions run.
+func (w *prWorld) resetPrincipalGrants(t *testing.T, ctx context.Context) {
+	t.Helper()
+	if _, err := w.db.Exec("DELETE FROM user_roles WHERE user_id IN (?, ?)", w.zeroGrantUID, w.readOnlyUID); err != nil {
+		t.Fatalf("reset principal grants: %v", err)
+	}
+	if err := w.c.AssignUserRole(ctx, 0, w.readOnlyUID, w.auditorRoleID, core.Scope{}, false); err != nil {
+		t.Fatalf("re-grant read-only baseline system_auditor: %v", err)
 	}
 }
 
@@ -294,23 +322,63 @@ func (w *prWorld) close() {
 //     GRPC's own comment on it: "Audit as a secret read... Best-effort
 //     metadata fetch") tripped the oracle because only audit_events was
 //     named here at the time.
-var bestEffortSideEffectTables = []string{"audit_events", "compliance_posture_snapshots", "secret_access_logs"}
+//   - sessions: internal/core/auth.go's ValidateSessionToken touches
+//     session.last_seen_at on EVERY successful authentication, throttled to
+//     once per sessionTouchInterval (30s) -- that function's own doc comment:
+//     "Best-effort, throttled last-seen stamp for the My Account sessions
+//     view... Never fails the request." This runs inside authenticateRequest
+//     BEFORE a handler's own validation/authz logic, so it can fire on a call
+//     that is about to be rejected for an unrelated reason (bad input,
+//     insufficient permissions) -- exactly the coordinator's diagnosis on
+//     PR #2390 of what the earlier "state-dependent, non-reproducible"
+//     findings actually were: a real, synchronous, documented best-effort
+//     writer this list hadn't named yet, not fuzz-minimization noise. Because
+//     it is wall-clock-throttled (sessionTouchInterval), it fires
+//     intermittently across a long -fuzz burst and not on an isolated
+//     single-input replay seconds later -- which is exactly why it looked
+//     like non-reproducible noise before this table was named here.
+var bestEffortSideEffectTables = []string{"audit_events", "compliance_posture_snapshots", "secret_access_logs", "sessions"}
 
-// prFuzzWriteCountsTable plus one AFTER INSERT/UPDATE/DELETE trigger per
-// bestEffortSideEffectTables entry (installed once in buildPRWorld via
-// installWriteCountTriggers) is how this oracle tells "this exempt table
-// absorbed a write" from "some OTHER table did", precisely. A row-content hash
-// diff was tried first and rejected: GORM's FirstOrCreate+Assign (the
-// snapshot upsert) issues a real UPDATE on every call regardless of whether
-// the new values differ from the old ones, so SQLite's total_changes() counts
-// it even when a content hash would see no difference -- a same-day second
-// call with unchanged tallies produced exactly that false mismatch live
-// (GetComplianceControls's seed, confirmed by tracing SQLite's own semantics:
-// an UPDATE statement counts every row it SETs, not every row whose value
-// actually changed). A trigger-based counter tracks "was a write statement
-// executed against this table" directly, matching total_changes()'s own unit
-// of account instead of approximating it via content.
+// prFuzzWriteCountsTable backs a per-table write counter, kept current by one
+// AFTER INSERT/UPDATE/DELETE trigger per table in the schema -- installed
+// once in buildPRWorld via installWriteCountTriggers against EVERY table
+// discoverAllTables finds, not only the exempt ones. Tracking every table
+// (not just the exempt list) is what lets unexplainedWrites name EXACTLY
+// which table(s) absorbed an unaccounted write and by how many write
+// operations, instead of only knowing that SOME table did (PR #2390 review:
+// "make every unexplainedWrite failure name the differing tables").
+//
+// A row-content hash diff was tried first and rejected: GORM's
+// FirstOrCreate+Assign (the compliance-snapshot upsert) issues a real UPDATE
+// on every call regardless of whether the new values differ from the old
+// ones, which a content hash would see as unchanged -- confirmed live (a
+// same-day second call with unchanged tallies produced a false mismatch). A
+// trigger-based counter tracks "was a write statement executed against this
+// table" directly, independent of content, so a same-value UPDATE still
+// counts correctly as a write.
 const prFuzzWriteCountsTable = "pr_fuzz_write_counts"
+
+// discoverAllTables introspects sqlite_master for every real table the live
+// schema declares, excluding SQLite's own internal tables and the tracker
+// table itself -- driven by the live schema, not a hand-maintained list, so a
+// table the production migration adds later is covered here automatically.
+func discoverAllTables(t testing.TB, db *sql.DB) []string {
+	t.Helper()
+	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != ?", prFuzzWriteCountsTable)
+	if err != nil {
+		t.Fatalf("list tables: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan table name: %v", err)
+		}
+		tables = append(tables, name)
+	}
+	return tables
+}
 
 func installWriteCountTriggers(t testing.TB, db *sql.DB, tables []string) {
 	t.Helper()
@@ -318,16 +386,17 @@ func installWriteCountTriggers(t testing.TB, db *sql.DB, tables []string) {
 		t.Fatalf("create %s: %v", prFuzzWriteCountsTable, err)
 	}
 	for _, tbl := range tables {
-		// tbl always ranges over the fixed, hardcoded bestEffortSideEffectTables
-		// literal slice, never fuzz input.
-		if _, err := db.Exec("INSERT OR IGNORE INTO " + prFuzzWriteCountsTable + " (table_name, n) VALUES ('" + tbl + "', 0)"); err != nil { // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- tbl is always one of the hardcoded bestEffortSideEffectTables literals, never external input
+		// tbl always ranges over the live schema's own table names
+		// (discoverAllTables) in production use, or a fixed hardcoded literal
+		// in the oracle mechanism unit tests -- never fuzz input.
+		if _, err := db.Exec("INSERT OR IGNORE INTO "+prFuzzWriteCountsTable+" (table_name, n) VALUES (?, 0)", tbl); err != nil {
 			t.Fatalf("seed counter row for %s: %v", tbl, err)
 		}
 		for _, event := range []string{"INSERT", "UPDATE", "DELETE"} {
 			stmt := fmt.Sprintf(
 				"CREATE TRIGGER IF NOT EXISTS pr_fuzz_count_%s_%s AFTER %s ON %s BEGIN UPDATE %s SET n = n + 1 WHERE table_name = '%s'; END",
 				tbl, event, event, tbl, prFuzzWriteCountsTable, tbl,
-			) // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- tbl/event are always drawn from the fixed hardcoded literals above, never external input
+			) // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- tbl/event are always drawn from the live schema's own table names or a fixed test literal, never external input
 			if _, err := db.Exec(stmt); err != nil {
 				t.Fatalf("install %s trigger on %s: %v", event, tbl, err)
 			}
@@ -335,59 +404,79 @@ func installWriteCountTriggers(t testing.TB, db *sql.DB, tables []string) {
 	}
 }
 
+// dbSnapshot holds the write-trigger counter for EVERY table in the schema at
+// one point in time -- not just the exempt ones -- so a violation can name
+// exactly which table(s) changed.
 type dbSnapshot struct {
-	totalChanges int64
-	sideEffectN  map[string]int64 // table -> write-trigger counter at snapshot time
+	tableN map[string]int64
 }
 
 func snapshotDB(t testing.TB, db *sql.DB) dbSnapshot {
 	t.Helper()
-	var snap dbSnapshot
-	if err := db.QueryRow("SELECT total_changes()").Scan(&snap.totalChanges); err != nil {
-		t.Fatalf("total_changes(): %v", err)
+	rows, err := db.Query("SELECT table_name, n FROM " + prFuzzWriteCountsTable)
+	if err != nil {
+		t.Fatalf("snapshot write counts: %v", err)
 	}
-	snap.sideEffectN = make(map[string]int64, len(bestEffortSideEffectTables))
-	for _, tbl := range bestEffortSideEffectTables {
+	defer func() { _ = rows.Close() }()
+	snap := dbSnapshot{tableN: map[string]int64{}}
+	for rows.Next() {
+		var tbl string
 		var n int64
-		if err := db.QueryRow("SELECT n FROM "+prFuzzWriteCountsTable+" WHERE table_name = ?", tbl).Scan(&n); err != nil {
-			t.Fatalf("read write-count(%s): %v", tbl, err)
+		if err := rows.Scan(&tbl, &n); err != nil {
+			t.Fatalf("scan write count: %v", err)
 		}
-		snap.sideEffectN[tbl] = n
+		snap.tableN[tbl] = n
 	}
 	return snap
 }
 
-// unexplainedWrite reports whether `after` reflects a DB write beyond what the
-// documented best-effort side-effect tables account for. total_changes() is a
-// SQLite connection-level counter of every row an INSERT/UPDATE/DELETE
-// touched since the connection opened (serialized onto one connection by this
-// world's SetMaxOpenConns(1), so it is meaningful here); comparing its delta
-// against the exempt tables' own write-trigger-counter delta is what makes
-// this check generic: it needs no per-call knowledge of which table a given
-// RPC is expected to touch, unlike a hand-maintained "this method writes to
-// that table" list -- it only needs the short, documented EXEMPTION list
-// above.
-//
-// Known limitation (documented, not silently assumed away): if a single call
-// legitimately touches an exempt table AND, in the same call, an unrelated
-// table changes by exactly the same row count, the two deltas are
-// indistinguishable from here and the latter would not be flagged. In
-// practice this can only coincide for calls that already, legitimately, write
-// the exempt table (i.e. GetCompliancePosture and GetComplianceControls) --
-// every other RPC's calls see zero exempt-table writes, so any non-exempt
-// write there is still caught in full.
-func (before dbSnapshot) unexplainedWrite(after dbSnapshot) bool {
-	delta := after.totalChanges - before.totalChanges
-	var explained int64
-	for _, tbl := range bestEffortSideEffectTables {
-		// Each real write to tbl fires exactly one AFTER trigger, which issues its
-		// own UPDATE on prFuzzWriteCountsTable -- that counter update is ITSELF one
-		// more row total_changes() counts, on top of the real write it's counting.
-		// So one explained write costs 2 total_changes() units, not 1: credit the
-		// counter delta at that same rate so the two sides compare like for like.
-		explained += 2 * (after.sideEffectN[tbl] - before.sideEffectN[tbl])
+func isBestEffortSideEffectTable(tbl string) bool {
+	for _, t := range bestEffortSideEffectTables {
+		if t == tbl {
+			return true
+		}
 	}
-	return delta > explained
+	return false
+}
+
+// tableDelta names one table and how many write operations its counter
+// absorbed between two snapshots.
+type tableDelta struct {
+	table string
+	n     int64
+}
+
+func (d tableDelta) String() string { return fmt.Sprintf("%s:+%d", d.table, d.n) }
+
+// unexplainedWrites returns every NON-exempt table whose write-trigger
+// counter increased between before and after, each with its delta -- empty
+// means no unexplained write happened. Generic: it needs no per-call
+// knowledge of which table a given RPC is expected to touch, only the short,
+// documented bestEffortSideEffectTables list above.
+func (before dbSnapshot) unexplainedWrites(after dbSnapshot) []tableDelta {
+	var out []tableDelta
+	for tbl, afterN := range after.tableN {
+		if isBestEffortSideEffectTable(tbl) {
+			continue
+		}
+		if delta := afterN - before.tableN[tbl]; delta > 0 {
+			out = append(out, tableDelta{table: tbl, n: delta})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].table < out[j].table })
+	return out
+}
+
+func (before dbSnapshot) unexplainedWrite(after dbSnapshot) bool {
+	return len(before.unexplainedWrites(after)) > 0
+}
+
+func formatTableDeltas(ds []tableDelta) string {
+	parts := make([]string, len(ds))
+	for i, d := range ds {
+		parts[i] = d.String()
+	}
+	return strings.Join(parts, ", ")
 }
 
 // --- oracle 4: bounded work ---------------------------------------------
@@ -529,6 +618,8 @@ func FuzzGRPCProtoreflectInvariants(f *testing.F) {
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, program []byte) {
+		w.resetPrincipalGrants(t, context.Background())
+
 		cur := newFuzzCursor(program)
 		m := w.methods[int(cur.byte())%len(w.methods)]
 		w.markReached(m.key())
@@ -575,15 +666,20 @@ func FuzzGRPCProtoreflectInvariants(f *testing.F) {
 		}
 
 		errorImpliesNoCommit := func(label string, callErr error, before, after dbSnapshot) {
-			if callErr != nil && before.unexplainedWrite(after) {
-				t.Fatalf("ERROR-IMPLIES-NO-COMMIT violation op=%s principal=%s: non-OK status (%v) but the DB changed outside the documented best-effort audit write", m.key(), label, callErr)
+			if callErr == nil {
+				return
+			}
+			if diffs := before.unexplainedWrites(after); len(diffs) > 0 {
+				t.Fatalf("ERROR-IMPLIES-NO-COMMIT violation op=%s principal=%s: non-OK status (%v) but the DB changed outside the documented best-effort writes -- differing table(s): %s",
+					m.key(), label, callErr, formatTableDeltas(diffs))
 			}
 		}
 
 		zResp, zBefore, zAfter, zErr := runAs("zero-grant", w.zeroGrantTok)
 		if zErr == nil {
-			if zBefore.unexplainedWrite(zAfter) {
-				t.Fatalf("AUTHZ BYPASS (write) op=%s: zero-grant principal got OK and the DB changed outside the documented best-effort audit write", m.key())
+			if diffs := zBefore.unexplainedWrites(zAfter); len(diffs) > 0 {
+				t.Fatalf("AUTHZ BYPASS (write) op=%s: zero-grant principal got OK and the DB changed outside the documented best-effort writes -- differing table(s): %s",
+					m.key(), formatTableDeltas(diffs))
 			}
 			if containsCanary(zResp) {
 				t.Fatalf("AUTHZ BYPASS (secret read) op=%s: zero-grant principal got OK and the response carried the canary secret's plaintext", m.key())
@@ -592,8 +688,11 @@ func FuzzGRPCProtoreflectInvariants(f *testing.F) {
 		errorImpliesNoCommit("zero-grant", zErr, zBefore, zAfter)
 
 		_, roBefore, roAfter, roErr := runAs("read-only", w.readOnlyTok)
-		if roErr == nil && roBefore.unexplainedWrite(roAfter) {
-			t.Fatalf("AUTHZ BYPASS (write) op=%s: read-only principal (system_auditor, no write grant) got OK and the DB changed outside the documented best-effort audit write", m.key())
+		if roErr == nil {
+			if diffs := roBefore.unexplainedWrites(roAfter); len(diffs) > 0 {
+				t.Fatalf("AUTHZ BYPASS (write) op=%s: read-only principal (system_auditor, no write grant) got OK and the DB changed outside the documented best-effort writes -- differing table(s): %s",
+					m.key(), formatTableDeltas(diffs))
+			}
 		}
 		errorImpliesNoCommit("read-only", roErr, roBefore, roAfter)
 

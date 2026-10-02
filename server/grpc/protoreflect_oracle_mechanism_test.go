@@ -80,10 +80,13 @@ func bestEffortSideEffectTablesForTest(t *testing.T, fake []string) {
 }
 
 // newOracleTestDB opens an isolated, fresh in-memory SQLite DB (NOT the fuzz
-// world) with one real business table ("widgets") and installs the write-count
-// triggers over a FAKE exempt-table list ("widgets_audit") -- proving the
-// detection mechanism itself, independent of any real keyorix table or
-// handler.
+// world) with two real business tables ("widgets", "widgets_audit") and
+// installs the write-count triggers on BOTH via discoverAllTables -- exactly
+// mirroring buildPRWorld's own installWriteCountTriggers(f, sqlDB,
+// discoverAllTables(f, sqlDB)) call, not a hand-picked subset, so these tests
+// prove the mechanism as it's actually wired in production, not a
+// best-case simplification of it. Proves the detection mechanism itself,
+// independent of any real keyorix table or handler.
 func newOracleTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dsn := fmt.Sprintf("file:kxoracletest_%d?mode=memory&cache=shared", oracleTestDBSeq.Add(1))
@@ -102,14 +105,13 @@ func newOracleTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("underlying *sql.DB: %v", err)
 	}
 	db.SetMaxOpenConns(1)
+	installWriteCountTriggers(t, db, discoverAllTables(t, db))
 	return db
 }
 
 func TestUnexplainedWrite_RedOnUnexemptedTableWrite(t *testing.T) {
 	db := newOracleTestDB(t)
-	exempt := []string{"widgets_audit"}
-	installWriteCountTriggers(t, db, exempt)
-	bestEffortSideEffectTablesForTest(t, exempt)
+	bestEffortSideEffectTablesForTest(t, []string{"widgets_audit"})
 
 	before := snapshotDB(t, db)
 	// A write to a table NOT in the exempt list -- the exact shape of an
@@ -124,11 +126,34 @@ func TestUnexplainedWrite_RedOnUnexemptedTableWrite(t *testing.T) {
 	}
 }
 
+// TestUnexplainedWrites_NamesTheDifferingTable proves the PR #2390 review ask
+// directly: a violation must name exactly which table changed and by how
+// many write operations, not just assert that SOME table did.
+func TestUnexplainedWrites_NamesTheDifferingTable(t *testing.T) {
+	db := newOracleTestDB(t)
+	bestEffortSideEffectTablesForTest(t, []string{"widgets_audit"})
+
+	before := snapshotDB(t, db)
+	if _, err := db.Exec("INSERT INTO widgets (name) VALUES ('x')"); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if _, err := db.Exec("INSERT INTO widgets (name) VALUES ('y')"); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	after := snapshotDB(t, db)
+
+	diffs := before.unexplainedWrites(after)
+	if len(diffs) != 1 || diffs[0].table != "widgets" || diffs[0].n != 2 {
+		t.Fatalf("expected exactly one diff {widgets, 2}, got %v", diffs)
+	}
+	if got := formatTableDeltas(diffs); got != "widgets:+2" {
+		t.Fatalf("formatTableDeltas = %q, want %q", got, "widgets:+2")
+	}
+}
+
 func TestUnexplainedWrite_GreenOnExemptedTableInsert(t *testing.T) {
 	db := newOracleTestDB(t)
-	exempt := []string{"widgets_audit"}
-	installWriteCountTriggers(t, db, exempt)
-	bestEffortSideEffectTablesForTest(t, exempt)
+	bestEffortSideEffectTablesForTest(t, []string{"widgets_audit"})
 
 	before := snapshotDB(t, db)
 	if _, err := db.Exec("INSERT INTO widgets_audit (note) VALUES ('ok')"); err != nil {
@@ -143,16 +168,14 @@ func TestUnexplainedWrite_GreenOnExemptedTableInsert(t *testing.T) {
 
 // TestUnexplainedWrite_GreenOnExemptedTableNoOpUpdate is the exact live
 // finding this mechanism was built to handle (see bestEffortSideEffectTables's
-// compliance_posture_snapshots entry): an UPDATE that sets a row to the SAME
-// values it already had still counts in SQLite's total_changes(), even though
-// a content-hash comparison would see no difference. A row-hash-based
-// exemption failed this red-proof live (false positive); the write-count
-// trigger mechanism must pass it.
+// compliance_posture_snapshots and sessions entries): an UPDATE that sets a
+// row to the SAME value it already had still counts in SQLite's
+// total_changes(), even though a content-hash comparison would see no
+// difference. A row-hash-based exemption failed this red-proof live (false
+// positive); the write-count trigger mechanism must pass it.
 func TestUnexplainedWrite_GreenOnExemptedTableNoOpUpdate(t *testing.T) {
 	db := newOracleTestDB(t)
-	exempt := []string{"widgets_audit"}
-	installWriteCountTriggers(t, db, exempt)
-	bestEffortSideEffectTablesForTest(t, exempt)
+	bestEffortSideEffectTablesForTest(t, []string{"widgets_audit"})
 
 	if _, err := db.Exec("INSERT INTO widgets_audit (id, note) VALUES (1, 'same')"); err != nil {
 		t.Fatalf("seed insert: %v", err)
@@ -160,7 +183,10 @@ func TestUnexplainedWrite_GreenOnExemptedTableNoOpUpdate(t *testing.T) {
 
 	before := snapshotDB(t, db)
 	// An UPDATE that writes the SAME value the row already had -- SQLite's
-	// total_changes() still counts this.
+	// total_changes() still counts this (this is exactly the shape of
+	// ValidateSessionToken's throttled session.last_seen_at touch: a real
+	// UPDATE statement regardless of whether the stamped value happens to
+	// already be fresh).
 	if _, err := db.Exec("UPDATE widgets_audit SET note = 'same' WHERE id = 1"); err != nil {
 		t.Fatalf("no-op update: %v", err)
 	}
@@ -173,9 +199,7 @@ func TestUnexplainedWrite_GreenOnExemptedTableNoOpUpdate(t *testing.T) {
 
 func TestUnexplainedWrite_RedOnMixedExemptAndNonExemptWrite(t *testing.T) {
 	db := newOracleTestDB(t)
-	exempt := []string{"widgets_audit"}
-	installWriteCountTriggers(t, db, exempt)
-	bestEffortSideEffectTablesForTest(t, exempt)
+	bestEffortSideEffectTablesForTest(t, []string{"widgets_audit"})
 
 	before := snapshotDB(t, db)
 	if _, err := db.Exec("INSERT INTO widgets_audit (note) VALUES ('ok')"); err != nil {
@@ -186,8 +210,9 @@ func TestUnexplainedWrite_RedOnMixedExemptAndNonExemptWrite(t *testing.T) {
 	}
 	after := snapshotDB(t, db)
 
-	if !before.unexplainedWrite(after) {
-		t.Fatal("expected unexplainedWrite to report true when a non-exempt write rides alongside a legitimate exempt one, got false")
+	diffs := before.unexplainedWrites(after)
+	if len(diffs) != 1 || diffs[0].table != "widgets" {
+		t.Fatalf("expected a diff naming only 'widgets' (widgets_audit is exempt), got %v -- exempting one table must never mask a write to another", diffs)
 	}
 }
 
