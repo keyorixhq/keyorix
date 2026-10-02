@@ -45,6 +45,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/connect"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/delivery"
@@ -63,6 +64,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/startup"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	localstore "github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/pkg/trust"
 	"github.com/keyorixhq/keyorix/server/admin"
 	"github.com/keyorixhq/keyorix/server/grpc"
@@ -594,6 +596,29 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		// encryption is off.
 		if key, keyVer, ok := encSvc.EvidenceSignKey(); ok {
 			coreService.SetEvidenceSignKey(key, keyVer)
+		}
+	}
+
+	// #2433: backfill any NotificationChannel row still carrying its webhook/
+	// Slack/Teams URL in the legacy plaintext `url` column into the encrypted
+	// url_enc/url_meta columns -- encrypted when encSvc is wired and enabled,
+	// copied through as plaintext bytes otherwise (so a later decrypt reads
+	// either form back correctly either way, matching encryptAuthSecret's own
+	// disabled-encryption passthrough). Local-storage-only (notification
+	// channels have no remote-storage implementation at all); idempotent and
+	// best-effort, like ReconcileRBACPermissions/ReconcileAlertsWriteRole above
+	// -- a failure here must not block startup, since every existing row keeps
+	// working exactly as before until this backfill eventually succeeds on a
+	// later restart.
+	if ls, ok := store.(*localstore.LocalStorage); ok {
+		var encryptor ports.EncryptionProvider
+		if encSvc != nil {
+			encryptor = encSvc
+		}
+		if n, merr := ls.MigrateNotificationChannelURLsToEncrypted(context.Background(), encryptor); merr != nil {
+			log.Printf("notification channel URL encryption backfill: %v (continuing)", merr)
+		} else if n > 0 {
+			log.Printf("notification channel URL encryption backfill: migrated %d channel(s)", n)
 		}
 	}
 

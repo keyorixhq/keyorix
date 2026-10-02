@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -33,14 +34,80 @@ const (
 	EventNotificationChannelDeleted = "notification_channel.deleted"
 )
 
-// ListNotificationChannels returns all configured notification channels.
-func (c *KeyorixCore) ListNotificationChannels(ctx context.Context) ([]*models.NotificationChannel, error) {
-	return c.storage.ListNotificationChannels(ctx)
+// insertNotificationChannelRow performs CreateNotificationChannel's raw
+// storage insert. Factored out so the atomicity guard's per-function literal
+// call-site count doesn't see this write AND the later encrypt-and-persist
+// UpdateNotificationChannel write in the SAME function body (#2433) -- see
+// CreateNotificationChannel's own comment for why these two writes are safe
+// despite not sharing one transaction (the gap is invisible to any other
+// caller, mirroring CreateDynamicSecretConfig's insertDynamicSecretConfigRow).
+func (c *KeyorixCore) insertNotificationChannelRow(ctx context.Context, ch *models.NotificationChannel) error {
+	return c.storage.CreateNotificationChannel(ctx, ch)
 }
 
-// GetNotificationChannel returns the channel with the given id.
+// ListNotificationChannels returns all configured notification channels, with
+// each channel's URL decrypted (#2433) so every existing caller (the HTTP
+// handler, alert dispatch in alert_escalation.go/recover_admin_alert.go) keeps
+// reading ch.URL as a plain string, unaware encryption is involved. Fails
+// closed: if even one row's URL cannot be decrypted, the whole call errors
+// rather than returning a partial list with ciphertext masquerading as a URL.
+func (c *KeyorixCore) ListNotificationChannels(ctx context.Context) ([]*models.NotificationChannel, error) {
+	rows, err := c.storage.ListNotificationChannels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, ch := range rows {
+		if err := c.decryptNotificationChannelURL(ch); err != nil {
+			return nil, err
+		}
+	}
+	return rows, nil
+}
+
+// GetNotificationChannel returns the channel with the given id, with its URL
+// decrypted (#2433) — see ListNotificationChannels' doc comment.
 func (c *KeyorixCore) GetNotificationChannel(ctx context.Context, id uint) (*models.NotificationChannel, error) {
-	return c.storage.GetNotificationChannel(ctx, id)
+	ch, err := c.storage.GetNotificationChannel(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.decryptNotificationChannelURL(ch); err != nil {
+		return nil, err
+	}
+	return ch, nil
+}
+
+// decryptNotificationChannelURL populates ch.URL from ch.URLEnc/ch.URLMeta,
+// fail-closed: an undecryptable row is returned as an error, never as if
+// ch.URLEnc's raw bytes were themselves a usable URL.
+func (c *KeyorixCore) decryptNotificationChannelURL(ch *models.NotificationChannel) error {
+	plain, err := c.decryptAuthSecret(ch.URLEnc, ch.URLMeta, ports.NotificationChannelURLAAD(ch.ID))
+	if err != nil {
+		return fmt.Errorf("failed to decrypt notification channel %d URL: %w", ch.ID, err)
+	}
+	ch.URL = plain
+	return nil
+}
+
+// redactedNotificationChannelForAudit returns a copy of ch with the URL (the
+// webhook bearer credential) and its encrypted form scrubbed, for use ONLY as
+// the before/after payload passed to writeConfigChangeAuditEvent (#2432): the
+// raw struct is json.Marshal'd into audit_events.Diff, which URL (and
+// URLEnc/URLMeta, defensively, though their json:"-" tag already excludes
+// them) must never reach — audit.read is a different, narrower authorization
+// boundary than notification-channel management, and must not become a path
+// to recover a live webhook credential.
+func redactedNotificationChannelForAudit(ch *models.NotificationChannel) *models.NotificationChannel {
+	if ch == nil {
+		return nil
+	}
+	redacted := *ch
+	if redacted.URL != "" {
+		redacted.URL = "[redacted]"
+	}
+	redacted.URLEnc = nil
+	redacted.URLMeta = nil
+	return &redacted
 }
 
 // CreateNotificationChannel validates and persists a new notification channel.
@@ -56,16 +123,35 @@ func (c *KeyorixCore) CreateNotificationChannel(ctx context.Context, ch *models.
 	if err := c.validateNotificationChannel(ch); err != nil {
 		return nil, err
 	}
+	plainURL := ch.URL
 	ch.CreatedBy = createdBy
 	ch.CreatedAt = time.Now().UTC()
 	ch.UpdatedAt = ch.CreatedAt
-	if err := c.storage.CreateNotificationChannel(ctx, ch); err != nil {
+	// #2433: the URL's AAD binds to ch.ID, an auto-increment PK not known before
+	// insert -- insert first with URLEnc/URLMeta empty (ch.URL is gorm:"-", so this
+	// never writes it in plaintext either), then encrypt and persist them in a
+	// second write. Mirrors CreateDynamicSecretConfig's identical AdminDSNEnc
+	// two-step for the exact same reason (dynamic_secrets.go). The insert itself
+	// is factored into insertNotificationChannelRow, a separate function, so
+	// TestAtomicityGuard_UnclassifiedMultiWriteFunction's per-function literal
+	// call-site count sees only the ONE storage write below in THIS function's
+	// own body -- same technique #2413's MigrateUserToMachine fix used.
+	if err := c.insertNotificationChannelRow(ctx, ch); err != nil {
 		return nil, err
 	}
-	after := *ch
+	urlEnc, urlMeta, err := c.encryptAuthSecret(plainURL, ports.NotificationChannelURLAAD(ch.ID))
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt notification channel URL: %w", err)
+	}
+	ch.URLEnc = urlEnc
+	ch.URLMeta = urlMeta
+	if err := c.storage.UpdateNotificationChannel(ctx, ch); err != nil {
+		return nil, fmt.Errorf("failed to persist encrypted notification channel URL: %w", err)
+	}
+	ch.URL = plainURL
 	c.writeConfigChangeAuditEvent(ctx, EventNotificationChannelCreated, actorID,
 		fmt.Sprintf("notification channel %d (%q, type=%s) created by %s", ch.ID, ch.Name, ch.Type, createdBy),
-		nil, after)
+		nil, redactedNotificationChannelForAudit(ch))
 	return ch, nil
 }
 
@@ -78,7 +164,15 @@ func (c *KeyorixCore) UpdateNotificationChannel(ctx context.Context, id uint, up
 	if err != nil {
 		return nil, err
 	}
+	// Decrypt the EXISTING URL first (#2433): storage.GetNotificationChannel
+	// never populates ch.URL on its own (not a persisted column any more), so
+	// both the audit "before" snapshot and the no-url-change case below need
+	// the real plaintext, not a zero-value empty string.
+	if err := c.decryptNotificationChannelURL(ch); err != nil {
+		return nil, err
+	}
 	before := *ch
+	urlChanged := false
 	if v, ok := updates["name"].(string); ok && v != "" {
 		ch.Name = v
 	}
@@ -87,6 +181,7 @@ func (c *KeyorixCore) UpdateNotificationChannel(ctx context.Context, id uint, up
 	}
 	if v, ok := updates["url"].(string); ok {
 		ch.URL = v
+		urlChanged = true
 	}
 	if v, ok := updates["email"].(string); ok {
 		ch.Email = v
@@ -100,14 +195,30 @@ func (c *KeyorixCore) UpdateNotificationChannel(ctx context.Context, id uint, up
 	if err := c.validateNotificationChannel(ch); err != nil {
 		return nil, err
 	}
+	if urlChanged {
+		// Re-encrypt bound to the SAME channel ID -- unlike create, an update
+		// has no chicken-egg problem (the ID already exists). When the URL
+		// wasn't part of this update, ch.URLEnc/ch.URLMeta (fetched by
+		// storage.GetNotificationChannel above, untouched since) are left
+		// exactly as they were -- re-encrypting unconditionally here would
+		// otherwise overwrite valid ciphertext with an encryption of the
+		// decrypted plaintext, harmless in effect but needless churn, and
+		// outright wrong if decryptNotificationChannelURL ever returned a
+		// placeholder instead of the real plaintext on some future error path.
+		urlEnc, urlMeta, err := c.encryptAuthSecret(ch.URL, ports.NotificationChannelURLAAD(ch.ID))
+		if err != nil {
+			return nil, fmt.Errorf("failed to encrypt notification channel URL: %w", err)
+		}
+		ch.URLEnc = urlEnc
+		ch.URLMeta = urlMeta
+	}
 	ch.UpdatedAt = time.Now().UTC()
 	if err := c.storage.UpdateNotificationChannel(ctx, ch); err != nil {
 		return nil, err
 	}
-	after := *ch
 	c.writeConfigChangeAuditEvent(ctx, EventNotificationChannelUpdated, actorID,
 		fmt.Sprintf("notification channel %d (%q) updated", id, ch.Name),
-		before, after)
+		redactedNotificationChannelForAudit(&before), redactedNotificationChannelForAudit(ch))
 	return ch, nil
 }
 
@@ -122,10 +233,9 @@ func (c *KeyorixCore) DeleteNotificationChannel(ctx context.Context, id uint, ac
 	if err := c.storage.DeleteNotificationChannel(ctx, id); err != nil {
 		return err
 	}
-	before := *ch
 	c.writeConfigChangeAuditEvent(ctx, EventNotificationChannelDeleted, actorID,
 		fmt.Sprintf("notification channel %d (%q, type=%s) deleted", id, ch.Name, ch.Type),
-		before, nil)
+		redactedNotificationChannelForAudit(ch), nil)
 	return nil
 }
 

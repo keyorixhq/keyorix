@@ -1620,7 +1620,6 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	scheduleExists := tableExists(db, "secret_access_schedules")
 	secretTemplateExists := tableExists(db, "secret_templates")
 	alertEscalationExists := tableExists(db, "alert_escalation_policies")
-	notificationChannelExists := tableExists(db, "notification_channels")
 	secretVersionCommentExists := tableExists(db, "secret_version_comments")
 	mfaStepupTokenExists := tableExists(db, "mfa_stepup_tokens")
 	hygieneTrendExists := tableExists(db, "hygiene_trend_snapshots")
@@ -2117,10 +2116,20 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 			return fmt.Errorf("failed to migrate alert_escalation_policies table: %w", err)
 		}
 	}
-	if !notificationChannelExists {
-		if err := db.AutoMigrate(&models.NotificationChannel{}); err != nil {
-			return fmt.Errorf("failed to migrate notification_channels table: %w", err)
-		}
+	// Unconditional (#2433), not guarded on !notificationChannelExists like the
+	// SESSION-U U1 block above: that guard only ever existed to catch up a table
+	// that was missing ENTIRELY on an upgrading install (the historical bug those
+	// 11 models share) -- it was never meant to freeze the table's columns at
+	// whatever existed the day the catch-up landed. NotificationChannel added two
+	// new columns (URLEnc/URLMeta) after that fix shipped; the old `if !exists`
+	// gate would skip AutoMigrate entirely once the table exists, so an
+	// upgrading install would never get the new columns at all, even though
+	// notification_channels.go's CRUD now depends on them unconditionally.
+	// AutoMigrate is additive and safe on an existing table (same rationale as
+	// "Create rotation_policies if missing" below), so there is no reason this
+	// one model needed the once-only gate going forward.
+	if err := db.AutoMigrate(&models.NotificationChannel{}); err != nil {
+		return fmt.Errorf("failed to migrate notification_channels table: %w", err)
 	}
 	if !secretVersionCommentExists {
 		if err := db.AutoMigrate(&models.SecretVersionComment{}); err != nil {

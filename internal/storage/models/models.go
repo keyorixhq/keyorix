@@ -2019,8 +2019,24 @@ type NotificationChannel struct {
 	Name    string `gorm:"uniqueIndex;not null" json:"name"`
 	Type    string `gorm:"not null" json:"type"` // webhook|slack|teams|email
 	Enabled bool   `gorm:"default:true" json:"enabled"`
-	// URL is the webhook endpoint (for webhook/slack/teams types)
-	URL string `json:"url,omitempty"`
+	// URL is the webhook endpoint (for webhook/slack/teams types) -- the
+	// destination URL IS the bearer credential (internal/notifychan/delivery.go).
+	// Not a persisted column (#2433): the at-rest form lives in URLEnc/URLMeta
+	// below, and internal/core/notification_channels.go populates this field by
+	// decrypting them on every read, so every existing caller of ch.URL keeps
+	// working unchanged. gorm:"-" also keeps this out of GORM's own column
+	// mapping so a caller can never accidentally write the plaintext straight
+	// back into a column, bypassing the encrypt step.
+	URL string `gorm:"-" json:"url,omitempty"`
+	// URLEnc/URLMeta hold the at-rest encrypted form of URL (#2433; same
+	// EncryptSecretWithAAD/DecryptSecretWithAAD envelope and AAD-binding
+	// convention as DynamicSecretConfig.AdminDSNEnc below) — ciphertext and
+	// passthrough-plaintext bytes alike when no encryptor is wired, mirroring
+	// encryptAuthSecret's own disabled-encryption behavior. Never exposed via
+	// JSON; API responses and audit diffs alike only ever see the decrypted URL
+	// field above (or a redacted placeholder for the audit diff).
+	URLEnc  []byte `json:"-"`
+	URLMeta []byte `json:"-"`
 	// Email is the recipient address (for email type)
 	Email string `json:"email,omitempty"`
 	// Events is a comma-separated list of event types this channel receives
