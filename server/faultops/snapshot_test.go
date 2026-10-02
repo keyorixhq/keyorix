@@ -114,6 +114,8 @@ var presenceOnlyFields = map[string]string{
 	// "never verified" for every oracle that cares about that distinction; only
 	// the exact step NUMBER is exempted.
 	"LastUsedStep": "wall-clock TOTP time-step (unix/period) of the most recently accepted code -- changes every 30s, so two snapshots of the same logical state taken seconds apart can legitimately differ by 1 step",
+	"LeaseID":      "generateSecureToken()-random opaque public identifier (internal/core/dynamic_secrets.go:535, models.go:1153) — two independent IssueLease calls never mint the same lease ID, so DynamicSecretLease rows never match byte-for-byte even when nothing else differs; missed by the original \"ends in Hash/Enc\" enumeration since this field holds the raw token itself, not a hash of it. Found live: FuzzStorageFaultOperations (GRPC keyorix.v1.DynamicSecretService.IssueLease, fault=LogAuditEvent#1/error), Session CR round 2.",
+	"RoleName":     "the generated role/username on the target DB (models.go:1156) — every engine.Issue (both the real backend engines, e.g. internal/dynamic/postgres.go's \"kx_dyn_\"+randString(16), and dynamictest.FakeEngine's \"kx_fake_\"+randString(8)) mints a fresh random suffix per call, so two independent issues never produce the same role name. Same root cause and found alongside LeaseID above.",
 }
 
 // tableSnapshot is one table's canonical dump: Hash over every row's
