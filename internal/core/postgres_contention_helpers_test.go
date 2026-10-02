@@ -62,14 +62,30 @@ func pgIsolatedSchemaDSN(t *testing.T, base string) string {
 // pgOpen opens a *gorm.DB against dsn, closing it on test cleanup. Each call
 // is a genuinely separate connection — the independence contention tests in
 // this file rely on.
+//
+// Capped to a small pool (coordinator review, PR #2370): database/sql's
+// default MaxOpenConns is 0 (unlimited), so an uncapped pool can silently
+// open far more than one real TCP connection under concurrent load. A
+// cross-replica test calling pgOpen several times per trial, across many
+// trials, with every pool's actual close deferred to this test's own
+// t.Cleanup (which doesn't run until the whole test FUNCTION returns, not
+// per-trial), accumulates enough live connections across a full test binary
+// run to exhaust a CI Postgres service's low max_connections — found live:
+// the full-matrix merge-group run failed opening a replica pool with
+// "FATAL: sorry, too many clients already (SQLSTATE 53300)". A handful of
+// connections per logical "replica" is never actually needed here — these
+// tests issue one serialized operation per replica, not concurrent queries
+// within one — so capping costs nothing real.
 func pgOpen(t *testing.T, dsn string) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Discard})
+	require.NoError(t, err, "open Postgres connection (dsn schema-scoped, see pgIsolatedSchemaDSN)")
+	sqlDB, err := db.DB()
 	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(2)
+	sqlDB.SetMaxIdleConns(1)
 	t.Cleanup(func() {
-		if sqlDB, dbErr := db.DB(); dbErr == nil {
-			_ = sqlDB.Close()
-		}
+		_ = sqlDB.Close()
 	})
 	return db
 }

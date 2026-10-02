@@ -1127,6 +1127,10 @@ func TestDeprovisionSCIMGroup_StorageError(t *testing.T) {
 	// guardLastProjectAdminGroupDelete (core-project-members.json#3) runs next;
 	// no group role assignments in this fixture, so it's a no-op too.
 	ms.On("ListGroupRoleAssignments", mock.Anything, uint(10)).Return([]storage.RoleAssignment{}, nil)
+	// SESSION-AT #2352: DeprovisionSCIMGroup now shares deleteGroupGuarded
+	// (withGroupProjectAdminGuardLocks -> projectAdminScopesHeldByGroup ->
+	// GetGroup), same as the native DeleteGroup path.
+	ms.On("GetGroup", mock.Anything, uint(10)).Return(&models.Group{ID: 10, Name: "g"}, nil)
 	ms.On("DeleteGroup", mock.Anything, uint(10)).Return(errors.New("not found"))
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)
@@ -1141,6 +1145,10 @@ func TestDeprovisionSCIMGroup_Success(t *testing.T) {
 	ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, errors.New("not found"))
 	ms.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, errors.New("not found"))
 	ms.On("ListGroupRoleAssignments", mock.Anything, uint(10)).Return([]storage.RoleAssignment{}, nil)
+	// SESSION-AT #2352: DeprovisionSCIMGroup now shares deleteGroupGuarded
+	// (withGroupProjectAdminGuardLocks -> projectAdminScopesHeldByGroup ->
+	// GetGroup), same as the native DeleteGroup path.
+	ms.On("GetGroup", mock.Anything, uint(10)).Return(&models.Group{ID: 10, Name: "g"}, nil)
 	ms.On("DeleteGroup", mock.Anything, uint(10)).Return(nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)

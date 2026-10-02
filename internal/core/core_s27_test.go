@@ -639,9 +639,14 @@ func TestDeprovisionSCIMGroup_DeleteGroupError_s27(t *testing.T) {
 	ms.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, errors.New("not found"))
 	ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, errors.New("not found"))
 	ms.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, errors.New("not found"))
+	// SESSION-AT #2352: DeprovisionSCIMGroup now shares DeleteGroup's own
+	// deleteGroupGuarded helper (withGroupProjectAdminGuardLocks ->
+	// projectAdminScopesHeldByGroup -> GetGroup), so this fixture needs both
+	// of those stubbed too, not just the two guard checks.
+	ms.On("ListGroupRoleAssignments", mock.Anything, uint(5)).Return([]storage.RoleAssignment{}, nil)
+	ms.On("GetGroup", mock.Anything, uint(5)).Return(&models.Group{ID: 5, Name: "g"}, nil)
 	// guardLastProjectAdminGroupDelete (core-project-members.json#3) runs next;
 	// no group role assignments in this fixture, so it's a no-op too.
-	ms.On("ListGroupRoleAssignments", mock.Anything, uint(5)).Return([]storage.RoleAssignment{}, nil)
 	ms.On("DeleteGroup", mock.Anything, uint(5)).Return(errors.New("not found"))
 	c := NewKeyorixCore(ms)
 	err := c.DeprovisionSCIMGroup(context.Background(), 0, 5)

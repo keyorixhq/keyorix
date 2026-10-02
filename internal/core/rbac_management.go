@@ -251,29 +251,53 @@ func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, r
 // membership removal, both already guarded — guardLastProjectAdminGroupDelete/
 // guardLastProjectAdminGroupMembership) a group can stop conferring project-admin
 // authority, and had no guard at all.
+//
+// SESSION-AT #2352: two bugs fixed here. (1) The global-scope branch ran
+// guardLastGlobalAdminGroupRole with no lock at all — two concurrent global-scope
+// removals of two DIFFERENT groups' admin-conferring roles could each observe
+// "another admin survives" before either commits. (2) The project-scope branch
+// DID take projectAdminGuardLockKey, but only around the guard CHECK — the lock
+// was released before the actual storage.RemoveRoleFromGroup write below ran, so
+// the guard's read and the write were not actually serialized against each
+// other across replicas; a second caller could acquire the lock, re-check, see
+// the first caller's grant still present (not yet committed), pass, release,
+// and both writes land. Both branches now hold their lock across the guard AND
+// the write, matching RemoveUserRole's identical project-scope fix (FIX-2,
+// rbac_management.go) and its own regression test
+// (TestConcurrency_RemoveUserRole_ProjectScope_ExactlyOneOfTwoAdminsRemoved).
 func (c *KeyorixCore) RemoveRoleFromGroup(ctx context.Context, actorID, groupID, roleID uint, scope Scope) error {
 	if _, err := c.storage.GetGroup(ctx, groupID); err != nil {
 		return fmt.Errorf("group not found: %w", err)
 	}
-	if err := c.guardLastGlobalAdminGroupRole(ctx, groupID, roleID, scope); err != nil {
-		return err
-	}
-	if scope.ProjectID != 0 && scope.EnvironmentID == 0 {
-		// #1646: serialize the guard's read against every HA replica via the same
-		// per-project named lock SetProjectMemberRole/RemoveProjectMember/
-		// RemoveUserRole use, so a concurrent removal racing this one can't each
-		// observe "another admin survives" before either write commits.
-		if err := c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(scope.ProjectID), func(ctx context.Context) error {
-			return c.guardLastProjectAdminGroupRole(ctx, groupID, roleID, scope.ProjectID)
-		}); err != nil {
-			return err
+	write := func(ctx context.Context) error {
+		if err := c.storage.RemoveRoleFromGroup(ctx, groupID, roleID, scope); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
+		c.LogGroupRoleRemoved(ctx, actorID, groupID, roleID, scope)
+		return nil
 	}
-	if err := c.storage.RemoveRoleFromGroup(ctx, groupID, roleID, scope); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	switch {
+	case scope.ProjectID == 0 && scope.EnvironmentID == 0:
+		return c.storage.WithNamedLock(ctx, lastAdminGuardLockKey, func(ctx context.Context) error {
+			if err := c.guardLastGlobalAdminGroupRole(ctx, groupID, roleID, scope); err != nil {
+				return err
+			}
+			return write(ctx)
+		})
+	case scope.ProjectID != 0 && scope.EnvironmentID == 0:
+		return c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(scope.ProjectID), func(ctx context.Context) error {
+			if err := c.guardLastProjectAdminGroupRole(ctx, groupID, roleID, scope.ProjectID); err != nil {
+				return err
+			}
+			return write(ctx)
+		})
+	default:
+		// Environment-scoped: neither guard applies (both early-return for a
+		// non-matching scope) — a project's roles.assign authority is never
+		// carried by an environment-scoped grant, so removing one can't be the
+		// last route to it.
+		return write(ctx)
 	}
-	c.LogGroupRoleRemoved(ctx, actorID, groupID, roleID, scope)
-	return nil
 }
 
 // ListRolesWithPermissions returns all roles with their permission sets.
