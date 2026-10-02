@@ -117,7 +117,7 @@ func TestRequireReauth_GrantConsumedOnFirstAction_ThirdActionAlsoRejected(t *tes
 	_, err := c.RegenerateMFARecoveryCodes(ctx, 1, mfaTestPassword)
 	require.NoError(t, err, "the first sensitive action must succeed off the live grant")
 
-	err = c.DisableMFA(ctx, 1, mfaTestPassword)
+	err = c.DisableMFA(ctx, 1, mfaTestPassword, "")
 	require.Error(t, err, "the same consumed grant must not satisfy a third, still-different action either")
 	assert.Contains(t, err.Error(), "invalid code or password")
 

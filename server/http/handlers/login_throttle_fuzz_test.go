@@ -196,7 +196,7 @@ func ensureLTTOTPActivated(t *testing.T, c *core.KeyorixCore) string {
 	// (mirrors the established convention in mfa_stepup_handler_test.go).
 	actCode, err := totp.GenerateCode(secret, ltFixedNow.Add(-30*time.Second))
 	require.NoError(t, err)
-	_, err = c.ActivateMFA(context.Background(), ltTOTPUserID, actCode, loginThrottleTestPassword)
+	_, err = c.ActivateMFA(context.Background(), ltTOTPUserID, actCode, loginThrottleTestPassword, "")
 	require.NoError(t, err)
 	return secret
 }
