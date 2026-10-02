@@ -123,10 +123,7 @@ func (s *GroupGRPCService) RestoreGroup(ctx context.Context, req *pb.RestoreGrou
 	if err := authorizeGlobal(ctx, s.core, actor, permRolesAssign); err != nil {
 		return nil, err
 	}
-	if err := s.core.RestoreGroup(ctx, actor.UserID, uint(req.GetId())); err != nil {
-		return nil, groupError(err)
-	}
-	g, err := s.core.GetGroup(ctx, uint(req.GetId()))
+	g, err := s.core.RestoreGroup(ctx, actor.UserID, uint(req.GetId()))
 	if err != nil {
 		return nil, groupError(err)
 	}

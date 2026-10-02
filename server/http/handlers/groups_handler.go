@@ -216,7 +216,7 @@ func (h *GroupHandler) RestoreGroup(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "InvalidParameter", errInvalidGroupID, http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.RestoreGroup(r.Context(), userCtx.UserID, uint(id)); err != nil {
+	if _, err := h.coreService.RestoreGroup(r.Context(), userCtx.UserID, uint(id)); err != nil {
 		log.Printf("Error restoring group: %v", err)
 		if strings.Contains(err.Error(), errNotFound) || strings.Contains(err.Error(), "not deleted") {
 			sendError(w, "NotFound", "Group not found or not deleted", http.StatusNotFound, nil)
