@@ -160,35 +160,52 @@ func (c *KeyorixCore) RestoreGroup(ctx context.Context, actorID, id uint) (*mode
 	if id == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
 	}
-	roles, err := c.storage.GetGroupRoles(ctx, id)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
-	}
-	roleIDs := make([]uint, 0, len(roles))
-	for _, r := range roles {
-		roleIDs = append(roleIDs, r.ID)
-	}
-	if err := c.requireGlobalAdminToReinstateAdminRoles(ctx, actorID, roleIDs, "group"); err != nil {
-		return nil, err
-	}
-	// The restore and the read-back that builds the caller's response share one
-	// transaction (#2428): a GetGroup read failing AFTER an unwrapped RestoreGroup
-	// had already committed used to report the whole call as failed while the
-	// group was, in fact, already active again (with its memberships and grants)
-	// -- the caller had no way to tell. Wrapping both means a failure here rolls
-	// the restore back too, so "reported failed" and "nothing happened" stay in
-	// sync, matching #2354/#2381's CreateRole fix for the identical class of bug.
+	// #2455: GetGroupRoles, the ceiling check, and the restore write all run
+	// under sodGrantLockKey("group", id) -- the same key AssignRoleToGroup/
+	// AssignGroupRoleWithExpiry (rbac_management.go, jit_access.go) take
+	// before adding a role to this group. A role grant racing this restore
+	// now either fully commits before this read (and is then correctly
+	// subject to requireGlobalAdminToReinstateAdminRoles below) or blocks
+	// until this call finishes. Previously the read+check and the write ran
+	// unlocked and separately: a role landing on the soft-deleted group in
+	// between could let a non-global-admin restore a group that now carries
+	// an admin-conferring role the check never saw (TOCTOU) -- note the
+	// storage-level AssignRoleToGroupWithExpiry write never checks the
+	// target group's existence/soft-delete state at all, so this is reachable
+	// via a JIT/time-bound grant even while the group is soft-deleted.
 	var restored *models.Group
-	err = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
-		if err := tx.RestoreGroup(ctx, id); err != nil {
+	if err := c.storage.WithNamedLock(ctx, sodGrantLockKey("group", id), func(ctx context.Context) error {
+		roles, err := c.storage.GetGroupRoles(ctx, id)
+		if err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		roleIDs := make([]uint, 0, len(roles))
+		for _, r := range roles {
+			roleIDs = append(roleIDs, r.ID)
+		}
+		if err := c.requireGlobalAdminToReinstateAdminRoles(ctx, actorID, roleIDs, "group"); err != nil {
 			return err
 		}
-		var gerr error
-		restored, gerr = tx.GetGroup(ctx, id)
-		return gerr
-	})
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		// The restore and the read-back that builds the caller's response share one
+		// transaction (#2428): a GetGroup read failing AFTER an unwrapped RestoreGroup
+		// had already committed used to report the whole call as failed while the
+		// group was, in fact, already active again (with its memberships and grants)
+		// -- the caller had no way to tell. Wrapping both means a failure here rolls
+		// the restore back too, so "reported failed" and "nothing happened" stay in
+		// sync, matching #2354/#2381's CreateRole fix for the identical class of bug.
+		if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+			if err := tx.RestoreGroup(ctx, id); err != nil {
+				return err
+			}
+			var gerr error
+			restored, gerr = tx.GetGroup(ctx, id)
+			return gerr
+		}); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	c.writeAuditEvent(ctx, EventGroupRestored, actorPtr(actorID), nil, fmt.Sprintf("group %d restored", id))
 	return restored, nil
