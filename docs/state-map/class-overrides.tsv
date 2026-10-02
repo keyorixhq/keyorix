@@ -153,3 +153,48 @@ rest	GET /api/v1/notification-channels/{id}	D	server/http/handlers/notification_
 rest	GET /api/v1/notifications	D	server/http/handlers/notifications_handler.go:48-73 List (notificationHandler, not notificationChannelHandler) only calls ListNotifications then UnreadNotificationCount, both reads, and writes the JSON response.
 rest	GET /api/v1/projects/{id}/access-review/campaigns/{campaignId}/export.csv	D	server/http/handlers/access_review_campaign_export_csv.go:22-57: calls GetAccessReviewCampaign and per-decider GetUser lookups (reads), then streams CSV with header writes only; no state writes.
 rest	GET /api/v1/projects/{id}/secrets/inventory.csv	D	server/http/handlers/secrets_inventory_csv.go:19-54: the 3 flagged calls are w.Header().Set (Content-Type/X-Content-Type-Options/Content-Disposition) before streaming a read-only CSV. No state writes.
+#
+# SESSION-AR, batch 4/5 (AT0 REVIEW triage, second slice of REST GET/PATCH/
+# POST rows -- rbac/roles/rotation/secret-templates/users read endpoints,
+# system info endpoints, health/readyz/status, SSO callback, impersonation,
+# folder/group/role create, SCIM list/get): all 38 rows classified (37 D,
+# 1 C). None touch backup/restore, a last-admin/last-owner guard, or a
+# multi-table cascade delete.
+rest	GET /api/v1/rbac/permission-matrix	D	RBACHandler.GetPermissionMatrix (server/http/handlers/rbac.go:1023) is read-only: one GetPermissionMatrix read, then branches on format to write a CSV or JSON body; flagged "writes" are w.Header().Set calls.
+rest	GET /api/v1/roles/	D	RBACHandler.ListRoles (server/http/handlers/rbac.go:117) only calls coreService.ListRolesWithPermissions (read) then sendSuccess; no storage write calls.
+rest	GET /api/v1/roles/{id}	D	RBACHandler.GetRole (server/http/handlers/rbac.go:223) only calls coreService.GetRoleWithPermissions (read) then sendSuccess; purely read-only.
+rest	GET /api/v1/rotation-calendar	D	RotationCalendarHandler.Get (server/http/handlers/rotation_calendar_handler.go:30) parses query params and calls coreService.GetRotationCalendar (read) once, then sendSuccess; no writes.
+rest	GET /api/v1/rotation-policies/	D	RotationPolicyHandler.List (server/http/handlers/rotation_policies_handler.go:86) calls coreService.ListRotationPolicies (read) once then sendSuccess; no writes.
+rest	GET /api/v1/rotation-policies/{id}	D	RotationPolicyHandler.Get (server/http/handlers/rotation_policies_handler.go:199) calls coreService.GetRotationPolicy (read) once then sendSuccess; no writes.
+rest	GET /api/v1/secret-templates/	D	SecretTemplateHandler.List (server/http/handlers/secret_templates.go:85) calls coreService.ListSecretTemplates (read) once then sendSuccess; no writes.
+rest	GET /api/v1/secret-templates/{id}	D	SecretTemplateHandler.Get (server/http/handlers/secret_templates.go:96) calls coreService.GetSecretTemplate (read) once then sendSuccess; no writes.
+rest	GET /api/v1/secrets/inventory.csv	D	SecretHandler.DeploymentSecretsInventoryCSV (server/http/handlers/secrets_inventory_deployment_csv.go:21) calls coreService.DeploymentSecretsInventory (read) once; flagged "3-writes" are w.Header().Set x3 for the CSV attachment response.
+rest	GET /api/v1/secrets/{id}/access-log/export	D	SecretHandler.ExportAccessLog (server/http/handlers/secret_access_log_export_handler.go:19) calls coreService.ExportSecretAccessLog (read) once; flagged "3-writes" are w.Header().Set x3 for the download response.
+rest	GET /api/v1/system/auth-config	D	router.go:440 wires handlers.MakeAuthConfigHandler(cfg): a closure returning a redacted config summary directly from in-memory cfg -- no storage access.
+rest	GET /api/v1/system/encryption-config	D	router.go:441 wires handlers.MakeEncryptionConfigHandler(cfg), same shape as auth-config: redacted in-memory config summary, no storage access.
+rest	GET /api/v1/system/info	D	router.go:448 wires handlers.MakeSystemInfoHandler(cfg, coreService); returns version/build/runtime/metrics info, a read-only reporting endpoint.
+rest	GET /api/v1/user-roles/user/{userId}	D	RBACHandler.GetUserRoles (server/http/handlers/rbac.go:525) calls coreService.GetUserRoleAssignment (read) once then sendSuccess; no writes.
+rest	GET /api/v1/users/	D	UserHandler.ListUsers (server/http/handlers/users_list.go:29) calls coreService.ListUsers (read) then attachProjectCounts (a best-effort read-only query merge); no writes.
+rest	GET /api/v1/users/by-email	D	UserHandler.GetUserByEmail (server/http/handlers/users_crud.go:256) calls coreService.GetUserByEmail (read) + attachProjectCounts (read-only); no writes.
+rest	GET /api/v1/users/by-external-id	D	UserHandler.GetUserByExternalID (server/http/handlers/users_crud.go:313) calls coreService.GetUserByExternalID (read) + attachProjectCounts (read-only); no writes.
+rest	GET /api/v1/users/by-username	D	UserHandler.GetUserByUsername (server/http/handlers/users_crud.go:285) calls coreService.GetUserByUsername (read) + attachProjectCounts (read-only); no writes.
+rest	GET /api/v1/users/search	D	UserHandler.SearchUsers (server/http/handlers/users_list.go:104) calls coreService.ListUsers (read) with a search filter then sendSuccess; no writes.
+rest	GET /api/v1/users/stale	D	UserHandler.StaleAccounts (server/http/handlers/users_list.go:166) calls coreService.StaleAccounts (read) once then sendSuccess; no writes.
+rest	GET /api/v1/users/{id}	D	UserHandler.GetUser (server/http/handlers/users_crud.go:218) calls coreService.GetUser (read) + attachProjectCounts (read-only); no writes.
+rest	GET /api/v1/version	D	router.go:233 wires handlers.MakeVersionHandler(cfg) (server/http/handlers/version.go:33): builds a VersionInfo struct from in-memory cfg/version constants and JSON-encodes it; no storage access.
+rest	GET /auth/sso/{provider}/callback	D	AuthHandler.CompleteSSO (server/http/handlers/sso.go:107) has exactly one real storage write (coreService.CompleteSSO); setSessionCookies and the frag.Set x3 calls only build the HTTP response (cookie header + redirect fragment), not storage writes.
+rest	GET /health	D	handlers.HealthCheck (server/http/handlers/health.go:17) builds a status map from time.Now()/uptime and JSON-encodes it after two w.Header().Set calls; trivially read-only.
+rest	GET /readyz	D	router.go:237 wires handlers.ReadinessCheck(coreService) (server/http/handlers/readiness.go:44): the only "writes" are an in-process mutex-guarded readinessCache struct, not storage.
+rest	GET /scim/v2/Groups	D	SCIMHandler.ListGroups (server/http/handlers/scim_groups.go:85) calls coreService.ListGroups/ListSCIMGroupsPage and GetGroupMembers per page item -- all reads; no writes.
+rest	GET /scim/v2/Groups/{id}	D	SCIMHandler.GetGroup (server/http/handlers/scim_groups.go:154) calls coreService.GetGroup (read) then renderGroup (response serialization); no writes.
+rest	GET /scim/v2/Users	D	SCIMHandler.ListUsers (server/http/handlers/scim.go:136) calls coreService.FindSCIMUser or ListSCIMUsersPage (reads only) depending on the filter query param; no writes.
+rest	GET /scim/v2/Users/{id}	D	SCIMHandler.GetUser (server/http/handlers/scim.go:216) calls coreService.GetSCIMUser (read) then writeSCIM; no writes.
+rest	GET /status	D	router.go:259 closure: on success serves a static status.html via http.ServeFile after two w.Header().Set calls, else falls back to handlers.HealthCheck (itself D, read-only); no storage access.
+rest	GET /status-es	D	router.go:275 closure: identical shape to /status for the Spanish status page; no storage access.
+rest	PATCH /scim/v2/Groups/{id}	D	SCIMHandler.PatchGroup (server/http/handlers/scim_groups.go:228): `if replaceAll { ReplaceSCIMGroup } else { PatchSCIMGroup }` -- confirmed a single real if/else branch; only one of the two calls ever executes per request.
+rest	POST /api/v1/admin/impersonate	D	ImpersonationHandler.Start (server/http/handlers/admin_impersonation.go:55) has one real storage write (coreService.StartImpersonation); SetSessionCookie/SetAdminSessionCookie/SetCSRFCookie only set HTTP response cookies, not storage writes.
+rest	POST /api/v1/alert-escalation-policies	C	AlertEscalationHandler.Create (server/http/handlers/alert_escalation.go:56): coreService.CreateAlertEscalationPolicy is the primary write and is checked for error/return before proceeding; coreService.LogAlertEscalationPolicyCreated (internal/core/alert_escalation.go:339) runs only after that succeeds, with its return value discarded -- a best-effort audit side effect.
+rest	POST /api/v1/auth/end-impersonation	D	ImpersonationHandler.End (server/http/handlers/admin_impersonation.go:121) has one real storage write (coreService.EndImpersonation); InvalidateTokenCache is an in-memory cache evict and the 5 cookie Set/Clear calls are HTTP response-only, not storage writes.
+rest	POST /api/v1/folders/	D	FolderHandler.CreateFolder (server/http/handlers/folders_handler.go:64) has one real storage write (coreService.CreateFolder); AuthorizePrincipal/ProjectMFABlocked are read-only checks, sendCreated's w.Header().Set x2 are response headers.
+rest	POST /api/v1/groups/	D	GroupHandler.CreateGroup (server/http/handlers/groups_handler.go:65) calls coreService.CreateGroup exactly once; no second write call exists despite the "ambiguous" scanner flag.
+rest	POST /api/v1/groups/{id}/roles	D	RBACHandler.AssignRoleToGroup (server/http/handlers/rbac.go:753): `if body.ExpiresAt != nil { AssignGroupRoleWithExpiry } else { AssignRoleToGroup }` -- confirmed a genuine if/else on a single request field; only one call executes per request.

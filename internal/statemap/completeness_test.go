@@ -30,7 +30,7 @@ var validClasses = map[string]bool{
 // just re-running the generator after an unrelated code change. Set to the
 // actual count after this round's classifier fixes (the job classifier was
 // off-by-one before this round and flagged all scheduled jobs; see the PR).
-const maxReviewRows = 75 // SESSION-AR batch 3/5 (AT0 REVIEW triage): 32 more rows triaged into class-overrides.tsv (24 D, 8 C); 6 rows left at REVIEW, deferred to Session AT (last-admin guard / cascade delete), see that file's batch-3 header comment.
+const maxReviewRows = 37 // SESSION-AR batch 4/5 (AT0 REVIEW triage): 38 more rows triaged into class-overrides.tsv (37 D, 1 C), see that file's batch-4 header comment.
 
 // TestCompletenessGuard_EntrypointsAndStoresMatchCode is AT0(f): re-runs the
 // same extractors/classifier cmd/statemapgen uses and fails if
