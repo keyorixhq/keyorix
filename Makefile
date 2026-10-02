@@ -353,17 +353,18 @@ e2e-journeys:
 	go test -tags e2e ./scripts/e2e/journeys/... -v -timeout 300s
 
 # e2e-journeys-containers: N4-N6 -- migrate from Vault/OpenBao, SSO login via
-# a real Keycloak, and disaster recovery (backup/restore/KEK rotation).
-# Needs BOTH the e2e and e2e_containers build tags: N4/N5 are gated on
-# `e2e && e2e_containers`, so `make e2e-journeys` (`-tags e2e`) never builds
-# or runs them, whether or not the runner has Docker. N4/N5 need
-# Docker (skip cleanly if absent, UNLESS KEYORIX_E2E_CONTAINERS is set --
-# see journey4/5's own doc comments); N6 is plain SQLite, no containers.
-# Nightly tier -- Keycloak's own startup dominates N5's runtime (measured
-# 16-56s across runs); N4 and N6 are each ~13-19s. ~50-90s combined,
-# measured live.
+# a real Keycloak, and disaster recovery (backup/restore/KEK rotation) --
+# plus journey7 (R4 spec #1: dynamic-secret full lifecycle against a real
+# Postgres target). Needs BOTH the e2e and e2e_containers build tags:
+# N4/N5/journey7 are gated on `e2e && e2e_containers`, so `make e2e-journeys`
+# (`-tags e2e`) never builds or runs them, whether or not the runner has
+# Docker. All need Docker (skip cleanly if absent, UNLESS
+# KEYORIX_E2E_CONTAINERS is set -- see journey4/5/7's own doc comments); N6 is
+# plain SQLite, no containers. Nightly tier -- Keycloak's own startup
+# dominates N5's runtime (measured 16-56s across runs); N4 and N6 are each
+# ~13-19s, journey7 ~15s. ~65-105s combined, measured live.
 e2e-journeys-containers:
-	KEYORIX_E2E_CONTAINERS=1 go test -tags e2e,e2e_containers ./scripts/e2e/journeys/... -run 'TestJourney_(VaultMigrate|SSOLogin|DisasterRecovery)' -v -timeout 600s
+	KEYORIX_E2E_CONTAINERS=1 go test -tags e2e,e2e_containers ./scripts/e2e/journeys/... -run 'TestJourney_(VaultMigrate|SSOLogin|DisasterRecovery|DynamicSecretLifecycle)' -v -timeout 600s
 
 # k8s-e2e: MANUAL target only, not run in CI by default (needs Docker + kind,
 # builds 4 images, installs a real External Secrets Operator, takes several
