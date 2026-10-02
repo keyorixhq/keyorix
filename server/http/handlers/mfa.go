@@ -174,23 +174,7 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Unauthorized", "Invalid or expired code", http.StatusUnauthorized, nil)
 		return
 	}
-	resp, identityErr := h.buildLoginResponse(r.Context(), session, user)
-	if identityErr != nil {
-		// CR3 (#2412): the MFA code itself was genuinely correct — VerifyMFALogin
-		// already minted a real session above — but the post-verify identity
-		// summary (roles/permissions) failed to resolve. Unlike the password-login
-		// path, this handler must not hand the client a usable session token while
-		// that resolution is unconfirmed: fail closed instead of the HTTP 200 the
-		// fuzzer found (FuzzStorageFaultOperations input c67f27, oracle c). Release
-		// the reservation too — a storage hiccup here is not the account's fault
-		// and must not consume its lockout budget the way a genuine wrong code does.
-		if reserved {
-			h.coreService.ReleaseLoginAttempt(r.Context(), attemptID)
-		}
-		log.Printf("MFA verify: identity resolution failed after a successful code check: %v", identityErr)
-		sendError(w, "Internal", "Login could not be completed; try again", http.StatusInternalServerError, nil)
-		return
-	}
+	resp := h.buildLoginResponse(r.Context(), session, user)
 	h.setSessionCookies(w, session)
 	goSafe(func() {
 		h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, r.Header.Get("User-Agent"))

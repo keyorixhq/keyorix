@@ -262,7 +262,7 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 		sendError(w, "Unauthorized", "Assertion failed or challenge expired", http.StatusUnauthorized, nil)
 		return
 	}
-	resp, _ := h.buildLoginResponse(r.Context(), session, user)
+	resp := h.buildLoginResponse(r.Context(), session, user)
 	h.setSessionCookies(w, session)
 	goSafe(func() {
 		h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, r.Header.Get(hdrUserAgent))
@@ -328,7 +328,7 @@ func (h *AuthHandler) FinishWebAuthnPasswordlessLogin(w http.ResponseWriter, r *
 		sendError(w, "Unauthorized", "Passwordless login failed", http.StatusUnauthorized, nil)
 		return
 	}
-	resp, _ := h.buildLoginResponse(r.Context(), session, user)
+	resp := h.buildLoginResponse(r.Context(), session, user)
 	h.setSessionCookies(w, session)
 	goSafe(func() {
 		h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, r.Header.Get(hdrUserAgent))
