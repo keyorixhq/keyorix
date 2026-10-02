@@ -4,6 +4,22 @@
 // -- including that the browser back button can't resurrect protected data
 // after logout. Real backend (scripts/e2e/web-real-smoke.sh), no mocked
 // routes.
+//
+// Merged from two independently-produced candidates (PRs #2456 and #2457)
+// that ended up covering the same scope: the audit-log test below is
+// #2456's (asserts actual Created/Rotated/Deleted row content for a secret
+// taken through its full lifecycle, not just "a project got created"), and
+// the session-timeout/logout tests are #2457's three-separate-tests
+// structure -- #2456's own combined version of this (one test doing logout
+// THEN installing a second page's fake clock for the timeout check)
+// reproducibly failed live (`page2.waitForURL` error:
+// "net::ERR_ABORTED; maybe frame was detached?") when actually run against
+// the real backend; #2457's version, with each concern as its own test
+// using its own fresh login, passed reliably across multiple real runs.
+// Neither candidate's admin usage mutates the shared bootstrap admin's own
+// MFA/session/role/password -- login/logout/inactivity-timeout are normal,
+// repeatable actions on that account, not one-way state changes the way
+// enabling MFA would be (see mfa-login.spec.ts's header for that contrast).
 import { test, expect, Page, request as apiRequest } from '@playwright/test';
 
 const ADMIN_USERNAME = process.env.KEYORIX_E2E_ADMIN_USERNAME;
@@ -25,28 +41,66 @@ async function realLogin(page: Page) {
     await page.waitForURL('/dashboard', { timeout: 15_000 });
 }
 
-test("the audit log records this session's own login, project, and secret creation", async ({ page }) => {
+test("the audit log shows create/rotate/delete operations on a real secret, and this session's own login", async ({
+    page,
+}) => {
     const unique = Date.now();
     const projectName = `e2e-audit-${unique}`;
+    const envName = `e2eenv${unique}`;
+    const secretName = `e2e-secret-${unique}`;
 
     await realLogin(page);
 
+    // ── Produce the operations this test asserts on ────────────────────────
     await page.goto('/projects');
     await page.getByRole('button', { name: 'New Project' }).click();
     await page.locator('#create-project-name').fill(projectName);
     await page.getByRole('button', { name: 'Create Project' }).click();
     await page.waitForURL(/\/projects\/\d+(\/secrets)?$/, { timeout: 15_000 });
+    const projectUrl = page.url().replace(/\/secrets$/, '');
 
+    await page.goto(`${projectUrl}/settings`);
+    await page.getByPlaceholder('New environment name…').fill(envName);
+    await page.getByRole('button', { name: 'Add' }).click();
+    await expect(page.getByText(envName, { exact: false })).toBeVisible({ timeout: 10_000 });
+
+    await page.goto(`${projectUrl}/secrets`);
+    await page.getByRole('button', { name: new RegExp(`^${envName}$`, 'i') }).click();
+    await expect(page).toHaveURL(new RegExp(`env=${envName}`), { timeout: 10_000 });
+    await page.getByRole('button', { name: 'New Secret' }).first().click();
+    await page.locator('#create-secret-name').fill(secretName);
+    await page.locator('#create-secret-value').fill(`value-${unique}`);
+    await page.getByRole('button', { name: 'Create Secret' }).click();
+    await expect(page.getByRole('dialog')).toBeHidden({ timeout: 10_000 });
+
+    const row = page.getByRole('row', { name: new RegExp(secretName) });
+    await row.getByTitle('View').click();
+    await page.setViewportSize({ width: 1280, height: 2600 }); // see secrets-crud.spec.ts's note on this modal's scroll gap
+    await page.getByRole('button', { name: 'Rotate', exact: true }).click();
+    await page.getByLabel('New value').fill(`rotated-${unique}`);
+    await page.getByRole('button', { name: 'Rotate secret' }).click();
+    await expect(page.getByText(`Rotate ${secretName}`)).not.toBeVisible({ timeout: 10_000 });
+
+    page.on('dialog', (d) => d.accept());
+    await page.getByRole('button', { name: 'Delete', exact: true }).click();
+    await expect(page.getByText('Delete Secret')).toBeVisible();
+    await page.getByRole('button', { name: 'Delete', exact: true }).click();
+    await expect(page.getByText('Delete Secret')).not.toBeVisible({ timeout: 10_000 });
+
+    // ── The audit log reflects all three operations on this exact secret ───
     await page.goto('/audit');
     await page.getByPlaceholder('Filter by actor…').fill(ADMIN_USERNAME as string);
 
-    // auth.login for the login at the top of this test.
-    await expect(page.getByText(/logged in/i).first()).toBeVisible({ timeout: 10_000 });
-    // project.created for the project just made, naming it specifically so
-    // this can't be satisfied by some other, unrelated project-created row.
-    await expect(
-        page.getByText(new RegExp(`created project.*${projectName}|${projectName}.*created`, 'i'))
-    ).toBeVisible({ timeout: 10_000 });
+    const secretRows = page.getByRole('row', { name: new RegExp(secretName) });
+    await expect(secretRows).toHaveCount(3, { timeout: 10_000 });
+    const rowsText = (await secretRows.allTextContents()).join(' | ');
+    expect(rowsText, 'audit log must show the secret was created').toContain('Created');
+    expect(rowsText, 'audit log must show the secret was rotated').toContain('Rotated');
+    expect(rowsText, 'audit log must show the secret was deleted').toContain('Deleted');
+
+    // A login this same session performed is in the log too.
+    await page.getByPlaceholder('Filter by actor…').fill('');
+    await expect(page.getByRole('row').filter({ hasText: /login/i }).first()).toBeVisible({ timeout: 10_000 });
 });
 
 test('an inactivity session timeout really ends the session (server-side, not just the UI)', async ({
