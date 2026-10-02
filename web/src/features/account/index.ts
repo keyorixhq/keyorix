@@ -84,7 +84,7 @@ export const useEnrollMfa = () => useMutation({ mutationFn: () => mfaApi.enroll(
 export const useActivateMfa = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: (code: string) => mfaApi.activate(code),
+        mutationFn: (vars: { code: string; password: string }) => mfaApi.activate(vars.code, vars.password),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: [MFA_RECOVERY_KEY] }),
         gcTime: SENSITIVE_GC_TIME,
     });

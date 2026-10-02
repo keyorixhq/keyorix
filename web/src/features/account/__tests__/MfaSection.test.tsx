@@ -109,8 +109,8 @@ describe('MfaSection enrolment flow', () => {
         enrollMutate.mockImplementation((_vars, opts) => {
             opts.onSuccess({ secret: 'JBSWY3DPEHPK3PXP', otpauth_uri: 'otpauth://totp/test' });
         });
-        activateMutate.mockImplementation((code, opts) => {
-            expect(code).toBe('123456');
+        activateMutate.mockImplementation((vars, opts) => {
+            expect(vars).toEqual({ code: '123456', password: 'hunter2' });
             opts.onSuccess(['code-1', 'code-2']);
         });
 
@@ -124,6 +124,7 @@ describe('MfaSection enrolment flow', () => {
         );
 
         fireEvent.change(screen.getByLabelText('6-digit code'), { target: { value: '123456' } });
+        fireEvent.change(screen.getByLabelText('Account password'), { target: { value: 'hunter2' } });
         fireEvent.click(screen.getByRole('button', { name: /verify/i }));
 
         expect(screen.getByText('code-1')).toBeInTheDocument();
@@ -167,7 +168,7 @@ describe('MfaSection enrolment flow', () => {
         enrollMutate.mockImplementation((_vars, opts) => {
             opts.onSuccess({ secret: 'SECRET', otpauth_uri: '' });
         });
-        activateMutate.mockImplementation((_code, opts) => {
+        activateMutate.mockImplementation((_vars, opts) => {
             opts.onError({});
         });
 
@@ -176,9 +177,30 @@ describe('MfaSection enrolment flow', () => {
         expect(screen.queryByRole('link', { name: /open in authenticator app/i })).not.toBeInTheDocument();
 
         fireEvent.change(screen.getByLabelText('6-digit code'), { target: { value: '654321' } });
+        fireEvent.change(screen.getByLabelText('Account password'), { target: { value: 'hunter2' } });
         fireEvent.click(screen.getByRole('button', { name: /verify/i }));
 
-        expect(screen.getByText('Invalid code. Try again.')).toBeInTheDocument();
+        expect(screen.getByText('Invalid code or password. Try again.')).toBeInTheDocument();
+    });
+
+    it('disables Verify & enable until both the code and password are filled in', () => {
+        enrollMutate.mockImplementation((_vars, opts) => {
+            opts.onSuccess({ secret: 'SECRET', otpauth_uri: 'otpauth://x' });
+        });
+
+        render(<MfaSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+
+        const submitButton = screen.getByRole('button', { name: /verify/i });
+        expect(submitButton).toBeDisabled();
+
+        fireEvent.change(screen.getByLabelText('6-digit code'), { target: { value: '123456' } });
+        expect(submitButton).toBeDisabled(); // code alone is not enough (#2441)
+
+        fireEvent.change(screen.getByLabelText('Account password'), { target: { value: 'hunter2' } });
+        expect(submitButton).not.toBeDisabled();
+
+        expect(activateMutate).not.toHaveBeenCalled();
     });
 
     it('Cancel resets and closes the enrolment modal', () => {
@@ -321,7 +343,7 @@ describe('MfaSection auto-clear (G28)', () => {
         enrollMutate.mockImplementation((_vars, opts) => {
             opts.onSuccess({ secret: 'JBSWY3DPEHPK3PXP', otpauth_uri: 'otpauth://totp/test' });
         });
-        activateMutate.mockImplementation((_code, opts) => {
+        activateMutate.mockImplementation((_vars, opts) => {
             opts.onSuccess(['idle-code-1', 'idle-code-2']);
         });
         vi.useFakeTimers();
@@ -329,6 +351,7 @@ describe('MfaSection auto-clear (G28)', () => {
         render(<MfaSection />);
         fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
         fireEvent.change(screen.getByLabelText('6-digit code'), { target: { value: '123456' } });
+        fireEvent.change(screen.getByLabelText('Account password'), { target: { value: 'hunter2' } });
         fireEvent.click(screen.getByRole('button', { name: /verify/i }));
         expect(screen.getByText('idle-code-1')).toBeInTheDocument();
 

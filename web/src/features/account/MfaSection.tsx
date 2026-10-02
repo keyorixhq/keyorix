@@ -67,6 +67,7 @@ const EnrollModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpe
     const [secret, setSecret] = useState('');
     const [uri, setUri] = useState('');
     const [code, setCode] = useState('');
+    const [password, setPassword] = useState('');
     const [codes, setCodes] = useState<string[] | null>(null);
     const [error, setError] = useState('');
 
@@ -88,6 +89,7 @@ const EnrollModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpe
         setSecret('');
         setUri('');
         setCode('');
+        setPassword('');
         setCodes(null);
         setError('');
     };
@@ -104,10 +106,17 @@ const EnrollModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpe
     const submit = (e: React.SubmitEvent<HTMLFormElement>) => {
         e.preventDefault();
         setError('');
-        activate.mutate(code, {
-            onSuccess: (newCodes) => setCodes(newCodes),
-            onError: (err) => setError(errMessage(err, 'Invalid code. Try again.')),
-        });
+        // #2441: the backend re-authenticates the caller with the account
+        // password during enrolment (MFAEnabled is still false, so the TOTP
+        // step-up branch requireReauth would otherwise take doesn't apply yet)
+        // — the code alone was never enough.
+        activate.mutate(
+            { code, password },
+            {
+                onSuccess: (newCodes) => setCodes(newCodes),
+                onError: (err) => setError(errMessage(err, 'Invalid code or password. Try again.')),
+            }
+        );
     };
 
     return (
@@ -167,11 +176,19 @@ const EnrollModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpe
                                 value={code}
                                 onChange={(e) => setCode(e.target.value)}
                             />
+                            <Input
+                                label="Account password"
+                                type="password"
+                                autoComplete="current-password"
+                                placeholder="Your current password"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                            />
                             <div className="flex justify-end gap-2">
                                 <Button type="button" variant="outline" onClick={close}>
                                     Cancel
                                 </Button>
-                                <Button type="submit" disabled={activate.isPending || code.length < 6}>
+                                <Button type="submit" disabled={activate.isPending || code.length < 6 || !password}>
                                     {activate.isPending && <Spinner size="sm" className="mr-2" />}
                                     Verify &amp; enable
                                 </Button>
