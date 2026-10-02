@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -578,9 +579,19 @@ type oracleInput struct {
 // downgraded from Errorf to Logf. A fix landing that makes this tolerance
 // stop matching is the intended way to notice the finding is closed — remove
 // the entry then, don't leave it tolerating a bug that no longer exists.
+//
+// issue and expires are REQUIRED on every entry (docs/adr-069-testing-strategy.md's
+// QUARANTINE convention: an issue reference plus an explicit expiry date, so a
+// tolerance is visible and bounded, not a silent permanent carve-out). issue is a
+// GitHub issue reference ("#1234"); expires is "YYYY-MM-DD", a backlog-hygiene
+// checkpoint to re-triage if still open by then -- not an enforced CI gate the way
+// the QUARANTINE preflight check is. findingDoc stays as the pointer to the fuller
+// write-up (a docs/findings/*.md path, or a keyorix-private doc).
 type knownOpenTolerance struct {
 	op, method string
 	kind       faultstorage.FaultKind
+	issue      string
+	expires    string
 	findingDoc string
 }
 
@@ -607,6 +618,29 @@ func matchingKnownOpen(in oracleInput) *knownOpenTolerance {
 		}
 	}
 	return nil
+}
+
+// TestKnownOpenTolerances_CarryIssueAndExpiry enforces knownOpenTolerance's own
+// doc comment: issue and expires are required, not optional decoration. Passes
+// trivially while knownOpenTolerances is empty (today) -- it exists for the next
+// entry, not this one; see docs/adr-069-testing-strategy.md's QUARANTINE
+// expiry-check precedent for why a tolerance without a checked issue+expiry pair
+// tends to become a silent permanent carve-out instead of the bounded, visible
+// one it's meant to be.
+func TestKnownOpenTolerances_CarryIssueAndExpiry(t *testing.T) {
+	for _, k := range knownOpenTolerances {
+		label := fmt.Sprintf("%s/%s/%s", k.op, k.method, k.kind)
+		if k.issue == "" {
+			t.Errorf("knownOpenTolerance %s: issue is empty -- every tolerance must cite a GitHub issue (\"#1234\")", label)
+		}
+		if k.expires == "" {
+			t.Errorf("knownOpenTolerance %s: expires is empty -- every tolerance must carry an explicit \"YYYY-MM-DD\" expiry", label)
+			continue
+		}
+		if _, err := time.Parse("2006-01-02", k.expires); err != nil {
+			t.Errorf("knownOpenTolerance %s: expires %q does not parse as YYYY-MM-DD: %v", label, k.expires, err)
+		}
+	}
 }
 
 // bestEffortTables maps a storage method this codebase deliberately calls

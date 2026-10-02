@@ -71,33 +71,35 @@ package http
 // audit_events.Diff via internal/core/config_change_audit.go's
 // writeConfigChangeAuditEvent, which json.Marshals the full NotificationChannel
 // struct (internal/core/notification_channels.go:65-68 on create; :108,:126 on
-// update/delete). See keyorix-private/adversarial-review/
-// NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19.md (private repo, not in this
-// tree) for the full trace, who-can-read analysis, and fix options. buildCanaryWorld
-// creates ONE webhook channel with a canary URL and confirms the leak ONCE via
-// f.Logf (not t.Fatalf) — informational, not gating, and not repeated on every
-// input (re-confirming a known, unfixed, single-cause bug on every iteration adds
-// cost for no new information). The webhook canary is never added to the shared
+// update/delete). Tracked as #2432 (full trace, who-can-read analysis, and fix
+// options are in keyorix-private/adversarial-review/
+// NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19.md, private repo, not in this
+// tree). Expires 2026-12-31 -- revisit by then; this date is a backlog-hygiene
+// checkpoint to re-triage if still open, not an enforced CI gate the way
+// docs/adr-069-testing-strategy.md's QUARANTINE expiry is. buildCanaryWorld creates
+// ONE webhook channel with a canary URL and confirms the leak ONCE via f.Logf (not
+// t.Fatalf) — informational, not gating, and not repeated on every input
+// (re-confirming a known, unfixed, single-cause bug on every iteration adds cost
+// for no new information). The webhook canary is never added to the shared
 // knownCanaries map, so it plays no further part in any later scan.
 // SIBLING FINDING: NotificationChannel.URL also has NO at-rest encryption at all
 // (unlike the DSN/lease/MFA credentials this same fuzzer verifies ARE encrypted) --
-// see keyorix-private/adversarial-review/
-// NOTIFICATION-CHANNEL-URL-PLAINTEXT-AT-REST-2026-09-19.md. Once URLs are encrypted
-// at rest, the db:raw-file exemption specifically should be deleted (its plaintext
-// bytes would no longer exist to leak into the raw file at all); the other
-// channel exemptions (db:audit_events.diff, http:audit-search:body,
-// http:audit-export-csv:body) depend on the SEPARATE audit-diff finding instead and
-// have their own, independent fix.
+// tracked as #2433 (full investigation in keyorix-private/adversarial-review/
+// NOTIFICATION-CHANNEL-URL-PLAINTEXT-AT-REST-2026-09-19.md). Also expires
+// 2026-12-31. Once URLs are encrypted at rest, the db:raw-file exemption
+// specifically should be deleted (its plaintext bytes would no longer exist to leak
+// into the raw file at all); the other channel exemptions (db:audit_events.diff,
+// http:audit-search:body, http:audit-export-csv:body) depend on the SEPARATE
+// audit-diff finding (#2432) instead and have their own, independent fix.
 //
 // The webhook canary lives under its own literal prefix, webhookCanaryPrefix
 // ("kxhook-"), not canaryPrefix ("kxcanary-") -- see that const's doc comment for
 // why (it used to share canaryPrefix's shape via a reserved marker byte; the
 // separate prefix removes an entire class of raw-file ambiguity at the root
 // instead of narrowing it).
-// TODO(NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19,
-// NOTIFICATION-CHANNEL-URL-PLAINTEXT-AT-REST-2026-09-19): once BOTH are fixed,
-// delete this paragraph and the special-cased block in buildCanaryWorld, and fold
-// the webhook canary into the normal plant() flow.
+// TODO(#2432, #2433): once BOTH are fixed, delete this paragraph and the
+// special-cased block in buildCanaryWorld, and fold the webhook canary into the
+// normal plant() flow.
 //
 // Every reachable output channel is captured in-process: stdlib `log` (the sole
 // logger in this codebase, redirected to a buffer), every other HTTP response body/
@@ -1522,7 +1524,7 @@ func buildCanaryWorld(tb worldBuilderTB) *canaryWorld {
 		Enabled: true, Events: "secret.rotated", CreatedBy: "testadmin",
 	}
 	if _, cherr := c.CreateNotificationChannel(ctx, ch, "testadmin", admin.ID); cherr == nil {
-		const findingRef = "keyorix-private/adversarial-review/NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19.md"
+		const findingRef = "#2432 (keyorix-private/adversarial-review/NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19.md, expires 2026-12-31)"
 		// plaintextFindingRef is a SEPARATE, sibling finding (same investigation, distinct
 		// root cause): NotificationChannel.URL has no at-rest encryption at all -- its own
 		// canonical storage column is plaintext by design (or by omission; no ADR says
@@ -1531,7 +1533,7 @@ func buildCanaryWorld(tb worldBuilderTB) *canaryWorld {
 		// own bytes are exempted below, and why db:raw-file is exempted for TWO distinct
 		// reasons, not one: the audit-diff duplication (findingRef) AND this column's own
 		// plaintext bytes (plaintextFindingRef) both land in the raw file independently.
-		const plaintextFindingRef = "keyorix-private/adversarial-review/NOTIFICATION-CHANNEL-URL-PLAINTEXT-AT-REST-2026-09-19.md"
+		const plaintextFindingRef = "#2433 (keyorix-private/adversarial-review/NOTIFICATION-CHANNEL-URL-PLAINTEXT-AT-REST-2026-09-19.md, expires 2026-12-31)"
 		webhookExemptions = []exemption{
 			{value: webhookCanary, channelPrefix: "db:audit_events.diff", reason: findingRef + ": writeConfigChangeAuditEvent json.Marshals the whole NotificationChannel struct (incl. URL) into audit_events.diff"},
 			{value: webhookCanary, channelPrefix: rawFileChannel, reason: findingRef + " AND " + plaintextFindingRef + ": the raw file carries both the audit-diff duplication and the column's own plaintext bytes"},
