@@ -64,6 +64,22 @@ var migrationMu sync.Mutex
 // is sufficient there; only Postgres needs the additional cross-process lock.
 const postgresMigrationLockKey = 872341
 
+// migrationCheckpoint, when non-nil, is invoked after each model is migrated in
+// migrateDatabase's fresh-install-only bulk AutoMigrate loop, with a stable label
+// naming the model just migrated. It is nil in every production build; only a
+// crash-consistency test installs it (factory_fresh_install_crash_test.go), the
+// same nil-in-production seam pattern as internal/encryption's rotationCheckpoint.
+var migrationCheckpoint func(label string)
+
+// migrationCheckpointHook invokes migrationCheckpoint if one is installed. A
+// test's hook may panic to simulate a process crash at label; production passes
+// through untouched.
+func migrationCheckpointHook(label string) {
+	if migrationCheckpoint != nil {
+		migrationCheckpoint(label)
+	}
+}
+
 // withMigrationLock runs fn while holding migrationMu (always) and an additional
 // cross-process lock appropriate to the backend:
 //   - Postgres: a session-level advisory lock (closing the cross-replica race
@@ -2035,131 +2051,152 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	if projectsExists {
 		return nil
 	}
-	// Migrated one model per AutoMigrate call, not as one bulk variadic call: on a
-	// fresh Postgres, re-inspecting a table that AutoMigrate already created
-	// earlier in this same run trips a pgx prepared-statement cache bug
-	// ("insufficient arguments") on whichever query runs afterward — the same
-	// hazard the Notification/RotationPolicy exclusions above already guard
-	// against. Any model already migrated by a dedicated block above (e.g.
-	// AuditCheckpoint, guarded by auditCkptExists) must NOT also appear in this
-	// list, or its re-inspection here will corrupt the cache for later models.
-	for _, m := range []interface{}{
-		&models.Project{},
-		&models.Environment{},
-		&models.User{},
-		&models.Role{},
-		&models.Permission{},
-		&models.RolePermission{},
-		&models.UserRole{},
-		&models.Group{},
-		&models.UserGroup{},
-		&models.GroupRole{},
-		&models.SecretNode{},
-		&models.SecretVersion{},
-		&models.ShareRecord{},
-		&models.Session{},
-		&models.Tag{},
-		&models.SecretTag{},
-		&models.AuditEvent{},
-		// NOTE: AuditCheckpoint is intentionally NOT listed here — it is migrated
-		// by the dedicated block above (guarded by auditCkptExists). Listing it
-		// again re-inspects the just-created table and trips the pgx
-		// "insufficient arguments" bug (same hazard as Notification/RotationPolicy).
-		//
-		// SESSION-U guard U1: SecretAccessLog, SecretMetadataHistory, PasswordReset,
-		// Setting, APIClient, APIToken, RateLimit, APICallLog, GRPCService,
-		// IdentityProvider and ExternalIdentity are likewise intentionally NOT listed
-		// here any more — each is now migrated unconditionally by its own
-		// existence-gated block above (apiClientExists et al.), so a database
-		// upgrading from an older schema gets them too, not only a truly fresh
-		// install. Re-listing any of them here would re-trip the same pgx hazard.
-		&models.SystemMetadata{},
-		&models.AnomalyAlert{},
-		&models.AnomalyConfigRecord{},
-		&models.StatsSnapshot{},
-		&models.DeploymentStatsSnapshot{},
-		// MFAStepUpGrant (store-mfa-002): was never migrated anywhere — a fresh
-		// install's CreateMFAStepUpGrant/GetActiveMFAStepUpGrant/
-		// PruneMFAStepUpGrants calls (VerifyMFAStepUp, the classification gate,
-		// and the mfa_stepup_grant_prune maintenance sweep) would all fail with
-		// "no such table" / "relation does not exist" against a real database.
-		// A plain new, simple table with no legacy columns to conditionally
-		// backfill, so it belongs in this generic bulk list rather than one of
-		// the guarded/existence-checked blocks above (those exist for models
-		// that need to distinguish "already existed" from "freshly created" to
-		// decide whether to add a follow-up column).
-		&models.MFAStepUpGrant{},
-	} {
-		if err := db.AutoMigrate(m); err != nil {
-			return fmt.Errorf("failed to migrate %T: %w", m, err)
+	// Everything from here to the end of the function runs ONLY on a genuinely
+	// fresh install (projectsExists was false above) and must apply atomically:
+	// without this transaction, each AutoMigrate/index/backfill call below
+	// auto-commits independently on SQLite, so a process crash partway through
+	// leaves models.Project's table created but a later model's (e.g.
+	// models.User, or models.MFAStepUpGrant at the end of the loop) missing.
+	// The NEXT boot's migrateDatabase call then re-reads tableExists(db,
+	// "projects") as true and takes the early return above BEFORE ever
+	// reaching this code again -- permanently leaving the half-created schema
+	// in place with no loud failure, only a later runtime "no such table"
+	// error. Wrapping the whole fresh-install tail in one transaction means an
+	// interruption anywhere in it rolls back EVERYTHING, including the
+	// projects table itself, so the next boot's tableExists check correctly
+	// reads false and retries the full sequence from scratch. SQLite supports
+	// transactional DDL (CREATE/ALTER TABLE, CREATE INDEX), so this is safe
+	// there; on Postgres this nests as a savepoint inside withMigrationLock's
+	// already-transactional wrapper (harmless, not required for correctness
+	// there, since Postgres was already atomic end to end).
+	return db.Transaction(func(tx *gorm.DB) error {
+		// Migrated one model per AutoMigrate call, not as one bulk variadic call: on a
+		// fresh Postgres, re-inspecting a table that AutoMigrate already created
+		// earlier in this same run trips a pgx prepared-statement cache bug
+		// ("insufficient arguments") on whichever query runs afterward — the same
+		// hazard the Notification/RotationPolicy exclusions above already guard
+		// against. Any model already migrated by a dedicated block above (e.g.
+		// AuditCheckpoint, guarded by auditCkptExists) must NOT also appear in this
+		// list, or its re-inspection here will corrupt the cache for later models.
+		for _, m := range []interface{}{
+			&models.Project{},
+			&models.Environment{},
+			&models.User{},
+			&models.Role{},
+			&models.Permission{},
+			&models.RolePermission{},
+			&models.UserRole{},
+			&models.Group{},
+			&models.UserGroup{},
+			&models.GroupRole{},
+			&models.SecretNode{},
+			&models.SecretVersion{},
+			&models.ShareRecord{},
+			&models.Session{},
+			&models.Tag{},
+			&models.SecretTag{},
+			&models.AuditEvent{},
+			// NOTE: AuditCheckpoint is intentionally NOT listed here — it is migrated
+			// by the dedicated block above (guarded by auditCkptExists). Listing it
+			// again re-inspects the just-created table and trips the pgx
+			// "insufficient arguments" bug (same hazard as Notification/RotationPolicy).
+			//
+			// SESSION-U guard U1: SecretAccessLog, SecretMetadataHistory, PasswordReset,
+			// Setting, APIClient, APIToken, RateLimit, APICallLog, GRPCService,
+			// IdentityProvider and ExternalIdentity are likewise intentionally NOT listed
+			// here any more — each is now migrated unconditionally by its own
+			// existence-gated block above (apiClientExists et al.), so a database
+			// upgrading from an older schema gets them too, not only a truly fresh
+			// install. Re-listing any of them here would re-trip the same pgx hazard.
+			&models.SystemMetadata{},
+			&models.AnomalyAlert{},
+			&models.AnomalyConfigRecord{},
+			&models.StatsSnapshot{},
+			&models.DeploymentStatsSnapshot{},
+			// MFAStepUpGrant (store-mfa-002): was never migrated anywhere — a fresh
+			// install's CreateMFAStepUpGrant/GetActiveMFAStepUpGrant/
+			// PruneMFAStepUpGrants calls (VerifyMFAStepUp, the classification gate,
+			// and the mfa_stepup_grant_prune maintenance sweep) would all fail with
+			// "no such table" / "relation does not exist" against a real database.
+			// A plain new, simple table with no legacy columns to conditionally
+			// backfill, so it belongs in this generic bulk list rather than one of
+			// the guarded/existence-checked blocks above (those exist for models
+			// that need to distinguish "already existed" from "freshly created" to
+			// decide whether to add a follow-up column).
+			&models.MFAStepUpGrant{},
+		} {
+			if err := tx.AutoMigrate(m); err != nil {
+				return fmt.Errorf("failed to migrate %T: %w", m, err)
+			}
+			migrationCheckpointHook(fmt.Sprintf("freshinstall:after:%T", m))
 		}
-	}
-	// The Group, User, and Project models carry no plain unique tag on
-	// name/username/name; enforce uniqueness only among live rows via partial indexes
-	// (so a soft-deleted name/username can be reused, e.g. on SCIM re-provisioning).
-	if err := ensureGroupNameIndex(db); err != nil {
-		return err
-	}
-	if err := ensureUserNameIndex(db); err != nil {
-		return err
-	}
-	if err := ensureUserEmailIndex(db); err != nil {
-		return err
-	}
-	if err := ensureUserExternalIDIndex(db); err != nil {
-		return err
-	}
-	// ADR-025 account-state root-cause fix: backfill any blank/unset
-	// account_state to an explicit "active" before adding the constraint
-	// that refuses to let a NEW blank land -- see backfillBlankAccountState's
-	// own doc for why this matters (AccountLoginBlocked treats blank the
-	// same as active, silently reactivating a suspended/deprovisioned
-	// account for login).
-	if err := backfillBlankAccountState(db); err != nil {
-		return err
-	}
-	if err := guardAccountStateValid(db); err != nil {
-		return err
-	}
-	if err := ensureProjectNameIndex(db); err != nil {
-		return err
-	}
-	if err := ensureRoleNameIndex(db); err != nil {
-		return err
-	}
-	if err := ensureSecretNodeNameNFC(db); err != nil {
-		return err
-	}
-	// #STORAGE-FACTORY-MT006-FIRSTBOOT: unlike every sibling ensure*Index call in
-	// this block, ensureSecretNodeNameIndex previously had only its EARLY,
-	// tableExists-gated call site above (the "additive migration for existing
-	// databases" section) — no safety-net call here. On a genuinely fresh
-	// install, secret_nodes doesn't exist yet at that earlier point (it's
-	// created by the bulk AutoMigrate loop above, same as every other model
-	// this block's siblings cover), so the early call is always skipped and the
-	// MT-006 partial unique index was never created on a first boot — only from
-	// the SECOND migrateDatabase run onward (e.g. after the first restart).
-	// Confirmed directly: one CreateStorage call against a fresh schema left
-	// uniq_secret_nodes_project_env_name_active absent on both SQLite and
-	// Postgres; a second call against the same schema created it. Between
-	// first boot and first restart, core.CreateSecret's GetSecretByName
-	// check-then-act TOCTOU (the exact race this index exists to close) had no
-	// DB-level backstop at all. Added here, unconditionally, matching every
-	// other ensure*Index call in this block — idempotent, so this is a no-op
-	// on a DB that already has the index from an earlier run.
-	if err := ensureSecretNodeNameIndex(db); err != nil {
-		return err
-	}
-	if err := ensureShareRecordUniqueIndex(db); err != nil {
-		return err
-	}
-	if err := ensureSecretVersionIndex(db); err != nil {
-		return err
-	}
-	// ADR-097: only after every migration step above has succeeded -- a crash
-	// or error partway through must not advance the recorded epoch past what
-	// was actually, successfully applied.
-	return recordSchemaEpoch(db)
+		// The Group, User, and Project models carry no plain unique tag on
+		// name/username/name; enforce uniqueness only among live rows via partial indexes
+		// (so a soft-deleted name/username can be reused, e.g. on SCIM re-provisioning).
+		if err := ensureGroupNameIndex(tx); err != nil {
+			return err
+		}
+		if err := ensureUserNameIndex(tx); err != nil {
+			return err
+		}
+		if err := ensureUserEmailIndex(tx); err != nil {
+			return err
+		}
+		if err := ensureUserExternalIDIndex(tx); err != nil {
+			return err
+		}
+		// ADR-025 account-state root-cause fix: backfill any blank/unset
+		// account_state to an explicit "active" before adding the constraint
+		// that refuses to let a NEW blank land -- see backfillBlankAccountState's
+		// own doc for why this matters (AccountLoginBlocked treats blank the
+		// same as active, silently reactivating a suspended/deprovisioned
+		// account for login).
+		if err := backfillBlankAccountState(tx); err != nil {
+			return err
+		}
+		if err := guardAccountStateValid(tx); err != nil {
+			return err
+		}
+		if err := ensureProjectNameIndex(tx); err != nil {
+			return err
+		}
+		if err := ensureRoleNameIndex(tx); err != nil {
+			return err
+		}
+		if err := ensureSecretNodeNameNFC(tx); err != nil {
+			return err
+		}
+		// #STORAGE-FACTORY-MT006-FIRSTBOOT: unlike every sibling ensure*Index call in
+		// this block, ensureSecretNodeNameIndex previously had only its EARLY,
+		// tableExists-gated call site above (the "additive migration for existing
+		// databases" section) — no safety-net call here. On a genuinely fresh
+		// install, secret_nodes doesn't exist yet at that earlier point (it's
+		// created by the bulk AutoMigrate loop above, same as every other model
+		// this block's siblings cover), so the early call is always skipped and the
+		// MT-006 partial unique index was never created on a first boot — only from
+		// the SECOND migrateDatabase run onward (e.g. after the first restart).
+		// Confirmed directly: one CreateStorage call against a fresh schema left
+		// uniq_secret_nodes_project_env_name_active absent on both SQLite and
+		// Postgres; a second call against the same schema created it. Between
+		// first boot and first restart, core.CreateSecret's GetSecretByName
+		// check-then-act TOCTOU (the exact race this index exists to close) had no
+		// DB-level backstop at all. Added here, unconditionally, matching every
+		// other ensure*Index call in this block — idempotent, so this is a no-op
+		// on a DB that already has the index from an earlier run.
+		if err := ensureSecretNodeNameIndex(tx); err != nil {
+			return err
+		}
+		if err := ensureShareRecordUniqueIndex(tx); err != nil {
+			return err
+		}
+		if err := ensureSecretVersionIndex(tx); err != nil {
+			return err
+		}
+		// ADR-097: only after every migration step above has succeeded -- a crash
+		// or error partway through must not advance the recorded epoch past what
+		// was actually, successfully applied.
+		return recordSchemaEpoch(tx)
+	})
 }
 
 // ensureRoleNameIndex replaces Role.Name's original plain `unique` gorm tag
