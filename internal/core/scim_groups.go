@@ -238,42 +238,56 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 	if len(rejected) > 0 {
 		return nil, fmt.Errorf("%s: SCIM can only add SCIM-managed users to a group (rejected member id(s): %v)", i18n.T("ErrorNotAuthorized", nil), rejected)
 	}
-	// Check every removal against guardLastGlobalAdminMembership (#G02) BEFORE
-	// applying any of them, so a PATCH that would strip the install's last route
-	// to global-admin authority is refused atomically — see
-	// applyGroupMembershipChanges's identical precheck-then-apply shape. Also
-	// checked against guardLastProjectAdminGroupMembership (core-project-
-	// members.json#3) so a removal can't strip a project's last roles.assign
-	// holder either — SCIM group management previously only saw the global case.
+	// SESSION-AT #2352: guard checks + the write both now run under
+	// withGroupProjectAdminGuardLocks (global key + every project key this
+	// group holds roles.assign at). An earlier version ran these guard checks
+	// with no lock at all, before the transaction below — two concurrent
+	// membership changes (another SCIM PATCH/PUT, or a native RemoveUserFromGroup)
+	// could each observe "another admin survives" before either commits.
 	toRemove := filterNonZero(removeIDs)
-	for _, id := range toRemove {
-		if err := c.guardLastGlobalAdminMembership(ctx, id, groupID); err != nil {
-			return nil, err
-		}
-		if err := c.guardLastProjectAdminGroupMembership(ctx, id, groupID); err != nil {
-			return nil, err
-		}
-	}
-	// All add/remove membership writes run in one transaction: a partial apply used
-	// to be best-effort (`_ =`). Both AddUserToGroup and RemoveUserFromGroup are
-	// idempotent (a duplicate add / already-gone remove is a no-op, not an error),
-	// so a fatal error here from a genuine storage failure — and a retry of the
-	// SAME PATCH after it — stay safe; this only changes the transient-failure case
-	// from "silently half-applied" to "rolled back, retry re-applies cleanly."
-	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
-		for _, id := range allowedAdds {
-			if err := tx.AddUserToGroup(ctx, id, groupID, 0); err != nil { // SCIM memberships are always global
-				return err
-			}
-		}
+	if err := c.withGroupProjectAdminGuardLocks(ctx, groupID, func(ctx context.Context) error {
+		// Check every removal against guardLastGlobalAdminMembership (#G02) BEFORE
+		// applying any of them, so a PATCH that would strip the install's last route
+		// to global-admin authority is refused atomically — see
+		// applyGroupMembershipChanges's identical precheck-then-apply shape. Also
+		// checked against guardLastProjectAdminGroupMembership (core-project-
+		// members.json#3) so a removal can't strip a project's last roles.assign
+		// holder either — SCIM group management previously only saw the global case.
 		for _, id := range toRemove {
-			if err := tx.RemoveUserFromGroup(ctx, id, groupID, 0); err != nil { // SCIM memberships are always global
+			if err := c.guardLastGlobalAdminMembership(ctx, id, groupID); err != nil {
 				return err
 			}
+			if err := c.guardLastProjectAdminGroupMembership(ctx, id, groupID); err != nil {
+				return err
+			}
+		}
+		// All add/remove membership writes run in one transaction: a partial apply used
+		// to be best-effort (`_ =`). Both AddUserToGroup and RemoveUserFromGroup are
+		// idempotent (a duplicate add / already-gone remove is a no-op, not an error),
+		// so a fatal error here from a genuine storage failure — and a retry of the
+		// SAME PATCH after it — stay safe; this only changes the transient-failure case
+		// from "silently half-applied" to "rolled back, retry re-applies cleanly."
+		// Wrapped in ErrorStorageFailed HERE, inside the closure, so the guard
+		// checks above (returned bare, their own message is already specific)
+		// aren't also mislabeled as a storage failure by the caller below.
+		if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+			for _, id := range allowedAdds {
+				if err := tx.AddUserToGroup(ctx, id, groupID, 0); err != nil { // SCIM memberships are always global
+					return err
+				}
+			}
+			for _, id := range toRemove {
+				if err := tx.RemoveUserFromGroup(ctx, id, groupID, 0); err != nil { // SCIM memberships are always global
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
 		return nil
 	}); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		return nil, err
 	}
 	c.writeAuditEvent(ctx, EventSCIMGroupUpdated, actorPtr(actorID), nil,
 		fmt.Sprintf("SCIM patched group %d (+%d/-%d members)", groupID, len(addIDs), len(removeIDs)))
@@ -354,34 +368,42 @@ func filterNonZero(ids []uint) []uint {
 // install's last route to global-admin authority, or a project's last
 // roles.assign holder, is refused atomically — not applied member-by-member
 // with some removals already committed.
+//
+// SESSION-AT #2352: guard checks + the write both now run under
+// withGroupProjectAdminGuardLocks — an earlier version ran the guard checks
+// with no lock at all, so two concurrent membership changes (this same PUT
+// racing a SCIM PATCH or a native RemoveUserFromGroup) could each observe
+// "another admin survives" before either commits.
 func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID uint, want map[uint]bool, current []*models.User, toAdd []uint) error {
-	for _, u := range current {
-		if !want[u.ID] {
-			if err := c.guardLastGlobalAdminMembership(ctx, u.ID, groupID); err != nil {
-				return err
-			}
-			if err := c.guardLastProjectAdminGroupMembership(ctx, u.ID, groupID); err != nil {
-				return err
-			}
-		}
-	}
-	// All add/remove membership writes run in one transaction: a partial apply used
-	// to be best-effort (`_ =`). Both storage calls are idempotent, so this stays
-	// safe under an IdP's own retry of the same PUT.
-	return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+	return c.withGroupProjectAdminGuardLocks(ctx, groupID, func(ctx context.Context) error {
 		for _, u := range current {
 			if !want[u.ID] {
-				if err := tx.RemoveUserFromGroup(ctx, u.ID, groupID, 0); err != nil { // SCIM memberships are always global
+				if err := c.guardLastGlobalAdminMembership(ctx, u.ID, groupID); err != nil {
+					return err
+				}
+				if err := c.guardLastProjectAdminGroupMembership(ctx, u.ID, groupID); err != nil {
 					return err
 				}
 			}
 		}
-		for _, id := range toAdd {
-			if err := tx.AddUserToGroup(ctx, id, groupID, 0); err != nil { // SCIM memberships are always global
-				return err
+		// All add/remove membership writes run in one transaction: a partial apply used
+		// to be best-effort (`_ =`). Both storage calls are idempotent, so this stays
+		// safe under an IdP's own retry of the same PUT.
+		return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+			for _, u := range current {
+				if !want[u.ID] {
+					if err := tx.RemoveUserFromGroup(ctx, u.ID, groupID, 0); err != nil { // SCIM memberships are always global
+						return err
+					}
+				}
 			}
-		}
-		return nil
+			for _, id := range toAdd {
+				if err := tx.AddUserToGroup(ctx, id, groupID, 0); err != nil { // SCIM memberships are always global
+					return err
+				}
+			}
+			return nil
+		})
 	})
 }
 
@@ -391,16 +413,17 @@ func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID u
 // any project's last roles.assign-conferring grant
 // (guardLastProjectAdminGroupDelete, core-project-members.json#3) — the same
 // guards the native DeleteGroup already applies.
+//
+// SESSION-AT #2352: this used to call c.storage.DeleteGroup directly after its
+// own, UNLOCKED guard checks — bypassing core.DeleteGroup's lock entirely (it
+// never called DeleteGroup at all, it duplicated the guard logic and then went
+// storage-direct). A SCIM DELETE racing a native DeleteGroup, another SCIM
+// DELETE, or any other group-wide admin-removing operation could each observe
+// "another admin survives" before either commits. Now shares DeleteGroup's own
+// deleteGroupGuarded helper (groups.go) — guard + lock + write identical to the
+// native path — and only the audit event differs.
 func (c *KeyorixCore) DeprovisionSCIMGroup(ctx context.Context, actorID, groupID uint) error {
-	if err := c.guardLastGlobalAdminGroupDelete(ctx, groupID); err != nil {
-		return err
-	}
-	if err := c.guardLastProjectAdminGroupDelete(ctx, groupID); err != nil {
-		return err
-	}
-	// Storage-direct: the SCIM path emits scim.group_deprovisioned below, not the
-	// generic group.deleted. storage.DeleteGroup still errors on a missing group.
-	if err := c.storage.DeleteGroup(ctx, groupID); err != nil {
+	if _, err := c.deleteGroupGuarded(ctx, groupID); err != nil {
 		return err
 	}
 	c.writeAuditEvent(ctx, EventSCIMGroupDeprovisioned, actorPtr(actorID), nil,

@@ -10,6 +10,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -396,6 +397,71 @@ func (c *KeyorixCore) projectAdminScopesHeldByGroup(ctx context.Context, groupID
 		}
 	}
 	return projectIDs, nil
+}
+
+// withGroupProjectAdminGuardLocks acquires lastAdminGuardLockKey (the global
+// admin-guard key) and projectAdminGuardLockKey(P) for every project P that
+// groupID currently holds a roles.assign-granting role at, THEN runs fn —
+// the shared lock acquisition every group-WIDE admin-removing operation
+// (DeleteGroup, RemoveUserFromGroup, the SCIM group-membership/deprovision
+// paths) needs (SESSION-AT #2352). Unlike a single-project operation
+// (RemoveUserRole, SetProjectMemberRole, RemoveProjectMember — each only
+// ever needs ONE project's key, already correctly scoped), any of these can
+// affect the group's role grant across MULTIPLE projects in one call, so it
+// must hold every affected project's key for the duration of its guard
+// check AND write — a caller that only acquired lastAdminGuardLockKey (as
+// an earlier version of DeleteGroup did) is not actually serialized against
+// RemoveProjectMember/SetProjectMemberRole/RemoveUserRole/RemoveRoleFromGroup,
+// which only ever take a project key: two operations in DIFFERENT lock
+// domains can each independently observe "another admin survives" using a
+// stale view of the other's not-yet-committed write, exactly the race this
+// whole guard family exists to close.
+//
+// Lock order is fixed: global first, then project keys ascending by ID.
+// This is the ONLY thing that prevents a deadlock between two concurrent
+// callers of this same helper whose affected-project sets overlap but were
+// computed in a different order — every group-wide caller MUST go through
+// this helper rather than acquiring these locks itself, so the order stays
+// centrally enforced in one place. WithNamedLock's own reentrancy guard
+// (internal/storage/store/local_named_lock.go) makes nesting these calls
+// cheap: on Postgres, a nested call under a DIFFERENT key reuses the outer
+// call's already-checked-out connection rather than taking a second one, so
+// locking N project keys costs zero additional pooled connections beyond
+// the first.
+//
+// KNOWN RESIDUAL GAP: the project set is computed ONCE, before any lock is
+// taken. A role newly granted to groupID at a project NOT in that set,
+// landing in the narrow window between this computation and lock
+// acquisition, would not have its key locked here. This is a NEW-GRANT
+// race during a REMOVAL — not the removal-vs-removal race this guard
+// family exists to close, and not among the paths #2352 asked to cover —
+// so it is documented, not fixed.
+func (c *KeyorixCore) withGroupProjectAdminGuardLocks(ctx context.Context, groupID uint, fn func(ctx context.Context) error) error {
+	return c.storage.WithNamedLock(ctx, lastAdminGuardLockKey, func(ctx context.Context) error {
+		projectIDs, err := c.projectAdminScopesHeldByGroup(ctx, groupID)
+		if err != nil {
+			return err
+		}
+		sorted := make([]uint, 0, len(projectIDs))
+		for pid := range projectIDs {
+			sorted = append(sorted, pid)
+		}
+		sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+		return c.lockProjectAdminGuardsInOrder(ctx, sorted, fn)
+	})
+}
+
+// lockProjectAdminGuardsInOrder acquires projectAdminGuardLockKey for each ID
+// in projectIDs, in slice order (the caller is responsible for sorting), then
+// runs fn under all of them. See withGroupProjectAdminGuardLocks for why the
+// order matters.
+func (c *KeyorixCore) lockProjectAdminGuardsInOrder(ctx context.Context, projectIDs []uint, fn func(ctx context.Context) error) error {
+	if len(projectIDs) == 0 {
+		return fn(ctx)
+	}
+	return c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(projectIDs[0]), func(ctx context.Context) error {
+		return c.lockProjectAdminGuardsInOrder(ctx, projectIDs[1:], fn)
+	})
 }
 
 // guardProjectAdminSurvivesGroupChange checks whether projectID still has a

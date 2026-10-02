@@ -88,26 +88,29 @@ func (c *KeyorixCore) UpdateGroup(ctx context.Context, actorID uint, req *Update
 	return updated, nil
 }
 
-// DeleteGroup deletes a group by ID. See CreateGroup for actorID semantics. It
-// refuses to delete a group holding the install's last global-admin-conferring
-// role grant (#107; see guardLastGlobalAdminGroupDelete) OR any project's last
-// roles.assign-conferring grant (see guardLastProjectAdminGroupDelete) —
-// deleting a group cascades to remove every role grant it holds, at every scope.
+// deleteGroupGuarded runs the last-admin guard checks and the actual group
+// delete under withGroupProjectAdminGuardLocks (SESSION-AT #2352), returning
+// the pre-delete group row for the caller's own audit message. It does not
+// write an audit event itself — DeleteGroup and DeprovisionSCIMGroup
+// (scim_groups.go) each emit a different event type for the same underlying
+// guarded delete, so both call this instead of duplicating the guard+lock
+// logic (the original #2348 fix lived only in DeleteGroup; DeprovisionSCIMGroup
+// called c.storage.DeleteGroup directly, bypassing every guard — found during
+// the #2352 sweep).
 //
-// SESSION-AT: the guard-then-delete sequence must run under the SAME lock
-// acquisition, across every replica of an HA deployment, not just within this
-// process — mirroring DeleteUser's own lastAdminGuardLockKey wrap (#1646).
-// Without it, two concurrent DeleteGroup calls on two DIFFERENT admin-holding
-// groups can each observe "the other group's grant still covers the install"
-// and both pass their guard, jointly leaving zero admins.
-func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
-	if id == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
-	}
-	return c.storage.WithNamedLock(ctx, lastAdminGuardLockKey, func(ctx context.Context) error {
-		group, err := c.storage.GetGroup(ctx, id)
-		if err != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+// lastAdminGuardLockKey alone (an earlier version of this function) is NOT
+// enough on its own for the project-admin check: RemoveProjectMember/
+// SetProjectMemberRole/RemoveUserRole/RemoveRoleFromGroup only ever take a
+// PER-PROJECT lock (projectAdminGuardLockKey), never the global one, so a
+// delete serialized only against the global key could still race any of
+// those four — see withGroupProjectAdminGuardLocks's own doc comment.
+func (c *KeyorixCore) deleteGroupGuarded(ctx context.Context, id uint) (*models.Group, error) {
+	var group *models.Group
+	err := c.withGroupProjectAdminGuardLocks(ctx, id, func(ctx context.Context) error {
+		var gerr error
+		group, gerr = c.storage.GetGroup(ctx, id)
+		if gerr != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), gerr)
 		}
 		if err := c.guardLastGlobalAdminGroupDelete(ctx, id); err != nil {
 			return err
@@ -118,10 +121,27 @@ func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
 		if err := c.storage.DeleteGroup(ctx, id); err != nil {
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
-		c.writeAuditEvent(ctx, EventGroupDeleted, actorPtr(actorID), nil,
-			fmt.Sprintf("group %q (id %d) deleted", group.Name, id))
 		return nil
 	})
+	return group, err
+}
+
+// DeleteGroup deletes a group by ID. See CreateGroup for actorID semantics. It
+// refuses to delete a group holding the install's last global-admin-conferring
+// role grant (#107; see guardLastGlobalAdminGroupDelete) OR any project's last
+// roles.assign-conferring grant (see guardLastProjectAdminGroupDelete) —
+// deleting a group cascades to remove every role grant it holds, at every scope.
+func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
+	if id == 0 {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
+	}
+	group, err := c.deleteGroupGuarded(ctx, id)
+	if err != nil {
+		return err
+	}
+	c.writeAuditEvent(ctx, EventGroupDeleted, actorPtr(actorID), nil,
+		fmt.Sprintf("group %q (id %d) deleted", group.Name, id))
+	return nil
 }
 
 // RestoreGroup reverses a soft-delete, bringing the group back with the role grants
@@ -296,17 +316,25 @@ func (c *KeyorixCore) RemoveUserFromGroup(ctx context.Context, actorID, userID, 
 	if userID == 0 || groupID == 0 {
 		return fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil))
 	}
-	if err := c.guardLastGlobalAdminMembership(ctx, userID, groupID); err != nil {
-		return err
-	}
-	if err := c.guardLastProjectAdminGroupMembership(ctx, userID, groupID); err != nil {
-		return err
-	}
-	if err := c.storage.RemoveUserFromGroup(ctx, userID, groupID, projectID); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	c.LogGroupMemberRemoved(ctx, actorID, userID, groupID)
-	return nil
+	// SESSION-AT #2352: guard+write serialized via withGroupProjectAdminGuardLocks
+	// (global key + every project key this group holds roles.assign at) — an
+	// earlier version ran both guards entirely unguarded by any lock, so two
+	// concurrent removals of two DIFFERENT users (each independently the last
+	// route to admin via this or another group) could each observe "another
+	// admin survives" before either commits.
+	return c.withGroupProjectAdminGuardLocks(ctx, groupID, func(ctx context.Context) error {
+		if err := c.guardLastGlobalAdminMembership(ctx, userID, groupID); err != nil {
+			return err
+		}
+		if err := c.guardLastProjectAdminGroupMembership(ctx, userID, groupID); err != nil {
+			return err
+		}
+		if err := c.storage.RemoveUserFromGroup(ctx, userID, groupID, projectID); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		c.LogGroupMemberRemoved(ctx, actorID, userID, groupID)
+		return nil
+	})
 }
 
 // RemoveUserFromGroupGlobal is a convenience wrapper that removes the global
