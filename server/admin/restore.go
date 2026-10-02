@@ -337,14 +337,20 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 	// Only past every check above: move staged key files into place, run
 	// migrations against the fresh target, then load the data (design §3.4).
 	restoreTS := time.Now().UTC().Format("20060102T150405Z")
+	keyFileData := make([][]byte, len(manifest.KeyFiles))
 	for i, entry := range manifest.KeyFiles {
 		data, rerr := os.ReadFile(filepath.Join(stagingDir, entry.TarName)) // #nosec G304 -- our own staged file, already checksum-verified by ExtractArchive
 		if rerr != nil {
 			return fmt.Errorf("read staged key file %q: %w", entry.TarName, rerr)
 		}
-		if err := writeRestoredFile(targetKeyPaths[i], data, restoreTS); err != nil {
-			return fmt.Errorf("write key file %q: %w", targetKeyPaths[i], err)
-		}
+		keyFileData[i] = data
+	}
+	// A single atomic-set install, not a per-file loop: these key files form
+	// one encryption configuration's required set (keyfiles.Registry), and a
+	// host with only SOME of them present can never start -- see
+	// writeRestoredFileSet's own doc comment.
+	if err := writeRestoredFileSet(targetKeyPaths, keyFileData, restoreTS); err != nil {
+		return fmt.Errorf("write key file set: %w", err)
 	}
 	if !isPG {
 		// v2 loads rows into a freshly-migrated database rather than writing
@@ -638,10 +644,15 @@ func runAdminRestoreV1(cfg *config.Config) error {
 
 	restoreTS := time.Now().UTC().Format("20060102T150405Z")
 
+	// A single atomic-set install, not a per-file loop -- see
+	// writeRestoredFileSet's own doc comment (same gap as the v2 path's
+	// key-file restore, fixed there for the same reason).
+	keyFilePaths := make([]string, len(manifest.KeyFiles))
 	for i, entry := range manifest.KeyFiles {
-		if err := writeRestoredFile(entry.OriginalPath, keyBlobs[i], restoreTS); err != nil {
-			return fmt.Errorf("write key file %q: %w", entry.OriginalPath, err)
-		}
+		keyFilePaths[i] = entry.OriginalPath
+	}
+	if err := writeRestoredFileSet(keyFilePaths, keyBlobs, restoreTS); err != nil {
+		return fmt.Errorf("write key file set: %w", err)
 	}
 	if err := removeStaleSQLiteSidecars(dbPath); err != nil {
 		return fmt.Errorf("clear stale WAL sidecar files for %q: %w", dbPath, err)
@@ -1000,13 +1011,127 @@ func refuseNonEmptyExisting(label, path string) error {
 	return nil
 }
 
-// writeRestoredFile atomically writes data to path: a temp file in the same
-// directory is written, fsynced, and renamed (or, without --overwrite-
-// existing, hard-linked -- see below) into place, so a crash or failure
-// partway through never leaves path holding a truncated or half-written
-// file. Always writes restoreFileMode (0600), never whatever mode the
-// archive's manifest recorded -- a crafted manifest must never be able to
-// make a restored key/DB file group- or world-readable.
+// writeRestoredFile atomically writes data to path -- see prepareRestoredFile
+// and commitRestoredFile, which this just runs back-to-back for a single
+// file. A multi-file SET (the key-material files restored together) should
+// use writeRestoredFileSet instead, which runs every file's prepare phase to
+// completion before committing any of them -- see that function's own doc
+// comment for why.
+func writeRestoredFile(path string, data []byte, restoreTS string) error {
+	tmpPath, err := prepareRestoredFile(path, data)
+	if err != nil {
+		return err
+	}
+	return commitRestoredFile(path, tmpPath, restoreTS)
+}
+
+// writeRestoredFileSet installs a SET of restored files -- the key-material
+// files a single encryption configuration needs together (KEK salt, wrapped
+// DEK, provider-specific files) -- as a tight group rather than one at a
+// time. restore.go's per-file guarantee (temp + fsync + rename/link) makes
+// EACH file crash-safe on its own, but says nothing about the SET: the
+// previous code called writeRestoredFile for each key file in a simple loop,
+// so a crash between file i and file i+1 left the target with a partial key
+// set (e.g. the KEK salt restored, the wrapped DEK not) -- a host that can
+// never start (keyfiles.Registry requires every entry), with no automatic
+// recovery. Worse, without --overwrite-existing, a retry doesn't help: the
+// already-written file(s) are now non-empty, so refuseNonEmptyExisting's
+// preflight check (which ran once, before ANY file in this restore was
+// written) fails on the very next attempt -- an operator would need to
+// manually find and delete the partially-restored file(s) first, something
+// this restore command gives no guidance about.
+//
+// This narrows that window rather than claiming to close it (true atomicity
+// across independently-pathed files isn't achievable without a filesystem
+// transaction): every file's prepare phase (write + fsync a temp copy) runs
+// to completion FIRST, for the whole set, with every target path still
+// completely untouched -- a failure here leaves nothing installed, so a
+// retry sees the exact same preflight state as the first attempt. Only once
+// every file in the set is durably staged does the commit phase begin,
+// installing each one in turn. The unsafe window shrinks from "any of N full
+// write+fsync+rename cycles, with whatever else runs between them" down to
+// "N fast rename/link syscalls run back-to-back with nothing else
+// interleaved" -- still not zero, but as tight as this per-path (not
+// per-directory) file set allows.
+func writeRestoredFileSet(paths []string, data [][]byte, restoreTS string) error {
+	if len(paths) != len(data) {
+		return fmt.Errorf("internal error: %d paths but %d data buffer(s) for a restored file set", len(paths), len(data))
+	}
+
+	type staged struct {
+		path, tmpPath string
+	}
+	var prepared []staged
+	for i, path := range paths {
+		tmpPath, err := prepareRestoredFile(path, data[i])
+		if err != nil {
+			for _, s := range prepared {
+				_ = os.Remove(s.tmpPath)
+			}
+			return err
+		}
+		prepared = append(prepared, staged{path: path, tmpPath: tmpPath})
+	}
+
+	for _, s := range prepared {
+		if err := commitRestoredFile(s.path, s.tmpPath, restoreTS); err != nil {
+			return fmt.Errorf("install %q: %w", s.path, err)
+		}
+	}
+	return nil
+}
+
+// prepareRestoredFile writes data to a temp file in path's directory and
+// fsyncs it, without touching path itself -- the half of writeRestoredFile
+// that can be run for an entire file SET before any of them commit (see
+// writeRestoredFileSet). On any error the temp file is removed and "" is
+// returned; on success, the caller owns cleanup of the returned temp path
+// (commitRestoredFile removes it as part of installing, or the caller must
+// os.Remove it directly if abandoning the prepare).
+func prepareRestoredFile(path string, data []byte) (string, error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return "", fmt.Errorf("create directory: %w", err)
+	}
+
+	// #nosec G304 -- path is either this config's own database path or one
+	// returned by keyfiles.Registry (already SafePath-sanitized) and, for key
+	// files, already matched 1:1 against the archive manifest by
+	// validateKeyFileSetV1/V2 -- never an attacker-controlled path from the archive.
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".restoring-*")
+	if err != nil {
+		return "", fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("write temp file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("fsync temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("close temp file: %w", err)
+	}
+	if err := os.Chmod(tmpPath, restoreFileMode); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("set file mode: %w", err)
+	}
+	return tmpPath, nil
+}
+
+// commitRestoredFile installs tmpPath (an already-written-and-fsynced temp
+// file from prepareRestoredFile, in the same directory as path) at path --
+// renamed (or, without --overwrite-existing, hard-linked -- see below) into
+// place, then fsyncs the directory. Always writes restoreFileMode (0600),
+// never whatever mode the archive's manifest recorded -- a crafted manifest
+// must never be able to make a restored key/DB file group- or
+// world-readable.
 //
 // With --overwrite-existing, an existing file at path is renamed aside to
 // "<path>.pre-restore-<restoreTS>" (never truncated or overwritten in
@@ -1017,38 +1142,10 @@ func refuseNonEmptyExisting(label, path string) error {
 // refuseNonEmptyExisting's earlier check and this write during which
 // another process could have created path (os.Rename has no portable
 // no-clobber option and would silently replace it).
-func writeRestoredFile(path string, data []byte, restoreTS string) error {
+func commitRestoredFile(path, tmpPath, restoreTS string) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0750); err != nil {
-		return fmt.Errorf("create directory: %w", err)
-	}
-
-	// #nosec G304 -- path is either this config's own database path or one
-	// returned by keyfiles.Registry (already SafePath-sanitized) and, for key
-	// files, already matched 1:1 against the archive manifest by
-	// validateKeyFileSetV1/V2 -- never an attacker-controlled path from the archive.
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".restoring-*")
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
-	}
-	tmpPath := tmp.Name()
 	// No-op once renamed/linked into place below.
 	defer os.Remove(tmpPath) //nolint:errcheck
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write temp file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("fsync temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp file: %w", err)
-	}
-	if err := os.Chmod(tmpPath, restoreFileMode); err != nil {
-		return fmt.Errorf("set file mode: %w", err)
-	}
 
 	if restoreOverwriteExisting {
 		if _, err := os.Stat(path); err == nil {
