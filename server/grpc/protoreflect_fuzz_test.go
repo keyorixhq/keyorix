@@ -304,6 +304,7 @@ func (w *prWorld) close() {
 //     server/grpc/services/secret_service.go's goSafe calls), fired
 //     asynchronously and independently of whether the triggering RPC itself
 //     was authorized or succeeded.
+//
 //   - compliance_posture_snapshots: GetCompliancePosture's own doc comment
 //     (internal/core/compliance_posture.go) -- "Persist today's snapshot for
 //     trend tracking (best-effort -- a write failure must not abort the
@@ -314,6 +315,7 @@ func (w *prWorld) close() {
 //     table was named here -- a real, intentional, documented side effect,
 //     not a security bug, which is exactly what this list exists to name
 //     explicitly rather than mask with a broader heuristic.
+//
 //   - secret_access_logs: every LogSecretRead*/LogSecretCreated*/
 //     LogSecretUpdated*-family call (internal/core/audit.go's writeAccessLog)
 //     writes BOTH audit_events AND this table for the same event -- found
@@ -322,6 +324,7 @@ func (w *prWorld) close() {
 //     GRPC's own comment on it: "Audit as a secret read... Best-effort
 //     metadata fetch") tripped the oracle because only audit_events was
 //     named here at the time.
+//
 //   - sessions, UPDATE of last_seen_at only: internal/core/auth.go's
 //     ValidateSessionToken touches session.last_seen_at on EVERY successful
 //     authentication, throttled to once per sessionTouchInterval (30s) --
@@ -345,6 +348,7 @@ func (w *prWorld) close() {
 //     TestUnexplainedWrite_RedOnSessionsUpdateTouchingOtherColumn, and
 //     TestUnexplainedWrite_RedOnSessionsUpdateOfOtherColumnAlone in
 //     protoreflect_oracle_mechanism_test.go for the direct red-proofs.
+//
 //   - secret_nodes / secret_versions, UPDATE of read_count only: found live
 //     by THIS round's 10-minute burst (not pre-anticipated -- flagged to the
 //     coordinator for review in the PR reply, same as every prior entry).
@@ -366,13 +370,28 @@ func (w *prWorld) close() {
 //     table exemption) is what still catches a write to any OTHER column on
 //     either table -- the actual secret value, its project/owner, a
 //     version's content, etc.
+//
+//     #2401 follow-up: this entry was originally unscoped by principal --
+//     exempt for EVERY identity, including zero-grant. That was harmless at
+//     the time because value reads enforce secrets.read before
+//     readVersionValue ever increments the counter, so a zero-grant caller
+//     never reached it -- but a future regression letting a denied caller
+//     reach readVersionValue would have bumped someone else's
+//     burn-after-N-reads counter while this oracle silently waved it
+//     through. Scoped to principals: read-only and admin (the only
+//     identities this harness mints that can legitimately hold secrets.read)
+//     so a zero-grant call that increments read_count now fails the oracle
+//     instead of being masked by this exemption. See
+//     TestUnexplainedWrite_RedOnSecretNodesReadCountUpdateByZeroGrant /
+//     ...ByZeroGrant's secret_versions twin in
+//     protoreflect_oracle_mechanism_test.go for the direct red-proof.
 var bestEffortSideEffectTables = []writeExemption{
 	{table: "audit_events"},
 	{table: "compliance_posture_snapshots"},
 	{table: "secret_access_logs"},
 	{table: "sessions", events: []string{"UPDATE"}, onlyColumns: []string{"last_seen_at"}},
-	{table: "secret_nodes", events: []string{"UPDATE"}, onlyColumns: []string{"read_count"}},
-	{table: "secret_versions", events: []string{"UPDATE"}, onlyColumns: []string{"read_count"}},
+	{table: "secret_nodes", events: []string{"UPDATE"}, onlyColumns: []string{"read_count"}, principals: []string{"read-only", "admin"}},
+	{table: "secret_versions", events: []string{"UPDATE"}, onlyColumns: []string{"read_count"}, principals: []string{"read-only", "admin"}},
 }
 
 // writeExemption names one table (and optionally a specific subset of
@@ -392,10 +411,37 @@ var bestEffortSideEffectTables = []writeExemption{
 // column OUTSIDE onlyColumns actually changed. A plain events-only exemption
 // (no onlyColumns) can't express this: "events" answers "which statement
 // kinds", not "which columns within one kind".
+//
+// principals optionally narrows the exemption to specific runAs labels
+// ("zero-grant", "read-only", "admin"). Empty/nil means the exemption
+// applies to every principal -- the right default for a side effect that
+// fires independently of who's calling (audit_events, the sessions
+// last_seen_at touch). A non-empty list means ONLY those principals get the
+// exemption; for any other principal, the same write is treated as
+// unexplained. Added for #2401: secret_nodes/secret_versions' read_count
+// entries are legitimate only for an identity that can actually reach
+// readVersionValue's own enforcement path (read-only, admin) -- a zero-grant
+// caller incrementing read_count would be the exact authz-bypass shape this
+// oracle exists to catch, not a documented side effect.
 type writeExemption struct {
 	table       string
 	events      []string
 	onlyColumns []string
+	principals  []string
+}
+
+// principalAllowed reports whether this entry's exemption covers principal.
+// An entry with no principals list applies to every principal.
+func (e writeExemption) principalAllowed(principal string) bool {
+	if len(e.principals) == 0 {
+		return true
+	}
+	for _, p := range e.principals {
+		if p == principal {
+			return true
+		}
+	}
+	return false
 }
 
 // allows reports whether this entry exempts event on its own, WITHOUT
@@ -421,9 +467,32 @@ func (e writeExemption) allows(event string) bool {
 	return false
 }
 
-func isBestEffortSideEffectWrite(table, event string) bool {
+// exemptOnlyEvent is a synthetic event name (never a real SQLite statement
+// kind) for the companion counter installExemptOnlyUpdateTrigger installs
+// alongside a column-scoped UPDATE exemption: "did onlyColumns itself
+// change", tracked independently of the ordinary UPDATE counter (which only
+// counts a change to some OTHER column). isBestEffortSideEffectWrite treats
+// this event specially, below -- it's how a column-scoped exemption's
+// principals scoping gets applied to the exempt case itself, not just used
+// to decide whether the non-exempt case should be flagged (that part is
+// already handled at the SQL level and never depends on principal).
+const exemptOnlyEvent = "UPDATE_EXEMPT_ONLY"
+
+func isBestEffortSideEffectWrite(table, event, principal string) bool {
 	for _, e := range bestEffortSideEffectTables {
-		if e.table == table && e.allows(event) {
+		if e.table != table {
+			continue
+		}
+		if event == exemptOnlyEvent {
+			if len(e.onlyColumns) == 0 {
+				continue
+			}
+			if e.principalAllowed(principal) {
+				return true
+			}
+			continue
+		}
+		if e.allows(event) && e.principalAllowed(principal) {
 			return true
 		}
 	}
@@ -584,6 +653,37 @@ func installColumnScopedUpdateTrigger(t testing.TB, db *sql.DB, table, key strin
 	}
 }
 
+// installExemptOnlyUpdateTrigger installs table's companion UPDATE trigger
+// for exemptOnlyEvent: the inverse condition of installColumnScopedUpdateTrigger.
+// It increments counterKey(table, exemptOnlyEvent) when at least one of
+// onlyColumns itself changed, regardless of whether some OTHER column also
+// did in the same statement (that case is already caught, for every
+// principal, by the ordinary column-scoped counter above). Added for #2401:
+// without this second counter, a column-scoped exemption's "only these
+// columns changed" case is invisible to Go entirely -- the SQL trigger
+// filters it out before unexplainedWrites ever sees a nonzero delta -- so
+// there was no way to apply writeExemption.principals to it. This trigger
+// makes that case observable; isBestEffortSideEffectWrite decides, per
+// principal, whether it's still exempt.
+func installExemptOnlyUpdateTrigger(t testing.TB, db *sql.DB, table, exemptKey string, onlyColumns []string) {
+	t.Helper()
+	var changedConds []string
+	for _, col := range onlyColumns {
+		changedConds = append(changedConds, fmt.Sprintf(`(NEW."%s" IS NOT OLD."%s")`, col, col))
+	}
+	when := "0" // onlyColumns is always non-empty when this is called (see installWriteCountTriggers); kept for symmetry with installColumnScopedUpdateTrigger.
+	if len(changedConds) > 0 {
+		when = strings.Join(changedConds, " OR ")
+	}
+	stmt := fmt.Sprintf(
+		"CREATE TRIGGER IF NOT EXISTS pr_fuzz_count_%s_UPDATE_exempt_only AFTER UPDATE ON %s WHEN %s BEGIN UPDATE %s SET n = n + 1 WHERE key = '%s'; END",
+		table, table, when, prFuzzWriteCountsTable, exemptKey,
+	) // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- table/exemptKey are schema-derived or fixed test literals; the WHEN clause's column names come from onlyColumns, a fixed hardcoded list, never external/fuzz input
+	if _, err := db.Exec(stmt); err != nil {
+		t.Fatalf("install exempt-only UPDATE trigger on %s: %v", table, err)
+	}
+}
+
 func installWriteCountTriggers(t testing.TB, db *sql.DB, tables []string) {
 	t.Helper()
 	if _, err := db.Exec("CREATE TABLE IF NOT EXISTS " + prFuzzWriteCountsTable + " (key TEXT PRIMARY KEY, n INTEGER NOT NULL)"); err != nil {
@@ -601,6 +701,11 @@ func installWriteCountTriggers(t testing.TB, db *sql.DB, tables []string) {
 			if event == "UPDATE" {
 				if onlyCols, ok := columnScopedUpdateExemption(tbl); ok {
 					installColumnScopedUpdateTrigger(t, db, tbl, key, onlyCols)
+					exemptKey := counterKey(tbl, exemptOnlyEvent)
+					if _, err := db.Exec("INSERT OR IGNORE INTO "+prFuzzWriteCountsTable+" (key, n) VALUES (?, 0)", exemptKey); err != nil {
+						t.Fatalf("seed counter row for %s: %v", exemptKey, err)
+					}
+					installExemptOnlyUpdateTrigger(t, db, tbl, exemptKey, onlyCols)
 					continue
 				}
 			}
@@ -653,16 +758,19 @@ type tableDelta struct {
 func (d tableDelta) String() string { return fmt.Sprintf("%s:+%d", d.table, d.n) }
 
 // unexplainedWrites returns every table with a write NOT covered by
-// bestEffortSideEffectTables, aggregating across whichever of
+// bestEffortSideEffectTables for principal (one of the runAs labels
+// "zero-grant", "read-only", "admin"), aggregating across whichever of
 // INSERT/UPDATE/DELETE weren't exempt -- empty means no unexplained write
 // happened. Checking exemption per (table, event) pair, not per table, is
 // what lets a narrow exemption (e.g. sessions:UPDATE only) still catch an
-// INSERT or DELETE on that same table.
-func (before dbSnapshot) unexplainedWrites(after dbSnapshot) []tableDelta {
+// INSERT or DELETE on that same table. principal narrows this further per
+// writeExemption.principals (#2401) -- a write that's exempt for one
+// principal can still be unexplained for another.
+func (before dbSnapshot) unexplainedWrites(after dbSnapshot, principal string) []tableDelta {
 	byTable := map[string]int64{}
 	for key, afterN := range after.n {
 		table, event := splitCounterKey(key)
-		if isBestEffortSideEffectWrite(table, event) {
+		if isBestEffortSideEffectWrite(table, event, principal) {
 			continue
 		}
 		if delta := afterN - before.n[key]; delta > 0 {
@@ -677,8 +785,8 @@ func (before dbSnapshot) unexplainedWrites(after dbSnapshot) []tableDelta {
 	return out
 }
 
-func (before dbSnapshot) unexplainedWrite(after dbSnapshot) bool {
-	return len(before.unexplainedWrites(after)) > 0
+func (before dbSnapshot) unexplainedWrite(after dbSnapshot, principal string) bool {
+	return len(before.unexplainedWrites(after, principal)) > 0
 }
 
 func formatTableDeltas(ds []tableDelta) string {
@@ -879,7 +987,7 @@ func FuzzGRPCProtoreflectInvariants(f *testing.F) {
 			if callErr == nil {
 				return
 			}
-			if diffs := before.unexplainedWrites(after); len(diffs) > 0 {
+			if diffs := before.unexplainedWrites(after, label); len(diffs) > 0 {
 				t.Fatalf("ERROR-IMPLIES-NO-COMMIT violation op=%s principal=%s: non-OK status (%v) but the DB changed outside the documented best-effort writes -- differing table(s): %s",
 					m.key(), label, callErr, formatTableDeltas(diffs))
 			}
@@ -887,7 +995,7 @@ func FuzzGRPCProtoreflectInvariants(f *testing.F) {
 
 		zResp, zBefore, zAfter, zErr := runAs("zero-grant", w.zeroGrantTok)
 		if zErr == nil {
-			if diffs := zBefore.unexplainedWrites(zAfter); len(diffs) > 0 {
+			if diffs := zBefore.unexplainedWrites(zAfter, "zero-grant"); len(diffs) > 0 {
 				t.Fatalf("AUTHZ BYPASS (write) op=%s: zero-grant principal got OK and the DB changed outside the documented best-effort writes -- differing table(s): %s",
 					m.key(), formatTableDeltas(diffs))
 			}
@@ -899,7 +1007,7 @@ func FuzzGRPCProtoreflectInvariants(f *testing.F) {
 
 		_, roBefore, roAfter, roErr := runAs("read-only", w.readOnlyTok)
 		if roErr == nil {
-			if diffs := roBefore.unexplainedWrites(roAfter); len(diffs) > 0 {
+			if diffs := roBefore.unexplainedWrites(roAfter, "read-only"); len(diffs) > 0 {
 				t.Fatalf("AUTHZ BYPASS (write) op=%s: read-only principal (system_auditor, no write grant) got OK and the DB changed outside the documented best-effort writes -- differing table(s): %s",
 					m.key(), formatTableDeltas(diffs))
 			}
