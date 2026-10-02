@@ -16,7 +16,7 @@ import (
 // craftArchive builds a gzip'd tar whose MANIFEST.json lists one table entry
 // with the given tar name and a self-consistent size/checksum, followed by
 // that entry: exactly what an attacker controls before signature checks.
-func craftArchive(t *testing.T, tarName string, payload []byte) []byte {
+func craftArchive(t testing.TB, tarName string, payload []byte) []byte {
 	t.Helper()
 	sum := sha256.Sum256(payload)
 	m := Manifest{Tables: []TableEntry{{
