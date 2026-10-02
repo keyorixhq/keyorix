@@ -109,6 +109,7 @@ func acBuildWorld(f *testing.F) *acWorld {
 	ls := store.NewLocalStorage(db)
 	c := core.NewKeyorixCore(ls)
 	c.SetTokenCacheInvalidator(InvalidateTokenCacheByHash)
+	c.SetTokenCacheEvictor(EvictTokenCacheByHash)
 	ctx := context.Background()
 
 	c.SetBootstrapToken("acd-bootstrap-token")

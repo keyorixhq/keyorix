@@ -311,6 +311,14 @@ func TestAssignPermissionToRole_NonBuiltinRole_NoSignal(t *testing.T) {
 // auth-cache TTL. Unlike those stronger events, the user's sessions themselves must
 // NOT be deleted (they stay logged in; only the cached authorization decision is
 // forced to re-resolve from storage on the next request).
+//
+// Wires SetTokenCacheEvictor, not SetTokenCacheInvalidator: a role removal is a
+// permission-only change, not a credential revocation — the session token itself
+// stays valid, so this must go through the evictor (forces re-validation without
+// caching the credential as invalid), never the invalidator (tombstones it as
+// outright revoked — confirmed live by FuzzAuthCacheDifferential's
+// role_removal_false_401 to otherwise make the auth cache serve 401 for a token
+// storage would correctly authenticate and merely deny at the permission layer).
 func TestRemoveUserRole_EvictsSessionCacheWithoutLoggingOut(t *testing.T) {
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
@@ -322,7 +330,7 @@ func TestRemoveUserRole_EvictsSessionCacheWithoutLoggingOut(t *testing.T) {
 	require.NoError(t, db.Create(&models.Session{UserID: userID, SessionToken: "session-hash-b"}).Error)
 
 	var evicted []string
-	c.SetTokenCacheInvalidator(func(h string) { evicted = append(evicted, h) })
+	c.SetTokenCacheEvictor(func(h string) { evicted = append(evicted, h) })
 
 	require.NoError(t, c.RemoveUserRole(ctx, 0, userID, 1, Scope{ProjectID: 5}))
 

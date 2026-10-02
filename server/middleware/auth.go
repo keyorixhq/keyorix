@@ -1605,6 +1605,13 @@ func InvalidateTokenCache(token string) {
 // PAT revocation works by token ID and never sees the raw token, but a PAT's stored
 // TokenHash equals this cache key, so revoke-by-id can purge the entry immediately
 // rather than waiting out the positive-cache TTL.
+//
+// This negative-caches the token for invalidTokenTTL — correct for a genuine
+// credential-revocation event (logout, PAT/machine-token revoke, password change,
+// suspend), where the credential really is now invalid and the NEXT request should
+// be denied outright without a DB round trip. NOT correct for a permission-only
+// change (role removal, break-glass revoke) where the credential itself stays
+// valid — use EvictTokenCacheByHash for that instead.
 func InvalidateTokenCacheByHash(hash string) {
 	tokenCacheMu.Lock()
 	// Write a short-lived tombstone rather than a plain delete: a positive validation that
@@ -1613,6 +1620,34 @@ func InvalidateTokenCacheByHash(hash string) {
 	// that stale write, and negative-caches the revoked token for invalidTokenTTL.
 	now := time.Now()
 	tokenCache[hash] = tokenCacheEntry{userCtx: nil, expiresAt: now.Add(invalidTokenTTL), revokedAt: now}
+	tokenCacheMu.Unlock()
+}
+
+// EvictTokenCacheByHash forces the NEXT request for this token hash to re-validate
+// and re-authorize from storage, without caching a negative ("credential invalid")
+// result. Use this after a PERMISSION change that leaves the credential itself
+// still valid (role removal, break-glass revoke) — unlike InvalidateTokenCacheByHash,
+// which tombstones the key as outright invalid for invalidTokenTTL, that would
+// make the auth cache serve 401 (no valid credential) for a token storage would
+// correctly authenticate and merely deny at the permission layer (403) — an
+// auth-cache/DB-truth divergence FuzzAuthCacheDifferential's oracle treats as a
+// bug regardless of which direction it points, confirmed live via
+// role_removal_false_401 (program "077\"": login, grant role, remove role,
+// authenticated request — the removal's cache eviction wrote exactly the wrong
+// tombstone shape).
+//
+// Still closes the same resurrection race InvalidateTokenCacheByHash's own
+// tombstone closes (a positive validation already in flight when this runs,
+// reading pre-eviction permissions, must not resurrect them after we evict): the
+// entry keeps revokedAt set, so cacheSetValidatedGen's existing.revokedAt.After(validatedAt)
+// check still drops a stale in-flight write. It differs only in expiresAt — set to
+// now (already expired) rather than now+invalidTokenTTL — so cacheGet treats it as
+// an immediate miss, falling through to a genuine slow-path re-validation +
+// re-authorization on the very next request, instead of short-circuiting to 401.
+func EvictTokenCacheByHash(hash string) {
+	tokenCacheMu.Lock()
+	now := time.Now()
+	tokenCache[hash] = tokenCacheEntry{userCtx: nil, expiresAt: now, revokedAt: now}
 	tokenCacheMu.Unlock()
 }
 

@@ -118,6 +118,14 @@ func (c *KeyorixCore) SetTokenCacheInvalidator(fn func(hash string)) {
 	c.tokenCacheInvalidator = fn
 }
 
+// SetTokenCacheEvictor wires the HTTP auth-cache's permission-only eviction function
+// (middleware.EvictTokenCacheByHash) — distinct from SetTokenCacheInvalidator: this
+// one forces a re-validation without caching the credential itself as invalid. Called
+// once at startup, alongside SetTokenCacheInvalidator.
+func (c *KeyorixCore) SetTokenCacheEvictor(fn func(hash string)) {
+	c.tokenCacheEvictor = fn
+}
+
 // SetMachineTokenCacheFlusher wires the HTTP auth-cache's fail-closed, all-machine-tokens
 // eviction function. Called once at startup, alongside SetTokenCacheInvalidator.
 func (c *KeyorixCore) SetMachineTokenCacheFlusher(fn func()) {
@@ -144,6 +152,16 @@ func (c *KeyorixCore) invalidateTokenCache(hashes ...string) {
 // re-resolve the user's permissions from storage instead of serving a stale,
 // positively-cached authorization decision for up to validTokenTTL.
 //
+// Uses tokenCacheEvictor, NOT invalidateTokenCache/tokenCacheInvalidator: the
+// credential itself is still perfectly valid here (only the user's PERMISSIONS
+// changed) — tombstoning it as revoked would make the auth cache serve 401 (no
+// valid credential) for a token storage would correctly authenticate and merely
+// deny at the permission layer, an auth-cache/DB-truth divergence
+// FuzzAuthCacheDifferential's oracle flags as a bug regardless of direction.
+// Confirmed live via role_removal_false_401 (program "077\"": login, grant role,
+// remove role, authenticated request) before this function was split from the
+// single-invalidator wiring it originally shared with genuine revocation events.
+//
 // Every caller of this function calls it AFTER its own primary operation has
 // already committed — the same "best-effort helper, primary effect already
 // succeeded" shape emitAudit protects against (service.go). Found live by
@@ -163,7 +181,14 @@ func (c *KeyorixCore) evictUserSessionCache(ctx context.Context, userID uint) {
 		}
 	}()
 	hashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, userID)
-	c.invalidateTokenCache(hashes...)
+	if c.tokenCacheEvictor == nil {
+		return
+	}
+	for _, h := range hashes {
+		if h != "" {
+			c.tokenCacheEvictor(h)
+		}
+	}
 }
 
 // EventSessionRevocationPanicked audits a panic recovered inside
