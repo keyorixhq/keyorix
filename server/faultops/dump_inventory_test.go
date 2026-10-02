@@ -23,6 +23,20 @@ import (
 	"gorm.io/gorm"
 )
 
+// faultopsSCIMToken is a fixed, >=20-char (core/rules.MinSCIMTokenLength)
+// bearer token enabling the /scim/v2 route group for BOTH liveOperationKeys
+// below and newFaultWorld (world_test.go) -- the same constant in both places
+// so a route liveOperationKeys discovers is the SAME route opCatalog's SCIM
+// entries (opcatalog_test.go) can actually reach and authenticate against.
+// Before this, cfg.SCIM.Enabled was never set anywhere in this package, so
+// every /scim/v2 route -- read AND write -- was invisible to BOTH the
+// generated registry and the fault-injection catalog, not because anyone
+// excluded it, but because it was never mounted in the router these helpers
+// construct. Not a secret -- this process never persists data beyond its own
+// run and this token authenticates nothing but requests this same process
+// sends to its own in-memory httptest.Server.
+const faultopsSCIMToken = "faultops-scim-test-token-not-a-secret"
+
 // allGRPCServiceDescs is the hand-maintained list of every generated gRPC
 // ServiceDesc — gRPC has no runtime registry to walk without spinning up a real
 // *grpc.Server, so the SERVICE list here is hand-maintained (13 as of writing,
@@ -92,7 +106,10 @@ func liveOperationKeys(t *testing.T) []string {
 		t.Fatal(err)
 	}
 	testCore := core.NewKeyorixCore(store.NewLocalStorage(db))
-	cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}}}
+	cfg := &config.Config{
+		Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}},
+		SCIM:   config.SCIMConfig{Enabled: true, Token: faultopsSCIMToken},
+	}
 	handler, err := httpserver.NewRouter(cfg, testCore)
 	if err != nil {
 		t.Fatal(err)

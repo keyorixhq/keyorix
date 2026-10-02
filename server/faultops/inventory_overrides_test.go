@@ -337,6 +337,22 @@ var operationOverrides = map[string]overrideEntry{
 	"GRPC keyorix.v1.DynamicSecretService.RenewLease":                {StatusFuzzed, "opCatalog key \"GRPC ...DynamicSecretService.RenewLease\" — E3"},
 	"GRPC keyorix.v1.DynamicSecretService.RevokeLease":               {StatusFuzzed, "opCatalog key \"GRPC ...DynamicSecretService.RevokeLease\" — E3"},
 	"GRPC keyorix.v1.DynamicSecretService.RevokeAllLeases":           {StatusFuzzed, "opCatalog key \"GRPC ...DynamicSecretService.RevokeAllLeases\" — E3"},
+
+	// SESSION-AT AT5: /scim/v2 was never reachable through liveOperationKeys's
+	// own router construction (cfg.SCIM.Enabled was never set anywhere in this
+	// package), so every SCIM route -- read and write alike -- was invisible to
+	// the generated registry itself, not merely unclassified. Now that
+	// dump_inventory_test.go/world_test.go both enable it (faultopsSCIMToken),
+	// these 3 Group-mutation keys are wired into opCatalog -- the ops the
+	// AT3/#2370 group-guard work actually touches (PatchSCIMGroup,
+	// ReplaceSCIMGroup, DeprovisionSCIMGroup). The other 5 newly-visible SCIM
+	// keys (REST POST /scim/v2/Groups, and all 4 REST */scim/v2/Users/*) are
+	// deliberately left unlisted here -- the honest StatusPending default,
+	// not silently dropped -- as a real, now-tracked gap outside this round's
+	// scope rather than one invisible to the ratchet/coverage report.
+	"REST PATCH /scim/v2/Groups/{id}":  {StatusFuzzed, "opCatalog[\"PatchOrReplaceSCIMGroup\"] — SESSION-AT AT5"},
+	"REST PUT /scim/v2/Groups/{id}":    {StatusFuzzed, "opCatalog[\"ReplaceSCIMGroup\"] — SESSION-AT AT5"},
+	"REST DELETE /scim/v2/Groups/{id}": {StatusFuzzed, "opCatalog[\"DeprovisionSCIMGroup\"] — SESSION-AT AT5"},
 }
 
 func statusOf(key string) overrideEntry {
