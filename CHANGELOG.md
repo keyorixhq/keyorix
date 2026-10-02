@@ -5,6 +5,24 @@ All notable changes to Keyorix are documented here. This project follows
 
 ## Unreleased
 
+### Security
+- **The server now refuses to start if its key files are an incomplete or
+  mixed-generation set** (ADR-112, follow-up from #2400). #2400 made a
+  single restore operation atomic (every file in a key-material set is
+  either all written or none are); this adds the boot-time check for what
+  that doesn't cover — a set assembled across multiple operations. Encryption
+  key files (salt, wrapped DEK, and any KMS/TPM wrapped-key blob or Shamir
+  share files) must either all be present or all be absent; a partial set
+  (e.g. the salt restored but not the wrapped DEK) refuses to start, naming
+  every present and missing file. Among a fully-present set, the salt,
+  wrapped-key blob, and Shamir shares must have been written within 24h of
+  each other — the signature of a legitimately-provisioned set (first boot,
+  KEK rotation, or a #2400-atomic restore all write these together) — or the
+  server refuses to start, naming the mismatched file(s) and their age gap.
+  The wrapped DEK is exempt from this timing check: routine DEK rotation
+  legitimately rewraps it on its own schedule without touching the rest of
+  the set.
+
 ## v0.95.3 — 2026-10-01
 
 ### Security
