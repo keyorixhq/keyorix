@@ -1,9 +1,10 @@
 package storage
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
-	"sync"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -880,10 +881,23 @@ func TestApplyPoolSettings_S22_ZeroValuesUseDefaults(t *testing.T) {
 // follow-up: when max_idle_conns is unset, it must match the effective MaxOpenConns
 // (defaultMaxOpenConns here), not silently fall through to database/sql's own built-in
 // default of 2. database/sql exposes no direct getter for the configured idle limit, so
-// this asserts the OBSERVABLE BEHAVIOR that limit controls: open more connections than
-// Go's default idle cap (2) but fewer than defaultMaxOpenConns (25), return them all to
-// the pool, and confirm they're kept idle/warm rather than closed down to 2. Before the
-// fix, this held at most 2 idle; after, it holds all of them (closeCount stays 0).
+// this asserts the OBSERVABLE BEHAVIOR that limit controls: open N simultaneous
+// connections, return them all to the pool, and confirm they're kept idle/warm rather
+// than closed down to 2. Before the fix, this held at most 2 idle; after, it holds all
+// of them (closeCount stays 0).
+//
+// Uses sqlDB.Conn(ctx) to EXPLICITLY check out N raw connections and hold them open
+// simultaneously, rather than firing N goroutines each issuing one query and hoping
+// the scheduler keeps N connections open at once (coordinator-reported CI flake,
+// job 110922169933: on a CPU-constrained runner, N goroutines running a near-instant
+// `SELECT 1` can legitimately execute mostly sequentially — each one returns its
+// connection to the idle pool before the next goroutine even starts, so the pool
+// correctly REUSES one or two connections instead of ever having N open at once; that
+// is database/sql's pool behaving correctly, not evidence about max_idle_conns at all,
+// and the previous version of this test could never deterministically tell the two
+// apart). sqlDB.Conn is synchronous and returns only once a connection is actually
+// checked out, so checking out N of them before releasing any is a real guarantee that
+// N connections existed simultaneously, independent of scheduler/CPU timing.
 func TestApplyPoolSettings_S22_ZeroValuesMaxIdleMatchesMaxOpen(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "pool-idle-default.db"))
 	require.NoError(t, err)
@@ -894,16 +908,20 @@ func TestApplyPoolSettings_S22_ZeroValuesMaxIdleMatchesMaxOpen(t *testing.T) {
 	require.NoError(t, err)
 
 	const concurrent = 10 // > Go's built-in idle default (2), < defaultMaxOpenConns (25)
-	var wg sync.WaitGroup
+	ctx := context.Background()
+	conns := make([]*sql.Conn, concurrent)
 	for i := 0; i < concurrent; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			var one int
-			assert.NoError(t, sqlDB.QueryRow("SELECT 1").Scan(&one))
-		}()
+		c, err := sqlDB.Conn(ctx)
+		require.NoError(t, err)
+		var one int
+		require.NoError(t, c.QueryRowContext(ctx, "SELECT 1").Scan(&one))
+		conns[i] = c
 	}
-	wg.Wait()
+	require.Equal(t, concurrent, sqlDB.Stats().InUse,
+		"all %d connections must be genuinely checked out simultaneously before any are released", concurrent)
+	for _, c := range conns {
+		require.NoError(t, c.Close()) // returns the connection to the pool, doesn't close the underlying DB conn
+	}
 
 	stats := sqlDB.Stats()
 	assert.Equal(t, int64(0), stats.MaxIdleClosed,
