@@ -598,7 +598,15 @@ type knownOpenTolerance struct {
 // test (see the committed seed
 // testdata/fuzz/FuzzStorageFaultOperations/630357d238f9c51b); no entry needed
 // unless a new finding is filed.
-var knownOpenTolerances = []knownOpenTolerance{}
+//
+// #2407 (filed 2026-10-02 from PR #2396's fuzz-changed run, seed
+// 4f002c3230303030): CreateAccessRequestApproval reports KindError but its
+// effect partially commits anyway (AuditEvent row persists). Unrelated to
+// #2396's own change (SAML ACS wiring) — pre-existing, confirmed present on
+// main. Remove this entry when #2407 is fixed.
+var knownOpenTolerances = []knownOpenTolerance{
+	{op: "REST PUT /api/v1/projects/{id}/access-requests/{requestId}", method: "CreateAccessRequestApproval", kind: faultstorage.KindError, findingDoc: "#2407"},
+}
 
 func matchingKnownOpen(in oracleInput) *knownOpenTolerance {
 	for i, k := range knownOpenTolerances {
