@@ -647,6 +647,39 @@ type knownOpenTolerance struct {
 	issue      string
 	expires    string
 	findingDoc string
+	// tables, if non-empty, narrows this tolerance to ONLY match when the
+	// violation's diff is confined to this set (a subset check, not an exact
+	// set match) — a diff that includes even one table outside this list is a
+	// DIFFERENT, unexplained divergence and must still fail loudly, not be
+	// silently swallowed under this finding's name. Empty preserves the
+	// original, table-unaware behavior: tolerate the full diff for this exact
+	// (op, method, kind, nth, oracle).
+	tables []string
+	// method == "" matches ANY storage method -- for a finding whose root
+	// cause is structural to the OP itself (e.g. a write that happens
+	// unconditionally before the faulted call even runs), not tied to one
+	// specific storage call.
+}
+
+// diffSubsetOf reports whether every table in diff also appears in allowed —
+// mirrors acceptableByDesign's identical subset check (bestEffortTables),
+// kept separate since knownOpenTolerance's tables field is conceptually
+// distinct (a narrowing of an already-filed, not-yet-fixed finding, not a
+// documented best-effort design tradeoff).
+func diffSubsetOf(diff, allowed []string) bool {
+	if len(diff) == 0 {
+		return false
+	}
+	allowedSet := make(map[string]bool, len(allowed))
+	for _, t := range allowed {
+		allowedSet[t] = true
+	}
+	for _, d := range diff {
+		if !allowedSet[d] {
+			return false
+		}
+	}
+	return true
 }
 
 // F3a and F3b (docs/findings/2026-09-21-FINDING-role-update-permission-replace-swallows-storage-errors.md)
@@ -663,32 +696,61 @@ type knownOpenTolerance struct {
 // test (see the committed seed
 // testdata/fuzz/FuzzStorageFaultOperations/630357d238f9c51b); no entry needed
 // unless a new finding is filed.
+// gRPC CreateUser CountProjectMembershipsByUsers panic (KindPanic, NthCall=1,
+// oracle (a), filed as #2449): FIXED by #2408 (projectCounts now recovers a
+// panic the same way it already handled a returned error, with its own
+// regression test TestCreateUser_ProjectCountsPanicDoesNotMaskSuccess). The
+// tolerance main briefly carried for it (added by #2434, which had forked
+// before #2408 landed) is dropped here, not re-added -- #2408's fix is the
+// regression test now.
 //
-// GRPC keyorix.v1.UserService.CreateUser, CountProjectMembershipsByUsers,
-// KindPanic, NthCall=1, oracle (a): found live by CI fuzz shard 0 on an
-// unrelated PR (#2434), confirmed pre-existing on main by replaying input
-// 5900200031 directly against origin/main (not caused by that PR). A panic
-// inside CountProjectMembershipsByUsers (call #1, injected post-commit) --
-// server/grpc/services/user_service.go's userToProto -> projectCounts ->
-// internal/core.ProjectMembershipCounts -- propagates past the ALREADY
-// committed User/UserRole/PasswordHistory/AuditEvent rows from CreateUser's
-// own write, which happens earlier and is unaffected; RecoveryInterceptor
-// catches the panic and the RPC reports an error even though the user was
-// genuinely created. Filed as #2449; not fixed here.
+// docs/findings/2026-10-02-FINDING-sod-policy-create-getrole-error-misread-as-not-admin.md
+// was tolerated here and is now fixed (#2405, merged) -- isGlobalAdminRoleName
+// no longer misreads a GetRole error as "not admin". No entry needed unless a
+// new finding is filed.
+//
+// docs/findings/2026-10-02-FINDING-grpc-createrole-updaterole-rolebyid-post-commit-read.md
+// was tolerated here and is now fixed (#2381, merged, dropped by this PR's own
+// adcfe1a1) -- RoleGRPCService's post-commit roleByID read no longer masks a
+// successful CreateRole. No entry needed unless a new finding is filed.
 var knownOpenTolerances = []knownOpenTolerance{
+	// docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md
+	// (SESSION-FI, AT5): NOT a bug -- BulkRejectAccessRequests' unconditional
+	// summary audit event legitimately differs in content (X/Y counts) when
+	// the one requested item fails. Same shape onlyOutcomeLogTables already
+	// accepts unconditionally in the SUCCESS branch; the error-reporting
+	// `default:` branch has no equivalent exemption yet, and extending it
+	// needs its own validation, not bundled into this op's own fix.
 	{
-		op: "GRPC keyorix.v1.UserService.CreateUser", method: "CountProjectMembershipsByUsers",
-		kind: faultstorage.KindPanic, nth: 1, oracle: "a",
-		issue: "#2449", expires: "2026-10-16",
-		findingDoc: "#2449",
+		op: "REST POST /api/v1/access-requests/bulk-reject", method: "GetAccessRequest", kind: faultstorage.KindError,
+		findingDoc: "docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md",
+	},
+	// docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md
+	// (SESSION-FI, AT5, out of OWNS, not fixed there): loadTOTPSecret's
+	// GetMFASecret error is checked with `err == nil` as the gate to even
+	// attempt TOTP validation; on error the whole branch is skipped,
+	// collapsing into the SAME path a genuine wrong code takes --
+	// audited as mfa.failed AND counted toward the account lockout, for a
+	// correct code that was never actually checked. Fix is PR #2398, not yet
+	// merged -- keep tolerating until it lands.
+	{
+		op: "REST POST /auth/mfa/verify", method: "GetMFASecret", kind: faultstorage.KindError,
+		findingDoc: "docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md",
 	},
 }
 
-func matchingKnownOpen(in oracleInput, oracle string) *knownOpenTolerance {
+func matchingKnownOpen(in oracleInput, oracle string, diff []string) *knownOpenTolerance {
 	for i, k := range knownOpenTolerances {
-		if k.op == in.op && k.method == in.method && k.kind == in.kind && k.nth == in.nth && k.oracle == oracle {
-			return &knownOpenTolerances[i]
+		if k.op != in.op || k.kind != in.kind || k.nth != in.nth || k.oracle != oracle {
+			continue
 		}
+		if k.method != "" && k.method != in.method {
+			continue
+		}
+		if len(k.tables) > 0 && !diffSubsetOf(diff, k.tables) {
+			continue
+		}
+		return &knownOpenTolerances[i]
 	}
 	return nil
 }
@@ -770,6 +832,21 @@ var bestEffortTables = map[string][]string{
 	// seeded successfully in its own HTTP response, rather than only via the
 	// audit trail. Left undecided, same as before.
 	"CreateEnvironment": {"Environment", "AuditEvent"},
+	// LastUserSecretActivity: OpenAccessReviewCampaign (internal/core/
+	// access_review_campaign.go) deliberately, by design (#483), persists a
+	// failure of this ONE sub-query onto the campaign row itself —
+	// Degraded/DegradedReasons — rather than aborting the campaign or
+	// silently leaving every item's LastUsedAt nil (indistinguishable from
+	// "genuinely never used"). annotateLastUsedAt (access_review.go) only
+	// sets report.degrade(...) and returns on this specific error; it does
+	// not alter entries, so AccessReviewItem rows are identical either way
+	// — the ENTIRE diff this failure can ever produce is confined to
+	// AccessReviewCampaign's own Degraded/DegradedReasons columns, found
+	// live by FuzzStorageFaultOperations (REST POST .../access-review/
+	// campaigns). This is the intended, documented behavior #483 built —
+	// not an undiscovered bug — so it belongs here, not in
+	// knownOpenTolerances.
+	"LastUserSecretActivity": {"AccessReviewCampaign"},
 }
 
 // acceptableByDesign reports whether every table in diff is accounted for by
@@ -803,9 +880,9 @@ func checkOracles(t *testing.T, in oracleInput) {
 	t.Helper()
 	label := fmt.Sprintf("op=%s fault=%s#%d/%s", in.op, in.method, in.nth, in.kind)
 
-	report := func(oracle, format string, args ...any) {
+	report := func(oracle string, diff []string, format string, args ...any) {
 		msg := fmt.Sprintf(format, args...)
-		if known := matchingKnownOpen(in, oracle); known != nil {
+		if known := matchingKnownOpen(in, oracle, diff); known != nil {
 			t.Logf("KNOWN-OPEN (%s): %s", known.findingDoc, msg)
 			return
 		}
@@ -817,7 +894,7 @@ func checkOracles(t *testing.T, in oracleInput) {
 	// reference run (the write happens anyway), which (a) alone would not flag.
 	if authzReadMethods[in.method] && in.kind != faultstorage.KindEffectThenError && in.result.Success &&
 		!nonLoadBearingAuthzRead(in.op, in.method, in.nth) {
-		report("c", "%s: ORACLE (c) VIOLATION — a fault on an authz-resolution read produced a SUCCESSFUL "+
+		report("c", nil, "%s: ORACLE (c) VIOLATION — a fault on an authz-resolution read produced a SUCCESSFUL "+
 			"result instead of an error/deny: %s", label, in.result.Detail)
 		return
 	}
@@ -826,7 +903,7 @@ func checkOracles(t *testing.T, in oracleInput) {
 	if !in.result.Success {
 		for _, frag := range canaryFragments {
 			if strings.Contains(in.result.Detail, frag) {
-				report("e", "%s: ORACLE (e) VIOLATION — error response leaked secret plaintext %q: %s",
+				report("e", nil, "%s: ORACLE (e) VIOLATION — error response leaked secret plaintext %q: %s",
 					label, frag, in.result.Detail)
 				return
 			}
@@ -866,7 +943,7 @@ func checkOracles(t *testing.T, in oracleInput) {
 					"benign audit-content degradation, not a business-state inconsistency", label, diff)
 				return
 			}
-			report("a", "%s: ORACLE (a) VIOLATION — reported SUCCESS but final state does not match the "+
+			report("a", diff, "%s: ORACLE (a) VIOLATION — reported SUCCESS but final state does not match the "+
 				"fault-free reference run's state (partial/incorrect commit). Differing tables: %v",
 				label, diff)
 		}
@@ -896,15 +973,16 @@ func checkOracles(t *testing.T, in oracleInput) {
 					label)
 				return
 			}
-			report("d", "%s: ORACLE (d) VIOLATION — effect-then-error state matches NEITHER the pre-fault "+
+			report("d", nil, "%s: ORACLE (d) VIOLATION — effect-then-error state matches NEITHER the pre-fault "+
 				"state nor the fault-free reference state (a genuine partial/mixed commit, not just an "+
 				"ambiguous-but-consistent one). Differing tables vs before: %v; vs reference: %v",
 				label, diffTables(in.before, in.after), diffTables(in.refAfter, in.after))
 		}
 	default:
 		if in.after.Hash != in.before.Hash {
-			report("a", "%s: ORACLE (a) VIOLATION — reported an ERROR but logical state changed anyway "+
-				"(partial commit). Differing tables: %v", label, diffTables(in.before, in.after))
+			diff := diffTables(in.before, in.after)
+			report("a", diff, "%s: ORACLE (a) VIOLATION — reported an ERROR but logical state changed anyway "+
+				"(partial commit). Differing tables: %v", label, diff)
 		}
 	}
 }
