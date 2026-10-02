@@ -41,7 +41,14 @@ const (
 	EventBreakGlassActivated      = "break_glass.activated"       // #nosec G101 -- audit event type, not a credential
 	EventBreakGlassRevoked        = "break_glass.revoked"         // #nosec G101 -- audit event type, not a credential
 	EventBreakGlassNotifyPanicked = "break_glass.notify_panicked" // #nosec G101 -- audit event type, not a credential
+	EventBreakGlassReviewed       = "break_glass.reviewed"        // #nosec G101 -- audit event type, not a credential
 )
+
+// minBreakGlassReviewNoteLen mirrors minBreakGlassJustificationLen's reasoning
+// (above) for the review note (ADR-112 §3, break-glass review item 5): this
+// becomes the PERMANENT audit-trail record of what the reviewer actually
+// checked, so a bare non-empty string isn't enough.
+const minBreakGlassReviewNoteLen = 10
 
 // BreakGlassPolicy is the deployment configuration for emergency access, wired from
 // config at startup via SetBreakGlassPolicy.
@@ -478,6 +485,54 @@ func (c *KeyorixCore) RevokeBreakGlassActivationAtomic(ctx context.Context, acto
 func (c *KeyorixCore) LogBreakGlassRevoked(ctx context.Context, actorID, projectID, activationID, userID, roleID uint, roleName string) {
 	c.auditProjectScoped(ctx, EventBreakGlassRevoked, actorID, projectID,
 		fmt.Sprintf("break-glass: revoked activation %d (user %d, role %q) early", activationID, userID, roleName))
+}
+
+// ReviewBreakGlass records a post-activation review (ADR-112 §3, break-glass
+// review item 5): who reviewed it, when, and why. Activation itself stays
+// single-person (decided) -- this is a SEPARATE, after-the-fact check, not a
+// second approver gating the grant. actorID is the reviewer; projectID scopes
+// and double-checks the activation the same way RevokeBreakGlass does.
+// Allowed regardless of the activation's active/expired/revoked state: a
+// review is a record about what happened, not a control over the grant.
+func (c *KeyorixCore) ReviewBreakGlass(ctx context.Context, actorID, projectID, activationID uint, note string) error {
+	if projectID == 0 {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
+	}
+	note = strings.TrimSpace(note)
+	if len(note) < minBreakGlassReviewNoteLen {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil),
+			fmt.Sprintf("review note must be at least %d characters", minBreakGlassReviewNoteLen))
+	}
+	activation, err := c.storage.GetBreakGlassActivation(ctx, activationID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+	}
+	if activation.ProjectID != projectID {
+		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+	}
+	now := c.now()
+	if err := c.storage.ReviewBreakGlassActivation(ctx, activationID, actorID, note, now); err != nil {
+		if errors.Is(err, storage.ErrBreakGlassAlreadyReviewed) {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "activation has already been reviewed")
+		}
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	c.auditProjectScoped(ctx, EventBreakGlassReviewed, actorID, projectID,
+		fmt.Sprintf("break-glass: activation %d (user %d, role %q) reviewed", activationID, activation.UserID, activation.RoleName))
+	return nil
+}
+
+// ListUnreviewedBreakGlassActivations returns every activation (across all
+// projects) that has gone unreviewed for at least window -- the posture
+// report's (item 4) source for "open break-glass activations without
+// review." window is typically BreakGlassConfig.GetReviewWindow().
+func (c *KeyorixCore) ListUnreviewedBreakGlassActivations(ctx context.Context, window time.Duration) ([]*models.BreakGlassActivation, error) {
+	cutoff := c.now().Add(-window)
+	rows, err := c.storage.ListUnreviewedBreakGlassActivationsBefore(ctx, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return rows, nil
 }
 
 // notifyBreakGlassAdmins alerts the project's approver-role members that emergency

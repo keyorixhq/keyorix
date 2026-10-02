@@ -128,3 +128,64 @@ func TestRevokeBreakGlass_NotFound_S13(t *testing.T) {
 	h.RevokeBreakGlass(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
+
+// ── break_glass.go: ReviewBreakGlass (ADR-112 §3, break-glass review item 5) ──
+
+func TestReviewBreakGlass_BadProjectID_S13(t *testing.T) {
+	h := newCatalogHandlerBreakGlassS13(t)
+	req := withChiParams(httptest.NewRequest(http.MethodPost, "/", nil),
+		map[string]string{"id": "notanumber", "activationId": "1"})
+	w := httptest.NewRecorder()
+	h.ReviewBreakGlass(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestReviewBreakGlass_BadActivationID_S13(t *testing.T) {
+	h := newCatalogHandlerBreakGlassS13(t)
+	req := withChiParams(httptest.NewRequest(http.MethodPost, "/", nil),
+		map[string]string{"id": "1", "activationId": "notanumber"})
+	w := httptest.NewRecorder()
+	h.ReviewBreakGlass(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestReviewBreakGlass_NoUserCtx_S13(t *testing.T) {
+	h := newCatalogHandlerBreakGlassS13(t)
+	req := withChiParams(httptest.NewRequest(http.MethodPost, "/", nil),
+		map[string]string{"id": "1", "activationId": "1"})
+	w := httptest.NewRecorder()
+	h.ReviewBreakGlass(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestReviewBreakGlass_BadJSON_S13(t *testing.T) {
+	h := newCatalogHandlerBreakGlassS13(t)
+	req := withUserCtx(withChiParams(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad json")),
+		map[string]string{"id": "1", "activationId": "1"}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ReviewBreakGlass(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestReviewBreakGlass_NotFound_S13(t *testing.T) {
+	h := newCatalogHandlerBreakGlassS13(t)
+	body := strings.NewReader(`{"note":"a perfectly good review note"}`)
+	req := withUserCtx(withChiParams(httptest.NewRequest(http.MethodPost, "/", body),
+		map[string]string{"id": "1", "activationId": "999999"}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ReviewBreakGlass(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestReviewBreakGlass_NoteTooShort_S13(t *testing.T) {
+	h := newCatalogHandlerBreakGlassS13(t)
+	body := strings.NewReader(`{"note":"ok"}`)
+	req := withUserCtx(withChiParams(httptest.NewRequest(http.MethodPost, "/", body),
+		map[string]string{"id": "1", "activationId": "1"}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ReviewBreakGlass(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
