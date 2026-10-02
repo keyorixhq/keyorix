@@ -13,6 +13,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -233,14 +234,40 @@ func TestLookupSessionUser_Success(t *testing.T) {
 
 // ── auth.go — Logout ──────────────────────────────────────────────────────────
 
+// TestLogout_SessionNotFound covers a genuine "no such live session" — GetSession wraps
+// storage.ErrSessionNotFound, matching LocalStorage's real contract (local_auth.go's
+// GetSession). Logout must map this to its own ErrSessionNotFound sentinel (401 via the
+// HTTP handler's errors.Is check), same as before this test's premise was corrected: it
+// previously used a bare errors.New("not found") that wrapped neither sentinel, which only
+// passed because the OLD Logout collapsed every GetSession error identically — exactly the
+// bug item 3 of the UX-fixes batch fixed (see TestLogout_StorageLookupFailure_NotMappedToSessionNotFound
+// right below for the case that bare-error premise was actually masking).
 func TestLogout_SessionNotFound(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
-	ms.On("GetSession", mock.Anything, "unknown").Return(nil, errors.New("not found"))
+	ms.On("GetSession", mock.Anything, "unknown").Return(nil, fmt.Errorf("not found: %w", storage.ErrSessionNotFound))
 	c := NewKeyorixCore(ms)
 	err := c.Logout(context.Background(), "unknown")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "session not found")
+	assert.True(t, errors.Is(err, ErrSessionNotFound))
+}
+
+// TestLogout_StorageLookupFailure_NotMappedToSessionNotFound is the mock-based sibling of
+// TestLogout_SessionNotFound: a GetSession failure that is NOT storage.ErrSessionNotFound (a
+// real retrieval failure, e.g. the DB is down) must NOT be reported as ErrSessionNotFound —
+// the HTTP handler's existing errors.Is(err, core.ErrSessionNotFound) branch would otherwise
+// map a genuine 5xx to a silent 401. See auth_logout_error_split_test.go for the same
+// assertion against a real SQLite-backed LocalStorage, and
+// server/http/handlers/auth_logout_error_split_test.go for the end-to-end HTTP status code.
+func TestLogout_StorageLookupFailure_NotMappedToSessionNotFound(t *testing.T) {
+	t.Parallel()
+	ms := new(MockStorage)
+	ms.On("GetSession", mock.Anything, "unknown").Return(nil, errors.New("connection refused"))
+	c := NewKeyorixCore(ms)
+	err := c.Logout(context.Background(), "unknown")
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrSessionNotFound),
+		"a real storage failure must not be reported as ErrSessionNotFound: %v", err)
 }
 
 func TestLogout_DeletesSession(t *testing.T) {

@@ -216,10 +216,26 @@ func (c *KeyorixCore) RecordLogin(ctx context.Context, userID uint) error {
 var ErrSessionNotFound = errors.New("session not found")
 
 // Logout invalidates the session identified by token.
+//
+// #2337 fixed the double-logout case (a prior logout already deleted the session) by
+// mapping it to ErrSessionNotFound -> 401, but did so by collapsing EVERY GetSession
+// error into that same sentinel — a real storage failure (DB down, a timeout) got the
+// identical 401 "session not found" as an ordinary already-logged-out token, silently
+// swallowing a genuine server fault. storage.IsSessionNotFound (backed by
+// storage.ErrSessionNotFound, which GetSession now wraps ONLY for a genuine
+// gorm.ErrRecordNotFound — see local_auth.go's GetSession) distinguishes the two: a
+// definitive "no such session" still maps to ErrSessionNotFound (401, unchanged
+// caller-visible behavior), while any other error propagates as-is for the HTTP
+// handler's existing non-ErrSessionNotFound branch (500) to report — that branch
+// already existed and was already correct; it was simply unreachable for this
+// specific failure before now.
 func (c *KeyorixCore) Logout(ctx context.Context, token string) error {
 	session, err := c.storage.GetSession(ctx, token)
 	if err != nil {
-		return ErrSessionNotFound
+		if storage.IsSessionNotFound(err) {
+			return ErrSessionNotFound
+		}
+		return fmt.Errorf("logout: session lookup failed: %w", err)
 	}
 	return c.storage.DeleteSession(ctx, session.ID)
 }

@@ -49,12 +49,26 @@ func (ls *LocalStorage) CreateSession(ctx context.Context, session *models.Sessi
 // GetSession looks up a LIVE session by the hash of the presented token — the row
 // stores only the hash. A rotated row (RotatedAt set) is excluded: it must
 // authenticate nothing, exactly like a deleted row (#211).
+//
+// Distinguishes a genuine "no such live session" (gorm.ErrRecordNotFound) from any
+// other retrieval failure by wrapping storage.ErrSessionNotFound ONLY for the former
+// — mirroring GetSessionByID immediately below, and storage.IsSessionNotFound's own
+// doc comment. Previously this wrapped ANY error identically (both under the
+// "ErrorNotFound" i18n message), which made every caller's `err != nil` the only
+// signal available — core.Logout (internal/core/auth.go) used to collapse a real
+// storage failure into the SAME 401 "session not found" response as an ordinary
+// already-logged-out token (#2337 fixed the double-logout case but, in doing so,
+// also silently swallowed a genuine 5xx into that same 401 — found closing that
+// finding properly rather than re-litigating it).
 func (ls *LocalStorage) GetSession(ctx context.Context, token string) (*models.Session, error) {
 	var session models.Session
 	if err := ls.db.WithContext(ctx).
 		Where("session_token = ? AND rotated_at IS NULL", hashSessionToken(token)).
 		First(&session).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), storage.ErrSessionNotFound)
+		}
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return &session, nil
 }
