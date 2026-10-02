@@ -185,7 +185,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := h.buildLoginResponse(r.Context(), session, user)
+	resp, _ := h.buildLoginResponse(r.Context(), session, user)
 	h.setSessionCookies(w, session)
 
 	// Audit log + last-login stamp (both non-blocking)
@@ -199,7 +199,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 // buildLoginResponse assembles the session-token + identity payload returned on a
 // successful login. Shared with the setup-token consume flow so that "landing the
 // user logged in" yields exactly the same shape a normal login does.
-func (h *AuthHandler) buildLoginResponse(ctx context.Context, session *models.Session, user *models.User) loginResponseBody {
+//
+// The returned error is the identity-summary (roles/permissions) resolution
+// error, if any — for password login and setup-token consume it is
+// deliberately non-fatal (see the comment below); VerifyMFA, found by the
+// fuzzer to return HTTP 200 on a GetUserPermissions storage error (#2412),
+// checks it and fails closed instead.
+func (h *AuthHandler) buildLoginResponse(ctx context.Context, session *models.Session, user *models.User) (loginResponseBody, error) {
 	resp := loginResponseBody{
 		Token:       session.SessionToken,
 		UserID:      user.ID,
@@ -215,15 +221,21 @@ func (h *AuthHandler) buildLoginResponse(ctx context.Context, session *models.Se
 	if session.AbsoluteExpiresAt != nil {
 		resp.AbsoluteExpiresAt = session.AbsoluteExpiresAt.UTC().Format(time.RFC3339)
 	}
-	// Surface roles + permissions so the UI can gate nav/routes. Best-effort:
-	// a failure here must not block an otherwise-successful login.
-	if id, ierr := h.coreService.GetUserIdentity(ctx, user.ID); ierr == nil {
+	// Surface roles + permissions so the UI can gate nav/routes. Best-effort
+	// for password login and setup-token consume (their callers ignore the
+	// returned error): a failure here must not block an otherwise-successful
+	// login, since Authorize() re-resolves permissions fresh on every real
+	// request regardless of what this summary says (identity.go's
+	// UserIdentity doc comment). The error is still returned so a caller that
+	// needs a stricter guarantee (VerifyMFA) can act on it.
+	id, ierr := h.coreService.GetUserIdentity(ctx, user.ID)
+	if ierr == nil {
 		resp.Role, resp.Roles, resp.Permissions = id.Role, id.Roles, id.Permissions
 	}
 	// Flag an expired/required password change so the UI can route (ADR-025).
 	resp.AccountState = core.NormalizeAccountState(user.AccountState)
 	resp.PasswordChangeRequired = h.coreService.PasswordExpired(user) || core.AccountRestricted(user.AccountState)
-	return resp
+	return resp, ierr
 }
 
 // ── Setup-token endpoints (ADR-028) ─────────────────────────────────────────────
@@ -325,7 +337,7 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := h.buildLoginResponse(r.Context(), result.Session, result.User)
+	resp, _ := h.buildLoginResponse(r.Context(), result.Session, result.User)
 	h.setSessionCookies(w, result.Session)
 	goSafe(func() {
 		h.coreService.LogAuthLogin(context.Background(), result.User.ID, result.User.Username, ip, r.Header.Get(hdrUserAgent))

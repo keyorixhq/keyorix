@@ -51,8 +51,16 @@ func setupMFAVerifyStorageErrorTest(t *testing.T) (*AuthHandler, *faultstorage.F
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	// A :memory: SQLite DSN gives each physical connection its own PRIVATE
+	// database -- the background goSafe(LogAuthLogin/RecordLogin) goroutines a
+	// successful verify fires can otherwise race the test's own queries onto a
+	// second, freshly-empty connection. Cap the pool at 1.
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.MFASecret{}, &models.MFARecoveryCode{},
-		&models.MFAChallenge{}, &models.Session{}, &models.AuditEvent{}, &models.LoginAttempt{}))
+		&models.MFAChallenge{}, &models.Session{}, &models.AuditEvent{}, &models.LoginAttempt{},
+		&models.Role{}, &models.UserRole{}, &models.Permission{}, &models.RolePermission{}))
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(mfaVerifyStorageErrorTestPassword), bcrypt.MinCost)
 	require.NoError(t, err)
