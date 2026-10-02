@@ -132,6 +132,20 @@ func withMigrationLock(db *gorm.DB, isPostgres bool, dbPath string, fn func(*gor
 // backing database's connection limit. A conservative cap is safer out of the box.
 const defaultMaxOpenConns = 25
 
+// applyPoolSettings (below) matches MaxIdleConns to the EFFECTIVE MaxOpenConns
+// (whichever of the operator's own max_open_conns or defaultMaxOpenConns above is
+// in force) when the operator hasn't set max_idle_conns (SESSION-PERF, #2403
+// follow-up). Go's own idle default is 2 — far below any sensible open ceiling —
+// so without this, a deployment that never sets max_idle_conns (the shipped
+// keyorix.docker.yaml does not) churns connections under any concurrency above
+// ~2: each request beyond the idle cap opens a fresh connection (full TCP
+// handshake + Postgres SCRAM-SHA-256/PBKDF2 authentication) only to have it
+// closed, rather than kept warm, the moment it's returned. Measured cost of the
+// gap this closes: at c=50 concurrent reads, Postgres's own connection log showed
+// ~1 new-connection+disconnect cycle per 3.5 requests, and a CPU profile
+// attributed 5.28% of total server CPU time to PBKDF2/SCRAM connection
+// handshakes alone.
+
 // sqliteBusyTimeoutMillis is how long a SQLite connection waits for a lock held by
 // another connection before returning SQLITE_BUSY (#465). SQLite's own default is 0
 // (fail immediately), which surfaces as spurious write failures under the concurrent
@@ -472,13 +486,22 @@ func applyPoolSettings(db *gorm.DB, dbCfg *config.DatabaseConfig) error {
 	// Always cap open connections. Go's default is UNLIMITED, so without a cap a flood of
 	// concurrent requests (even unauthenticated ones like /readyz, which pings the DB) can
 	// open connections without bound and exhaust the backing database's max_connections.
+	effectiveMaxOpenConns := defaultMaxOpenConns
 	if dbCfg.MaxOpenConns > 0 {
-		sqlDB.SetMaxOpenConns(dbCfg.MaxOpenConns)
-	} else {
-		sqlDB.SetMaxOpenConns(defaultMaxOpenConns)
+		effectiveMaxOpenConns = dbCfg.MaxOpenConns
 	}
+	sqlDB.SetMaxOpenConns(effectiveMaxOpenConns)
+	// Match the idle cap to the EFFECTIVE open cap by default (whether that came from the
+	// operator's own max_open_conns or defaultMaxOpenConns above), not a separate fixed
+	// constant — see defaultMaxIdleConns' doc comment. This keeps a connection, once
+	// opened, warm for reuse rather than opened and immediately closed again under any
+	// concurrency above Go's built-in default of 2, for whatever open ceiling is actually
+	// in effect. (database/sql itself silently caps idle to open if idle is ever set
+	// higher than open, so this can never exceed effectiveMaxOpenConns regardless.)
 	if dbCfg.MaxIdleConns > 0 {
 		sqlDB.SetMaxIdleConns(dbCfg.MaxIdleConns)
+	} else {
+		sqlDB.SetMaxIdleConns(effectiveMaxOpenConns)
 	}
 	if dbCfg.ConnMaxLifetimeMinutes > 0 {
 		sqlDB.SetConnMaxLifetime(time.Duration(dbCfg.ConnMaxLifetimeMinutes) * time.Minute)

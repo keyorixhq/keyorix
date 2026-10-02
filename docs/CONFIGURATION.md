@@ -103,7 +103,7 @@ storage:
     # dsn: "host=db user=keyorix dbname=keyorix port=5432 sslmode=require"
     # password: ""                # prefer KEYORIX_DB_PASSWORD
     max_open_conns: 25
-    max_idle_conns: 5
+    max_idle_conns: 25  # match max_open_conns, or a connection gets closed instead of reused
     conn_max_lifetime_minutes: 30
 ```
 

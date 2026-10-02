@@ -56,7 +56,9 @@ storage:
     # dsn: "host=localhost user=keyorix dbname=keyorix port=5432 sslmode=require"
     # password: ""  # use KEYORIX_DB_PASSWORD environment variable instead
     max_open_conns: 25
-    max_idle_conns: 5
+    # Matches max_open_conns (SESSION-PERF, #2403 follow-up) -- see
+    # configs/keyorix.yaml.tpl's matching comment for why.
+    max_idle_conns: 25
     conn_max_lifetime_minutes: 30
   encryption:
     enabled: true
