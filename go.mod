@@ -3,7 +3,7 @@ module github.com/keyorixhq/keyorix
 go 1.27
 
 require (
-	cloud.google.com/go/kms v1.34.0
+	cloud.google.com/go/kms v1.35.0
 	cloud.google.com/go/secretmanager v1.21.0
 	filippo.io/age v1.3.2
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.1
