@@ -96,22 +96,6 @@ var presenceOnlyFields = map[string]string{
 	"CredentialBlob": "authenticator-generated WebAuthn public key material",
 	"SessionToken":   "SHA-256 hash of a randomly generated per-login session token (models.go:1217) — two independent bootstrap logins (reference world vs fault world) never produce the same raw token, so never the same hash",
 	"FamilyID":       "randomly generated per-login refresh-token family identifier (models.go:1243) — same reasoning as SessionToken; found via this file's own Session-row debug dump when the structural timestamp fix alone didn't make two independently-bootstrapped worlds' Session tables match",
-	// LeaseID/RoleName (SESSION-FI, AT5, found by an unattended fuzz burst):
-	// DynamicSecretLease.LeaseID is generateSecureToken() output
-	// (internal/core/dynamic_secrets.go IssueLease) and RoleName is the
-	// target engine's own randomly-generated username (dynamictest.FakeEngine.Issue,
-	// "kx_fake_"+randString(8) — real backends generate an equally random
-	// name) — two independently-issued leases (reference world vs fault
-	// world, each calling Setup's IssueLease separately) never share either
-	// value, same reasoning as TokenHash/SessionToken above. Found by
-	// FuzzStorageFaultOperations (GRPC DynamicSecretService.RevokeLease,
-	// LogAuditEvent#1/error): the LogAuditEvent half of that diff was already
-	// covered by bestEffortTables, but RoleName (and, confirmed by the same
-	// sweep, LeaseID) were not yet in this enumeration, so the oracle
-	// wrongly flagged DynamicSecretLease as having "changed" when the only
-	// difference was each world's own independently-random Setup output.
-	"LeaseID":  "generateSecureToken() output — never shared between two independently-issued leases",
-	"RoleName": "the target engine's own randomly-generated username, real or fake — never shared between two independent issuances",
 }
 
 // tableSnapshot is one table's canonical dump: Hash over every row's

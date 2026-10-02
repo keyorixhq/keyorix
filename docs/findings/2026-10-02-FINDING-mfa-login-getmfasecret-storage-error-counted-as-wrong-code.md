@@ -64,6 +64,38 @@ Directly reachable by any user completing the standard password + TOTP
 login flow (`POST /auth/login` → `POST /auth/mfa/verify`), whenever the
 one `GetMFASecret` read inside `VerifyMFACredentials` fails.
 
+## Second trigger: `GetUser`, a different call site, same consequence
+
+Found by CI (PR #2392, `fuzz (shard 0)`), input `877139548d2805a6`:
+
+```
+op="REST POST /auth/mfa/verify" fault=(method=GetUser, NthCall=1, kind=error)
+ORACLE (a) VIOLATION — reported an ERROR but logical state changed anyway (partial commit). Differing tables: [LoginAttempt]
+```
+
+Seed committed at
+`server/faultops/testdata/fuzz/FuzzStorageFaultOperations/877139548d2805a6`.
+
+This is a DIFFERENT storage call than the one above, and a different
+exact mechanism: `VerifyMFACredentials`'s own `c.storage.GetUser(ctx,
+ch.UserID)` call (line 270, BEFORE `loadTOTPSecret` ever runs) fails
+closed correctly on its own terms — it returns `"user not found"`
+immediately, never reaching `loadTOTPSecret`/`auditMFAFailed`/
+`recordFailedLogin` at all. The `LoginAttempt` write instead comes from
+the HANDLER (`server/http/handlers/mfa.go`'s `VerifyMFA`), which calls
+`h.reserveLoginAttempt` (IP-keyed rate-limit bookkeeping, F2 2026-09-20)
+UNCONDITIONALLY before `VerifyMFALogin` even runs — so this diff is
+`[LoginAttempt]` alone, never `AuditEvent` (unlike the `GetMFASecret`
+trigger above, whose diff includes `AuditEvent` from `auditMFAFailed`).
+Same root CONSEQUENCE (a storage hiccup, not an actual wrong code, still
+contributes to the per-IP login-attempt bookkeeping that feeds rate
+limiting), reached through a structurally different path — not something
+the `GetMFASecret` fix alone would close. Tolerated with its own
+`tables`-scoped `knownOpenTolerances` entry (method left blank/wildcard,
+since the root cause — `reserveLoginAttempt`'s unconditional write — isn't
+tied to any one specific storage call failing; `tables: ["LoginAttempt"]`
+keeps it from silently swallowing an unrelated diff on the same op).
+
 ## Reproduction (fuzzer trace)
 
 Found by `FuzzStorageFaultOperations`'s own exploration (not seeded),
@@ -149,8 +181,17 @@ false lockout contribution rather than to avoid a false allow).
 ## Fix status
 
 **Not fixed.** Tolerated in `server/faultops/fuzz_storage_fault_operations_test.go`'s
-`knownOpenTolerances` (op=`REST POST /auth/mfa/verify`, method=
-`GetMFASecret`, kind=error) so the corpus entry above can be committed as
-a permanent regression pointer without failing CI on an open, out-of-scope
-finding — remove that tolerance entry when this is fixed, per its own doc
-comment.
+`knownOpenTolerances` with TWO entries — one per trigger: (op=`REST POST
+/auth/mfa/verify`, method=`GetMFASecret`, kind=error) for the original
+`loadTOTPSecret` trigger, and (op=`REST POST /auth/mfa/verify`, method=""
+(wildcard), kind=error, tables=[`LoginAttempt`]) for the `reserveLoginAttempt`
+trigger above — so both corpus entries can be committed as permanent
+regression pointers without failing CI on an open, out-of-scope finding.
+Remove the matching entry when each is fixed, per the type's own doc comment.
+
+**The real fix belongs to CR3** (the MFA lockout task), and must close BOTH
+call sites together: `loadTOTPSecret`'s `err == nil` gate (this finding's
+original trigger) AND the handler's unconditional `reserveLoginAttempt`
+call racing ahead of any actual verification (the `GetUser` trigger) — a
+fix addressing only one leaves the other's identical lockout-contribution
+risk live.

@@ -737,6 +737,56 @@ var knownOpenTolerances = []knownOpenTolerance{
 		op: "REST POST /auth/mfa/verify", method: "GetMFASecret", kind: faultstorage.KindError,
 		findingDoc: "docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md",
 	},
+	// Second trigger for the same finding (found by CI on PR #2392, input
+	// 877139548d2805a6, committed under testdata/): VerifyMFACredentials'
+	// OWN GetUser call (line 270) fails closed correctly -- it returns before
+	// ever reaching loadTOTPSecret/recordFailedLogin -- but the HANDLER
+	// (server/http/handlers/mfa.go's VerifyMFA) already called
+	// reserveLoginAttempt (RecordFailedLogin by IP) UNCONDITIONALLY, before
+	// VerifyMFALogin even runs, as its own rate-limiting bookkeeping (F2,
+	// 2026-09-20). That write is structural to this op's wiring, not tied to
+	// GetMFASecret specifically: ANY storage-error fault that makes this op
+	// report failure will show the identical LoginAttempt-only diff, since
+	// reserveLoginAttempt's write already landed before the fault-affected
+	// call runs. method is deliberately left blank (wildcard) for this
+	// reason, and tables is scoped to LoginAttempt alone -- unlike the
+	// GetMFASecret entry above (whose diff also legitimately includes
+	// AuditEvent from auditMFAFailed, a different code path entirely), a
+	// GetUser-stage failure never reaches auditMFAFailed at all, so AuditEvent
+	// never appears in ITS diff. A diff that included anything beyond
+	// LoginAttempt would be a different, unexplained issue and must still
+	// fail. Fix is PR #2398 (second commit), not yet merged -- keep
+	// tolerating until it lands; #2398's own body says to remove this entry
+	// once both it and #2392 have merged.
+	{
+		op: "REST POST /auth/mfa/verify", kind: faultstorage.KindError,
+		tables:     []string{"LoginAttempt"},
+		findingDoc: "docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md",
+	},
+	// docs/findings/2026-10-02-FINDING-mfa-verify-enforcesessionlimit-panic-masks-successful-login.md
+	// (SESSION-FI2, found extending this op's own fuzz coverage, out of
+	// OWNS, not fixed here): mintSession's EnforceSessionLimit call is
+	// best-effort against a RETURNED error (`_ = ...`) but has no recover()
+	// for a PANIC, so a panic there reports an already-successful TOTP
+	// verification + session mint as a failed login.
+	{
+		op: "REST POST /auth/mfa/verify", method: "EnforceSessionLimit", kind: faultstorage.KindPanic,
+		tables:     []string{"LoginAttempt", "Session", "MFASecret"},
+		findingDoc: "docs/findings/2026-10-02-FINDING-mfa-verify-enforcesessionlimit-panic-masks-successful-login.md",
+	},
+	// docs/findings/2026-10-02-NOTE-mfa-stepup-consume-first-grant-failure-reported-as-error.md
+	// (SESSION-FI2): NOT a bug -- VerifyMFAStepUp's own doc comment and
+	// TestVerifyMFAStepUp_GrantFailureAfterConsume_FailsClosed already prove
+	// this exact shape (TOTP step consumed, then CreateMFAStepUpGrant fails,
+	// reported as an error) is the intended fail-closed design. The oracle's
+	// default (error) branch has no "acceptable-by-design" exemption the
+	// success branch's bestEffortTables/opScopedBestEffortTables have; see
+	// the bulk-access-request NOTE above for the same deferred gap.
+	{
+		op: "REST POST /api/v1/auth/mfa/stepup", method: "CreateMFAStepUpGrant", kind: faultstorage.KindError,
+		tables:     []string{"MFASecret"},
+		findingDoc: "docs/findings/2026-10-02-NOTE-mfa-stepup-consume-first-grant-failure-reported-as-error.md",
+	},
 }
 
 func matchingKnownOpen(in oracleInput, oracle string, diff []string) *knownOpenTolerance {
