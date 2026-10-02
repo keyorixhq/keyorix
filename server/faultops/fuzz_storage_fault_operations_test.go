@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -578,9 +579,30 @@ type oracleInput struct {
 // downgraded from Errorf to Logf. A fix landing that makes this tolerance
 // stop matching is the intended way to notice the finding is closed — remove
 // the entry then, don't leave it tolerating a bug that no longer exists.
+//
+// issue and expires are REQUIRED on every entry (docs/adr-069-testing-strategy.md's
+// QUARANTINE convention: an issue reference plus an explicit expiry date, so a
+// tolerance is visible and bounded, not a silent permanent carve-out). issue is a
+// GitHub issue reference ("#1234"); expires is "YYYY-MM-DD", a backlog-hygiene
+// checkpoint to re-triage if still open by then -- not an enforced CI gate the way
+// the QUARANTINE preflight check is. findingDoc stays as the pointer to the fuller
+// write-up (a docs/findings/*.md path, or a keyorix-private doc).
+//
+// nth and oracle (added alongside the first real entry, #2449) narrow the
+// match further: nth is the exact 1-indexed fault call number
+// (oracleInput.nth), and oracle is the exact letter ("a".."e") of the ONE
+// GOAL oracle this tolerance covers. Without them, (op, method, kind) alone
+// would match EVERY call number and EVERY oracle that happens to report a
+// violation on this triple -- silently swallowing a different, unrelated
+// violation (a different nth, or a different oracle) that happens to share
+// the same op/method/kind. Both are required, same as issue/expires.
 type knownOpenTolerance struct {
 	op, method string
 	kind       faultstorage.FaultKind
+	nth        int
+	oracle     string
+	issue      string
+	expires    string
 	findingDoc string
 }
 
@@ -598,15 +620,57 @@ type knownOpenTolerance struct {
 // test (see the committed seed
 // testdata/fuzz/FuzzStorageFaultOperations/630357d238f9c51b); no entry needed
 // unless a new finding is filed.
-var knownOpenTolerances = []knownOpenTolerance{}
+//
+// GRPC keyorix.v1.UserService.CreateUser, CountProjectMembershipsByUsers,
+// KindPanic, NthCall=1, oracle (a): found live by CI fuzz shard 0 on an
+// unrelated PR (#2434), confirmed pre-existing on main by replaying input
+// 5900200031 directly against origin/main (not caused by that PR). A panic
+// inside CountProjectMembershipsByUsers (call #1, injected post-commit) --
+// server/grpc/services/user_service.go's userToProto -> projectCounts ->
+// internal/core.ProjectMembershipCounts -- propagates past the ALREADY
+// committed User/UserRole/PasswordHistory/AuditEvent rows from CreateUser's
+// own write, which happens earlier and is unaffected; RecoveryInterceptor
+// catches the panic and the RPC reports an error even though the user was
+// genuinely created. Filed as #2449; not fixed here.
+var knownOpenTolerances = []knownOpenTolerance{
+	{
+		op: "GRPC keyorix.v1.UserService.CreateUser", method: "CountProjectMembershipsByUsers",
+		kind: faultstorage.KindPanic, nth: 1, oracle: "a",
+		issue: "#2449", expires: "2026-10-16",
+		findingDoc: "#2449",
+	},
+}
 
-func matchingKnownOpen(in oracleInput) *knownOpenTolerance {
+func matchingKnownOpen(in oracleInput, oracle string) *knownOpenTolerance {
 	for i, k := range knownOpenTolerances {
-		if k.op == in.op && k.method == in.method && k.kind == in.kind {
+		if k.op == in.op && k.method == in.method && k.kind == in.kind && k.nth == in.nth && k.oracle == oracle {
 			return &knownOpenTolerances[i]
 		}
 	}
 	return nil
+}
+
+// TestKnownOpenTolerances_CarryIssueAndExpiry enforces knownOpenTolerance's own
+// doc comment: issue and expires are required, not optional decoration. Passes
+// trivially while knownOpenTolerances is empty (today) -- it exists for the next
+// entry, not this one; see docs/adr-069-testing-strategy.md's QUARANTINE
+// expiry-check precedent for why a tolerance without a checked issue+expiry pair
+// tends to become a silent permanent carve-out instead of the bounded, visible
+// one it's meant to be.
+func TestKnownOpenTolerances_CarryIssueAndExpiry(t *testing.T) {
+	for _, k := range knownOpenTolerances {
+		label := fmt.Sprintf("%s/%s/%s", k.op, k.method, k.kind)
+		if k.issue == "" {
+			t.Errorf("knownOpenTolerance %s: issue is empty -- every tolerance must cite a GitHub issue (\"#1234\")", label)
+		}
+		if k.expires == "" {
+			t.Errorf("knownOpenTolerance %s: expires is empty -- every tolerance must carry an explicit \"YYYY-MM-DD\" expiry", label)
+			continue
+		}
+		if _, err := time.Parse("2006-01-02", k.expires); err != nil {
+			t.Errorf("knownOpenTolerance %s: expires %q does not parse as YYYY-MM-DD: %v", label, k.expires, err)
+		}
+	}
 }
 
 // bestEffortTables maps a storage method this codebase deliberately calls
@@ -696,9 +760,9 @@ func checkOracles(t *testing.T, in oracleInput) {
 	t.Helper()
 	label := fmt.Sprintf("op=%s fault=%s#%d/%s", in.op, in.method, in.nth, in.kind)
 
-	report := func(format string, args ...any) {
+	report := func(oracle, format string, args ...any) {
 		msg := fmt.Sprintf(format, args...)
-		if known := matchingKnownOpen(in); known != nil {
+		if known := matchingKnownOpen(in, oracle); known != nil {
 			t.Logf("KNOWN-OPEN (%s): %s", known.findingDoc, msg)
 			return
 		}
@@ -710,7 +774,7 @@ func checkOracles(t *testing.T, in oracleInput) {
 	// reference run (the write happens anyway), which (a) alone would not flag.
 	if authzReadMethods[in.method] && in.kind != faultstorage.KindEffectThenError && in.result.Success &&
 		!nonLoadBearingAuthzRead(in.op, in.method, in.nth) {
-		report("%s: ORACLE (c) VIOLATION — a fault on an authz-resolution read produced a SUCCESSFUL "+
+		report("c", "%s: ORACLE (c) VIOLATION — a fault on an authz-resolution read produced a SUCCESSFUL "+
 			"result instead of an error/deny: %s", label, in.result.Detail)
 		return
 	}
@@ -719,7 +783,7 @@ func checkOracles(t *testing.T, in oracleInput) {
 	if !in.result.Success {
 		for _, frag := range canaryFragments {
 			if strings.Contains(in.result.Detail, frag) {
-				report("%s: ORACLE (e) VIOLATION — error response leaked secret plaintext %q: %s",
+				report("e", "%s: ORACLE (e) VIOLATION — error response leaked secret plaintext %q: %s",
 					label, frag, in.result.Detail)
 				return
 			}
@@ -759,7 +823,7 @@ func checkOracles(t *testing.T, in oracleInput) {
 					"benign audit-content degradation, not a business-state inconsistency", label, diff)
 				return
 			}
-			report("%s: ORACLE (a) VIOLATION — reported SUCCESS but final state does not match the "+
+			report("a", "%s: ORACLE (a) VIOLATION — reported SUCCESS but final state does not match the "+
 				"fault-free reference run's state (partial/incorrect commit). Differing tables: %v",
 				label, diff)
 		}
@@ -789,14 +853,14 @@ func checkOracles(t *testing.T, in oracleInput) {
 					label)
 				return
 			}
-			report("%s: ORACLE (d) VIOLATION — effect-then-error state matches NEITHER the pre-fault "+
+			report("d", "%s: ORACLE (d) VIOLATION — effect-then-error state matches NEITHER the pre-fault "+
 				"state nor the fault-free reference state (a genuine partial/mixed commit, not just an "+
 				"ambiguous-but-consistent one). Differing tables vs before: %v; vs reference: %v",
 				label, diffTables(in.before, in.after), diffTables(in.refAfter, in.after))
 		}
 	default:
 		if in.after.Hash != in.before.Hash {
-			report("%s: ORACLE (a) VIOLATION — reported an ERROR but logical state changed anyway "+
+			report("a", "%s: ORACLE (a) VIOLATION — reported an ERROR but logical state changed anyway "+
 				"(partial commit). Differing tables: %v", label, diffTables(in.before, in.after))
 		}
 	}
