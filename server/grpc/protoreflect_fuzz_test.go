@@ -322,47 +322,94 @@ func (w *prWorld) close() {
 //     GRPC's own comment on it: "Audit as a secret read... Best-effort
 //     metadata fetch") tripped the oracle because only audit_events was
 //     named here at the time.
-//   - sessions, UPDATE only: internal/core/auth.go's ValidateSessionToken
-//     touches session.last_seen_at on EVERY successful authentication,
-//     throttled to once per sessionTouchInterval (30s) -- that function's own
-//     doc comment: "Best-effort, throttled last-seen stamp for the My
-//     Account sessions view... Never fails the request." This runs inside
-//     authenticateRequest BEFORE a handler's own validation/authz logic, so
-//     it can fire on a call that is about to be rejected for an unrelated
-//     reason (bad input, insufficient permissions) -- this was the
-//     coordinator's diagnosis on PR #2390 of what the earlier
-//     "state-dependent, non-reproducible" findings actually were: a real,
-//     synchronous, documented best-effort writer this list hadn't named yet,
-//     not fuzz-minimization noise. The exemption is scoped to UPDATE only,
-//     NOT the whole table (PR #2390 second review round): an INSERT (minting
-//     a session -- login, impersonation start) or DELETE (revoking a
-//     session) by zero-grant/read-only is exactly the authz bypass this
-//     oracle exists to catch, and exempting the whole table would wave it
-//     through. See TestUnexplainedWrite_RedOnSessionsInsert and
-//     TestUnexplainedWrite_RedOnSessionsDelete in
-//     protoreflect_oracle_mechanism_test.go for the direct red-proof.
+//   - sessions, UPDATE of last_seen_at only: internal/core/auth.go's
+//     ValidateSessionToken touches session.last_seen_at on EVERY successful
+//     authentication, throttled to once per sessionTouchInterval (30s) --
+//     that function's own doc comment: "Best-effort, throttled last-seen
+//     stamp for the My Account sessions view... Never fails the request."
+//     This runs inside authenticateRequest BEFORE a handler's own
+//     validation/authz logic, so it can fire on a call that is about to be
+//     rejected for an unrelated reason -- this was the coordinator's
+//     diagnosis on PR #2390 of what the earlier "state-dependent,
+//     non-reproducible" findings actually were: a real, synchronous,
+//     documented best-effort writer this list hadn't named yet, not
+//     fuzz-minimization noise. The exemption is scoped to UPDATE only (PR
+//     #2390 second review round), AND, within UPDATE, to a change touching
+//     ONLY last_seen_at (PR #2390 third review round): an INSERT (minting a
+//     session), a DELETE (revoking one), or an UPDATE that ALSO changes any
+//     other column (expires_at, revoked_at, user_id, ...) is exactly the
+//     authz-bypass shape this oracle exists to catch, and a broader
+//     exemption would wave it through. See
+//     TestUnexplainedWrite_RedOnSessionsInsert,
+//     TestUnexplainedWrite_RedOnSessionsDelete,
+//     TestUnexplainedWrite_RedOnSessionsUpdateTouchingOtherColumn, and
+//     TestUnexplainedWrite_RedOnSessionsUpdateOfOtherColumnAlone in
+//     protoreflect_oracle_mechanism_test.go for the direct red-proofs.
+//   - secret_nodes / secret_versions, UPDATE of read_count only: found live
+//     by THIS round's 10-minute burst (not pre-anticipated -- flagged to the
+//     coordinator for review in the PR reply, same as every prior entry).
+//     internal/core/versions.go's readVersionValue enforces max_reads by
+//     atomically incrementing secret_nodes.read_count
+//     (TryIncrementSecretNodeReadCount, "the ACTUAL enforcement mechanism...
+//     fail closed") and, best-effort, secret_versions.read_count
+//     (TryIncrementSecretReadCount, "CLI/gRPC display only, not the
+//     enforcement mechanism... a failure here must not block an
+//     already-authorized read") on EVERY value read of a secret that has
+//     max_reads set -- regardless of which authorized identity triggered the
+//     read. Both storage calls use GORM's UpdateColumn (not Updates/Save),
+//     which touches ONLY the named column and nothing else -- confirmed by
+//     reading internal/storage/store/local_secrets.go directly, not assumed.
+//     This is not best-effort bookkeeping layered on top of the read the way
+//     the audit-log writes are -- it IS the read's own defined behavior
+//     (burn-after-N-reads), so a read-only principal who legitimately holds
+//     secrets.read correctly triggers it; the column scoping (not a blanket
+//     table exemption) is what still catches a write to any OTHER column on
+//     either table -- the actual secret value, its project/owner, a
+//     version's content, etc.
 var bestEffortSideEffectTables = []writeExemption{
 	{table: "audit_events"},
 	{table: "compliance_posture_snapshots"},
 	{table: "secret_access_logs"},
-	{table: "sessions", events: []string{"UPDATE"}},
+	{table: "sessions", events: []string{"UPDATE"}, onlyColumns: []string{"last_seen_at"}},
+	{table: "secret_nodes", events: []string{"UPDATE"}, onlyColumns: []string{"read_count"}},
+	{table: "secret_versions", events: []string{"UPDATE"}, onlyColumns: []string{"read_count"}},
 }
 
 // writeExemption names one table (and optionally a specific subset of
 // INSERT/UPDATE/DELETE events on it) that unexplainedWrites must not flag.
 // events == nil/empty means every event on that table is exempt; a non-empty
 // list narrows the exemption to exactly those events -- e.g. {"sessions",
-// []string{"UPDATE"}} exempts ValidateSessionToken's last_seen_at touch
-// without also waving through an INSERT (a new session, i.e. a login or
-// impersonation start) or a DELETE (a session revocation) on that same
-// table, both of which are real, security-relevant writes a zero-grant/
-// read-only principal must never be able to trigger.
+// []string{"UPDATE"}} exempts an UPDATE but still flags an INSERT (a new
+// session, i.e. a login or impersonation start) or a DELETE (a session
+// revocation) on that same table, both of which are real, security-relevant
+// writes a zero-grant/read-only principal must never be able to trigger.
+//
+// onlyColumns narrows an UPDATE exemption further, to statements that change
+// ONLY the listed columns and no others. When set, allows() always returns
+// false for this entry (see its own doc comment) -- the real filtering
+// happens at the SQL level, in installColumnScopedUpdateTrigger's WHEN
+// clause, which only increments the counter unexplainedWrites reads when a
+// column OUTSIDE onlyColumns actually changed. A plain events-only exemption
+// (no onlyColumns) can't express this: "events" answers "which statement
+// kinds", not "which columns within one kind".
 type writeExemption struct {
-	table  string
-	events []string
+	table       string
+	events      []string
+	onlyColumns []string
 }
 
+// allows reports whether this entry exempts event on its own, WITHOUT
+// consulting column content -- true for a plain table/event exemption.
+// Column-scoped entries (onlyColumns set) always return false here: the
+// trigger installed for them (installColumnScopedUpdateTrigger) only
+// increments the shared counter for the NON-exempt case (some other column
+// changed), so by the time unexplainedWrites sees a nonzero delta for that
+// key, it is already known-bad -- a second, blanket exemption at this layer
+// would silently re-open exactly the gap onlyColumns exists to close.
 func (e writeExemption) allows(event string) bool {
+	if len(e.onlyColumns) > 0 {
+		return false
+	}
 	if len(e.events) == 0 {
 		return true
 	}
@@ -381,6 +428,20 @@ func isBestEffortSideEffectWrite(table, event string) bool {
 		}
 	}
 	return false
+}
+
+// columnScopedUpdateExemption returns the first bestEffortSideEffectTables
+// entry naming table with a non-empty onlyColumns, if any -- used by
+// installWriteCountTriggers to decide whether table's UPDATE trigger needs
+// installColumnScopedUpdateTrigger's WHEN-clause form instead of the plain
+// unconditional one.
+func columnScopedUpdateExemption(table string) ([]string, bool) {
+	for _, e := range bestEffortSideEffectTables {
+		if e.table == table && len(e.onlyColumns) > 0 {
+			return e.onlyColumns, true
+		}
+	}
+	return nil, false
 }
 
 // prFuzzWriteCountsTable backs a per-(table,event) write counter, kept
@@ -444,6 +505,85 @@ func discoverAllTables(t testing.TB, db *sql.DB) []string {
 	return tables
 }
 
+// tableColumns reads PRAGMA table_info(table) to list every column the live
+// schema declares for it, in declaration order -- used to derive "every
+// OTHER column" for a column-scoped UPDATE exemption, so a column added to
+// the table later is covered automatically rather than needing a hand edit
+// here.
+func tableColumns(t testing.TB, db *sql.DB, table string) []string {
+	t.Helper()
+	// table always ranges over the live schema's own table names
+	// (discoverAllTables) in production use, or a fixed hardcoded literal in
+	// the oracle mechanism unit tests -- never fuzz input.
+	rows, err := db.Query("PRAGMA table_info(" + table + ")") // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- table is always one of the hardcoded cases above; PRAGMA statements cannot be parameterized in SQLite
+	if err != nil {
+		t.Fatalf("pragma table_info(%s): %v", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+	cols, err := rows.Columns()
+	if err != nil {
+		t.Fatalf("pragma table_info(%s) columns: %v", table, err)
+	}
+	var out []string
+	for rows.Next() {
+		vals := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			t.Fatalf("scan table_info(%s): %v", table, err)
+		}
+		// PRAGMA table_info's fixed output schema is (cid, name, type,
+		// notnull, dflt_value, pk) -- "name" is always column index 1.
+		switch v := vals[1].(type) {
+		case string:
+			out = append(out, v)
+		case []byte:
+			out = append(out, string(v))
+		}
+	}
+	return out
+}
+
+// installColumnScopedUpdateTrigger installs table's UPDATE trigger for a
+// column-scoped best-effort exemption (writeExemption.onlyColumns): it
+// increments counterKey(table, "UPDATE") -- the SAME key a plain,
+// unconditional UPDATE trigger would -- but ONLY when at least one column
+// OTHER than onlyColumns actually changed. An UPDATE that changes only the
+// listed columns (ValidateSessionToken's last_seen_at touch) never
+// increments it, so it never appears in unexplainedWrites; an UPDATE that
+// ALSO touches any other column -- or touches only some other column,
+// skipping the listed ones entirely -- does. "Other columns" comes from
+// tableColumns (PRAGMA table_info), not a hand-maintained list, so a column
+// added to the table later is covered automatically rather than silently
+// falling outside the check.
+func installColumnScopedUpdateTrigger(t testing.TB, db *sql.DB, table, key string, onlyColumns []string) {
+	t.Helper()
+	only := make(map[string]bool, len(onlyColumns))
+	for _, c := range onlyColumns {
+		only[c] = true
+	}
+	var changedConds []string
+	for _, col := range tableColumns(t, db, table) {
+		if only[col] {
+			continue
+		}
+		changedConds = append(changedConds, fmt.Sprintf(`(NEW."%s" IS NOT OLD."%s")`, col, col))
+	}
+	when := "0" // no columns exist outside onlyColumns -- this table's UPDATE can never be the non-exempt case.
+	if len(changedConds) > 0 {
+		when = strings.Join(changedConds, " OR ")
+	}
+	stmt := fmt.Sprintf(
+		"CREATE TRIGGER IF NOT EXISTS pr_fuzz_count_%s_UPDATE_scoped AFTER UPDATE ON %s WHEN %s BEGIN UPDATE %s SET n = n + 1 WHERE key = '%s'; END",
+		table, table, when, prFuzzWriteCountsTable, key,
+	) // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- table/key are schema-derived or fixed test literals; the WHEN clause's column names come from PRAGMA table_info (the live schema itself), never external/fuzz input
+	if _, err := db.Exec(stmt); err != nil {
+		t.Fatalf("install column-scoped UPDATE trigger on %s: %v", table, err)
+	}
+}
+
 func installWriteCountTriggers(t testing.TB, db *sql.DB, tables []string) {
 	t.Helper()
 	if _, err := db.Exec("CREATE TABLE IF NOT EXISTS " + prFuzzWriteCountsTable + " (key TEXT PRIMARY KEY, n INTEGER NOT NULL)"); err != nil {
@@ -457,6 +597,12 @@ func installWriteCountTriggers(t testing.TB, db *sql.DB, tables []string) {
 			key := counterKey(tbl, event)
 			if _, err := db.Exec("INSERT OR IGNORE INTO "+prFuzzWriteCountsTable+" (key, n) VALUES (?, 0)", key); err != nil {
 				t.Fatalf("seed counter row for %s: %v", key, err)
+			}
+			if event == "UPDATE" {
+				if onlyCols, ok := columnScopedUpdateExemption(tbl); ok {
+					installColumnScopedUpdateTrigger(t, db, tbl, key, onlyCols)
+					continue
+				}
 			}
 			stmt := fmt.Sprintf(
 				"CREATE TRIGGER IF NOT EXISTS pr_fuzz_count_%s_%s AFTER %s ON %s BEGIN UPDATE %s SET n = n + 1 WHERE key = '%s'; END",

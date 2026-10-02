@@ -217,12 +217,14 @@ func TestUnexplainedWrite_RedOnMixedExemptAndNonExemptWrite(t *testing.T) {
 }
 
 // newSessionsShapedTestDB opens an isolated DB with a table literally named
-// "sessions" (minimal shape -- these tests only need a row to exist, not the
-// real models.Session columns) and installs write-count triggers on it,
-// deliberately WITHOUT calling bestEffortSideEffectTablesForTest -- these
-// three tests exercise the REAL, unmodified, production
-// bestEffortSideEffectTables (sessions scoped to UPDATE only), proving the
-// actual exemption config, not a swapped-out stand-in for it.
+// "sessions" carrying last_seen_at PLUS one other column (expires_at --
+// minimal shape, not the real models.Session, but enough to exercise the
+// column-scoped exemption's "did some OTHER column change too" check) and
+// installs write-count triggers on it, deliberately WITHOUT calling
+// bestEffortSideEffectTablesForTest -- all five tests below exercise the
+// REAL, unmodified, production bestEffortSideEffectTables (sessions scoped
+// to an UPDATE touching ONLY last_seen_at), proving the actual exemption
+// config, not a swapped-out stand-in for it.
 func newSessionsShapedTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dsn := fmt.Sprintf("file:kxoraclesessions_%d?mode=memory&cache=shared", oracleTestDBSeq.Add(1))
@@ -230,7 +232,7 @@ func newSessionsShapedTestDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := gdb.Exec("CREATE TABLE sessions (id INTEGER PRIMARY KEY, last_seen_at TEXT)").Error; err != nil {
+	if err := gdb.Exec("CREATE TABLE sessions (id INTEGER PRIMARY KEY, last_seen_at TEXT, expires_at TEXT)").Error; err != nil {
 		t.Fatalf("create sessions: %v", err)
 	}
 	db, err := gdb.DB()
@@ -243,11 +245,12 @@ func newSessionsShapedTestDB(t *testing.T) *sql.DB {
 }
 
 // TestUnexplainedWrite_GreenOnSessionsLastSeenUpdate proves the production
-// exemption's intended positive case still works after narrowing it to
-// sessions:UPDATE only -- ValidateSessionToken's own write shape.
+// exemption's intended positive case still works after narrowing it to an
+// UPDATE touching ONLY last_seen_at -- ValidateSessionToken's own write
+// shape.
 func TestUnexplainedWrite_GreenOnSessionsLastSeenUpdate(t *testing.T) {
 	db := newSessionsShapedTestDB(t)
-	if _, err := db.Exec("INSERT INTO sessions (id, last_seen_at) VALUES (1, 'old')"); err != nil {
+	if _, err := db.Exec("INSERT INTO sessions (id, last_seen_at, expires_at) VALUES (1, 'old', 'exp1')"); err != nil {
 		t.Fatalf("seed insert (admin's own session, outside the measured window): %v", err)
 	}
 
@@ -258,7 +261,7 @@ func TestUnexplainedWrite_GreenOnSessionsLastSeenUpdate(t *testing.T) {
 	after := snapshotDB(t, db)
 
 	if before.unexplainedWrite(after) {
-		t.Fatal("expected unexplainedWrite to report false for a sessions UPDATE (the documented last_seen_at touch), got true")
+		t.Fatal("expected unexplainedWrite to report false for a sessions UPDATE touching only last_seen_at, got true")
 	}
 }
 
@@ -271,7 +274,7 @@ func TestUnexplainedWrite_RedOnSessionsInsert(t *testing.T) {
 	db := newSessionsShapedTestDB(t)
 
 	before := snapshotDB(t, db)
-	if _, err := db.Exec("INSERT INTO sessions (id, last_seen_at) VALUES (1, 'new')"); err != nil {
+	if _, err := db.Exec("INSERT INTO sessions (id, last_seen_at, expires_at) VALUES (1, 'new', 'exp1')"); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
 	after := snapshotDB(t, db)
@@ -286,7 +289,7 @@ func TestUnexplainedWrite_RedOnSessionsInsert(t *testing.T) {
 // twin for DELETE (revoking a session).
 func TestUnexplainedWrite_RedOnSessionsDelete(t *testing.T) {
 	db := newSessionsShapedTestDB(t)
-	if _, err := db.Exec("INSERT INTO sessions (id, last_seen_at) VALUES (1, 'x')"); err != nil {
+	if _, err := db.Exec("INSERT INTO sessions (id, last_seen_at, expires_at) VALUES (1, 'x', 'exp1')"); err != nil {
 		t.Fatalf("seed insert (outside the measured window): %v", err)
 	}
 
@@ -299,6 +302,163 @@ func TestUnexplainedWrite_RedOnSessionsDelete(t *testing.T) {
 	diffs := before.unexplainedWrites(after)
 	if len(diffs) != 1 || diffs[0].table != "sessions" || diffs[0].n != 1 {
 		t.Fatalf("expected unexplainedWrites to report exactly {sessions, 1} for a sessions DELETE, got %v -- narrowing the exemption to UPDATE must not also exempt DELETE", diffs)
+	}
+}
+
+// TestUnexplainedWrite_RedOnSessionsUpdateTouchingOtherColumn is the PR #2390
+// third-review round's core red-proof: an UPDATE that changes last_seen_at
+// AND expires_at in the same statement must NOT be exempt -- the prior
+// {sessions, UPDATE} exemption (any UPDATE on sessions) would have waved
+// this through; the column-scoped one must not.
+func TestUnexplainedWrite_RedOnSessionsUpdateTouchingOtherColumn(t *testing.T) {
+	db := newSessionsShapedTestDB(t)
+	if _, err := db.Exec("INSERT INTO sessions (id, last_seen_at, expires_at) VALUES (1, 'old', 'exp1')"); err != nil {
+		t.Fatalf("seed insert (outside the measured window): %v", err)
+	}
+
+	before := snapshotDB(t, db)
+	if _, err := db.Exec("UPDATE sessions SET last_seen_at = 'new', expires_at = 'exp2' WHERE id = 1"); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	after := snapshotDB(t, db)
+
+	diffs := before.unexplainedWrites(after)
+	if len(diffs) != 1 || diffs[0].table != "sessions" || diffs[0].n != 1 {
+		t.Fatalf("expected unexplainedWrites to report exactly {sessions, 1} for an UPDATE touching last_seen_at AND expires_at, got %v -- the column-scoped exemption must not cover a multi-column change", diffs)
+	}
+}
+
+// TestUnexplainedWrite_RedOnSessionsUpdateOfOtherColumnAlone is this round's
+// other half: an UPDATE that touches expires_at WITHOUT touching
+// last_seen_at at all must also fail -- it is not the documented
+// last_seen_at touch either, just a different single-column change.
+func TestUnexplainedWrite_RedOnSessionsUpdateOfOtherColumnAlone(t *testing.T) {
+	db := newSessionsShapedTestDB(t)
+	if _, err := db.Exec("INSERT INTO sessions (id, last_seen_at, expires_at) VALUES (1, 'old', 'exp1')"); err != nil {
+		t.Fatalf("seed insert (outside the measured window): %v", err)
+	}
+
+	before := snapshotDB(t, db)
+	if _, err := db.Exec("UPDATE sessions SET expires_at = 'exp2' WHERE id = 1"); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	after := snapshotDB(t, db)
+
+	diffs := before.unexplainedWrites(after)
+	if len(diffs) != 1 || diffs[0].table != "sessions" || diffs[0].n != 1 {
+		t.Fatalf("expected unexplainedWrites to report exactly {sessions, 1} for an UPDATE of expires_at alone, got %v -- only a last_seen_at-only change is exempt", diffs)
+	}
+}
+
+// newReadCountShapedTestDB opens an isolated DB with a table literally named
+// table (either "secret_nodes" or "secret_versions" in practice), carrying
+// read_count PLUS one other column ("value" -- minimal shape, not the real
+// models.SecretNode/SecretVersion), and installs write-count triggers on it,
+// deliberately WITHOUT calling bestEffortSideEffectTablesForTest -- these
+// tests exercise the REAL, unmodified, production bestEffortSideEffectTables
+// (secret_nodes/secret_versions scoped to an UPDATE touching ONLY
+// read_count), proving the actual exemption config, not a swapped-out
+// stand-in for it.
+func newReadCountShapedTestDB(t *testing.T, table string) *sql.DB {
+	t.Helper()
+	dsn := fmt.Sprintf("file:kxoraclereadcount_%d?mode=memory&cache=shared", oracleTestDBSeq.Add(1))
+	gdb, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := gdb.Exec(fmt.Sprintf("CREATE TABLE %s (id INTEGER PRIMARY KEY, read_count INTEGER, value TEXT)", table)).Error; err != nil {
+		t.Fatalf("create %s: %v", table, err)
+	}
+	db, err := gdb.DB()
+	if err != nil {
+		t.Fatalf("underlying *sql.DB: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	installWriteCountTriggers(t, db, discoverAllTables(t, db))
+	return db
+}
+
+// TestUnexplainedWrite_GreenOnSecretNodesReadCountUpdate and
+// TestUnexplainedWrite_GreenOnSecretVersionsReadCountUpdate prove the
+// max_reads enforcement path's own write shape
+// (TryIncrementSecretNodeReadCount / TryIncrementSecretReadCount, both
+// GORM UpdateColumn("read_count", ...) -- confirmed by reading
+// internal/storage/store/local_secrets.go directly) stays exempt under the
+// real production list. Found live by a -fuzz burst during PR #2390 review
+// round 3 (read-only GetSecretValue on a max_reads-bearing secret) --
+// flagged to the coordinator in the PR reply, not pre-approved.
+func TestUnexplainedWrite_GreenOnSecretNodesReadCountUpdate(t *testing.T) {
+	db := newReadCountShapedTestDB(t, "secret_nodes")
+	if _, err := db.Exec("INSERT INTO secret_nodes (id, read_count, value) VALUES (1, 0, 'v')"); err != nil {
+		t.Fatalf("seed insert (outside the measured window): %v", err)
+	}
+
+	before := snapshotDB(t, db)
+	if _, err := db.Exec("UPDATE secret_nodes SET read_count = 1 WHERE id = 1"); err != nil {
+		t.Fatalf("read_count increment: %v", err)
+	}
+	after := snapshotDB(t, db)
+
+	if before.unexplainedWrite(after) {
+		t.Fatal("expected unexplainedWrite to report false for a secret_nodes UPDATE touching only read_count, got true")
+	}
+}
+
+func TestUnexplainedWrite_GreenOnSecretVersionsReadCountUpdate(t *testing.T) {
+	db := newReadCountShapedTestDB(t, "secret_versions")
+	if _, err := db.Exec("INSERT INTO secret_versions (id, read_count, value) VALUES (1, 0, 'v')"); err != nil {
+		t.Fatalf("seed insert (outside the measured window): %v", err)
+	}
+
+	before := snapshotDB(t, db)
+	if _, err := db.Exec("UPDATE secret_versions SET read_count = 1 WHERE id = 1"); err != nil {
+		t.Fatalf("read_count increment: %v", err)
+	}
+	after := snapshotDB(t, db)
+
+	if before.unexplainedWrite(after) {
+		t.Fatal("expected unexplainedWrite to report false for a secret_versions UPDATE touching only read_count, got true")
+	}
+}
+
+// TestUnexplainedWrite_RedOnSecretNodesUpdateTouchingOtherColumn and
+// TestUnexplainedWrite_RedOnSecretNodesUpdateOfOtherColumnAlone are
+// secret_nodes's twins of the sessions red-proofs above: the column scoping
+// must not cover a multi-column change, or a change to a different column
+// alone.
+func TestUnexplainedWrite_RedOnSecretNodesUpdateTouchingOtherColumn(t *testing.T) {
+	db := newReadCountShapedTestDB(t, "secret_nodes")
+	if _, err := db.Exec("INSERT INTO secret_nodes (id, read_count, value) VALUES (1, 0, 'v1')"); err != nil {
+		t.Fatalf("seed insert (outside the measured window): %v", err)
+	}
+
+	before := snapshotDB(t, db)
+	if _, err := db.Exec("UPDATE secret_nodes SET read_count = 1, value = 'v2' WHERE id = 1"); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	after := snapshotDB(t, db)
+
+	diffs := before.unexplainedWrites(after)
+	if len(diffs) != 1 || diffs[0].table != "secret_nodes" || diffs[0].n != 1 {
+		t.Fatalf("expected unexplainedWrites to report exactly {secret_nodes, 1} for an UPDATE touching read_count AND value, got %v -- the column-scoped exemption must not cover a multi-column change", diffs)
+	}
+}
+
+func TestUnexplainedWrite_RedOnSecretNodesUpdateOfOtherColumnAlone(t *testing.T) {
+	db := newReadCountShapedTestDB(t, "secret_nodes")
+	if _, err := db.Exec("INSERT INTO secret_nodes (id, read_count, value) VALUES (1, 0, 'v1')"); err != nil {
+		t.Fatalf("seed insert (outside the measured window): %v", err)
+	}
+
+	before := snapshotDB(t, db)
+	if _, err := db.Exec("UPDATE secret_nodes SET value = 'v2' WHERE id = 1"); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	after := snapshotDB(t, db)
+
+	diffs := before.unexplainedWrites(after)
+	if len(diffs) != 1 || diffs[0].table != "secret_nodes" || diffs[0].n != 1 {
+		t.Fatalf("expected unexplainedWrites to report exactly {secret_nodes, 1} for an UPDATE of value alone, got %v -- only a read_count-only change is exempt", diffs)
 	}
 }
 
