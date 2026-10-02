@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -742,6 +743,13 @@ func checkOracles(t *testing.T, in oracleInput) {
 					label, diff)
 				return
 			}
+			if bulkPartialFailureAccountsForDiff(in.op, in.result.Detail, diff) {
+				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in %v, and the response body's own "+
+					"\"failed\" array already reports this item as not deleted — this op's documented "+
+					"partial-success design (see bulkPartialFailureAccountsForDiff's doc comment), not an "+
+					"unreported business-state change", label, diff)
+				return
+			}
 			// Generalized AuditEvent-only case: every traced instance of
 			// "reported SUCCESS, only AuditEvent differs" has turned out to
 			// be benign audit-content degradation (a best-effort enrichment
@@ -820,6 +828,64 @@ func onlyOutcomeLogTables(diff []string) bool {
 			}
 		}
 		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// bulkPartialSuccessOps names ops whose success response body is
+// {"data":{"deleted":[ids],"failed":[{"secret_id":id,...}],"total":N}} —
+// BulkDeleteSecrets' own documented shape (internal/core/bulk_delete.go: "Partial
+// success is allowed — individual failures are collected in Failed"). A
+// per-item failure here is accurately reported in the body even though the
+// HTTP-level call still reports overall success — by this op's own design, not
+// a bug. Scoped to exactly this op for now: a sibling bulk op (bulk-rename,
+// bulk-rotate, extend-expiring) sharing the same partial-success shape would
+// need its own entry here, not inferred from this one (CLAUDE.md's "an
+// enumeration is only as complete as the idioms it knows about").
+var bulkPartialSuccessOps = map[string]bool{
+	"REST POST /api/v1/projects/{id}/secrets/bulk-delete": true,
+}
+
+// bulkPartialFailureAccountsForDiff reports whether op's response body
+// (in.result.Detail, "HTTP <code>: <json body>") shows EVERY requested item
+// failed (an empty "deleted" array, a non-empty "failed" array — the only
+// shape FuzzStorageFaultOperations' bulk-delete op, which always submits
+// exactly one secret_id, can currently produce) and the observed diff is
+// confined to exactly the tables a successful delete would have touched
+// (SecretNode, its AuditEvent, its SecretAccessLog) — i.e. the diff is fully
+// explained by "the one item this call reported failed legitimately never
+// committed," not an unreported business-state change oracle (a) exists to
+// catch. Deliberately does NOT generalize to a true mixed batch (some
+// deleted, some failed): this fuzz op never exercises that shape, so nothing
+// here has been red/green-tested against it — see the doc comment above.
+func bulkPartialFailureAccountsForDiff(op, detail string, diff []string) bool {
+	if !bulkPartialSuccessOps[op] {
+		return false
+	}
+	sep := strings.Index(detail, ": ")
+	if sep < 0 {
+		return false
+	}
+	var body struct {
+		Data struct {
+			Deleted []uint `json:"deleted"`
+			Failed  []struct {
+				SecretID uint   `json:"secret_id"`
+				Error    string `json:"error"`
+			} `json:"failed"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(detail[sep+2:]), &body); err != nil {
+		return false
+	}
+	if len(body.Data.Deleted) != 0 || len(body.Data.Failed) == 0 {
+		return false
+	}
+	allowed := map[string]bool{"SecretNode": true, "AuditEvent": true, "SecretAccessLog": true}
+	for _, d := range diff {
+		if !allowed[d] {
 			return false
 		}
 	}
