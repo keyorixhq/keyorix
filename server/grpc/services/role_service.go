@@ -77,11 +77,16 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 	// already propagated an AssignPermissionToRole failure correctly, unlike
 	// the REST side, but still left the role row committed non-atomically
 	// with its permission set).
-	role, _, err := s.core.CreateRole(ctx, actor.UserID, req.GetName(), req.GetDescription(), permIDs)
+	role, perms, err := s.core.CreateRole(ctx, actor.UserID, req.GetName(), req.GetDescription(), permIDs)
 	if err != nil {
 		return nil, mapRoleError(err)
 	}
-	return s.roleByID(ctx, role.ID)
+	// Build the response from the values core.CreateRole already returned
+	// (read inside the same transaction that created the role) instead of
+	// issuing a fresh post-commit GetRole: a fault on that extra read used to
+	// report an ERROR for a role that had, in fact, already committed
+	// (#2354, oracle (a) — same class as #1969/#1996).
+	return roleToProto(role, perms), nil
 }
 
 // GetRole returns a role with its permissions.
@@ -143,12 +148,14 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 	// sequenced calls the way it used to be (this gRPC path used to interleave
 	// its own RemovePermissionFromRole/AssignPermissionToRole loop after a bare
 	// role-row UpdateRole call, the same non-atomic shape the REST handler had).
-	role, _, err = s.core.UpdateRole(ctx, actor.UserID, role, newPermissionIDs)
+	updated, perms, err := s.core.UpdateRole(ctx, actor.UserID, role, newPermissionIDs)
 	if err != nil {
 		return nil, mapRoleError(err)
 	}
-
-	return s.roleByID(ctx, role.ID)
+	// Same fix as CreateRole above: build from the values UpdateRole already
+	// returned (read inside its own transaction) instead of a fresh
+	// post-commit GetRole.
+	return roleToProto(updated, perms), nil
 }
 
 // DeleteRole deletes a role.

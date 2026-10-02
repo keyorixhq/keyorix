@@ -361,6 +361,13 @@ func FuzzStorageFaultOperations(f *testing.F) {
 	if s := seedFor("REST DELETE /api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}", "GetUser", 1, 0); s != nil {
 		f.Add(s)
 	}
+	// #2354: a post-commit GetRole read-back faulted with an error after
+	// CreateRole's transaction had already committed the Role, RolePermission
+	// and AuditEvent rows -- oracle (a) violation (REPLAY_HEX=58e803). Same
+	// class as F3 above but on the create path, not update.
+	if s := seedFor("GRPC keyorix.v1.RoleService.CreateRole", "GetRole", 1, 0); s != nil {
+		f.Add(s)
+	}
 	// Per-worker world reuse (M5): each `go test -fuzz` worker is a separate
 	// OS process (see world_reuse_test.go's doc comment), so building ref/w
 	// ONCE here, before f.Fuzz, is naturally scoped to one worker -- no
