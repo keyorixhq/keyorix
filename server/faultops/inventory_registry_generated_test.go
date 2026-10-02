@@ -153,6 +153,7 @@ var knownOperations = map[string]bool{
 	"REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide":      true,
 	"REST POST /api/v1/projects/{id}/access-review/revoke":                                            true,
 	"REST POST /api/v1/projects/{id}/break-glass":                                                     true,
+	"REST POST /api/v1/projects/{id}/break-glass/{activationId}/review":                               true,
 	"REST POST /api/v1/projects/{id}/break-glass/{activationId}/revoke":                               true,
 	"REST POST /api/v1/projects/{id}/environments":                                                    true,
 	"REST POST /api/v1/projects/{id}/environments/{envId}/clone":                                      true,
