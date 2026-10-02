@@ -451,7 +451,9 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
-	return store.NewLocalStorage(db), nil
+	ls := store.NewLocalStorage(db)
+	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
+	return ls, nil
 }
 
 // createPostgresStorage creates a PostgreSQL-backed local storage instance
@@ -474,7 +476,9 @@ func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (stora
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
-	return store.NewLocalStorage(db), nil
+	ls := store.NewLocalStorage(db)
+	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
+	return ls, nil
 }
 
 // applyPoolSettings configures the connection pool on the underlying *sql.DB

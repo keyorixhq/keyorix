@@ -278,6 +278,18 @@ func (ls *LocalStorage) logAuditEventDirect(ctx context.Context, event *models.A
 				prev = auditGenesisHash
 			}
 
+			// Zero at the start of each attempt (coordinator review, #2420,
+			// item 4): a retried attempt reuses this same event/accessLog
+			// pointer, and a PRIOR attempt's tx.Create(event) may have
+			// already assigned event.ID before accessLog's Create failed
+			// and rolled the whole transaction back — without this reset,
+			// the retry's tx.Create(event) would run with that stale ID
+			// still set, turning an auto-assigned insert into an
+			// explicit-primary-key one.
+			event.ID = 0
+			if accessLog != nil {
+				accessLog.ID = 0
+			}
 			event.PrevHash = prev
 			event.EntryHash = computeAuditEntryHash(event, prev)
 			if err := tx.Create(event).Error; err != nil {
@@ -335,29 +347,6 @@ const auditFlusherMaxBatch = 256
 // continuous load essentially never pays the restart cost (a new item almost
 // always arrives well within this window).
 const auditFlusherIdleTimeout = 200 * time.Millisecond
-
-// auditFlusherLingerWindow is how long the flusher deliberately waits, after
-// its first queued item, for more to arrive before committing (or until
-// auditFlusherMaxBatch is reached, whichever comes first) — SESSION-PERF
-// #2403/#2420 follow-up, coordinator-requested tuning. 0 disables lingering
-// entirely (drain whatever's already buffered, don't wait) — this was this
-// PR's original, un-tuned behavior.
-//
-// 1ms was NOT chosen because it hit a clean target: measurement on the
-// benchmarking host (see PR body/inbox for the full 0/0.5/1/2ms x
-// SQLite/Postgres x c=1/10/50 table) found no value satisfies "c=1 p50 cost
-// <=1ms" — every nonzero value pays a near-identical ~5.5-7ms c=1 tax
-// regardless of its nominal size (0.5ms and 2ms cost almost the same as
-// 1ms), consistent with virtualized-host timer-interrupt coarseness
-// dominating a sub-millisecond time.Timer on this host rather than the
-// configured duration itself. A second, more consequential finding: on
-// Postgres specifically, ANY nonzero window measurably REGRESSES c=10
-// throughput relative to 0 (fewer concurrent arrivals than c=50, not enough
-// to amortize the added wait) even though it roughly doubles c=50
-// throughput. SQLite showed no reliable signal at any concurrency. 1ms is a
-// middle-of-the-range value, not a locally-optimal one — see the PR body for
-// why this needs the coordinator's read before being treated as final.
-const auditFlusherLingerWindow = 1 * time.Millisecond
 
 // auditBatchItem is one pending LogAuditEvent/LogAuditEventWithAccessLog
 // submission, queued for the flusher goroutine to commit as part of a batch.
@@ -455,13 +444,15 @@ func (ls *LocalStorage) runAuditFlusher(af *auditFlusherState) {
 		}
 		// Linger (SESSION-PERF, #2403/#2420 follow-up, coordinator-requested
 		// tuning): after the first item arrives, deliberately wait up to
-		// auditFlusherLingerWindow for MORE items to arrive, instead of only ever
-		// draining whatever happened to already be buffered at this exact
-		// instant. auditFlusherLingerWindow == 0 preserves the original
-		// behavior exactly (a non-blocking drain, `default:` fires immediately,
-		// no deliberate wait) -- see the tuning writeup in the PR body/inbox for
-		// why a non-zero window was chosen and what it measurably costs/gains.
-		if auditFlusherLingerWindow <= 0 {
+		// ls.auditFlusherLingerWindow for MORE items to arrive, instead of only
+		// ever draining whatever happened to already be buffered at this exact
+		// instant. The field defaults to 0 (preserving the original behavior
+		// exactly: a non-blocking drain, `default:` fires immediately, no
+		// deliberate wait) and is only ever nonzero if a deployment has
+		// explicitly set config.DatabaseConfig.AuditFlusherLingerWindow — see
+		// that field's doc comment, and PR #2420's body, for why 0 is the
+		// shipped default rather than a tuned nonzero value.
+		if ls.auditFlusherLingerWindow <= 0 {
 			for len(batch) < auditFlusherMaxBatch {
 				select {
 				case item := <-af.queue:
@@ -471,7 +462,7 @@ func (ls *LocalStorage) runAuditFlusher(af *auditFlusherState) {
 				}
 			}
 		} else {
-			lingerTimer := time.NewTimer(auditFlusherLingerWindow)
+			lingerTimer := time.NewTimer(ls.auditFlusherLingerWindow)
 		lingerLoop:
 			for len(batch) < auditFlusherMaxBatch {
 				select {
@@ -484,72 +475,133 @@ func (ls *LocalStorage) runAuditFlusher(af *auditFlusherState) {
 			lingerTimer.Stop()
 		}
 	commit:
-		recordAuditFlush(len(batch))
-		err := ls.commitAuditBatch(batch)
-		for _, item := range batch {
-			item.done <- err
+		errs := ls.commitAuditBatch(batch)
+		for i, item := range batch {
+			item.done <- errs[i]
 		}
 	}
 }
 
-// commitAuditBatch commits every item in batch in ONE transaction — one
-// fsync covers the whole batch, not one per item. Chain linkage (prev_hash ->
-// entry_hash) threads through the batch in order, starting from whatever the
-// table's current head is; identical hashing/locking semantics to the old
-// per-call path (computeAuditEntryHash, the Postgres cross-process advisory
-// lock, the SQLite busy-retry loop), just amortized across every item in the
-// batch instead of paid once per item.
-func (ls *LocalStorage) commitAuditBatch(batch []*auditBatchItem) error {
-	ctx := batch[0].ctx // auditWriteContext-derived; every item's ctx carries the same fixed deadline shape
-	delay := auditBusyRetryBaseDelay
-	for {
-		txErr := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if tx.Dialector.Name() == "postgres" {
-				if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(auditAdvisoryLockKey)).Error; err != nil {
-					return err
-				}
-			}
-			var head struct{ EntryHash string }
-			if err := tx.Model(&models.AuditEvent{}).
-				Select("entry_hash").
-				Order("id DESC").
-				Limit(1).
-				Scan(&head).Error; err != nil {
+// commitBatchAttempt runs ONE transaction attempt for batch: reads the
+// current chain head, assigns/recomputes prev_hash+entry_hash for every
+// item in order, and inserts them all — one fsync for the whole attempt.
+//
+// Zeros each item's event/accessLog ID at the START of this attempt
+// (coordinator review, #2420, item 4): tx.Create assigns the DB-generated ID
+// onto the Go struct the moment that individual statement succeeds, which
+// can happen for an EARLIER item in this same loop before a LATER item's
+// Create fails and rolls the whole transaction back. Without this reset, a
+// retried attempt's tx.Create for that earlier item would run with the
+// stale ID already set from the rolled-back attempt, turning what should be
+// a fresh auto-assigned insert into an explicit-primary-key insert — wrong
+// on every backend, and on Postgres specifically a correctness hazard: that
+// stale ID may not even be the one the sequence would hand out next.
+func (ls *LocalStorage) commitBatchAttempt(ctx context.Context, batch []*auditBatchItem) error {
+	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if tx.Dialector.Name() == "postgres" {
+			if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(auditAdvisoryLockKey)).Error; err != nil {
 				return err
 			}
-			prev := head.EntryHash
-			if prev == "" {
-				prev = auditGenesisHash
+		}
+		var head struct{ EntryHash string }
+		if err := tx.Model(&models.AuditEvent{}).
+			Select("entry_hash").
+			Order("id DESC").
+			Limit(1).
+			Scan(&head).Error; err != nil {
+			return err
+		}
+		prev := head.EntryHash
+		if prev == "" {
+			prev = auditGenesisHash
+		}
+		for _, item := range batch {
+			item.event.ID = 0
+			if item.accessLog != nil {
+				item.accessLog.ID = 0
 			}
-			for _, item := range batch {
-				item.event.PrevHash = prev
-				item.event.EntryHash = computeAuditEntryHash(item.event, prev)
-				if err := tx.Create(item.event).Error; err != nil {
+			item.event.PrevHash = prev
+			item.event.EntryHash = computeAuditEntryHash(item.event, prev)
+			if err := tx.Create(item.event).Error; err != nil {
+				return err
+			}
+			prev = item.event.EntryHash
+			if item.accessLog != nil {
+				if err := tx.Create(item.accessLog).Error; err != nil {
 					return err
 				}
-				prev = item.event.EntryHash
-				if item.accessLog != nil {
-					if err := tx.Create(item.accessLog).Error; err != nil {
-						return err
-					}
-				}
 			}
-			return nil
-		})
-		if txErr == nil || !isSQLiteBusyErr(txErr) {
-			return txErr
+		}
+		return nil
+	})
+}
+
+// commitBatchWithBusyRetry attempts batch repeatedly, retrying ONLY on a
+// transient SQLite busy error — identical backoff shape to
+// logAuditEventDirect's own retry loop (see its doc comment for the full
+// rationale: SQLite's busy handler makes no fairness guarantee, so a
+// transaction already in the queue can be repeatedly overtaken by new
+// arrivals). Returns nil on success, or the final error (a genuine
+// non-busy failure, or the last busy error if ctx expired first).
+func (ls *LocalStorage) commitBatchWithBusyRetry(ctx context.Context, batch []*auditBatchItem) error {
+	delay := auditBusyRetryBaseDelay
+	for {
+		err := ls.commitBatchAttempt(ctx, batch)
+		if err == nil || !isSQLiteBusyErr(err) {
+			return err
 		}
 		// #nosec G404 -- jitter for retry timing, not a security-sensitive value.
 		jittered := delay/2 + time.Duration(mathrand.Int63n(int64(delay/2+1)))
 		select {
 		case <-ctx.Done():
-			return txErr
+			return err
 		case <-time.After(jittered):
 		}
 		if delay *= 2; delay > auditBusyRetryMaxDelay {
 			delay = auditBusyRetryMaxDelay
 		}
 	}
+}
+
+// commitAuditBatch commits every item in batch, preferring ONE transaction
+// for the whole batch — the group-commit fast path, one fsync for every
+// item, identical hashing/locking semantics to the old per-call path
+// (computeAuditEntryHash, the Postgres cross-process advisory lock, the
+// SQLite busy-retry loop). Returns one error per item, in the SAME order as
+// batch (nil = that item's event, and access-log row if any, committed).
+//
+// A GENUINE (non-busy) failure on a multi-item batch does NOT fail every
+// item in the batch (coordinator review, #2420, item 3: "one bad item must
+// not fail the batch"). It bisects instead, retrying each half
+// independently — a single poisoned item (e.g. one access-log row
+// violating a constraint) only ever fails itself, isolated down through
+// O(log n) extra transaction attempts, not the N-1 unrelated reads that
+// happened to share its batch window. Every surviving item still gets full
+// chain-linkage: each sub-batch attempt re-reads the CURRENT chain head
+// fresh from the table, so whichever sub-batch commits first (these all run
+// sequentially on the one flusher goroutine, never concurrently with each
+// other) correctly becomes the next sub-batch's starting point — the same
+// "some total order, not a causal-order claim" guarantee the single
+// un-split batch always provided.
+//
+// A batch that fails only because busy-retry exhausted its budget (ctx
+// expired under sustained contention) bisects the same way and every leaf
+// gets the same outcome (nothing committed, same error) — bisection doesn't
+// change that case's result, only adds a few harmless extra attempts.
+func (ls *LocalStorage) commitAuditBatch(batch []*auditBatchItem) []error {
+	ctx := batch[0].ctx // auditWriteContext-derived; every item's ctx carries the same fixed deadline shape
+	err := ls.commitBatchWithBusyRetry(ctx, batch)
+	recordAuditFlush(len(batch))
+	if err == nil {
+		return make([]error, len(batch))
+	}
+	if len(batch) == 1 {
+		return []error{err}
+	}
+	mid := len(batch) / 2
+	left := ls.commitAuditBatch(batch[:mid])
+	right := ls.commitAuditBatch(batch[mid:])
+	return append(left, right...)
 }
 
 // logAuditEventBatched queues event (and optionally accessLog) with the

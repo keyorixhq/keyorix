@@ -251,8 +251,16 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 		// Defensive fallback only: every route serving this handler's machine
 		// branch goes through that middleware, which always sets this on
 		// success (mirrors GetSecretValueByRef's identical defensive check).
+		//
+		// Coordinator review, #2420, item 5: trusting the resolved secret
+		// WITHOUT checking it actually matches this request's path id would
+		// let a future middleware or route wiring change serve one secret's
+		// value under another secret's authorization check (the middleware
+		// authorized THAT secret's scope, not necessarily this URL's id) --
+		// cheap to check, and it keeps this handler correct independent of
+		// what the middleware is trusted to have done.
 		secret = middleware.GetResolvedSecretFromContext(r.Context())
-		if secret == nil {
+		if secret == nil || secret.ID != uint(id) {
 			secret, err = h.coreService.GetSecret(r.Context(), uint(id))
 		}
 	} else {

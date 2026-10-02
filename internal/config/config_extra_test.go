@@ -151,6 +151,34 @@ func TestDatabaseConfig_GetPassword_Fallback(t *testing.T) {
 	assert.Equal(t, "from-file", d.GetPassword())
 }
 
+// TestDatabaseConfig_GetAuditFlusherLingerWindow_DefaultIsZero validates the
+// coordinator-review decision on #2420: an unset AuditFlusherLingerWindow
+// must resolve to 0 (no deliberate linger wait), not a tuned nonzero value —
+// see AuditFlusherLingerWindow's own doc comment for why.
+func TestDatabaseConfig_GetAuditFlusherLingerWindow_DefaultIsZero(t *testing.T) {
+	d := &DatabaseConfig{}
+	assert.Equal(t, time.Duration(0), d.GetAuditFlusherLingerWindow())
+}
+
+// TestDatabaseConfig_GetAuditFlusherLingerWindow_Configurable validates that
+// an operator can still set a nonzero window via config, per the
+// coordinator's "keep it configurable (documented)" instruction.
+func TestDatabaseConfig_GetAuditFlusherLingerWindow_Configurable(t *testing.T) {
+	d := &DatabaseConfig{AuditFlusherLingerWindow: "2ms"}
+	assert.Equal(t, 2*time.Millisecond, d.GetAuditFlusherLingerWindow())
+}
+
+// TestDatabaseConfig_GetAuditFlusherLingerWindow_InvalidFallsBackToZero
+// validates that an unparseable or non-positive value falls back to the
+// safe default (0) rather than erroring at startup or, worse, silently
+// treating garbage as "wait forever".
+func TestDatabaseConfig_GetAuditFlusherLingerWindow_InvalidFallsBackToZero(t *testing.T) {
+	for _, raw := range []string{"not-a-duration", "-5ms", "0ms"} {
+		d := &DatabaseConfig{AuditFlusherLingerWindow: raw}
+		assert.Equal(t, time.Duration(0), d.GetAuditFlusherLingerWindow(), "raw=%q", raw)
+	}
+}
+
 // TestBoolPtr validates that BoolPtr returns a pointer to the given value.
 func TestBoolPtr(t *testing.T) {
 	pTrue := BoolPtr(true)
