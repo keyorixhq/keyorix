@@ -2136,7 +2136,21 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		anomalyConfigRecordExists && statsSnapshotExists && deploymentStatsSnapshotExists &&
 		mfaStepUpGrantExists
 	if freshInstallComplete {
-		return nil
+		// Gap 2 (ADR-097 conformance): this early return is taken on EVERY boot of
+		// an already-initialized database -- which, after the very first boot, is
+		// every boot there is. recordSchemaEpoch previously lived ONLY at the end
+		// of the transactional fresh-install tail below, so an established
+		// database's schema_epoch row was written once (at first install) and
+		// never again -- a binary upgrade that bumps currentSchemaEpoch in the
+		// future would never record the new value here, permanently freezing the
+		// stored epoch and silently defeating checkSchemaEpoch's whole comparison
+		// (a dbEpoch that can never advance can never be read as "too new" either).
+		// Not a corruption risk by itself (checkSchemaEpoch already ran at the top
+		// of this function and would have refused first), but recordSchemaEpoch
+		// must run on this path too, as the last step, same invariant as the
+		// transactional tail: only after every other step on this path (none,
+		// here -- the additive-migration section above already ran) has succeeded.
+		return recordSchemaEpoch(db)
 	}
 	// Everything from here to the end of the function applies atomically,
 	// whether this is a genuinely fresh install (every flag above false) or a
