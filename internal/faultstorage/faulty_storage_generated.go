@@ -1861,17 +1861,18 @@ func (w *FaultyStorage) DeleteResolvedAccessRequestsBefore(ctx context.Context, 
 	return w.real.DeleteResolvedAccessRequestsBefore(ctx, before)
 }
 
-func (w *FaultyStorage) DeleteRole(ctx context.Context, id uint) error {
+func (w *FaultyStorage) DeleteRole(ctx context.Context, id uint) (storage.RoleDeleteCascadeCounts, error) {
 	fire, kind, injected := w.check("DeleteRole")
 	if fire {
 		switch kind {
 		case KindPanic:
 			panic(injected)
 		case KindError:
-			return injected
+			var zero1 storage.RoleDeleteCascadeCounts
+			return zero1, injected
 		case KindEffectThenError:
-			_ = w.real.DeleteRole(ctx, id)
-			return injected
+			rv1, _ := w.real.DeleteRole(ctx, id)
+			return rv1, injected
 		}
 	}
 	return w.real.DeleteRole(ctx, id)

@@ -102,15 +102,17 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 		expectedPurpose: "",
 		reason:          "see internal/faultstorage/faulty_storage_generated.go:353 — the second (KindEffectThenError) call to the real ConsumeMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
 	},
-	"internal/faultstorage/faulty_storage_generated.go:2231": {
+	"internal/faultstorage/faulty_storage_generated.go:2232": {
 		expectedPurpose: "",
 		reason: "generated, mechanical pass-through (w.real.GetActiveMFAStepUpGrant(...)) inside the same " +
 			"test/fuzz-harness-only wrapper — see internal/faultstorage/faulty_storage_generated.go:353's " +
-			"reasoning; this is the read-only sibling call, same forwarding shape.",
+			"reasoning; this is the read-only sibling call, same forwarding shape. (Line shifted from :2231 " +
+			"by PR #2357's unrelated DeleteRole signature change, which added a net +1 line earlier in this " +
+			"generated file via `go run ./internal/faultstorage/gen` — same call site, not a new one.)",
 	},
-	"internal/faultstorage/faulty_storage_generated.go:2235": {
+	"internal/faultstorage/faulty_storage_generated.go:2236": {
 		expectedPurpose: "",
-		reason:          "see internal/faultstorage/faulty_storage_generated.go:2231 — the second (KindEffectThenError) call to the real GetActiveMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
+		reason:          "see internal/faultstorage/faulty_storage_generated.go:2232 — the second (KindEffectThenError) call to the real GetActiveMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
 	},
 	"internal/core/mfa.go:482": {
 		expectedPurpose: "MFAStepUpPurposeReauth",

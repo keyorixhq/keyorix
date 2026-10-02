@@ -169,8 +169,24 @@ func (ls *LocalStorage) UpdateRole(ctx context.Context, role *models.Role) (*mod
 // every authorization query joins against the live roles table, so an
 // orphaned grant row matches nothing) -- this fix is data hygiene, not a
 // security closure.
-func (ls *LocalStorage) DeleteRole(ctx context.Context, id uint) error {
-	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+//
+// Deliberately NOT cascaded, and must stay that way: BreakGlassActivation
+// and AccessReviewItem both also carry a RoleID (plus a RoleName string
+// snapshot), but both are history/compliance records, not live grants --
+// BreakGlassActivation is the audit trail of a past emergency access
+// activation, AccessReviewItem is an explicit frozen snapshot of a grant at
+// the moment an access-review campaign opened (its own doc comment: "the
+// live grant may change or be revoked after capture"). Deleting either on a
+// role delete would destroy audit/compliance evidence that must survive the
+// role being deleted (PR #2357 review). A future "complete the cascade"
+// change must not add these two.
+//
+// The returned RoleDeleteCascadeCounts is read back by core.DeleteRole
+// purely for its own audit-log message (PR #2357 review) -- the counts
+// themselves carry no correctness meaning here.
+func (ls *LocalStorage) DeleteRole(ctx context.Context, id uint) (storage.RoleDeleteCascadeCounts, error) {
+	var counts storage.RoleDeleteCascadeCounts
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Delete(&models.Role{}, id)
 		if result.Error != nil {
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
@@ -178,15 +194,21 @@ func (ls *LocalStorage) DeleteRole(ctx context.Context, id uint) error {
 		if result.RowsAffected == 0 {
 			return fmt.Errorf("%s", i18n.T("ErrorRoleNotFound", nil))
 		}
-		if err := tx.Where("role_id = ?", id).Delete(&models.UserRole{}).Error; err != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		ur := tx.Where("role_id = ?", id).Delete(&models.UserRole{})
+		if ur.Error != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), ur.Error)
 		}
-		if err := tx.Where("role_id = ?", id).Delete(&models.GroupRole{}).Error; err != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		counts.UserAssignments = int(ur.RowsAffected)
+		gr := tx.Where("role_id = ?", id).Delete(&models.GroupRole{})
+		if gr.Error != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), gr.Error)
 		}
-		if err := tx.Where("role_id = ?", id).Delete(&models.MachineIdentityRole{}).Error; err != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		counts.GroupAssignments = int(gr.RowsAffected)
+		mr := tx.Where("role_id = ?", id).Delete(&models.MachineIdentityRole{})
+		if mr.Error != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), mr.Error)
 		}
+		counts.MachineAssignments = int(mr.RowsAffected)
 		if err := tx.Where("role_id = ?", id).Delete(&models.RolePermission{}).Error; err != nil {
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
@@ -195,6 +217,7 @@ func (ls *LocalStorage) DeleteRole(ctx context.Context, id uint) error {
 		}
 		return nil
 	})
+	return counts, err
 }
 
 func (ls *LocalStorage) ListRoles(ctx context.Context) ([]*models.Role, error) {
