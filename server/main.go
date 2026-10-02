@@ -148,6 +148,13 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		log.Fatalf("Configuration is invalid: %v", err)
 	}
 
+	// ADR-112 opt-out rule (item 2): a deprecated alias (an old key renamed to its
+	// current insecure_ form) found in this config file, and every insecure_ setting
+	// currently in effect, both get a warning on EVERY start — never silent. See
+	// warnDeprecatedSettingAliases/warnInsecureSettingsInEffect below.
+	warnDeprecatedSettingAliases(cfg)
+	warnInsecureSettingsInEffect(cfg)
+
 	// Run the file-permission / encryption-key / database-reachability checks that were
 	// previously reachable ONLY via the manual `keyorix system validate` CLI subcommand
 	// (#330), despite official docs and that command's own help text claiming they run
@@ -260,6 +267,12 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// Record the evaluated license state once at startup (ADR-065), so the
 	// entitlement (and any degrade reason) is on the audit record.
 	coreService.AuditLicenseState(ctx)
+
+	// ADR-112 opt-out rule (item 2): the start-to-start settings diff. Config has no
+	// hot reload, so this is the only place a security-relevant setting changing
+	// between two starts ever becomes visible — audits old vs. new value for any
+	// difference since the previous start.
+	coreService.ReconcileSecurityPostureSnapshot(ctx, securityPostureSnapshot(cfg))
 
 	// Start every background scheduler exactly once, regardless of which of
 	// HTTP/gRPC is enabled (#G12) — see startSchedulers' doc comment.
@@ -2044,6 +2057,46 @@ func logWarnOnImplicitRequireMFADefault(cfg *config.Config) {
 		return
 	}
 	log.Printf("WARNING: security.require_mfa is enforcing on its new secure-by-default value (ADR-112) — this config file never set it explicitly. Session-authenticated admins without MFA enrolled will be confined to MFA-enrolment endpoints until they enrol (non-interactive PAT/machine credentials are unaffected). Set security.require_mfa: true explicitly once you've reviewed this, or security.require_mfa: false to opt out (visibly, not silently).")
+}
+
+// warnDeprecatedSettingAliases logs every ADR-112 deprecated-alias key (an old
+// name config.Load translated to its current insecure_ form) found in this
+// config file — "deprecated alias, warns when used" (opt-out rule item 2)
+// means the old key still works exactly as before, but is never silent about it.
+func warnDeprecatedSettingAliases(cfg *config.Config) {
+	for _, w := range cfg.DeprecatedSettingWarnings {
+		log.Printf("WARNING: deprecated config key: %s", w)
+	}
+}
+
+// warnInsecureSettingsInEffect logs a start-up warning for every ADR-112
+// registry entry currently in effect — unconditionally, on every boot, so a
+// security-weakening setting can never be silently in effect (opt-out rule
+// item 2's "a start-up warning for every insecure_ setting in effect").
+// Looping config.InsecureSettingsRegistry here is also half of what makes
+// TestInsecureSettingsRegistry_EveryEntryHasThePrefixWarningAndAuditHook's
+// guarantee hold: every entry with a non-nil InEffect is warned about by
+// construction, with no per-entry call site that could forget to wire one in.
+func warnInsecureSettingsInEffect(cfg *config.Config) {
+	for _, s := range config.InsecureSettingsRegistry {
+		if s.InEffect(cfg) {
+			log.Printf("WARNING: %s is in effect — %s", s.Name, s.Describe)
+		}
+	}
+}
+
+// securityPostureSnapshot computes this boot's value of every ADR-112
+// registry entry, keyed by its Name — the input to
+// coreService.ReconcileSecurityPostureSnapshot's start-to-start diff. Looping
+// config.InsecureSettingsRegistry here is the other half of
+// TestInsecureSettingsRegistry_EveryEntryHasThePrefixWarningAndAuditHook's
+// guarantee: every entry with a non-nil Value is audited by construction.
+func securityPostureSnapshot(cfg *config.Config) map[string]string {
+	snapshot := make(map[string]string, len(config.InsecureSettingsRegistry))
+	for _, s := range config.InsecureSettingsRegistry {
+		snapshot[s.Name] = s.Value(cfg)
+	}
+	return snapshot
 }
 
 func startGRPCServer(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) error {
