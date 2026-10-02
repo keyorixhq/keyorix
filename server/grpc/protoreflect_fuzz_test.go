@@ -322,31 +322,77 @@ func (w *prWorld) close() {
 //     GRPC's own comment on it: "Audit as a secret read... Best-effort
 //     metadata fetch") tripped the oracle because only audit_events was
 //     named here at the time.
-//   - sessions: internal/core/auth.go's ValidateSessionToken touches
-//     session.last_seen_at on EVERY successful authentication, throttled to
-//     once per sessionTouchInterval (30s) -- that function's own doc comment:
-//     "Best-effort, throttled last-seen stamp for the My Account sessions
-//     view... Never fails the request." This runs inside authenticateRequest
-//     BEFORE a handler's own validation/authz logic, so it can fire on a call
-//     that is about to be rejected for an unrelated reason (bad input,
-//     insufficient permissions) -- exactly the coordinator's diagnosis on
-//     PR #2390 of what the earlier "state-dependent, non-reproducible"
-//     findings actually were: a real, synchronous, documented best-effort
-//     writer this list hadn't named yet, not fuzz-minimization noise. Because
-//     it is wall-clock-throttled (sessionTouchInterval), it fires
-//     intermittently across a long -fuzz burst and not on an isolated
-//     single-input replay seconds later -- which is exactly why it looked
-//     like non-reproducible noise before this table was named here.
-var bestEffortSideEffectTables = []string{"audit_events", "compliance_posture_snapshots", "secret_access_logs", "sessions"}
+//   - sessions, UPDATE only: internal/core/auth.go's ValidateSessionToken
+//     touches session.last_seen_at on EVERY successful authentication,
+//     throttled to once per sessionTouchInterval (30s) -- that function's own
+//     doc comment: "Best-effort, throttled last-seen stamp for the My
+//     Account sessions view... Never fails the request." This runs inside
+//     authenticateRequest BEFORE a handler's own validation/authz logic, so
+//     it can fire on a call that is about to be rejected for an unrelated
+//     reason (bad input, insufficient permissions) -- this was the
+//     coordinator's diagnosis on PR #2390 of what the earlier
+//     "state-dependent, non-reproducible" findings actually were: a real,
+//     synchronous, documented best-effort writer this list hadn't named yet,
+//     not fuzz-minimization noise. The exemption is scoped to UPDATE only,
+//     NOT the whole table (PR #2390 second review round): an INSERT (minting
+//     a session -- login, impersonation start) or DELETE (revoking a
+//     session) by zero-grant/read-only is exactly the authz bypass this
+//     oracle exists to catch, and exempting the whole table would wave it
+//     through. See TestUnexplainedWrite_RedOnSessionsInsert and
+//     TestUnexplainedWrite_RedOnSessionsDelete in
+//     protoreflect_oracle_mechanism_test.go for the direct red-proof.
+var bestEffortSideEffectTables = []writeExemption{
+	{table: "audit_events"},
+	{table: "compliance_posture_snapshots"},
+	{table: "secret_access_logs"},
+	{table: "sessions", events: []string{"UPDATE"}},
+}
 
-// prFuzzWriteCountsTable backs a per-table write counter, kept current by one
-// AFTER INSERT/UPDATE/DELETE trigger per table in the schema -- installed
-// once in buildPRWorld via installWriteCountTriggers against EVERY table
-// discoverAllTables finds, not only the exempt ones. Tracking every table
-// (not just the exempt list) is what lets unexplainedWrites name EXACTLY
-// which table(s) absorbed an unaccounted write and by how many write
-// operations, instead of only knowing that SOME table did (PR #2390 review:
-// "make every unexplainedWrite failure name the differing tables").
+// writeExemption names one table (and optionally a specific subset of
+// INSERT/UPDATE/DELETE events on it) that unexplainedWrites must not flag.
+// events == nil/empty means every event on that table is exempt; a non-empty
+// list narrows the exemption to exactly those events -- e.g. {"sessions",
+// []string{"UPDATE"}} exempts ValidateSessionToken's last_seen_at touch
+// without also waving through an INSERT (a new session, i.e. a login or
+// impersonation start) or a DELETE (a session revocation) on that same
+// table, both of which are real, security-relevant writes a zero-grant/
+// read-only principal must never be able to trigger.
+type writeExemption struct {
+	table  string
+	events []string
+}
+
+func (e writeExemption) allows(event string) bool {
+	if len(e.events) == 0 {
+		return true
+	}
+	for _, ev := range e.events {
+		if ev == event {
+			return true
+		}
+	}
+	return false
+}
+
+func isBestEffortSideEffectWrite(table, event string) bool {
+	for _, e := range bestEffortSideEffectTables {
+		if e.table == table && e.allows(event) {
+			return true
+		}
+	}
+	return false
+}
+
+// prFuzzWriteCountsTable backs a per-(table,event) write counter, kept
+// current by one AFTER INSERT/AFTER UPDATE/AFTER DELETE trigger per table in
+// the schema -- installed once in buildPRWorld via installWriteCountTriggers
+// against EVERY table discoverAllTables finds, not only the exempt ones.
+// Tracking every table AND every event separately (not just a per-table
+// total) is what lets an exemption narrow to one specific event on one
+// table (see writeExemption) and lets unexplainedWrites name EXACTLY which
+// table(s) absorbed an unaccounted write and by how many write operations
+// (PR #2390 review: "make every unexplainedWrite failure name the differing
+// tables").
 //
 // A row-content hash diff was tried first and rejected: GORM's
 // FirstOrCreate+Assign (the compliance-snapshot upsert) issues a real UPDATE
@@ -357,6 +403,24 @@ var bestEffortSideEffectTables = []string{"audit_events", "compliance_posture_sn
 // table" directly, independent of content, so a same-value UPDATE still
 // counts correctly as a write.
 const prFuzzWriteCountsTable = "pr_fuzz_write_counts"
+
+// writeCountEvents are the three statement kinds tracked per table. Order is
+// insignificant; a fixed list (not derived) because SQLite's own trigger
+// vocabulary is exactly these three.
+var writeCountEvents = []string{"INSERT", "UPDATE", "DELETE"}
+
+// counterKey is prFuzzWriteCountsTable's primary key for one (table, event)
+// pair. table never legitimately contains ':' (SQL identifiers can't), so a
+// later split on the last ':' is unambiguous.
+func counterKey(table, event string) string { return table + ":" + event }
+
+func splitCounterKey(key string) (table, event string) {
+	i := strings.LastIndex(key, ":")
+	if i < 0 {
+		return key, ""
+	}
+	return key[:i], key[i+1:]
+}
 
 // discoverAllTables introspects sqlite_master for every real table the live
 // schema declares, excluding SQLite's own internal tables and the tracker
@@ -382,20 +446,21 @@ func discoverAllTables(t testing.TB, db *sql.DB) []string {
 
 func installWriteCountTriggers(t testing.TB, db *sql.DB, tables []string) {
 	t.Helper()
-	if _, err := db.Exec("CREATE TABLE IF NOT EXISTS " + prFuzzWriteCountsTable + " (table_name TEXT PRIMARY KEY, n INTEGER NOT NULL)"); err != nil {
+	if _, err := db.Exec("CREATE TABLE IF NOT EXISTS " + prFuzzWriteCountsTable + " (key TEXT PRIMARY KEY, n INTEGER NOT NULL)"); err != nil {
 		t.Fatalf("create %s: %v", prFuzzWriteCountsTable, err)
 	}
 	for _, tbl := range tables {
 		// tbl always ranges over the live schema's own table names
 		// (discoverAllTables) in production use, or a fixed hardcoded literal
 		// in the oracle mechanism unit tests -- never fuzz input.
-		if _, err := db.Exec("INSERT OR IGNORE INTO "+prFuzzWriteCountsTable+" (table_name, n) VALUES (?, 0)", tbl); err != nil {
-			t.Fatalf("seed counter row for %s: %v", tbl, err)
-		}
-		for _, event := range []string{"INSERT", "UPDATE", "DELETE"} {
+		for _, event := range writeCountEvents {
+			key := counterKey(tbl, event)
+			if _, err := db.Exec("INSERT OR IGNORE INTO "+prFuzzWriteCountsTable+" (key, n) VALUES (?, 0)", key); err != nil {
+				t.Fatalf("seed counter row for %s: %v", key, err)
+			}
 			stmt := fmt.Sprintf(
-				"CREATE TRIGGER IF NOT EXISTS pr_fuzz_count_%s_%s AFTER %s ON %s BEGIN UPDATE %s SET n = n + 1 WHERE table_name = '%s'; END",
-				tbl, event, event, tbl, prFuzzWriteCountsTable, tbl,
+				"CREATE TRIGGER IF NOT EXISTS pr_fuzz_count_%s_%s AFTER %s ON %s BEGIN UPDATE %s SET n = n + 1 WHERE key = '%s'; END",
+				tbl, event, event, tbl, prFuzzWriteCountsTable, key,
 			) // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- tbl/event are always drawn from the live schema's own table names or a fixed test literal, never external input
 			if _, err := db.Exec(stmt); err != nil {
 				t.Fatalf("install %s trigger on %s: %v", event, tbl, err)
@@ -404,43 +469,36 @@ func installWriteCountTriggers(t testing.TB, db *sql.DB, tables []string) {
 	}
 }
 
-// dbSnapshot holds the write-trigger counter for EVERY table in the schema at
-// one point in time -- not just the exempt ones -- so a violation can name
-// exactly which table(s) changed.
+// dbSnapshot holds the write-trigger counter for EVERY (table, event) pair
+// in the schema at one point in time -- not just the exempt ones -- so a
+// violation can name exactly which table(s) changed, and an exemption can be
+// scoped to one event on one table without masking the other two.
 type dbSnapshot struct {
-	tableN map[string]int64
+	n map[string]int64 // counterKey(table, event) -> counter at snapshot time
 }
 
 func snapshotDB(t testing.TB, db *sql.DB) dbSnapshot {
 	t.Helper()
-	rows, err := db.Query("SELECT table_name, n FROM " + prFuzzWriteCountsTable)
+	rows, err := db.Query("SELECT key, n FROM " + prFuzzWriteCountsTable)
 	if err != nil {
 		t.Fatalf("snapshot write counts: %v", err)
 	}
 	defer func() { _ = rows.Close() }()
-	snap := dbSnapshot{tableN: map[string]int64{}}
+	snap := dbSnapshot{n: map[string]int64{}}
 	for rows.Next() {
-		var tbl string
+		var key string
 		var n int64
-		if err := rows.Scan(&tbl, &n); err != nil {
+		if err := rows.Scan(&key, &n); err != nil {
 			t.Fatalf("scan write count: %v", err)
 		}
-		snap.tableN[tbl] = n
+		snap.n[key] = n
 	}
 	return snap
 }
 
-func isBestEffortSideEffectTable(tbl string) bool {
-	for _, t := range bestEffortSideEffectTables {
-		if t == tbl {
-			return true
-		}
-	}
-	return false
-}
-
-// tableDelta names one table and how many write operations its counter
-// absorbed between two snapshots.
+// tableDelta names one table and how many (non-exempt) write operations it
+// absorbed between two snapshots, summed across whichever of
+// INSERT/UPDATE/DELETE were not covered by an exemption.
 type tableDelta struct {
 	table string
 	n     int64
@@ -448,20 +506,26 @@ type tableDelta struct {
 
 func (d tableDelta) String() string { return fmt.Sprintf("%s:+%d", d.table, d.n) }
 
-// unexplainedWrites returns every NON-exempt table whose write-trigger
-// counter increased between before and after, each with its delta -- empty
-// means no unexplained write happened. Generic: it needs no per-call
-// knowledge of which table a given RPC is expected to touch, only the short,
-// documented bestEffortSideEffectTables list above.
+// unexplainedWrites returns every table with a write NOT covered by
+// bestEffortSideEffectTables, aggregating across whichever of
+// INSERT/UPDATE/DELETE weren't exempt -- empty means no unexplained write
+// happened. Checking exemption per (table, event) pair, not per table, is
+// what lets a narrow exemption (e.g. sessions:UPDATE only) still catch an
+// INSERT or DELETE on that same table.
 func (before dbSnapshot) unexplainedWrites(after dbSnapshot) []tableDelta {
-	var out []tableDelta
-	for tbl, afterN := range after.tableN {
-		if isBestEffortSideEffectTable(tbl) {
+	byTable := map[string]int64{}
+	for key, afterN := range after.n {
+		table, event := splitCounterKey(key)
+		if isBestEffortSideEffectWrite(table, event) {
 			continue
 		}
-		if delta := afterN - before.tableN[tbl]; delta > 0 {
-			out = append(out, tableDelta{table: tbl, n: delta})
+		if delta := afterN - before.n[key]; delta > 0 {
+			byTable[table] += delta
 		}
+	}
+	out := make([]tableDelta, 0, len(byTable))
+	for table, n := range byTable {
+		out = append(out, tableDelta{table: table, n: n})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].table < out[j].table })
 	return out

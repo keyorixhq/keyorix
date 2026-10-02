@@ -72,7 +72,7 @@ var oracleTestDBSeq atomic.Int64
 // restores it on cleanup -- every test below that exercises
 // unexplainedWrite's EXEMPT path needs this (the red test, which deliberately
 // writes a NON-exempt table, does not).
-func bestEffortSideEffectTablesForTest(t *testing.T, fake []string) {
+func bestEffortSideEffectTablesForTest(t *testing.T, fake []writeExemption) {
 	t.Helper()
 	orig := bestEffortSideEffectTables
 	bestEffortSideEffectTables = fake
@@ -111,7 +111,7 @@ func newOracleTestDB(t *testing.T) *sql.DB {
 
 func TestUnexplainedWrite_RedOnUnexemptedTableWrite(t *testing.T) {
 	db := newOracleTestDB(t)
-	bestEffortSideEffectTablesForTest(t, []string{"widgets_audit"})
+	bestEffortSideEffectTablesForTest(t, []writeExemption{{table: "widgets_audit"}})
 
 	before := snapshotDB(t, db)
 	// A write to a table NOT in the exempt list -- the exact shape of an
@@ -131,7 +131,7 @@ func TestUnexplainedWrite_RedOnUnexemptedTableWrite(t *testing.T) {
 // many write operations, not just assert that SOME table did.
 func TestUnexplainedWrites_NamesTheDifferingTable(t *testing.T) {
 	db := newOracleTestDB(t)
-	bestEffortSideEffectTablesForTest(t, []string{"widgets_audit"})
+	bestEffortSideEffectTablesForTest(t, []writeExemption{{table: "widgets_audit"}})
 
 	before := snapshotDB(t, db)
 	if _, err := db.Exec("INSERT INTO widgets (name) VALUES ('x')"); err != nil {
@@ -153,7 +153,7 @@ func TestUnexplainedWrites_NamesTheDifferingTable(t *testing.T) {
 
 func TestUnexplainedWrite_GreenOnExemptedTableInsert(t *testing.T) {
 	db := newOracleTestDB(t)
-	bestEffortSideEffectTablesForTest(t, []string{"widgets_audit"})
+	bestEffortSideEffectTablesForTest(t, []writeExemption{{table: "widgets_audit"}})
 
 	before := snapshotDB(t, db)
 	if _, err := db.Exec("INSERT INTO widgets_audit (note) VALUES ('ok')"); err != nil {
@@ -175,7 +175,7 @@ func TestUnexplainedWrite_GreenOnExemptedTableInsert(t *testing.T) {
 // positive); the write-count trigger mechanism must pass it.
 func TestUnexplainedWrite_GreenOnExemptedTableNoOpUpdate(t *testing.T) {
 	db := newOracleTestDB(t)
-	bestEffortSideEffectTablesForTest(t, []string{"widgets_audit"})
+	bestEffortSideEffectTablesForTest(t, []writeExemption{{table: "widgets_audit"}})
 
 	if _, err := db.Exec("INSERT INTO widgets_audit (id, note) VALUES (1, 'same')"); err != nil {
 		t.Fatalf("seed insert: %v", err)
@@ -199,7 +199,7 @@ func TestUnexplainedWrite_GreenOnExemptedTableNoOpUpdate(t *testing.T) {
 
 func TestUnexplainedWrite_RedOnMixedExemptAndNonExemptWrite(t *testing.T) {
 	db := newOracleTestDB(t)
-	bestEffortSideEffectTablesForTest(t, []string{"widgets_audit"})
+	bestEffortSideEffectTablesForTest(t, []writeExemption{{table: "widgets_audit"}})
 
 	before := snapshotDB(t, db)
 	if _, err := db.Exec("INSERT INTO widgets_audit (note) VALUES ('ok')"); err != nil {
@@ -213,6 +213,92 @@ func TestUnexplainedWrite_RedOnMixedExemptAndNonExemptWrite(t *testing.T) {
 	diffs := before.unexplainedWrites(after)
 	if len(diffs) != 1 || diffs[0].table != "widgets" {
 		t.Fatalf("expected a diff naming only 'widgets' (widgets_audit is exempt), got %v -- exempting one table must never mask a write to another", diffs)
+	}
+}
+
+// newSessionsShapedTestDB opens an isolated DB with a table literally named
+// "sessions" (minimal shape -- these tests only need a row to exist, not the
+// real models.Session columns) and installs write-count triggers on it,
+// deliberately WITHOUT calling bestEffortSideEffectTablesForTest -- these
+// three tests exercise the REAL, unmodified, production
+// bestEffortSideEffectTables (sessions scoped to UPDATE only), proving the
+// actual exemption config, not a swapped-out stand-in for it.
+func newSessionsShapedTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	dsn := fmt.Sprintf("file:kxoraclesessions_%d?mode=memory&cache=shared", oracleTestDBSeq.Add(1))
+	gdb, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := gdb.Exec("CREATE TABLE sessions (id INTEGER PRIMARY KEY, last_seen_at TEXT)").Error; err != nil {
+		t.Fatalf("create sessions: %v", err)
+	}
+	db, err := gdb.DB()
+	if err != nil {
+		t.Fatalf("underlying *sql.DB: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	installWriteCountTriggers(t, db, discoverAllTables(t, db))
+	return db
+}
+
+// TestUnexplainedWrite_GreenOnSessionsLastSeenUpdate proves the production
+// exemption's intended positive case still works after narrowing it to
+// sessions:UPDATE only -- ValidateSessionToken's own write shape.
+func TestUnexplainedWrite_GreenOnSessionsLastSeenUpdate(t *testing.T) {
+	db := newSessionsShapedTestDB(t)
+	if _, err := db.Exec("INSERT INTO sessions (id, last_seen_at) VALUES (1, 'old')"); err != nil {
+		t.Fatalf("seed insert (admin's own session, outside the measured window): %v", err)
+	}
+
+	before := snapshotDB(t, db)
+	if _, err := db.Exec("UPDATE sessions SET last_seen_at = 'new' WHERE id = 1"); err != nil {
+		t.Fatalf("last_seen_at touch: %v", err)
+	}
+	after := snapshotDB(t, db)
+
+	if before.unexplainedWrite(after) {
+		t.Fatal("expected unexplainedWrite to report false for a sessions UPDATE (the documented last_seen_at touch), got true")
+	}
+}
+
+// TestUnexplainedWrite_RedOnSessionsInsert is the PR #2390 third-review
+// red-proof: exempting sessions:UPDATE must NOT also wave through an INSERT
+// (minting a new session -- a login or an impersonation start) by a
+// zero-grant/read-only principal, which would be a real authz bypass this
+// oracle exists to catch.
+func TestUnexplainedWrite_RedOnSessionsInsert(t *testing.T) {
+	db := newSessionsShapedTestDB(t)
+
+	before := snapshotDB(t, db)
+	if _, err := db.Exec("INSERT INTO sessions (id, last_seen_at) VALUES (1, 'new')"); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	after := snapshotDB(t, db)
+
+	diffs := before.unexplainedWrites(after)
+	if len(diffs) != 1 || diffs[0].table != "sessions" || diffs[0].n != 1 {
+		t.Fatalf("expected unexplainedWrites to report exactly {sessions, 1} for a sessions INSERT, got %v -- narrowing the exemption to UPDATE must not also exempt INSERT", diffs)
+	}
+}
+
+// TestUnexplainedWrite_RedOnSessionsDelete is TestUnexplainedWrite_RedOnSessionsInsert's
+// twin for DELETE (revoking a session).
+func TestUnexplainedWrite_RedOnSessionsDelete(t *testing.T) {
+	db := newSessionsShapedTestDB(t)
+	if _, err := db.Exec("INSERT INTO sessions (id, last_seen_at) VALUES (1, 'x')"); err != nil {
+		t.Fatalf("seed insert (outside the measured window): %v", err)
+	}
+
+	before := snapshotDB(t, db)
+	if _, err := db.Exec("DELETE FROM sessions WHERE id = 1"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	after := snapshotDB(t, db)
+
+	diffs := before.unexplainedWrites(after)
+	if len(diffs) != 1 || diffs[0].table != "sessions" || diffs[0].n != 1 {
+		t.Fatalf("expected unexplainedWrites to report exactly {sessions, 1} for a sessions DELETE, got %v -- narrowing the exemption to UPDATE must not also exempt DELETE", diffs)
 	}
 }
 
