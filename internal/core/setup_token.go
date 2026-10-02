@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -29,6 +30,17 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
+
+// ErrSetupTokenIssuanceFailed marks a failure of the supersede+create transaction
+// below (not a config/validation problem like a missing base_url or a throttle hit).
+// Callers that create a durable record ahead of the setup link (e.g.
+// InviteGlobalWithLink/InviteToProjectWithLink creating a ProjectInvitation first)
+// use this to tell the two failure classes apart: a config/throttle failure leaves
+// prior links untouched and is safe to report as a resendable partial success, but
+// this one means the attempted supersede of the subject's prior active links did
+// NOT happen (the whole transaction rolled back) -- that must never be reported as
+// success, so the caller can fail closed instead of claiming the link was replaced.
+var ErrSetupTokenIssuanceFailed = errors.New("setup token issuance transaction failed")
 
 // Setup-token purposes. A token is bound to exactly one at issuance.
 const (
@@ -151,7 +163,7 @@ func (c *KeyorixCore) IssueSetupToken(ctx context.Context, req IssueSetupTokenRe
 		return cerr
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		return nil, fmt.Errorf("%s: %w: %w", i18n.T("ErrorStorageFailed", nil), ErrSetupTokenIssuanceFailed, err)
 	}
 
 	// Issuer is the actor; for self-service reset (CreatedBy == 0) attribute to the

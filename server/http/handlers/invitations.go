@@ -8,6 +8,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -58,6 +59,14 @@ func (h *CatalogHandler) CreateInvitation(w http.ResponseWriter, r *http.Request
 	}
 	inv, prov, err := h.coreService.InviteToProjectWithLink(r.Context(), id, body.Email, body.Role, actor.UserID, machineID(r))
 	if err != nil {
+		// See CreateGlobalInvitation's identical carve-out (#2419): a failed
+		// supersede+create of the setup token itself must fail closed, not be
+		// reported as a resendable partial success.
+		if errors.Is(err, core.ErrSetupTokenIssuanceFailed) {
+			log.Printf("Error issuing setup token for invitation to %q on project %d: %v", body.Email, id, err)
+			sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
+			return
+		}
 		// A nil inv means the invitation was not created at all; a non-nil inv with an
 		// error means it was created but the link could not be provisioned (e.g.
 		// base_url unset) — surface that so the admin can fix config and resend.
@@ -130,6 +139,16 @@ func (h *CatalogHandler) CreateGlobalInvitation(w http.ResponseWriter, r *http.R
 	}
 	inv, prov, err := h.coreService.InviteGlobalWithLink(r.Context(), body.Email, body.Role, assignments, actor.UserID, machineID(r))
 	if err != nil {
+		// A failed supersede+create of the setup token itself must never be reported
+		// as success (#2419): unlike a config/throttle/delivery failure below, this
+		// means the attempted invalidation of the subject's prior active links did
+		// NOT happen, so an admin reading "created" could believe an old link was
+		// just replaced when it was not. Fail closed regardless of inv.
+		if errors.Is(err, core.ErrSetupTokenIssuanceFailed) {
+			log.Printf("Error issuing setup token for global invitation to %q: %v", body.Email, err)
+			sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
+			return
+		}
 		// A nil inv means the invitation was not created at all (bad input); a non-nil
 		// inv with an error means it exists but the link couldn't be provisioned (e.g.
 		// base_url unset) — surface that so the admin can fix config and resend.
