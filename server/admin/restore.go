@@ -279,7 +279,7 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 	if err != nil {
 		return err
 	}
-	manifestKey, err := unwrapManifestKey(cfg, kekStagingDir, restorePassphraseSource)
+	manifestKey, err := unwrapManifestKey(cfg, kekStagingDir, restorePassphraseSource, nil)
 	if err != nil {
 		return err
 	}
