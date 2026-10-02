@@ -739,6 +739,15 @@ func diffSubsetOf(diff, allowed []string) bool {
 // could not commit a working seed before that wiring existed); no entry
 // needed unless a new finding is filed.
 var knownOpenTolerances = []knownOpenTolerance{
+	// #2407 (filed 2026-10-02 from PR #2396's fuzz-changed run, seed
+	// 4f002c3230303030): CreateAccessRequestApproval reports KindError but its
+	// effect partially commits anyway. Unrelated to #2396's own change (SAML
+	// ACS wiring) -- pre-existing on main. Remove this entry when #2407 is fixed.
+	{
+		op: "REST PUT /api/v1/projects/{id}/access-requests/{requestId}", method: "CreateAccessRequestApproval", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2407", expires: "2026-10-17",
+		findingDoc: "#2407",
+	},
 	// docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md
 	// (SESSION-FI, AT5): NOT a bug -- BulkRejectAccessRequests' unconditional
 	// summary audit event legitimately differs in content (X/Y counts) when
