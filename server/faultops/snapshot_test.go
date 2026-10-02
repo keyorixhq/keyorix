@@ -96,6 +96,15 @@ var presenceOnlyFields = map[string]string{
 	"CredentialBlob": "authenticator-generated WebAuthn public key material",
 	"SessionToken":   "SHA-256 hash of a randomly generated per-login session token (models.go:1217) — two independent bootstrap logins (reference world vs fault world) never produce the same raw token, so never the same hash",
 	"FamilyID":       "randomly generated per-login refresh-token family identifier (models.go:1243) — same reasoning as SessionToken; found via this file's own Session-row debug dump when the structural timestamp fix alone didn't make two independently-bootstrapped worlds' Session tables match",
+	// #2406: found via TestWorldReuseSoundness, not FuzzStorageFaultOperations
+	// directly — the soundness gate's reused-vs-fresh-world comparison was the
+	// first thing in this corpus to actually exercise a dynamic-secret
+	// issue-then-revoke op, surfacing a gap that would equally have affected
+	// oracle (a)'s own in.after-vs-in.refAfter comparison (two independently
+	// built worlds, same as every other presenceOnlyFields entry) the moment
+	// any corpus input reached it.
+	"LeaseID":  "generateSecureToken() (dynamic_secrets.go) mints a fresh random lease identifier on every IssueLease call — two independently bootstrapped worlds never produce the same one",
+	"RoleName": "the dynamic-secret engine (real backends and dynamictest.FakeEngine alike) generates a randomized per-issue role/username suffix — same reasoning as LeaseID",
 }
 
 // tableSnapshot is one table's canonical dump: Hash over every row's
