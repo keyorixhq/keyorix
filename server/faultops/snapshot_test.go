@@ -98,6 +98,38 @@ var presenceOnlyFields = map[string]string{
 	"FamilyID":       "randomly generated per-login refresh-token family identifier (models.go:1243) — same reasoning as SessionToken; found via this file's own Session-row debug dump when the structural timestamp fix alone didn't make two independently-bootstrapped worlds' Session tables match",
 }
 
+// typeScopedPresenceOnlyFields is presenceOnlyFields' table-scoped sibling,
+// for a field name that is randomized/non-deterministic on ONE model but
+// carries real, must-stay-byte-compared business state on another — adding
+// it to the global, name-only presenceOnlyFields map above would silently
+// hide a genuine divergence on every OTHER model sharing that field name.
+// Checked in canonicalRow BEFORE the global map, so a (type, field) match
+// here takes precedence.
+//
+// LeaseID and RoleName were originally added to the GLOBAL presenceOnlyFields
+// map (DynamicSecretLease.LeaseID/RoleName, models.go:1153/1156, both random
+// per IssueLease/engine.Issue call — see models.go for the exact generators).
+// LeaseID alone is a safe global entry (it's the only LeaseID field in the
+// schema), but RoleName is NOT: BreakGlassActivation.RoleName (models.go:285,
+// which role an emergency break-glass activation granted) and
+// AccessReviewItem.RoleName (models.go:389, a role-name snapshot in an
+// access-review campaign entry) are both DETERMINISTIC, security-relevant
+// values that must keep failing the oracle if they ever diverge — the global
+// entry silently reduced both to presence-only ("was anything written",
+// not "is the value correct") repo-wide. Moved both fields here, scoped to
+// DynamicSecretLease only, so the exemption can never leak onto an unrelated
+// model again regardless of what future field happens to share a name.
+// Red-proofed by TestCanonicalRow_BreakGlassAndAccessReviewRoleNameStillCompared
+// (this file's own test): asserts a changed RoleName on each of those two
+// OTHER models still produces a different canonicalRow() output -- i.e. the
+// oracle can still see it.
+var typeScopedPresenceOnlyFields = map[string]map[string]string{
+	"DynamicSecretLease": {
+		"LeaseID":  "generateSecureToken()-random opaque public identifier (internal/core/dynamic_secrets.go:535, models.go:1153) — two independent IssueLease calls never mint the same lease ID, so DynamicSecretLease rows never match byte-for-byte even when nothing else differs; missed by the original \"ends in Hash/Enc\" enumeration since this field holds the raw token itself, not a hash of it. Found live: FuzzStorageFaultOperations (GRPC keyorix.v1.DynamicSecretService.IssueLease, fault=LogAuditEvent#1/error), Session CR round 2.",
+		"RoleName": "the generated role/username on the target DB (models.go:1156) — every engine.Issue (both the real backend engines, e.g. internal/dynamic/postgres.go's \"kx_dyn_\"+randString(16), and dynamictest.FakeEngine's \"kx_fake_\"+randString(8)) mints a fresh random suffix per call, so two independent issues never produce the same role name. Same root cause and found alongside LeaseID above. Table-scoped (not global) because BreakGlassActivation.RoleName and AccessReviewItem.RoleName are unrelated, deterministic fields that must stay byte-compared — see this map's own doc comment.",
+	},
+}
+
 // tableSnapshot is one table's canonical dump: Hash over every row's
 // (excluded-stripped, presence-redacted) JSON encoding, sorted so row order
 // never affects the hash, plus the rows themselves for readable tracing when an
@@ -186,6 +218,12 @@ func canonicalRow(row interface{}) (string, error) {
 		}
 		if _, excluded := excludedFields[name]; excluded {
 			continue
+		}
+		if scoped, ok := typeScopedPresenceOnlyFields[rt.Name()]; ok {
+			if _, presence := scoped[name]; presence {
+				out[name] = !isGoZero(fv)
+				continue
+			}
 		}
 		if _, presence := presenceOnlyFields[name]; presence {
 			out[name] = !isGoZero(fv)

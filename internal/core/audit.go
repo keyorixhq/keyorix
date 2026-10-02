@@ -342,8 +342,25 @@ func sanitizeAuditText(s string) string {
 
 // writeAccessLog persists a secret_access_logs row. A failure here is a gap in the
 // secret-access trail, so it is surfaced loudly rather than silently discarded —
-// mirroring emitAudit's handling of a failed audit_events write.
+// mirroring emitAudit's handling of a failed audit_events write. A panic from
+// c.storage.CreateSecretAccessLog is recovered too, same reasoning and same
+// pattern as emitAudit's own recover(): every caller of writeAccessLog is
+// itself in a "the primary operation already succeeded, only the access-log
+// trail is being written" position, so an unrecovered panic here would
+// propagate past the Recovery middleware and misreport the whole request as
+// failed (500) even though the real effect — and often an audit_events row
+// written just before this call, e.g. LogSecretReadWithProject's
+// writeAuditEventFull-then-writeAccessLog ordering — already committed.
+// Found live: FuzzStorageFaultOperations op="REST POST /api/v1/secrets/{id}/copy"
+// fault=CreateSecretAccessLog#1/panic, ORACLE (a) VIOLATION (reported an ERROR
+// but AuditEvent had already committed).
 func (c *KeyorixCore) writeAccessLog(ctx context.Context, secretID uint, accessedBy, action, ip, ua string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: writeAccessLog panicked persisting secret access log (secret=%d action=%q accessedBy=%q, best-effort, primary operation already succeeded): %v",
+				secretID, action, accessedBy, r)
+		}
+	}()
 	entry := &models.SecretAccessLog{
 		SecretNodeID: secretID,
 		AccessedBy:   accessedBy,
