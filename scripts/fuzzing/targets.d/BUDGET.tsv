@@ -15,7 +15,7 @@ internal-core__FuzzOIDCIDTokenSingleConstraintViolation.conf	high
 internal-core__FuzzSSOIDTokenSingleConstraintViolation.conf	high
 internal-core__FuzzSSRFGuardDifferential.conf	high
 internal-libconformance__FuzzDigitorusPKCS7BoundedWork.conf	high
-server-http-handlers__FuzzWebAuthnCredentialResponse.conf	high
+server-http-handlers-webauthnparse__FuzzWebAuthnCredentialResponse.conf	high
 server-http__FuzzCanarySecretLeakage.conf	high
 
 # low: the target's own targets.d/*.conf comment says it is saturated
@@ -24,8 +24,8 @@ server-http__FuzzCanarySecretLeakage.conf	high
 # header) finds it reopened.
 internal-crypto__FuzzCombineKEK.conf	low
 internal-rotation__FuzzAzureGenerateUpstreamRef.conf	low
-internal-rotation__FuzzPostgresQuoting.conf	low
-internal-rotation__FuzzMySQLQuoteString.conf	low
+internal-rotation-quote__FuzzPostgresQuoting.conf	low
+internal-rotation-quote__FuzzMySQLQuoteString.conf	low
 internal-saml__FuzzSAMLMetadata.conf	low
 pkg-bundleverify__FuzzBundleVerify.conf	low
 pkg-bundleverify__FuzzComponentPathContainment.conf	low
