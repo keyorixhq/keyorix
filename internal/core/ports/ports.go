@@ -293,6 +293,14 @@ func DynamicSecretLeaseAAD(leaseID string, configID uint) []byte {
 	return []byte(fmt.Sprintf("keyorix:dynsecret-lease:v1:%s:%d", leaseID, configID))
 }
 
+// NotificationChannelURLAAD returns the AAD for a notification channel's
+// encrypted webhook/Slack/Teams URL (#2433), binding the ciphertext to the
+// channel's identity so a DB-write attacker cannot transplant one channel's
+// encrypted URL onto another's row.
+func NotificationChannelURLAAD(channelID uint) []byte {
+	return []byte(fmt.Sprintf("keyorix:notifchan-url:v1:%d", channelID))
+}
+
 // NotaryReceipt is proof an external timestamping authority anchored a
 // message. Mirrors internal/notary.Receipt.
 type NotaryReceipt struct {

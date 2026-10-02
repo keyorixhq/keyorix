@@ -266,6 +266,10 @@ func TestRunAlertEscalation_DialTimeRefusesDNSRebind(t *testing.T) {
 	c := NewKeyorixCore(store)
 	c.now = fixedNow(now)
 	store.On("CreateNotificationChannel", mock.Anything, mock.Anything).Return(nil)
+	// #2433: CreateNotificationChannel inserts, then encrypts the URL (bound to
+	// the now-known ID) and persists URLEnc/URLMeta via a second
+	// UpdateNotificationChannel call.
+	store.On("UpdateNotificationChannel", mock.Anything, mock.Anything).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	created, err := c.CreateNotificationChannel(context.Background(), &models.NotificationChannel{
 		Name: "rebind-channel", Type: "webhook", URL: "https://" + rebindHost + "/hook", Enabled: true,
@@ -273,7 +277,10 @@ func TestRunAlertEscalation_DialTimeRefusesDNSRebind(t *testing.T) {
 	require.NoError(t, err, "channel creation sees a public address and must succeed")
 	require.GreaterOrEqual(t, callCount, 1)
 
-	ch := &models.NotificationChannel{ID: 7, Name: created.Name, Type: created.Type, URL: created.URL, Enabled: true}
+	// URLEnc (#2433), not URL: GetNotificationChannel (the core-layer wrapper
+	// dispatchPolicyChannels now calls) decrypts ch.URLEnc into ch.URL -- a
+	// fixture that only set the latter would read back empty.
+	ch := &models.NotificationChannel{ID: 7, Name: created.Name, Type: created.Type, URLEnc: []byte(created.URL), Enabled: true}
 	store.On("ListAlertEscalationPolicies", mock.Anything).Return([]models.AlertEscalationPolicy{p}, nil)
 	store.On("ListUnacknowledgedAnomalyAlertsBefore", mock.Anything, mock.Anything).Return([]models.AnomalyAlert{alert}, nil)
 	store.On("GetNotificationChannel", mock.Anything, uint(7)).Return(ch, nil)

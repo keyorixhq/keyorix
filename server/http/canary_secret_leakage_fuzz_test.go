@@ -1507,46 +1507,43 @@ func buildCanaryWorld(tb worldBuilderTB) *canaryWorld {
 		}
 	}
 
-	// KNOWN-OPEN FINDING (see file header): confirm ONCE, informationally, that
-	// NotificationChannel.URL leaks into audit_events.Diff -- AND, confirmed live by
-	// an earlier burst, into the audit-search/audit-export-csv HTTP read surfaces too
-	// (see keyorix-private/adversarial-review/
-	// NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19.md, "who can read it").
-	// webhookCanary is deliberately never passed to plantOnce (knownCanaries) --
-	// instead each confirmed-affected channel gets its OWN exemption entry below (one
-	// value, one channel each -- see exemption's doc comment), so a DIFFERENT canary
-	// on the same channel, or this SAME value on an unlisted channel, both still fail.
+	// #2432/#2433: NotificationChannel.URL (the webhook bearer credential) used to
+	// leak into audit_events.Diff (writeConfigChangeAuditEvent json.Marshaled the
+	// whole NotificationChannel struct) and was stored with no at-rest encryption
+	// at all -- see keyorix-private/adversarial-review/
+	// NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19.md and
+	// .../NOTIFICATION-CHANNEL-URL-PLAINTEXT-AT-REST-2026-09-19.md for the original
+	// investigations. Both fixed: writeConfigChangeAuditEvent's before/after now
+	// gets a redacted copy, and the URL is encrypted at rest (URLEnc/URLMeta,
+	// AAD-bound to the channel's own ID, the same encryptAuthSecret primitive the
+	// DSN/lease/MFA credentials above already use).
+	//
+	// webhookCanary is deliberately NOT passed to plantOnce (knownCanaries): unlike
+	// those credential-shaped values, this channel's OWN management API (GET/List)
+	// still, correctly, returns its decrypted URL -- a different, authorized read
+	// surface than audit.read, which this canary isn't meant to flag. The two
+	// direct assertions below are the enforced regression guard for the two fixed
+	// findings instead of relying on the generic DB/HTTP scanners' exemption
+	// mechanism, which per both issues' own "current mitigation" sections should be
+	// removed (not just loosened) once the fix lands.
 	webhookCanary := deriveHookCanary("webhook-world", []byte("world-init"))
-	var webhookExemptions []exemption
 	ch := &models.NotificationChannel{
 		Name: "canary-webhook-world", Type: "webhook",
 		URL:     "https://example.com/hooks/" + webhookCanary,
 		Enabled: true, Events: "secret.rotated", CreatedBy: "testadmin",
 	}
 	if _, cherr := c.CreateNotificationChannel(ctx, ch, "testadmin", admin.ID); cherr == nil {
-		const findingRef = "#2432 (keyorix-private/adversarial-review/NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19.md, expires 2026-12-31)"
-		// plaintextFindingRef is a SEPARATE, sibling finding (same investigation, distinct
-		// root cause): NotificationChannel.URL has no at-rest encryption at all -- its own
-		// canonical storage column is plaintext by design (or by omission; no ADR says
-		// which), unlike the DSN/lease/MFA credentials this same fuzzer DOES verify are
-		// encrypted (secret_value_crypto.go / SetAuthEncryptor). This is why the column's
-		// own bytes are exempted below, and why db:raw-file is exempted for TWO distinct
-		// reasons, not one: the audit-diff duplication (findingRef) AND this column's own
-		// plaintext bytes (plaintextFindingRef) both land in the raw file independently.
-		const plaintextFindingRef = "#2433 (keyorix-private/adversarial-review/NOTIFICATION-CHANNEL-URL-PLAINTEXT-AT-REST-2026-09-19.md, expires 2026-12-31)"
-		webhookExemptions = []exemption{
-			{value: webhookCanary, channelPrefix: "db:audit_events.diff", reason: findingRef + ": writeConfigChangeAuditEvent json.Marshals the whole NotificationChannel struct (incl. URL) into audit_events.diff"},
-			{value: webhookCanary, channelPrefix: rawFileChannel, reason: findingRef + " AND " + plaintextFindingRef + ": the raw file carries both the audit-diff duplication and the column's own plaintext bytes"},
-			{value: webhookCanary, channelPrefix: "http:audit-search:body", reason: findingRef + ": GET /api/v1/audit/search returns audit_events rows including Diff verbatim to any audit.read holder"},
-			{value: webhookCanary, channelPrefix: "http:audit-export-csv:body", reason: findingRef + ": GET /api/v1/audit/export.csv, same exposure"},
-			{value: webhookCanary, channelPrefix: "db:notification_channels.url", reason: plaintextFindingRef + ": own canonical storage column, plaintext -- see that doc for the full at-rest investigation"},
-		}
 		drainAllBackgroundGoroutines()
 		if sqlDB, dberr := db.DB(); dberr == nil {
-			rows, qerr := sqlDB.Query("SELECT 1 FROM audit_events WHERE diff LIKE ? LIMIT 1", "%"+webhookCanary+"%")
-			if qerr == nil {
+			if rows, qerr := sqlDB.Query("SELECT 1 FROM audit_events WHERE diff LIKE ? LIMIT 1", "%"+webhookCanary+"%"); qerr == nil {
 				if rows.Next() {
-					tb.Logf("KNOWN-OPEN FINDING confirmed live: webhook URL canary present in audit_events.diff -- see " + findingRef)
+					tb.Fatalf("#2432 regression: webhook URL canary found in audit_events.diff -- writeConfigChangeAuditEvent must redact the URL before marshaling")
+				}
+				_ = rows.Close()
+			}
+			if rows, qerr := sqlDB.Query("SELECT 1 FROM notification_channels WHERE url_enc LIKE ? LIMIT 1", "%"+webhookCanary+"%"); qerr == nil {
+				if rows.Next() {
+					tb.Fatalf("#2433 regression: webhook URL canary found in notification_channels.url_enc as plaintext -- the URL must be encrypted at rest")
 				}
 				_ = rows.Close()
 			}
@@ -1601,7 +1598,7 @@ func buildCanaryWorld(tb worldBuilderTB) *canaryWorld {
 		secAID: sA.ID, secBID: sB.ID,
 		refA: "canary-proja/prod/sa", refB: "canary-projb/prod/sb",
 		principals: principals, logBuf: lb,
-		knownCanaries: knownCanaries, fixedCreds: fixedCreds, webhookExemptions: webhookExemptions,
+		knownCanaries: knownCanaries, fixedCreds: fixedCreds,
 		dbWatermarks: map[string]int64{},
 	}
 }

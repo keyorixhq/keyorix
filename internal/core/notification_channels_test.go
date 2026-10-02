@@ -76,7 +76,7 @@ func TestNotificationChannel_CRUD(t *testing.T) {
 		ID:     1,
 		Name:   "webhook-siem",
 		Type:   "webhook",
-		URL:    "https://siem.example.com/hook",
+		URLEnc: []byte("https://siem.example.com/hook"),
 		Events: "anomaly.detected,secret.expiring",
 	}
 
@@ -87,6 +87,11 @@ func TestNotificationChannel_CRUD(t *testing.T) {
 		ch := args.Get(1).(*models.NotificationChannel)
 		ch.ID = 1
 	})
+	// #2433: CreateNotificationChannel inserts, then encrypts the URL (bound to
+	// the now-known ID) and persists URLEnc/URLMeta via a second
+	// UpdateNotificationChannel call -- same two-step shape
+	// CreateDynamicSecretConfig uses for AdminDSNEnc.
+	store.On("UpdateNotificationChannel", ctx, mock.AnythingOfType("*models.NotificationChannel")).Return(nil)
 	var auditEvents []*models.AuditEvent
 	store.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).
 		Run(func(args mock.Arguments) { auditEvents = append(auditEvents, args.Get(1).(*models.AuditEvent)) }).
@@ -188,10 +193,10 @@ func TestUpdateNotificationChannel_UpdateStorageError(t *testing.T) {
 	ctx := context.Background()
 
 	existing := &models.NotificationChannel{
-		ID:   2,
-		Name: "hook",
-		Type: "webhook",
-		URL:  "https://hook.example.com",
+		ID:     2,
+		Name:   "hook",
+		Type:   "webhook",
+		URLEnc: []byte("https://hook.example.com"),
 	}
 	st.On("GetNotificationChannel", ctx, uint(2)).Return(existing, nil)
 	st.On("UpdateNotificationChannel", ctx, mock.AnythingOfType("*models.NotificationChannel")).
