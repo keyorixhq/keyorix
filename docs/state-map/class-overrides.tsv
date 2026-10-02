@@ -59,3 +59,49 @@ cli	keyorix risk revoke	D	risk.go:171-194 makes exactly one mutating call.
 cli	keyorix rotation create	D	rotation.go:183-232: exactly one mutating API call, CreateRotationPolicyWithResponse -- project/environment only toggle fields on one body, not two sequential writes.
 cli	keyorix secret access	D	secret_access.go:16-48 is fully read-only.
 cli	keyorix secret access-log	D	secret_access.go:55-94 is fully read-only.
+#
+# SESSION-AR, batch 2/5 (AT0 REVIEW triage, secret acl/classify/schedule/
+# comment/organize/deps/description/fix/info/move/restore/resume/rollback/
+# suspend/tags/template/trash, share, sod, system rows): all 38 rows in this
+# slice are CLI commands; 37 class D (single-write CLI wrappers around one
+# REST call, or fully read-only), 1 class C (`secret fix`: an entirely local
+# source-tree rewriter, no REST calls, independent per-file edits that
+# continue past a single file's failure and are safely re-runnable).
+cli	keyorix secret acl grant	D	secret_acl.go:68 secretACLGrantCmd.RunE makes exactly one write call, client.GrantSecretACLWithResponse; everything else is flag validation and print.
+cli	keyorix secret acl list	D	secret_acl.go:28 secretACLListCmd.RunE is read-only: one call to client.ListSecretACLsWithResponse, then formatting; no writes at all.
+cli	keyorix secret acl revoke	D	secret_acl.go:105 secretACLRevokeCmd.RunE makes exactly one write call, client.RevokeSecretACLWithResponse; flag checks precede it, print follows.
+cli	keyorix secret classify	D	secret_metadata.go:243 secretClassifyCmd.RunE makes exactly one write call, client.ClassifySecretWithResponse; the switch over --level values is validation, not a second write.
+cli	keyorix secret clear-schedule	D	secret_schedule.go:123 secretClearScheduleCmd.RunE makes exactly one write call, client.DeleteSecretScheduleWithResponse.
+cli	keyorix secret comment add	D	secret_versions.go:269 versionCommentAddCmd.RunE makes exactly one write call, client.AddSecretVersionCommentWithResponse; args parsing precedes it.
+cli	keyorix secret comment delete	D	secret_versions.go:351 versionCommentDeleteCmd.RunE makes exactly one write call, client.DeleteSecretVersionCommentWithResponse.
+cli	keyorix secret comment list	D	secret_versions.go:308 versionCommentListCmd.RunE is read-only: one call to client.ListSecretVersionCommentsWithResponse, then formatting.
+cli	keyorix secret copy	D	secret_organize.go:66 secretCopyCmd.RunE makes exactly one write call, client.CopySecretWithResponse; the whole copy happens server-side in one request.
+cli	keyorix secret copy-environment	D	secret_organize.go:112 secretCopyEnvironmentCmd.RunE makes exactly one write call, client.CopyEnvironmentSecretsWithResponse; bulk per-secret copy/skip logic is server-side in a single request, not multiple client writes.
+cli	keyorix secret deps add	D	secret_deps.go:56 secretDepsAddCmd.RunE makes exactly one write call, client.AddSecretDependencyWithResponse.
+cli	keyorix secret deps impact	D	secret_deps.go:121 secretDepsImpactCmd.RunE is read-only: one call to client.GetSecretImpactWithResponse, then formatting.
+cli	keyorix secret deps list	D	secret_deps.go:30 secretDepsListCmd.RunE is read-only: one call to client.ListSecretDependenciesWithResponse, then formatting.
+cli	keyorix secret deps rm	D	secret_deps.go:90 secretDepsRemoveCmd.RunE makes exactly one write call, client.RemoveSecretDependencyWithResponse.
+cli	keyorix secret description	D	secret_metadata.go:182 secretDescriptionCmd.RunE: at most one write (client.DescribeSecretWithResponse, only when --set changed) followed unconditionally by a read-only GetSecretWithResponse used only to print the current value; only ever one real write.
+cli	keyorix secret fix	C	secret_fix.go:51 runSecretFix is a local source-tree rewriter (no REST calls): loops over independent fixPlan entries, printing an error and continuing past any single file's failure, then separately best-effort appends a stub line to .env. A mid-loop crash leaves some files fixed and others untouched, visible in printed output and safely re-runnable; no shared state can be left inconsistent.
+cli	keyorix secret get-schedule	D	secret_schedule.go:92 secretGetScheduleCmd.RunE is read-only: one call to client.GetSecretScheduleWithResponse, then formatting.
+cli	keyorix secret info	D	secret_metadata.go:19 secretInfoCmd.RunE is read-only: client.GetSecretWithResponse plus a best-effort client.GetSecretTagsWithResponse (explicitly comment-documented as best-effort, errors ignored); no writes.
+cli	keyorix secret move	D	secret_organize.go:21 secretMoveCmd.RunE makes exactly one write call, client.MoveSecretWithResponse.
+cli	keyorix secret restore	D	secret_lifecycle.go:129 secretRestoreCmd.RunE makes exactly one write call, client.RestoreSecretWithResponse (soft-delete recovery flag flip, not the backup/restore subsystem).
+cli	keyorix secret resume	D	secret_lifecycle.go:51 secretResumeCmd.RunE makes exactly one write call, client.ResumeSecretWithResponse.
+cli	keyorix secret rollback	D	secret_versions.go:404 secretRollbackCmd.RunE makes exactly one write call, client.RollbackSecretWithResponse; old-value-as-new-version semantics are implemented server-side in that single request.
+cli	keyorix secret set-schedule	D	secret_schedule.go:50 secretSetScheduleCmd.RunE makes exactly one write call, client.SetSecretScheduleWithResponse; convertSecretDayNames is pure local string parsing before it.
+cli	keyorix secret suspend	D	secret_lifecycle.go:21 secretSuspendCmd.RunE makes exactly one write call, client.SuspendSecretWithResponse.
+cli	keyorix secret tags	D	secret_metadata.go:106 secretTagsCmd.RunE branches mutually exclusively on cmd.Flags().Changed("set"): either one write or one read; never both in the same invocation.
+cli	keyorix secret template create	D	secret_templates.go:92 secretTemplateCreateCmd.RunE makes exactly one write call, client.CreateSecretTemplateWithResponse.
+cli	keyorix secret template delete	D	secret_templates.go:132 secretTemplateDeleteCmd.RunE does a read (resolve name->id) followed by exactly one write (client.DeleteSecretTemplateWithResponse); a crash before it just means nothing was deleted.
+cli	keyorix secret template get	D	secret_templates.go:52 secretTemplateGetCmd.RunE is read-only: one list call, then a local name match and print; no writes.
+cli	keyorix secret template list	D	secret_templates.go:24 secretTemplateListCmd.RunE is read-only: one call to client.ListSecretTemplatesWithResponse, then formatting.
+cli	keyorix secret trash	D	secret_lifecycle.go:90 secretTrashCmd.RunE is read-only: one call to client.ListDeletedSecretsWithResponse, then formatting (soft-delete recycle-bin listing, unrelated to the backup/restore subsystem).
+cli	keyorix share update	D	share.go:61/261 runShareUpdate makes exactly one write call, client.UpdateSharePermissionWithResponse; expiry validation beforehand is pure local struct-building, not an additional write.
+cli	keyorix sod policy create	D	sod.go:94 sodPolicyCreateCmd.RunE makes exactly one write call, client.CreateSoDPolicyWithResponse.
+cli	keyorix sod policy delete	D	sod.go:128 sodPolicyDeleteCmd.RunE makes exactly one write call, client.DeleteSoDPolicyWithResponse.
+cli	keyorix sod policy list	D	sod.go:58 sodPolicyListCmd.RunE is read-only: one call to client.ListSoDPoliciesWithResponse, then formatting.
+cli	keyorix sod violations	D	sod.go:153 sodViolationsCmd.RunE is read-only: one call to client.ListSoDViolationsWithResponse, then formatting (including a degraded-scan warning path, still read-only).
+cli	keyorix system info	D	system.go:57 systemInfoCmd.RunE is read-only: one call to client.GetSystemInfoWithResponse, then formatting.
+cli	keyorix system role-expiry-check	D	system.go:116 systemRoleExpiryCheckCmd.RunE makes exactly one call, client.RunRoleExpiryCheckWithResponse, a single POST that triggers a server-side job; no sequential client-side writes.
+cli	keyorix system token-expiry-check	D	system.go:154 systemTokenExpiryCheckCmd.RunE makes exactly one call, client.RunTokenExpiryCheckWithResponse, a single POST that triggers a server-side job; no sequential client-side writes.

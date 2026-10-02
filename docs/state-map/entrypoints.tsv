@@ -223,9 +223,9 @@ cli	keyorix secret	cli/cmd/secret.go	34		none	no RunE/Run set on this cobra.Comm
 cli	keyorix secret access	cli/cmd/secret_access.go	16	<expr>	D	secret_access.go:16-48 is fully read-only.
 cli	keyorix secret access-log	cli/cmd/secret_access.go	55	<expr>	D	secret_access.go:55-94 is fully read-only.
 cli	keyorix secret acl	cli/cmd/secret_acl.go	15		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
-cli	keyorix secret acl grant	cli/cmd/secret_acl.go	68	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix secret acl list	cli/cmd/secret_acl.go	28	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix secret acl revoke	cli/cmd/secret_acl.go	105	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
+cli	keyorix secret acl grant	cli/cmd/secret_acl.go	68	<expr>	D	secret_acl.go:68 secretACLGrantCmd.RunE makes exactly one write call, client.GrantSecretACLWithResponse; everything else is flag validation and print.
+cli	keyorix secret acl list	cli/cmd/secret_acl.go	28	<expr>	D	secret_acl.go:28 secretACLListCmd.RunE is read-only: one call to client.ListSecretACLsWithResponse, then formatting; no writes at all.
+cli	keyorix secret acl revoke	cli/cmd/secret_acl.go	105	<expr>	D	secret_acl.go:105 secretACLRevokeCmd.RunE makes exactly one write call, client.RevokeSecretACLWithResponse; flag checks precede it, print follows.
 cli	keyorix secret audit	cli/cmd/secret_risk.go	211	runSecretAudit	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret auto-rotate	cli/cmd/secret_rotation.go	146	runSecretAutoRotate	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret blast-radius	cli/cmd/secret_risk.go	80	runSecretBlastRadius	none	single/no write-shaped call found by a 1-hop scan of the handler body
@@ -233,59 +233,59 @@ cli	keyorix secret bulk-delete	cli/cmd/secret_bulk.go	320	runSecretBulkDelete	no
 cli	keyorix secret bulk-rename	cli/cmd/secret_bulk.go	209	runSecretBulkRename	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret bulk-rotate	cli/cmd/secret_bulk.go	30	runSecretBulkRotate	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret cert	cli/cmd/secret_risk.go	139	runSecretCert	none	single/no write-shaped call found by a 1-hop scan of the handler body
-cli	keyorix secret classify	cli/cmd/secret_metadata.go	243	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix secret clear-schedule	cli/cmd/secret_schedule.go	123	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
+cli	keyorix secret classify	cli/cmd/secret_metadata.go	243	<expr>	D	secret_metadata.go:243 secretClassifyCmd.RunE makes exactly one write call, client.ClassifySecretWithResponse; the switch over --level values is validation, not a second write.
+cli	keyorix secret clear-schedule	cli/cmd/secret_schedule.go	123	<expr>	D	secret_schedule.go:123 secretClearScheduleCmd.RunE makes exactly one write call, client.DeleteSecretScheduleWithResponse.
 cli	keyorix secret comment	cli/cmd/secret_versions.go	264		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
-cli	keyorix secret comment add	cli/cmd/secret_versions.go	269	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix secret comment delete	cli/cmd/secret_versions.go	351	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix secret comment list	cli/cmd/secret_versions.go	308	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix secret copy	cli/cmd/secret_organize.go	66	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix secret copy-environment	cli/cmd/secret_organize.go	112	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
+cli	keyorix secret comment add	cli/cmd/secret_versions.go	269	<expr>	D	secret_versions.go:269 versionCommentAddCmd.RunE makes exactly one write call, client.AddSecretVersionCommentWithResponse; args parsing precedes it.
+cli	keyorix secret comment delete	cli/cmd/secret_versions.go	351	<expr>	D	secret_versions.go:351 versionCommentDeleteCmd.RunE makes exactly one write call, client.DeleteSecretVersionCommentWithResponse.
+cli	keyorix secret comment list	cli/cmd/secret_versions.go	308	<expr>	D	secret_versions.go:308 versionCommentListCmd.RunE is read-only: one call to client.ListSecretVersionCommentsWithResponse, then formatting.
+cli	keyorix secret copy	cli/cmd/secret_organize.go	66	<expr>	D	secret_organize.go:66 secretCopyCmd.RunE makes exactly one write call, client.CopySecretWithResponse; the whole copy happens server-side in one request.
+cli	keyorix secret copy-environment	cli/cmd/secret_organize.go	112	<expr>	D	secret_organize.go:112 secretCopyEnvironmentCmd.RunE makes exactly one write call, client.CopyEnvironmentSecretsWithResponse; bulk per-secret copy/skip logic is server-side in a single request, not multiple client writes.
 cli	keyorix secret create	cli/cmd/secret_crud.go	34	runSecretCreate	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret delete	cli/cmd/secret_crud.go	487	runSecretDelete	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret deps	cli/cmd/secret_deps.go	17		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
-cli	keyorix secret deps add	cli/cmd/secret_deps.go	56	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix secret deps impact	cli/cmd/secret_deps.go	121	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix secret deps list	cli/cmd/secret_deps.go	30	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix secret deps rm	cli/cmd/secret_deps.go	90	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix secret description	cli/cmd/secret_metadata.go	182	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
+cli	keyorix secret deps add	cli/cmd/secret_deps.go	56	<expr>	D	secret_deps.go:56 secretDepsAddCmd.RunE makes exactly one write call, client.AddSecretDependencyWithResponse.
+cli	keyorix secret deps impact	cli/cmd/secret_deps.go	121	<expr>	D	secret_deps.go:121 secretDepsImpactCmd.RunE is read-only: one call to client.GetSecretImpactWithResponse, then formatting.
+cli	keyorix secret deps list	cli/cmd/secret_deps.go	30	<expr>	D	secret_deps.go:30 secretDepsListCmd.RunE is read-only: one call to client.ListSecretDependenciesWithResponse, then formatting.
+cli	keyorix secret deps rm	cli/cmd/secret_deps.go	90	<expr>	D	secret_deps.go:90 secretDepsRemoveCmd.RunE makes exactly one write call, client.RemoveSecretDependencyWithResponse.
+cli	keyorix secret description	cli/cmd/secret_metadata.go	182	<expr>	D	secret_metadata.go:182 secretDescriptionCmd.RunE: at most one write (client.DescribeSecretWithResponse, only when --set changed) followed unconditionally by a read-only GetSecretWithResponse used only to print the current value; only ever one real write.
 cli	keyorix secret diff	cli/cmd/secret_versions.go	154	runSecretDiff	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret expiring	cli/cmd/secret_hygiene.go	21	runSecretExpiring	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret explain	cli/cmd/secret_explain.go	17	runSecretExplain	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret export	cli/cmd/secret_export.go	31	runSecretExport	none	single/no write-shaped call found by a 1-hop scan of the handler body
-cli	keyorix secret fix	cli/cmd/secret_fix.go	19	runSecretFix	REVIEW	2 write-shaped call(s) found by a 1-hop scan of the handler body: strings.ReplaceAll, f.Close
+cli	keyorix secret fix	cli/cmd/secret_fix.go	19	runSecretFix	C	secret_fix.go:51 runSecretFix is a local source-tree rewriter (no REST calls): loops over independent fixPlan entries, printing an error and continuing past any single file's failure, then separately best-effort appends a stub line to .env. A mid-loop crash leaves some files fixed and others untouched, visible in printed output and safely re-runnable; no shared state can be left inconsistent.
 cli	keyorix secret folder	cli/cmd/secret_folder.go	17		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
 cli	keyorix secret folder create	cli/cmd/secret_folder.go	36	runSecretFolderCreate	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret folder delete	cli/cmd/secret_folder.go	165	runSecretFolderDelete	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret folder list	cli/cmd/secret_folder.go	100	runSecretFolderList	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret get	cli/cmd/secret_crud.go	181	runSecretGet	none	single/no write-shaped call found by a 1-hop scan of the handler body
-cli	keyorix secret get-schedule	cli/cmd/secret_schedule.go	92	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
+cli	keyorix secret get-schedule	cli/cmd/secret_schedule.go	92	<expr>	D	secret_schedule.go:92 secretGetScheduleCmd.RunE is read-only: one call to client.GetSecretScheduleWithResponse, then formatting.
 cli	keyorix secret import	cli/cmd/secret_import.go	34	runSecretImport	none	single/no write-shaped call found by a 1-hop scan of the handler body
-cli	keyorix secret info	cli/cmd/secret_metadata.go	19	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
+cli	keyorix secret info	cli/cmd/secret_metadata.go	19	<expr>	D	secret_metadata.go:19 secretInfoCmd.RunE is read-only: client.GetSecretWithResponse plus a best-effort client.GetSecretTagsWithResponse (explicitly comment-documented as best-effort, errors ignored); no writes.
 cli	keyorix secret list	cli/cmd/secret_crud.go	632	runSecretList	none	single/no write-shaped call found by a 1-hop scan of the handler body
-cli	keyorix secret move	cli/cmd/secret_organize.go	21	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
+cli	keyorix secret move	cli/cmd/secret_organize.go	21	<expr>	D	secret_organize.go:21 secretMoveCmd.RunE makes exactly one write call, client.MoveSecretWithResponse.
 cli	keyorix secret name-conformance	cli/cmd/secret_hygiene.go	125	runSecretNameConformance	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret orphaned	cli/cmd/secret_hygiene.go	79	runSecretOrphaned	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret ownership-history	cli/cmd/secret_hygiene.go	263	runSecretOwnershipHistory	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret quota-report	cli/cmd/secret_hygiene.go	216	runSecretQuotaReport	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret reassign-owner	cli/cmd/secret_hygiene.go	317	runSecretReassignOwner	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret render	cli/cmd/secret_render.go	20	runSecretRender	none	single/no write-shaped call found by a 1-hop scan of the handler body
-cli	keyorix secret restore	cli/cmd/secret_lifecycle.go	129	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix secret resume	cli/cmd/secret_lifecycle.go	51	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix secret rollback	cli/cmd/secret_versions.go	404	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
+cli	keyorix secret restore	cli/cmd/secret_lifecycle.go	129	<expr>	D	secret_lifecycle.go:129 secretRestoreCmd.RunE makes exactly one write call, client.RestoreSecretWithResponse (soft-delete recovery flag flip, not the backup/restore subsystem).
+cli	keyorix secret resume	cli/cmd/secret_lifecycle.go	51	<expr>	D	secret_lifecycle.go:51 secretResumeCmd.RunE makes exactly one write call, client.ResumeSecretWithResponse.
+cli	keyorix secret rollback	cli/cmd/secret_versions.go	404	<expr>	D	secret_versions.go:404 secretRollbackCmd.RunE makes exactly one write call, client.RollbackSecretWithResponse; old-value-as-new-version semantics are implemented server-side in that single request.
 cli	keyorix secret rotate	cli/cmd/secret_rotation.go	20	runSecretRotate	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret rotation-simulate	cli/cmd/secret_rotation.go	72	runSecretRotationSimulate	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret scan	cli/cmd/secret_scan.go	18	runSecretScan	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret score	cli/cmd/secret_risk.go	19	runSecretScore	none	single/no write-shaped call found by a 1-hop scan of the handler body
-cli	keyorix secret set-schedule	cli/cmd/secret_schedule.go	50	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix secret suspend	cli/cmd/secret_lifecycle.go	21	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix secret tags	cli/cmd/secret_metadata.go	106	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
+cli	keyorix secret set-schedule	cli/cmd/secret_schedule.go	50	<expr>	D	secret_schedule.go:50 secretSetScheduleCmd.RunE makes exactly one write call, client.SetSecretScheduleWithResponse; convertSecretDayNames is pure local string parsing before it.
+cli	keyorix secret suspend	cli/cmd/secret_lifecycle.go	21	<expr>	D	secret_lifecycle.go:21 secretSuspendCmd.RunE makes exactly one write call, client.SuspendSecretWithResponse.
+cli	keyorix secret tags	cli/cmd/secret_metadata.go	106	<expr>	D	secret_metadata.go:106 secretTagsCmd.RunE branches mutually exclusively on cmd.Flags().Changed("set"): either one write or one read; never both in the same invocation.
 cli	keyorix secret template	cli/cmd/secret_templates.go	14		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
-cli	keyorix secret template create	cli/cmd/secret_templates.go	92	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix secret template delete	cli/cmd/secret_templates.go	132	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix secret template get	cli/cmd/secret_templates.go	52	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix secret template list	cli/cmd/secret_templates.go	24	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix secret trash	cli/cmd/secret_lifecycle.go	90	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
+cli	keyorix secret template create	cli/cmd/secret_templates.go	92	<expr>	D	secret_templates.go:92 secretTemplateCreateCmd.RunE makes exactly one write call, client.CreateSecretTemplateWithResponse.
+cli	keyorix secret template delete	cli/cmd/secret_templates.go	132	<expr>	D	secret_templates.go:132 secretTemplateDeleteCmd.RunE does a read (resolve name->id) followed by exactly one write (client.DeleteSecretTemplateWithResponse); a crash before it just means nothing was deleted.
+cli	keyorix secret template get	cli/cmd/secret_templates.go	52	<expr>	D	secret_templates.go:52 secretTemplateGetCmd.RunE is read-only: one list call, then a local name match and print; no writes.
+cli	keyorix secret template list	cli/cmd/secret_templates.go	24	<expr>	D	secret_templates.go:24 secretTemplateListCmd.RunE is read-only: one call to client.ListSecretTemplatesWithResponse, then formatting.
+cli	keyorix secret trash	cli/cmd/secret_lifecycle.go	90	<expr>	D	secret_lifecycle.go:90 secretTrashCmd.RunE is read-only: one call to client.ListDeletedSecretsWithResponse, then formatting (soft-delete recycle-bin listing, unrelated to the backup/restore subsystem).
 cli	keyorix secret update	cli/cmd/secret_crud.go	399	runSecretUpdate	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix secret versions	cli/cmd/secret_versions.go	24	runSecretVersions	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix share	cli/cmd/share.go	25		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
@@ -295,19 +295,19 @@ cli	keyorix share list	cli/cmd/share.go	47	runShareList	none	single/no write-sha
 cli	keyorix share revoke	cli/cmd/share.go	69	runShareRevoke	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix share self-remove	cli/cmd/share.go	75	runShareSelfRemove	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix share shared-secrets	cli/cmd/share.go	84	runSharedSecrets	none	single/no write-shaped call found by a 1-hop scan of the handler body
-cli	keyorix share update	cli/cmd/share.go	61	runShareUpdate	REVIEW	2 write-shaped call(s) found by a 1-hop scan of the handler body: apiclient.UpdateSharePermissionJSONBodyPermission, client.UpdateSharePermissionWithResponse
+cli	keyorix share update	cli/cmd/share.go	61	runShareUpdate	D	share.go:61/261 runShareUpdate makes exactly one write call, client.UpdateSharePermissionWithResponse; expiry validation beforehand is pure local struct-building, not an additional write.
 cli	keyorix sod	cli/cmd/sod.go	17		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
 cli	keyorix sod policy	cli/cmd/sod.go	23		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
-cli	keyorix sod policy create	cli/cmd/sod.go	94	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix sod policy delete	cli/cmd/sod.go	128	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix sod policy list	cli/cmd/sod.go	58	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix sod violations	cli/cmd/sod.go	153	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
+cli	keyorix sod policy create	cli/cmd/sod.go	94	<expr>	D	sod.go:94 sodPolicyCreateCmd.RunE makes exactly one write call, client.CreateSoDPolicyWithResponse.
+cli	keyorix sod policy delete	cli/cmd/sod.go	128	<expr>	D	sod.go:128 sodPolicyDeleteCmd.RunE makes exactly one write call, client.DeleteSoDPolicyWithResponse.
+cli	keyorix sod policy list	cli/cmd/sod.go	58	<expr>	D	sod.go:58 sodPolicyListCmd.RunE is read-only: one call to client.ListSoDPoliciesWithResponse, then formatting.
+cli	keyorix sod violations	cli/cmd/sod.go	153	<expr>	D	sod.go:153 sodViolationsCmd.RunE is read-only: one call to client.ListSoDViolationsWithResponse, then formatting (including a degraded-scan warning path, still read-only).
 cli	keyorix status	cli/cmd/status.go	11	runStatus	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix system	cli/cmd/system.go	25		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
-cli	keyorix system info	cli/cmd/system.go	57	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
+cli	keyorix system info	cli/cmd/system.go	57	<expr>	D	system.go:57 systemInfoCmd.RunE is read-only: one call to client.GetSystemInfoWithResponse, then formatting.
 cli	keyorix system init	cli/cmd/systeminit.go	37	runSystemInit	none	single/no write-shaped call found by a 1-hop scan of the handler body
-cli	keyorix system role-expiry-check	cli/cmd/system.go	116	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
-cli	keyorix system token-expiry-check	cli/cmd/system.go	154	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
+cli	keyorix system role-expiry-check	cli/cmd/system.go	116	<expr>	D	system.go:116 systemRoleExpiryCheckCmd.RunE makes exactly one call, client.RunRoleExpiryCheckWithResponse, a single POST that triggers a server-side job; no sequential client-side writes.
+cli	keyorix system token-expiry-check	cli/cmd/system.go	154	<expr>	D	system.go:154 systemTokenExpiryCheckCmd.RunE makes exactly one call, client.RunTokenExpiryCheckWithResponse, a single POST that triggers a server-side job; no sequential client-side writes.
 cli	keyorix trust	cli/cmd/trust.go	32		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
 cli	keyorix trust keygen	cli/cmd/trust.go	57	<expr>	REVIEW	handler "<expr>" not found by name in the scanned implementation directories -- resolution blind spot, see classify.go's package doc
 cli	keyorix usage	cli/cmd/usage.go	24		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)

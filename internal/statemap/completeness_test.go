@@ -30,7 +30,7 @@ var validClasses = map[string]bool{
 // just re-running the generator after an unrelated code change. Set to the
 // actual count after this round's classifier fixes (the job classifier was
 // off-by-one before this round and flagged all scheduled jobs; see the PR).
-const maxReviewRows = 145 // SESSION-AR batch 1/5 (AT0 REVIEW triage): 37 rows triaged into class-overrides.tsv (36 D, 1 C), see docs/state-map/class-overrides.tsv's batch-1 header comment. `keyorix backup` stays REVIEW -- in scope for Session AT's backup/restore triage, not this batch.
+const maxReviewRows = 107 // SESSION-AR batch 2/5 (AT0 REVIEW triage): 38 more rows triaged into class-overrides.tsv (37 D, 1 C), see that file's batch-2 header comment.
 
 // TestCompletenessGuard_EntrypointsAndStoresMatchCode is AT0(f): re-runs the
 // same extractors/classifier cmd/statemapgen uses and fails if
