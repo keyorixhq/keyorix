@@ -61,8 +61,14 @@ database:
   max_idle_conns: 5
   conn_max_lifetime_minutes: 30
 
-  # SQLite only — these pragmas improve write throughput on SQLite:
-  # journal_mode: WAL, synchronous: NORMAL, temp_store: MEMORY
+  # SQLite only — this codebase's own factory.go sets these on every connection:
+  # journal_mode: WAL, synchronous: FULL, foreign_keys: ON, busy_timeout: 10s.
+  # Do NOT set synchronous to NORMAL: this database carries the audit
+  # hash-chain, and NORMAL in WAL mode only fsyncs at checkpoint boundaries,
+  # not on every COMMIT -- a committed audit entry could be lost on an OS
+  # crash/power loss. FULL costs an fsync per commit; that cost is the price
+  # of "the audit entry was written" and "the audit entry survives a host
+  # crash" staying the same claim.
 
   # PostgreSQL — tuning is done server-side (postgresql.conf):
   # max_connections, shared_buffers, work_mem, effective_cache_size
@@ -195,10 +201,15 @@ alerts:
 
 ### Database Tuning
 ```sql
--- SQLite performance optimizations (run on the SQLite connection)
+-- SQLite performance optimizations (journal_mode/synchronous/busy_timeout/
+-- foreign_keys are already set by this codebase's factory.go on every
+-- connection -- don't re-apply these by hand against a running deployment):
 PRAGMA cache_size = 10000;
 PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
+PRAGMA synchronous = FULL;  -- NOT NORMAL: this DB carries the audit hash-chain,
+                            -- and NORMAL in WAL mode only fsyncs at checkpoint
+                            -- boundaries, not every COMMIT -- a committed audit
+                            -- entry could be lost on an OS crash/power loss.
 PRAGMA temp_store = MEMORY;
 PRAGMA mmap_size = 268435456;
 

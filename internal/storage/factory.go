@@ -175,6 +175,28 @@ const sqliteBusyTimeoutMillis = 10000
 //     35871480798, 35840030029: "grant victim ...: database is locked (5)
 //     (SQLITE_BUSY)" from AssignUserRole) despite _busy_timeout already
 //     being set.
+//   - _synchronous=FULL (SESSION-PERF, 2026-10-02): without this, `synchronous`
+//     is never touched by this DSN and falls through to the driver/library
+//     default — which modernc.org/sqlite v1.59.0 leaves unset when the DSN
+//     omits it, so it resolves to SQLite's own compiled-in default of FULL (2)
+//     (confirmed empirically: a connection opened with the DSN as it stood
+//     before this change reports `PRAGMA synchronous` = 2). So this change does
+//     NOT alter runtime behaviour — FULL was already in effect. What it fixes
+//     is that the guarantee was implicit and unasserted: nothing stopped a
+//     future dependency bump, or someone "optimizing" this DSN, from silently
+//     weakening it to NORMAL. FULL, not NORMAL, is required here specifically
+//     because this database carries the audit hash-chain
+//     (internal/storage/store/local_audit_chain.go): in WAL mode, NORMAL only
+//     fsyncs at checkpoint boundaries, not on every COMMIT — a transaction can
+//     report success to the audit-chain writer while its WAL frame is still
+//     only in the OS page cache, surviving an application crash but NOT an OS
+//     crash or power loss before the next checkpoint. FULL fsyncs the WAL on
+//     every commit, so "the audit entry was written" and "the audit entry
+//     survives a host crash" stay the same claim. See
+//     factory_sqlite_pragma_test.go for the test asserting this, and
+//     docs/g80-remediation-notes.md's SESSION-PERF entry for the measured
+//     before/after (no throughput delta, as expected, since the pragma value
+//     is unchanged — this closes an unasserted-guarantee gap, not a bug).
 //
 // Postgres has no equivalent opt-out (FK enforcement is always on) and no analogous
 // pragmas, so this is intentionally SQLite-only — never applied to the Postgres
@@ -186,7 +208,7 @@ func sqliteDSN(dbPath string) string {
 		// custom path with embedded pragmas) — append rather than clobber them.
 		sep = "&"
 	}
-	return fmt.Sprintf("%s%s_foreign_keys=1&_busy_timeout=%d&_journal_mode=WAL&_txlock=immediate", dbPath, sep, sqliteBusyTimeoutMillis)
+	return fmt.Sprintf("%s%s_foreign_keys=1&_busy_timeout=%d&_journal_mode=WAL&_txlock=immediate&_synchronous=FULL", dbPath, sep, sqliteBusyTimeoutMillis)
 }
 
 // gormConfig returns the *gorm.Config shared by every gorm.Open call in this
