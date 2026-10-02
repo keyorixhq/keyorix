@@ -230,6 +230,23 @@ var multiStepAmbiguousCommitExceptions = []nonLoadBearingException{}
 // op.Execute) ties the exemption to evidence the known, reviewed code path
 // fired, not to the table-diff shape alone. Silent missing envs stay a
 // violation.
+//
+// #2406: unlike every other entry here, these 4 are consulted from the
+// default: (plain-error) branch of checkOracles' oracle (a), not just the
+// success branch -- core.RevokeLease performs an EXTERNAL, irreversible
+// side effect (engine.Revoke drops the credential on the real target) that
+// cannot be tied to the SAME transaction as its own bookkeeping writes.
+// Once that drop succeeds, the lease row MUST end up marked "revoked" --
+// claiming otherwise (leaving it "active") would be a worse lie in the
+// other direction, implying a dead credential is still live. If the
+// FOLLOW-ON audit write then fails, RevokeLease correctly returns an error
+// (closing #2406: callers must not see a clean, unconditional success) --
+// but the DynamicSecretLease/AuditEvent state has still legitimately moved
+// relative to before the call, exactly the shape the default: branch's
+// blanket "error implies zero state change" assumption doesn't hold for.
+// See RevokeLease's own #2406 doc comment (dynamic_secrets.go) for the
+// full design. All 4 entries reach the identical core.RevokeLease /
+// RevokeLeasesForConfig code path.
 var opScopedBestEffortTables = []struct {
 	op, method string
 	tables     []string
@@ -275,6 +292,10 @@ var opScopedBestEffortTables = []struct {
 	// (REST POST /api/v1/projects/{id}/machine-identities/migrate-from-user,
 	// fault=GetRolePermissions#1/error), Session CR round 2.
 	{op: "REST POST /api/v1/projects/{id}/machine-identities/migrate-from-user", method: "GetRolePermissions", tables: []string{"AuditEvent", "MachineIdentity"}},
+	{op: "REST POST /api/v1/dynamic-secrets/configs/{id}/revoke-all", method: "LogAuditEvent", tables: []string{"DynamicSecretLease", "AuditEvent"}},
+	{op: "REST POST /api/v1/dynamic-secrets/leases/{leaseID}/revoke", method: "LogAuditEvent", tables: []string{"DynamicSecretLease", "AuditEvent"}},
+	{op: "GRPC keyorix.v1.DynamicSecretService.RevokeLease", method: "LogAuditEvent", tables: []string{"DynamicSecretLease", "AuditEvent"}},
+	{op: "GRPC keyorix.v1.DynamicSecretService.RevokeAllLeases", method: "LogAuditEvent", tables: []string{"DynamicSecretLease", "AuditEvent"}},
 }
 
 func opScopedAcceptableByDesign(op, method string, nth int, diff []string, execLog string) bool {
