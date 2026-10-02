@@ -62,6 +62,34 @@ type InsecureSettingStatus struct {
 // intent (e.g. an explicit CLI flag) takes effect without silently depending
 // on a field read from the very config file being validated.
 func ValidateStartup(configPath string, forceAutoFix bool) (*ValidationResult, error) {
+	return validateStartup(configPath, forceAutoFix, false)
+}
+
+// ValidateStartupTolerant is ValidateStartup, except a KEK salt/wrapped-DEK pair
+// that BOTH don't exist yet is a warning, not an error, from validateEncryption.
+//
+// server/main.go's runStartupValidation is the sole caller: it runs BEFORE
+// initializeCoreService's encryption.Service.Initialize, which performs
+// first-boot key generation (ensureSaltExists/ensureWrappedDEKExists) when
+// they're missing — so on an actual fresh install, "missing" here means
+// "about to be generated in a few hundred milliseconds," not "broken."
+// ADR-112 flips security.enable_file_permission_check's default to true,
+// which is what makes this server-boot path reach ValidateStartup at all for
+// a deployment that never explicitly asked for it — this tolerance is what
+// keeps that flip from refusing to complete a fresh install's first boot.
+//
+// `keyorix-server admin ... validate` (server/admin/validate.go) and
+// examples/system_init deliberately keep calling the strict ValidateStartup
+// above, unchanged: an operator invoking validate (or the init example)
+// explicitly, as a diagnostic, wants "encryption is enabled but no key
+// material exists" reported as the real problem it is, not silently
+// explained away as "first boot" — they are not mid-boot-sequence the moment
+// before auto-generation runs the way the server's own call is.
+func ValidateStartupTolerant(configPath string, forceAutoFix bool) (*ValidationResult, error) {
+	return validateStartup(configPath, forceAutoFix, true)
+}
+
+func validateStartup(configPath string, forceAutoFix bool, tolerateUnprovisionedKeys bool) (*ValidationResult, error) {
 	result := &ValidationResult{
 		ConfigValid:   false,
 		PermissionsOK: false,
@@ -97,7 +125,7 @@ func ValidateStartup(configPath string, forceAutoFix bool) (*ValidationResult, e
 	}
 
 	if cfg.Storage.Encryption.Enabled {
-		if err := validateEncryption(cfg, result); err != nil {
+		if err := validateEncryption(cfg, result, tolerateUnprovisionedKeys); err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("Encryption validation failed: %v", err))
 			return result, fmt.Errorf("encryption validation failed: %w", err)
 		}
@@ -302,27 +330,44 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 // derived from the master passphrase at runtime and never touches disk, so there
 // is no KEK file to check. The DEK on disk is wrapped (AES-256-GCM: 12-byte nonce
 // + 32-byte key + 16-byte tag = 60 bytes), not a bare 32-byte key.
-func validateEncryption(cfg *config.Config, result *ValidationResult) error {
+//
+// tolerateUnprovisionedKeys, when true (ValidateStartupTolerant), treats BOTH
+// files missing as "not yet provisioned" (a warning) rather than an error — see
+// ValidateStartupTolerant's doc comment for why the server's own boot path needs
+// this and the CLI `admin validate` diagnostic path (tolerateUnprovisionedKeys
+// false, via the plain ValidateStartup) does not. Exactly one of the two missing
+// (as opposed to both) is NEVER given this pass, even when tolerant: that is a
+// broken partial state no ordinary boot sequence produces, not a fresh install,
+// and stays a hard error below regardless of the caller.
+func validateEncryption(cfg *config.Config, result *ValidationResult, tolerateUnprovisionedKeys bool) error {
 	enc := cfg.Storage.Encryption
 
 	saltPath := resolveKeyPath(enc.SaltPath)
 	if strings.Contains(saltPath, "..") {
 		return fmt.Errorf("KEK salt path is unsafe: %s", saltPath)
 	}
-	saltInfo, err := os.Stat(saltPath)
-	if err != nil {
+	dekPath := resolveKeyPath(enc.DEKPath)
+	if strings.Contains(dekPath, "..") {
+		return fmt.Errorf("DEK path is unsafe: %s", dekPath)
+	}
+
+	saltInfo, saltErr := os.Stat(saltPath)
+	dekInfo, dekErr := os.Stat(dekPath)
+	if tolerateUnprovisionedKeys && os.IsNotExist(saltErr) && os.IsNotExist(dekErr) {
+		result.Warnings = append(result.Warnings, fmt.Sprintf(
+			"KEK salt (%s) and wrapped DEK (%s) do not exist yet — treating as first boot; they will be generated before this check runs again",
+			saltPath, dekPath))
+		return nil
+	}
+
+	if saltErr != nil {
 		return fmt.Errorf("KEK salt file not found: %s", saltPath)
 	}
 	if saltInfo.Size() != 32 {
 		return fmt.Errorf("KEK salt file %s has invalid size %d bytes (expected 32)", saltPath, saltInfo.Size())
 	}
 
-	dekPath := resolveKeyPath(enc.DEKPath)
-	if strings.Contains(dekPath, "..") {
-		return fmt.Errorf("DEK path is unsafe: %s", dekPath)
-	}
-	dekInfo, err := os.Stat(dekPath)
-	if err != nil {
+	if dekErr != nil {
 		return fmt.Errorf("wrapped DEK file not found: %s", dekPath)
 	}
 	const minWrappedDEKSize = 60 // 12-byte GCM nonce + 32-byte key + 16-byte tag

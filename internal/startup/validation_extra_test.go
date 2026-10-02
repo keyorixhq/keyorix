@@ -45,7 +45,7 @@ func TestSafeFilePermPath_SafeRelative(t *testing.T) {
 // is caught by validateEncryption's own traversal check.
 func TestValidateEncryption_UnsafeSaltPath(t *testing.T) {
 	cfg := encCfg("../../outside/salt", "/tmp/dek")
-	err := validateEncryption(cfg, &ValidationResult{})
+	err := validateEncryption(cfg, &ValidationResult{}, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsafe")
 }
@@ -56,7 +56,7 @@ func TestValidateEncryption_UnsafeDEKPath(t *testing.T) {
 	dir := t.TempDir()
 	salt := writeKeyFile(t, dir, "kek.salt", 32)
 	cfg := encCfg(salt, "../../outside/dek.key")
-	err := validateEncryption(cfg, &ValidationResult{})
+	err := validateEncryption(cfg, &ValidationResult{}, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsafe")
 }
@@ -68,7 +68,7 @@ func TestValidateEncryption_MissingDEK(t *testing.T) {
 	salt := writeKeyFile(t, dir, "kek.salt", 32)
 	dek := filepath.Join(dir, "absent.dek")
 
-	err := validateEncryption(encCfg(salt, dek), &ValidationResult{})
+	err := validateEncryption(encCfg(salt, dek), &ValidationResult{}, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "DEK")
 }

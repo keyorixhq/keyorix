@@ -222,6 +222,10 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		log.Fatalf("key file consistency: %v", err)
 	}
 
+	// ADR-112: security.require_mfa now defaults to true (see config.Load). This is
+	// visibility only, not an enforcement gate — logWarnOnImplicitRequireMFADefault.
+	logWarnOnImplicitRequireMFADefault(cfg)
+
 	// Mark this process as a live server attached to cfg's database (ADR-108 §B,
 	// PR 11) — held for the whole process lifetime, released on shutdown. Lets
 	// `keyorix-server admin` commands detect and refuse to run concurrently
@@ -1988,9 +1992,9 @@ func checkTransportTLSPosture(cfg *config.Config) error {
 // they run automatically on every boot (#330).
 //
 // Gated behind security.enable_file_permission_check — the flag these checks are
-// documented under and the one production.yaml/web-enabled.yaml explicitly turn on — so a
-// deployment that hasn't opted in (the default: the flag defaults to false) is completely
-// unaffected by wiring this in; enforceKeyFilePermissions below still runs unconditionally
+// documented under and the one production.yaml/web-enabled.yaml explicitly turn on.
+// ADR-112 flips this flag's default to true (config.Load resolves an absent key to true,
+// not Go's bool zero value) — enforceKeyFilePermissions below still runs unconditionally
 // as the lighter-weight, always-on permission check it always was. When the flag is set,
 // ValidateStartup itself decides warn-vs-fail-closed for a bad permission via
 // allow_unsafe_file_permissions, and auto-fixes bad permissions when
@@ -1998,6 +2002,14 @@ func checkTransportTLSPosture(cfg *config.Config) error {
 // auto-fix takes effect before that check re-inspects the same files) — any other failure
 // (missing/undersized DEK or salt, unreachable local database) refuses to start, matching
 // this being "the sole automated backstop for a world-readable master-key-material file."
+//
+// ADR-112 grace period: a deployment that never explicitly set this key (it is enforcing
+// only because of the new secure default — EnableFilePermissionCheckImplicitDefault is
+// true) gets a start-up warning instead of an instant boot-blocking regression on upgrade
+// if ValidateStartup actually finds a problem. A deployment that explicitly set the key —
+// whether to true (today's existing opt-in behavior) or false — is unaffected by this: an
+// explicit true keeps failing closed exactly as before, an explicit false still skips the
+// whole check below exactly as before.
 func runStartupValidation(cfg *config.Config) error {
 	if !cfg.Security.EnableFilePermissionCheck {
 		// #G37: unlike checkTransportTLSPosture's cleartext warning, this opt-out was
@@ -2008,10 +2020,13 @@ func runStartupValidation(cfg *config.Config) error {
 		log.Printf("WARNING: security.enable_file_permission_check is false — the DEK/salt existence+size and database-reachability startup checks (internal/startup.ValidateStartup) are SKIPPED. Set it true to enable them.")
 		return nil
 	}
+	if cfg.Security.EnableFilePermissionCheckImplicitDefault {
+		log.Printf("INFO: security.enable_file_permission_check is enforcing on its new secure-by-default value (ADR-112) — this config file never set it explicitly. A fresh install is unaffected; an upgraded deployment with a real problem below gets a warning instead of refusing to start, until the key is set explicitly.")
+	}
 	configPath := config.ResolvedPath("")
 	// Server startup has no --fix flag; remediation is governed solely by the
 	// config's Security.AutoFixFilePermissions field, as before.
-	result, err := startup.ValidateStartup(configPath, false)
+	result, err := startup.ValidateStartupTolerant(configPath, false)
 	if result != nil {
 		for _, w := range result.Warnings {
 			log.Printf("startup validation warning: %s", w)
@@ -2021,6 +2036,10 @@ func runStartupValidation(cfg *config.Config) error {
 		}
 	}
 	if err != nil {
+		if cfg.Security.EnableFilePermissionCheckImplicitDefault {
+			log.Printf("WARNING: startup validation failed (%v) — ADR-112 grace period: security.enable_file_permission_check was never set explicitly, so this upgrade continues instead of refusing to start. Fix the problem above, then set security.enable_file_permission_check: true explicitly to make this fail closed like a compliant deployment.", err)
+			return nil
+		}
 		return err
 	}
 	log.Printf("Startup validation passed (config, file permissions, encryption keys, database).")
@@ -2071,6 +2090,15 @@ func enforceKeyFilePermissions(cfg *config.Config) error { // NOSONAR -- cogniti
 	}
 	msg := fmt.Sprintf("key material is readable beyond its owner: %s", strings.Join(insecure, ", "))
 	if cfg.Security.EnableFilePermissionCheck && !cfg.Security.AllowUnsafeFilePermissions {
+		if cfg.Security.EnableFilePermissionCheckImplicitDefault {
+			// ADR-112 grace period: this deployment never explicitly opted into the check —
+			// it's failing closed only because of the new secure default. Don't turn a
+			// pre-existing bad-permission file (present before this upgrade, previously only
+			// warned about) into a boot-blocking regression. Warn loudly instead, naming
+			// exactly how to comply.
+			log.Printf("WARNING: %s — this now fails closed by default (ADR-112); set to warn-only, which is what the pre-upgrade behavior was, with security.allow_unsafe_file_permissions, or (preferred) chmod the files to 0600 and set security.enable_file_permission_check: true explicitly once compliant.", msg)
+			return nil
+		}
 		return fmt.Errorf("%s — refusing to start (chmod to 0600, or set security.allow_unsafe_file_permissions to override)", msg)
 	}
 	log.Printf("WARNING: %s — restrict to 0600. Set security.enable_file_permission_check to fail closed instead of warning.", msg)
@@ -2086,6 +2114,26 @@ func verifyKeyFileSetConsistency(cfg *config.Config) error {
 		return nil
 	}
 	return keyfiles.VerifyKeySetConsistency(&cfg.Storage.Encryption, ".")
+}
+
+// logWarnOnImplicitRequireMFADefault logs a start-up warning when security.require_mfa is
+// enforcing solely because of ADR-112's new secure-by-default value (config.Load resolves
+// an absent key to true; RequireMFAImplicitDefault is true only when the config file never
+// set it explicitly).
+//
+// Unlike enforceKeyFilePermissions/runStartupValidation above, this does NOT soften the
+// actual enforcement for the grace period: server/middleware.EnforceMFAEnrollment only
+// confines an already-authenticated session without MFA to the enrolment endpoints (it
+// does not lock the account out, and non-interactive PAT/machine credentials are exempt
+// entirely — see EnforceMFAEnrollment's own doc comment), so there is no boot-blocking or
+// account-lockout failure mode here to protect an upgrade from. The warning exists so an
+// operator who relied on MFA being off is not silently surprised by admins now being
+// prompted to enrol, and names exactly how to comply or acknowledge it.
+func logWarnOnImplicitRequireMFADefault(cfg *config.Config) {
+	if !cfg.Security.RequireMFA || !cfg.Security.RequireMFAImplicitDefault {
+		return
+	}
+	log.Printf("WARNING: security.require_mfa is enforcing on its new secure-by-default value (ADR-112) — this config file never set it explicitly. Session-authenticated admins without MFA enrolled will be confined to MFA-enrolment endpoints until they enrol (non-interactive PAT/machine credentials are unaffected). Set security.require_mfa: true explicitly once you've reviewed this, or security.require_mfa: false to opt out (visibly, not silently).")
 }
 
 func startGRPCServer(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) error {
