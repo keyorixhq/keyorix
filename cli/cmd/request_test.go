@@ -48,9 +48,47 @@ func TestRunRequestAccess_MatchesOldCLIOutputShape(t *testing.T) {
 
 func TestRunRequestAccess_RequiresProject(t *testing.T) {
 	requestAccessProject = ""
+	requestAccessProjectID = 0
 	t.Setenv("KEYORIX_PROJECT", "")
 	if err := runRequestAccess(requestAccessCmd, nil); err == nil || !containsAll(err.Error(), "no project specified") {
 		t.Fatalf("err = %v, want the missing-project error", err)
+	}
+}
+
+// TestRunRequestAccess_ZeroGrantCallerUsesProjectID covers #2's reported case: a caller with no
+// project grants is correctly denied GET /api/v1/projects (resolveRequestProjectID's backing
+// call), so --project (name lookup) is unusable for them. --project-id must let them request
+// access anyway, without ever calling the list-projects route.
+func TestRunRequestAccess_ZeroGrantCallerUsesProjectID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/projects" && r.Method == http.MethodGet {
+			t.Errorf("zero-grant caller should never hit GET /api/v1/projects, got request to %s", r.URL.Path)
+			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v1/projects/7/access-requests" && r.Method == http.MethodPost:
+			_, _ = fmt.Fprint(w, `{"data":{"access_request":{"ID":11,"ProjectID":7,"UserID":2,"State":"pending"}}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	setRequestCreds(t, srv)
+	requestAccessProject = ""
+	requestAccessProjectID = 7
+	requestAccessRole = ""
+	requestAccessReason = ""
+	defer func() { requestAccessProjectID = 0 }()
+
+	out := captureStdout(t, func() {
+		if err := runRequestAccess(requestAccessCmd, nil); err != nil {
+			t.Fatalf("runRequestAccess: %v", err)
+		}
+	})
+	if !containsAll(out, "Requesting access to project id=7", "Access requested: id=11 project=id=7 requester=user#2") {
+		t.Fatalf("output missing expected fields: %q", out)
 	}
 }
 

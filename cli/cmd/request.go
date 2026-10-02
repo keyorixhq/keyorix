@@ -154,9 +154,10 @@ func dashIfEmpty(s string) string {
 // ── request access ───────────────────────────────────────────────────────────
 
 var (
-	requestAccessProject string
-	requestAccessRole    string
-	requestAccessReason  string
+	requestAccessProject   string
+	requestAccessProjectID uint
+	requestAccessRole      string
+	requestAccessReason    string
 )
 
 var requestAccessCmd = &cobra.Command{
@@ -168,12 +169,40 @@ var requestAccessCmd = &cobra.Command{
 
 func init() {
 	requestAccessCmd.Flags().StringVar(&requestAccessProject, "project", "", "Project name (or use KEYORIX_PROJECT)")
+	requestAccessCmd.Flags().UintVar(&requestAccessProjectID, "project-id", 0,
+		"Project ID -- use this instead of --project when the caller has no grants yet and GET /api/v1/projects "+
+			"correctly denies them (the create-access-request route itself accepts any authenticated caller)")
 	requestAccessCmd.Flags().StringVar(&requestAccessRole, "role", "", "Suggested project role (optional)")
 	requestAccessCmd.Flags().StringVar(&requestAccessReason, "reason", "", "Reason for the request (optional)")
 }
 
+// accessProjectFromFlags reads --project-id / --project / KEYORIX_PROJECT before any network
+// call, so a missing/invalid flag fails fast without contacting the server. A nonzero projectID
+// means --project-id was used (bypassing GET /api/v1/projects entirely -- the only path available
+// to a zero-grant caller, who is correctly denied that list endpoint); otherwise projectName still
+// needs resolving via that listing, for callers who can use it.
+func accessProjectFromFlags() (projectID uint, projectName string, err error) {
+	if requestAccessProjectID != 0 {
+		return requestAccessProjectID, "", nil
+	}
+	projectName, err = requestProjectName(requestAccessProject)
+	if err != nil {
+		return 0, "", fmt.Errorf("no project specified — use --project, --project-id, or set KEYORIX_PROJECT")
+	}
+	return 0, projectName, nil
+}
+
+// accessProjectDisplay renders the project for status output: the quoted name with its ID when
+// known, otherwise just the bare ID (--project-id path, where no name lookup ever happened).
+func accessProjectDisplay(projectID uint, projectName string) string {
+	if projectName == "" {
+		return fmt.Sprintf("id=%d", projectID)
+	}
+	return fmt.Sprintf("%q (id=%d)", projectName, projectID)
+}
+
 func runRequestAccess(_ *cobra.Command, _ []string) error {
-	projectName, err := requestProjectName(requestAccessProject)
+	projectID, projectName, err := accessProjectFromFlags()
 	if err != nil {
 		return err
 	}
@@ -182,12 +211,14 @@ func runRequestAccess(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	projectID, err := resolveRequestProjectID(ctx, client, projectName)
-	if err != nil {
-		return err
+	if projectID == 0 {
+		projectID, err = resolveRequestProjectID(ctx, client, projectName)
+		if err != nil {
+			return err
+		}
 	}
 
-	fmt.Printf("Requesting access to project %q (id=%d)...\n", projectName, projectID)
+	fmt.Printf("Requesting access to project %s...\n", accessProjectDisplay(projectID, projectName))
 	fmt.Println("Note: this request is self-service -- it is always attributed to the authenticated " +
 		"caller's own session. If you are requesting access on behalf of someone else, have them run " +
 		"this command themselves via their own 'keyorix-next login' session.")
@@ -213,8 +244,12 @@ func runRequestAccess(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	req := data.AccessRequest
+	confirmProject := projectName
+	if confirmProject == "" {
+		confirmProject = fmt.Sprintf("id=%d", req.ProjectID)
+	}
 	fmt.Printf("Access requested: id=%d project=%s requester=user#%d suggested-role=%s state=%s\n",
-		req.ID, projectName, req.UserID, dashIfEmpty(req.SuggestedRole), req.State)
+		req.ID, confirmProject, req.UserID, dashIfEmpty(req.SuggestedRole), req.State)
 	return nil
 }
 
