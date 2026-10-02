@@ -17,6 +17,7 @@ package core
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +29,44 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+// closePG closes db's underlying connection pool immediately, rather than
+// waiting for pgOpen's own t.Cleanup (which only fires once, at the end of
+// the whole test FUNCTION -- not per trial). A multi-trial loop that calls
+// pgOpen several times per trial and never closes early accumulates live
+// connections across the full loop, which is exactly what exhausted the CI
+// Postgres service's max_connections (coordinator review, PR #2370). Safe
+// to call even though pgOpen's own Close is still registered: sql.DB.Close
+// is idempotent.
+func closePG(db *gorm.DB) {
+	if sqlDB, err := db.DB(); err == nil {
+		_ = sqlDB.Close()
+	}
+}
+
+// isConnectionError reports whether err looks like a Postgres connection-
+// level failure (pool exhaustion, refused connection, closed connection)
+// rather than a legitimate application-level guard refusal. Coordinator
+// review, PR #2370: a connection failure inside coreA.X()/coreB.X() must
+// fail the test loudly with the REAL error, not be silently absorbed as "the
+// operation was refused" (whose row-state side effect -- nothing changed --
+// looks identical to a correct guard refusal from the outside).
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, marker := range []string{
+		"too many clients", "SQLSTATE 53300", "connection refused",
+		"sql: database is closed", "connection reset by peer", "EOF",
+		"i/o timeout", "broken pipe",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
 
 const lastAdminSweepPGTrials = 15
 
@@ -76,9 +115,12 @@ func TestConcurrency_RemoveUserFromGroup_GlobalScope_CrossReplicaPostgres(t *tes
 		require.NoError(t, setupDB.Create(&models.GroupRole{GroupID: groupB.ID, RoleID: role.ID}).Error)
 		require.NoError(t, setupDB.Create(&models.UserGroup{UserID: userA.ID, GroupID: groupA.ID}).Error)
 		require.NoError(t, setupDB.Create(&models.UserGroup{UserID: userB.ID, GroupID: groupB.ID}).Error)
+		closePG(setupDB) // done with the setup connection for this trial -- free it before opening the replicas below
 
-		coreA := NewKeyorixCore(localstore.NewLocalStorage(pgOpen(t, dsn)))
-		coreB := NewKeyorixCore(localstore.NewLocalStorage(pgOpen(t, dsn)))
+		dbA := pgOpen(t, dsn)
+		dbB := pgOpen(t, dsn)
+		coreA := NewKeyorixCore(localstore.NewLocalStorage(dbA))
+		coreB := NewKeyorixCore(localstore.NewLocalStorage(dbB))
 		ctx := context.Background()
 
 		var errA, errB error
@@ -87,12 +129,28 @@ func TestConcurrency_RemoveUserFromGroup_GlobalScope_CrossReplicaPostgres(t *tes
 		go func() { defer close(doneB); errB = coreB.RemoveUserFromGroup(ctx, 99, userB.ID, groupB.ID, 0) }()
 		<-doneA
 		<-doneB
-		_, _ = errA, errB
+		closePG(dbA)
+		closePG(dbB)
+
+		// Coordinator review, PR #2370: a connection-level failure (pool
+		// exhaustion, refused connection) must fail loudly with the REAL
+		// error here -- its row-state side effect (nothing changed) looks
+		// identical to a correct guard refusal from the trial-outcome check
+		// below, so without this check a connection problem would be
+		// silently absorbed as "the operation was refused" instead of
+		// surfacing as the environment/test-infra problem it actually is.
+		if isConnectionError(errA) {
+			t.Fatalf("trial %d: coreA.RemoveUserFromGroup failed with a connection-level error, not a guard refusal: %v", trial, errA)
+		}
+		if isConnectionError(errB) {
+			t.Fatalf("trial %d: coreB.RemoveUserFromGroup failed with a connection-level error, not a guard refusal: %v", trial, errB)
+		}
 
 		verifier := pgOpen(t, dsn)
 		var nA, nB int64
 		_ = verifier.Model(&models.UserGroup{}).Where("user_id = ? AND group_id = ?", userA.ID, groupA.ID).Count(&nA)
 		_ = verifier.Model(&models.UserGroup{}).Where("user_id = ? AND group_id = ?", userB.ID, groupB.ID).Count(&nB)
+		closePG(verifier)
 		aGone, bGone := nA == 0, nB == 0
 		switch {
 		case aGone && bGone:
@@ -133,9 +191,12 @@ func TestConcurrency_DeleteGroup_RemoveProjectMember_CrossPath_CrossReplicaPostg
 		require.NoError(t, setupDB.Create(&models.GroupRole{GroupID: group.ID, RoleID: role.ID, ProjectID: proj.ID}).Error)
 		require.NoError(t, setupDB.Create(&models.UserGroup{UserID: userA.ID, GroupID: group.ID}).Error)
 		require.NoError(t, setupDB.Create(&models.UserRole{UserID: userB.ID, RoleID: role.ID, ProjectID: proj.ID}).Error)
+		closePG(setupDB) // done with the setup connection for this trial -- free it before opening the replicas below
 
-		coreA := NewKeyorixCore(localstore.NewLocalStorage(pgOpen(t, dsn)))
-		coreB := NewKeyorixCore(localstore.NewLocalStorage(pgOpen(t, dsn)))
+		dbA := pgOpen(t, dsn)
+		dbB := pgOpen(t, dsn)
+		coreA := NewKeyorixCore(localstore.NewLocalStorage(dbA))
+		coreB := NewKeyorixCore(localstore.NewLocalStorage(dbB))
 		ctx := context.Background()
 
 		var errA, errB error
@@ -144,12 +205,25 @@ func TestConcurrency_DeleteGroup_RemoveProjectMember_CrossPath_CrossReplicaPostg
 		go func() { defer close(doneB); errB = coreB.RemoveProjectMember(ctx, 99, proj.ID, userB.ID) }()
 		<-doneA
 		<-doneB
+		closePG(dbA)
+		closePG(dbB)
 		t.Logf("trial %d: DeleteGroup=%v RemoveProjectMember=%v", trial, errA, errB)
+
+		// Coordinator review, PR #2370: fail loudly with the real error on a
+		// connection-level failure rather than letting it masquerade as a
+		// guard refusal -- see isConnectionError's own doc comment.
+		if isConnectionError(errA) {
+			t.Fatalf("trial %d: coreA.DeleteGroup failed with a connection-level error, not a guard refusal: %v", trial, errA)
+		}
+		if isConnectionError(errB) {
+			t.Fatalf("trial %d: coreB.RemoveProjectMember failed with a connection-level error, not a guard refusal: %v", trial, errB)
+		}
 
 		verifier := pgOpen(t, dsn)
 		var groupGrants, userGrants int64
 		_ = verifier.Model(&models.GroupRole{}).Where("group_id = ? AND project_id = ?", group.ID, proj.ID).Count(&groupGrants)
 		_ = verifier.Model(&models.UserRole{}).Where("user_id = ? AND project_id = ?", userB.ID, proj.ID).Count(&userGrants)
+		closePG(verifier)
 		if groupGrants == 0 && userGrants == 0 {
 			bothGone++
 		}
