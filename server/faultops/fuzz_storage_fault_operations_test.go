@@ -743,8 +743,9 @@ func checkOracles(t *testing.T, in oracleInput) {
 					label, diff)
 				return
 			}
-			if bulkPartialFailureAccountsForDiff(in.op, in.result.Detail, diff) {
-				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in %v, and the response body's own "+
+			if bulkPartialFailureAccountsForDiff(in) {
+				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges from the reference only in %v, but this "+
+					"run's own before/after state is byte-for-byte unchanged and the response body's own "+
 					"\"failed\" array already reports this item as not deleted — this op's documented "+
 					"partial-success design (see bulkPartialFailureAccountsForDiff's doc comment), not an "+
 					"unreported business-state change", label, diff)
@@ -848,22 +849,31 @@ var bulkPartialSuccessOps = map[string]bool{
 	"REST POST /api/v1/projects/{id}/secrets/bulk-delete": true,
 }
 
-// bulkPartialFailureAccountsForDiff reports whether op's response body
+// bulkPartialFailureAccountsForDiff reports whether in.op's response body
 // (in.result.Detail, "HTTP <code>: <json body>") shows EVERY requested item
 // failed (an empty "deleted" array, a non-empty "failed" array — the only
 // shape FuzzStorageFaultOperations' bulk-delete op, which always submits
-// exactly one secret_id, can currently produce) and the observed diff is
-// confined to exactly the tables a successful delete would have touched
-// (SecretNode, its AuditEvent, its SecretAccessLog) — i.e. the diff is fully
-// explained by "the one item this call reported failed legitimately never
-// committed," not an unreported business-state change oracle (a) exists to
-// catch. Deliberately does NOT generalize to a true mixed batch (some
-// deleted, some failed): this fuzz op never exercises that shape, so nothing
-// here has been red/green-tested against it — see the doc comment above.
-func bulkPartialFailureAccountsForDiff(op, detail string, diff []string) bool {
-	if !bulkPartialSuccessOps[op] {
+// exactly one secret_id, can currently produce) AND this run's final state is
+// BYTE-FOR-BYTE IDENTICAL to its own pre-fault snapshot (in.before == in.after).
+//
+// Deliberately NOT "diff confined to the tables a delete would touch" —
+// coordinator review caught that an earlier version of this check compared
+// against ONLY the fault-free reference run and accepted any diff limited to
+// {SecretNode, AuditEvent, SecretAccessLog}, which is too broad: it would wave
+// through a REAL bug where an audit event or access-log row gets written for
+// an item the body itself reports as failed (both runs would still show a
+// non-empty AuditEvent table, just with different content, and a table-name-
+// only diff can't tell those apart). Zero reported deletions means literally
+// nothing should have changed in the database during this call — the
+// strictest, most direct statement of "this item's effect never committed,
+// and the body correctly says so." Deliberately does NOT generalize to a true
+// mixed batch (some deleted, some failed): this fuzz op never exercises that
+// shape, so nothing here has been red/green-tested against it.
+func bulkPartialFailureAccountsForDiff(in oracleInput) bool {
+	if !bulkPartialSuccessOps[in.op] {
 		return false
 	}
+	detail := in.result.Detail
 	sep := strings.Index(detail, ": ")
 	if sep < 0 {
 		return false
@@ -883,13 +893,7 @@ func bulkPartialFailureAccountsForDiff(op, detail string, diff []string) bool {
 	if len(body.Data.Deleted) != 0 || len(body.Data.Failed) == 0 {
 		return false
 	}
-	allowed := map[string]bool{"SecretNode": true, "AuditEvent": true, "SecretAccessLog": true}
-	for _, d := range diff {
-		if !allowed[d] {
-			return false
-		}
-	}
-	return true
+	return in.before.Hash == in.after.Hash
 }
 
 func diffTables(before, after dbSnapshot) []string {
