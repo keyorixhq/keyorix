@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -195,7 +196,19 @@ func (c *KeyorixCore) RevokeShare(ctx context.Context, shareID uint, revokedBy u
 		return fmt.Errorf("%s", i18n.T("ErrorPermissionDenied", nil))
 	}
 
-	if err := c.storage.DeleteShareRecord(ctx, shareID); err != nil {
+	// Wrapped in a transaction (not a bare c.storage.DeleteShareRecord call) so a
+	// fault that reports an error AFTER the real delete already committed (effect-
+	// then-error — e.g. a lost ack, not just a genuine failure) rolls the delete
+	// back too, instead of leaving a mixed state: ShareRecord deleted (new state)
+	// but the audit/notification below never attempted (old state) — a share
+	// silently revoked with zero audit trail and no notification to the affected
+	// user. Found live: FuzzStorageFaultOperations op="REST DELETE /api/v1/shares/{id}"
+	// fault=DeleteShareRecord#1/effect-then-error, ORACLE (d) VIOLATION (differing
+	// tables vs before: [ShareRecord]; vs reference: [SecretAccessLog AuditEvent
+	// Notification]). Same root cause and fix shape as PR #1996 (CreateSecret).
+	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		return tx.DeleteShareRecord(ctx, shareID)
+	}); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 
