@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -32,6 +33,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/http/handlers"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/stretchr/testify/require"
 )
@@ -54,7 +56,16 @@ func miepAuthedRequest(srv *httptest.Server, method, path, token string, body []
 	if err != nil {
 		return -1
 	}
-	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	// Wait out detached audit writes (goSafe) from this request before the
+	// next one: on the shared-cache in-memory SQLite DB a late write can hold
+	// the table lock while the next request's transaction starts, and
+	// SQLITE_LOCKED_SHAREDCACHE is not retried by _busy_timeout. That turned
+	// the revoke into a rolled-back 500 on slow CI runners (seen in the
+	// closures-ledger run on #2361). Same fix as #2346's doMachineRequest.
+	handlers.DrainBackgroundGoroutines()
+	core.DrainBackgroundGoroutines()
 	return resp.StatusCode
 }
 
