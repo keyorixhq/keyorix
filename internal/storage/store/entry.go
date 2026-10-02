@@ -145,6 +145,18 @@ type LocalStorage struct {
 	// same underlying fact. A pointer for the same sharing reason as every
 	// other watermark/mutex field on this struct.
 	rbacClockWatermark *clockWatermark
+	// auditFlusher backs the batching audit-append writer (SESSION-PERF, #2403
+	// follow-up, item 3) — nil on a transaction-scoped LocalStorage (see
+	// WithTransaction/RemoveGlobalAdminRoleGuarded's clone construction, which
+	// deliberately does NOT copy this field), falling back there to the
+	// original per-call direct write (logAuditEventDirect): batching across to
+	// a DIFFERENT, independent transaction would break the atomicity a
+	// caller's own WithTransaction depends on. Only the root LocalStorage
+	// returned by NewLocalStorage gets a real one. NOT a pointer-shared-with-
+	// clones field like the mutexes above — deliberately so a forgotten update
+	// to a future clone-construction site defaults to nil (the SAFE,
+	// non-batching fallback), not to incorrectly sharing the root's flusher.
+	auditFlusher *auditFlusherState
 }
 
 // clockWatermark pairs a mutex with the time.Time it guards, so a single
@@ -166,6 +178,7 @@ func NewLocalStorage(db *gorm.DB) *LocalStorage {
 		namedLockMu:           newNamedLockRegistry(),
 		consumeClockWatermark: &clockWatermark{},
 		rbacClockWatermark:    &clockWatermark{},
+		auditFlusher:          &auditFlusherState{},
 	}
 }
 

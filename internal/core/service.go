@@ -670,19 +670,7 @@ func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) {
 			log.Printf("SECURITY: emitAudit panicked persisting audit event %q (success=%v, best-effort, primary operation already succeeded): %v", event.EventType, event.Success, r)
 		}
 	}()
-	if event.ActorType == ActorTypeMachine {
-		if event.MachineIdentityID == nil {
-			if machineID, ok := machineActorFromContext(ctx); ok {
-				event.MachineIdentityID = &machineID
-			}
-		}
-		// A machine principal's ID must never occupy UserID -- see the doc
-		// comment above. Unconditional: no caller has a legitimate reason to
-		// want a machine's raw ID there once ActorType says machine.
-		event.UserID = nil
-	}
-	event.Description = truncateAuditField(event.Description, auditDescriptionMaxLen)
-	event.Diff = truncateAuditField(event.Diff, auditDiffMaxLen)
+	prepareAuditEventForEmit(ctx, event)
 	// #1650: the request-cancellation-immunity fix lives at the storage layer
 	// (LocalStorage.LogAuditEvent detaches its own ctx before doing I/O), not here —
 	// this is one of four call sites into LogAuditEvent
@@ -698,6 +686,33 @@ func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) {
 		log.Printf("SECURITY: failed to persist audit event %q (success=%v): %v", event.EventType, event.Success, err)
 		return
 	}
+	c.afterAuditEventPersisted(event)
+}
+
+// prepareAuditEventForEmit applies the mutations emitAudit/emitAuditWithAccessLog
+// both need BEFORE the actual storage write (machine-actor-ID stamping, field
+// truncation) — factored out (SESSION-PERF, #2403 follow-up, item 3) so the two
+// can't drift on this.
+func prepareAuditEventForEmit(ctx context.Context, event *models.AuditEvent) {
+	if event.ActorType == ActorTypeMachine {
+		if event.MachineIdentityID == nil {
+			if machineID, ok := machineActorFromContext(ctx); ok {
+				event.MachineIdentityID = &machineID
+			}
+		}
+		// A machine principal's ID must never occupy UserID -- see the doc
+		// comment above. Unconditional: no caller has a legitimate reason to
+		// want a machine's raw ID there once ActorType says machine.
+		event.UserID = nil
+	}
+	event.Description = truncateAuditField(event.Description, auditDescriptionMaxLen)
+	event.Diff = truncateAuditField(event.Diff, auditDiffMaxLen)
+}
+
+// afterAuditEventPersisted runs what emitAudit/emitAuditWithAccessLog both do
+// AFTER a successful storage write (SIEM forward, waking live audit-tail
+// subscribers) — factored out for the same reason as prepareAuditEventForEmit.
+func (c *KeyorixCore) afterAuditEventPersisted(event *models.AuditEvent) {
 	if c.auditForwarder != nil {
 		c.auditForwarder.Forward(event)
 	}
@@ -706,6 +721,31 @@ func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) {
 	if c.auditStream != nil {
 		c.auditStream.signal()
 	}
+}
+
+// emitAuditWithAccessLog is emitAudit's error-returning sibling for a caller
+// that needs to know the write actually succeeded before proceeding —
+// specifically, LogSecretReadWithProject's audit-before-disclosure requirement
+// (SESSION-PERF, #2403 follow-up, item 3): a secret's value must never be
+// returned to a caller whose read wasn't durably recorded. Unlike emitAudit,
+// a panic here becomes a returned error (fail closed) rather than a logged-
+// and-swallowed best-effort failure — this caller's "primary operation" is
+// the disclosure itself, which has NOT happened yet when this runs, the
+// opposite of emitAudit's every other caller.
+func (c *KeyorixCore) emitAuditWithAccessLog(ctx context.Context, event *models.AuditEvent, accessLog *models.SecretAccessLog) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: emitAuditWithAccessLog panicked persisting audit event %q (success=%v): %v -- failing closed", event.EventType, event.Success, r)
+			err = fmt.Errorf("audit write panicked: %v", r)
+		}
+	}()
+	prepareAuditEventForEmit(ctx, event)
+	if werr := c.storage.LogAuditEventWithAccessLog(ctx, event, accessLog); werr != nil {
+		log.Printf("SECURITY: failed to persist audit event %q with access log (success=%v): %v -- failing closed", event.EventType, event.Success, werr)
+		return werr
+	}
+	c.afterAuditEventPersisted(event)
+	return nil
 }
 
 // NotificationEvent is one user-facing notification handed to an external sink for

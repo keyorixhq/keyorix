@@ -1302,6 +1302,11 @@ func (m *MockStorage) LogAuditEvent(ctx context.Context, event *models.AuditEven
 	return args.Error(0)
 }
 
+func (m *MockStorage) LogAuditEventWithAccessLog(ctx context.Context, event *models.AuditEvent, accessLog *models.SecretAccessLog) error {
+	args := m.Called(ctx, event, accessLog)
+	return args.Error(0)
+}
+
 func (m *MockStorage) CreateSecretAccessLog(ctx context.Context, log *models.SecretAccessLog) error {
 	args := m.Called(ctx, log)
 	return args.Error(0)

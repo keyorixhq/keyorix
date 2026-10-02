@@ -237,11 +237,14 @@ func (c *KeyorixCore) commitStagedSecretRead(ctx context.Context, s *stagedSecre
 		_, _ = c.storage.TryIncrementSecretReadCount(ctx, s.version.ID, *s.secret.MaxReads)
 	}
 	// Record the read like the single-secret read path does, so a bulk render is
-	// auditable and visible to the anomaly detector (detached so it survives the
-	// request and never blocks the render).
-	goSafe(func() {
-		c.LogSecretReadWithProject(DetachedAuditContext(ctx), userID, s.secret.ID, projectID, username, s.secretName, ip, ua)
-	}) // #nosec G118
+	// auditable and visible to the anomaly detector. SESSION-PERF #2403 follow-up
+	// (item 3): now synchronous and checked (DetachedAuditContext still protects it
+	// from the request's own cancellation) instead of fire-and-forget — propagates
+	// as an error the same way the max-reads check above already does, rather than
+	// silently dropping an audit-write failure.
+	if err := c.LogSecretReadWithProject(DetachedAuditContext(ctx), userID, s.secret.ID, projectID, username, s.secretName, ip, ua); err != nil {
+		return fmt.Errorf("failed to record audit trail for rendered secret: %w", err)
+	}
 	return nil
 }
 
