@@ -761,7 +761,7 @@ func checkOracles(t *testing.T, in oracleInput) {
 
 // outcomeLogTables record what the caller was TOLD happened (audit trail, secret
 // access log), not application state; the oracles compare them separately.
-var outcomeLogTables = []string{"AuditEvent", "SecretAccessLog"}
+var outcomeLogTables = []string{"AuditEvent", "SecretAccessLog", "Notification"}
 
 // onlyOutcomeLogTables reports whether every differing table is an outcome log.
 func onlyOutcomeLogTables(diff []string) bool {
