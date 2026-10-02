@@ -132,7 +132,16 @@ func acquireDatabaseLock(cfg *config.Config) (*serverguard.Exclusive, error) {
 			fmt.Printf("WARNING: could not acquire this database's exclusive lock (%v) — proceeding anyway because --force was given. A live server or another admin command may be concurrently using this database; this command is not protected against that race.\n", err)
 			return nil, nil
 		}
-		return nil, fmt.Errorf("a Keyorix server (or another admin command) appears to be using this database (%v) — admin commands must not run concurrently with either; stop it first, or pass --force if you are certain this is safe", err)
+		// #2362: AcquireExclusive fails the same way whether a server genuinely holds the
+		// lock OR the attempt couldn't even connect (e.g. a Postgres auth failure,
+		// SQLSTATE 28P01) -- the latter was being misreported as "a server is using this
+		// database", which is simply untrue: presence was never actually determined. Both
+		// cases still fail closed (no lock acquired, command refuses to proceed without
+		// --force); only the displayed reason differs.
+		if serverguard.IsLockHeld(err) {
+			return nil, fmt.Errorf("a Keyorix server (or another admin command) appears to be using this database (%v) — admin commands must not run concurrently with either; stop it first, or pass --force if you are certain this is safe", err)
+		}
+		return nil, fmt.Errorf("cannot connect to the database to check for a running server: %v — admin commands must not run concurrently with a server, but this could not be verified; pass --force if you are certain this is safe", err)
 	}
 	return lock, nil
 }

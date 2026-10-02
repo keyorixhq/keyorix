@@ -2,6 +2,7 @@ package serverguard
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -75,6 +76,71 @@ func TestPostgres_ProbeRunning_FalseAfterServerReleases(t *testing.T) {
 	}
 	if running {
 		t.Fatal("expected running=false after the server released its presence lock")
+	}
+}
+
+// parseLibpqDSN parses a libpq keyword/value DSN ("host=... user=... password=...") into a
+// map, just enough to let TestPostgres_AcquireExclusive_AuthFailureIsNotLockHeld mutate the
+// password without needing its own separate connection config -- mirrors the format CI's
+// e2e-nightly sets for KEYORIX_TEST_PG_DSN (scripts/e2e/api_smoke_test.go's own documented
+// convention). A URI-form DSN ("postgres://...") isn't handled -- this test's own
+// KEYORIX_TEST_PG_DSN must use the keyword/value form for it to target the real host/port.
+func parseLibpqDSN(dsn string) map[string]string {
+	out := map[string]string{}
+	for _, tok := range strings.Fields(dsn) {
+		kv := strings.SplitN(tok, "=", 2)
+		if len(kv) == 2 {
+			out[kv[0]] = strings.Trim(kv[1], `'"`)
+		}
+	}
+	return out
+}
+
+// TestPostgres_AcquireExclusive_AuthFailureIsNotLockHeld reproduces #2362 exactly: a real
+// Postgres server, reachable, but with a wrong password (SQLSTATE 28P01) -- as opposed to
+// TestPostgres_AcquireExclusive_ConnectFailureIsNotLockHeld's unreachable-host case. Either
+// way, IsLockHeld must be false: presence was never actually determined.
+func TestPostgres_AcquireExclusive_AuthFailureIsNotLockHeld(t *testing.T) {
+	fields := parseLibpqDSN(pgTestDSN(t))
+	if fields["host"] == "" || fields["user"] == "" {
+		t.Skip("KEYORIX_TEST_PG_DSN is not in keyword/value form -- cannot target its real host with a mutated password")
+	}
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			Type: "postgres",
+			Database: config.DatabaseConfig{
+				Host: fields["host"], Port: fields["port"], Name: fields["dbname"],
+				User: fields["user"], Password: "wrong-" + fields["password"] + "-definitely-not-it", SSLMode: "disable",
+			},
+		},
+	}
+	_, err := AcquireExclusive(cfg)
+	if err == nil {
+		t.Fatal("expected AcquireExclusive to fail with a wrong password")
+	}
+	if IsLockHeld(err) {
+		t.Fatalf("expected IsLockHeld(err) == false for an auth failure, got true: %v", err)
+	}
+}
+
+// TestPostgres_AcquireExclusive_ConflictsWithAnotherExclusive_IsLockHeld is the Postgres
+// counterpart to TestSQLite_AcquireExclusive_ConflictsWithAnotherExclusive: a genuine
+// lock-held failure, as opposed to the auth/connect-failure tests above, must satisfy
+// IsLockHeld.
+func TestPostgres_AcquireExclusive_ConflictsWithAnotherExclusive_IsLockHeld(t *testing.T) {
+	cfg := pgCfg(t)
+	first, err := AcquireExclusive(cfg)
+	if err != nil {
+		t.Fatalf("first AcquireExclusive: %v", err)
+	}
+	defer first.Release() //nolint:errcheck
+
+	_, err = AcquireExclusive(cfg)
+	if err == nil {
+		t.Fatal("expected a second concurrent AcquireExclusive to fail")
+	}
+	if !IsLockHeld(err) {
+		t.Fatalf("expected IsLockHeld(err) == true for a genuine lock conflict, got: %v", err)
 	}
 }
 
