@@ -90,6 +90,7 @@ type faultWorld struct {
 	httpServer *httptest.Server
 	httpClient *http.Client
 	adminToken string
+	scimToken  string
 	grpcConn   *grpc.ClientConn
 	grpcCtx    context.Context
 	grpcSrv    *grpc.Server // set by buildReusableFaultWorld (world_reuse_test.go); zero-value (nil) unused by newFaultWorld's own callers
@@ -268,7 +269,14 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 	})
 
 	worldPhase = time.Now()
-	cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}}}
+	cfg := &config.Config{
+		Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}},
+		// Enables /scim/v2 (see faultopsSCIMToken's own doc comment,
+		// dump_inventory_test.go) -- SAME token liveOperationKeys's own router
+		// construction uses, so a route visible to the generated registry is
+		// also reachable+authenticatable here.
+		SCIM: config.SCIMConfig{Enabled: true, Token: faultopsSCIMToken},
+	}
 	handler, err := httpserver.NewRouter(cfg, testCore)
 	if err != nil {
 		t.Fatal(err)
@@ -304,6 +312,7 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 		t: t, db: db, core: testCore, faulty: faulty,
 		httpServer: httpSrv, httpClient: &http.Client{Timeout: 10 * time.Second},
 		adminToken: session.SessionToken,
+		scimToken:  faultopsSCIMToken,
 		grpcConn:   conn, grpcCtx: grpcCtx,
 	}
 }
