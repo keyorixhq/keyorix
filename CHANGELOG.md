@@ -55,6 +55,17 @@ All notable changes to Keyorix are documented here. This project follows
   the opt-in upgrade for a deployment that can require 1.3-only clients.
   `tls.allowed_ciphers` has no effect under strict mode (TLS 1.3 negotiates
   its own suite set) and now warns if both are set.
+- **Every break-glass activation can now be reviewed after the fact**
+  (ADR-112, secure-by-default baseline, break-glass review item 5):
+  `POST /api/v1/projects/{id}/break-glass/{activationId}/review` records who
+  reviewed an activation, when, and a note — exactly once (a second attempt
+  is refused, not a silent overwrite), regardless of whether the activation
+  is still active, expired, or already revoked. Activation itself remains
+  single-person, by design (an emergency path that needs a second person
+  fails exactly when it's needed) — review is a separate, after-the-fact
+  check, not a second approver. A new `break_glass.review_window` setting
+  (default 72h) is how long an activation may go unreviewed before this
+  becomes visible as a deviation in the posture report (a later release).
 - **The server now refuses to start if its key files are an incomplete or
   mixed-generation set** (ADR-112, follow-up from #2400). #2400 made a
   single restore operation atomic (every file in a key-material set is
