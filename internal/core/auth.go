@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -187,8 +188,26 @@ func (c *KeyorixCore) mintSession(ctx context.Context, userID uint, userAgent, i
 	}
 	// Bound concurrent sessions per user so unbounded logins can't grow the table or
 	// enlarge the credential-theft blast radius. Best-effort — never fail a login on it.
-	_ = c.storage.EnforceSessionLimit(ctx, userID, maxSessionsPerUser)
+	c.enforceSessionLimitSafe(ctx, userID)
 	return created, nil
+}
+
+// enforceSessionLimitSafe caps a user's concurrent sessions, called AFTER
+// CreateSession above has already committed the new session row. Discarding
+// EnforceSessionLimit's returned error isn't enough to make this truly
+// best-effort — a panic isn't stopped by that discard, and would otherwise
+// unwind past mintSession entirely, reaching only the transport layer's
+// Recovery middleware, which reports an otherwise-successful login as a 500.
+// Same "best-effort helper, primary operation already succeeded" shape as
+// evictUserSessionCache (account.go) and notifySecretAccessRequested
+// (classification_gate.go).
+func (c *KeyorixCore) enforceSessionLimitSafe(ctx context.Context, userID uint) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: EnforceSessionLimit panicked for user %d (best-effort, primary operation already succeeded): %v", userID, r)
+		}
+	}()
+	_ = c.storage.EnforceSessionLimit(ctx, userID, maxSessionsPerUser)
 }
 
 // maxSessionsPerUser caps a user's concurrent sessions; the oldest beyond this are
