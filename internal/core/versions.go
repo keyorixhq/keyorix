@@ -153,7 +153,18 @@ func (c *KeyorixCore) GetLatestSecretVersionWithPermissionCheck(ctx context.Cont
 // (see checkRestrictedSecretReadApproval) — there is no user to check an approval
 // against, matching the machine-read design decision.
 func (c *KeyorixCore) GetSecretValue(ctx context.Context, secretID uint) ([]byte, error) {
-	return c.getSecretValueForUser(ctx, secretID, 0)
+	return c.getSecretValueForUser(ctx, secretID, 0, nil)
+}
+
+// GetSecretValueResolved is GetSecretValue for a caller that has already
+// authoritatively resolved the secret (e.g. via the route's own scoped-
+// permission middleware) — skips the redundant storage.GetSecret fetch
+// getSecretValueForUser would otherwise do internally (SESSION-PERF, #2403
+// follow-up). Same guards, same classification gate (userID 0, matching
+// GetSecretValue's own machine-read semantics), same disclosure path — only
+// the fetch is skipped, nothing else changes.
+func (c *KeyorixCore) GetSecretValueResolved(ctx context.Context, secret *models.SecretNode) ([]byte, error) {
+	return c.getSecretValueForUser(ctx, secret.ID, 0, secret)
 }
 
 // enforceSecretReadGuards runs every read-time guard a secret-value
@@ -211,13 +222,24 @@ func (c *KeyorixCore) enforceSecretReadGuards(ctx context.Context, secret *model
 // from GetSecretValue's public, userID-less signature so *WithPermissionCheck
 // callers — which already resolved a real userID via ValidateSecretAccess — can
 // thread it through instead of losing it at the handoff.
-func (c *KeyorixCore) getSecretValueForUser(ctx context.Context, secretID, userID uint) ([]byte, error) {
+//
+// preResolved, when non-nil (GetSecretValueResolved; SESSION-PERF, #2403
+// follow-up), is used in place of fetching the secret again — the caller has
+// already done so, authoritatively, for the exact same ID. nil (every other
+// caller, unchanged) fetches as before. Never re-validates preResolved.ID
+// against secretID: GetSecretValueResolved derives secretID FROM
+// preResolved.ID, so the two can never disagree by construction.
+func (c *KeyorixCore) getSecretValueForUser(ctx context.Context, secretID, userID uint, preResolved *models.SecretNode) ([]byte, error) {
 	if secretID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
-	secret, err := c.storage.GetSecret(ctx, secretID)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
+	secret := preResolved
+	if secret == nil {
+		var err error
+		secret, err = c.storage.GetSecret(ctx, secretID)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
+		}
 	}
 	if err := c.enforceSecretReadGuards(ctx, secret, userID); err != nil {
 		return nil, err
@@ -240,7 +262,7 @@ func (c *KeyorixCore) GetSecretValueWithPermissionCheck(ctx context.Context, sec
 	// Delegate to the shared body with the real userID — avoids duplicating
 	// max-reads logic while still giving the classification gate a user to check
 	// an approved secret-scoped access request against.
-	return c.getSecretValueForUser(ctx, secretID, userID)
+	return c.getSecretValueForUser(ctx, secretID, userID, nil)
 }
 
 // GetSecretValueByVersion retrieves the decrypted value of a specific version of a secret.

@@ -245,7 +245,16 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 
 	var secret *models.SecretNode
 	if isMachine {
-		secret, err = h.coreService.GetSecret(r.Context(), uint(id))
+		// SESSION-PERF (#2403 follow-up): reuse the EXACT resolution
+		// RequireScopedSecretPermission already fetched to compute the
+		// authorization scope, instead of fetching this same row again.
+		// Defensive fallback only: every route serving this handler's machine
+		// branch goes through that middleware, which always sets this on
+		// success (mirrors GetSecretValueByRef's identical defensive check).
+		secret = middleware.GetResolvedSecretFromContext(r.Context())
+		if secret == nil {
+			secret, err = h.coreService.GetSecret(r.Context(), uint(id))
+		}
 	} else {
 		secret, err = h.coreService.GetSecretWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
 	}
@@ -268,7 +277,10 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 	if valueIncluded {
 		var value []byte
 		if isMachine {
-			value, err = h.coreService.GetSecretValue(r.Context(), uint(id))
+			// Reuses the SAME resolved secret as above, instead of letting
+			// getSecretValueForUser fetch it a third time (SESSION-PERF, #2403
+			// follow-up).
+			value, err = h.coreService.GetSecretValueResolved(r.Context(), secret)
 		} else {
 			value, err = h.coreService.GetSecretValueWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
 		}

@@ -32,6 +32,30 @@ func (ls *LocalStorage) GetMachineIdentityCredentialByHash(ctx context.Context, 
 	return &c, nil
 }
 
+// credentialWithIdentityState scans a JOIN row: the credential's own columns
+// (matched by name via the embedded struct, exactly as a plain `c.*` select
+// would -- kept in sync with models.MachineIdentityCredential automatically,
+// no hand-maintained column list to drift) plus one extra scalar from the
+// joined machine_identities row.
+type credentialWithIdentityState struct {
+	models.MachineIdentityCredential
+	IdentityState string `gorm:"column:identity_state"`
+}
+
+func (ls *LocalStorage) GetMachineIdentityCredentialWithIdentityStateByHash(ctx context.Context, hash string) (*models.MachineIdentityCredential, string, error) {
+	var row credentialWithIdentityState
+	err := ls.db.WithContext(ctx).
+		Table("machine_identity_credentials AS c").
+		Select("c.*, m.state AS identity_state").
+		Joins("JOIN machine_identities AS m ON m.id = c.machine_identity_id").
+		Where("c.token_hash = ?", hash).
+		First(&row).Error
+	if err != nil {
+		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+	}
+	return &row.MachineIdentityCredential, row.IdentityState, nil
+}
+
 func (ls *LocalStorage) GetMachineIdentityCredentialByID(ctx context.Context, id uint) (*models.MachineIdentityCredential, error) {
 	var c models.MachineIdentityCredential
 	if err := ls.db.WithContext(ctx).First(&c, id).Error; err != nil {

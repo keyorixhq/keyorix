@@ -361,8 +361,20 @@ func (c *KeyorixCore) TouchMachineTokenLastUsed(ctx context.Context, credID uint
 // machine identity itself is no longer active (mirroring ValidateMachineToken's
 // own checks) — the caller must treat all three as "deny the request", not a
 // transient lookup failure to degrade past.
+//
+// SESSION-PERF (#2403 follow-up): this runs on EVERY cache hit (#G18's whole
+// point — the check must be fresh every time, never cached across requests),
+// which made it the single largest measured CPU/query cost on the machine-token
+// read path (67% of cumulative CPU time in a profile under load). The fix is
+// NOT to cache this result — that would reopen the exact staleness window #G18
+// closed (a revoked/expired/deactivated token trusted for up to validTokenTTL).
+// Instead, GetMachineIdentityCredentialWithIdentityStateByHash fetches the
+// credential AND the owning identity's State in ONE query (a JOIN) instead of
+// the two sequential round trips this function used before — same freshness,
+// same checks, same fail-closed behavior on every single call, just one DB
+// round trip instead of two.
 func (c *KeyorixCore) CurrentMachineTokenRestriction(ctx context.Context, raw string) (*MachineTokenRestriction, error) {
-	cred, err := c.storage.GetMachineIdentityCredentialByHash(ctx, sha256Hex(raw))
+	cred, identityState, err := c.storage.GetMachineIdentityCredentialWithIdentityStateByHash(ctx, sha256Hex(raw))
 	if err != nil {
 		return nil, err
 	}
@@ -372,12 +384,8 @@ func (c *KeyorixCore) CurrentMachineTokenRestriction(ctx context.Context, raw st
 	if cred.ExpiresAt != nil && c.authEffectiveNow().After(*cred.ExpiresAt) {
 		return nil, ErrMachineTokenExpired
 	}
-	m, err := c.storage.GetMachineIdentity(ctx, cred.MachineIdentityID)
-	if err != nil {
-		return nil, err
-	}
-	if m.State != MachineActive {
-		return nil, fmt.Errorf("machine identity is %s", m.State)
+	if identityState != MachineActive {
+		return nil, fmt.Errorf("machine identity is %s", identityState)
 	}
 	return machineRestrictionFrom(cred), nil
 }

@@ -176,6 +176,13 @@ const (
 	// value read reuses that ONE resolution instead of resolving the ref by
 	// name a second time. See WithResolvedSecretRef / GetResolvedSecretRefFromContext.
 	resolvedSecretRefContextKey contextKey = "resolvedSecretRef"
+	// resolvedSecretContextKey is resolvedSecretRefContextKey's by-ID sibling
+	// (SESSION-PERF, #2403 follow-up): carries the *models.SecretNode
+	// RequireScopedSecretPermission already fetched to compute the authorization
+	// scope, so GetSecret's machine branch reuses that ONE resolution instead of
+	// fetching the same row again (and so does getSecretValueForUser downstream
+	// — see GetSecretValueResolved). See WithResolvedSecret / GetResolvedSecretFromContext.
+	resolvedSecretContextKey contextKey = "resolvedSecret"
 
 	// TTL for valid token cache entries (session is trusted for this window).
 	validTokenTTL = 30 * time.Second
@@ -692,7 +699,16 @@ func handleScopedSecretPermissionRequest(next http.Handler, w http.ResponseWrite
 		return
 	}
 	scope := core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
-	allowed, err := cs.AuthorizeSecretPrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), secretID, permission)
+	// Pin this ONE resolution on the request context before dispatch, regardless of
+	// the authorize outcome below (finishScopedPermissionRequest still gates on
+	// allowed/err) — mirrors RequireScopedSecretRefPermission's identical pattern.
+	// GetSecret's machine branch reuses it instead of fetching the same row again,
+	// and getSecretValueForUser reuses it again downstream (SESSION-PERF, #2403
+	// follow-up) instead of a 3rd fetch.
+	r = r.WithContext(WithResolvedSecret(r.Context(), secret))
+	// AuthorizeSecretPrincipalForSecret reuses the secret already fetched above
+	// instead of AuthorizeSecretPrincipal's own internal re-fetch of the same row.
+	allowed, err := cs.AuthorizeSecretPrincipalForSecret(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), secret, permission)
 	finishScopedPermissionRequest(next, w, r, cs, scope, allowed, err)
 }
 
@@ -755,6 +771,23 @@ func WithResolvedSecretRef(ctx context.Context, secret *models.SecretNode) conte
 // ref resolution ran (e.g. the route isn't wired through that middleware).
 func GetResolvedSecretRefFromContext(ctx context.Context) *models.SecretNode {
 	if secret, ok := ctx.Value(resolvedSecretRefContextKey).(*models.SecretNode); ok {
+		return secret
+	}
+	return nil
+}
+
+// WithResolvedSecret is WithResolvedSecretRef's by-ID sibling (SESSION-PERF,
+// #2403 follow-up): stores the secret RequireScopedSecretPermission resolved
+// by numeric ID on ctx, for GetSecret to reuse instead of fetching it again.
+func WithResolvedSecret(ctx context.Context, secret *models.SecretNode) context.Context {
+	return context.WithValue(ctx, resolvedSecretContextKey, secret)
+}
+
+// GetResolvedSecretFromContext retrieves the secret resolved by
+// RequireScopedSecretPermission from the request context. Returns nil if no
+// by-ID resolution ran (e.g. the route isn't wired through that middleware).
+func GetResolvedSecretFromContext(ctx context.Context) *models.SecretNode {
+	if secret, ok := ctx.Value(resolvedSecretContextKey).(*models.SecretNode); ok {
 		return secret
 	}
 	return nil
