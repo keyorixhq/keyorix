@@ -1616,24 +1616,43 @@ func InvalidateTokenCacheByHash(hash string) {
 	tokenCacheMu.Unlock()
 }
 
-// ClearTokenCacheIfCached deletes the entry keyed by hash ONLY if one already exists
-// -- unlike InvalidateTokenCacheByHash, it never WRITES a new tombstone. Use this for
-// a transition where staying stale is safe in only one specific direction (an
-// over-restrictive leftover is fine; creating a brand-new false negative for a key
-// that was never cached is not): a plain tombstone-write would otherwise negative-cache
-// a credential this call never actually saw. See setAccountState's "becoming active"
-// branch (internal/core/account_state.go) for the motivating case — PR #2206 fixed the
-// unconditional-tombstone shape by skipping eviction entirely on that branch, which
-// left a DIFFERENT bug open: an EXISTING negative entry, cached while the account was
-// blocked, now outlives the account becoming active again, since nothing ever clears
-// it (FuzzAuthCacheDifferential, G5, found this as a cache/DB status-code divergence
-// — both paths still deny, so not an authz bypass, but the cache answers "denied" for
-// a request storage would now allow or deny for a different reason). Safe to call
-// unconditionally, even for a hash that was never cached: deleting a missing map key
-// is a no-op.
+// ClearTokenCacheIfCached forces the entry keyed by hash to miss on its very next
+// read, WITHOUT negative-caching it for invalidTokenTTL the way
+// InvalidateTokenCacheByHash's tombstone does. Use this for a transition where
+// staying stale is safe in only one specific direction (an over-restrictive
+// leftover is fine; creating a brand-new false negative for a key that was never
+// cached is not): a plain long-lived tombstone-write would otherwise negative-cache
+// a credential this call never actually saw. See setAccountState's "becoming
+// active" branch (internal/core/account_state.go) for the motivating case — PR
+// #2206 fixed the unconditional-tombstone shape by skipping eviction entirely on
+// that branch, which left a DIFFERENT bug open: an EXISTING negative entry, cached
+// while the account was blocked, now outlives the account becoming active again,
+// since nothing ever clears it (FuzzAuthCacheDifferential, G5, found this as a
+// cache/DB status-code divergence — both paths still deny, so not an authz bypass,
+// but the cache answers "denied" for a request storage would now allow or deny for
+// a different reason).
+//
+// A PLAIN delete (the original #2423 shape) reopens a different, more serious
+// gap than the one this function exists to avoid: a slow-path validation that
+// began reading the DB BEFORE this call (so its in-memory result still reflects
+// the stale, pre-change privileges) can finish and call cacheSetValidatedGen
+// AFTER this call, and cacheSetValidatedGen's own resurrection guard
+// (`existing.revokedAt.After(validatedAt)`) only fires when an entry still
+// exists to check `revokedAt` on — a bare delete leaves nothing to check, so the
+// stale positive write resurrects unguarded for up to validTokenTTL. That is a
+// genuine privilege-bypass window (a role removal's old permission grant
+// outliving the removal), not merely a wrong status code, and the exact
+// coordinator ask on #2423 ("confirm the cache can never ALLOW where the DB
+// denies") was not yet true before this fix. Closed by writing the SAME
+// revokedAt+immediate-expiry marker InvalidateTokenCacheByHash's tombstone uses
+// for the guard, but with expiresAt set to now (not now+invalidTokenTTL): the
+// marker blocks resurrection exactly like a real tombstone, while any ordinary
+// cacheGet a nanosecond later already finds it expired — no observable negative
+// window for a credential this call never saw, so the #2402 bug stays fixed.
 func ClearTokenCacheIfCached(hash string) {
 	tokenCacheMu.Lock()
-	delete(tokenCache, hash) // a no-op if hash isn't a key -- never writes a new entry
+	now := time.Now()
+	tokenCache[hash] = tokenCacheEntry{userCtx: nil, expiresAt: now, revokedAt: now}
 	tokenCacheMu.Unlock()
 }
 
