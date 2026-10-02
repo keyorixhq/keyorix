@@ -202,10 +202,19 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	// config an operator believes is scoped to (A, envX) is actually associated with
 	// an environment that belongs to a project the creator may have no visibility
 	// into at all.
-	if env, err := c.storage.GetEnvironment(ctx, req.EnvironmentID); err != nil {
-		return nil, fmt.Errorf("environment %d not found", req.EnvironmentID)
-	} else if env.ProjectID != req.ProjectID {
-		return nil, fmt.Errorf("environment %d does not belong to project %d", req.EnvironmentID, req.ProjectID)
+	//
+	// EnvironmentID == 0 is the documented project-wide sentinel (CLI's own
+	// --environment-id help: "0 = project-wide") and must skip this lookup
+	// entirely — GetEnvironment(ctx, 0) always fails (no environment has
+	// primary key 0), so without this guard every project-wide config create
+	// unconditionally failed with "environment 0 not found", regardless of
+	// actor or project. Found while writing scripts/e2e/journeys/journey7.
+	if req.EnvironmentID != 0 {
+		if env, err := c.storage.GetEnvironment(ctx, req.EnvironmentID); err != nil {
+			return nil, fmt.Errorf("environment %d not found", req.EnvironmentID)
+		} else if env.ProjectID != req.ProjectID {
+			return nil, fmt.Errorf("environment %d does not belong to project %d", req.EnvironmentID, req.ProjectID)
+		}
 	}
 	if _, err := c.dynamicEngine(req.BackendType); err != nil {
 		return nil, err
