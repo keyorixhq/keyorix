@@ -353,6 +353,11 @@ var operationOverrides = map[string]overrideEntry{
 	"REST PATCH /scim/v2/Groups/{id}":  {StatusFuzzed, "opCatalog[\"PatchOrReplaceSCIMGroup\"] — SESSION-AT AT5"},
 	"REST PUT /scim/v2/Groups/{id}":    {StatusFuzzed, "opCatalog[\"ReplaceSCIMGroup\"] — SESSION-AT AT5"},
 	"REST DELETE /scim/v2/Groups/{id}": {StatusFuzzed, "opCatalog[\"DeprovisionSCIMGroup\"] — SESSION-AT AT5"},
+	// Session FI2: the two WebAuthn "finish" ceremonies, driven with real W3C
+	// spec test vectors (webauthn_finish_ops_test.go) — go-webauthn's actual
+	// signature-verification path, not a stub.
+	"REST POST /api/v1/auth/webauthn/register/finish": {StatusFuzzed, "opCatalog[\"REST POST /api/v1/auth/webauthn/register/finish\"] — Session FI2"},
+	"REST POST /auth/webauthn/login/finish":            {StatusFuzzed, "opCatalog[\"REST POST /auth/webauthn/login/finish\"] — Session FI2"},
 }
 
 func statusOf(key string) overrideEntry {
