@@ -861,73 +861,101 @@ func (c *KeyorixCore) recordPartialApproval(ctx context.Context, req *models.Acc
 
 // finalizeAccessRequestApproval handles the threshold-reached path: grants the role,
 // records the approval, and updates the request state atomically. On a concurrent
-// write race (!ok) the grant is reverted and the caller receives an error.
+// write race (!ok) nothing is granted at all — the whole sequence rolls back.
+//
+// The grant, the approval record, and the request-state update all run inside ONE
+// storage.WithTransaction, instead of granting first and compensating with a
+// separate RemoveUserRole call if a later step fails (the pre-fix shape, PR #2306).
+// Compensating-after-the-fact had two real costs this closes: (1) a window existed,
+// between the grant's own commit and the compensating revert's commit, where the
+// role was genuinely, visibly granted — anything reading UserRole state in that
+// window (an auth check, a token mint) saw an over-grant that was about to be
+// un-done; true atomicity removes that window entirely, not just shortens it. (2) a
+// CreateAccessRequestApproval storage error reverted correctly but still left a new
+// "approval_race_reverted" AuditEvent behind — the operation's only observable
+// effect for a reported failure — which FuzzStorageFaultOperations' oracle (a)
+// flags as "reported an ERROR but logical state changed anyway" (found via
+// REST PUT /api/v1/projects/{id}/access-requests/{requestId}, fault
+// CreateAccessRequestApproval#1/error, GH #2407). A clean rollback has no such
+// side effect: a reported failure now means PRECISELY "nothing happened," matching
+// every other mutating call's own error contract.
+//
+// Mirrors the SoD-grant locking AssignUserRole/AssignUserRoleWithExpiry use
+// (#1646, sodGrantLockKey): the lock must still span the SoD check and the write
+// so a concurrent grant cannot slip in between them, but the write itself needs to
+// also cover CreateAccessRequestApproval/UpdateAccessRequest atomically — grant
+// ceiling + SoD check stay as plain reads immediately before the lock/transaction
+// (same timing the two functions above already use), the lock is taken once, and
+// the transaction opens INSIDE it (pg_advisory_lock is session-scoped, independent
+// of transaction boundaries, so nesting a transaction inside an already-held
+// named lock is the same safe shape WithNamedLock's own call sites already rely
+// on elsewhere).
 func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *models.AccessRequest, approverID, approverMachineID uint, roleModel *models.Role, grantTTL time.Duration, received, required int) (*models.AccessRequest, error) {
 	now := c.now()
 	scope := storage.Scope{ProjectID: req.ProjectID}
-	// Grant the role FIRST so that a grant failure leaves the approval unrecorded
-	// (retryable) rather than stuck above-threshold-but-ungranted.
 	grantDesc := roleModel.Name
+	var expiresAt time.Time
 	if grantTTL > 0 {
-		expiresAt := now.Add(grantTTL)
-		// Routed through the audited wrapper so this grant lands in the RBAC audit
-		// trail with a structured RoleID, alongside the generic access_request.approved
-		// event below (#298). approverMachineID (mirroring ApproverMachineIdentityID's
-		// own attribution convention: approverID is 0 when the approver was a machine
-		// identity, and approverMachineID carries the real ID) closes the sibling gap
-		// #1542 left open here — a machine-driven approval no longer gets the trusted
-		// actorID==0 exemption unconditionally.
-		if err := c.AssignUserRoleWithExpiry(ctx, approverID, req.UserID, roleModel.ID, scope, expiresAt, approverMachineID != 0); err != nil {
-			return nil, fmt.Errorf("failed to grant role: %w", err)
-		}
+		expiresAt = now.Add(grantTTL)
 		grantDesc = fmt.Sprintf("%s until %s (TTL %s)", roleModel.Name, expiresAt.UTC().Format(time.RFC3339), grantTTL)
-	} else {
-		if err := c.AssignUserRole(ctx, approverID, req.UserID, roleModel.ID, scope, approverMachineID != 0); err != nil {
-			return nil, fmt.Errorf("failed to grant role: %w", err)
+	}
+	// Same two gates AssignUserRole(WithExpiry) apply, run once here up front: the
+	// escalation-by-proxy grant ceiling (#93/#107/#141) and (inside the lock below)
+	// the #419 separation-of-duties preventive check.
+	if err := c.requireGranterHoldsRolePermissions(ctx, approverID, roleModel.ID, scope, approverMachineID != 0); err != nil {
+		return nil, fmt.Errorf("failed to grant role: %w", err)
+	}
+
+	raceLost := false
+	err := c.storage.WithNamedLock(ctx, sodGrantLockKey("user", req.UserID), func(ctx context.Context) error {
+		if err := c.requireNoSoDViolation(ctx, req.UserID, roleModel.ID); err != nil {
+			return err
 		}
-	}
-	// revertGrant is the SAME compensating action the race-loss path below already
-	// used, generalized to cover every failure after the grant lands, not only the
-	// UpdateAccessRequest(!ok) race. Before this, a CreateAccessRequestApproval
-	// failure (or a genuine UpdateAccessRequest storage error, as opposed to the
-	// !ok optimistic-concurrency loss) left the role granted with NO approval
-	// record and the request never flipping to approved — access granted with
-	// zero audit trail of who approved it, and no way to tell from the request's
-	// own state that anything happened.
-	revertGrant := func(reason string) {
-		if rerr := c.RemoveUserRole(ctx, approverID, req.UserID, roleModel.ID, scope); rerr != nil {
-			c.auditProjectScoped(ctx, "access_request.approval_race_revoke_failed", approverID, req.ProjectID,
-				fmt.Sprintf("access request %d: %s granting %s to user %d, and reverting the grant failed: %v — MANUAL CLEANUP REQUIRED", req.ID, reason, roleModel.Name, req.UserID, rerr))
-		} else {
-			c.auditProjectScoped(ctx, "access_request.approval_race_reverted", approverID, req.ProjectID,
-				fmt.Sprintf("access request %d: %s; reverted the %s grant just made to user %d", req.ID, reason, roleModel.Name, req.UserID))
-		}
-	}
-	if err := c.storage.CreateAccessRequestApproval(ctx, &models.AccessRequestApproval{
-		RequestID: req.ID, ApproverID: approverID, ApproverMachineIdentityID: approverMachineID, CreatedAt: now,
-	}); err != nil {
-		revertGrant(fmt.Sprintf("failed to record approval (%v) after", err))
-		return nil, fmt.Errorf("failed to record approval: %w", err)
-	}
-	req.State = AccessRequestApproved
-	req.GrantedRole = roleModel.Name
-	req.ResolvedBy = approverID
-	req.ResolvedByMachineIdentityID = approverMachineID
-	req.ResolvedAt = &now
-	ok, err := c.storage.UpdateAccessRequest(ctx, req)
+		return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+			if grantTTL > 0 {
+				if err := tx.AssignRoleWithExpiry(ctx, req.UserID, roleModel.ID, scope, expiresAt); err != nil {
+					return fmt.Errorf("failed to grant role: %w", err)
+				}
+			} else if err := tx.AssignRole(ctx, req.UserID, roleModel.ID, scope); err != nil {
+				return fmt.Errorf("failed to grant role: %w", err)
+			}
+			if err := tx.CreateAccessRequestApproval(ctx, &models.AccessRequestApproval{
+				RequestID: req.ID, ApproverID: approverID, ApproverMachineIdentityID: approverMachineID, CreatedAt: now,
+			}); err != nil {
+				return fmt.Errorf("failed to record approval: %w", err)
+			}
+			req.State = AccessRequestApproved
+			req.GrantedRole = roleModel.Name
+			req.ResolvedBy = approverID
+			req.ResolvedByMachineIdentityID = approverMachineID
+			req.ResolvedAt = &now
+			ok, err := tx.UpdateAccessRequest(ctx, req)
+			if err != nil {
+				return fmt.Errorf("failed to update access request: %w", err)
+			}
+			if !ok {
+				// The request stopped being pending between the read in
+				// approveAccessRequestWithExpiryLocked and this write — most likely a
+				// concurrent WithdrawAccessRequest/RejectAccessRequest (neither takes
+				// this request's dualControlLockKey lock) won the race. Returning an
+				// error here rolls back the grant and the approval record together —
+				// nothing to revert afterward, since nothing committed.
+				raceLost = true
+				return fmt.Errorf("access request was concurrently withdrawn or resolved")
+			}
+			return nil
+		})
+	})
 	if err != nil {
-		revertGrant(fmt.Sprintf("failed to update access request (%v) after", err))
-		return nil, fmt.Errorf("failed to update access request: %w", err)
+		if raceLost {
+			return nil, fmt.Errorf("access request was concurrently withdrawn or resolved; no role was granted")
+		}
+		return nil, err
 	}
-	if !ok {
-		// The request stopped being pending between the read above and this write —
-		// most likely a concurrent WithdrawAccessRequest or RejectAccessRequest won
-		// the race after the role grant above already landed. The grant must not
-		// outlive a request that no longer reads as approved (#277): revoke it and
-		// fail closed rather than reporting success with a stale/contradictory state.
-		revertGrant("was concurrently withdrawn/rejected after")
-		return nil, fmt.Errorf("access request was concurrently withdrawn or resolved; the role grant was reverted")
-	}
+
+	// Only log/notify once the transaction has actually committed (#283's "no
+	// phantom audit on a failure" principle, applied to this whole sequence).
+	c.LogRoleAssigned(ctx, approverID, req.UserID, roleModel.ID, scope)
 	c.auditProjectScoped(ctx, "access_request.approved", approverID, req.ProjectID,
 		fmt.Sprintf("approved access request %d for user %d as %s (%d approval(s))", req.ID, req.UserID, grantDesc, received))
 	c.notifyAccessResolved(ctx, req, true)
