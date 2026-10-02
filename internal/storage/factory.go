@@ -1263,6 +1263,33 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	connectRefGrantExists := tableExists(db, "connect_ref_grants")
 	connectorProjectBindingsExists := tableExists(db, "connector_project_bindings")
 	groupsExists := tableExists(db, "groups")
+	// The remaining flags below back freshInstallComplete (see its own doc
+	// comment, near the former `if projectsExists { return nil }` gate):
+	// every one of them is a model migrated by the fresh-install-only
+	// transactional block, snapshotted up front for the exact same pgx
+	// reason as every flag above -- these must never be queried AFTER any
+	// AutoMigrate call in this function, including the ones inside that
+	// block itself.
+	environmentExists := tableExists(db, "environments")
+	userExists := tableExists(db, "users")
+	roleExists := tableExists(db, "roles")
+	permissionExists := tableExists(db, "permissions")
+	rolePermissionExists := tableExists(db, "role_permissions")
+	userRoleExists := tableExists(db, "user_roles")
+	userGroupExists := tableExists(db, "user_groups")
+	groupRoleExists := tableExists(db, "group_roles")
+	secretNodeExists := tableExists(db, "secret_nodes")
+	secretVersionExists := tableExists(db, "secret_versions")
+	shareRecordExists := tableExists(db, "share_records")
+	sessionExists := tableExists(db, "sessions")
+	tagExists := tableExists(db, "tags")
+	secretTagExists := tableExists(db, "secret_tags")
+	auditEventExists := tableExists(db, "audit_events")
+	systemMetadataExists := tableExists(db, "system_metadata")
+	anomalyAlertExists := tableExists(db, "anomaly_alerts")
+	anomalyConfigRecordExists := tableExists(db, "anomaly_config_records")
+	statsSnapshotExists := tableExists(db, "stats_snapshots")
+	deploymentStatsSnapshotExists := tableExists(db, "deployment_stats_snapshots")
 	secretACLExists := tableExists(db, "secret_acls")
 	scheduleExists := tableExists(db, "secret_access_schedules")
 	secretTemplateExists := tableExists(db, "secret_templates")
@@ -2047,28 +2074,42 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		}
 	}
 
-	// Skip full AutoMigrate if already initialised (projects table present).
-	if projectsExists {
+	// freshInstallComplete is true only when EVERY model the transactional
+	// block below migrates already has its table -- not just "projects"
+	// present. A database left half-migrated by a crash BEFORE this and the
+	// surrounding transaction (#2383) existed can have projects (and maybe
+	// several more) but still be missing a later model's table; checking
+	// projects alone (the original gate) would wrongly treat that database
+	// as fully initialised forever, exactly the bug #2383's transaction
+	// prevents going FORWARD but cannot retroactively repair for a database
+	// that was already left in that state before the fix shipped.
+	freshInstallComplete := projectsExists && environmentExists && userExists &&
+		roleExists && permissionExists && rolePermissionExists && userRoleExists &&
+		groupsExists && userGroupExists && groupRoleExists && secretNodeExists &&
+		secretVersionExists && shareRecordExists && sessionExists && tagExists &&
+		secretTagExists && auditEventExists && systemMetadataExists && anomalyAlertExists &&
+		anomalyConfigRecordExists && statsSnapshotExists && deploymentStatsSnapshotExists &&
+		mfaStepUpGrantExists
+	if freshInstallComplete {
 		return nil
 	}
-	// Everything from here to the end of the function runs ONLY on a genuinely
-	// fresh install (projectsExists was false above) and must apply atomically:
-	// without this transaction, each AutoMigrate/index/backfill call below
-	// auto-commits independently on SQLite, so a process crash partway through
-	// leaves models.Project's table created but a later model's (e.g.
-	// models.User, or models.MFAStepUpGrant at the end of the loop) missing.
-	// The NEXT boot's migrateDatabase call then re-reads tableExists(db,
-	// "projects") as true and takes the early return above BEFORE ever
-	// reaching this code again -- permanently leaving the half-created schema
-	// in place with no loud failure, only a later runtime "no such table"
-	// error. Wrapping the whole fresh-install tail in one transaction means an
-	// interruption anywhere in it rolls back EVERYTHING, including the
-	// projects table itself, so the next boot's tableExists check correctly
-	// reads false and retries the full sequence from scratch. SQLite supports
-	// transactional DDL (CREATE/ALTER TABLE, CREATE INDEX), so this is safe
-	// there; on Postgres this nests as a savepoint inside withMigrationLock's
-	// already-transactional wrapper (harmless, not required for correctness
-	// there, since Postgres was already atomic end to end).
+	// Everything from here to the end of the function applies atomically,
+	// whether this is a genuinely fresh install (every flag above false) or a
+	// database left half-migrated by a pre-#2383 crash (some flags true, some
+	// false): AutoMigrate on a model whose table already exists is a safe,
+	// idempotent no-op, so this transaction either performs a full fresh
+	// install or FINISHES an interrupted one, never re-creating or
+	// corrupting what already exists. The transaction itself still matters
+	// going forward even with freshInstallComplete's broader check: without
+	// it, each AutoMigrate/index/backfill call below would auto-commit
+	// independently on SQLite, so a NEW crash partway through could leave
+	// yet another half-migrated state for a future boot to detect and
+	// finish -- correct, but needlessly repeating the same multi-boot dance
+	// instead of completing in one shot. SQLite supports transactional DDL
+	// (CREATE/ALTER TABLE, CREATE INDEX), so this is safe there; on Postgres
+	// this nests as a savepoint inside withMigrationLock's already-
+	// transactional wrapper (harmless, not required for correctness there,
+	// since Postgres was already atomic end to end).
 	return db.Transaction(func(tx *gorm.DB) error {
 		// Migrated one model per AutoMigrate call, not as one bulk variadic call: on a
 		// fresh Postgres, re-inspecting a table that AutoMigrate already created
