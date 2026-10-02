@@ -59,7 +59,7 @@ func TestCreateSoDPolicy_GetRoleErrorIsNotMisreadAsNonAdmin(t *testing.T) {
 	// No DENIED audit event, and no policy, from the faulted attempt.
 	var deniedCount int64
 	require.NoError(t, st.DB().Model(&models.AuditEvent{}).
-		Where("description LIKE ?", "%DENIED: not admin-tier%").Count(&deniedCount).Error)
+		Where("description LIKE ?", "%is not an admin-tier principal%").Count(&deniedCount).Error)
 	assert.Zero(t, deniedCount,
 		"a storage error must not be audited as a confirmed non-admin denial")
 
@@ -73,4 +73,85 @@ func TestCreateSoDPolicy_GetRoleErrorIsNotMisreadAsNonAdmin(t *testing.T) {
 	policy, err := c.CreateSoDPolicy(ctx, admin.ID, "fault-test-policy", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
 	require.NotNil(t, policy)
+}
+
+// roleIDOrderStub wraps a real storage.Storage and makes GetUserRoleIDsAt
+// return a FIXED, caller-chosen id order (GetUserGroupRoleIDsAt returns
+// empty) -- real SQL order is unspecified (no ORDER BY in GetUserRoleIDsAt),
+// so a test that needs the dangling id checked BEFORE the real admin id
+// cannot rely on insertion/rowid order holding by chance.
+type roleIDOrderStub struct {
+	corestorage.Storage
+	ids []uint
+}
+
+func (s *roleIDOrderStub) GetUserRoleIDsAt(ctx context.Context, userID uint, scope corestorage.Scope) ([]uint, error) {
+	return s.ids, nil
+}
+
+func (s *roleIDOrderStub) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, scope corestorage.Scope) ([]uint, error) {
+	return nil, nil
+}
+
+// TestIsGlobalAdminRoleName_DanglingRoleReferenceIsSkippedNotFailed: a
+// user-role row pointing at a since-deleted role (AT4's orphan class, guard
+// #2380) must NOT block every subsequent isGlobalAdminRoleName check for
+// that user forever -- a role that no longer exists cannot confer
+// admin-bypass either way, so GetRole's genuine "not found" is "not this
+// role, keep looking," not a resolution error to fail closed on. The
+// dangling id is forced to resolve BEFORE the real admin id (roleIDOrderStub)
+// so this actually exercises the continue branch, not just "found admin on
+// the first iteration regardless."
+func TestIsGlobalAdminRoleName_DanglingRoleReferenceIsSkippedNotFailed(t *testing.T) {
+	t.Parallel()
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+
+	admin, err := st.GetUserByUsername(ctx, "admin")
+	require.NoError(t, err)
+	adminRoleIDs, err := st.GetUserRoleIDsAt(ctx, admin.ID, corestorage.Scope{})
+	require.NoError(t, err)
+	require.NotEmpty(t, adminRoleIDs, "sanity check: the bootstrapped admin must hold at least one role")
+
+	const danglingRoleID = 999999
+	_, err = st.GetRole(ctx, danglingRoleID)
+	require.Error(t, err, "sanity check: this role ID must not actually exist")
+	require.True(t, corestorage.IsRoleNotFound(err), "sanity check: must be a genuine not-found, not some other error")
+
+	// Dangling id first, then every one of the admin's real role ids -- the
+	// dangling one must be checked and skipped before the real admin role(s)
+	// are ever reached.
+	c.storage = &roleIDOrderStub{Storage: c.storage, ids: append([]uint{danglingRoleID}, adminRoleIDs...)}
+
+	policy, err := c.CreateSoDPolicy(ctx, admin.ID, "dangling-role-test-policy", "", "secrets.read", "secrets.write")
+	require.NoError(t, err, "a dangling role checked BEFORE a real admin role must still recognize admin-tier")
+	require.NotNil(t, policy)
+}
+
+// TestIsGlobalAdminRoleName_SoleRoleDanglingEvaluatesToNotAdmin: when the
+// ONLY role a user holds is a dangling reference, isGlobalAdminRoleName
+// must still reach a definite verdict ("", nil) -- not an error -- so the
+// caller correctly (and accurately) denies as a confirmed non-admin, not a
+// resolution failure.
+func TestIsGlobalAdminRoleName_SoleRoleDanglingEvaluatesToNotAdmin(t *testing.T) {
+	t.Parallel()
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+
+	nonAdmin, err := st.CreateUser(ctx, foldedTestUser(t, "eve", "eve@example.com"))
+	require.NoError(t, err)
+
+	const danglingRoleID = 999998
+	require.NoError(t, st.DB().Create(&models.UserRole{UserID: nonAdmin.ID, RoleID: danglingRoleID}).Error)
+
+	_, err = c.CreateSoDPolicy(ctx, nonAdmin.ID, "dangling-sole-role-test-policy", "", "secrets.read", "secrets.write")
+	require.Error(t, err, "a sole dangling role reference must evaluate to a confirmed non-admin, not succeed")
+	assert.Contains(t, err.Error(), "admin-tier",
+		"must be the genuine permission-denied path, not a retrieval error")
+
+	var deniedCount int64
+	require.NoError(t, st.DB().Model(&models.AuditEvent{}).
+		Where("description LIKE ?", "%is not an admin-tier principal%").Count(&deniedCount).Error)
+	assert.EqualValues(t, 1, deniedCount,
+		"a confirmed (not merely unconfirmable) non-admin denial is correctly audited as a real denial")
 }

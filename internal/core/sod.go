@@ -504,6 +504,16 @@ func (c *KeyorixCore) isGlobalAdminRoleName(ctx context.Context, userID uint) (s
 	for _, id := range ids {
 		role, rerr := c.storage.GetRole(ctx, id)
 		if rerr != nil {
+			if storage.IsRoleNotFound(rerr) {
+				// A dangling user-role/group-role row pointing at a since-deleted
+				// role (the orphan class AT4's guard #2380 exists for) is "not
+				// this role," not a resolution failure to fail closed on -- a
+				// role that no longer exists cannot confer admin-bypass either
+				// way, and blocking every SoD/legal-hold/risk-exception/
+				// license-expiry check for this user forever over a stale
+				// reference has no security benefit, only an availability cost.
+				continue
+			}
 			return "", rerr
 		}
 		if isAdminRoleName(role.Name) {

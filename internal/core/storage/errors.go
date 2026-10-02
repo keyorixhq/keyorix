@@ -10,6 +10,16 @@ import (
 // gone?" — should match it with errors.Is rather than treating any error as absence.
 var ErrUserNotFound = errors.New("user not found")
 
+// ErrRoleNotFound is returned (wrapped) by GetRole when the role positively does
+// not exist, as distinct from a transient retrieval failure. isGlobalAdminRoleName
+// (internal/core/sod.go) matches it with errors.Is: a dangling user-role/group-role
+// row pointing at a since-deleted role (the orphan class AT4's guard #2380 exists
+// for) must not block every SoD/legal-hold/risk-exception/license-expiry check for
+// that user indefinitely — a role that no longer exists cannot confer admin-bypass
+// either way, so this one case is "not this role, keep looking," not a resolution
+// failure to fail closed on.
+var ErrRoleNotFound = errors.New("role not found")
+
 // ErrSoDPolicyNotFound is returned (wrapped) by GetSoDPolicy when no policy exists
 // for the given id, as distinct from a transient retrieval failure. DeleteSoDPolicy
 // (internal/core/sod.go) matches it with errors.Is to decide whether a real 404 is
@@ -194,6 +204,16 @@ func IsUserNotFound(err error) bool {
 		return false
 	}
 	return errors.Is(err, ErrUserNotFound)
+}
+
+// IsRoleNotFound is IsUserNotFound's role counterpart — true only for a
+// definitive "this role does not exist" (ErrRoleNotFound), false for a
+// transient retrieval failure.
+func IsRoleNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, ErrRoleNotFound)
 }
 
 // IsSessionNotFound is IsUserNotFound's session counterpart — true only for a
