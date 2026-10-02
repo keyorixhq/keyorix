@@ -336,6 +336,29 @@ const auditFlusherMaxBatch = 256
 // always arrives well within this window).
 const auditFlusherIdleTimeout = 200 * time.Millisecond
 
+// auditFlusherLingerWindow is how long the flusher deliberately waits, after
+// its first queued item, for more to arrive before committing (or until
+// auditFlusherMaxBatch is reached, whichever comes first) — SESSION-PERF
+// #2403/#2420 follow-up, coordinator-requested tuning. 0 disables lingering
+// entirely (drain whatever's already buffered, don't wait) — this was this
+// PR's original, un-tuned behavior.
+//
+// 1ms was NOT chosen because it hit a clean target: measurement on the
+// benchmarking host (see PR body/inbox for the full 0/0.5/1/2ms x
+// SQLite/Postgres x c=1/10/50 table) found no value satisfies "c=1 p50 cost
+// <=1ms" — every nonzero value pays a near-identical ~5.5-7ms c=1 tax
+// regardless of its nominal size (0.5ms and 2ms cost almost the same as
+// 1ms), consistent with virtualized-host timer-interrupt coarseness
+// dominating a sub-millisecond time.Timer on this host rather than the
+// configured duration itself. A second, more consequential finding: on
+// Postgres specifically, ANY nonzero window measurably REGRESSES c=10
+// throughput relative to 0 (fewer concurrent arrivals than c=50, not enough
+// to amortize the added wait) even though it roughly doubles c=50
+// throughput. SQLite showed no reliable signal at any concurrency. 1ms is a
+// middle-of-the-range value, not a locally-optimal one — see the PR body for
+// why this needs the coordinator's read before being treated as final.
+const auditFlusherLingerWindow = 1 * time.Millisecond
+
 // auditBatchItem is one pending LogAuditEvent/LogAuditEventWithAccessLog
 // submission, queued for the flusher goroutine to commit as part of a batch.
 type auditBatchItem struct {
@@ -430,15 +453,38 @@ func (ls *LocalStorage) runAuditFlusher(af *auditFlusherState) {
 				return
 			}
 		}
-		for len(batch) < auditFlusherMaxBatch {
-			select {
-			case item := <-af.queue:
-				batch = append(batch, item)
-			default:
-				goto commit
+		// Linger (SESSION-PERF, #2403/#2420 follow-up, coordinator-requested
+		// tuning): after the first item arrives, deliberately wait up to
+		// auditFlusherLingerWindow for MORE items to arrive, instead of only ever
+		// draining whatever happened to already be buffered at this exact
+		// instant. auditFlusherLingerWindow == 0 preserves the original
+		// behavior exactly (a non-blocking drain, `default:` fires immediately,
+		// no deliberate wait) -- see the tuning writeup in the PR body/inbox for
+		// why a non-zero window was chosen and what it measurably costs/gains.
+		if auditFlusherLingerWindow <= 0 {
+			for len(batch) < auditFlusherMaxBatch {
+				select {
+				case item := <-af.queue:
+					batch = append(batch, item)
+				default:
+					goto commit
+				}
 			}
+		} else {
+			lingerTimer := time.NewTimer(auditFlusherLingerWindow)
+		lingerLoop:
+			for len(batch) < auditFlusherMaxBatch {
+				select {
+				case item := <-af.queue:
+					batch = append(batch, item)
+				case <-lingerTimer.C:
+					break lingerLoop
+				}
+			}
+			lingerTimer.Stop()
 		}
 	commit:
+		recordAuditFlush(len(batch))
 		err := ls.commitAuditBatch(batch)
 		for _, item := range batch {
 			item.done <- err
