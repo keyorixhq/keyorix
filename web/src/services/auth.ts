@@ -65,6 +65,44 @@ export const authService = {
         }
     },
 
+    /**
+     * Completes a login-time MFA challenge (TOTP code or a recovery code) and
+     * returns the same login-shaped payload a non-MFA login would. The server
+     * sets the session cookie on this response (server/http/handlers/mfa.go's
+     * VerifyMFA) — unlike login(), there is no second "mfa_required" branch to
+     * handle here, since the backend only reaches this success path at all
+     * once the challenge itself is resolved.
+     */
+    async verifyMfa(challenge: string, code: string): Promise<LoginResponse> {
+        try {
+            const response: AxiosResponse<ApiResponse<LoginResponse>> = await authApi.post(
+                API_ENDPOINTS.AUTH.MFA_VERIFY,
+                { mfa_challenge: challenge, code }
+            );
+
+            if (!response.data.data) {
+                throw new Error(response.data.message || 'Verification failed');
+            }
+
+            return response.data.data;
+        } catch (error) {
+            if (axios.isAxiosError(error)) {
+                // Deliberately just the API's own message (401 "Invalid or expired
+                // code" collapses wrong-code/expired-challenge/account-lockout into
+                // one string server-side already — see mfa.go's VerifyMFA/writeMFAErr
+                // doc comments; this must not try to be smarter than that and infer
+                // which one it was) or the 429 rate-limit message, verbatim. `.message`
+                // is the human-readable detail; `.error` (server/http/handlers/helpers.go's
+                // sendError) is only ever a generic status-name category ("Unauthorized",
+                // "TooManyRequests") — preferring it here would show that generic name
+                // instead of the actual, more informative text.
+                const message = error.response?.data?.message || error.response?.data?.error || 'Verification failed';
+                throw new Error(message, { cause: error });
+            }
+            throw error;
+        }
+    },
+
     async logout(): Promise<void> {
         // Deliberately does NOT swallow a failed server-side session
         // invalidation (G65) — the caller (authStore.logout()) still clears

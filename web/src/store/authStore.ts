@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { AuthState, User, LoginFormData, LoginResponse, ImpersonatedBy } from '../types';
+import { AuthState, User, LoginFormData, LoginResponse, ImpersonatedBy, MfaChallengeState } from '../types';
 import { authService } from '../services/auth';
 import {
     persistAuthData,
@@ -21,8 +21,19 @@ interface AuthStore extends AuthState {
     // is just to call the endpoints and re-sync via checkAuth().
     impersonatedBy: ImpersonatedBy | null;
 
+    // Non-null between a login() call that got back `mfa_required` and either
+    // verifyMfa() succeeding or clearMfaChallenge() abandoning it. #2442: this
+    // is what login() previously dropped on the floor, landing the UI in a
+    // bogus "authenticated" state built from an all-undefined response.
+    mfaChallenge: MfaChallengeState | null;
+
     // Actions
     login: (credentials: LoginFormData) => Promise<void>;
+    // Completes a pending mfaChallenge with a TOTP or recovery code, then lands
+    // the session exactly like a non-MFA login would.
+    verifyMfa: (code: string) => Promise<void>;
+    // Abandons a pending mfaChallenge (e.g. "back to login") without verifying.
+    clearMfaChallenge: () => void;
     // ADR-028: land the user logged in from a setup-link consume response (which is
     // login-shaped) without re-authenticating with a password.
     completeSetup: (response: LoginResponse) => void;
@@ -44,6 +55,32 @@ interface AuthStore extends AuthState {
     endImpersonation: () => Promise<void>;
 }
 
+// buildUserFromLoginResponse is the shared shaping logic behind every path
+// that lands an authenticated session from a login-shaped response: login()'s
+// non-MFA branch, verifyMfa()'s success branch, and completeSetup(). Kept as
+// a pure function (no `set`) so it can't silently diverge between the three
+// call sites the way three independent copies eventually would.
+function buildUserFromLoginResponse(response: LoginResponse): User {
+    return {
+        id: response.user_id,
+        username: response.username,
+        displayName: response.display_name || response.username,
+        email: response.email,
+        role: response.role || 'user',
+        roles: response.roles || [],
+        permissions: response.permissions || [],
+        preferences: {
+            language: 'en',
+            timezone: 'UTC',
+            theme: 'system',
+            notifications: { email: true, browser: true, sharing: true, security: true },
+        },
+        lastLogin: new Date().toISOString(),
+        passwordChangeRequired: response.password_change_required || false,
+        ...(response.account_state ? { accountState: response.account_state } : {}),
+    };
+}
+
 // Shared in-flight refresh promise so concurrent callers coalesce onto a single
 // POST /auth/refresh (see refreshToken). Module-scoped: there is one auth store.
 let inFlightRefresh: Promise<void> | null = null;
@@ -56,288 +93,294 @@ let checkAuthInFlight = false;
 
 export const useAuthStore = create<AuthStore>()(
     persist(
-        (set, get) => ({
-            // Initial state — isLoading: true holds every route guard in the
-            // spinner state until rehydrate() + checkAuth() have both resolved.
-            // skipHydration (below) prevents the persist middleware from loading
-            // stale localStorage values synchronously before the server validates
-            // the session, which would let a manipulated auth-storage entry pass
-            // ProtectedRoute before checkAuth fires.
-            user: null,
-            isAuthenticated: false,
-            impersonatedBy: null,
-            isLoading: true,
-            hasCheckedAuth: false,
-            error: null,
-
-            // Actions
-            login: async (credentials: LoginFormData) => {
-                set({ isLoading: true, error: null });
-
-                try {
-                    const response = await authService.login(credentials);
-
-                    const user: User = {
-                        id: response.user_id,
-                        username: response.username,
-                        displayName: response.display_name || response.username,
-                        email: response.email,
-                        role: response.role || 'user',
-                        roles: response.roles || [],
-                        permissions: response.permissions || [],
-                        preferences: {
-                            language: 'en',
-                            timezone: 'UTC',
-                            theme: 'system',
-                            notifications: { email: true, browser: true, sharing: true, security: true },
-                        },
-                        lastLogin: new Date().toISOString(),
-                        passwordChangeRequired: response.password_change_required || false,
-                        ...(response.account_state ? { accountState: response.account_state } : {}),
-                    };
-
-                    set({
-                        user,
-                        isAuthenticated: true,
-                        isLoading: false,
-                        error: null,
-                    });
-
-                    // Persist non-credential bookkeeping (the session itself is now an
-                    // httpOnly cookie — there is no token for the client to hold).
-                    persistAuthData({
-                        user,
-                        expiresAt: response.expires_at,
-                        absoluteExpiresAt: response.absolute_expires_at,
-                    });
-                } catch (error) {
-                    const errorMessage = error instanceof Error ? error.message : 'Login failed';
-                    set({
-                        user: null,
-                        isAuthenticated: false,
-                        isLoading: false,
-                        error: errorMessage,
-                    });
-                    throw error;
-                }
-            },
-
-            completeSetup: (response: LoginResponse) => {
-                const user: User = {
-                    id: response.user_id,
-                    username: response.username,
-                    displayName: response.display_name || response.username,
-                    email: response.email,
-                    role: response.role || 'user',
-                    roles: response.roles || [],
-                    permissions: response.permissions || [],
-                    preferences: {
-                        language: 'en',
-                        timezone: 'UTC',
-                        theme: 'system',
-                        notifications: { email: true, browser: true, sharing: true, security: true },
-                    },
-                    lastLogin: new Date().toISOString(),
-                    passwordChangeRequired: response.password_change_required || false,
-                    ...(response.account_state ? { accountState: response.account_state } : {}),
-                };
-
+        (set, get) => {
+            // Shared by login()'s non-MFA branch, verifyMfa()'s success branch, and
+            // completeSetup() — builds the User, flips isAuthenticated, and persists
+            // the non-credential expiry bookkeeping. Needs `set`, so it lives here
+            // rather than alongside the pure buildUserFromLoginResponse above.
+            const landAuthenticatedSession = (response: LoginResponse) => {
+                const user = buildUserFromLoginResponse(response);
                 set({
                     user,
                     isAuthenticated: true,
                     isLoading: false,
                     error: null,
+                    mfaChallenge: null,
                 });
-
                 persistAuthData({
                     user,
                     expiresAt: response.expires_at,
                     absoluteExpiresAt: response.absolute_expires_at,
                 });
-            },
+            };
 
-            completeSSOLogin: async (expiresAt?: string, absoluteExpiresAt?: string) => {
-                // The backend already set the session cookie on its redirect response
-                // (see sso.go/saml.go) — nothing to stash here, just load the profile.
-                set({ isLoading: true, error: null });
-                await get().checkAuth(); // populates user, or clears + redirects on failure
-                const user = get().user;
-                if (user) {
-                    persistAuthData({
-                        user,
-                        expiresAt: expiresAt ?? '',
-                        absoluteExpiresAt,
-                    });
-                }
-            },
+            return {
+                // Initial state — isLoading: true holds every route guard in the
+                // spinner state until rehydrate() + checkAuth() have both resolved.
+                // skipHydration (below) prevents the persist middleware from loading
+                // stale localStorage values synchronously before the server validates
+                // the session, which would let a manipulated auth-storage entry pass
+                // ProtectedRoute before checkAuth fires.
+                user: null,
+                isAuthenticated: false,
+                impersonatedBy: null,
+                isLoading: true,
+                hasCheckedAuth: false,
+                error: null,
+                mfaChallenge: null,
 
-            logout: async () => {
-                set({ isLoading: true });
+                // Actions
+                login: async (credentials: LoginFormData) => {
+                    set({ isLoading: true, error: null, mfaChallenge: null });
 
-                // G65: track whether the server-side session invalidation
-                // itself failed, so it can be surfaced below instead of
-                // silently reported as a clean logout. authService.logout()
-                // rethrows on failure (it no longer swallows the error
-                // itself); this is the only place that catches it.
-                let serverLogoutFailed = false;
-                try {
-                    await authService.logout();
-                } catch (error) {
-                    serverLogoutFailed = true;
-                    console.warn('Logout request failed:', error);
-                } finally {
-                    // Always clear local state regardless of server response —
-                    // a failed server-side logout must not trap the user in a
-                    // "logged in" UI state.
-                    set({
-                        user: null,
-                        isAuthenticated: false,
-                        impersonatedBy: null,
-                        isLoading: false,
-                        error: null,
-                    });
-
-                    // Clear stored data
-                    clearPersistedAuthData();
-                    // Redirect to login. This is a hard navigation
-                    // (window.location.href), so no in-memory React/store
-                    // state survives it — a server-side logout failure is
-                    // surfaced via a query param instead, mirroring the
-                    // sso_error pattern LoginPage already reads. The user
-                    // needs to know their session may still be valid
-                    // server-side (e.g. on a shared machine) even though the
-                    // client has cleared its own local state.
-                    window.location.href = serverLogoutFailed ? '/login?logout_error=1' : '/login';
-                }
-            },
-
-            refreshToken: async () => {
-                // Single-flight: several in-flight requests can hit expiry at once.
-                // Without dedup each would POST /auth/refresh and rotate the session
-                // cookie out from under the others (every rotation deletes the prior
-                // session → cascading 401s). Share one refresh across concurrent
-                // callers instead.
-                if (inFlightRefresh) {
-                    return inFlightRefresh;
-                }
-                inFlightRefresh = (async () => {
                     try {
-                        // Past the absolute ceiling there is nothing to refresh into —
-                        // re-authentication is required. Skip the round-trip and log out.
-                        if (isAbsoluteExpiryPassed()) {
-                            await get().logout();
-                            throw new Error('Session lifetime exceeded');
+                        const response = await authService.login(credentials);
+
+                        // #2442: a correct password on an MFA-enabled account returns this
+                        // shape INSTEAD of the identity fields landAuthenticatedSession
+                        // needs — every field below is undefined when mfa_required is true,
+                        // so this must be checked before touching any of them. Not an
+                        // error: stop here with a pending challenge and let the UI render
+                        // a code-entry step; isAuthenticated stays false.
+                        if (response.mfa_required) {
+                            set({
+                                isLoading: false,
+                                error: null,
+                                mfaChallenge: {
+                                    challenge: response.mfa_challenge ?? '',
+                                    totpAvailable: !!response.totp_available,
+                                    webauthnAvailable: !!response.webauthn_available,
+                                },
+                            });
+                            return;
                         }
 
-                        try {
-                            const response = await authService.refreshToken();
-                            set({ error: null });
+                        landAuthenticatedSession(response);
+                    } catch (error) {
+                        const errorMessage = error instanceof Error ? error.message : 'Login failed';
+                        set({
+                            user: null,
+                            isAuthenticated: false,
+                            isLoading: false,
+                            error: errorMessage,
+                        });
+                        throw error;
+                    }
+                },
 
-                            // Advance the access window and carry the (possibly absent)
-                            // ceiling. Note: the field is expires_at to match the backend
-                            // payload — reading the old camelCase expiresAt silently stored
-                            // undefined and logged the user out on the next request.
-                            updateTokenExpiry(response.expires_at);
-                            updateAbsoluteTokenExpiry(response.absolute_expires_at);
-                        } catch (error) {
-                            // If refresh fails, logout user
-                            await get().logout();
-                            throw error;
+                verifyMfa: async (code: string) => {
+                    const challenge = get().mfaChallenge;
+                    if (!challenge) {
+                        // Programmer error (called with no pending challenge) — not a
+                        // server-reported failure, so not routed through `error`.
+                        throw new Error('No pending MFA challenge to verify');
+                    }
+                    set({ isLoading: true, error: null });
+                    try {
+                        const response = await authService.verifyMfa(challenge.challenge, code);
+                        landAuthenticatedSession(response);
+                    } catch (error) {
+                        // Deliberately just the message authService.verifyMfa surfaced —
+                        // see its own doc comment: the backend already collapses wrong
+                        // code / expired challenge / account lockout into one generic
+                        // string, and this must not try to add its own guess on top.
+                        const errorMessage = error instanceof Error ? error.message : 'Verification failed';
+                        set({ isLoading: false, error: errorMessage });
+                        throw error;
+                    }
+                },
+
+                clearMfaChallenge: () => {
+                    set({ mfaChallenge: null, error: null });
+                },
+
+                completeSetup: (response: LoginResponse) => {
+                    landAuthenticatedSession(response);
+                },
+
+                completeSSOLogin: async (expiresAt?: string, absoluteExpiresAt?: string) => {
+                    // The backend already set the session cookie on its redirect response
+                    // (see sso.go/saml.go) — nothing to stash here, just load the profile.
+                    set({ isLoading: true, error: null });
+                    await get().checkAuth(); // populates user, or clears + redirects on failure
+                    const user = get().user;
+                    if (user) {
+                        persistAuthData({
+                            user,
+                            expiresAt: expiresAt ?? '',
+                            absoluteExpiresAt,
+                        });
+                    }
+                },
+
+                logout: async () => {
+                    set({ isLoading: true });
+
+                    // G65: track whether the server-side session invalidation
+                    // itself failed, so it can be surfaced below instead of
+                    // silently reported as a clean logout. authService.logout()
+                    // rethrows on failure (it no longer swallows the error
+                    // itself); this is the only place that catches it.
+                    let serverLogoutFailed = false;
+                    try {
+                        await authService.logout();
+                    } catch (error) {
+                        serverLogoutFailed = true;
+                        console.warn('Logout request failed:', error);
+                    } finally {
+                        // Always clear local state regardless of server response —
+                        // a failed server-side logout must not trap the user in a
+                        // "logged in" UI state.
+                        set({
+                            user: null,
+                            isAuthenticated: false,
+                            impersonatedBy: null,
+                            isLoading: false,
+                            error: null,
+                        });
+
+                        // Clear stored data
+                        clearPersistedAuthData();
+                        // Redirect to login. This is a hard navigation
+                        // (window.location.href), so no in-memory React/store
+                        // state survives it — a server-side logout failure is
+                        // surfaced via a query param instead, mirroring the
+                        // sso_error pattern LoginPage already reads. The user
+                        // needs to know their session may still be valid
+                        // server-side (e.g. on a shared machine) even though the
+                        // client has cleared its own local state.
+                        window.location.href = serverLogoutFailed ? '/login?logout_error=1' : '/login';
+                    }
+                },
+
+                refreshToken: async () => {
+                    // Single-flight: several in-flight requests can hit expiry at once.
+                    // Without dedup each would POST /auth/refresh and rotate the session
+                    // cookie out from under the others (every rotation deletes the prior
+                    // session → cascading 401s). Share one refresh across concurrent
+                    // callers instead.
+                    if (inFlightRefresh) {
+                        return inFlightRefresh;
+                    }
+                    inFlightRefresh = (async () => {
+                        try {
+                            // Past the absolute ceiling there is nothing to refresh into —
+                            // re-authentication is required. Skip the round-trip and log out.
+                            if (isAbsoluteExpiryPassed()) {
+                                await get().logout();
+                                throw new Error('Session lifetime exceeded');
+                            }
+
+                            try {
+                                const response = await authService.refreshToken();
+                                set({ error: null });
+
+                                // Advance the access window and carry the (possibly absent)
+                                // ceiling. Note: the field is expires_at to match the backend
+                                // payload — reading the old camelCase expiresAt silently stored
+                                // undefined and logged the user out on the next request.
+                                updateTokenExpiry(response.expires_at);
+                                updateAbsoluteTokenExpiry(response.absolute_expires_at);
+                            } catch (error) {
+                                // If refresh fails, logout user
+                                await get().logout();
+                                throw error;
+                            }
+                        } finally {
+                            inFlightRefresh = null;
+                        }
+                    })();
+                    return inFlightRefresh;
+                },
+
+                checkAuth: async () => {
+                    // Always attempt the profile fetch — under cookie auth there is no
+                    // client-visible token to gate on; a 401 from the request itself is
+                    // the only way to know the session is gone.
+                    if (checkAuthInFlight) return;
+                    checkAuthInFlight = true;
+                    set({ isLoading: true });
+                    try {
+                        const profile = await authService.getProfile();
+                        const user: User = {
+                            id: profile.id,
+                            username: profile.username,
+                            email: profile.email,
+                            role: profile.role || 'user',
+                            roles: profile.roles || [],
+                            permissions: profile.permissions || [],
+                            preferences: profile.preferences || {
+                                language: 'en',
+                                timezone: 'UTC',
+                                theme: 'system',
+                                notifications: { email: true, browser: true, sharing: true, security: true },
+                            },
+                            lastLogin: profile.lastLogin || new Date().toISOString(),
+                            // Carry the server's flag forward on every reload so
+                            // RequirePasswordChange stays effective past the first session.
+                            passwordChangeRequired: profile.passwordChangeRequired ?? false,
+                        };
+                        // impersonation is present only while the session is actively
+                        // impersonating — server-validated, not a client claim (see
+                        // services/auth.ts's getProfile doc comment).
+                        const impersonatedBy = profile.impersonation
+                            ? {
+                                  adminId: profile.impersonation.admin_id,
+                                  adminUsername: profile.impersonation.admin_username,
+                                  adminDisplayName: profile.impersonation.admin_display_name,
+                              }
+                            : null;
+                        set({ user, isAuthenticated: true, isLoading: false, error: null, impersonatedBy });
+                    } catch {
+                        set({ user: null, isAuthenticated: false, isLoading: false, impersonatedBy: null });
+                        clearPersistedAuthData();
+                        if (window.location.pathname !== '/login') {
+                            window.location.href = '/login';
                         }
                     } finally {
-                        inFlightRefresh = null;
+                        checkAuthInFlight = false;
+                        set({ hasCheckedAuth: true });
                     }
-                })();
-                return inFlightRefresh;
-            },
+                },
 
-            checkAuth: async () => {
-                // Always attempt the profile fetch — under cookie auth there is no
-                // client-visible token to gate on; a 401 from the request itself is
-                // the only way to know the session is gone.
-                if (checkAuthInFlight) return;
-                checkAuthInFlight = true;
-                set({ isLoading: true });
-                try {
-                    const profile = await authService.getProfile();
-                    const user: User = {
-                        id: profile.id,
-                        username: profile.username,
-                        email: profile.email,
-                        role: profile.role || 'user',
-                        roles: profile.roles || [],
-                        permissions: profile.permissions || [],
-                        preferences: profile.preferences || {
-                            language: 'en',
-                            timezone: 'UTC',
-                            theme: 'system',
-                            notifications: { email: true, browser: true, sharing: true, security: true },
-                        },
-                        lastLogin: profile.lastLogin || new Date().toISOString(),
-                        // Carry the server's flag forward on every reload so
-                        // RequirePasswordChange stays effective past the first session.
-                        passwordChangeRequired: profile.passwordChangeRequired ?? false,
-                    };
-                    // impersonation is present only while the session is actively
-                    // impersonating — server-validated, not a client claim (see
-                    // services/auth.ts's getProfile doc comment).
-                    const impersonatedBy = profile.impersonation
-                        ? {
-                              adminId: profile.impersonation.admin_id,
-                              adminUsername: profile.impersonation.admin_username,
-                              adminDisplayName: profile.impersonation.admin_display_name,
-                          }
-                        : null;
-                    set({ user, isAuthenticated: true, isLoading: false, error: null, impersonatedBy });
-                } catch {
-                    set({ user: null, isAuthenticated: false, isLoading: false, impersonatedBy: null });
-                    clearPersistedAuthData();
-                    if (window.location.pathname !== '/login') {
-                        window.location.href = '/login';
+                clearError: () => {
+                    set({ error: null });
+                },
+
+                setUser: (user: User | null) => {
+                    set({ user, isAuthenticated: !!user });
+                },
+
+                setLoading: (loading: boolean) => {
+                    set({ isLoading: loading });
+                },
+
+                setError: (error: string | null) => {
+                    set({ error });
+                },
+
+                clearPasswordChangeRequired: () => {
+                    const { user } = get();
+                    if (user) {
+                        set({ user: { ...user, passwordChangeRequired: false } });
                     }
-                } finally {
-                    checkAuthInFlight = false;
-                    set({ hasCheckedAuth: true });
-                }
-            },
+                },
 
-            clearError: () => {
-                set({ error: null });
-            },
-
-            setUser: (user: User | null) => {
-                set({ user, isAuthenticated: !!user });
-            },
-
-            setLoading: (loading: boolean) => {
-                set({ isLoading: loading });
-            },
-
-            setError: (error: string | null) => {
-                set({ error });
-            },
-
-            clearPasswordChangeRequired: () => {
-                const { user } = get();
-                if (user) {
-                    set({ user: { ...user, passwordChangeRequired: false } });
-                }
-            },
-
-            endImpersonation: async () => {
-                // The server restores the admin's original session cookie (or clears
-                // it if that session is gone) as part of this call — see
-                // internal/core/impersonation.go's EndImpersonation and the
-                // OriginalSessionID linkage. The client never holds a second
-                // credential to swap back to; checkAuth() re-syncs to whichever
-                // session is now active. If the request itself fails (network blip,
-                // backend hiccup), this rejects without touching local state, so the
-                // caller (ImpersonationBanner) can offer a retry instead of a false
-                // "you're back to normal" UI.
-                await authService.endImpersonation();
-                await get().checkAuth();
-            },
-        }),
+                endImpersonation: async () => {
+                    // The server restores the admin's original session cookie (or clears
+                    // it if that session is gone) as part of this call — see
+                    // internal/core/impersonation.go's EndImpersonation and the
+                    // OriginalSessionID linkage. The client never holds a second
+                    // credential to swap back to; checkAuth() re-syncs to whichever
+                    // session is now active. If the request itself fails (network blip,
+                    // backend hiccup), this rejects without touching local state, so the
+                    // caller (ImpersonationBanner) can offer a retry instead of a false
+                    // "you're back to normal" UI.
+                    await authService.endImpersonation();
+                    await get().checkAuth();
+                },
+            };
+        },
         {
             name: 'auth-storage',
             // G65: never write `permissions` (or other authorization-shaping

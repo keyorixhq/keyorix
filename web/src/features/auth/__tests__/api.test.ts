@@ -7,15 +7,18 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 // network. useAuthStore.persist.rehydrate() is called as a static method on
 // the hook itself (not via its return value), so the mock needs that too.
 // vi.hoisted() runs before the vi.mock() factory so these stubs are in scope there.
-const { login, logout, refreshToken, checkAuth, clearError, setError, rehydrate } = vi.hoisted(() => ({
-    login: vi.fn(),
-    logout: vi.fn(),
-    refreshToken: vi.fn(),
-    checkAuth: vi.fn().mockResolvedValue(undefined),
-    clearError: vi.fn(),
-    setError: vi.fn(),
-    rehydrate: vi.fn().mockResolvedValue(undefined),
-}));
+const { login, verifyMfa, clearMfaChallenge, logout, refreshToken, checkAuth, clearError, setError, rehydrate } =
+    vi.hoisted(() => ({
+        login: vi.fn(),
+        verifyMfa: vi.fn(),
+        clearMfaChallenge: vi.fn(),
+        logout: vi.fn(),
+        refreshToken: vi.fn(),
+        checkAuth: vi.fn().mockResolvedValue(undefined),
+        clearError: vi.fn(),
+        setError: vi.fn(),
+        rehydrate: vi.fn().mockResolvedValue(undefined),
+    }));
 
 let storeState: {
     user: any;
@@ -23,6 +26,7 @@ let storeState: {
     isLoading: boolean;
     hasCheckedAuth: boolean;
     error: string | null;
+    mfaChallenge: { challenge: string; totpAvailable: boolean; webauthnAvailable: boolean } | null;
 };
 
 vi.mock('../../../store/authStore', () => {
@@ -47,10 +51,20 @@ beforeEach(() => {
         isLoading: false,
         hasCheckedAuth: false,
         error: null,
+        mfaChallenge: null,
     };
     // useAuthStore() destructures login/logout/etc from its own return value,
     // so those actions must live on storeState too.
-    Object.assign(storeState, { login, logout, refreshToken, checkAuth, clearError, setError });
+    Object.assign(storeState, {
+        login,
+        verifyMfa,
+        clearMfaChallenge,
+        logout,
+        refreshToken,
+        checkAuth,
+        clearError,
+        setError,
+    });
 });
 
 // ── mount-once bootstrap ─────────────────────────────────────────────────────
@@ -187,5 +201,27 @@ describe('useAuth session timeout', () => {
             vi.advanceTimersByTime(3_600_000);
         });
         expect(logout).not.toHaveBeenCalled();
+    });
+});
+
+// #2442: these pass through from the store unmodified — useAuth() is just a
+// thin wrapper here, but LoginPage depends on it actually forwarding them.
+describe('mfaChallenge / verifyMfa / clearMfaChallenge passthrough', () => {
+    it('exposes a pending mfaChallenge from the store', () => {
+        storeState.mfaChallenge = { challenge: 'chal-abc123', totpAvailable: true, webauthnAvailable: false };
+        const { result } = renderHook(() => useAuth(), { wrapper });
+        expect(result.current.mfaChallenge).toEqual({
+            challenge: 'chal-abc123',
+            totpAvailable: true,
+            webauthnAvailable: false,
+        });
+    });
+
+    it("exposes the store's verifyMfa and clearMfaChallenge actions", () => {
+        const { result } = renderHook(() => useAuth(), { wrapper });
+        result.current.verifyMfa('123456');
+        result.current.clearMfaChallenge();
+        expect(verifyMfa).toHaveBeenCalledWith('123456');
+        expect(clearMfaChallenge).toHaveBeenCalled();
     });
 });
