@@ -71,6 +71,7 @@ server:
     tls:
       enabled: false              # commonly terminated at a reverse proxy
       auto_cert: false            # ACME/autocert when true
+    tls_mode: ""                  # "" (default: TLS 1.2 floor, forward-secret AEAD only) | "strict" (TLS 1.3 only)
     ratelimit:
       enabled: true
       requests_per_second: 50
@@ -85,11 +86,23 @@ server:
     reflection_enabled: false     # keep false in production
     tls:
       enabled: false
+    tls_mode: ""                  # same two values as server.http.tls_mode above
     ratelimit:
       enabled: true
       requests_per_second: 25
       burst: 50
 ```
+
+**`tls_mode: strict`** (ADR-112 §3) switches a listener from the default TLS
+posture (1.2 floor, restricted to forward-secret AEAD cipher suites — see
+`tls.allowed_ciphers` above) to TLS 1.3 only, with no fallback to 1.2. The
+default itself is **not** an `insecure_` opt-out: NIST SP 800-52 Rev. 2
+requires servers to support both 1.2 and 1.3, BSI TR-02102-2 prefers 1.3
+while planning 1.2's phase-out, and OT/legacy clients still commonly need
+1.2 — `tls_mode: strict` is an explicit upgrade an operator opts INTO when
+every client can be required to speak 1.3. `tls.allowed_ciphers` has no
+effect under strict mode (TLS 1.3 negotiates its own, always-AEAD suite set)
+and logs a warning if both are set.
 
 ## storage
 

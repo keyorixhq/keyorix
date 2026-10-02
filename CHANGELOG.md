@@ -46,6 +46,15 @@ All notable changes to Keyorix are documented here. This project follows
   names, but were not renamed in this change — each needs either a
   polarity-inverting rename of a load-bearing flag or a restructuring from a
   non-boolean field, both deferred pending a product decision.
+- **New `server.http/grpc.tls_mode: strict` setting** (ADR-112, secure-by-default
+  baseline, item 3) switches a listener to TLS 1.3 only, with no fallback to
+  1.2. The existing default (TLS 1.2 floor, restricted to forward-secret AEAD
+  cipher suites — unchanged by this release) remains compliant, not a
+  downgrade to warn about: NIST SP 800-52 Rev. 2 requires servers to support
+  both 1.2 and 1.3, and OT/legacy clients often still need 1.2. `tls_mode` is
+  the opt-in upgrade for a deployment that can require 1.3-only clients.
+  `tls.allowed_ciphers` has no effect under strict mode (TLS 1.3 negotiates
+  its own suite set) and now warns if both are set.
 - **The server now refuses to start if its key files are an incomplete or
   mixed-generation set** (ADR-112, follow-up from #2400). #2400 made a
   single restore operation atomic (every file in a key-material set is

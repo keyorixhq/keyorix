@@ -118,7 +118,7 @@ func TestApplyTLSHardening_AllowedCiphersOverridesDefault(t *testing.T) {
 		AllowedCiphers: []string{"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
 	}
 	result := &tls.Config{}
-	if err := applyTLSHardening(result, tlsCfg); err != nil {
+	if err := applyTLSHardening(result, tlsCfg, ""); err != nil {
 		t.Fatalf("applyTLSHardening: %v", err)
 	}
 	if len(result.CipherSuites) != 1 || result.CipherSuites[0] != tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 {

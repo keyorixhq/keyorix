@@ -1103,7 +1103,7 @@ func TestStartHTTPServer_S27_AutoCertBadCipher(t *testing.T) {
 	// #1475: confirm this fixture's placeholder Domains didn't change what the
 	// test actually exercises — the invalid cipher name must still make
 	// buildAutoCertTLSConfig fail at cipher-suite resolution.
-	if _, err := buildAutoCertTLSConfig(cfg.Server.HTTP.TLS.Domains, cfg.Server.HTTP.TLS); err == nil {
+	if _, err := buildAutoCertTLSConfig(cfg.Server.HTTP.TLS.Domains, cfg.Server.HTTP.TLS, ""); err == nil {
 		t.Fatal("buildAutoCertTLSConfig must still fail for an unrecognised cipher suite name")
 	} else if !strings.Contains(err.Error(), "invalid TLS configuration") {
 		t.Fatalf("expected a cipher-resolution error, got: %v", err)
