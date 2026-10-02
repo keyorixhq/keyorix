@@ -51,6 +51,17 @@ const (
 	EventProjectDeleted = "project.deleted"
 )
 
+// EventProjectEnvironmentSeedFailed is audited when CreateProject/CreateProjectWithEnvs's
+// per-environment seeding step fails or panics (seedProjectEnvironment). The project row
+// itself has already committed by then (non-fatal by design -- see seedProjectEnvironment's
+// doc comment), so this is the ONLY durable, queryable record that the project came out
+// short an environment; previously this was a log.Printf only, visible to an operator
+// tailing server logs but invisible to the audit trail, the API response, or any
+// automated reconciliation sweep -- "observable" in the original #1996 fix did not mean
+// "discoverable by the caller." Same convention as dynamic_secret.project_cascade_failed
+// (revokeProjectDynamicSecretLeases, this file) for the identical class of problem.
+const EventProjectEnvironmentSeedFailed = "project.environment_seed_failed"
+
 // LogProjectCreated/LogProjectUpdated/LogProjectDeleted record a project
 // create/update/delete. actorID is the acting admin (0 = none). See the
 // EventProjectCreated doc comment above for why these are standalone methods.
@@ -423,6 +434,7 @@ func (c *KeyorixCore) CreateProject(ctx context.Context, name, description strin
 	// NOT close the ambiguous-response half (the client is still told "error" even
 	// when the write commits) — that needs an idempotency key, tracked separately.
 	var project *models.Project
+	var seedFailures []projectEnvSeedFailure
 	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
 		var err error
 		project, err = tx.CreateProject(ctx, &models.Project{Name: name, Description: description})
@@ -436,41 +448,19 @@ func (c *KeyorixCore) CreateProject(ctx context.Context, name, description strin
 		// more of its expected default environments with zero operator
 		// visibility into why): the project row itself already committed, and a
 		// caller retries environment creation separately if seeding fails, but
-		// this must be OBSERVABLE, not a swallowed error.
-		//
-		// Each seed runs in its OWN nested tx.WithTransaction (a SAVEPOINT on
-		// PostgreSQL, gorm's own nested-transaction support). On PostgreSQL a
-		// FAILED STATEMENT aborts the enclosing transaction at the protocol
-		// level (any later statement errors, and COMMIT downgrades to ROLLBACK,
-		// pgx's ErrTxCommitRollback) — unlike SQLite, which has no such
-		// poisoning. Without the SAVEPOINT, a single faulted CreateEnvironment
-		// call would silently fail the WHOLE project create on Postgres, even
-		// though this loop is meant to be non-fatal. Found reviewing PR #1996
-		// before merge — SQLite-only fault-fuzz validation stayed green despite
-		// this, since SQLite has no equivalent transaction-abort behavior.
-		//
-		// A panic from the same call is recovered too (found live by
-		// FuzzStorageFaultOperations, same class as CreateUser's seeding in
-		// users.go): without it, a panic would propagate out to the Recovery
-		// middleware and misreport the create as a failed request (oracle (a)).
+		// this must be OBSERVABLE, not a swallowed error. See
+		// seedProjectEnvironment's own doc comment for the SAVEPOINT/panic
+		// handling shared with CreateProjectWithEnvs, and
+		// reportProjectEnvironmentSeedFailures for why the audit write is
+		// deferred until after this transaction commits.
 		for _, envName := range defaultEnvironmentNames {
-			envName := envName
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						log.Printf("Warning: project %d (%s) created without its default environment %q: seeding panicked: %v", project.ID, project.Name, envName, r)
-					}
-				}()
-				if err := tx.WithTransaction(ctx, func(savepoint storage.Storage) error {
-					_, err := savepoint.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID})
-					return err
-				}); err != nil {
-					log.Printf("Warning: project %d (%s) created without its default environment %q: %v", project.ID, project.Name, envName, err)
-				}
-			}()
+			if f := seedProjectEnvironment(ctx, tx, project, envName); f != nil {
+				seedFailures = append(seedFailures, *f)
+			}
 		}
 		return nil
 	})
+	c.reportProjectEnvironmentSeedFailures(ctx, project, seedFailures)
 	if txErr != nil {
 		if errors.Is(txErr, storage.ErrDuplicateProjectName) {
 			return nil, translateProjectNameError(txErr)
@@ -588,6 +578,7 @@ func (c *KeyorixCore) CreateProjectWithEnvs(ctx context.Context, name, descripti
 	// (nested tx.WithTransaction) — a failed CreateEnvironment must not abort the
 	// whole create on PostgreSQL, same reasoning as CreateProject's own loop.
 	var project *models.Project
+	var seedFailures []projectEnvSeedFailure
 	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
 		var err error
 		project, err = tx.CreateProject(ctx, &models.Project{Name: name, Description: description})
@@ -595,27 +586,13 @@ func (c *KeyorixCore) CreateProjectWithEnvs(ctx context.Context, name, descripti
 			return err
 		}
 		for _, envName := range envNames {
-			envName := envName
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						// Panic recovery, same rationale as CreateProject's
-						// default-environment seeding above.
-						log.Printf("Warning: project %d (%s) created without requested environment %q: seeding panicked: %v", project.ID, project.Name, envName, r)
-					}
-				}()
-				if err := tx.WithTransaction(ctx, func(savepoint storage.Storage) error {
-					_, err := savepoint.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID})
-					return err
-				}); err != nil {
-					// Non-fatal, same rationale as CreateProject's default-environment
-					// seeding above — but must be observable, not silently discarded.
-					log.Printf("Warning: project %d (%s) created without requested environment %q: %v", project.ID, project.Name, envName, err)
-				}
-			}()
+			if f := seedProjectEnvironment(ctx, tx, project, envName); f != nil {
+				seedFailures = append(seedFailures, *f)
+			}
 		}
 		return nil
 	})
+	c.reportProjectEnvironmentSeedFailures(ctx, project, seedFailures)
 	if txErr != nil {
 		if errors.Is(txErr, storage.ErrDuplicateProjectName) {
 			return nil, translateProjectNameError(txErr)
@@ -623,4 +600,74 @@ func (c *KeyorixCore) CreateProjectWithEnvs(ctx context.Context, name, descripti
 		return nil, fmt.Errorf("failed to create project: %w", txErr)
 	}
 	return project, nil
+}
+
+// projectEnvSeedFailure captures one failed/panicked per-environment seed from
+// seedProjectEnvironment, for reportProjectEnvironmentSeedFailures to audit once the outer
+// transaction has committed -- see that function's doc comment for why the audit write
+// cannot safely happen while the transaction seedProjectEnvironment runs inside is still open.
+type projectEnvSeedFailure struct {
+	envName string
+	reason  string
+}
+
+// seedProjectEnvironment creates one environment for a just-created project (shared by
+// CreateProject's default set and CreateProjectWithEnvs's caller-specified set), inside its
+// own nested tx.WithTransaction (a SAVEPOINT on PostgreSQL, gorm's own nested-transaction
+// support). On PostgreSQL a FAILED STATEMENT aborts the enclosing transaction at the
+// protocol level (any later statement errors, and COMMIT downgrades to ROLLBACK, pgx's
+// ErrTxCommitRollback) — unlike SQLite, which has no such poisoning. Without the SAVEPOINT, a
+// single faulted CreateEnvironment call would silently fail the WHOLE project create on
+// Postgres, even though this is meant to be non-fatal. Found reviewing PR #1996 before merge
+// — SQLite-only fault-fuzz validation stayed green despite this, since SQLite has no
+// equivalent transaction-abort behavior.
+//
+// A failure (or a panic, recovered here — found live by FuzzStorageFaultOperations, same
+// class as CreateUser's seeding in users.go: without it, a panic would propagate out to the
+// Recovery middleware and misreport the create as a failed request, oracle (a)) is non-fatal
+// by design (server/faultops's opScopedBestEffortTables entry for this exact call,
+// #2350/#2252): the project row has already committed, and a caller recovers by calling
+// POST /projects/{id}/environments for the missing name. Returns the failure (nil on
+// success) for the caller to audit later -- NOT written here, even though project/envName are
+// in scope: this runs inside the still-open outer tx (the same storage.WithTransaction call
+// that created the project row), and c.writeAuditEventFull goes through c.storage, a
+// DIFFERENT connection than tx. Writing from inside tx's own goroutine while tx itself still
+// holds an open write transaction can self-deadlock on SQLite (single-writer: the audit
+// INSERT blocks waiting for a lock only this same, still-uncommitted transaction holds, and
+// it can't release that lock until the blocked call returns) — the exact shape
+// TestCreateProject_SeedFailureSurvivesWithoutDeadlock guards against.
+func seedProjectEnvironment(ctx context.Context, tx storage.Storage, project *models.Project, envName string) (failure *projectEnvSeedFailure) {
+	defer func() {
+		if r := recover(); r != nil {
+			reason := fmt.Sprintf("seeding panicked: %v", r)
+			log.Printf("Warning: project %d (%s) created without its environment %q: %s", project.ID, project.Name, envName, reason)
+			failure = &projectEnvSeedFailure{envName: envName, reason: reason}
+		}
+	}()
+	if err := tx.WithTransaction(ctx, func(savepoint storage.Storage) error {
+		_, err := savepoint.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID})
+		return err
+	}); err != nil {
+		log.Printf("Warning: project %d (%s) created without its environment %q: %v", project.ID, project.Name, envName, err)
+		return &projectEnvSeedFailure{envName: envName, reason: err.Error()}
+	}
+	return nil
+}
+
+// reportProjectEnvironmentSeedFailures writes an EventProjectEnvironmentSeedFailed audit
+// event for each environment seedProjectEnvironment failed to create, once the project's own
+// transaction has returned (committed or not -- a no-op when failures is empty, which it
+// always is when the transaction itself failed before reaching the seed loop). Deferred to
+// here, after commit, specifically so the audit write — through c.storage, a connection
+// distinct from the transaction's own tx handle — can never run while that transaction is
+// still open; see seedProjectEnvironment's doc comment for the self-deadlock this avoids.
+// Doing this makes the gap DISCOVERABLE via the audit trail, not just a log.Printf an
+// operator happens to be tailing — the caller still recovers the same way either way: POST
+// /projects/{id}/environments for the missing name.
+func (c *KeyorixCore) reportProjectEnvironmentSeedFailures(ctx context.Context, project *models.Project, failures []projectEnvSeedFailure) {
+	for _, f := range failures {
+		msg := fmt.Sprintf("project %d (%s) created without its environment %q: %s — create it manually via POST /projects/%d/environments",
+			project.ID, project.Name, f.envName, f.reason, project.ID)
+		c.writeAuditEventFull(ctx, EventProjectEnvironmentSeedFailed, nil, nil, &project.ID, "", msg)
+	}
 }

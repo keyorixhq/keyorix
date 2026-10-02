@@ -205,6 +205,14 @@ var multiStepAmbiguousCommitExceptions = []nonLoadBearingException{}
 // the restriction here too means a regression in that assumption gets caught
 // by TestOpScopedAcceptableByDesign_ProjectWithTransaction_RequiresNthCallTwo
 // directly, not silently masked by this exemption.
+//
+// AuditEvent joined this entry's tables (item 4 of the UX-fixes batch,
+// alongside CreateEnvironment's identical addition above): the per-
+// environment seed failure this entry already accepted now also writes an
+// EventProjectEnvironmentSeedFailed row, closing the "no caller-visible
+// signal" half of the original gap — the missing environment is still
+// non-fatal by design, but it is now DISCOVERABLE via the audit trail
+// instead of only a server log line.
 var opScopedBestEffortTables = []struct {
 	op, method string
 	tables     []string
@@ -215,7 +223,7 @@ var opScopedBestEffortTables = []struct {
 }{
 	{op: "REST POST /api/v1/users/", method: "AssignRole", tables: []string{"UserRole"}},
 	{op: "REST POST /api/v1/users/", method: "GetRoleByName", tables: []string{"UserRole"}},
-	{op: "REST POST /api/v1/projects", method: "WithTransaction", tables: []string{"Environment"}, minNthCall: 2},
+	{op: "REST POST /api/v1/projects", method: "WithTransaction", tables: []string{"Environment", "AuditEvent"}, minNthCall: 2},
 }
 
 func opScopedAcceptableByDesign(op, method string, nth int, diff []string) bool {
@@ -596,12 +604,16 @@ var bestEffortTables = map[string][]string{
 	// same PR: both now log.Printf a Warning naming the project and the
 	// environment that failed to seed). The underlying "proceed without the
 	// environment" behavior itself is unchanged and is the actual tradeoff
-	// flagged here — a project can end up missing one or more expected
-	// environments with only a log line, no caller-visible signal. FLAG FOR
-	// REVIEW: should CreateProject instead report which environments seeded
-	// successfully in its response, or fail the whole create? Left as
-	// existing (now-observable) behavior, not decided here.
-	"CreateEnvironment": {"Environment"},
+	// flagged here. FLAG FOR REVIEW (updated, item 4 of the UX-fixes batch):
+	// "no caller-visible signal" above is no longer true for an operator or
+	// automated sweep -- seedProjectEnvironment now writes an
+	// EventProjectEnvironmentSeedFailed audit event (AuditEvent row, hence
+	// that table joining the diff here too) for every failed/panicked seed,
+	// once the outer transaction commits (reportProjectEnvironmentSeedFailures).
+	// Still open: whether CreateProject should ALSO report which environments
+	// seeded successfully in its own HTTP response, rather than only via the
+	// audit trail. Left undecided, same as before.
+	"CreateEnvironment": {"Environment", "AuditEvent"},
 }
 
 // acceptableByDesign reports whether every table in diff is accounted for by
