@@ -224,6 +224,17 @@ var opScopedBestEffortTables = []struct {
 	{op: "REST POST /api/v1/users/", method: "AssignRole", tables: []string{"UserRole"}},
 	{op: "REST POST /api/v1/users/", method: "GetRoleByName", tables: []string{"UserRole"}},
 	{op: "REST POST /api/v1/projects", method: "WithTransaction", tables: []string{"Environment", "AuditEvent"}, minNthCall: 2},
+	// MigrateUserToMachine (internal/core/migrate_user_to_machine.go) deliberately
+	// returns the already-created machine identity ALONGSIDE a non-nil error when
+	// GetRolePermissions fails after the identity row committed — the function's
+	// own doc comment (lines 64-67) says so explicitly: "The identity exists;
+	// report the partial state..." rather than attempt a compensating delete.
+	// This is the default-branch (reported-error) analogue of bestEffortTables'
+	// AddPasswordHistory entry: a documented, intentional "committed anyway, told
+	// the caller" tradeoff, not a bug. Found live: FuzzStorageFaultOperations
+	// (REST POST /api/v1/projects/{id}/machine-identities/migrate-from-user,
+	// fault=GetRolePermissions#1/error), Session CR round 2.
+	{op: "REST POST /api/v1/projects/{id}/machine-identities/migrate-from-user", method: "GetRolePermissions", tables: []string{"AuditEvent", "MachineIdentity"}},
 }
 
 func opScopedAcceptableByDesign(op, method string, nth int, diff []string) bool {
@@ -753,8 +764,34 @@ func checkOracles(t *testing.T, in oracleInput) {
 		}
 	default:
 		if in.after.Hash != in.before.Hash {
+			diff := diffTables(in.before, in.after)
+			// Same 3-layer tolerance as the SUCCESS branch above, reused here for
+			// a reported ERROR that still changed state: a function can commit a
+			// real effect and then fail on a later, best-effort or documented-
+			// partial step (see opScopedBestEffortTables' MigrateUserToMachine
+			// entry and bestEffortTables generally) just as easily on the error
+			// path as on the success path — there is nothing about "the caller
+			// was told ERROR" that makes a best-effort audit-log failure, or a
+			// documented partial-commit-on-error design, suddenly a bug.
+			if acceptableByDesign(in.method, diff) {
+				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in %v, which %s explicitly documents "+
+					"as best-effort/non-fatal (see acceptableByDesign's doc comment)", label, diff, in.method)
+				return
+			}
+			if opScopedAcceptableByDesign(in.op, in.method, in.nth, diff) {
+				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in %v, which this op/method pair "+
+					"explicitly documents as best-effort/non-fatal (see opScopedBestEffortTables' doc comment)",
+					label, diff)
+				return
+			}
+			if onlyOutcomeLogTables(diff) {
+				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in outcome-log tables %v — see "+
+					"onlyOutcomeLogTables' doc comment on the SUCCESS branch above; the same reasoning applies "+
+					"to a reported ERROR", label, diff)
+				return
+			}
 			report("%s: ORACLE (a) VIOLATION — reported an ERROR but logical state changed anyway "+
-				"(partial commit). Differing tables: %v", label, diffTables(in.before, in.after))
+				"(partial commit). Differing tables: %v", label, diff)
 		}
 	}
 }
