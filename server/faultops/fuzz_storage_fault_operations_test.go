@@ -353,17 +353,57 @@ func opScopedAcceptableByDesign(op, method string, nth int, diff []string, execL
 // one. Coordinator review requested on this exclusion specifically (Session
 // CR round 2 PR body) per the "never widen a carve-out without flagging it"
 // rule -- not silently assumed correct.
+//
+// #2410/#2406: the four GRPC/REST revoke-lease routes under
+// fault=LogAuditEvent#1/effect-then-error use `columns`, not `tables` --
+// found live, CI input cf013c0032 on GRPC RevokeAllLeases: ORACLE (d)
+// VIOLATION, differing tables vs before AND vs reference: [AuditEvent
+// DynamicSecretLease]. AuditEvent is already excluded by outcomeLogTables.
+// Unlike CreateUserWithRoleGrants's PasswordHistory above, DynamicSecretLease
+// is NOT fully divergent -- core.RevokeLease (dynamic_secrets.go) always marks
+// the lease `revoked` (the external credential drop already happened and is
+// irreversible), and ONLY when the follow-on audit write then fails does it
+// additionally stamp DynamicSecretLease.RevokeError with that failure's own
+// message, in the SAME row update -- see RevokeLease's own #2406 doc comment.
+// The reference (fault-free) run never sets RevokeError, so that is the ONE
+// column that legitimately differs; every other DynamicSecretLease column
+// (Revoked, RevokedAt, LeaseID, ...) must still match both the pre-fault AND
+// reference state exactly. A whole-table exclusion here (the `tables` field)
+// would also hide a lease left "active" when it should be "revoked" -- the
+// exact mixed-state bug oracle (d) exists to catch -- so this must be
+// column-scoped. See TestEffectThenErrorColumnExclusion_RedOnOtherColumnChange
+// in this file's own test for the direct proof that a change to any OTHER
+// DynamicSecretLease column is still caught.
 var effectThenErrorExtraExclusions = []struct {
 	op, method string
 	tables     []string
+	// columns narrows one table to a column-level exclusion instead of
+	// removing it from the comparison entirely (see hashExcludingColumns):
+	// key is the table name, value is the column(s) stripped from every row
+	// of that table before it's hashed. A table named here does NOT also need
+	// to be named in `tables` -- the two are independent, applied together.
+	columns map[string][]string
 }{
 	{op: "GRPC keyorix.v1.UserService.CreateUser", method: "CreateUserWithRoleGrants", tables: []string{"PasswordHistory"}},
+	{op: "REST POST /api/v1/dynamic-secrets/configs/{id}/revoke-all", method: "LogAuditEvent", columns: map[string][]string{"DynamicSecretLease": {"RevokeError"}}},
+	{op: "REST POST /api/v1/dynamic-secrets/leases/{leaseID}/revoke", method: "LogAuditEvent", columns: map[string][]string{"DynamicSecretLease": {"RevokeError"}}},
+	{op: "GRPC keyorix.v1.DynamicSecretService.RevokeLease", method: "LogAuditEvent", columns: map[string][]string{"DynamicSecretLease": {"RevokeError"}}},
+	{op: "GRPC keyorix.v1.DynamicSecretService.RevokeAllLeases", method: "LogAuditEvent", columns: map[string][]string{"DynamicSecretLease": {"RevokeError"}}},
 }
 
 func effectThenErrorExtraExcludedTables(op, method string) []string {
 	for _, e := range effectThenErrorExtraExclusions {
 		if e.op == op && e.method == method {
 			return e.tables
+		}
+	}
+	return nil
+}
+
+func effectThenErrorExtraExcludedColumns(op, method string) map[string][]string {
+	for _, e := range effectThenErrorExtraExclusions {
+		if e.op == op && e.method == method {
+			return e.columns
 		}
 	}
 	return nil
@@ -1246,10 +1286,11 @@ func checkOracles(t *testing.T, in oracleInput) {
 		// writeAccessLog), so an effect-then-error delete legitimately has the
 		// secret gone but no access-log row. It only became visible to this
 		// oracle once secret_access_logs was migrated on every install (#2314).
-		excluded := append(append([]string{}, outcomeLogTables...), effectThenErrorExtraExcludedTables(in.op, in.method)...)
-		nonAuditBefore := hashExcluding(in.before, excluded...)
-		nonAuditAfter := hashExcluding(in.after, excluded...)
-		nonAuditRef := hashExcluding(in.refAfter, excluded...)
+		excludedTables := append(append([]string{}, outcomeLogTables...), effectThenErrorExtraExcludedTables(in.op, in.method)...)
+		excludedColumns := effectThenErrorExtraExcludedColumns(in.op, in.method)
+		nonAuditBefore := hashExcludingColumns(in.before, excludedTables, excludedColumns)
+		nonAuditAfter := hashExcludingColumns(in.after, excludedTables, excludedColumns)
+		nonAuditRef := hashExcludingColumns(in.refAfter, excludedTables, excludedColumns)
 		if nonAuditAfter != nonAuditBefore && nonAuditAfter != nonAuditRef {
 			if multiStepFirstCallAmbiguousCommit(in.op, in.method, in.nth) {
 				t.Logf("FLAG FOR REVIEW (not auto-fixed, not silently accepted): %s: state matches neither "+
@@ -1414,6 +1455,70 @@ func hashExcluding(snap dbSnapshot, excludeTables ...string) string {
 	return hex.EncodeToString(h[:])
 }
 
+// hashExcludingColumns is hashExcluding's column-scoped sibling (#2410): the
+// tables in excludeTables are dropped from the comparison entirely, same as
+// hashExcluding; each table named in excludeColumns instead STAYS in the
+// comparison, but has the named column(s) stripped from every row before
+// that table's own hash is recomputed -- so a difference in some OTHER
+// column of that same table is still caught, while an already-documented,
+// legitimately-divergent column doesn't make the whole table (and therefore
+// the whole snapshot) look different. excludeColumns may be nil.
+func hashExcludingColumns(snap dbSnapshot, excludeTables []string, excludeColumns map[string][]string) string {
+	exclude := make(map[string]bool, len(excludeTables))
+	for _, t := range excludeTables {
+		exclude[t] = true
+	}
+	var lines []string
+	for name, ts := range snap.Tables {
+		if exclude[name] {
+			continue
+		}
+		h := ts.Hash
+		if cols := excludeColumns[name]; len(cols) > 0 {
+			h = rowsHashExcludingColumns(ts.Rows, cols)
+		}
+		lines = append(lines, name+":"+h)
+	}
+	sort.Strings(lines)
+	h := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+	return hex.EncodeToString(h[:])
+}
+
+// rowsHashExcludingColumns recomputes one table's canonical hash (same
+// construction snapshotDB uses: sorted per-row JSON, newline-joined, SHA-256)
+// with columns stripped from each row's already-canonicalized JSON first.
+// rows are always this file's own canonicalRow output (sorted-key JSON of a
+// model's exported, non-excluded fields -- see snapshot_test.go) and never
+// fuzz input; a row that fails to parse as JSON is kept as-is rather than
+// silently dropped, since that would only happen if canonicalRow's own
+// output shape changed underneath this function.
+func rowsHashExcludingColumns(rows []string, columns []string) string {
+	strip := make(map[string]bool, len(columns))
+	for _, c := range columns {
+		strip[c] = true
+	}
+	canon := make([]string, 0, len(rows))
+	for _, row := range rows {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(row), &fields); err != nil {
+			canon = append(canon, row)
+			continue
+		}
+		for c := range strip {
+			delete(fields, c)
+		}
+		b, err := json.Marshal(fields) // map[string]json.RawMessage marshals with sorted keys
+		if err != nil {
+			canon = append(canon, row)
+			continue
+		}
+		canon = append(canon, string(b))
+	}
+	sort.Strings(canon)
+	h := sha256.Sum256([]byte(strings.Join(canon, "\n")))
+	return hex.EncodeToString(h[:])
+}
+
 // TestOpScopedAcceptableByDesign_ProjectWithTransaction_RequiresNthCallTwo is
 // the coordinator-requested split-out check (PR #2252 review) for the
 // "REST POST /api/v1/projects"/WithTransaction/[Environment] exemption above:
@@ -1465,4 +1570,52 @@ func TestOpScopedAcceptableByDesign_ProjectWithTransaction_RequiresNthCallTwo(t 
 func TestOpScopedAcceptableByDesign_UnrestrictedEntriesIgnoreNthCall(t *testing.T) {
 	assert.True(t, opScopedAcceptableByDesign("REST POST /api/v1/users/", "AssignRole", 1, []string{"UserRole"}, ""))
 	assert.True(t, opScopedAcceptableByDesign("REST POST /api/v1/users/", "GetRoleByName", 99, []string{"UserRole"}, ""))
+}
+
+// TestHashExcludingColumns_ColumnScopedExclusion is #2410's direct proof:
+// excluding one column from one table must mask ONLY a change isolated to
+// that column, and still catch a change to any OTHER column on the same
+// table -- the exact distinction a whole-table exclusion (hashExcluding, and
+// the effectThenErrorExtraExclusions `tables` field) cannot make, and
+// exactly why this entry needed `columns` instead.
+func TestHashExcludingColumns_ColumnScopedExclusion(t *testing.T) {
+	mkSnap := func(revokeError, other string) dbSnapshot {
+		row := fmt.Sprintf(`{"Other":%q,"RevokeError":%q}`, other, revokeError)
+		h := sha256.Sum256([]byte(row))
+		ts := tableSnapshot{Table: "DynamicSecretLease", Hash: hex.EncodeToString(h[:]), Rows: []string{row}}
+		return dbSnapshot{Tables: map[string]tableSnapshot{"DynamicSecretLease": ts}}
+	}
+
+	base := mkSnap("", "same")
+	onlyRevokeErrorDiffers := mkSnap("boom", "same")
+	otherColumnDiffers := mkSnap("", "different")
+
+	excludeColumns := map[string][]string{"DynamicSecretLease": {"RevokeError"}}
+
+	assert.Equal(t,
+		hashExcludingColumns(base, nil, excludeColumns),
+		hashExcludingColumns(onlyRevokeErrorDiffers, nil, excludeColumns),
+		"a change isolated to the excluded column must not change the hash")
+
+	assert.NotEqual(t,
+		hashExcludingColumns(base, nil, excludeColumns),
+		hashExcludingColumns(otherColumnDiffers, nil, excludeColumns),
+		"a change to a DIFFERENT column on the same table must still be caught -- column exclusion must not become a whole-table one")
+}
+
+// TestHashExcludingColumns_MatchesHashExcludingWhenNoColumns proves
+// hashExcludingColumns, called with a nil excludeColumns map, reduces to
+// exactly hashExcluding's whole-table-exclusion behavior -- the pre-#2410
+// callers of hashExcluding (world_reuse_soundness_test.go,
+// mixed_principal_authority_fuzz_test.go, fuzz_shared_secrets_view_test.go)
+// still call hashExcluding directly and are unaffected by this change; this
+// proves the function the oracle (d) call site switched TO would have given
+// them the identical answer, for the entries that only ever used `tables`.
+func TestHashExcludingColumns_MatchesHashExcludingWhenNoColumns(t *testing.T) {
+	snap := dbSnapshot{Tables: map[string]tableSnapshot{
+		"A": {Table: "A", Hash: "aaa"},
+		"B": {Table: "B", Hash: "bbb"},
+	}}
+	assert.Equal(t, hashExcluding(snap, "A"), hashExcludingColumns(snap, []string{"A"}, nil))
+	assert.Equal(t, hashExcluding(snap), hashExcludingColumns(snap, nil, nil))
 }
