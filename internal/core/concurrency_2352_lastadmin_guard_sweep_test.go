@@ -376,12 +376,17 @@ func newGroupVsDirectProjectAdminFixture(t *testing.T, name string) (*core.Keyor
 	return core.NewKeyorixCore(store.NewLocalStorage(db)), db
 }
 
+// projectHasNoAdmin reports whether BOTH of project 1's two roles.assign
+// routes are gone: group 10 soft-deleted (DeleteGroup soft-deletes the GROUP
+// row -- it does NOT cascade-delete the GroupRole join row itself; a live
+// authorization check excludes a soft-deleted group's grants by filtering on
+// the group's own deleted_at, not by the join row's mere absence, so
+// checking groupGone is the correct liveness test here, not GroupRole
+// row-count) AND user 2's direct grant gone.
 func projectHasNoAdmin(db *gorm.DB, groupID uint) bool {
-	// Group 10's grant gone AND user 2's direct grant gone == zero admins.
-	var groupGrants, userGrants int64
-	_ = db.Model(&models.GroupRole{}).Where("group_id = ? AND project_id = ?", groupID, 1).Count(&groupGrants)
+	var userGrants int64
 	_ = db.Model(&models.UserRole{}).Where("user_id = ? AND project_id = ?", 2, 1).Count(&userGrants)
-	return groupGrants == 0 && userGrants == 0
+	return groupGone(db, groupID) && userGrants == 0
 }
 
 func TestConcurrency_DeleteGroup_RemoveProjectMember_CrossPath_NeverStripsBothAdminRoutes(t *testing.T) {
@@ -399,6 +404,91 @@ func TestConcurrency_DeleteGroup_RemoveProjectMember_CrossPath_NeverStripsBothAd
 		}
 	}
 	assert.Zero(t, bothGone, "%d/%d trials: DeleteGroup and RemoveProjectMember together stripped project 1's ONLY two roles.assign routes, leaving it with zero administrators (the lock-domain-mismatch bug this sweep found: DeleteGroup used the global key, RemoveProjectMember the per-project key)", bothGone, lastAdminSweepTrials)
+}
+
+// delayedDeleteGroupStorage pauses exactly one targeted storage.DeleteGroup(id)
+// call right before it runs, signaling blocked once it starts waiting -- same
+// technique as delayedRemoveRoleFromGroupStorage above, applied to DeleteGroup's
+// own write instead of RemoveRoleFromGroup's.
+type delayedDeleteGroupStorage struct {
+	storage.Storage
+	targetGroupID    uint
+	blocked, release chan struct{}
+}
+
+func (d *delayedDeleteGroupStorage) DeleteGroup(ctx context.Context, id uint) error {
+	if id == d.targetGroupID {
+		close(d.blocked)
+		<-d.release
+	}
+	return d.Storage.DeleteGroup(ctx, id)
+}
+
+// TestConcurrency_DeleteGroup_RemoveProjectMember_CrossPath_TOCTOU_Deterministic
+// forces the exact interleaving the plain timing race above could not reliably
+// reproduce (confirmed empirically: 0/50 trials on the UNFIXED code -- DeleteGroup's
+// guard chain runs several more queries than RemoveProjectMember's, a structural
+// head start that consistently let one side's write land before the other's read
+// could observe the pre-write state, the same timing-asymmetry phenomenon
+// concurrency_remove_user_role_toctou_test.go's own doc comment documents for its
+// bug). DeleteGroup's actual storage write is paused right after its OWN guards
+// pass (having seen RemoveProjectMember's direct grant still present);
+// RemoveProjectMember is given a generous window to run to completion while
+// DeleteGroup is still paused.
+//
+// Pre-fix: DeleteGroup held only lastAdminGuardLockKey (global); RemoveProjectMember
+// holds only projectAdminGuardLockKey(1) -- two different lock domains, so
+// RemoveProjectMember is never blocked at all and completes well within the
+// window, its own guard seeing the group's grant still present (DeleteGroup's
+// write hasn't landed yet) and passing. Releasing DeleteGroup's write then commits
+// the group deletion too -- both of project 1's only two roles.assign routes gone.
+//
+// Post-fix: DeleteGroup holds BOTH the global key AND projectAdminGuardLockKey(1)
+// (withGroupProjectAdminGuardLocks) for its ENTIRE guard+write. RemoveProjectMember
+// needs the SAME per-project key, so it blocks on DeleteGroup's lock and cannot
+// complete within the window.
+func TestConcurrency_DeleteGroup_RemoveProjectMember_CrossPath_TOCTOU_Deterministic(t *testing.T) {
+	_, db := newGroupVsDirectProjectAdminFixture(t, "deletegroup_vs_removeprojectmember_toctou.db")
+	realStorage := store.NewLocalStorage(db)
+	wrapped := &delayedDeleteGroupStorage{
+		Storage: realStorage, targetGroupID: 10,
+		blocked: make(chan struct{}), release: make(chan struct{}),
+	}
+	cWrapped := core.NewKeyorixCore(wrapped)
+	ctx := context.Background()
+
+	var errA, errB error
+	doneA, doneB := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(doneA)
+		errA = cWrapped.DeleteGroup(ctx, 99, 10)
+	}()
+
+	<-wrapped.blocked // DeleteGroup passed both its guards, paused right before its write
+
+	go func() {
+		defer close(doneB)
+		errB = cWrapped.RemoveProjectMember(ctx, 99, 1, 2)
+	}()
+
+	select {
+	case <-doneB:
+	case <-time.After(2 * time.Second):
+	}
+	close(wrapped.release)
+	<-doneA
+	<-doneB
+
+	t.Logf("DeleteGroup result: %v", errA)
+	t.Logf("RemoveProjectMember result: %v", errB)
+
+	if projectHasNoAdmin(db, 10) {
+		t.Errorf("LAST-PROJECT-ADMIN GUARD BYPASSED ACROSS LOCK DOMAINS: DeleteGroup's guard read the "+
+			"pre-write grant set, RemoveProjectMember raced in on a DIFFERENT lock and committed before "+
+			"DeleteGroup's own (delayed) write landed, and both writes committed -- project 1 is left with "+
+			"ZERO roles.assign holders (errA=%v errB=%v)", errA, errB)
+	}
+	assert.False(t, projectHasNoAdmin(db, 10), "DeleteGroup and RemoveProjectMember must not both succeed concurrently")
 }
 
 // --- 7. Cross-path: RemoveUserFromGroup vs DeleteUser ------------------------
