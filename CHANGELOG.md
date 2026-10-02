@@ -64,6 +64,30 @@ All notable changes to Keyorix are documented here. This project follows
   password; prints one-time recovery codes). With `require_mfa` on, this is
   how a CLI-only operator gets past the first-login enrolment confinement;
   `keyorix login --mfa-code` completes later logins.
+- **Every security-weakening setting is now registered, warned about and
+  audited** (ADR-112, secure-by-default baseline, item 2 — the opt-out rule).
+  `internal/config.InsecureSettingsRegistry` is the single enumeration of all
+  32 of them; three things read it, so nothing has to be wired up per setting:
+  a start-up **warning** for every one currently in effect, a start-to-start
+  **settings diff** that writes an audit event (old value → new value) for any
+  of them that changed between two starts of the same deployment, and the
+  posture report. Nothing is renamed yet and no behaviour changes for an
+  existing config file: each entry records the `insecure_`-prefixed name it is
+  *heading for* alongside the real key it reads today, and the literal YAML
+  renames land as their own small follow-ups, each keeping the old key working
+  as a warning-logging deprecated alias.
+  A **sweep of the whole config surface** (`insecure_settings_sweep_test.go`)
+  is what keeps the registry honest: a setting whose name reads as an opt-out
+  and that no entry covers fails CI by name, and a count ratchet over every
+  leaf setting fails on *any* config addition — because eight of the registered
+  weakenings (`membership.validation_mode`, `storage.database.ssl_mode`,
+  `credential_delivery.mode`, the SMTP/email `tls` enums, `metrics_token`,
+  `max_request_body_bytes`, `sso.providers[].trust_asserted_email`) have names
+  no pattern list can recognise. Fourteen settings that cannot be renamed
+  mechanically — each needing a polarity inversion of a load-bearing flag, or
+  a non-boolean field restructured into a real boolean — are recorded as known
+  exceptions with an owning tracking issue, and are covered by the warning,
+  the audit diff and the posture report under their current names meanwhile.
 
 ## v0.95.3 — 2026-10-01
 

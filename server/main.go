@@ -151,6 +151,13 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		log.Fatalf("Configuration is invalid: %v", err)
 	}
 
+	// ADR-112 opt-out rule (item 2): every insecure_ setting currently in effect
+	// gets a warning on EVERY start — never silent. See
+	// warnInsecureSettingsInEffect below. (The deprecated-alias warning for an old
+	// key that was renamed lands with the renames themselves, in their own
+	// follow-up PRs; no setting is renamed yet.)
+	warnInsecureSettingsInEffect(cfg)
+
 	// Run the file-permission / encryption-key / database-reachability checks that were
 	// previously reachable ONLY via the manual `keyorix system validate` CLI subcommand
 	// (#330), despite official docs and that command's own help text claiming they run
@@ -280,6 +287,12 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// Record the evaluated license state once at startup (ADR-065), so the
 	// entitlement (and any degrade reason) is on the audit record.
 	coreService.AuditLicenseState(ctx)
+
+	// ADR-112 opt-out rule (item 2): the start-to-start settings diff. Config has no
+	// hot reload, so this is the only place a security-relevant setting changing
+	// between two starts ever becomes visible — audits old vs. new value for any
+	// difference since the previous start.
+	coreService.ReconcileSecurityPostureSnapshot(ctx, securityPostureSnapshot(cfg))
 
 	// Start every background scheduler exactly once, regardless of which of
 	// HTTP/gRPC is enabled (#G12) — see startSchedulers' doc comment.
@@ -2030,12 +2043,24 @@ func runStartupValidation(cfg *config.Config) error {
 	}
 	configPath := config.ResolvedPath("")
 	// Server startup has no --fix flag; remediation is governed solely by the
-	// config's Security.AutoFixFilePermissions field, as before. Only the ADR-112
-	// implicit default gets the first-boot tolerance for not-yet-generated key
-	// material: before ADR-112 such a deployment skipped this check entirely and
-	// went straight to first-boot key generation. An explicit true keeps the strict
-	// ValidateStartup, which refuses to boot (rather than mint a new encryption
-	// domain) when the salt and wrapped DEK are both missing.
+	// config's Security.AutoFixFilePermissions field, as before.
+	//
+	// The TOLERANT variant is reachable ONLY through the ADR-112 grace period —
+	// never for a deployment that set security.enable_file_permission_check
+	// explicitly. That gate is the whole point, not a detail: the tolerance
+	// treats "KEK salt AND wrapped DEK both missing" as a fresh install, so with
+	// it in force a key volume that failed to mount is explained away as first
+	// boot, this function returns nil, and initializeEncryption then GENERATES A
+	// FRESH SALT AND DEK — over an existing, still-encrypted database whose real
+	// key material is merely unmounted. Every value in it becomes permanently
+	// unreadable, and the server reports a clean start while doing it.
+	//
+	// So the variant follows the same explicit/implicit split the err→warn
+	// softening below already follows, and for the same reason: an operator who
+	// wrote the key down asked for these checks, and "an explicit true keeps
+	// failing closed exactly as before" is what this function's own doc comment
+	// above promises. Guarded by
+	// TestRunStartupValidation_ExplicitTrue_MissingKeyMaterial_RefusesToStart.
 	validate := startup.ValidateStartup
 	if cfg.Security.EnableFilePermissionCheckImplicitDefault {
 		validate = startup.ValidateStartupTolerant
@@ -2181,6 +2206,36 @@ func logWarnOnImplicitRequireMFADefault(cfg *config.Config) {
 		}
 		log.Printf("INFO: security.require_mfa is enforcing on its ADR-112 secure-by-default value (%s). Session-authenticated users without MFA are confined to MFA enrolment until they enrol (PAT/machine credentials are unaffected). Set security.require_mfa explicitly to silence this.", reason)
 	}
+}
+
+// warnInsecureSettingsInEffect logs a start-up warning for every ADR-112
+// registry entry currently in effect — unconditionally, on every boot, so a
+// security-weakening setting can never be silently in effect (opt-out rule
+// item 2's "a start-up warning for every insecure_ setting in effect").
+// Looping config.InsecureSettingsRegistry here is also half of what makes
+// TestInsecureSettingsRegistry_EveryEntryHasThePrefixWarningAndAuditHook's
+// guarantee hold: every entry with a non-nil InEffect is warned about by
+// construction, with no per-entry call site that could forget to wire one in.
+func warnInsecureSettingsInEffect(cfg *config.Config) {
+	for _, s := range config.InsecureSettingsRegistry {
+		if s.InEffect(cfg) {
+			log.Printf("WARNING: %s is in effect — %s", s.Name, s.Describe)
+		}
+	}
+}
+
+// securityPostureSnapshot computes this boot's value of every ADR-112
+// registry entry, keyed by its Name — the input to
+// coreService.ReconcileSecurityPostureSnapshot's start-to-start diff. Looping
+// config.InsecureSettingsRegistry here is the other half of
+// TestInsecureSettingsRegistry_EveryEntryHasThePrefixWarningAndAuditHook's
+// guarantee: every entry with a non-nil Value is audited by construction.
+func securityPostureSnapshot(cfg *config.Config) map[string]string {
+	snapshot := make(map[string]string, len(config.InsecureSettingsRegistry))
+	for _, s := range config.InsecureSettingsRegistry {
+		snapshot[s.Name] = s.Value(cfg)
+	}
+	return snapshot
 }
 
 func startGRPCServer(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) error {

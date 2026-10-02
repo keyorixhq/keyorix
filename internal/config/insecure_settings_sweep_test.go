@@ -1,0 +1,287 @@
+// insecure_settings_sweep_test.go — the half of ADR-112's opt-out rule that
+// looks OUTWARD, at Config, instead of inward at the registry.
+//
+// The coordinator's 2026-10-06 review named the gap precisely: the registry's
+// own structural test validates only entries ALREADY in the registry, and since
+// every entry's Name is a synthetic insecure_-prefixed path whether or not the
+// YAML key was renamed, that test passes no matter what Config grows next to
+// it. "There is no violation count for an exception to be excluded from,
+// because no sweep of the config surface exists." This file is that sweep.
+//
+// It has two nets, because one is provably not enough:
+//
+//  1. A LEXICAL net over every leaf in Config's YAML surface: a key whose name
+//     reads like an opt-out (allow_, disable, skip_, unsafe, insecure_,
+//     keyless) must be covered by a registry entry's SourcePaths or carry a
+//     written exemption. This catches the common shape and names the offender
+//     exactly.
+//
+//  2. A COUNT ratchet over the same surface. This is not belt-and-braces: half
+//     the known exceptions prove the lexical net cannot see them —
+//     membership.validation_mode, storage.database.ssl_mode,
+//     credential_delivery.mode, credential_delivery.smtp.tls,
+//     notifications.email.tls, server.http.metrics_token,
+//     server.http.max_request_body_bytes and sso.providers.trust_asserted_email
+//     are all security-weakening in some value, and not one of them contains a
+//     word a pattern list would flag. A new field of that kind would sail
+//     straight through net 1. Net 2 cannot miss it: ANY new leaf anywhere in
+//     Config fails, and the failure message states the two legitimate ways to
+//     resolve it.
+//
+// What this does NOT claim: that it can tell a weakening setting from a benign
+// one by itself. Net 1 guesses from the name and net 2 refuses to guess at all,
+// forcing a human classification on every addition. That is the whole design —
+// the thing being prevented is a weakening setting entering the codebase with
+// NOBODY having looked at it, not a wrong guess about which it is.
+package config
+
+import (
+	"fmt"
+	"reflect"
+	"sort"
+	"strings"
+	"testing"
+)
+
+// configLeaf is one scalar (non-struct) field on Config's YAML surface.
+type configLeaf struct {
+	Path string       // dotted YAML path, slices flattened (no [] marker)
+	Kind reflect.Kind // the leaf's Go kind, for the failure message's benefit
+}
+
+// configSurfaceLeaves walks Config and returns every leaf YAML path.
+//
+// Slices and pointers are flattened to their element type, so a per-provider
+// setting appears once as sso.providers.trust_asserted_email rather than being
+// invisible behind the slice — that is the same path spelling the registry's
+// SourcePaths use. `yaml:"-"` fields are skipped: they are never settable from
+// a config file, so they are not part of the opt-out surface (that is how
+// SecurityConfig.EnableFilePermissionCheckImplicitDefault, a derived field,
+// stays out of this sweep).
+//
+// Recursion stops on a type already on the current path, which is what keeps
+// KeyProviderConfig.Fallbacks ([]KeyProviderConfig, self-referential) from
+// expanding forever. One level is the right depth anyway, and not an
+// approximation chosen here: keyProviderChain and internal/keyfiles.Registry
+// both already read exactly one level of Fallbacks, so a deeper nesting is not
+// a live configuration shape.
+func configSurfaceLeaves() []configLeaf {
+	var leaves []configLeaf
+	var walk func(t reflect.Type, prefix string, onPath map[reflect.Type]bool)
+	walk = func(t reflect.Type, prefix string, onPath map[reflect.Type]bool) {
+		for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
+			t = t.Elem()
+		}
+		if t.Kind() != reflect.Struct || onPath[t] {
+			return
+		}
+		onPath[t] = true
+		defer delete(onPath, t)
+
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			if f.PkgPath != "" { // unexported: not YAML-settable
+				continue
+			}
+			name := strings.Split(f.Tag.Get("yaml"), ",")[0]
+			if name == "-" {
+				continue
+			}
+			if name == "" {
+				name = strings.ToLower(f.Name)
+			}
+			path := name
+			if prefix != "" {
+				path = prefix + "." + name
+			}
+			ft := f.Type
+			for ft.Kind() == reflect.Pointer || ft.Kind() == reflect.Slice || ft.Kind() == reflect.Array {
+				ft = ft.Elem()
+			}
+			if ft.Kind() == reflect.Struct {
+				walk(ft, path, onPath)
+				continue
+			}
+			leaves = append(leaves, configLeaf{Path: path, Kind: ft.Kind()})
+		}
+	}
+	walk(reflect.TypeOf(Config{}), "", map[reflect.Type]bool{})
+	sort.Slice(leaves, func(i, j int) bool { return leaves[i].Path < leaves[j].Path })
+	return leaves
+}
+
+// optOutLookingSubstrings are the lexical patterns net 1 matches against a
+// leaf's LAST path segment. Deliberately matched on the leaf only: a parent
+// segment like "allowlist_sync" would otherwise flag every field beneath it.
+var optOutLookingSubstrings = []string{
+	"insecure_",
+	"allow_",
+	"_allow",
+	"disable",
+	"skip_",
+	"unsafe",
+	"keyless",
+}
+
+// sweepExemptions are leaves net 1 flags that are NOT security-weakening opt-
+// outs, each with the reason. An exemption is a claim a reviewer can check at
+// its source, which is why each one says what the field actually does rather
+// than just "not applicable".
+var sweepExemptions = map[string]string{
+	"membership.domain_allowlist": "an ALLOWLIST is a restriction, not an opt-out: setting it narrows which " +
+		"email domains may self-register. Its empty value is the permissive one, but 'open registration' is " +
+		"already covered as a weakening by membership.validation_mode (the insecure_skip_membership_review " +
+		"entry) — registering this field too would audit the same posture twice under two names.",
+}
+
+// registryCoveredPaths is the set of config paths some registry entry's
+// SourcePaths claims.
+func registryCoveredPaths() map[string][]string {
+	covered := map[string][]string{}
+	for _, e := range InsecureSettingsRegistry {
+		for _, p := range e.SourcePaths {
+			covered[p] = append(covered[p], e.Name)
+		}
+	}
+	return covered
+}
+
+func looksLikeOptOut(path string) bool {
+	leaf := path
+	if i := strings.LastIndex(path, "."); i >= 0 {
+		leaf = path[i+1:]
+	}
+	for _, s := range optOutLookingSubstrings {
+		if strings.Contains(leaf, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestConfigSurface_EveryOptOutLookingSettingIsRegisteredOrExempt is net 1.
+//
+// RED on adding a bool field tagged yaml:"allow_anything"
+// to any struct reachable from Config without touching anything else: the test
+// names the exact path and refuses to pass until it is either registered or
+// exempted with a reason.
+func TestConfigSurface_EveryOptOutLookingSettingIsRegisteredOrExempt(t *testing.T) {
+	covered := registryCoveredPaths()
+	var unlisted []string
+	for _, l := range configSurfaceLeaves() {
+		if !looksLikeOptOut(l.Path) {
+			continue
+		}
+		if len(covered[l.Path]) > 0 {
+			continue
+		}
+		if _, ok := sweepExemptions[l.Path]; ok {
+			continue
+		}
+		unlisted = append(unlisted, fmt.Sprintf("%s (%s)", l.Path, l.Kind))
+	}
+	if len(unlisted) > 0 {
+		t.Errorf("found %d config setting(s) whose name reads as a security opt-out but which no "+
+			"InsecureSettingsRegistry entry covers and which carry no exemption:\n  %s\n\n"+
+			"ADR-112's opt-out rule says a security-weakening setting must be visible: warned about at "+
+			"start-up, present in the start-to-start settings diff, and reported as a deviation by the "+
+			"posture report. All three read InsecureSettingsRegistry, so an unregistered setting is in "+
+			"effect SILENTLY. Resolve it one of two ways, both of which are a decision someone made on "+
+			"purpose:\n"+
+			"  (a) add an InsecureSettingsRegistry entry whose SourcePaths names this path, or\n"+
+			"  (b) add it to sweepExemptions with a reason saying why it is not an opt-out.",
+			len(unlisted), strings.Join(unlisted, "\n  "))
+	}
+}
+
+// TestConfigSurface_RegistrySourcePathsAllExist stops the registry's side of
+// the link from rotting. A SourcePaths entry naming a field that no longer
+// exists would silently stop covering anything, and net 1 would go on passing
+// because the (now absent) path is no longer swept either — a carve-out that
+// quietly covers nothing is worse than no carve-out, because it still reads as
+// coverage.
+func TestConfigSurface_RegistrySourcePathsAllExist(t *testing.T) {
+	real := map[string]bool{}
+	for _, l := range configSurfaceLeaves() {
+		real[l.Path] = true
+	}
+	for _, e := range InsecureSettingsRegistry {
+		t.Run(e.Name, func(t *testing.T) {
+			if len(e.SourcePaths) == 0 {
+				t.Fatalf("entry %q has no SourcePaths — nothing ties it to a real config field, so the "+
+					"sweep cannot tell whether the setting it describes still exists", e.Name)
+			}
+			for _, p := range e.SourcePaths {
+				if !real[p] {
+					t.Errorf("SourcePaths entry %q does not exist on Config's YAML surface (renamed? removed? "+
+						"typo?) — fix the path, or drop the entry if the setting is gone", p)
+				}
+			}
+		})
+	}
+}
+
+// TestConfigSurface_ExemptionsAreLive keeps sweepExemptions honest in the other
+// direction: an exemption for a path that no longer exists, or that no longer
+// even looks like an opt-out, is dead weight that reads as a reviewed decision.
+func TestConfigSurface_ExemptionsAreLive(t *testing.T) {
+	real := map[string]bool{}
+	for _, l := range configSurfaceLeaves() {
+		real[l.Path] = true
+	}
+	for path, reason := range sweepExemptions {
+		if reason == "" {
+			t.Errorf("exemption %q has no reason", path)
+		}
+		if !real[path] {
+			t.Errorf("exemption %q names a config path that no longer exists — remove it", path)
+		} else if !looksLikeOptOut(path) {
+			t.Errorf("exemption %q is never flagged by the sweep (its name no longer reads as an opt-out), "+
+				"so the exemption does nothing — remove it", path)
+		}
+	}
+}
+
+// wantConfigSurfaceLeafCount is net 2's ratchet.
+//
+// Update it ONLY together with the classification the failure message asks for.
+// Bumping the number to make CI green, with no entry added to either
+// InsecureSettingsRegistry or sweepExemptions and nothing written down, is the
+// one way to defeat this check — and it is exactly the decision this number
+// exists to force someone to make in the open.
+const wantConfigSurfaceLeafCount = 304
+
+// TestConfigSurface_LeafCountRatchet is net 2: the net for a weakening setting
+// whose NAME gives nothing away.
+//
+// Eight of the known exceptions are proof this is needed rather than
+// decorative — membership.validation_mode, storage.database.ssl_mode,
+// credential_delivery.mode, credential_delivery.smtp.tls,
+// notifications.email.tls, server.http.metrics_token,
+// server.http.max_request_body_bytes and sso.providers.trust_asserted_email are
+// each weakening in some value and none of them contains a word net 1 looks
+// for. A ninth of the same kind, added tomorrow, would pass net 1 silently.
+//
+// This check cannot be silently passed: any added or removed leaf anywhere in
+// Config fails it.
+func TestConfigSurface_LeafCountRatchet(t *testing.T) {
+	leaves := configSurfaceLeaves()
+	if len(leaves) == wantConfigSurfaceLeafCount {
+		return
+	}
+	verb := "grew to"
+	if len(leaves) < wantConfigSurfaceLeafCount {
+		verb = "shrank to"
+	}
+	t.Errorf("Config's YAML surface %s %d leaf settings (wantConfigSurfaceLeafCount = %d).\n\n"+
+		"This is ADR-112's opt-out rule asking one question about whatever changed: can any value of "+
+		"the new/changed setting weaken security?\n"+
+		"  - YES -> add an InsecureSettingsRegistry entry whose SourcePaths names it. It then gets the "+
+		"start-up warning, the settings-diff audit and the posture report automatically; no call site to "+
+		"wire up.\n"+
+		"  - NO  -> update wantConfigSurfaceLeafCount, and say so in the commit message.\n\n"+
+		"The name-based sweep (TestConfigSurface_EveryOptOutLookingSettingIsRegisteredOrExempt) is not a "+
+		"substitute for answering this: validation_mode, ssl_mode, mode, tls, metrics_token and "+
+		"max_request_body_bytes are all registered weakenings whose names it cannot see.",
+		verb, len(leaves), wantConfigSurfaceLeafCount)
+}
