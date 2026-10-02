@@ -357,7 +357,7 @@ var operationOverrides = map[string]overrideEntry{
 	// spec test vectors (webauthn_finish_ops_test.go) — go-webauthn's actual
 	// signature-verification path, not a stub.
 	"REST POST /api/v1/auth/webauthn/register/finish": {StatusFuzzed, "opCatalog[\"REST POST /api/v1/auth/webauthn/register/finish\"] — Session FI2"},
-	"REST POST /auth/webauthn/login/finish":            {StatusFuzzed, "opCatalog[\"REST POST /auth/webauthn/login/finish\"] — Session FI2"},
+	"REST POST /auth/webauthn/login/finish":           {StatusFuzzed, "opCatalog[\"REST POST /auth/webauthn/login/finish\"] — Session FI2"},
 }
 
 func statusOf(key string) overrideEntry {
