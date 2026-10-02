@@ -63,13 +63,19 @@ func waitForAuditEventsToSettle(t *testing.T, s *harness.Server, adminToken stri
 // narrower, still-exact assertions below instead (viewer's own read count,
 // and total login count matching the exact number of adminLogin calls this
 // test file's own call graph makes).
+// #2394 (journey1 switched to keyorix-sdks/go v0.3.0) added SDK-only checks
+// to N1 that this journey also runs: a second project + machine identity for
+// the cross-project denial check (one extra project.created,
+// machine_identity.created/role_granted/token_issued each), and 24 extra
+// secrets that push one scope past the server's page_size=20 default for the
+// ListSecretsScoped pagination check (secret.created 4 -> 28).
 var n3ExactEventCounts = map[string]int{
-	"secret.created":                 4,
+	"secret.created":                 28,
 	"secret.updated":                 1,
 	"secret.rolled_back":             1,
-	"machine_identity.created":       1,
-	"machine_identity.role_granted":  1,
-	"machine_identity.token_issued":  1,
+	"machine_identity.created":       2,
+	"machine_identity.role_granted":  2,
+	"machine_identity.token_issued":  2,
 	"machine_identity.token_revoked": 1,
 	"role.assigned":                  3,
 	"role.removed":                   1,
@@ -81,7 +87,7 @@ var n3ExactEventCounts = map[string]int{
 	// ('default')"), not an N1/N2 action. See n3StaleKnownGapNote below for
 	// why these are asserted PRESENT here at all -- this was NOT true when
 	// N3 was first written.
-	"project.created": 4,
+	"project.created": 5,
 	"user.created":    4,
 }
 
@@ -344,14 +350,26 @@ func runVerifyAudit(t *testing.T, s *harness.Server, dbPath string) (verifyAudit
 
 // copyFile copies src to dst byte-for-byte (used to tamper a COPY, never the
 // live DB file).
+// copyFile copies a SQLite database file AND its -wal/-shm companions. The
+// server is stopped with Kill (no clean shutdown), so the most recent
+// committed rows can still live only in the -wal file; copying the main file
+// alone silently drops them, and a tamper aimed at one of those rows then
+// edits nothing, so the verifier correctly reports VALID and the journey's
+// tamper assertion fails for the wrong reason (seen after #2394 grew N1's
+// write volume).
 func copyFile(t *testing.T, src, dst string) {
 	t.Helper()
-	data, err := os.ReadFile(src) // #nosec G304 -- src is this test's own harness-managed DB path
-	if err != nil {
-		t.Fatalf("read %s: %v", src, err)
-	}
-	if err := os.WriteFile(dst, data, 0o600); err != nil {
-		t.Fatalf("write %s: %v", dst, err)
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		data, err := os.ReadFile(src + suffix) // #nosec G304 -- src is this test's own harness-managed DB path
+		if err != nil {
+			if suffix != "" && os.IsNotExist(err) {
+				continue
+			}
+			t.Fatalf("read %s: %v", src+suffix, err)
+		}
+		if err := os.WriteFile(dst+suffix, data, 0o600); err != nil {
+			t.Fatalf("write %s: %v", dst+suffix, err)
+		}
 	}
 }
 
