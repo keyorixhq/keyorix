@@ -263,15 +263,17 @@ func (c *KeyorixCore) writeAuditEvent(ctx context.Context, eventType string, use
 }
 
 // writeAuditEventFull persists an audit_events row with full NIS2/DORA context.
-func (c *KeyorixCore) writeAuditEventFull(ctx context.Context, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string) {
-	c.writeAuditEventDiff(ctx, eventType, userID, secretID, projectID, ip, description, "")
+// Returns whether it actually persisted (see emitAudit's own doc comment) --
+// every pre-#2406 caller ignores it, source-compatible and behavior-unchanged.
+func (c *KeyorixCore) writeAuditEventFull(ctx context.Context, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string) bool {
+	return c.writeAuditEventDiff(ctx, eventType, userID, secretID, projectID, ip, description, "")
 }
 
 // writeAuditEventDiff is writeAuditEventFull plus a structured before/after diff.
 // It also stamps impersonation attribution when the context carries an
 // impersonation tag (set by the auth middleware), so every action taken inside
 // an impersonation session is consistently marked with impersonation=true.
-func (c *KeyorixCore) writeAuditEventDiff(ctx context.Context, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string, diff string) { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
+func (c *KeyorixCore) writeAuditEventDiff(ctx context.Context, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string, diff string) bool { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
 	t := true
 	event := &models.AuditEvent{
 		EventType:    eventType,
@@ -291,7 +293,7 @@ func (c *KeyorixCore) writeAuditEventDiff(ctx context.Context, eventType string,
 		event.ActingAs = userID
 		event.Impersonation = true
 	}
-	c.emitAudit(ctx, event)
+	return c.emitAudit(ctx, event)
 }
 
 // writeAuditEventFailed persists a failed audit event (Success=false), with
