@@ -58,7 +58,7 @@ Uptime: 5h30m+ stable
 # Optimized connection pool configuration (applies to both SQLite and PostgreSQL)
 database:
   max_open_conns: 25
-  max_idle_conns: 5
+  max_idle_conns: 25  # match max_open_conns, or a connection gets closed instead of reused
   conn_max_lifetime_minutes: 30
 
   # SQLite only — these pragmas improve write throughput on SQLite:
@@ -98,7 +98,7 @@ type SecretCache struct {
 // Connection pooling
 db, err := sql.Open("sqlite3", "keyorix.db?cache=shared&mode=rwc")
 db.SetMaxOpenConns(25)
-db.SetMaxIdleConns(5)
+db.SetMaxIdleConns(25)  // match SetMaxOpenConns
 db.SetConnMaxLifetime(time.Hour)
 ```
 
@@ -218,7 +218,7 @@ CREATE INDEX idx_shares_secret ON share_records(secret_id);
 ```go
 // Connection pool tuning
 db.SetMaxOpenConns(25)
-db.SetMaxIdleConns(5)
+db.SetMaxIdleConns(25)  // match SetMaxOpenConns
 db.SetConnMaxLifetime(time.Hour)
 
 // HTTP server tuning

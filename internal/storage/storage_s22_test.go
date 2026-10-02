@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -873,6 +874,44 @@ func TestApplyPoolSettings_S22_ZeroValuesUseDefaults(t *testing.T) {
 	stats := sqlDB.Stats()
 	// MaxOpenConnections must be capped at defaultMaxOpenConns (25), not unlimited (0).
 	assert.Equal(t, defaultMaxOpenConns, stats.MaxOpenConnections)
+}
+
+// TestApplyPoolSettings_S22_ZeroValuesMaxIdleMatchesMaxOpen is SESSION-PERF's #2403
+// follow-up: when max_idle_conns is unset, it must match the effective MaxOpenConns
+// (defaultMaxOpenConns here), not silently fall through to database/sql's own built-in
+// default of 2. database/sql exposes no direct getter for the configured idle limit, so
+// this asserts the OBSERVABLE BEHAVIOR that limit controls: open more connections than
+// Go's default idle cap (2) but fewer than defaultMaxOpenConns (25), return them all to
+// the pool, and confirm they're kept idle/warm rather than closed down to 2. Before the
+// fix, this held at most 2 idle; after, it holds all of them (closeCount stays 0).
+func TestApplyPoolSettings_S22_ZeroValuesMaxIdleMatchesMaxOpen(t *testing.T) {
+	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "pool-idle-default.db"))
+	require.NoError(t, err)
+	cfg := &config.DatabaseConfig{}
+	require.NoError(t, applyPoolSettings(db, cfg))
+
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+
+	const concurrent = 10 // > Go's built-in idle default (2), < defaultMaxOpenConns (25)
+	var wg sync.WaitGroup
+	for i := 0; i < concurrent; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var one int
+			assert.NoError(t, sqlDB.QueryRow("SELECT 1").Scan(&one))
+		}()
+	}
+	wg.Wait()
+
+	stats := sqlDB.Stats()
+	assert.Equal(t, int64(0), stats.MaxIdleClosed,
+		"with max_idle_conns defaulted to match max_open_conns (25), none of the 10 "+
+			"connections used above should have been closed for exceeding the idle cap "+
+			"(database/sql's own default of 2 would have closed 8 of them)")
+	assert.GreaterOrEqual(t, stats.Idle, concurrent-1,
+		"nearly all 10 connections should still be idle/warm in the pool for reuse")
 }
 
 // TestApplyPoolSettings_S22_AllFieldsSet verifies that non-zero pool settings are
