@@ -110,6 +110,27 @@ type IssueSetupTokenResult struct {
 // for the same (purpose, email) so a reissue invalidates the old link. The raw token
 // is returned once; only its hash is stored.
 func (c *KeyorixCore) IssueSetupToken(ctx context.Context, req IssueSetupTokenRequest) (*IssueSetupTokenResult, error) {
+	result, err := c.mintSetupTokenOn(ctx, c.storage, req)
+	if err != nil {
+		return nil, err
+	}
+	c.auditSetupTokenIssued(ctx, req, result.Token)
+	return result, nil
+}
+
+// mintSetupTokenOn is IssueSetupToken's actual mint logic, parameterized over
+// the storage.Storage handle it writes through, WITHOUT auditing (the audit
+// write always happens via emitAudit against c.storage directly and must
+// never run until the caller's own transaction, if any, has committed --
+// #2444 coordinator follow-up). st is c.storage for the standalone
+// IssueSetupToken path above, or an outer caller's already-open transaction
+// handle (e.g. createInvitationWithSetupTokenAtomically below) when the mint
+// must commit or roll back together with a durable record created ahead of
+// it. st.WithTransaction nests as a SAVEPOINT when st is already
+// transaction-scoped (GORM's standard nested-transaction behavior, same
+// mechanism catalog.go's nested environment-seed transaction relies on), so
+// this needs no special-casing for either caller.
+func (c *KeyorixCore) mintSetupTokenOn(ctx context.Context, st storage.Storage, req IssueSetupTokenRequest) (*IssueSetupTokenResult, error) {
 	if !validSetupPurpose(req.Purpose) {
 		return nil, fmt.Errorf("%s: unknown setup-token purpose %q", i18n.T("ErrorValidation", nil), req.Purpose)
 	}
@@ -154,7 +175,7 @@ func (c *KeyorixCore) IssueSetupToken(ctx context.Context, req IssueSetupTokenRe
 	// confines this to the issuing project's own invitations
 	// (CORE-INVITATIONS-003) rather than every project's.
 	var created *models.SetupToken
-	err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+	err := st.WithTransaction(ctx, func(tx storage.Storage) error {
 		if err := tx.SupersedeActiveSetupTokens(ctx, req.Purpose, email, req.SupersedeProjectID); err != nil {
 			return err
 		}
@@ -166,14 +187,23 @@ func (c *KeyorixCore) IssueSetupToken(ctx context.Context, req IssueSetupTokenRe
 		return nil, fmt.Errorf("%s: %w: %w", i18n.T("ErrorStorageFailed", nil), ErrSetupTokenIssuanceFailed, err)
 	}
 
+	return &IssueSetupTokenResult{Token: created, PlainToken: raw}, nil
+}
+
+// auditSetupTokenIssued writes setup_token.issued. Split out of IssueSetupToken
+// so a caller that minted the token via mintSetupTokenOn against an outer,
+// not-yet-committed transaction (createInvitationWithSetupTokenAtomically)
+// can defer this until AFTER that transaction actually commits -- emitAudit
+// always writes through c.storage directly (never a tx handle), so calling
+// it before commit would record "issued" for a token a later rollback could
+// still erase.
+func (c *KeyorixCore) auditSetupTokenIssued(ctx context.Context, req IssueSetupTokenRequest, tok *models.SetupToken) {
 	// Issuer is the actor; for self-service reset (CreatedBy == 0) attribute to the
 	// subject. No token (not even the hash) is recorded on the audit row.
 	actor := actorOrSubject(req.CreatedBy, req.SubjectUserID)
 	c.writeAuditEventFull(ctx, "setup_token.issued", actor, nil, nil, "",
 		fmt.Sprintf("setup token issued (purpose=%s, subject=%s, expires=%s)",
-			req.Purpose, email, created.ExpiresAt.Format(time.RFC3339)))
-
-	return &IssueSetupTokenResult{Token: created, PlainToken: raw}, nil
+			req.Purpose, tok.SubjectEmail, tok.ExpiresAt.Format(time.RFC3339)))
 }
 
 // ValidateSetupToken resolves a raw token to its record for the expected purpose,

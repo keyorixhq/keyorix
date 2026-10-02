@@ -73,7 +73,7 @@ func setupInvitationFaultTest(t *testing.T) (*CatalogHandler, *gorm.DB, *faultst
 // not the 201 "created" response CreateGlobalInvitation/CreateInvitation send
 // for a benign config/throttle/delivery failure.
 func TestCreateGlobalInvitation_SupersedeActiveSetupTokensErrorFailsClosed(t *testing.T) {
-	h, _, faulty := setupInvitationFaultTest(t)
+	h, db, faulty := setupInvitationFaultTest(t)
 	faulty.Arm(&faultstorage.FaultSpec{
 		Method: "SupersedeActiveSetupTokens", NthCall: 1, Kind: faultstorage.KindError,
 		Err: errInjectedInviteFault,
@@ -85,6 +85,36 @@ func TestCreateGlobalInvitation_SupersedeActiveSetupTokensErrorFailsClosed(t *te
 		"a failed supersede+create must not be reported as 201 success")
 	assert.NotContains(t, w.Body.String(), "delivery_error",
 		"this is not the benign delivery-failure partial-success shape")
+
+	// #2444 coordinator follow-up: neither the invitation nor a setup token
+	// may exist after the fault -- the insert and the mint now commit or
+	// fail together.
+	var n int64
+	require.NoError(t, db.Model(&models.ProjectInvitation{}).Where("email = ?", "carol@acme.io").Count(&n).Error)
+	assert.Zero(t, n, "no invitation row should exist after a rolled-back issuance")
+	require.NoError(t, db.Model(&models.SetupToken{}).Where("subject_email = ?", "carol@acme.io").Count(&n).Error)
+	assert.Zero(t, n, "no setup token should exist after a rolled-back issuance")
+}
+
+// TestCreateGlobalInvitation_SupersedeActiveSetupTokensError_RetrySucceeds
+// proves the fail-closed fix actually unblocks recovery: an immediate retry
+// of the exact same invite, once the fault clears, must succeed with no
+// leftover state from the failed attempt in the way.
+func TestCreateGlobalInvitation_SupersedeActiveSetupTokensError_RetrySucceeds(t *testing.T) {
+	h, db, faulty := setupInvitationFaultTest(t)
+	faulty.Arm(&faultstorage.FaultSpec{
+		Method: "SupersedeActiveSetupTokens", NthCall: 1, Kind: faultstorage.KindError,
+		Err: errInjectedInviteFault,
+	})
+	w := postGlobalInvite(t, h, `{"email":"carol@acme.io","role":"system_auditor"}`)
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+
+	w2 := postGlobalInvite(t, h, `{"email":"carol@acme.io","role":"system_auditor"}`)
+	assert.Equal(t, http.StatusCreated, w2.Code, "an immediate retry after a rolled-back attempt must succeed")
+
+	var n int64
+	require.NoError(t, db.Model(&models.ProjectInvitation{}).Where("email = ?", "carol@acme.io").Count(&n).Error)
+	assert.Equal(t, int64(1), n, "exactly one invitation should exist after the failed attempt rolled back and the retry succeeded")
 }
 
 func TestCreateInvitation_SupersedeActiveSetupTokensErrorFailsClosed(t *testing.T) {
@@ -104,4 +134,38 @@ func TestCreateInvitation_SupersedeActiveSetupTokensErrorFailsClosed(t *testing.
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code,
 		"a failed supersede+create must not be reported as 201 success")
+
+	var n int64
+	require.NoError(t, db.Model(&models.ProjectInvitation{}).Where("email = ?", "dave@acme.io").Count(&n).Error)
+	assert.Zero(t, n, "no invitation row should exist after a rolled-back issuance")
+	require.NoError(t, db.Model(&models.SetupToken{}).Where("subject_email = ?", "dave@acme.io").Count(&n).Error)
+	assert.Zero(t, n, "no setup token should exist after a rolled-back issuance")
+}
+
+// TestCreateInvitation_SupersedeActiveSetupTokensError_RetrySucceeds is the
+// project-scoped sibling of the global-invite retry test above.
+func TestCreateInvitation_SupersedeActiveSetupTokensError_RetrySucceeds(t *testing.T) {
+	h, db, faulty := setupInvitationFaultTest(t)
+	var proj models.Project
+	require.NoError(t, db.Where("name = ?", "default").First(&proj).Error)
+
+	faulty.Arm(&faultstorage.FaultSpec{
+		Method: "SupersedeActiveSetupTokens", NthCall: 1, Kind: faultstorage.KindError,
+		Err: errInjectedInviteFault,
+	})
+
+	body := `{"email":"dave@acme.io","role":"project_developer"}`
+	req1 := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte(body))), "id", strconv.Itoa(int(proj.ID))))
+	w1 := httptest.NewRecorder()
+	h.CreateInvitation(w1, req1)
+	require.Equal(t, http.StatusInternalServerError, w1.Code)
+
+	req2 := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte(body))), "id", strconv.Itoa(int(proj.ID))))
+	w2 := httptest.NewRecorder()
+	h.CreateInvitation(w2, req2)
+	assert.Equal(t, http.StatusCreated, w2.Code, "an immediate retry after a rolled-back attempt must succeed")
+
+	var n int64
+	require.NoError(t, db.Model(&models.ProjectInvitation{}).Where("email = ?", "dave@acme.io").Count(&n).Error)
+	assert.Equal(t, int64(1), n, "exactly one invitation should exist after the failed attempt rolled back and the retry succeeded")
 }
