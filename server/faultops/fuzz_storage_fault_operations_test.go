@@ -14,11 +14,13 @@
 package faultops
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"reflect"
 	"sort"
 	"strings"
@@ -185,7 +187,7 @@ var multiStepAmbiguousCommitExceptions = []nonLoadBearingException{}
 // environment seeding in one outer WithTransaction, with EACH environment
 // seeded via its own NESTED tx.WithTransaction (a SAVEPOINT) — deliberately,
 // per that function's own extensive comment: a per-environment seeding
-// failure is caught, logged ("created without its default environment ...:
+// failure is caught, logged ("created without its environment ...:
 // %v"), and non-fatal by design, so the project itself still commits. Found
 // live: FuzzStorageFaultOperations op="REST POST /api/v1/projects"
 // fault=WithTransaction#4/error (CI, PR #2252) — NthCall=4 lands on one of
@@ -213,6 +215,19 @@ var multiStepAmbiguousCommitExceptions = []nonLoadBearingException{}
 // signal" half of the original gap — the missing environment is still
 // non-fatal by design, but it is now DISCOVERABLE via the audit trail
 // instead of only a server log line.
+//
+// requireLogSubstring (session-M follow-up, inbox/CORE.md's "2026-09-30
+// session-m" entry): minNthCall alone rules out the OUTER transaction fault,
+// but says nothing about WHETHER the per-environment seeding actually hit the
+// documented best-effort path — a diff of exactly [Environment] with
+// NthCall>=2 is also the shape a SILENT bug (env seeding skipped with no
+// warning logged) would produce, and that shape must not be waved through
+// just because it resembles the accepted tradeoff. Requiring the warning
+// substring to actually appear in the op's own captured log output (see
+// execLog on oracleInput, populated from stdlib log output captured around
+// op.Execute) ties the exemption to evidence the known, reviewed code path
+// fired, not to the table-diff shape alone. Silent missing envs stay a
+// violation.
 var opScopedBestEffortTables = []struct {
 	op, method string
 	tables     []string
@@ -220,18 +235,30 @@ var opScopedBestEffortTables = []struct {
 	// 1-indexed call number; 0 means unrestricted (every pre-existing entry's
 	// behavior, unchanged).
 	minNthCall int
+	// requireLogSubstring, when non-empty, additionally requires this exact
+	// substring to appear in the op's captured log output (execLog) for this
+	// exemption to apply. Empty (the zero value, every pre-existing entry)
+	// means no log-evidence check — unchanged behavior for those entries.
+	requireLogSubstring string
 }{
 	{op: "REST POST /api/v1/users/", method: "AssignRole", tables: []string{"UserRole"}},
 	{op: "REST POST /api/v1/users/", method: "GetRoleByName", tables: []string{"UserRole"}},
-	{op: "REST POST /api/v1/projects", method: "WithTransaction", tables: []string{"Environment", "AuditEvent"}, minNthCall: 2},
+	{
+		op: "REST POST /api/v1/projects", method: "WithTransaction", tables: []string{"Environment", "AuditEvent"},
+		minNthCall:          2,
+		requireLogSubstring: "created without its environment",
+	},
 }
 
-func opScopedAcceptableByDesign(op, method string, nth int, diff []string) bool {
+func opScopedAcceptableByDesign(op, method string, nth int, diff []string, execLog string) bool {
 	for _, e := range opScopedBestEffortTables {
 		if e.op != op || e.method != method {
 			continue
 		}
 		if e.minNthCall > 0 && nth < e.minNthCall {
+			continue
+		}
+		if e.requireLogSubstring != "" && !strings.Contains(execLog, e.requireLogSubstring) {
 			continue
 		}
 		allowedSet := make(map[string]bool, len(e.tables))
@@ -464,8 +491,19 @@ func runOneFuzzIterationWithWorlds(t *testing.T, data []byte, reusedRef, reusedW
 
 	var result opResult
 	var execErr error
+	var execLog string
 	func() {
+		// Capture the standard logger's output for the duration of Execute only
+		// — narrowly scoped to "this iteration", per opScopedBestEffortTables'
+		// requireLogSubstring: evidence must come from THIS call, not from
+		// Setup or an earlier/later iteration's output. Same redirect pattern
+		// as internal/core's captureLog helper (audit_write_failure_test.go).
+		var logBuf bytes.Buffer
+		prevOut := log.Writer()
+		log.SetOutput(&logBuf)
 		defer func() {
+			log.SetOutput(prevOut)
+			execLog = logBuf.String()
 			if r := recover(); r != nil {
 				t.Errorf("panic escaped the transport layer entirely for op %q (fault %s/%d/%s) — "+
 					"the real Recovery middleware/RecoveryInterceptor should have converted this to "+
@@ -503,7 +541,7 @@ func runOneFuzzIterationWithWorlds(t *testing.T, data []byte, reusedRef, reusedW
 
 	oi := oracleInput{
 		op: op.Key, method: decoded.methodName, nth: decoded.nthCall, kind: decoded.kind,
-		result: result, before: before, after: after, refAfter: refAfter,
+		result: result, before: before, after: after, refAfter: refAfter, execLog: execLog,
 	}
 	if observe != nil {
 		observe(oi)
@@ -519,6 +557,11 @@ type oracleInput struct {
 	before     dbSnapshot
 	after      dbSnapshot
 	refAfter   dbSnapshot
+	// execLog is everything the standard logger wrote during op.Execute for
+	// this iteration — used by opScopedAcceptableByDesign's requireLogSubstring
+	// check (evidence that a best-effort code path actually fired, not just
+	// that the table diff resembles it).
+	execLog string
 }
 
 // knownOpenTolerance narrowly fingerprints one already-filed, not-yet-fixed
@@ -687,7 +730,7 @@ func checkOracles(t *testing.T, in oracleInput) {
 					"as best-effort/non-fatal (see acceptableByDesign's doc comment)", label, diff, in.method)
 				return
 			}
-			if opScopedAcceptableByDesign(in.op, in.method, in.nth, diff) {
+			if opScopedAcceptableByDesign(in.op, in.method, in.nth, diff, in.execLog) {
 				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in %v, which this op/method pair "+
 					"explicitly documents as best-effort/non-fatal (see opScopedBestEffortTables' doc comment)",
 					label, diff)
@@ -819,27 +862,43 @@ func hashExcluding(snap dbSnapshot, excludeTables ...string) string {
 // comment says never even reaches this success-branch check in practice —
 // this test pins that assumption as an explicit, checked invariant rather
 // than an implicit one.
+//
+// Extended for the session-M follow-up (inbox/CORE.md's "2026-09-30
+// session-m" entry) with the requireLogSubstring cases: an Environment-only
+// diff at a qualifying NthCall must ALSO have the warning log actually
+// present — a planted bug that silently skips env seeding with no warning
+// (e.g. a swallowed error that never reaches catalog.go's log.Printf) must
+// stay a violation, not get waved through just because the diff shape
+// matches. Red without the requireLogSubstring check: the "no log" and
+// "unrelated log" cases below would both wrongly return true.
 func TestOpScopedAcceptableByDesign_ProjectWithTransaction_RequiresNthCallTwo(t *testing.T) {
 	const op = "REST POST /api/v1/projects"
 	const method = "WithTransaction"
+	const warningLog = `2026/10/02 14:13:33 Warning: project 2 (fuzz-project) created without its environment "production": fault-fuzz injected failure` + "\n"
 
-	assert.False(t, opScopedAcceptableByDesign(op, method, 1, []string{"Environment"}),
+	assert.False(t, opScopedAcceptableByDesign(op, method, 1, []string{"Environment"}, warningLog),
 		"NthCall=1 (the OUTER transaction) must NOT be exempted -- only an inner per-environment SAVEPOINT fault (NthCall>=2) is the documented, accepted tradeoff")
-	assert.True(t, opScopedAcceptableByDesign(op, method, 2, []string{"Environment"}),
-		"NthCall=2 (the first per-environment SAVEPOINT) with an Environment-only diff must be exempted")
-	assert.True(t, opScopedAcceptableByDesign(op, method, 5, []string{"Environment"}),
+	assert.True(t, opScopedAcceptableByDesign(op, method, 2, []string{"Environment"}, warningLog),
+		"NthCall=2 (the first per-environment SAVEPOINT) with an Environment-only diff AND the warning log present must be exempted")
+	assert.True(t, opScopedAcceptableByDesign(op, method, 5, []string{"Environment"}, warningLog),
 		"a later per-environment SAVEPOINT (NthCall=5) must be exempted the same way as NthCall=2")
-	assert.False(t, opScopedAcceptableByDesign(op, method, 2, []string{"Environment", "Project"}),
-		"a diff touching a table OUTSIDE the allowed set must never be exempted, regardless of NthCall")
-	assert.False(t, opScopedAcceptableByDesign("REST POST /api/v1/other", method, 2, []string{"Environment"}),
+	assert.False(t, opScopedAcceptableByDesign(op, method, 2, []string{"Environment", "Project"}, warningLog),
+		"a diff touching a table OUTSIDE the allowed set must never be exempted, regardless of NthCall or log evidence")
+	assert.False(t, opScopedAcceptableByDesign("REST POST /api/v1/other", method, 2, []string{"Environment"}, warningLog),
 		"an unrelated op must never match this op-scoped entry")
+	assert.False(t, opScopedAcceptableByDesign(op, method, 2, []string{"Environment"}, ""),
+		"EVIDENCE REQUIRED: an Environment-only diff with NO captured log output must NOT be exempted -- a silent env-seed skip (no warning logged) stays an oracle (a) violation")
+	assert.False(t, opScopedAcceptableByDesign(op, method, 2, []string{"Environment"}, "some unrelated log line\n"),
+		"EVIDENCE REQUIRED: log output present but not containing the specific warning substring must NOT be exempted")
 }
 
 // TestOpScopedAcceptableByDesign_UnrestrictedEntriesIgnoreNthCall proves the
-// two pre-existing opScopedBestEffortTables entries (minNthCall: 0, the zero
-// value) are unaffected by adding minNthCall to the struct -- they must keep
-// matching at every NthCall, exactly as before this field existed.
+// two pre-existing opScopedBestEffortTables entries (minNthCall: 0 and
+// requireLogSubstring: "", both zero values) are unaffected by adding
+// minNthCall/requireLogSubstring to the struct -- they must keep matching at
+// every NthCall with no log evidence required, exactly as before either
+// field existed.
 func TestOpScopedAcceptableByDesign_UnrestrictedEntriesIgnoreNthCall(t *testing.T) {
-	assert.True(t, opScopedAcceptableByDesign("REST POST /api/v1/users/", "AssignRole", 1, []string{"UserRole"}))
-	assert.True(t, opScopedAcceptableByDesign("REST POST /api/v1/users/", "GetRoleByName", 99, []string{"UserRole"}))
+	assert.True(t, opScopedAcceptableByDesign("REST POST /api/v1/users/", "AssignRole", 1, []string{"UserRole"}, ""))
+	assert.True(t, opScopedAcceptableByDesign("REST POST /api/v1/users/", "GetRoleByName", 99, []string{"UserRole"}, ""))
 }
