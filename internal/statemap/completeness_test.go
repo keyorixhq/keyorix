@@ -30,7 +30,7 @@ var validClasses = map[string]bool{
 // just re-running the generator after an unrelated code change. Set to the
 // actual count after this round's classifier fixes (the job classifier was
 // off-by-one before this round and flagged all scheduled jobs; see the PR).
-const maxReviewRows = 37 // SESSION-AR batch 4/5 (AT0 REVIEW triage): 38 more rows triaged into class-overrides.tsv (37 D, 1 C), see that file's batch-4 header comment.
+const maxReviewRows = 9 // SESSION-AR batch 5/5 (AT0 REVIEW triage, FINAL): 28 more rows triaged into class-overrides.tsv (3 D, 1 B, 24 C); 9 rows left at REVIEW total, all deferred to Session AT (backup/restore, last-admin guard, or cascade delete) -- see docs/state-map/class-overrides.tsv's per-batch header comments for the full list and reasons. AT0 REVIEW triage is now complete from Session AR's side; every remaining REVIEW row is explicitly out of scope, not unclassified.
 
 // TestCompletenessGuard_EntrypointsAndStoresMatchCode is AT0(f): re-runs the
 // same extractors/classifier cmd/statemapgen uses and fails if
