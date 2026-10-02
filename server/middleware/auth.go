@@ -1616,6 +1616,27 @@ func InvalidateTokenCacheByHash(hash string) {
 	tokenCacheMu.Unlock()
 }
 
+// ClearTokenCacheIfCached deletes the entry keyed by hash ONLY if one already exists
+// -- unlike InvalidateTokenCacheByHash, it never WRITES a new tombstone. Use this for
+// a transition where staying stale is safe in only one specific direction (an
+// over-restrictive leftover is fine; creating a brand-new false negative for a key
+// that was never cached is not): a plain tombstone-write would otherwise negative-cache
+// a credential this call never actually saw. See setAccountState's "becoming active"
+// branch (internal/core/account_state.go) for the motivating case — PR #2206 fixed the
+// unconditional-tombstone shape by skipping eviction entirely on that branch, which
+// left a DIFFERENT bug open: an EXISTING negative entry, cached while the account was
+// blocked, now outlives the account becoming active again, since nothing ever clears
+// it (FuzzAuthCacheDifferential, G5, found this as a cache/DB status-code divergence
+// — both paths still deny, so not an authz bypass, but the cache answers "denied" for
+// a request storage would now allow or deny for a different reason). Safe to call
+// unconditionally, even for a hash that was never cached: deleting a missing map key
+// is a no-op.
+func ClearTokenCacheIfCached(hash string) {
+	tokenCacheMu.Lock()
+	delete(tokenCache, hash) // a no-op if hash isn't a key -- never writes a new entry
+	tokenCacheMu.Unlock()
+}
+
 // InvalidateAllMachineTokenCache drops every positive cache entry attributed to a
 // machine identity (ActorType core.ActorTypeMachine), leaving human session/PAT
 // entries untouched. Fail-closed fallback for TransitionMachineIdentity
