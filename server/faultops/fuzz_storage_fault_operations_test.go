@@ -244,6 +244,48 @@ func opScopedAcceptableByDesign(op, method string, nth int, diff []string) bool 
 	return false
 }
 
+// effectThenErrorExtraExclusions narrows oracle (d)'s outcomeLogTables
+// exclusion further for a SPECIFIC (op, method) pair whose effect-then-error
+// mixed-state diff includes an already-documented, already-best-effort
+// DOWNSTREAM side effect of the faulted call -- not a load-bearing part of
+// the primary mutation. Unlike outcomeLogTables (which is a blanket,
+// method-independent exclusion), each entry here names the exact call site
+// so a future genuinely-load-bearing table added to the same op/method pair
+// is not silently swallowed by a too-broad exclusion.
+//
+// GRPC keyorix.v1.UserService.CreateUser, CreateUserWithRoleGrants: found live
+// by FuzzStorageFaultOperations, op="GRPC keyorix.v1.UserService.CreateUser"
+// fault=CreateUserWithRoleGrants#1/effect-then-error -- ORACLE (d) VIOLATION,
+// differing tables vs before: [User UserRole] (both match the real, committed
+// NEW state -- CreateUserWithRoleGrants already wraps the user row and every
+// role-grant row in one storage.WithTransaction, internal/storage/store/
+// local_users.go:84, so there is no partial-role-grants scenario here); vs
+// reference: [AuditEvent PasswordHistory] (AuditEvent already excluded by
+// outcomeLogTables above; PasswordHistory is the remaining divergence).
+// internal/core/users.go's own comment names PasswordHistory's seed as
+// "Best-effort password-history seed, after the atomic create (ADR-025)",
+// and bestEffortTables["AddPasswordHistory"] = {"PasswordHistory"} already
+// documents this exact tradeoff for oracle (a) -- this entry extends the
+// SAME already-accepted tradeoff to oracle (d) rather than asserting a new
+// one. Coordinator review requested on this exclusion specifically (Session
+// CR round 2 PR body) per the "never widen a carve-out without flagging it"
+// rule -- not silently assumed correct.
+var effectThenErrorExtraExclusions = []struct {
+	op, method string
+	tables     []string
+}{
+	{op: "GRPC keyorix.v1.UserService.CreateUser", method: "CreateUserWithRoleGrants", tables: []string{"PasswordHistory"}},
+}
+
+func effectThenErrorExtraExcludedTables(op, method string) []string {
+	for _, e := range effectThenErrorExtraExclusions {
+		if e.op == op && e.method == method {
+			return e.tables
+		}
+	}
+	return nil
+}
+
 func multiStepFirstCallAmbiguousCommit(op, method string, nth int) bool {
 	for _, e := range multiStepAmbiguousCommitExceptions {
 		if e.op == op && e.method == method && e.nth == nth {
@@ -715,9 +757,10 @@ func checkOracles(t *testing.T, in oracleInput) {
 		// writeAccessLog), so an effect-then-error delete legitimately has the
 		// secret gone but no access-log row. It only became visible to this
 		// oracle once secret_access_logs was migrated on every install (#2314).
-		nonAuditBefore := hashExcluding(in.before, outcomeLogTables...)
-		nonAuditAfter := hashExcluding(in.after, outcomeLogTables...)
-		nonAuditRef := hashExcluding(in.refAfter, outcomeLogTables...)
+		excluded := append(append([]string{}, outcomeLogTables...), effectThenErrorExtraExcludedTables(in.op, in.method)...)
+		nonAuditBefore := hashExcluding(in.before, excluded...)
+		nonAuditAfter := hashExcluding(in.after, excluded...)
+		nonAuditRef := hashExcluding(in.refAfter, excluded...)
 		if nonAuditAfter != nonAuditBefore && nonAuditAfter != nonAuditRef {
 			if multiStepFirstCallAmbiguousCommit(in.op, in.method, in.nth) {
 				t.Logf("FLAG FOR REVIEW (not auto-fixed, not silently accepted): %s: state matches neither "+
