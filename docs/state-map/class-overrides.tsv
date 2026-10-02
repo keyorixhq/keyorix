@@ -14,3 +14,48 @@
 # section. Add a row here, lower internal/statemap/completeness_test.go's
 # maxReviewRows by one, and re-run `go run ./cmd/statemapgen` for each row
 # triaged.
+#
+# SESSION-AR, batch 1/5 (AT0 REVIEW triage, access-review/audit/backup/
+# bundle/compliance/encryption/hygiene/legal-hold/machine/rbac/recovery-key/
+# risk/rotation/secret-access rows): 37 of 38 rows in this slice read out as
+# class D or C -- single-write CLI wrappers around one REST call, or local
+# artifact writes with loud partial-failure handling. `keyorix backup` is
+# intentionally left at REVIEW -- it is server/admin/backup.go, in scope for
+# Session AT's backup/restore triage, not this batch.
+cli	keyorix access-review attest	D	accessreview.go:253 RunE closure calls runAccessReviewDecision(ctx, client, "attest"), which makes exactly one API call (AttestProjectAccessReviewWithResponse) and nothing else; scanner flagged it only because it could not resolve the anonymous cobra closure, not because of a real write sequence.
+cli	keyorix access-review campaign close	D	accessreview.go:504-535 closure makes exactly one mutating call, CloseAccessReviewCampaignWithResponse, then only decodes/prints the response (reads); single-call CLI wrapper.
+cli	keyorix access-review campaign decide	D	accessreview.go:471-502 closure makes exactly one mutating call, DecideAccessReviewCampaignItemWithResponse, then prints; single-call CLI wrapper.
+cli	keyorix access-review campaign list	D	accessreview.go:369-419 closure makes exactly one read-only call, ListAccessReviewCampaignsWithResponse; no writes at all, pure report.
+cli	keyorix access-review campaign open	D	accessreview.go:334-367 closure makes exactly one mutating call, OpenAccessReviewCampaignWithResponse, then only prints; single-call CLI wrapper.
+cli	keyorix access-review campaign show	D	accessreview.go:421-469 closure makes exactly one read-only call, GetAccessReviewCampaignWithResponse; no writes at all, pure report.
+cli	keyorix access-review revoke	D	accessreview.go:236-244 closure calls runAccessReviewDecision(ctx, client, "revoke"), which makes exactly one API call (RevokeProjectAccessReviewWithResponse); single-call CLI wrapper.
+cli	keyorix audit export-checkpoint	C	audit_export_checkpoint.go runExportCheckpoint: primary artifact write is f.Write(data) to the --output file, committed and reported to the operator first; recordAdminAction is a trailing audit-log write after the export already succeeded on disk -- its failure cannot un-write or corrupt the already-exported checkpoint file.
+cli	keyorix bundle import	D	bundle.go:135-176 runBundleImport: license/install-state checks are read-only, then exactly one state-changing call, bundleverify.ExtractAllowingStateReset, itself documented fail-closed ("nothing staged on a verify failure").
+cli	keyorix bundle verify	D	bundle.go:98-133 runBundleVerify is fully read-only (open file, verify signature/digests, print); no writes anywhere in the function.
+cli	keyorix compliance controls	D	compliance.go:469-518: if/else on --csv is a single mutually-exclusive branch, each branch makes exactly one HTTP GET call; no writes.
+cli	keyorix compliance credential-trends	D	compliance.go:819-861 makes exactly one HTTP GET call, then prints a table; no writes.
+cli	keyorix compliance digest	D	compliance.go:532-585: --send is a mutually exclusive branch from the default path -- never both in one run.
+cli	keyorix compliance export	C	compliance.go:271-327: writes the evidence pack file then the detached .sig file, both local operator-disk files; explicit loud partial-failure handling ("written, but failed to write its detached signature"), safe to re-run.
+cli	keyorix compliance inventory	D	compliance.go:759-798: project-scoped vs deployment-wide is mutually exclusive, each branch one HTTP GET + emitCSV.
+cli	keyorix compliance permission-baseline	D	compliance.go:696-749: json/csv switch is mutually exclusive, each branch one GET + at most one optional local write.
+cli	keyorix compliance permission-changes	D	compliance.go:614-686 is fully read-only.
+cli	keyorix compliance report	D	compliance.go:161-253 is fully read-only.
+cli	keyorix compliance rotation-by-backend	D	compliance.go:879-923 is fully read-only.
+cli	keyorix compliance verify	D	compliance.go:348-408: two local file reads plus one verify-only HTTP call; no state-changing writes.
+cli	keyorix encryption shamir-split	C	encryption.go:232-240 -> internal/encryptionops/shamir_split.go writes one file per share plus commitment.hex for a brand-new, not-yet-used KEK (no DB/storage touched); a mid-loop failure leaves an incomplete sub-threshold share set -- safe, re-running mints an entirely new key.
+cli	keyorix hygiene	D	hygiene.go:52-64 is fully read-only (one GET).
+cli	keyorix legal-hold lift	D	legalhold.go:110-137: confirmation prompt is local-only, then exactly one mutating call.
+cli	keyorix legal-hold place	D	legalhold.go:72-101 makes exactly one mutating call.
+cli	keyorix legal-hold status	D	legalhold.go:36-68 is fully read-only.
+cli	keyorix machine reactivate	D	machine_lifecycle.go:49-65: two read helpers then exactly one mutating call via transitionMachine.
+cli	keyorix machine suspend	D	machine_lifecycle.go:49-65: same shape, exactly one mutating call.
+cli	keyorix rbac assign-role	D	rbac.go:251-308: four read helpers build one request body; exactly one mutating call, AssignUserRoleWithResponse.
+cli	keyorix rbac assign-role-to-group	D	rbac_group_roles.go:87-144: read helpers build one body; exactly one mutating call, AssignRoleToGroupWithResponse.
+cli	keyorix recovery-key rotate	C	recovery_key.go:76-240: primary write store.SetRecoveryKeyRecord commits first, with --recipient/--output validated/reserved beforehand so failures there leave the OLD key valid; notifyAllAdmins and recordAdminAction afterward are explicitly-commented best-effort trailing side effects whose errors are only logged.
+cli	keyorix risk add	D	risk.go:92-136 makes exactly one mutating call.
+cli	keyorix risk approve	D	risk.go:140-167 makes exactly one mutating call.
+cli	keyorix risk list	D	risk.go:47-86 is fully read-only.
+cli	keyorix risk revoke	D	risk.go:171-194 makes exactly one mutating call.
+cli	keyorix rotation create	D	rotation.go:183-232: exactly one mutating API call, CreateRotationPolicyWithResponse -- project/environment only toggle fields on one body, not two sequential writes.
+cli	keyorix secret access	D	secret_access.go:16-48 is fully read-only.
+cli	keyorix secret access-log	D	secret_access.go:55-94 is fully read-only.
