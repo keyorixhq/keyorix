@@ -27,6 +27,30 @@ import (
 // and complete VerifyMFALogin with a one-time code.
 var ErrMFARequired = errors.New("mfa required")
 
+// ErrMFAVerificationStorageFailure marks a VerifyMFALogin/VerifyMFACredentials
+// error that comes from a storage read failing BEFORE a verdict on the code
+// was reached — as distinct from a confirmed negative result (a genuinely
+// wrong/expired/unknown credential, an already-locked or inactive account).
+// VerifyMFACredentials itself already keeps this class of error from touching
+// the per-account lockout counter (see the storageErr handling below); this
+// sentinel lets a caller outside this package apply the same distinction to
+// its OWN bookkeeping. Its one caller today is the /auth/mfa/verify HTTP
+// handler (server/http/handlers/mfa.go), which reserves an IP-level
+// rate-limit slot before calling VerifyMFALogin at all (closing a
+// concurrent-burst race, F2 2026-09-20) and needs to release that
+// reservation when this sentinel is present — second call site of
+// docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md,
+// found by the fuzzer (CI on PR #2392, seed 877139548d2805a6) via the
+// handler's reservation landing before the GetUser call below even runs.
+//
+// Deliberately NOT applied to ConsumeMFAChallenge's error (see that call
+// site): an unknown/expired/already-consumed challenge is that call's
+// expected, common negative result, not a storage ambiguity, and must stay
+// counted toward the IP throttle — confirmed by FuzzLoginThrottleConcurrency
+// (server/http/handlers/login_throttle_fuzz_test.go), whose oracle (a) failed
+// when that branch was tagged too.
+var ErrMFAVerificationStorageFailure = errors.New("mfa verification storage failure")
+
 const (
 	mfaIssuer            = "Keyorix"
 	mfaRecoveryCodeCount = 10
@@ -266,11 +290,20 @@ func (c *KeyorixCore) CreateMFAChallenge(ctx context.Context, userID uint) (stri
 func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code string) (*models.User, bool, error) { // NOSONAR -- cognitive complexity 18, suppress go:S3776
 	ch, err := c.storage.ConsumeMFAChallenge(ctx, sha256Hex(challenge), c.now())
 	if err != nil {
+		// Deliberately NOT tagged with ErrMFAVerificationStorageFailure, unlike the
+		// GetUser/storageErr branches below: a missing/expired/already-consumed
+		// challenge is ConsumeMFAChallenge's expected, common negative result (a
+		// stale or guessed challenge token), not a storage-layer ambiguity, and
+		// legitimately belongs in the per-IP throttle's count — confirmed by
+		// FuzzLoginThrottleConcurrency's oracle (a) (login_throttle_fuzz_test.go),
+		// which failed when this branch was tagged too.
 		return nil, false, fmt.Errorf("invalid or expired challenge")
 	}
 	user, err := c.storage.GetUser(ctx, ch.UserID)
 	if err != nil {
-		return nil, false, fmt.Errorf("user not found")
+		// Same ambiguity as above: GetUser failing on a storage hiccup must not read
+		// the same as "this challenge really does belong to no user."
+		return nil, false, fmt.Errorf("%w: user not found", ErrMFAVerificationStorageFailure)
 	}
 	// Completing a second factor still mints a login session, so a suspended or
 	// deactivated account must be refused here too — the challenge may have been
@@ -330,7 +363,7 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 			// attempt and do NOT count it toward the lockout: this request never
 			// actually got a verdict on whether its code was right.
 			c.auditMFAError(ctx, ch.UserID, "login", storageErr)
-			return nil, false, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), storageErr)
+			return nil, false, fmt.Errorf("%w: %s: %w", ErrMFAVerificationStorageFailure, i18n.T("ErrorRetrievalFailed", nil), storageErr)
 		}
 		c.auditMFAFailed(ctx, ch.UserID, "login")
 		c.recordFailedLogin(ctx, user) // count the failed second factor toward the lockout

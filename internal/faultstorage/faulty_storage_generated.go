@@ -5667,6 +5667,22 @@ func (w *FaultyStorage) RecordLoginAttempt(ctx context.Context, ip string, at ti
 	return w.real.RecordLoginAttempt(ctx, ip, at)
 }
 
+func (w *FaultyStorage) ReleaseLoginAttempt(ctx context.Context, id uint) error {
+	fire, kind, injected := w.check("ReleaseLoginAttempt")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			return injected
+		case KindEffectThenError:
+			_ = w.real.ReleaseLoginAttempt(ctx, id)
+			return injected
+		}
+	}
+	return w.real.ReleaseLoginAttempt(ctx, id)
+}
+
 func (w *FaultyStorage) ReleaseSchedulerLock(ctx context.Context, key int64, holder string) error {
 	fire, kind, injected := w.check("ReleaseSchedulerLock")
 	if fire {
@@ -5793,6 +5809,23 @@ func (w *FaultyStorage) RemoveUserFromGroup(ctx context.Context, userID uint, gr
 		}
 	}
 	return w.real.RemoveUserFromGroup(ctx, userID, groupID, projectID)
+}
+
+func (w *FaultyStorage) ReserveLoginAttempt(ctx context.Context, ip string, at time.Time) (uint, error) {
+	fire, kind, injected := w.check("ReserveLoginAttempt")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 uint
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ReserveLoginAttempt(ctx, ip, at)
+			return rv1, injected
+		}
+	}
+	return w.real.ReserveLoginAttempt(ctx, ip, at)
 }
 
 func (w *FaultyStorage) RestoreEnvironment(ctx context.Context, projectID uint, id uint) error {
