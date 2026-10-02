@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -123,6 +124,82 @@ func TestValidateMachineToken(t *testing.T) {
 		c.now = func() time.Time { return fixed }
 		_, _, _, _, err := c.ValidateMachineToken(context.Background(), raw)
 		require.ErrorContains(t, err, "suspended")
+	})
+}
+
+// TestCurrentMachineTokenRestriction is SESSION-PERF's #2403 follow-up (item 2):
+// proves the one-query GetMachineIdentityCredentialWithIdentityStateByHash path
+// (replacing the old two sequential GetMachineIdentityCredentialByHash +
+// GetMachineIdentity calls) makes EXACTLY the same deny/allow decisions as
+// before — every deny case #G18 added this function for (revoked, expired,
+// inactive) must still deny, with the same error. This is the auth
+// middleware's per-cache-hit re-check (server/middleware/auth.go
+// serveAuthCacheHit): it must run fresh on every call, never be cached across
+// requests, or a revoked/expired/deactivated token would be trusted again for
+// up to the cache's TTL — exactly the staleness #G18 closed.
+func TestCurrentMachineTokenRestriction(t *testing.T) {
+	t.Parallel()
+	fixed := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	raw := "kx_machine_restriction_check"
+	hash := sha256Hex(raw)
+
+	t.Run("valid active token returns its restriction", func(t *testing.T) {
+		store := new(MockStorage)
+		store.On("GetMachineIdentityCredentialWithIdentityStateByHash", mock.Anything, hash).
+			Return(&models.MachineIdentityCredential{ID: 5, MachineIdentityID: 1, AllowedCIDRs: `["10.0.0.0/8"]`}, MachineActive, nil)
+		c := NewKeyorixCore(store)
+		c.now = func() time.Time { return fixed }
+
+		restriction, err := c.CurrentMachineTokenRestriction(context.Background(), raw)
+		require.NoError(t, err)
+		require.NotNil(t, restriction)
+		require.Equal(t, []string{"10.0.0.0/8"}, restriction.AllowedCIDRs)
+	})
+
+	t.Run("revoked credential denied", func(t *testing.T) {
+		store := new(MockStorage)
+		store.On("GetMachineIdentityCredentialWithIdentityStateByHash", mock.Anything, hash).
+			Return(&models.MachineIdentityCredential{ID: 5, MachineIdentityID: 1, Revoked: true}, MachineActive, nil)
+		c := NewKeyorixCore(store)
+		c.now = func() time.Time { return fixed }
+
+		_, err := c.CurrentMachineTokenRestriction(context.Background(), raw)
+		require.ErrorIs(t, err, ErrMachineTokenRevoked)
+	})
+
+	t.Run("expired credential denied", func(t *testing.T) {
+		past := fixed.Add(-time.Hour)
+		store := new(MockStorage)
+		store.On("GetMachineIdentityCredentialWithIdentityStateByHash", mock.Anything, hash).
+			Return(&models.MachineIdentityCredential{ID: 5, MachineIdentityID: 1, ExpiresAt: &past}, MachineActive, nil)
+		c := NewKeyorixCore(store)
+		c.now = func() time.Time { return fixed }
+
+		_, err := c.CurrentMachineTokenRestriction(context.Background(), raw)
+		require.ErrorIs(t, err, ErrMachineTokenExpired)
+	})
+
+	t.Run("inactive machine identity denied", func(t *testing.T) {
+		store := new(MockStorage)
+		store.On("GetMachineIdentityCredentialWithIdentityStateByHash", mock.Anything, hash).
+			Return(&models.MachineIdentityCredential{ID: 5, MachineIdentityID: 1}, MachineSuspended, nil)
+		c := NewKeyorixCore(store)
+		c.now = func() time.Time { return fixed }
+
+		_, err := c.CurrentMachineTokenRestriction(context.Background(), raw)
+		require.ErrorContains(t, err, "suspended")
+	})
+
+	t.Run("storage error propagated, not swallowed (e.g. unknown token hash)", func(t *testing.T) {
+		store := new(MockStorage)
+		lookupErr := errors.New("storage unavailable")
+		store.On("GetMachineIdentityCredentialWithIdentityStateByHash", mock.Anything, hash).
+			Return(nil, "", lookupErr)
+		c := NewKeyorixCore(store)
+		c.now = func() time.Time { return fixed }
+
+		_, err := c.CurrentMachineTokenRestriction(context.Background(), raw)
+		require.ErrorIs(t, err, lookupErr)
 	})
 }
 

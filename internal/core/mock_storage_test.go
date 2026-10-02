@@ -1962,6 +1962,14 @@ func (m *MockStorage) GetMachineIdentityCredentialByHash(ctx context.Context, ha
 	return args.Get(0).(*models.MachineIdentityCredential), args.Error(1)
 }
 
+func (m *MockStorage) GetMachineIdentityCredentialWithIdentityStateByHash(ctx context.Context, hash string) (*models.MachineIdentityCredential, string, error) {
+	args := m.Called(ctx, hash)
+	if args.Get(0) == nil {
+		return nil, args.String(1), args.Error(2)
+	}
+	return args.Get(0).(*models.MachineIdentityCredential), args.String(1), args.Error(2)
+}
+
 func (m *MockStorage) GetMachineIdentityCredentialByID(ctx context.Context, id uint) (*models.MachineIdentityCredential, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
