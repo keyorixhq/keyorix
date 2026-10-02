@@ -138,7 +138,7 @@ security:
   # Check file permission safety on startup
   enable_file_permission_check: true
   auto_fix_file_permissions: true
-  allow_unsafe_file_permissions: false
+  insecure_allow_unsafe_file_permissions: false
   # DEV-ONLY DEFAULT (#G36/#G37) — with server.http/grpc.tls.enabled false above, a
   # cleartext listener normally only logs a loud startup WARNING. Set this true (and
   # enable tls, or front the listener with a TLS-terminating proxy) to fail closed
