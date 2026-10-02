@@ -15,6 +15,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
@@ -287,24 +288,50 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 	if c.loginLocked(user) {
 		return nil, false, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 	}
+	// storageErr tracks a genuine storage-read/write failure on either path below,
+	// as distinct from a CONFIRMED negative result (wrong code / non-matching
+	// recovery code). Fails closed the other direction from the rest of this
+	// function's checks: a resolution error here must not be indistinguishable
+	// from a legitimate negative result, mirroring roleSetContainsAdmin's own
+	// documented precedent (internal/core/authz.go) — except that a false
+	// ALLOW is never possible on this path (verified only ever becomes true from
+	// a real, successfully-checked code), so the risk this guards against is a
+	// false DENY that also falsely counts toward the account lockout and the
+	// audit trail (docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md).
 	verified, usedRecovery := false, false
-	if secret, err := c.loadTOTPSecret(ctx, ch.UserID); err == nil {
-		if step, ok := c.validateTOTPStep(secret, code); ok {
-			// Single-use within the validity window: atomically advance the last-used
-			// step. A code already accepted at this (or a later) step is a replay and
-			// MarkTOTPStepUsed returns false, so it is rejected — closing the ~90s
-			// replay window the bare totp validation left open.
-			if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, ch.UserID, step); ferr == nil && fresh {
-				verified = true
-			}
+	var storageErr error
+	if secret, err := c.loadTOTPSecret(ctx, ch.UserID); err != nil {
+		storageErr = err
+	} else if step, ok := c.validateTOTPStep(secret, code); ok {
+		// Single-use within the validity window: atomically advance the last-used
+		// step. A code already accepted at this (or a later) step is a replay and
+		// MarkTOTPStepUsed returns false, so it is rejected — closing the ~90s
+		// replay window the bare totp validation left open.
+		if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, ch.UserID, step); ferr != nil {
+			storageErr = ferr
+		} else if fresh {
+			verified = true
 		}
 	}
 	if !verified {
-		if consumed, err := c.storage.ConsumeMFARecoveryCode(ctx, ch.UserID, sha256Hex(normalizeRecoveryCode(code)), c.now()); err == nil && consumed {
-			verified, usedRecovery = true, true
+		// Tried regardless of a TOTP-phase storageErr: the caller may have supplied
+		// a recovery code, not a TOTP code, and this path is independent of the one
+		// above — a failed TOTP secret read must not preempt a genuinely valid
+		// recovery code.
+		if consumed, err := c.storage.ConsumeMFARecoveryCode(ctx, ch.UserID, sha256Hex(normalizeRecoveryCode(code)), c.now()); err != nil {
+			storageErr = err
+		} else if consumed {
+			verified, usedRecovery, storageErr = true, true, nil
 		}
 	}
 	if !verified {
+		if storageErr != nil {
+			// Neither path could be conclusively evaluated — do NOT audit as a failed
+			// attempt and do NOT count it toward the lockout: this request never
+			// actually got a verdict on whether its code was right.
+			c.auditMFAError(ctx, ch.UserID, "login", storageErr)
+			return nil, false, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), storageErr)
+		}
 		c.auditMFAFailed(ctx, ch.UserID, "login")
 		c.recordFailedLogin(ctx, user) // count the failed second factor toward the lockout
 		return nil, false, fmt.Errorf("invalid code")
@@ -387,6 +414,17 @@ func (c *KeyorixCore) validateTOTPStep(secret, code string) (int64, bool) {
 func (c *KeyorixCore) auditMFAFailed(ctx context.Context, userID uint, phase string) {
 	uid := userID
 	c.writeAuditEventFull(ctx, "mfa.failed", &uid, nil, nil, "", fmt.Sprintf("failed MFA %s for user %d", phase, userID))
+}
+
+// auditMFAError records that an MFA attempt could not be conclusively evaluated
+// due to a storage failure — distinct from auditMFAFailed's "a code was checked
+// and found wrong": this attempt never actually got a verdict, so it must not
+// read, on review, as the same thing a genuine wrong-code attempt would
+// (docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md).
+func (c *KeyorixCore) auditMFAError(ctx context.Context, userID uint, phase string, err error) {
+	uid := userID
+	c.writeAuditEventFull(ctx, "mfa.error", &uid, nil, nil, "",
+		fmt.Sprintf("MFA %s for user %d could not be evaluated (storage error): %v", phase, userID, err))
 }
 
 // requireReauth is the shared self-service re-authentication gate (#372) for
