@@ -777,13 +777,47 @@ func DeriveMaxRequestBodySize(maxSecretSize int) int64 {
 }
 
 type SecurityConfig struct {
-	EnableFilePermissionCheck  bool `yaml:"enable_file_permission_check"`
-	AutoFixFilePermissions     bool `yaml:"auto_fix_file_permissions"`
-	AllowUnsafeFilePermissions bool `yaml:"allow_unsafe_file_permissions"`
+	// EnableFilePermissionCheck gates the file-permission/DEK-salt-size/database-
+	// reachability startup checks (internal/startup.ValidateStartup) and whether
+	// enforceKeyFilePermissions fails closed instead of warning. ADR-112: secure
+	// by default -- Load() resolves an ABSENT key to true (and records that in
+	// EnableFilePermissionCheckImplicitDefault below), not Go's bool zero value,
+	// so a fresh install enforces from its first start without anyone setting this.
+	EnableFilePermissionCheck bool `yaml:"enable_file_permission_check"`
+	// EnableFilePermissionCheckImplicitDefault records whether Load() set
+	// EnableFilePermissionCheck to true itself (the key was absent from the
+	// config file) rather than the operator writing it. Computed from the raw
+	// YAML (a plain bool can't tell "absent" from "explicitly false" apart --
+	// both decode to false); never itself read from YAML.
+	//
+	// Deliberately false-by-default (unlike an "...Explicit" flag would be):
+	// every caller that builds a *Config by hand instead of through Load() --
+	// test fixtures across this repo, any future one-off caller -- leaves this
+	// at Go's zero value, which must mean "treat EnableFilePermissionCheck as
+	// if the operator meant it," the strict pre-ADR-112 behavior, not silently
+	// downgrade a hand-set EnableFilePermissionCheck: true into the softened
+	// grace-period path below. Only Load() ever sets this true, and only when
+	// it also just set EnableFilePermissionCheck to true itself.
+	//
+	// An existing deployment relying on this implicit default gets a start-up
+	// warning and a softened, warn-instead-of-fail-closed response to a real
+	// problem the check finds, until it explicitly sets the key -- see
+	// server/main.go's runStartupValidation and enforceKeyFilePermissions.
+	EnableFilePermissionCheckImplicitDefault bool `yaml:"-"`
+	AutoFixFilePermissions                   bool `yaml:"auto_fix_file_permissions"`
+	AllowUnsafeFilePermissions               bool `yaml:"allow_unsafe_file_permissions"`
 	// RequireMFA mandates TOTP MFA for interactive login: a session-authenticated
 	// user without MFA enabled is confined to the MFA-enrolment endpoints until
 	// they enrol. Non-interactive credentials (PAT/machine/OIDC) are exempt.
+	// ADR-112: secure by default -- Load() resolves an ABSENT key to true (see
+	// RequireMFAImplicitDefault below), not Go's bool zero value.
 	RequireMFA bool `yaml:"require_mfa"`
+	// RequireMFAImplicitDefault is RequireMFA's counterpart to
+	// EnableFilePermissionCheckImplicitDefault above: true only when Load() set
+	// RequireMFA to true itself because the key was absent. False-by-default for
+	// the same reason -- a hand-built *Config with RequireMFA: true must not be
+	// read as "inherited the default." Never read from YAML.
+	RequireMFAImplicitDefault bool `yaml:"-"`
 	// LoginLockout configures per-account login lockout (brute-force protection):
 	// after MaxAttempts failed password logins within Window, the account is locked
 	// for an exponentially-backing-off cooldown. Distinct from (and complementary to)
@@ -1933,6 +1967,21 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	// ADR-112 secure-by-default: resolve the two inverted-default security keys
+	// against whether the operator actually wrote them, not Go's bool zero value.
+	explicit, err := explicitSecurityKeys(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect config for explicit security keys: %w", err)
+	}
+	if !explicit["enable_file_permission_check"] {
+		cfg.Security.EnableFilePermissionCheck = true
+		cfg.Security.EnableFilePermissionCheckImplicitDefault = true
+	}
+	if !explicit["require_mfa"] {
+		cfg.Security.RequireMFA = true
+		cfg.Security.RequireMFAImplicitDefault = true
+	}
+
 	// server.http.domain/allowed_origins are the only fields documented (in
 	// server/config/production.yaml) as supporting ${VAR}/${VAR:-default} interpolation.
 	// Expansion is applied here, per-field, AFTER unmarshaling — not as a raw-bytes
@@ -1967,6 +2016,32 @@ func Load(path string) (*Config, error) {
 	cfg.Storage.Database.Path = resolvedDBPath
 
 	return &cfg, nil
+}
+
+// explicitSecurityKeys reports which top-level security.* keys the config file
+// actually wrote, as a set of lowercase YAML key names. Used by Load() to tell
+// "the operator explicitly set this bool to false" apart from "the operator
+// never mentioned this key, so it inherits a secure-by-default value" (ADR-112)
+// -- a distinction yaml.Unmarshal's own decode into SecurityConfig can't make,
+// since both cases leave the struct field at Go's false zero value. Re-parses
+// the same raw bytes Load() already decoded, this time into a generic map, so
+// it only needs to answer "was this key present," not reproduce the typed
+// decode. Deliberately permissive (no KnownFields, ignores a malformed/absent
+// security: block as "nothing explicit"): Load's own strict decode above has
+// already rejected a truly malformed document before this ever runs.
+func explicitSecurityKeys(data []byte) (map[string]bool, error) {
+	var raw struct {
+		Security map[string]interface{} `yaml:"security"`
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	if err := dec.Decode(&raw); err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	explicit := make(map[string]bool, len(raw.Security))
+	for k := range raw.Security {
+		explicit[k] = true
+	}
+	return explicit, nil
 }
 
 // resolveConfigRelativePath anchors a relative SQLite database path to
