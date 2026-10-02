@@ -148,7 +148,11 @@ func (c *KeyorixCore) CreateSoDPolicy(ctx context.Context, actorID uint, name, d
 	// #1529 authority check runs AFTER field validation (mirrors PlaceLegalHold's
 	// own order: cheap input checks before a DB-backed authority resolution) --
 	// see this function's doc comment above for the full reasoning.
-	if c.isGlobalAdminRoleName(ctx, actorID) == "" {
+	adminRole, err := c.isGlobalAdminRoleName(ctx, actorID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	if adminRole == "" {
 		c.writeAuditEventFailed(ctx, EventSoDPolicyCreated, actorPtr(actorID), nil, "",
 			fmt.Sprintf("SoD policy create DENIED: actor %d is not an admin-tier principal", actorID))
 		return nil, wrapSoDPermissionDenied(fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
@@ -210,7 +214,11 @@ func (c *KeyorixCore) ListSoDPolicies(ctx context.Context) ([]*models.SoDPolicy,
 // theirs -- same status, same message, same error classification -- closing
 // the oracle rather than merely renaming it.
 func (c *KeyorixCore) DeleteSoDPolicy(ctx context.Context, actorID, id uint) error {
-	isAdminTier := c.isGlobalAdminRoleName(ctx, actorID) != ""
+	adminRole, err := c.isGlobalAdminRoleName(ctx, actorID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	isAdminTier := adminRole != ""
 
 	policy, err := c.storage.GetSoDPolicy(ctx, id)
 	if err != nil {
@@ -327,7 +335,13 @@ func (c *KeyorixCore) appendUserSoDViolations(ctx context.Context, report *SoDVi
 // the caller (DetectSoDViolations) must record that the scan is incomplete instead of
 // looking clean.
 func (c *KeyorixCore) userSoDViolations(ctx context.Context, u *models.User, policies []*models.SoDPolicy) ([]SoDViolation, error) {
-	if adminRole := c.isGlobalAdminRoleName(ctx, u.ID); adminRole != "" {
+	adminRole, err := c.isGlobalAdminRoleName(ctx, u.ID)
+	if err != nil {
+		// Same #420 precedent as the permission-resolution error below: degrade the
+		// scan, don't silently resolve an unconfirmed admin status to "not admin."
+		return nil, err
+	}
+	if adminRole != "" {
 		out := make([]SoDViolation, 0, len(policies))
 		detail := fmt.Sprintf("holds all permissions via admin role %q", adminRole)
 		for _, pol := range policies {
@@ -450,7 +464,22 @@ func (c *KeyorixCore) machineSoDViolations(ctx context.Context, report *SoDViola
 
 // isGlobalAdminRoleName returns the name of an admin (permission-bypass) role
 // the user holds at GLOBAL SCOPE specifically (ProjectID 0) — direct or
-// group-inherited — or "" if none.
+// group-inherited — or "" if none, and a non-nil error if the user's admin
+// status at global scope could not be determined at all.
+//
+// Fails closed on a genuine resolution error (docs/findings/2026-10-02-FINDING-
+// sod-policy-create-getrole-error-misread-as-not-admin.md): a scopedRoleIDs or
+// GetRole storage error is returned to the caller rather than silently treated
+// as "" — the same outcome a role set that genuinely contains no admin role
+// produces. Every caller must distinguish "confirmed not admin-tier" (safe to
+// deny, and to audit the denial as a real denial) from "could not confirm"
+// (an infrastructure failure, not a verdict on the actor) — mirrors
+// roleSetContainsAdmin's own documented precedent one file over
+// (internal/core/authz.go): "a lookup error on a security-relevant path must
+// not be indistinguishable from a legitimate negative result, or a caller can
+// trigger the same lookup error to silently bypass whatever the error would
+// otherwise have blocked" (here, to silently trigger a false admin-tier
+// DENIAL instead — fail-closed either way, just the other failure direction).
 //
 // #G01: this replaces the former adminRoleName, which checked the role NAME
 // only and ignored the grant's own scope — so a role named like an admin role
@@ -467,21 +496,21 @@ func (c *KeyorixCore) machineSoDViolations(ctx context.Context, report *SoDViola
 // project_id=0 rows (and, for the group-inherited case, ALSO require the
 // user's own group membership to be project_id=0) when called with the global
 // scope — so this call is scope-correct for free, reusing already-tested code.
-func (c *KeyorixCore) isGlobalAdminRoleName(ctx context.Context, userID uint) string {
+func (c *KeyorixCore) isGlobalAdminRoleName(ctx context.Context, userID uint) (string, error) {
 	ids, err := c.scopedRoleIDs(ctx, userID, Scope{})
 	if err != nil {
-		return ""
+		return "", err
 	}
 	for _, id := range ids {
 		role, rerr := c.storage.GetRole(ctx, id)
 		if rerr != nil {
-			continue
+			return "", rerr
 		}
 		if isAdminRoleName(role.Name) {
-			return role.Name
+			return role.Name, nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 // actorPtr returns a *uint for an actor id (nil when 0/unauthenticated).
@@ -590,7 +619,11 @@ func (c *KeyorixCore) requireNoSoDViolation(ctx context.Context, userID, roleID 
 	if len(policies) == 0 {
 		return nil
 	}
-	if c.isGlobalAdminRoleName(ctx, userID) != "" {
+	adminRole, err := c.isGlobalAdminRoleName(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	if adminRole != "" {
 		return nil // already holds admin-bypass — see package doc above
 	}
 	role, err := c.storage.GetRole(ctx, roleID)
@@ -679,7 +712,14 @@ func (c *KeyorixCore) groupGrantSoDContext(ctx context.Context, roleID uint) (po
 // longer re-derives them (or re-applies their early-outs) itself.
 func (c *KeyorixCore) requireGroupGrantNoSoDViolation(ctx context.Context, members []*models.User, policies []*models.SoDPolicy, adding map[string]bool) error { // nosemgrep: keyorix-unbounded-bulk-slice-param -- members is withGroupMemberSoDLocks's own ListGroupMembers(ctx, groupID) result (that group's actual membership), not a raw client-supplied array in one request
 	for _, m := range members {
-		if !m.IsActive || c.isGlobalAdminRoleName(ctx, m.ID) != "" {
+		if !m.IsActive {
+			continue
+		}
+		adminRole, err := c.isGlobalAdminRoleName(ctx, m.ID)
+		if err != nil {
+			return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+		}
+		if adminRole != "" {
 			continue
 		}
 		held, err := c.userHeldPermissionSet(ctx, m.ID)
@@ -821,7 +861,11 @@ func (c *KeyorixCore) requireGroupJoinNoSoDViolation(ctx context.Context, userID
 	if len(policies) == 0 {
 		return nil
 	}
-	if c.isGlobalAdminRoleName(ctx, userID) != "" {
+	adminRole, err := c.isGlobalAdminRoleName(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	if adminRole != "" {
 		return nil // already holds admin-bypass — see package doc above
 	}
 	adding := make(map[string]bool)

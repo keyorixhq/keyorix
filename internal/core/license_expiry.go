@@ -101,7 +101,13 @@ func (c *KeyorixCore) globalAdminIDs(ctx context.Context) ([]uint, error) { // N
 			return nil, err
 		}
 		for _, u := range users {
-			if c.isGlobalAdminRoleName(ctx, u.ID) != "" {
+			adminRole, err := c.isGlobalAdminRoleName(ctx, u.ID)
+			if err != nil {
+				// Fail closed on the whole scan rather than silently omit a user whose
+				// admin status could not be confirmed from this install-wide admin list.
+				return nil, err
+			}
+			if adminRole != "" {
 				ids = append(ids, u.ID)
 			}
 		}
