@@ -5,6 +5,7 @@ package journeys
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -12,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	keyorix "github.com/keyorixhq/keyorix-go"
+	keyorix "github.com/keyorixhq/keyorix-sdks/go"
 
 	"github.com/keyorixhq/keyorix/scripts/e2e/harness"
 )
@@ -20,9 +21,15 @@ import (
 // TestJourney_AppGetsSecret is N1: an admin provisions a project, an
 // environment's secret, and a machine identity token scoped to read it; an
 // "application" then reads the secret three independent ways (REST, the
-// keyorix-go SDK, the CLI) and all three must agree -- through a rotation
-// (all three see the new value, version history holds both) and a token
-// revocation (all three are denied, and the secret itself is unchanged).
+// keyorix-sdks/go SDK, the CLI) and all three must agree -- through a
+// rotation (all three see the new value, version history holds both) and a
+// token revocation (all three are denied, and the secret itself is
+// unchanged). It also proves two SDK-specific properties that have no REST/
+// CLI equivalent in this journey: a token scoped to a DIFFERENT project is
+// denied with a typed *keyorix.ForbiddenError (and the value never leaks
+// into that error), and ListSecretsScoped returns every secret in a scope
+// larger than the server's single-page default instead of silently
+// truncating.
 //
 // Every step below is exported as appGetsSecret so N3 (the audit-trail
 // journey) can call it directly against its own shared install instead of
@@ -54,6 +61,17 @@ const (
 	n1MachineName = "n1-reader"
 	n1ValueV1     = "hunter2-v1-fbeacd3c"
 	n1ValueV2     = "hunter2-v2-rotated-9a71"
+
+	// A second project + machine token, scoped to nothing in n1ProjectName,
+	// for the cross-project SDK denial check.
+	n1ForeignProjectName = "n1-app-gets-secret-foreign"
+	n1ForeignMachineName = "n1-foreign-reader"
+
+	// n1BulkSecretCount additional secrets (on top of n1SecretName itself)
+	// put the scope over the server's page_size=20 default -- the exact
+	// truncation keyorix-sdks/go v0.2.x's ListSecretsScoped-equivalent query
+	// silently hit (see assertListSecretsScopedReturnsEverything).
+	n1BulkSecretCount = 24
 )
 
 func appGetsSecret(t *testing.T, s *harness.Server, cliBin, adminUser, adminPass string) appGetsSecretResult {
@@ -94,6 +112,14 @@ func appGetsSecret(t *testing.T, s *harness.Server, cliBin, adminUser, adminPass
 	// ── Three readers agree on the initial value ────────────────────────────
 
 	assertThreeReadersAgree(t, s, cliBin, machToken, ref, n1SecretName, n1ValueV1)
+
+	// ── SDK-only properties: cross-project denial, and ListSecretsScoped
+	// doesn't truncate a scope bigger than one page. Both are exercised once
+	// here, against the stable v1 value/scope, rather than repeated on every
+	// assertThreeReadersAgree call. ──────────────────────────────────────────
+
+	assertForeignTokenForbidden(t, s, cliBin, adminToken, n1ProjectName, n1EnvName, n1SecretName, n1ValueV1)
+	assertListSecretsScopedReturnsEverything(t, s, adminToken, machToken, projID, envID, n1SecretName)
 
 	// ── Rotate (admin CLI `secret update`) -- version-bump, not the
 	// backend-rotation-policy-flavored `secret rotate` (secret_rotation.go is
@@ -182,26 +208,9 @@ func secretVersionCount(t *testing.T, s *harness.Server, adminToken string, secI
 	return len(data.Versions)
 }
 
-// assertThreeReadersAgree reads secretName by ref via REST, the keyorix-go
-// SDK, and the CLI, and asserts all three return byte-identical values.
-//
-// SDK caveat (CONFIRMED BROKEN, not worked around here -- see
-// assertSDKBlockedByMachineTokenBug and the N1 entry in
-// ~/proj/prompts/reports/SESSION-N.md / ~/proj/prompts/inbox/SESSION-K.md,
-// Session K owns keyorix-go, this journey does not patch it): a
-// machine-token caller is REQUIRED to send `project_id` on GET
-// /api/v1/secrets (server/http/handlers/secrets_list.go, a deliberate
-// CWE-862 enumeration guard, not a server bug -- "any machine token could
-// otherwise enumerate secrets from arbitrary projects"). keyorix-go v0.2.1's
-// ListSecrets/GetSecret never send project_id at all (no parameter exists to
-// pass one), so its own package-doc "Quick start" example --
-// client.GetSecret(ctx, "db-password", "production") -- unconditionally
-// returns "400: machine tokens must specify project_id" for ANY
-// machine-token-authenticated caller, the exact "app reads a secret with its
-// machine token" use case the SDK's README leads with. The REST and CLI
-// readers below (both of which DO send project_id under the hood) are
-// therefore this journey's real "do independent read paths agree" proof;
-// the SDK leg's job is to keep proving the bug is still there.
+// assertThreeReadersAgree reads secretName by ref via REST, the CLI, and the
+// keyorix-sdks/go SDK (both GetSecretIn and GetSecretByRef), and asserts all
+// four reads return byte-identical values.
 func assertThreeReadersAgree(t *testing.T, s *harness.Server, cliBin, machToken, ref, secretName, want string) {
 	t.Helper()
 
@@ -223,39 +232,181 @@ func assertThreeReadersAgree(t *testing.T, s *harness.Server, cliBin, machToken,
 		t.Fatalf("CLI reader: want %q, got %q", want, cliValue)
 	}
 
-	assertSDKBlockedByMachineTokenBug(t, s, machToken, secretName)
+	assertSDKReaderAgrees(t, s, machToken, ref, secretName, want)
 }
 
-// assertSDKBlockedByMachineTokenBug asserts keyorix-go's GetSecret still
-// fails for a machine-token caller with EXACTLY the known server-side
-// project_id gate's error, not merely "an error" -- so this assertion breaks
-// loudly (not silently keeps "passing") the day either the SDK is fixed to
-// send project_id, or the server's error text/shape changes, either of which
-// means this workaround needs re-evaluating rather than continuing to assume
-// the same bug.
-func assertSDKBlockedByMachineTokenBug(t *testing.T, s *harness.Server, machToken, secretName string) {
+// assertSDKReaderAgrees is the SDK leg of assertThreeReadersAgree: a
+// project-scoped machine token calls both GetSecretIn (project/environment/
+// name) and GetSecretByRef (the same, pre-joined as a "project/environment/
+// name" ref) and both must return want. keyorix-sdks/go v0.3.0 fixed the bug
+// that made this unconditionally fail for a machine token (see keyorix-sdks
+// #49 / this repo's PR body for the red/green proof) -- prior to that fix
+// this journey could only assert the SDK leg failed with a specific error
+// (assertSDKBlockedByMachineTokenBug, now removed); it is a real reader now.
+func assertSDKReaderAgrees(t *testing.T, s *harness.Server, machToken, ref, secretName, want string) {
 	t.Helper()
-	sdkClient := keyorix.New(s.BaseURL, machToken)
-	// environment="" (not e.g. "production"): a non-empty environment hits the
-	// OTHER known SDK/server bug first (the environment-name filter server/
-	// http/handlers/secrets_list.go rejects, see assertThreeReadersAgree's
-	// doc comment) and never reaches the project_id gate this function means
-	// to demonstrate.
-	_, err := sdkClient.GetSecret(context.Background(), secretName, "")
+	ctx := context.Background()
+	sdkClient, err := keyorix.New(s.BaseURL, machToken)
+	if err != nil {
+		t.Fatalf("keyorix.New: %v", err)
+	}
+
+	projectName, envName, name, ok := splitRef(ref)
+	if !ok {
+		t.Fatalf("splitRef(%q): malformed ref", ref)
+	}
+	if name != secretName {
+		t.Fatalf("splitRef(%q): name = %q, want %q", ref, name, secretName)
+	}
+
+	gotIn, err := sdkClient.GetSecretIn(ctx, projectName, envName, name)
+	if err != nil {
+		t.Fatalf("SDK reader GetSecretIn(%q, %q, %q): %v", projectName, envName, name, err)
+	}
+	if gotIn != want {
+		t.Fatalf("SDK reader GetSecretIn: want %q, got %q", want, gotIn)
+	}
+
+	gotByRef, err := sdkClient.GetSecretByRef(ctx, ref)
+	if err != nil {
+		t.Fatalf("SDK reader GetSecretByRef(%q): %v", ref, err)
+	}
+	if gotByRef != want {
+		t.Fatalf("SDK reader GetSecretByRef: want %q, got %q", want, gotByRef)
+	}
+}
+
+// splitRef splits a "project/environment/name" ref into its three parts, the
+// same way the server itself does (only the first two "/"-separated segments
+// are taken as project/environment; the rest is the name).
+func splitRef(ref string) (project, environment, name string, ok bool) {
+	parts := strings.SplitN(ref, "/", 3)
+	if len(parts) != 3 {
+		return "", "", "", false
+	}
+	return parts[0], parts[1], parts[2], true
+}
+
+// assertForeignTokenForbidden provisions a second project and a machine
+// token scoped ONLY to it, then has that token try to read n1's secret via
+// the SDK's two single-round-trip readers. Both must fail with a typed
+// *keyorix.ForbiddenError (not a generic error, not success), and the
+// secret's actual value must never appear anywhere in the error -- a
+// forbidden response is not supposed to carry the thing it's refusing to
+// disclose.
+func assertForeignTokenForbidden(t *testing.T, s *harness.Server, cliBin, adminToken, project1Name, env1Name, secretName, secretValue string) {
+	t.Helper()
+	ctx := context.Background()
+	aEnv := adminEnv(s, adminToken)
+
+	runCLI(t, cliBin, aEnv, "project", "create", "--name", n1ForeignProjectName)
+	foreignProjID := projectID(t, s, adminToken, n1ForeignProjectName)
+
+	runCLI(t, cliBin, aEnv, "machine", "create",
+		"--project", n1ForeignProjectName, "--name", n1ForeignMachineName, "--type", "service")
+	_ = machineIdentityID(t, s, adminToken, foreignProjID, n1ForeignMachineName)
+
+	runCLI(t, cliBin, aEnv, "machine", "grant-role", n1ForeignMachineName,
+		"--project", n1ForeignProjectName, "--role", "project_viewer")
+
+	issueOut := runCLI(t, cliBin, aEnv, "machine", "token", "issue", n1ForeignMachineName,
+		"--project", n1ForeignProjectName, "--name", "n1-foreign-token")
+	foreignToken, _ := parseIssuedToken(t, issueOut)
+
+	sdkClient, err := keyorix.New(s.BaseURL, foreignToken)
+	if err != nil {
+		t.Fatalf("keyorix.New: %v", err)
+	}
+
+	ref := fmt.Sprintf("%s/%s/%s", project1Name, env1Name, secretName)
+
+	_, err = sdkClient.GetSecretIn(ctx, project1Name, env1Name, secretName)
+	assertTypedForbiddenNoValueLeak(t, "GetSecretIn", err, secretValue)
+
+	_, err = sdkClient.GetSecretByRef(ctx, ref)
+	assertTypedForbiddenNoValueLeak(t, "GetSecretByRef", err, secretValue)
+}
+
+// assertTypedForbiddenNoValueLeak asserts err is a *keyorix.ForbiddenError
+// (not merely non-nil, not some other typed error) and that its message
+// never contains secretValue.
+func assertTypedForbiddenNoValueLeak(t *testing.T, callLabel string, err error, secretValue string) {
+	t.Helper()
 	if err == nil {
-		t.Fatal("SDK reader: GetSecret unexpectedly SUCCEEDED for a machine token -- the known project_id bug " +
-			"(see this function's doc comment) may be fixed; if so, update this journey to use the SDK as a real " +
-			"reader instead of asserting the failure, and tell Session K the workaround is no longer needed")
+		t.Fatalf("SDK reader %s: a foreign-project token unexpectedly succeeded", callLabel)
 	}
-	if !strings.Contains(err.Error(), "machine tokens must specify project_id") {
-		t.Fatalf("SDK reader: expected the known project_id-gate error, got a different error: %v", err)
+	var forbidden *keyorix.ForbiddenError
+	if !errors.As(err, &forbidden) {
+		t.Fatalf("SDK reader %s: want *keyorix.ForbiddenError, got %T: %v", callLabel, err, err)
 	}
+	if strings.Contains(err.Error(), secretValue) {
+		t.Fatalf("SDK reader %s: forbidden error leaked the secret value: %v", callLabel, err)
+	}
+}
+
+// assertListSecretsScopedReturnsEverything seeds n1BulkSecretCount additional
+// secrets into project+environment (on top of the one already there),
+// putting the scope over the server's page_size=20 default, then asserts
+// ListSecretsScoped returns every one of them by name -- the pagination fix
+// (keyorix-sdks#49 / CHANGELOG "ListSecretsScoped silently truncated at the
+// server's default page size (20)"). The admin token does the seeding (CLI
+// would also work but is far slower for two dozen creates); the
+// project-scoped machine token does the listing, exactly as an application
+// would.
+func assertListSecretsScopedReturnsEverything(t *testing.T, s *harness.Server, adminToken, machToken string, projID, envID int, existingSecretName string) {
+	t.Helper()
+	ctx := context.Background()
+
+	want := map[string]bool{existingSecretName: true}
+	for i := 0; i < n1BulkSecretCount; i++ {
+		name := fmt.Sprintf("n1-bulk-%02d", i)
+		restExpect(t, s, adminToken, http.MethodPost, "/api/v1/secrets", map[string]interface{}{
+			"name":           name,
+			"value":          "n1-bulk-value",
+			"project_id":     projID,
+			"environment_id": envID,
+			"type":           "generic",
+		}, http.StatusCreated)
+		want[name] = true
+	}
+
+	sdkClient, err := keyorix.New(s.BaseURL, machToken)
+	if err != nil {
+		t.Fatalf("keyorix.New: %v", err)
+	}
+	secrets, err := sdkClient.ListSecretsScoped(ctx, keyorix.ProjectByID(uint(projID)), keyorix.EnvironmentByID(uint(envID))) //nolint:gosec // projID/envID come from this test's own int-typed REST decode, never negative
+	if err != nil {
+		t.Fatalf("ListSecretsScoped: %v", err)
+	}
+
+	got := make(map[string]bool, len(secrets))
+	for _, sec := range secrets {
+		got[sec.Name] = true
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ListSecretsScoped: got %d distinct secrets, want %d (scope has %d total, over the server's page_size=20 default): got=%v",
+			len(got), len(want), len(want), namesOf(secrets))
+	}
+	for name := range want {
+		if !got[name] {
+			t.Fatalf("ListSecretsScoped: missing secret %q -- truncated at the server's page_size=20 default? got=%v", name, namesOf(secrets))
+		}
+	}
+}
+
+func namesOf(secrets []keyorix.Secret) []string {
+	names := make([]string, len(secrets))
+	for i, sec := range secrets {
+		names[i] = sec.Name
+	}
+	return names
 }
 
 // assertReadersDenied re-attempts the REST and CLI reads with the
 // now-revoked machine token and asserts both are denied (the SDK leg is not
 // re-checked here -- it fails identically before and after revocation, for
-// an unrelated reason; see assertSDKBlockedByMachineTokenBug).
+// an unrelated reason: the token itself is revoked, which assertSDKReaderAgrees
+// already proved the SDK legs depend on just like REST/CLI do).
 func assertReadersDenied(t *testing.T, s *harness.Server, cliBin, machToken, ref string) {
 	t.Helper()
 

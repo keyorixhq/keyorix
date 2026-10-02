@@ -5,7 +5,7 @@
 // each journey here asserts the RESULT of a realistic end-to-end scenario --
 // read-back values, audit event counts, denial status codes -- exercised
 // through the real keyorix-server binary, the real keyorix CLI binary, and
-// the keyorix-go SDK, on a freshly bootstrapped install. Reuses
+// the keyorix-sdks/go SDK, on a freshly bootstrapped install. Reuses
 // scripts/e2e/harness for server boot/bootstrap (one boot sequence, not two
 // -- see docs/TESTING_GUIDE.md's "Customer journeys" section).
 package journeys
