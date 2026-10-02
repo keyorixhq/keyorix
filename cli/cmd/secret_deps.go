@@ -110,7 +110,12 @@ var secretDepsRemoveCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if resp.StatusCode() != 204 {
+		// The server responds 200 with a body (sendSuccess), not 204 -- see
+		// server/http/handlers/secret_dependencies.go's RemoveSecretDependency
+		// and its success-path tests (e.g. TestRemoveSecretDependency_SuccessPath_DepCov).
+		// This check previously required 204, so it reported failure on every
+		// successful removal.
+		if resp.StatusCode() != 200 {
 			return fmt.Errorf("remove secret dependency: HTTP %d", resp.StatusCode())
 		}
 		fmt.Printf("Removed dependency edge %d from secret %d.\n", edgeID, id)
