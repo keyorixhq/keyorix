@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -266,11 +267,25 @@ func userToProtoWithCounts(u *models.User, c corestorage.MembershipCounts) *pb.U
 	}
 }
 
-// projectCounts is best-effort: on error the counts are absent (zero).
+// projectCounts is best-effort: on a returned error OR a panic, the counts
+// are absent (zero) rather than letting either take down the whole RPC.
+// Every caller of userToProto (CreateUser, UpdateUser, GetUser, ListUsers)
+// reaches this AFTER its own primary write (if any) already committed --
+// same "a best-effort response-enrichment failure must not report an
+// already-successful operation as failed" shape as internal/core/service.go's
+// emitAudit, and the same panic-masking-a-commit family as this campaign's
+// other findings (docs/findings/2026-10-02-FINDING-grpc-createuser-usertoproto-projectcounts-panic-masks-commit.md):
+// the returned-error case was already handled; a panic from the identical
+// call had no protection at all.
 func (s *UserGRPCService) projectCounts(ctx context.Context, ids []uint) map[uint]corestorage.MembershipCounts {
 	if len(ids) == 0 {
 		return nil
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: projectCounts panicked resolving membership counts for %d user(s) (best-effort, primary operation already succeeded): %v", len(ids), r)
+		}
+	}()
 	counts, err := s.core.ProjectMembershipCounts(ctx, ids)
 	if err != nil {
 		return nil

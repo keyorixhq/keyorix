@@ -140,11 +140,7 @@ func (h *UserHandler) SearchUsers(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) attachProjectCounts(ctx context.Context, resp []map[string]interface{}, ids []uint) {
 	var counts map[uint]storage.MembershipCounts
 	if len(ids) > 0 {
-		var err error
-		counts, err = h.coreService.ProjectMembershipCounts(ctx, ids)
-		if err != nil {
-			log.Printf("Error counting project memberships: %v", err)
-		}
+		counts = h.projectCountsRecovered(ctx, ids)
 	}
 	for _, m := range resp {
 		id, _ := m["id"].(uint)
@@ -152,6 +148,28 @@ func (h *UserHandler) attachProjectCounts(ctx context.Context, resp []map[string
 		m["project_count"] = c.Total
 		m["active_project_count"] = c.Active
 	}
+}
+
+// projectCountsRecovered is attachProjectCounts' ProjectMembershipCounts call,
+// isolated so a panic there (not just a returned error, already handled below)
+// can't take down a ListUsers/SearchUsers response whose primary query already
+// succeeded. Same best-effort-enrichment-must-not-mask-success shape as the
+// gRPC UserService sibling this mirrors (docs/findings/2026-10-02-FINDING-grpc-
+// createuser-usertoproto-projectcounts-panic-masks-commit.md's "check fix
+// siblings" note) — lower severity here (a read-only list, nothing committed
+// to misreport as failed), but the same gap, so fixed alongside it.
+func (h *UserHandler) projectCountsRecovered(ctx context.Context, ids []uint) map[uint]storage.MembershipCounts {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: attachProjectCounts panicked resolving membership counts for %d user(s) (best-effort, primary list query already succeeded): %v", len(ids), r)
+		}
+	}()
+	counts, err := h.coreService.ProjectMembershipCounts(ctx, ids)
+	if err != nil {
+		log.Printf("Error counting project memberships: %v", err)
+		return nil
+	}
+	return counts
 }
 
 // staleAccountStates are the account states it makes sense to surface as "stuck":
