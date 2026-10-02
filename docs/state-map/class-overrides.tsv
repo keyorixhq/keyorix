@@ -105,3 +105,51 @@ cli	keyorix sod violations	D	sod.go:153 sodViolationsCmd.RunE is read-only: one 
 cli	keyorix system info	D	system.go:57 systemInfoCmd.RunE is read-only: one call to client.GetSystemInfoWithResponse, then formatting.
 cli	keyorix system role-expiry-check	D	system.go:116 systemRoleExpiryCheckCmd.RunE makes exactly one call, client.RunRoleExpiryCheckWithResponse, a single POST that triggers a server-side job; no sequential client-side writes.
 cli	keyorix system token-expiry-check	D	system.go:154 systemTokenExpiryCheckCmd.RunE makes exactly one call, client.RunTokenExpiryCheckWithResponse, a single POST that triggers a server-side job; no sequential client-side writes.
+#
+# SESSION-AR, batch 3/5 (AT0 REVIEW triage, trust/user CLI tail, all 4 gRPC
+# rows, both scheduled jobs, and the first slice of REST DELETE/GET rows):
+# 32 of 38 rows classified (24 D, 8 C); 6 deferred to Session AT (last-admin
+# guard or multi-table cascade delete -- see docs/state-map/entrypoints.tsv,
+# still class=REVIEW: DELETE /api/v1/groups/{id} [core.DeleteGroup, tagged
+# SESSION-AT at internal/core/groups.go:97], DELETE /api/v1/roles/{id}
+# [core.DeleteRole cascade across RoleID-referencing tables],
+# DELETE /api/v1/user-roles/ [core.RemoveUserRole's removeGlobalAdminRoleIfApplicable
+# guard], DELETE /api/v1/users/{id} [core.DeleteUser's guardLastAdminDeactivation],
+# DELETE /scim/v2/Groups/{id} [DeprovisionSCIMGroup's guardLastGlobalAdminGroupDelete],
+# DELETE /scim/v2/Users/{id} [DeprovisionSCIMUser's guardLastAdminDeactivation]).
+# The dominant pattern discovered here --
+# primary write commits, then a trailing best-effort audit-log write whose
+# failure cannot corrupt the already-committed state -- recurs across most
+# of the remaining REVIEW rows; see individual reasons below.
+cli	keyorix trust keygen	C	cli/cmd/trust.go:124-129 writes private.pem then public.pem via two independent securefiles writes; a crash between leaves an orphaned private key with no public key -- a local air-gapped signing-key artifact, not corrupted server state; operator reruns with --force to complete, or discards and starts over.
+cli	keyorix user force-password-reset	D	cli/cmd/user.go:539-553 RunE validates flags and calls runAccountStateChange, a thin wrapper issuing ONE REST call (RequirePasswordResetWithResponse) per action; no local state writes.
+cli	keyorix user reactivate	D	cli/cmd/user.go:524-537 RunE validates flags and calls runAccountStateChange -> ReactivateUserWithResponse, a single REST call; no local writes.
+cli	keyorix user resend-setup-link	D	cli/cmd/user.go:677-722 RunE makes a single REST call (ResendSetupLinkWithResponse) then prints the result; no local state writes.
+cli	keyorix user revoke-sessions	D	cli/cmd/user.go:560-601 RunE makes a single REST call (RevokeUserSessionsWithResponse) then decodes/prints the response; no local state writes.
+cli	keyorix user suspend	D	cli/cmd/user.go:509-521 RunE validates flags and calls runAccountStateChange -> SuspendUserWithResponse, a single REST call; server-side SuspendUser atomicity is deferred-AT separately (see POST /api/v1/users/{id}/suspend).
+cli	keyorix version	D	cli/cmd/version.go:14-17 RunE only does fmt.Printf of static version constants; no writes of any kind.
+grpc	MachineIdentityService.IssueMachineToken	D	server/grpc/services/machine_identity_service.go:153-184: the scanner's second "write" is time.Time.AddDate (line 166) matching the write-verb regex by accident, not a real write. Only one real state-changing call exists: s.core.IssueMachineToken.
+grpc	SecretService.DeleteSecret	C	server/grpc/services/secret_service.go:267-310: primary delete is one of two mutually exclusive branches (machine vs user actor); after it commits, the only remaining write is an async audit log call (LogSecretDeletedWithProject) on a DetachedAuditContext -- best-effort, trailing.
+grpc	SecretService.UpdateSecret	C	server/grpc/services/secret_service.go:214-264: primary update is one of two mutually exclusive branches; the trailing write is an async audit diff log (LogSecretUpdatedWithDiff) on a DetachedAuditContext after the primary write already committed.
+grpc	UserService.CreateUser	D	server/grpc/services/user_service.go:37-133: the three core calls the scanner counted (CreateUserWithSetupLink/WithOneTimePassword/WithAssignments) are in mutually exclusive switch-case branches, never sequential.
+job	jit_access_expiry	C	server/main.go:1569-1603: RemoveExpiredRoleGrants then RemoveExpiredShares are two independent cleanup sweeps over different tables; both grants and shares already stop authorizing immediately via expiry-filtered auth queries regardless of this sweep, so a crash between the two just leaves the second category to be swept on the next tick.
+job	retention_purge	C	server/main.go:1278-1296 calls PurgeExpiredSoftDeletes; internally (internal/core/purge.go:32-79) the legal-hold check plus all four entity purges run inside ONE storage.WithTransaction (per the #G21 comment fixing this exact cross-entity atomicity gap). The only write after commit is a best-effort audit event. Matches PurgeExpiredComplianceRecords' C classification in atomicity-exempt.tsv. Independently verified by SESSION-AR by direct read of purge.go.
+rest	DELETE /api/v1/alert-escalation-policies/{id}	C	server/http/handlers/alert_escalation.go:174-195: DeleteAlertEscalationPolicy is the primary write; LogAlertEscalationPolicyDeleted runs after it as a synchronous audit-trail write -- the policy deletion has already committed by the time the audit call happens.
+rest	DELETE /api/v1/notification-channels/{id}	D	server/http/handlers/notification_channels.go:160-180: single write call DeleteNotificationChannel, then sendSuccess -- no second write or audit call in this handler.
+rest	DELETE /api/v1/rotation-policies/{id}	D	server/http/handlers/rotation_policies_handler.go:287-312: single write call DeleteRotationPolicy, then w.WriteHeader -- no second write or audit call.
+rest	DELETE /api/v1/secret-templates/{id}	C	server/http/handlers/secret_templates.go:168-190: DeleteSecretTemplate is the primary write; LogSecretTemplateDeleted runs after it as a synchronous audit-trail write on the already-deleted record.
+rest	DELETE /api/v1/secrets/{id}	C	server/http/handlers/secrets_crud.go:563-628: primary delete is one of two mutually exclusive branches by actor kind; the trailing write is an async audit log (LogSecretDeletedWithProject) on a DetachedAuditContext after the delete already committed.
+rest	GET /api/v1/admin/scheduler-metrics	D	router.go:1086 wires customMiddleware.SchedulerMetricsHandler().ServeHTTP; server/middleware/scheduler_metrics.go:110-112 shows that's a stock promhttp.HandlerFor exposition endpoint, pure read.
+rest	GET /api/v1/alert-escalation-policies	D	server/http/handlers/alert_escalation.go:100-112 List only calls ListAlertEscalationPolicies and writes the JSON response -- no state writes.
+rest	GET /api/v1/alert-escalation-policies/{id}	D	server/http/handlers/alert_escalation.go:115-131 Get only calls GetAlertEscalationPolicy and writes the JSON response -- no state writes.
+rest	GET /api/v1/audit/export.csv	D	server/http/handlers/audit_export_csv.go:22-62: the 3 flagged calls are w.Header().Set (Content-Type/X-Content-Type-Options/Content-Disposition) before streaming a read-only CSV. No state writes.
+rest	GET /api/v1/compliance/controls.csv	D	server/http/handlers/compliance_controls_csv.go:20-53: 3 w.Header().Set calls before streaming a read-only CSV. No state writes.
+rest	GET /api/v1/compliance/permission-baseline.csv	D	server/http/handlers/permission_baseline.go:38-68: 3 w.Header().Set calls before streaming a read-only CSV. No state writes.
+rest	GET /api/v1/groups/	D	server/http/handlers/groups_handler.go:45-62 ListGroups only calls ListGroups and writes the JSON response -- no state writes.
+rest	GET /api/v1/groups/{id}	D	server/http/handlers/groups_handler.go:109-130 GetGroup only calls GetGroup and writes the JSON response -- no state writes.
+rest	GET /api/v1/machine-identities/audit.csv	D	server/http/handlers/machine_audit.go:47-77: 3 w.Header().Set calls before streaming a read-only CSV. No state writes.
+rest	GET /api/v1/notification-channels	D	server/http/handlers/notification_channels.go:49-61 List only calls ListNotificationChannels and writes the JSON response -- no state writes.
+rest	GET /api/v1/notification-channels/{id}	D	server/http/handlers/notification_channels.go:108-124 Get only calls GetNotificationChannel and writes the JSON response -- no state writes.
+rest	GET /api/v1/notifications	D	server/http/handlers/notifications_handler.go:48-73 List (notificationHandler, not notificationChannelHandler) only calls ListNotifications then UnreadNotificationCount, both reads, and writes the JSON response.
+rest	GET /api/v1/projects/{id}/access-review/campaigns/{campaignId}/export.csv	D	server/http/handlers/access_review_campaign_export_csv.go:22-57: calls GetAccessReviewCampaign and per-decider GetUser lookups (reads), then streams CSV with header writes only; no state writes.
+rest	GET /api/v1/projects/{id}/secrets/inventory.csv	D	server/http/handlers/secrets_inventory_csv.go:19-54: the 3 flagged calls are w.Header().Set (Content-Type/X-Content-Type-Options/Content-Disposition) before streaming a read-only CSV. No state writes.
