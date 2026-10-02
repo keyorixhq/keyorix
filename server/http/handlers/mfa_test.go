@@ -120,7 +120,7 @@ func TestDisableMFA_DBErrorSanitized(t *testing.T) {
 	require.NoError(t, err)
 	code, err := totp.GenerateCode(secret, time.Now())
 	require.NoError(t, err)
-	_, err = coreService.ActivateMFA(t.Context(), 1, code, reauthTestPassword)
+	_, err = coreService.ActivateMFA(t.Context(), 1, code, reauthTestPassword, "")
 	require.NoError(t, err)
 
 	require.NoError(t, db.Migrator().DropTable(&models.MFASecret{}))
@@ -155,7 +155,7 @@ func TestRegenerateRecoveryCodes_DBErrorSanitized(t *testing.T) {
 	require.NoError(t, err)
 	code, err := totp.GenerateCode(secret, time.Now())
 	require.NoError(t, err)
-	_, err = coreService.ActivateMFA(t.Context(), 1, code, reauthTestPassword)
+	_, err = coreService.ActivateMFA(t.Context(), 1, code, reauthTestPassword, "")
 	require.NoError(t, err)
 
 	require.NoError(t, db.Migrator().DropTable(&models.MFARecoveryCode{}))
@@ -189,7 +189,7 @@ func TestRecoveryCodesStatus_DBErrorSanitized(t *testing.T) {
 	require.NoError(t, err)
 	code, err := totp.GenerateCode(secret, time.Now())
 	require.NoError(t, err)
-	_, err = coreService.ActivateMFA(t.Context(), 1, code, reauthTestPassword)
+	_, err = coreService.ActivateMFA(t.Context(), 1, code, reauthTestPassword, "")
 	require.NoError(t, err)
 
 	require.NoError(t, db.Migrator().DropTable(&models.MFARecoveryCode{}))
