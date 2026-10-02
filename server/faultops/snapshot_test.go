@@ -96,6 +96,8 @@ var presenceOnlyFields = map[string]string{
 	"CredentialBlob": "authenticator-generated WebAuthn public key material",
 	"SessionToken":   "SHA-256 hash of a randomly generated per-login session token (models.go:1217) — two independent bootstrap logins (reference world vs fault world) never produce the same raw token, so never the same hash",
 	"FamilyID":       "randomly generated per-login refresh-token family identifier (models.go:1243) — same reasoning as SessionToken; found via this file's own Session-row debug dump when the structural timestamp fix alone didn't make two independently-bootstrapped worlds' Session tables match",
+	"LeaseID":        "generateSecureToken()-random opaque public identifier (internal/core/dynamic_secrets.go:535, models.go:1153) — two independent IssueLease calls never mint the same lease ID, so DynamicSecretLease rows never match byte-for-byte even when nothing else differs; missed by the original \"ends in Hash/Enc\" enumeration since this field holds the raw token itself, not a hash of it. Found live: FuzzStorageFaultOperations (GRPC keyorix.v1.DynamicSecretService.IssueLease, fault=LogAuditEvent#1/error), Session CR round 2.",
+	"RoleName":       "the generated role/username on the target DB (models.go:1156) — every engine.Issue (both the real backend engines, e.g. internal/dynamic/postgres.go's \"kx_dyn_\"+randString(16), and dynamictest.FakeEngine's \"kx_fake_\"+randString(8)) mints a fresh random suffix per call, so two independent issues never produce the same role name. Same root cause and found alongside LeaseID above.",
 }
 
 // tableSnapshot is one table's canonical dump: Hash over every row's
