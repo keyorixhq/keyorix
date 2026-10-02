@@ -22,6 +22,7 @@ import type { User, LoginResponse, RefreshTokenResponse } from '../../types';
 vi.mock('../../services/auth', () => ({
     authService: {
         login: vi.fn(),
+        verifyMfa: vi.fn(),
         logout: vi.fn(),
         refreshToken: vi.fn(),
         getProfile: vi.fn(),
@@ -86,6 +87,7 @@ describe('authStore', () => {
             isLoading: false,
             hasCheckedAuth: false,
             error: null,
+            mfaChallenge: null,
         });
     });
 
@@ -142,6 +144,139 @@ describe('authStore', () => {
             );
 
             expect(useAuthStore.getState().error).toBe('Login failed');
+        });
+    });
+
+    // #2442: login() previously ignored mfa_required entirely and built a User
+    // from an all-undefined response, landing isAuthenticated: true with no
+    // real session. These assert the fix: a pending challenge instead, and
+    // isAuthenticated/user left untouched.
+    describe('login (mfa_required)', () => {
+        it('stores a pending mfaChallenge and does not authenticate, on an mfa_required response', async () => {
+            vi.mocked(authService.login).mockResolvedValueOnce({
+                mfa_required: true,
+                mfa_challenge: 'chal-abc123',
+                totp_available: true,
+                webauthn_available: false,
+            } as never);
+
+            await useAuthStore.getState().login({ username: 'bob', password: 'pw' } as never);
+
+            const state = useAuthStore.getState();
+            expect(state.isAuthenticated).toBe(false);
+            expect(state.user).toBeNull();
+            expect(state.isLoading).toBe(false);
+            expect(state.error).toBeNull();
+            expect(state.mfaChallenge).toEqual({
+                challenge: 'chal-abc123',
+                totpAvailable: true,
+                webauthnAvailable: false,
+            });
+        });
+
+        it('defaults totpAvailable/webauthnAvailable to false and challenge to "" when the fields are absent', async () => {
+            vi.mocked(authService.login).mockResolvedValueOnce({ mfa_required: true } as never);
+
+            await useAuthStore.getState().login({ username: 'bob', password: 'pw' } as never);
+
+            expect(useAuthStore.getState().mfaChallenge).toEqual({
+                challenge: '',
+                totpAvailable: false,
+                webauthnAvailable: false,
+            });
+        });
+
+        it('clears any previous mfaChallenge at the start of a fresh login() call', async () => {
+            useAuthStore.setState({
+                mfaChallenge: { challenge: 'stale', totpAvailable: true, webauthnAvailable: false },
+            });
+            vi.mocked(authService.login).mockResolvedValueOnce({
+                expires_at: '2030-01-01T00:00:00Z',
+                user_id: 5,
+                username: 'bob',
+                email: 'bob@example.com',
+            } as never);
+
+            await useAuthStore.getState().login({ username: 'bob', password: 'pw' } as never);
+
+            expect(useAuthStore.getState().mfaChallenge).toBeNull();
+            expect(useAuthStore.getState().isAuthenticated).toBe(true);
+        });
+    });
+
+    describe('verifyMfa', () => {
+        const baseResponse: LoginResponse = {
+            expires_at: '2030-01-01T00:00:00Z',
+            user_id: 5,
+            username: 'bob',
+            email: 'bob@example.com',
+        };
+
+        beforeEach(() => {
+            useAuthStore.setState({
+                mfaChallenge: { challenge: 'chal-abc123', totpAvailable: true, webauthnAvailable: false },
+            });
+        });
+
+        it('rejects with no pending challenge, without calling the API', async () => {
+            useAuthStore.setState({ mfaChallenge: null });
+
+            await expect(useAuthStore.getState().verifyMfa('123456')).rejects.toThrow(
+                'No pending MFA challenge to verify'
+            );
+            expect(authService.verifyMfa).not.toHaveBeenCalled();
+        });
+
+        it('calls authService.verifyMfa with the stored challenge and the code, then lands the session', async () => {
+            vi.mocked(authService.verifyMfa).mockResolvedValueOnce(baseResponse);
+
+            await useAuthStore.getState().verifyMfa('123456');
+
+            expect(authService.verifyMfa).toHaveBeenCalledWith('chal-abc123', '123456');
+            const state = useAuthStore.getState();
+            expect(state.isAuthenticated).toBe(true);
+            expect(state.user?.username).toBe('bob');
+            expect(state.mfaChallenge).toBeNull();
+            expect(state.isLoading).toBe(false);
+            expect(state.error).toBeNull();
+        });
+
+        it('surfaces the rejection message and keeps the challenge for a retry on failure', async () => {
+            vi.mocked(authService.verifyMfa).mockRejectedValueOnce(new Error('Invalid or expired code'));
+
+            await expect(useAuthStore.getState().verifyMfa('000000')).rejects.toThrow('Invalid or expired code');
+
+            const state = useAuthStore.getState();
+            expect(state.isAuthenticated).toBe(false);
+            expect(state.error).toBe('Invalid or expired code');
+            // Deliberately still set — the user can retry against the same
+            // challenge without being bounced back to the username/password step.
+            expect(state.mfaChallenge).toEqual({
+                challenge: 'chal-abc123',
+                totpAvailable: true,
+                webauthnAvailable: false,
+            });
+        });
+
+        it("falls back to a generic 'Verification failed' message when the rejection isn't an Error instance", async () => {
+            vi.mocked(authService.verifyMfa).mockRejectedValueOnce('network exploded');
+
+            await expect(useAuthStore.getState().verifyMfa('123456')).rejects.toBe('network exploded');
+            expect(useAuthStore.getState().error).toBe('Verification failed');
+        });
+    });
+
+    describe('clearMfaChallenge', () => {
+        it('clears a pending challenge and any error', () => {
+            useAuthStore.setState({
+                mfaChallenge: { challenge: 'chal-abc123', totpAvailable: true, webauthnAvailable: false },
+                error: 'Invalid or expired code',
+            });
+
+            useAuthStore.getState().clearMfaChallenge();
+
+            expect(useAuthStore.getState().mfaChallenge).toBeNull();
+            expect(useAuthStore.getState().error).toBeNull();
         });
     });
 

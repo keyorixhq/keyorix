@@ -8,9 +8,12 @@ const authState = vi.hoisted(() => ({
     isLoading: false,
     hasCheckedAuth: true,
     error: null as string | null,
+    mfaChallenge: null as { challenge: string; totpAvailable: boolean; webauthnAvailable: boolean } | null,
 }));
 
 const loginMock = vi.hoisted(() => vi.fn());
+const verifyMfaMock = vi.hoisted(() => vi.fn());
+const clearMfaChallengeMock = vi.hoisted(() => vi.fn());
 const logoutMock = vi.hoisted(() => vi.fn());
 const refreshTokenMock = vi.hoisted(() => vi.fn());
 const checkAuthMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
@@ -25,7 +28,10 @@ vi.mock('../../../store/authStore', () => {
         isLoading: authState.isLoading,
         hasCheckedAuth: authState.hasCheckedAuth,
         error: authState.error,
+        mfaChallenge: authState.mfaChallenge,
         login: loginMock,
+        verifyMfa: verifyMfaMock,
+        clearMfaChallenge: clearMfaChallengeMock,
         logout: logoutMock,
         refreshToken: refreshTokenMock,
         checkAuth: checkAuthMock,
@@ -63,7 +69,10 @@ beforeEach(() => {
     authState.isLoading = false;
     authState.hasCheckedAuth = true;
     authState.error = null;
+    authState.mfaChallenge = null;
     loginMock.mockReset();
+    verifyMfaMock.mockReset();
+    clearMfaChallengeMock.mockReset();
     logoutMock.mockReset();
     refreshTokenMock.mockReset();
     checkAuthMock.mockReset().mockResolvedValue(undefined);
@@ -114,6 +123,63 @@ describe('LoginPage', () => {
         fireEvent.click(screen.getByTestId('login-button'));
 
         await waitFor(() => expect(loginMock).toHaveBeenCalled());
+    });
+
+    // #2442: login() ignoring mfa_required previously meant this never rendered
+    // anything beyond the login form — these assert the fix.
+    it('shows the MFA code-entry step once a pending mfaChallenge appears', async () => {
+        loginMock.mockImplementation(async () => {
+            authState.mfaChallenge = { challenge: 'chal-abc123', totpAvailable: true, webauthnAvailable: false };
+        });
+        render(<LoginPage />);
+
+        fireEvent.change(screen.getByTestId('username-input'), { target: { value: 'dana' } });
+        fireEvent.change(screen.getByTestId('password-input'), { target: { value: 'Str0ngPass!' } });
+        fireEvent.click(screen.getByTestId('login-button'));
+
+        expect(await screen.findByTestId('mfa-code-input')).toBeInTheDocument();
+        expect(screen.queryByTestId('username-input')).not.toBeInTheDocument();
+    });
+
+    it('submits the entered code via verifyMfa once on the MFA step', async () => {
+        authState.mfaChallenge = { challenge: 'chal-abc123', totpAvailable: true, webauthnAvailable: false };
+        verifyMfaMock.mockResolvedValue(undefined);
+        render(<LoginPage />);
+
+        fireEvent.change(screen.getByTestId('mfa-code-input'), { target: { value: '123456' } });
+        fireEvent.click(screen.getByTestId('mfa-verify-button'));
+
+        await waitFor(() => expect(verifyMfaMock).toHaveBeenCalledWith('123456'));
+    });
+
+    it('does not throw when verifyMfa rejects (error is surfaced via the auth store)', async () => {
+        authState.mfaChallenge = { challenge: 'chal-abc123', totpAvailable: true, webauthnAvailable: false };
+        verifyMfaMock.mockRejectedValue(new Error('Invalid or expired code'));
+        render(<LoginPage />);
+
+        fireEvent.change(screen.getByTestId('mfa-code-input'), { target: { value: '000000' } });
+        fireEvent.click(screen.getByTestId('mfa-verify-button'));
+
+        await waitFor(() => expect(verifyMfaMock).toHaveBeenCalled());
+    });
+
+    it('renders the auth-store error on the MFA step too', async () => {
+        authState.mfaChallenge = { challenge: 'chal-abc123', totpAvailable: true, webauthnAvailable: false };
+        authState.error = 'Invalid or expired code';
+        render(<LoginPage />);
+
+        expect(await screen.findByText('Invalid or expired code')).toBeInTheDocument();
+    });
+
+    it('returns to the login form via "Back to login", clearing the pending challenge', async () => {
+        authState.mfaChallenge = { challenge: 'chal-abc123', totpAvailable: true, webauthnAvailable: false };
+        render(<LoginPage />);
+
+        expect(await screen.findByTestId('mfa-code-input')).toBeInTheDocument();
+        fireEvent.click(screen.getByText('Back to login'));
+
+        expect(clearMfaChallengeMock).toHaveBeenCalled();
+        expect(screen.getByTestId('username-input')).toBeInTheDocument();
     });
 
     it('renders the auth-store error via the login form alert', async () => {

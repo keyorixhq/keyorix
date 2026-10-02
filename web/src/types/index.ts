@@ -304,6 +304,26 @@ export interface LoginResponse {
     permissions?: string[];
     password_change_required?: boolean;
     account_state?: string;
+
+    // mfa_required (and the three fields below) are present INSTEAD of the
+    // identity fields above when the account has MFA enabled and a correct
+    // password alone isn't sufficient yet (server/http/handlers/auth.go's
+    // Login: HTTP 200, no session cookie set). authStore.login() must branch
+    // on mfa_required before treating a response as a completed session —
+    // every other field on this type is meaningless when it's true.
+    mfa_required?: boolean;
+    mfa_challenge?: string;
+    totp_available?: boolean;
+    webauthn_available?: boolean;
+}
+
+// MfaChallengeState is the client-side shape of a pending login-time MFA
+// challenge — derived from LoginResponse's mfa_required branch, held in
+// authStore until verifyMfa() (or clearMfaChallenge()) resolves it.
+export interface MfaChallengeState {
+    challenge: string;
+    totpAvailable: boolean;
+    webauthnAvailable: boolean;
 }
 
 export interface RefreshTokenResponse {
