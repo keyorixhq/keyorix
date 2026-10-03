@@ -45,7 +45,7 @@ Format: `INV-WEB-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   properly quotes CSV-special characters — mirrors the Go `csvSafe` encoder
   (`server/http/handlers/csv_safe.go`) explicitly cited in its own comment. Guard:
   `pages/audit/__tests__/AuditLogPage.test.tsx` (`'neutralizes formula-injection and properly
-  quotes CSV-special characters...'`). See `internal/core/INVARIANTS.md` INV-CORE-39 for the
+quotes CSV-special characters...'`). See `internal/core/INVARIANTS.md` INV-CORE-39 for the
   Go-side half of this same class — if a second client-side CSV writer is ever added, it needs
   the identical treatment and an identical test.
 
