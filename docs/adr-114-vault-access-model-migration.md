@@ -1,6 +1,6 @@
 # ADR-114: Vault access-model migration (policies, auth methods → Keyorix roles, grants, machine identities)
 
-**Status:** Proposed
+**Status:** Accepted (Andrei Beshkov, 2026-10-03)
 **Date:** 2026-10-03
 **Related:** ADR-030 (machine-token authentication), ADR-031 (OIDC/Kubernetes-JWT
 federation), ADR-084 (admin bypass is a structural marker, never grantable),
