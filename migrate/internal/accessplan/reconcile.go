@@ -12,13 +12,15 @@ import (
 // through the public REST API, matching this module's module-boundary rule; Reconcile itself
 // never does.
 type KeyorixReader interface {
-	// RoleDescriptionByName returns the role's own Description (where the migrate.source-id
-	// line lives, see provenance.go), or found=false if no role has this name.
-	RoleDescriptionByName(ctx context.Context, name string) (description string, found bool, err error)
-	// MachineIdentityDescriptionByName returns a project-scoped machine identity's own
+	// RoleDescriptionByName returns the role's own id and Description (where the
+	// migrate.source-id line lives, see provenance.go), or found=false if no role has this
+	// name. The id is returned so Apply can reuse an already-existing (Skip-outcome) role on a
+	// resumed run — it never creates a role it only read here.
+	RoleDescriptionByName(ctx context.Context, name string) (id int, description string, found bool, err error)
+	// MachineIdentityDescriptionByName returns a project-scoped machine identity's own id and
 	// Description, or found=false. Machine identities are project-scoped (ADR-030); Reconcile
 	// never looks one up outside the project it's proposed in.
-	MachineIdentityDescriptionByName(ctx context.Context, projectID int, name string) (description string, found bool, err error)
+	MachineIdentityDescriptionByName(ctx context.Context, projectID int, name string) (id int, description string, found bool, err error)
 	// MachineHasRoleGrant reports whether machineName (within projectID) already holds
 	// roleName. A grant has no name of its own to conflict on — existence alone resolves it to
 	// Skip or Create.
@@ -64,19 +66,19 @@ func Reconcile(ctx context.Context, items []Item, reader KeyorixReader) error {
 		}
 		switch it.Kind {
 		case KindRole:
-			desc, found, err := reader.RoleDescriptionByName(ctx, it.ProposedName)
+			id, desc, found, err := reader.RoleDescriptionByName(ctx, it.ProposedName)
 			if err != nil {
 				return fmt.Errorf("reconcile role %q: %w", it.ProposedName, err)
 			}
-			resolveNamedObject(it, found, desc)
+			resolveNamedObject(it, id, found, desc)
 		case KindMachineIdentity:
 			projectID := projectByMachineName[it.ProposedName]
 			it.ProposedProjectID = projectID
-			desc, found, err := reader.MachineIdentityDescriptionByName(ctx, projectID, it.ProposedName)
+			id, desc, found, err := reader.MachineIdentityDescriptionByName(ctx, projectID, it.ProposedName)
 			if err != nil {
 				return fmt.Errorf("reconcile machine identity %q: %w", it.ProposedName, err)
 			}
-			resolveNamedObject(it, found, desc)
+			resolveNamedObject(it, id, found, desc)
 		case KindMachineRoleGrant:
 			has, err := reader.MachineHasRoleGrant(ctx, it.ProposedProjectID, it.ProposedMachineRef, it.ProposedRoleRef)
 			if err != nil {
@@ -102,10 +104,11 @@ func Reconcile(ctx context.Context, items []Item, reader KeyorixReader) error {
 
 // resolveNamedObject applies the by-name-then-provenance triad (internal/plan's existing
 // pattern, applied here to Role/MachineIdentity) to one Create-outcome item in place.
-func resolveNamedObject(it *Item, found bool, description string) {
+func resolveNamedObject(it *Item, id int, found bool, description string) {
 	if !found {
 		return // stays Create.
 	}
+	it.ExistingID = id
 	existingKey, hasProvenance := ParseProvenanceKey(description)
 	if hasProvenance && existingKey == it.ProvenanceKey {
 		it.Outcome = Skip
