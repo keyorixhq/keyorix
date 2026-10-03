@@ -23,10 +23,19 @@ import (
 // contain. Server-side internal packages first (ADR-108 Decision A's "no core/storage/
 // server config"), then every cloud SDK the old, thick CLI pulled in (docs/adr-108-cli-
 // server-split.md's Context table: 90 cloud-SDK packages linked).
+//
+// internal/crypto and internal/encryption are named explicitly (#2524, INV-CLI-03), not
+// left to be caught transitively: internal/crypto's own dependency graph is just
+// internal/securefiles plus the stdlib, and internal/encryption/aead is stdlib-only, so
+// a direct import of either slipped past every other prefix here. The prefixes are
+// deliberately unslashed so they also cover their subpackages (crypto/awskms,
+// encryption/aead) and the sibling internal/encryptionops.
 var forbiddenPrefixes = []string{
 	"github.com/keyorixhq/keyorix/internal/core",
 	"github.com/keyorixhq/keyorix/internal/storage",
 	"github.com/keyorixhq/keyorix/internal/config",
+	"github.com/keyorixhq/keyorix/internal/crypto",
+	"github.com/keyorixhq/keyorix/internal/encryption",
 	"github.com/keyorixhq/keyorix/server/",
 	"github.com/aws/aws-sdk-go",
 	"github.com/Azure/azure-sdk-for-go",
