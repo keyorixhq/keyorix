@@ -162,11 +162,13 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   adds. Why: ADR-052. Guard: `secret_dependencies_test.go`
   (`TestTopologicalRotationOrderDetectsCycle`, `TestAddSecretDependency_Validation`,
   `TestAddSecretDependency_CrossEnvironmentRejected`,
-  `TestAddSecretDependency_ConcurrentRaceCannotPersistACycle`). **Cross-replica: UNGUARDED
-  and currently violated (#2660)** — that concurrency guard races goroutines through ONE
-  `KeyorixCore` on SQLite (serialized by its own `secretDependencyMu`); across replicas on
-  Postgres, `CreateSecretDependencyExclusive`'s `FOR UPDATE` on existing edges does not stop
-  the second add (READ COMMITTED snapshot excludes the first's new edge).
+  `TestAddSecretDependency_ConcurrentRaceCannotPersistACycle`). Cross-replica (#2660): that
+  concurrency guard races goroutines through ONE `KeyorixCore` on SQLite, and
+  `CreateSecretDependencyExclusive`'s `FOR UPDATE` on existing edges does not stop a second
+  replica's add (READ COMMITTED snapshot excludes the first's new edge), so every edge insert
+  runs under `WithNamedLock(secretDependencyGraphLockKey(project))` in
+  `LockedCreateSecretDependencyExclusive`, the only path `AddSecretDependency` uses. Guard:
+  `TestCTAReview_AddSecretDependency_CrossReplicaCycle_Postgres` (pg-gated).
   `TestCTAReview_AddSecretDependency_CrossReplicaCycle_Postgres` reproduces it (skipped until
   #2660 is fixed).
 - **INV-CORE-32** Dependency reads (impact/order) are filtered by environment, and `DELETE`
