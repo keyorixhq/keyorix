@@ -162,7 +162,13 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   adds. Why: ADR-052. Guard: `secret_dependencies_test.go`
   (`TestTopologicalRotationOrderDetectsCycle`, `TestAddSecretDependency_Validation`,
   `TestAddSecretDependency_CrossEnvironmentRejected`,
-  `TestAddSecretDependency_ConcurrentRaceCannotPersistACycle`).
+  `TestAddSecretDependency_ConcurrentRaceCannotPersistACycle`). **Cross-replica: UNGUARDED
+  and currently violated (#2660)** — that concurrency guard races goroutines through ONE
+  `KeyorixCore` on SQLite (serialized by its own `secretDependencyMu`); across replicas on
+  Postgres, `CreateSecretDependencyExclusive`'s `FOR UPDATE` on existing edges does not stop
+  the second add (READ COMMITTED snapshot excludes the first's new edge).
+  `TestCTAReview_AddSecretDependency_CrossReplicaCycle_Postgres` reproduces it (skipped until
+  #2660 is fixed).
 - **INV-CORE-32** Dependency reads (impact/order) are filtered by environment, and `DELETE`
   requires the edge to reference the path secret (closes a cross-environment IDOR). Guard:
   `TestSecretDependencyReadsFilterByEnvironment`, `TestRemoveSecretDependency_RequiresFocalReference`.
@@ -206,6 +212,26 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
 - **INV-CORE-37** A SUCCESS audit event never textually precedes the storage write it reports
   on, in the same function; denial/failure events are exempt by construction, anything else
   needs a reviewed `AUDIT:<fn>` exemption. Guard: `atomicity_guard_test.go:TestAtomicityGuard_AuditBeforeWrite`.
+
+## Check-then-act across replicas (GUARD-2)
+
+- **INV-CORE-41** Every function where a `require*`/`guard*` security check precedes a later
+  storage/core write with no shared `storage.WithNamedLock` is a reviewed entry in
+  `docs/check-then-act-lock-exempt.tsv`; rows the independent second review (#2564) found to
+  be real cross-replica races are kept as `UNSAFE-OPEN` with a tracking issue and a skipped
+  two-replica Postgres repro in `concurrency_check_then_act_exempt_review_postgres_test.go`.
+  Guard: `check_then_act_lock_guard_test.go:TestCheckThenActLockGuard_UnlockedSecurityCheck`
+  (AST walk; no control-flow, interprocedural, or `tx.<Write>` awareness — and it does not
+  detect stale rows, see the TSV's `STALE` class). Open: #2646 #2647 #2648 #2649 #2650 #2651
+  #2652 #2653 #2654 #2655 #2656 #2657 #2659.
+- **INV-CORE-42** A write that persists a pre-read snapshot must not overwrite columns the
+  operation did not change, and must not resurrect a soft-deleted row. GORM `Save(struct)` on
+  a soft-delete model is a resurrection primitive under concurrency: its `UPDATE ... WHERE
+  deleted_at IS NULL` matches 0 rows and it falls back to `INSERT ... ON CONFLICT (id) DO
+  UPDATE SET <all columns>` including `deleted_at = NULL`; `Select("*").Updates(...)` reverts
+  every column a narrower concurrent writer (`SetAccountState`, `SetPasswordHash`, …) changed.
+  Why: C-GUARD2-EXEMPT-REVIEW. Guard: UNGUARDED (#2648 share revoke, #2650 secret undelete,
+  #2651 dynamic config re-enable, #2653/#2654 user suspension/password revert).
 
 ## Account-state / exhaustiveness
 
