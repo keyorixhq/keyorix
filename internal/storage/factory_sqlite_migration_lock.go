@@ -16,10 +16,15 @@
 package storage
 
 import (
+	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"syscall"
+
+	"gorm.io/gorm"
 )
 
 // sqliteMigrationLockSuffix is appended to the configured SQLite database path
@@ -98,4 +103,128 @@ func acquireSQLiteMigrationLock(dbPath string) (*sqliteMigrationLock, error) {
 		)
 	}
 	return &sqliteMigrationLock{f: f}, nil
+}
+
+// sqliteExclusiveTxConn is the gorm ConnPool withSQLiteInDBMigrationLock runs
+// the migration on: one dedicated *sql.Conn that already holds BEGIN
+// EXCLUSIVE. Implementing gorm.TxCommitter makes every db.Transaction inside
+// migrateDatabase nest as a SAVEPOINT on this same connection (exactly as the
+// Postgres branch's tx handle does) rather than trying to BEGIN a second
+// transaction -- which SQLite would reject on this connection, and which on
+// any other pooled connection would block on our own exclusive lock.
+//
+// It deliberately exposes only gorm.ConnPool's methods plus Commit/Rollback --
+// NOT *sql.Conn's BeginTx -- so it looks to GORM exactly like a *sql.Tx: its
+// default per-write transaction (Create/Update/...) then runs inline instead
+// of attempting a nested BEGIN.
+type sqliteExclusiveTxConn struct {
+	conn *sql.Conn
+}
+
+func (c sqliteExclusiveTxConn) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
+	return c.conn.PrepareContext(ctx, query)
+}
+
+func (c sqliteExclusiveTxConn) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	return c.conn.ExecContext(ctx, query, args...)
+}
+
+func (c sqliteExclusiveTxConn) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	return c.conn.QueryContext(ctx, query, args...)
+}
+
+func (c sqliteExclusiveTxConn) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	return c.conn.QueryRowContext(ctx, query, args...)
+}
+
+func (c sqliteExclusiveTxConn) Commit() error {
+	_, err := c.conn.ExecContext(context.Background(), "COMMIT")
+	return err
+}
+
+func (c sqliteExclusiveTxConn) Rollback() error {
+	_, err := c.conn.ExecContext(context.Background(), "ROLLBACK")
+	return err
+}
+
+var (
+	_ gorm.ConnPool    = sqliteExclusiveTxConn{}
+	_ gorm.TxCommitter = sqliteExclusiveTxConn{}
+)
+
+// withSQLiteInDBMigrationLock runs fn inside a BEGIN EXCLUSIVE transaction on
+// a dedicated connection of db (INV-STORAGE-23, ADR-095 Task 4.3), committing
+// only if fn succeeds. The lock is SQLite's own lock on the database file, so
+// two processes migrating the same file are serialized by SQLite itself --
+// whatever path each one used to reach it, with or without a surviving
+// sidecar lock file (acquireSQLiteMigrationLock is keyed on the path string,
+// so it misses both), and released by the OS if the holder dies. It is also
+// schema-independent: it needs no table to exist, so it guards the very first
+// migration that creates every table (the chicken-and-egg problem ADR-095
+// notes rules out a lease row).
+//
+// A second migrator waits for the lock up to the connection's busy_timeout
+// (sqliteBusyTimeoutMillis via sqliteDSN), then fails with an actionable
+// error; one that gets the lock after the first finished sees an
+// already-migrated database and migrateDatabase's idempotent steps no-op. The
+// same-path case still fails immediately on the sidecar flock taken before
+// this (withMigrationLock).
+//
+// Because the migration is one transaction, a crash or error anywhere in it
+// leaves the database exactly as it was before this boot began.
+func withSQLiteInDBMigrationLock(db *gorm.DB, dbPath string, fn func(*gorm.DB) error) (err error) {
+	ctx := context.Background()
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("SQLite migration lock: get connection pool: %w", err)
+	}
+	conn, err := sqlDB.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("SQLite migration lock: get dedicated connection: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN EXCLUSIVE"); err != nil {
+		if isSQLiteBusy(err) {
+			return fmt.Errorf(
+				"another process is migrating the SQLite database %s (still held after waiting %dms for its exclusive lock) "+
+					"— only one Keyorix process (server or CLI) may connect to/migrate a local SQLite database at a time; "+
+					"stop the other process before starting this one: %w",
+				dbPath, sqliteBusyTimeoutMillis, err)
+		}
+		return fmt.Errorf("SQLite migration lock: BEGIN EXCLUSIVE: %w", err)
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			// Covers fn's error and a panic alike (the panic keeps propagating
+			// after this deferred rollback). The rollback's own error is
+			// secondary to whatever made us roll back.
+			_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		}
+	}()
+
+	tx := db.Session(&gorm.Session{NewDB: true, Context: ctx})
+	tx.Statement.ConnPool = sqliteExclusiveTxConn{conn}
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return fmt.Errorf("SQLite migration lock: COMMIT: %w", err)
+	}
+	committed = true
+	return nil
+}
+
+// isSQLiteBusy reports whether err is SQLite's SQLITE_BUSY ("database is
+// locked") -- matched on the message, so this package does not depend on the
+// driver's error type for one diagnostic branch.
+func isSQLiteBusy(err error) bool {
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if msg := e.Error(); strings.Contains(msg, "SQLITE_BUSY") || strings.Contains(msg, "database is locked") {
+			return true
+		}
+	}
+	return false
 }

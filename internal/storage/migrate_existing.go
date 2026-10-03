@@ -14,8 +14,9 @@ import "gorm.io/gorm"
 // AutoMigrate alone never creates uniq_secret_versions_node_version, the
 // partial unique indexes on users/projects/memberships/..., the
 // account-state CHECK, etc.). Unlike CreateStorage it takes no SQLite
-// cross-process file lock: the caller owns the connection and whatever file
-// (if any) backs it.
+// sidecar flock (it has no path to key one on); on SQLite it still runs the
+// migration inside the in-database BEGIN EXCLUSIVE lock
+// (withSQLiteInDBMigrationLock, INV-STORAGE-23), which needs no path.
 func MigrateExisting(db *gorm.DB) error {
 	return withMigrationLock(db, db.Dialector.Name() == "postgres", "", (&DefaultStorageFactory{}).migrateDatabase)
 }
