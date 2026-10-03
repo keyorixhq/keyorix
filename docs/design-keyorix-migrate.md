@@ -168,6 +168,22 @@ that looks like it echoes request/response body content before it reaches the
 report). The canary-value test (Step 2) plants a known marker value and greps
 every byte this tool writes to stdout, stderr, and the JSON report for it.
 
+## Audit-trail origin (#2545)
+
+Every `Create`/`UpdateValue` sends `X-Keyorix-Client-Origin:
+keyorix-migrate/<version> source=<source locator>` (e.g.
+`source=vault:secret/team-a/db#password`); the locator is the same
+human-readable path the report already prints, and never a value. The server's
+`CreateSecret`/`UpdateSecret` handlers append it to that write's
+`secret.created`/`secret.updated` audit description as
+`[client-asserted origin: …]` (sanitized, capped at 256 runes;
+`core.ClientOriginHeader`). It is deliberately a labelled note, not
+attribution: any caller can send the header, so `actor_type` and every other
+attribution field still come only from the authenticated principal. A
+structured audit column was declined (it would need a schema change for a value
+no server-side check can verify). Only the HTTP surface records it — this tool
+never uses gRPC.
+
 ## Resume
 
 `--apply` writes each item's outcome to the JSON report incrementally (flushed
