@@ -187,9 +187,9 @@ func (c *Client) CreateRole(ctx context.Context, name, description string, permi
 	return *resp.JSON201.Data.Role.Id, nil
 }
 
-// CreateMachineIdentity implements accessplan.KeyorixWriter. The identity is created in
-// Keyorix's default "pending" state; the caller (accessplan.Apply) always follows with
-// ActivateMachineIdentity before issuing a credential or granting a role.
+// CreateMachineIdentity implements accessplan.KeyorixWriter. core.CreateMachineIdentity
+// creates it already in state "active" (internal/core/machine_identities.go — confirmed live
+// against a real server), so no separate activation step follows.
 func (c *Client) CreateMachineIdentity(ctx context.Context, projectID int, name, identityType, description string) (int, error) {
 	resp, err := c.api.CreateMachineIdentityWithResponse(ctx, projectID, apiclient.CreateMachineIdentityJSONRequestBody{
 		Name: name, IdentityType: &identityType, Description: &description,
@@ -201,20 +201,6 @@ func (c *Client) CreateMachineIdentity(ctx context.Context, projectID int, name,
 		return 0, apiErr("create machine identity", resp.StatusCode(), resp.Body)
 	}
 	return *resp.JSON201.Data.MachineIdentity.Id, nil
-}
-
-// ActivateMachineIdentity implements accessplan.KeyorixWriter.
-func (c *Client) ActivateMachineIdentity(ctx context.Context, projectID, machineID int) error {
-	resp, err := c.api.TransitionMachineIdentityWithResponse(ctx, projectID, machineID, apiclient.TransitionMachineIdentityJSONRequestBody{
-		Action: apiclient.Activate,
-	})
-	if err != nil {
-		return fmt.Errorf("activate machine identity %d: %w", machineID, err)
-	}
-	if resp.StatusCode() != http.StatusOK {
-		return apiErr("activate machine identity", resp.StatusCode(), resp.Body)
-	}
-	return nil
 }
 
 // IssueMachineCredential implements accessplan.KeyorixWriter. Returns the raw bearer token —

@@ -55,24 +55,6 @@ func TestCreateMachineIdentity(t *testing.T) {
 	}
 }
 
-func TestActivateMachineIdentity(t *testing.T) {
-	var gotBody string
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/projects/1/machine-identities/42", func(w http.ResponseWriter, r *http.Request) {
-		buf := make([]byte, 128)
-		n, _ := r.Body.Read(buf)
-		gotBody = string(buf[:n])
-		writeJSONStatus(w, http.StatusOK, `{"data":{"machine_identity":{"id":42,"state":"active"}}}`)
-	})
-	c := fakeKeyorix(t, mux)
-	if err := c.ActivateMachineIdentity(context.Background(), 1, 42); err != nil {
-		t.Fatalf("ActivateMachineIdentity: %v", err)
-	}
-	if !strings.Contains(gotBody, `"activate"`) {
-		t.Fatalf("request body = %q, want it to carry action=activate", gotBody)
-	}
-}
-
 func TestIssueMachineCredential(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/projects/1/machine-identities/42/tokens", func(w http.ResponseWriter, r *http.Request) {
