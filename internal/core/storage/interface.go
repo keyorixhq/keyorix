@@ -1321,7 +1321,11 @@ type Storage interface {
 	// (NIS2 mandates 12 months of retention). Oldest/Newest are nil on an empty
 	// table.
 	AuditRetentionStats(ctx context.Context) (*AuditRetentionStats, error)
-	// DeleteAuditLogsBefore hard-deletes AuditEvent rows with created_at < cutoff.
+	// DeleteAuditLogsBefore hard-deletes the longest contiguous id prefix of
+	// AuditEvent rows whose event_time is ALL before cutoff (INV-STORE-22,
+	// #2633) — never a row past the first one that is not, so a row whose
+	// event_time is out of id order is retained rather than cut out of the
+	// middle of the hash chain — under the same KEYAUDIT lock appends use.
 	// Returns the number of rows deleted, plus a re-anchor candidate when the
 	// delete reached into the chained (post-ADR-029) region: the new earliest
 	// surviving row's id/prev_hash/entry_hash, for the caller to authenticate
