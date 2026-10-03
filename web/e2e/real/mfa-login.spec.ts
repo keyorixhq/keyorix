@@ -2,13 +2,13 @@
 // through the real Profile → Security UI (no mocked routes, same real-backend
 // shape as pages.spec.ts) and a subsequent login.
 //
-// WEB-FIX1: the first test below (#2441, enrollment) is now a real passing
-// test -- EnrollModal was fixed to collect and send the account password
-// ActivateMFA requires. The second test (#2442, login) is still marked
-// test.fail(): that fix is a separate, not-yet-landed PR. test.fail() (not
-// skip) keeps it RED on CI until the real fix lands, and flips to a loud
-// "unexpectedly passing" the moment someone fixes the underlying code
-// without updating this file.
+// WEB-FIX1: both tests below are now real passing tests. The first
+// (#2441, enrollment) -- EnrollModal was fixed to collect and send the
+// account password ActivateMFA requires. The second (#2442, login) --
+// authStore.login() was fixed to detect an mfa_required response and park
+// it instead of treating it as a completed session, and LoginPage now
+// renders a code-entry step (MfaChallengeForm) off that state, calling the
+// real VerifyMFA endpoint to complete the login.
 //
 // Note on "bootstrap admin via the UI" (SESSION-WEB-E2E item 1's own wording):
 // there is no such UI flow in this app. POST /system/init (internal/core's
@@ -85,6 +85,23 @@ function totpCode(base32Secret: string, atSeconds = Date.now() / 1000): string {
         ((hmac[offset + 2] & 0xff) << 8) |
         (hmac[offset + 3] & 0xff);
     return (binary % 1_000_000).toString().padStart(6, '0');
+}
+
+// waitForNextTotpStep blocks until the TOTP period rolls over to a new
+// 30-second step, plus a small buffer past the boundary. #2442's test below
+// needs this: internal/core/mfa.go's anti-replay guard (MarkTOTPStepUsed)
+// marks whichever time-step a code was accepted at as used, and rejects ANY
+// code for that same (or an earlier) step afterward, even a different,
+// independently-correct one -- a real security property (closes the ~90s
+// replay window on a leaked code), not a bug. enableMfaViaApi's own
+// activation call consumes a step; without this wait, the login attempt
+// moments later would very likely compute a code for that same step and get
+// "invalid code or expired" rejected as a false replay. Confirmed live.
+async function waitForNextTotpStep(): Promise<void> {
+    const periodMs = 30_000;
+    const msIntoCurrentStep = Date.now() % periodMs;
+    const msUntilNextStep = periodMs - msIntoCurrentStep;
+    await new Promise((resolve) => setTimeout(resolve, msUntilNextStep + 1000));
 }
 
 async function submitLogin(page: Page, username: string, password: string) {
@@ -262,31 +279,33 @@ async function enableMfaViaApi(username: string, password: string): Promise<stri
     }
 }
 
-test('logging in with MFA enabled currently cannot complete (known bug #2442)', async ({ page }) => {
-    // https://github.com/keyorixhq/keyorix/issues/2442 -- server/http/handlers/auth.go's
-    // Login returns HTTP 200 with {mfa_required: true, mfa_challenge, ...} on
-    // a correct password for an MFA account (no session cookie set).
-    // web/src/services/auth.ts's login() treats any non-empty response.data
-    // as success, and web/src/store/authStore.ts's login() unconditionally
-    // builds a User from it (every field undefined here) and sets
-    // isAuthenticated: true. No component under web/src calls the real
-    // VerifyMFA endpoint -- grepped pages/auth, store, and features/auth for
-    // mfa_required/mfa_challenge/VerifyMFA and found zero references.
-    // Confirmed live: this is the one externally-observable, stable end state
-    // (never a code-entry field, eventually bounced back to /login once the
-    // first real API call 401s with no session cookie).
-    test.fail(true, 'issue #2442 -- authStore.login() ignores mfa_required; no UI path calls VerifyMFA');
-
+test('logging in with MFA enabled', async ({ page }) => {
+    // https://github.com/keyorixhq/keyorix/issues/2442 -- FIXED by WEB-FIX1.
+    // server/http/handlers/auth.go's Login returns HTTP 200 with
+    // {mfa_required: true, mfa_challenge, ...} on a correct password for an
+    // MFA account (no session cookie set). authStore.login() used to treat
+    // any non-empty response.data as success; fixed to detect mfa_required
+    // and park the challenge instead, and LoginPage now renders
+    // MfaChallengeForm (a code-entry step) off that state, calling the real
+    // VerifyMFA endpoint (server/http/handlers/mfa.go) to complete the login.
     const user = await createDedicatedUser('mfalogin');
     const totpSecret = await enableMfaViaApi(user.username, user.password);
+    // See waitForNextTotpStep's own comment: without this, the code computed
+    // below for login can land in the same 30s step enableMfaViaApi's own
+    // activation call already consumed, and the server's anti-replay guard
+    // correctly (not a bug) rejects it.
+    await waitForNextTotpStep();
 
     await page.goto('/login');
     await submitLogin(page, user.username, user.password);
 
-    // What SHOULD happen: a visible code-entry control for the pending MFA
-    // challenge, which this test would then complete.
+    // The code-entry step for the pending MFA challenge.
     await expect(page.getByPlaceholder('123456')).toBeVisible({ timeout: 10_000 });
     await page.getByPlaceholder('123456').fill(totpCode(totpSecret));
     await page.getByRole('button', { name: /verify/i }).click();
     await page.waitForURL('/dashboard', { timeout: 15_000 });
+    // The dashboard actually renders real data post-login, not an error
+    // boundary or a stuck spinner -- same load-bearing check pages.spec.ts
+    // uses for a plain (non-MFA) login.
+    await expect(page.getByText('Total Secrets')).toBeVisible();
 });

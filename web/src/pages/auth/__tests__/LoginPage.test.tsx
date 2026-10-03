@@ -8,9 +8,12 @@ const authState = vi.hoisted(() => ({
     isLoading: false,
     hasCheckedAuth: true,
     error: null as string | null,
+    pendingMfa: null as { challenge: string; totpAvailable: boolean; webauthnAvailable: boolean } | null,
 }));
 
 const loginMock = vi.hoisted(() => vi.fn());
+const verifyMfaLoginMock = vi.hoisted(() => vi.fn());
+const cancelMfaLoginMock = vi.hoisted(() => vi.fn());
 const logoutMock = vi.hoisted(() => vi.fn());
 const refreshTokenMock = vi.hoisted(() => vi.fn());
 const checkAuthMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
@@ -25,7 +28,10 @@ vi.mock('../../../store/authStore', () => {
         isLoading: authState.isLoading,
         hasCheckedAuth: authState.hasCheckedAuth,
         error: authState.error,
+        pendingMfa: authState.pendingMfa,
         login: loginMock,
+        verifyMfaLogin: verifyMfaLoginMock,
+        cancelMfaLogin: cancelMfaLoginMock,
         logout: logoutMock,
         refreshToken: refreshTokenMock,
         checkAuth: checkAuthMock,
@@ -63,7 +69,10 @@ beforeEach(() => {
     authState.isLoading = false;
     authState.hasCheckedAuth = true;
     authState.error = null;
+    authState.pendingMfa = null;
     loginMock.mockReset();
+    verifyMfaLoginMock.mockReset();
+    cancelMfaLoginMock.mockReset();
     logoutMock.mockReset();
     refreshTokenMock.mockReset();
     checkAuthMock.mockReset().mockResolvedValue(undefined);
@@ -301,4 +310,65 @@ describe('LoginPage', () => {
     // PasswordResetForm (lines 146-149) are unreachable for the same reason as the
     // BUG documented above — mode never becomes 'reset', so PasswordResetForm (and
     // its callback props) never mount. Left uncovered deliberately.
+
+    // ── MFA challenge step (#2442) ───────────────────────────────────────────
+    describe('MFA challenge', () => {
+        it('renders the code-entry form instead of the username/password form when pendingMfa is set', () => {
+            authState.pendingMfa = { challenge: 'chal-abc', totpAvailable: true, webauthnAvailable: false };
+            render(<LoginPage />);
+
+            expect(screen.getByTestId('mfa-code-input')).toBeInTheDocument();
+            expect(screen.queryByTestId('username-input')).not.toBeInTheDocument();
+            expect(screen.queryByTestId('password-input')).not.toBeInTheDocument();
+        });
+
+        it('submits the entered code via verifyMfaLogin', async () => {
+            authState.pendingMfa = { challenge: 'chal-abc', totpAvailable: true, webauthnAvailable: false };
+            verifyMfaLoginMock.mockResolvedValue(undefined);
+            render(<LoginPage />);
+
+            fireEvent.change(screen.getByTestId('mfa-code-input'), { target: { value: '123456' } });
+            fireEvent.click(screen.getByTestId('mfa-verify-button'));
+
+            await waitFor(() => expect(verifyMfaLoginMock).toHaveBeenCalledWith('123456'));
+        });
+
+        it('does not throw when verifyMfaLogin rejects (error is surfaced via the auth store)', async () => {
+            authState.pendingMfa = { challenge: 'chal-abc', totpAvailable: true, webauthnAvailable: false };
+            verifyMfaLoginMock.mockRejectedValue(new Error('Invalid or expired code'));
+            render(<LoginPage />);
+
+            fireEvent.change(screen.getByTestId('mfa-code-input'), { target: { value: '000000' } });
+            fireEvent.click(screen.getByTestId('mfa-verify-button'));
+
+            await waitFor(() => expect(verifyMfaLoginMock).toHaveBeenCalled());
+        });
+
+        it('renders the auth-store error via the MFA form alert', () => {
+            authState.pendingMfa = { challenge: 'chal-abc', totpAvailable: true, webauthnAvailable: false };
+            authState.error = 'Invalid or expired code';
+            render(<LoginPage />);
+
+            expect(screen.getByText('Invalid or expired code')).toBeInTheDocument();
+        });
+
+        it('calls cancelMfaLogin via "Back to sign in"', () => {
+            authState.pendingMfa = { challenge: 'chal-abc', totpAvailable: true, webauthnAvailable: false };
+            render(<LoginPage />);
+
+            fireEvent.click(screen.getByText('Back to sign in'));
+            expect(cancelMfaLoginMock).toHaveBeenCalled();
+        });
+
+        it('does not show the logout-error or SSO-error banners, or SSO provider links, during the MFA step', async () => {
+            window.history.pushState({}, '', '/login?logout_error=1&sso_error=access_denied');
+            authState.pendingMfa = { challenge: 'chal-abc', totpAvailable: true, webauthnAvailable: false };
+            getSSOProvidersMock.mockResolvedValue(['google']);
+            render(<LoginPage />);
+
+            expect(screen.queryByText(/Sign-out could not be confirmed/)).not.toBeInTheDocument();
+            expect(screen.queryByText(/SSO sign-in failed/)).not.toBeInTheDocument();
+            expect(screen.queryByRole('link', { name: /Sign in with/ })).not.toBeInTheDocument();
+        });
+    });
 });

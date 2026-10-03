@@ -110,6 +110,72 @@ describe('authService.login', () => {
         await authService.login({ ...credentials, rememberMe: true });
         expect(mockPost).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ rememberMe: true }));
     });
+
+    // #2442: a correct password on an MFA-enabled account resolves with this
+    // shape (still HTTP 200) instead of a LoginResponse.
+    it('resolves with MfaRequiredResponse when the account has MFA enabled', async () => {
+        const mfaPayload = {
+            mfa_required: true,
+            mfa_challenge: 'chal-abc123',
+            totp_available: true,
+            webauthn_available: false,
+        };
+        mockPost.mockResolvedValueOnce(ok(mfaPayload));
+        const result = await authService.login(credentials);
+        expect(result).toEqual(mfaPayload);
+    });
+});
+
+// ── verifyMfa (#2442) ────────────────────────────────────────────────────────
+
+describe('authService.verifyMfa', () => {
+    const completedPayload = {
+        expires_at: '2030-01-01',
+        user_id: 1,
+        username: 'alice',
+        email: 'a@x.io',
+    };
+
+    it('POSTs the challenge and code, and returns a completed LoginResponse', async () => {
+        mockPost.mockResolvedValueOnce(ok(completedPayload));
+        const result = await authService.verifyMfa('chal-abc123', '123456');
+        expect(result).toEqual(completedPayload);
+        expect(mockPost).toHaveBeenCalledWith(expect.stringContaining('mfa/verify'), {
+            mfa_challenge: 'chal-abc123',
+            code: '123456',
+        });
+    });
+
+    it('accepts a recovery code in the same field (server does not distinguish)', async () => {
+        mockPost.mockResolvedValueOnce(ok(completedPayload));
+        await authService.verifyMfa('chal-abc123', 'ABCDE-12345');
+        expect(mockPost).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ code: 'ABCDE-12345' }));
+    });
+
+    // Message-first, deliberately different from this file's other
+    // catch blocks (which prioritize .error) -- VerifyMFA's error response is
+    // always {error: "Unauthorized", message: "Invalid or expired code"}
+    // regardless of cause, and "Unauthorized" alone would be less
+    // informative than what the API actually provides.
+    it('throws the server message (not the generic error type) on an invalid/expired code', async () => {
+        mockPost.mockRejectedValueOnce(axiosErr(401, { error: 'Unauthorized', message: 'Invalid or expired code' }));
+        await expect(authService.verifyMfa('chal-abc123', '000000')).rejects.toThrow('Invalid or expired code');
+    });
+
+    it('falls back to the error type when the server sends no message', async () => {
+        mockPost.mockRejectedValueOnce(axiosErr(401, { error: 'Unauthorized' }));
+        await expect(authService.verifyMfa('chal-abc123', '000000')).rejects.toThrow('Unauthorized');
+    });
+
+    it('throws a generic message when the server sends no error text at all', async () => {
+        mockPost.mockRejectedValueOnce(axiosErr(500, {}));
+        await expect(authService.verifyMfa('chal-abc123', '000000')).rejects.toThrow('Invalid or expired code');
+    });
+
+    it('throws a generic message when data object is missing', async () => {
+        mockPost.mockResolvedValueOnce({ data: {} });
+        await expect(authService.verifyMfa('chal-abc123', '000000')).rejects.toThrow('Invalid or expired code');
+    });
 });
 
 // ── logout ────────────────────────────────────────────────────────────────────

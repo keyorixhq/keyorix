@@ -2,6 +2,7 @@ import axios, { AxiosResponse } from 'axios';
 import {
     LoginFormData,
     LoginResponse,
+    MfaRequiredResponse,
     RefreshTokenResponse,
     PasswordResetRequest,
     PasswordResetConfirm,
@@ -43,13 +44,20 @@ authApi.interceptors.request.use((requestConfig) => {
 
 // Auth service functions
 export const authService = {
-    async login(credentials: LoginFormData): Promise<LoginResponse> {
+    // #2442: the response is LoginResponse on a completed login, OR
+    // MfaRequiredResponse (same HTTP 200) when the account has MFA enabled --
+    // the caller (authStore.login) must check `mfa_required` before treating
+    // this as an authenticated session.
+    async login(credentials: LoginFormData): Promise<LoginResponse | MfaRequiredResponse> {
         try {
-            const response: AxiosResponse<ApiResponse<LoginResponse>> = await authApi.post(API_ENDPOINTS.AUTH.LOGIN, {
-                username: credentials.username,
-                password: credentials.password,
-                rememberMe: credentials.rememberMe,
-            });
+            const response: AxiosResponse<ApiResponse<LoginResponse | MfaRequiredResponse>> = await authApi.post(
+                API_ENDPOINTS.AUTH.LOGIN,
+                {
+                    username: credentials.username,
+                    password: credentials.password,
+                    rememberMe: credentials.rememberMe,
+                }
+            );
 
             if (!response.data.data) {
                 throw new Error(response.data.message || 'Login failed');
@@ -59,6 +67,40 @@ export const authService = {
         } catch (error) {
             if (axios.isAxiosError(error)) {
                 const message = error.response?.data?.error || error.response?.data?.message || 'Login failed';
+                throw new Error(message, { cause: error });
+            }
+            throw error;
+        }
+    },
+
+    // #2442: completes a two-step MFA login -- consumes the challenge from a
+    // prior login() call's MfaRequiredResponse, along with a TOTP or recovery
+    // code (server/http/handlers/mfa.go's VerifyMFA accepts either). Returns
+    // a real LoginResponse and sets the session cookie, exactly like login()
+    // on a non-MFA account.
+    async verifyMfa(challenge: string, code: string): Promise<LoginResponse> {
+        try {
+            const response: AxiosResponse<ApiResponse<LoginResponse>> = await authApi.post(
+                API_ENDPOINTS.AUTH.MFA_VERIFY,
+                { mfa_challenge: challenge, code }
+            );
+
+            if (!response.data.data) {
+                throw new Error(response.data.message || 'Invalid or expired code');
+            }
+
+            return response.data.data;
+        } catch (error) {
+            if (axios.isAxiosError(error)) {
+                // message-first (not .error-first like this file's other
+                // catch blocks): VerifyMFA's error response is always
+                // {error: "Unauthorized", message: "Invalid or expired
+                // code"} regardless of cause (wrong code, expired challenge,
+                // locked account) -- showing the generic "Unauthorized" type
+                // instead of the actual message would be less informative
+                // than what the API provides, not "no more specific."
+                const message =
+                    error.response?.data?.message || error.response?.data?.error || 'Invalid or expired code';
                 throw new Error(message, { cause: error });
             }
             throw error;

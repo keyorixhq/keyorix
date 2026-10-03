@@ -306,6 +306,18 @@ export interface LoginResponse {
     account_state?: string;
 }
 
+// MfaRequiredResponse mirrors the backend's /auth/login (and /auth/setup/consume)
+// response when the account has MFA enabled: the password was correct, but a
+// second factor is required before a session is minted (#2442). `mfa_required`
+// is always `true` here -- it's what callers switch on to tell this apart from
+// a completed LoginResponse (the same HTTP 200 status either way).
+export interface MfaRequiredResponse {
+    mfa_required: true;
+    mfa_challenge: string;
+    totp_available: boolean;
+    webauthn_available: boolean;
+}
+
 export interface RefreshTokenResponse {
     // snake_case to match the backend payload ({expires_at, absolute_expires_at}).
     // Note: no `token` field — auth is cookie-based (httpOnly), not Bearer.

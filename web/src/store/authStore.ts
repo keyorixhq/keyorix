@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { AuthState, User, LoginFormData, LoginResponse, ImpersonatedBy } from '../types';
+import { AuthState, User, LoginFormData, LoginResponse, MfaRequiredResponse, ImpersonatedBy } from '../types';
 import { authService } from '../services/auth';
 import {
     persistAuthData,
@@ -21,8 +21,24 @@ interface AuthStore extends AuthState {
     // is just to call the endpoints and re-sync via checkAuth().
     impersonatedBy: ImpersonatedBy | null;
 
+    // #2442: set by login() instead of completing the session when the
+    // account has MFA enabled -- the backend returns HTTP 200 with
+    // {mfa_required: true, mfa_challenge, ...} on a correct password in that
+    // case, not a session. Null the rest of the time. LoginPage renders a
+    // code-entry step off this instead of treating that response as success.
+    pendingMfa: { challenge: string; totpAvailable: boolean; webauthnAvailable: boolean } | null;
+
     // Actions
     login: (credentials: LoginFormData) => Promise<void>;
+    // #2442: completes the login started above, using the pending challenge
+    // and a TOTP or recovery code. Throws (leaving pendingMfa set, so the
+    // user can retry) on an invalid/expired code.
+    verifyMfaLogin: (code: string) => Promise<void>;
+    // #2442: lets the user abandon a pending MFA challenge and return to the
+    // username/password step (e.g. they started logging into the wrong
+    // account). Purely local -- the challenge itself expires server-side on
+    // its own; there's nothing to tell the server.
+    cancelMfaLogin: () => void;
     // ADR-028: land the user logged in from a setup-link consume response (which is
     // login-shaped) without re-authenticating with a password.
     completeSetup: (response: LoginResponse) => void;
@@ -42,6 +58,40 @@ interface AuthStore extends AuthState {
     // End impersonation: tell the server (which restores the admin's original
     // session cookie, or clears it if that session is gone), then re-sync.
     endImpersonation: () => Promise<void>;
+}
+
+// isMfaRequiredResponse discriminates the two possible shapes login() (and
+// authService.login's return type) can resolve to -- a real type guard
+// rather than an inline `in` check, since the latter wasn't narrowing
+// `response` in the caller reliably combined with the `&&` clause this
+// needed (confirmed via tsc).
+function isMfaRequiredResponse(response: LoginResponse | MfaRequiredResponse): response is MfaRequiredResponse {
+    return (response as MfaRequiredResponse).mfa_required === true;
+}
+
+// buildUserFromLoginResponse is shared by login(), verifyMfaLogin(), and
+// completeSetup() -- all three land the user from the same LoginResponse
+// shape (a plain password login, a completed two-step MFA login, and an
+// ADR-028 setup-link consume respectively).
+function buildUserFromLoginResponse(response: LoginResponse): User {
+    return {
+        id: response.user_id,
+        username: response.username,
+        displayName: response.display_name || response.username,
+        email: response.email,
+        role: response.role || 'user',
+        roles: response.roles || [],
+        permissions: response.permissions || [],
+        preferences: {
+            language: 'en',
+            timezone: 'UTC',
+            theme: 'system',
+            notifications: { email: true, browser: true, sharing: true, security: true },
+        },
+        lastLogin: new Date().toISOString(),
+        passwordChangeRequired: response.password_change_required || false,
+        ...(response.account_state ? { accountState: response.account_state } : {}),
+    };
 }
 
 // Shared in-flight refresh promise so concurrent callers coalesce onto a single
@@ -69,6 +119,7 @@ export const useAuthStore = create<AuthStore>()(
             isLoading: true,
             hasCheckedAuth: false,
             error: null,
+            pendingMfa: null,
 
             // Actions
             login: async (credentials: LoginFormData) => {
@@ -77,24 +128,24 @@ export const useAuthStore = create<AuthStore>()(
                 try {
                     const response = await authService.login(credentials);
 
-                    const user: User = {
-                        id: response.user_id,
-                        username: response.username,
-                        displayName: response.display_name || response.username,
-                        email: response.email,
-                        role: response.role || 'user',
-                        roles: response.roles || [],
-                        permissions: response.permissions || [],
-                        preferences: {
-                            language: 'en',
-                            timezone: 'UTC',
-                            theme: 'system',
-                            notifications: { email: true, browser: true, sharing: true, security: true },
-                        },
-                        lastLogin: new Date().toISOString(),
-                        passwordChangeRequired: response.password_change_required || false,
-                        ...(response.account_state ? { accountState: response.account_state } : {}),
-                    };
+                    // #2442: a correct password on an MFA-enabled account gets
+                    // this shape instead of a completed login -- no session
+                    // cookie has been set yet. Park the challenge and stop;
+                    // LoginPage renders a code-entry step off pendingMfa.
+                    if (isMfaRequiredResponse(response)) {
+                        set({
+                            pendingMfa: {
+                                challenge: response.mfa_challenge,
+                                totpAvailable: response.totp_available,
+                                webauthnAvailable: response.webauthn_available,
+                            },
+                            isLoading: false,
+                            error: null,
+                        });
+                        return;
+                    }
+
+                    const user = buildUserFromLoginResponse(response);
 
                     set({
                         user,
@@ -122,25 +173,48 @@ export const useAuthStore = create<AuthStore>()(
                 }
             },
 
+            verifyMfaLogin: async (code: string) => {
+                const challenge = get().pendingMfa?.challenge;
+                if (!challenge) {
+                    // Nothing pending to verify against -- e.g. the user
+                    // navigated here directly, or already completed/cancelled.
+                    throw new Error('No MFA challenge is pending. Please log in again.');
+                }
+
+                set({ isLoading: true, error: null });
+                try {
+                    const response = await authService.verifyMfa(challenge, code);
+                    const user = buildUserFromLoginResponse(response);
+
+                    set({
+                        user,
+                        isAuthenticated: true,
+                        isLoading: false,
+                        error: null,
+                        pendingMfa: null,
+                    });
+
+                    persistAuthData({
+                        user,
+                        expiresAt: response.expires_at,
+                        absoluteExpiresAt: response.absolute_expires_at,
+                    });
+                } catch (error) {
+                    // pendingMfa deliberately stays set on failure -- an
+                    // invalid/expired code should let the user retry, not
+                    // bounce them back to re-entering their password.
+                    const errorMessage = error instanceof Error ? error.message : 'Invalid or expired code';
+                    set({ isLoading: false, error: errorMessage });
+                    throw error;
+                }
+            },
+
+            cancelMfaLogin: () => {
+                set({ pendingMfa: null, error: null });
+            },
+
             completeSetup: (response: LoginResponse) => {
-                const user: User = {
-                    id: response.user_id,
-                    username: response.username,
-                    displayName: response.display_name || response.username,
-                    email: response.email,
-                    role: response.role || 'user',
-                    roles: response.roles || [],
-                    permissions: response.permissions || [],
-                    preferences: {
-                        language: 'en',
-                        timezone: 'UTC',
-                        theme: 'system',
-                        notifications: { email: true, browser: true, sharing: true, security: true },
-                    },
-                    lastLogin: new Date().toISOString(),
-                    passwordChangeRequired: response.password_change_required || false,
-                    ...(response.account_state ? { accountState: response.account_state } : {}),
-                };
+                const user = buildUserFromLoginResponse(response);
 
                 set({
                     user,
@@ -195,6 +269,7 @@ export const useAuthStore = create<AuthStore>()(
                         impersonatedBy: null,
                         isLoading: false,
                         error: null,
+                        pendingMfa: null,
                     });
 
                     // Clear stored data

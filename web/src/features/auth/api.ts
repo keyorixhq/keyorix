@@ -28,7 +28,10 @@ export const useAuth = () => {
         isLoading,
         hasCheckedAuth,
         error,
+        pendingMfa,
         login,
+        verifyMfaLogin,
+        cancelMfaLogin,
         logout,
         refreshToken,
         checkAuth,
@@ -117,9 +120,14 @@ export const useAuth = () => {
         // Non-null only once inside the SESSION_TIMEOUT_WARNING_MS window before
         // an inactivity-triggered logout; null the rest of the session.
         sessionTimeLeftMs,
+        // #2442: non-null between a correct-password login on an MFA-enabled
+        // account and a completed/cancelled second factor.
+        pendingMfa,
 
         // Actions
         login,
+        verifyMfaLogin,
+        cancelMfaLogin,
         logout,
         refreshToken,
         checkAuth,

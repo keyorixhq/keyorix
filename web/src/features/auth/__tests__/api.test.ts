@@ -7,15 +7,18 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 // network. useAuthStore.persist.rehydrate() is called as a static method on
 // the hook itself (not via its return value), so the mock needs that too.
 // vi.hoisted() runs before the vi.mock() factory so these stubs are in scope there.
-const { login, logout, refreshToken, checkAuth, clearError, setError, rehydrate } = vi.hoisted(() => ({
-    login: vi.fn(),
-    logout: vi.fn(),
-    refreshToken: vi.fn(),
-    checkAuth: vi.fn().mockResolvedValue(undefined),
-    clearError: vi.fn(),
-    setError: vi.fn(),
-    rehydrate: vi.fn().mockResolvedValue(undefined),
-}));
+const { login, verifyMfaLogin, cancelMfaLogin, logout, refreshToken, checkAuth, clearError, setError, rehydrate } =
+    vi.hoisted(() => ({
+        login: vi.fn(),
+        verifyMfaLogin: vi.fn(),
+        cancelMfaLogin: vi.fn(),
+        logout: vi.fn(),
+        refreshToken: vi.fn(),
+        checkAuth: vi.fn().mockResolvedValue(undefined),
+        clearError: vi.fn(),
+        setError: vi.fn(),
+        rehydrate: vi.fn().mockResolvedValue(undefined),
+    }));
 
 let storeState: {
     user: any;
@@ -23,6 +26,7 @@ let storeState: {
     isLoading: boolean;
     hasCheckedAuth: boolean;
     error: string | null;
+    pendingMfa: { challenge: string; totpAvailable: boolean; webauthnAvailable: boolean } | null;
 };
 
 vi.mock('../../../store/authStore', () => {
@@ -47,10 +51,20 @@ beforeEach(() => {
         isLoading: false,
         hasCheckedAuth: false,
         error: null,
+        pendingMfa: null,
     };
     // useAuthStore() destructures login/logout/etc from its own return value,
     // so those actions must live on storeState too.
-    Object.assign(storeState, { login, logout, refreshToken, checkAuth, clearError, setError });
+    Object.assign(storeState, {
+        login,
+        verifyMfaLogin,
+        cancelMfaLogin,
+        logout,
+        refreshToken,
+        checkAuth,
+        clearError,
+        setError,
+    });
 });
 
 // ── mount-once bootstrap ─────────────────────────────────────────────────────
@@ -101,6 +115,28 @@ describe('useAuth computed values', () => {
         storeState.user = { role: 'viewer', roles: ['viewer'] };
         const { result } = renderHook(() => useAuth(), { wrapper });
         expect(result.current.isAdmin).toBe(false);
+    });
+});
+
+// ── MFA login (#2442) ───────────────────────────────────────────────────────
+
+describe('useAuth MFA pass-through', () => {
+    it('exposes pendingMfa, verifyMfaLogin, and cancelMfaLogin straight from the store', () => {
+        storeState.pendingMfa = { challenge: 'chal-abc', totpAvailable: true, webauthnAvailable: false };
+        const { result } = renderHook(() => useAuth(), { wrapper });
+
+        expect(result.current.pendingMfa).toEqual({
+            challenge: 'chal-abc',
+            totpAvailable: true,
+            webauthnAvailable: false,
+        });
+        expect(result.current.verifyMfaLogin).toBe(verifyMfaLogin);
+        expect(result.current.cancelMfaLogin).toBe(cancelMfaLogin);
+    });
+
+    it('defaults pendingMfa to null outside an MFA challenge', () => {
+        const { result } = renderHook(() => useAuth(), { wrapper });
+        expect(result.current.pendingMfa).toBeNull();
     });
 });
 

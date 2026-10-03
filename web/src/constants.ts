@@ -12,6 +12,7 @@ export const API_ENDPOINTS = {
         LOGOUT: '/auth/logout',
         REFRESH: '/auth/refresh',
         PROFILE: '/api/v1/auth/profile',
+        MFA_VERIFY: '/auth/mfa/verify',
     },
     PROJECTS: {
         LIST: '/api/v1/projects',

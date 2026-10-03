@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router';
-import { LoginForm, PasswordResetForm, useAuth } from '../../features/auth';
+import { LoginForm, MfaChallengeForm, PasswordResetForm, useAuth } from '../../features/auth';
 import { authService } from '../../services/auth';
 import { LoginFormData, PasswordResetRequest } from '../../types';
 import { ROUTES } from '../../constants';
@@ -11,7 +11,8 @@ type AuthMode = 'login' | 'reset' | 'reset-success';
 export const LoginPage: React.FC = () => {
     const navigate = useNavigate();
     const location = useLocation();
-    const { login, isAuthenticated, isLoading, error, clearError } = useAuth();
+    const { login, verifyMfaLogin, cancelMfaLogin, pendingMfa, isAuthenticated, isLoading, error, clearError } =
+        useAuth();
 
     const [mode, setMode] = useState<AuthMode>('login');
     const [resetLoading, setResetLoading] = useState(false);
@@ -63,6 +64,15 @@ export const LoginPage: React.FC = () => {
         }
     };
 
+    const handleMfaVerify = async (code: string) => {
+        try {
+            await verifyMfaLogin(code);
+        } catch {
+            // Error handled by auth store; pendingMfa stays set so the form
+            // stays up for a retry.
+        }
+    };
+
     const handlePasswordReset = async (data: PasswordResetRequest) => {
         setResetLoading(true);
         setResetError(null);
@@ -107,7 +117,15 @@ export const LoginPage: React.FC = () => {
                     className="py-8 px-6 shadow-lg rounded-lg border"
                     style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
                 >
-                    {mode === 'login' && (
+                    {mode === 'login' && pendingMfa && (
+                        <MfaChallengeForm
+                            onSubmit={handleMfaVerify}
+                            onBack={cancelMfaLogin}
+                            isLoading={isLoading}
+                            error={error}
+                        />
+                    )}
+                    {mode === 'login' && !pendingMfa && (
                         <>
                             {logoutError && (
                                 <div
