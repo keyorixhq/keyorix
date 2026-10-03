@@ -241,20 +241,6 @@ func (c *Client) CreateMachineIdentity(ctx context.Context, projectID int, name,
 	return *resp.JSON201.Data.MachineIdentity.Id, nil
 }
 
-// ActivateMachineIdentity implements accessplan.KeyorixWriter.
-func (c *Client) ActivateMachineIdentity(ctx context.Context, projectID, machineID int) error {
-	resp, err := c.api.TransitionMachineIdentityWithResponse(ctx, projectID, machineID, apiclient.TransitionMachineIdentityJSONRequestBody{
-		Action: apiclient.Activate,
-	})
-	if err != nil {
-		return fmt.Errorf("activate machine identity %d: %w", machineID, err)
-	}
-	if resp.StatusCode() != http.StatusOK {
-		return apiErr("activate machine identity", resp.StatusCode(), resp.Body)
-	}
-	return nil
-}
-
 // IssueMachineCredential implements accessplan.KeyorixWriter. Returns the raw bearer token —
 // shown exactly once by the real API, and never logged, printed, or included in any report by
 // this tool (the caller writes it straight to a 0600 credentials file).

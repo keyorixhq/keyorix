@@ -65,8 +65,6 @@ type KeyorixWriter interface {
 	// in Keyorix's default "pending" state — ActivateMachineIdentity must be called before any
 	// credential can be issued or any role granted that requires an active identity (ADR-030).
 	CreateMachineIdentity(ctx context.Context, projectID int, name, identityType, description string) (id int, err error)
-	// ActivateMachineIdentity transitions machineID to "active".
-	ActivateMachineIdentity(ctx context.Context, projectID, machineID int) error
 	// IssueMachineCredential issues a fresh machine-identity bearer token and returns the raw
 	// value — shown exactly once, by Apply's caller, to a 0600 file; never logged or returned
 	// in any report (see ApplyResult.Credential's own doc comment).
@@ -162,7 +160,7 @@ func applyOne(ctx context.Context, it Item, writer KeyorixWriter, roleIDs, machi
 		machineIDs[it.ProposedName] = id
 		token, err := writer.IssueMachineCredential(ctx, it.ProposedProjectID, id, "migrated-from-vault")
 		if err != nil {
-			return ApplyResult{Item: it, Ran: true, Error: fmt.Sprintf("created and activated machine identity %d but failed to issue a credential: %v", id, err)}
+			return ApplyResult{Item: it, Ran: true, Error: fmt.Sprintf("created machine identity %d but failed to issue a credential: %v", id, err)}
 		}
 		return ApplyResult{Item: it, Ran: true, Credential: token}
 
