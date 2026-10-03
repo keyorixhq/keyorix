@@ -79,6 +79,7 @@ const maxPlanFileBytes = 256 << 20 // 256MB
 // Vault/Keyorix state.
 func ReadJSON(r io.Reader) (accessplan.Plan, error) {
 	dec := json.NewDecoder(io.LimitReader(r, maxPlanFileBytes))
+	dec := json.NewDecoder(r)
 	var items []accessplan.Item
 	for dec.More() {
 		var l Line

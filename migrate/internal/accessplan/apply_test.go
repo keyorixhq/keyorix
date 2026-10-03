@@ -12,6 +12,7 @@ type fakeWriter struct {
 	nextID         int
 	createdRoles   []string
 	createdMachine []string
+	activated      []int
 	issued         []int
 	grants         [][3]int // projectID, machineID, roleID
 	bindings       []string // "machineID:issuer:subject"
@@ -24,6 +25,12 @@ type fakeWriter struct {
 
 func (f *fakeWriter) CreateRole(ctx context.Context, name, _ string, _ []string) (int, error) {
 	f.lastCreateRoleCtx = ctx
+	failActivate   bool
+	failIssue      bool
+	failCreateRole bool
+}
+
+func (f *fakeWriter) CreateRole(_ context.Context, name, _ string, _ []string) (int, error) {
 	if f.failCreateRole {
 		return 0, errors.New("create role failed")
 	}
@@ -36,6 +43,14 @@ func (f *fakeWriter) CreateMachineIdentity(_ context.Context, _ int, name, _, _ 
 	f.nextID++
 	f.createdMachine = append(f.createdMachine, name)
 	return f.nextID, nil
+}
+
+func (f *fakeWriter) ActivateMachineIdentity(_ context.Context, _, machineID int) error {
+	if f.failActivate {
+		return errors.New("activate failed")
+	}
+	f.activated = append(f.activated, machineID)
+	return nil
 }
 
 func (f *fakeWriter) IssueMachineCredential(_ context.Context, _, machineID int, _ string) (string, error) {
@@ -77,6 +92,7 @@ func TestApply_RoleThenMachineThenGrant(t *testing.T) {
 		}
 	}
 	if len(w.createdRoles) != 1 || len(w.createdMachine) != 1 || len(w.issued) != 1 || len(w.grants) != 1 {
+	if len(w.createdRoles) != 1 || len(w.createdMachine) != 1 || len(w.activated) != 1 || len(w.issued) != 1 || len(w.grants) != 1 {
 		t.Fatalf("writer calls = %+v", w)
 	}
 	if results[1].Credential != "kx_machine_fake_token" {
@@ -130,12 +146,17 @@ func TestApply_GrantSkippedWhenParentNeverCreated(t *testing.T) {
 func TestApply_IssueCredentialFailureStillReportsAnError(t *testing.T) {
 	items := []Item{{Kind: KindMachineIdentity, Outcome: Create, ProposedName: "vault-approle-ci"}}
 	w := &fakeWriter{failIssue: true}
+func TestApply_ActivateFailureStopsBeforeIssuingCredential(t *testing.T) {
+	items := []Item{{Kind: KindMachineIdentity, Outcome: Create, ProposedName: "vault-approle-ci"}}
+	w := &fakeWriter{failActivate: true}
 	results := Apply(context.Background(), items, w)
 	if results[0].Error == "" || results[0].Credential != "" {
 		t.Fatalf("expected an error and no credential, got %+v", results[0])
 	}
 	if len(w.createdMachine) != 1 {
 		t.Fatal("CreateMachineIdentity must still have been called before the credential-issue failure")
+	if len(w.issued) != 0 {
+		t.Fatal("IssueMachineCredential must never be called when activation failed")
 	}
 }
 

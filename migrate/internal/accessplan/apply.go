@@ -61,6 +61,12 @@ type KeyorixWriter interface {
 	// way: an unconditional activate-after-create call 409'd with "cannot transition from
 	// active to active") — so no separate activation step exists in this interface.
 	CreateMachineIdentity(ctx context.Context, projectID int, name, identityType, description string) (id int, err error)
+	// it the same way CreateRole does. Returns the new identity's id. The identity is created
+	// in Keyorix's default "pending" state — ActivateMachineIdentity must be called before any
+	// credential can be issued or any role granted that requires an active identity (ADR-030).
+	CreateMachineIdentity(ctx context.Context, projectID int, name, identityType, description string) (id int, err error)
+	// ActivateMachineIdentity transitions machineID to "active".
+	ActivateMachineIdentity(ctx context.Context, projectID, machineID int) error
 	// IssueMachineCredential issues a fresh machine-identity bearer token and returns the raw
 	// value — shown exactly once, by Apply's caller, to a 0600 file; never logged or returned
 	// in any report (see ApplyResult.Credential's own doc comment).
@@ -124,6 +130,7 @@ func Apply(ctx context.Context, items []Item, writer KeyorixWriter) []ApplyResul
 // the value-migration path; #2545 applied here too, see accesstarget.go's originEditor).
 func applyOne(ctx context.Context, it Item, writer KeyorixWriter, roleIDs, machineIDs map[string]int) ApplyResult {
 	ctx = WithSourceOrigin(ctx, it.SourceRef)
+func applyOne(ctx context.Context, it Item, writer KeyorixWriter, roleIDs, machineIDs map[string]int) ApplyResult {
 	switch it.Kind {
 	case KindRole:
 		if _, ok := roleIDs[it.ProposedName]; ok {
@@ -148,6 +155,14 @@ func applyOne(ctx context.Context, it Item, writer KeyorixWriter, roleIDs, machi
 		token, err := writer.IssueMachineCredential(ctx, it.ProposedProjectID, id, "migrated-from-vault")
 		if err != nil {
 			return ApplyResult{Item: it, Ran: true, Error: fmt.Sprintf("created machine identity %d but failed to issue a credential: %v", id, err)}
+		if err := writer.ActivateMachineIdentity(ctx, it.ProposedProjectID, id); err != nil {
+			machineIDs[it.ProposedName] = id // created, just not usable yet -- later grants will still correctly find it and fail clearly on the actual gate, not silently retry creation.
+			return ApplyResult{Item: it, Ran: true, Error: fmt.Sprintf("created machine identity %d but failed to activate it: %v", id, err)}
+		}
+		machineIDs[it.ProposedName] = id
+		token, err := writer.IssueMachineCredential(ctx, it.ProposedProjectID, id, "migrated-from-vault")
+		if err != nil {
+			return ApplyResult{Item: it, Ran: true, Error: fmt.Sprintf("created and activated machine identity %d but failed to issue a credential: %v", id, err)}
 		}
 		return ApplyResult{Item: it, Ran: true, Credential: token}
 

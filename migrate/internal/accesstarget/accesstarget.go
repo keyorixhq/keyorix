@@ -208,6 +208,7 @@ func (c *Client) CreateRole(ctx context.Context, name, description string, permi
 	resp, err := c.api.CreateRoleWithResponse(ctx, apiclient.CreateRoleJSONRequestBody{
 		Name: name, Description: description, Permissions: permissions,
 	}, originEditor(ctx))
+	})
 	if err != nil {
 		return 0, fmt.Errorf("create role %q: %w", name, err)
 	}
@@ -224,6 +225,13 @@ func (c *Client) CreateMachineIdentity(ctx context.Context, projectID int, name,
 	resp, err := c.api.CreateMachineIdentityWithResponse(ctx, projectID, apiclient.CreateMachineIdentityJSONRequestBody{
 		Name: name, IdentityType: &identityType, Description: &description,
 	}, originEditor(ctx))
+// CreateMachineIdentity implements accessplan.KeyorixWriter. The identity is created in
+// Keyorix's default "pending" state; the caller (accessplan.Apply) always follows with
+// ActivateMachineIdentity before issuing a credential or granting a role.
+func (c *Client) CreateMachineIdentity(ctx context.Context, projectID int, name, identityType, description string) (int, error) {
+	resp, err := c.api.CreateMachineIdentityWithResponse(ctx, projectID, apiclient.CreateMachineIdentityJSONRequestBody{
+		Name: name, IdentityType: &identityType, Description: &description,
+	})
 	if err != nil {
 		return 0, fmt.Errorf("create machine identity %q: %w", name, err)
 	}
@@ -233,11 +241,26 @@ func (c *Client) CreateMachineIdentity(ctx context.Context, projectID int, name,
 	return *resp.JSON201.Data.MachineIdentity.Id, nil
 }
 
+// ActivateMachineIdentity implements accessplan.KeyorixWriter.
+func (c *Client) ActivateMachineIdentity(ctx context.Context, projectID, machineID int) error {
+	resp, err := c.api.TransitionMachineIdentityWithResponse(ctx, projectID, machineID, apiclient.TransitionMachineIdentityJSONRequestBody{
+		Action: apiclient.Activate,
+	})
+	if err != nil {
+		return fmt.Errorf("activate machine identity %d: %w", machineID, err)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		return apiErr("activate machine identity", resp.StatusCode(), resp.Body)
+	}
+	return nil
+}
+
 // IssueMachineCredential implements accessplan.KeyorixWriter. Returns the raw bearer token —
 // shown exactly once by the real API, and never logged, printed, or included in any report by
 // this tool (the caller writes it straight to a 0600 credentials file).
 func (c *Client) IssueMachineCredential(ctx context.Context, projectID, machineID int, name string) (string, error) {
 	resp, err := c.api.IssueMachineTokenWithResponse(ctx, projectID, machineID, apiclient.IssueMachineTokenJSONRequestBody{Name: name}, originEditor(ctx))
+	resp, err := c.api.IssueMachineTokenWithResponse(ctx, projectID, machineID, apiclient.IssueMachineTokenJSONRequestBody{Name: name})
 	if err != nil {
 		return "", fmt.Errorf("issue credential for machine identity %d: %w", machineID, err)
 	}
@@ -252,6 +275,7 @@ func (c *Client) GrantMachineRole(ctx context.Context, projectID, environmentID,
 	resp, err := c.api.GrantMachineRoleWithResponse(ctx, projectID, machineID, apiclient.GrantMachineRoleJSONRequestBody{
 		RoleId: roleID, EnvironmentId: &environmentID,
 	}, originEditor(ctx))
+	})
 	if err != nil {
 		return fmt.Errorf("grant role %d to machine identity %d: %w", roleID, machineID, err)
 	}
@@ -266,6 +290,7 @@ func (c *Client) CreateOIDCBinding(ctx context.Context, projectID, machineID int
 	resp, err := c.api.CreateOIDCBindingWithResponse(ctx, projectID, machineID, apiclient.CreateOIDCBindingJSONRequestBody{
 		Issuer: issuer, Subject: subject,
 	}, originEditor(ctx))
+	})
 	if err != nil {
 		return fmt.Errorf("create oidc binding for machine identity %d: %w", machineID, err)
 	}
