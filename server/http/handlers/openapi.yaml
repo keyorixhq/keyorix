@@ -2287,13 +2287,14 @@ paths:
     delete:
       tags: [MachineIdentities]
       summary: Remove a project role from a machine identity
-      description: Revoke a previously granted project-scoped role from a machine identity.
+      description: Revoke a previously granted project- or environment-scoped role from a machine identity.
       operationId: removeMachineRole
       security: [{bearerAuth: []}]
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer}}
         - {name: machineId, in: path, required: true, schema: {type: integer}}
         - {name: roleId, in: path, required: true, schema: {type: integer}}
+        - {name: environment_id, in: query, required: false, description: "Remove the grant scoped to this one environment (must belong to the project; 400 otherwise). Omitted or 0 removes the project-wide grant only.", schema: {type: integer}}
       responses:
         '200':
           description: Envelope with null `data` and a confirmation message.

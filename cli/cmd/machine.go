@@ -442,7 +442,7 @@ func runMachineRevokeRole(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := client.RemoveMachineRoleWithResponse(ctx, projectID, derefInt(m.Id), roleID)
+	resp, err := client.RemoveMachineRoleWithResponse(ctx, projectID, derefInt(m.Id), roleID, nil)
 	if err != nil {
 		return fmt.Errorf("failed to revoke role: %w", err)
 	}
