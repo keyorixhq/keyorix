@@ -3,10 +3,10 @@ package services
 import (
 	"context"
 	"errors"
-	"log"
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -281,15 +281,15 @@ func (s *UserGRPCService) projectCounts(ctx context.Context, ids []uint) map[uin
 	if len(ids) == 0 {
 		return nil
 	}
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("SECURITY: projectCounts panicked resolving membership counts for %d user(s) (best-effort, primary operation already succeeded): %v", len(ids), r)
+	var counts map[uint]corestorage.MembershipCounts
+	besteffort.Run(ctx, "grpc.UserGRPCService.projectCounts", func() error {
+		c, err := s.core.ProjectMembershipCounts(ctx, ids)
+		if err != nil {
+			return err
 		}
-	}()
-	counts, err := s.core.ProjectMembershipCounts(ctx, ids)
-	if err != nil {
+		counts = c
 		return nil
-	}
+	})
 	return counts
 }
 
