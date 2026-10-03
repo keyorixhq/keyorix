@@ -55,10 +55,11 @@ Uptime: 5h30m+ stable
 
 ### Database Optimization
 ```yaml
-# Optimized connection pool configuration (applies to both SQLite and PostgreSQL)
+# Connection pool: the defaults differ per dialect (8 SQLite, 25 Postgres) and
+# were measured, see docs/CONFIGURATION.md "Connection pool" before overriding.
 database:
-  max_open_conns: 25
-  max_idle_conns: 25  # match max_open_conns, or a connection gets closed instead of reused
+  # max_open_conns: 8
+  # max_idle_conns: 8   # defaults to the effective max_open_conns
   conn_max_lifetime_minutes: 30
 
   # SQLite only — this codebase's own factory.go sets these on every connection:

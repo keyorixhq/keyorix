@@ -160,6 +160,17 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   ADR-095 Task 2 table. Guard: documented-verified by direct code read in the ADR, not an
   independent test beyond the general Postgres bootstrap tests above.
 
+- **INV-STORAGE-38** The default connection pool is per dialect and measured, not shared:
+  `DefaultSQLiteMaxOpenConns` (8) and `DefaultPostgresMaxOpenConns` (25), with idle matching
+  the effective open cap; an operator's `max_open_conns` always wins. Harnesses that must mirror
+  production's pool reference the exported constants instead of copying a number. A Postgres pool
+  larger than the server's usable slots (`max_connections - superuser_reserved_connections`) is
+  logged at boot (it fails requests with SQLSTATE 53300). Why: #2631 (PERF-2), measurements in
+  `docs/CONFIGURATION.md` "Connection pool". Guard: `pool_defaults_test.go`
+  (`TestApplyPoolSettings_DialectDefaults`, `TestPostgresPoolHeadroomWarning`,
+  `TestWarnPostgresPoolHeadroom_ReadsTheRealServerLimits` pg-gated); `BenchmarkPoolSize` for
+  re-measuring.
+
 ## File permissions
 
 - **INV-STORAGE-29** A freshly-created local SQLite database file is always mode 0600,

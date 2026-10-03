@@ -72,7 +72,7 @@
 //
 // BACKENDS: SQLite always, mirroring PRODUCTION's actual pool — WAL journal
 // mode, _busy_timeout=10000ms, up to internal/storage/factory.go's
-// defaultMaxOpenConns(25) open connections (see sqliteDSN there) — NOT the
+// storage.DefaultSQLiteMaxOpenConns open connections (see sqliteDSN there) — NOT the
 // ':memory:' + SetMaxOpenConns(1) single-connection serialization
 // FuzzCoreOperationSequence/FuzzKeyorixHTTPAPISequence use (correct for THEIR
 // ':memory:'-per-connection quirk, but it would make THIS fuzzer race-safe by
@@ -106,6 +106,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/internal/testutil/fuzzworld"
@@ -113,14 +114,14 @@ import (
 )
 
 // clSqliteBusyTimeoutMillis / clSqliteMaxOpenConns mirror
-// internal/storage/factory.go's sqliteDSN/defaultMaxOpenConns exactly (see
+// internal/storage/factory.go's sqliteDSN/DefaultSQLiteMaxOpenConns exactly (see
 // this file's package doc for why matching production's pool matters here).
 // The DSN built below also mirrors sqliteDSN's _txlock=immediate, for the
 // same reason: this fuzzer's whole point is exercising production's real
 // locking behavior under concurrency.
 const (
 	clSqliteBusyTimeoutMillis = 10000
-	clSqliteMaxOpenConns      = 25
+	clSqliteMaxOpenConns      = storage.DefaultSQLiteMaxOpenConns // referenced, not copied: #2631 changed it
 )
 
 type clPrincipal struct {

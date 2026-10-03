@@ -873,13 +873,13 @@ func TestApplyPoolSettings_S22_ZeroValuesUseDefaults(t *testing.T) {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	stats := sqlDB.Stats()
-	// MaxOpenConnections must be capped at defaultMaxOpenConns (25), not unlimited (0).
-	assert.Equal(t, defaultMaxOpenConns, stats.MaxOpenConnections)
+	// MaxOpenConnections must be capped at the SQLite default, not unlimited (0).
+	assert.Equal(t, DefaultSQLiteMaxOpenConns, stats.MaxOpenConnections)
 }
 
 // TestApplyPoolSettings_S22_ZeroValuesMaxIdleMatchesMaxOpen is SESSION-PERF's #2403
 // follow-up: when max_idle_conns is unset, it must match the effective MaxOpenConns
-// (defaultMaxOpenConns here), not silently fall through to database/sql's own built-in
+// (DefaultSQLiteMaxOpenConns here), not silently fall through to database/sql's own built-in
 // default of 2. database/sql exposes no direct getter for the configured idle limit, so
 // this asserts the OBSERVABLE BEHAVIOR that limit controls: open N simultaneous
 // connections, return them all to the pool, and confirm they're kept idle/warm rather
@@ -907,7 +907,7 @@ func TestApplyPoolSettings_S22_ZeroValuesMaxIdleMatchesMaxOpen(t *testing.T) {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 
-	const concurrent = 10 // > Go's built-in idle default (2), < defaultMaxOpenConns (25)
+	const concurrent = DefaultSQLiteMaxOpenConns // > Go's built-in idle default (2), <= the pool cap
 	ctx := context.Background()
 	conns := make([]*sql.Conn, concurrent)
 	for i := 0; i < concurrent; i++ {
@@ -925,11 +925,11 @@ func TestApplyPoolSettings_S22_ZeroValuesMaxIdleMatchesMaxOpen(t *testing.T) {
 
 	stats := sqlDB.Stats()
 	assert.Equal(t, int64(0), stats.MaxIdleClosed,
-		"with max_idle_conns defaulted to match max_open_conns (25), none of the 10 "+
+		"with max_idle_conns defaulted to match max_open_conns, none of the %d "+
 			"connections used above should have been closed for exceeding the idle cap "+
-			"(database/sql's own default of 2 would have closed 8 of them)")
+			"(database/sql's own default of 2 would have closed %d of them)", concurrent, concurrent-2)
 	assert.GreaterOrEqual(t, stats.Idle, concurrent-1,
-		"nearly all 10 connections should still be idle/warm in the pool for reuse")
+		"nearly all %d connections should still be idle/warm in the pool for reuse", concurrent)
 }
 
 // TestApplyPoolSettings_S22_AllFieldsSet verifies that non-zero pool settings are
