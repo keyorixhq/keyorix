@@ -231,12 +231,11 @@ func runProjectUse(_ *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	projects, err := listProjects(ctx, client)
-	if err != nil {
+	// Stored exactly as given: a project-scoped caller who ran `project use 2`
+	// must keep resolving by ID later, since the name form needs the global
+	// listing they cannot see (#2562).
+	if _, err := resolveProjectItem(ctx, client, name); err != nil {
 		return err
-	}
-	if _, ok := findProjectByName(projects, name); !ok {
-		return fmt.Errorf("project %q not found — run 'keyorix project list' to see available projects", name)
 	}
 
 	store, err := resolveCredStore()
@@ -307,13 +306,9 @@ func resolveProjectContext(ctx context.Context, client *apiclient.ClientWithResp
 	if err != nil {
 		return "", 0, err
 	}
-	projects, err := listProjects(ctx, client)
+	p, err := resolveProjectItem(ctx, client, name)
 	if err != nil {
 		return "", 0, err
-	}
-	p, ok := findProjectByName(projects, name)
-	if !ok {
-		return "", 0, fmt.Errorf("project %q not found", name)
 	}
 	return name, p.ID, nil
 }
@@ -342,20 +337,16 @@ func runProjectDescribe(_ *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	projects, err := listProjects(ctx, client)
+	p, err := resolveProjectItem(ctx, client, name)
 	if err != nil {
 		return err
-	}
-	p, ok := findProjectByName(projects, name)
-	if !ok {
-		return fmt.Errorf("project %q not found", name)
 	}
 
 	envs, err := listEnvironments(ctx, client, p.ID)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Project:      %s (id=%d)\n", name, p.ID)
+	fmt.Printf("Project:      %s (id=%d)\n", p.Name, p.ID)
 	if p.Description != "" {
 		fmt.Printf("Description:  %s\n", p.Description)
 	}
@@ -410,13 +401,9 @@ func runProjectStats(_ *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	projects, err := listProjects(ctx, client)
+	p, err := resolveProjectItem(ctx, client, name)
 	if err != nil {
 		return err
-	}
-	p, ok := findProjectByName(projects, name)
-	if !ok {
-		return fmt.Errorf("project %q not found", name)
 	}
 
 	resp, err := client.GetProjectStatsWithResponse(ctx, uint32(p.ID)) // #nosec G115 -- p.ID is a DB auto-increment project ID, never near uint32's range
@@ -591,13 +578,9 @@ func runProjectHealth(_ *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	projects, err := listProjects(ctx, client)
+	p, err := resolveProjectItem(ctx, client, name)
 	if err != nil {
 		return err
-	}
-	p, ok := findProjectByName(projects, name)
-	if !ok {
-		return fmt.Errorf("project %q not found", name)
 	}
 
 	var params *apiclient.GetProjectHealthParams
