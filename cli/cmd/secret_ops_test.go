@@ -71,6 +71,36 @@ func TestRunSecretVersions_MatchesOldCLIOutputShape(t *testing.T) {
 	}
 }
 
+// TestRunSecretVersions_LatestVersionIsTheHighestVersionNumber guards against a real
+// DEMO-1 finding (#2563): the server returns versions newest-first (as this fixture
+// does, matching production), but the summary line picked versions[len-1] -- the
+// OLDEST entry, not the newest -- for "Latest Version". Red without the fix: the
+// summary printed "Latest Version: 1" even though version 2 is newer and listed first.
+func TestRunSecretVersions_LatestVersionIsTheHighestVersionNumber(t *testing.T) {
+	srv := secretOpsServer(t,
+		secretJSONRoute(http.MethodGet, "/api/v1/secrets/1", `{"data":{"ID":1,"Name":"stripe-api-key","Type":"generic"}}`),
+		secretJSONRoute(http.MethodGet, "/api/v1/secrets/1/versions", `{"data":{"versions":[
+			{"ID":9,"VersionNumber":2,"ReadCount":0,"CreatedAt":"2026-10-03T10:46:35Z"},
+			{"ID":8,"VersionNumber":1,"ReadCount":0,"CreatedAt":"2026-10-03T10:46:04Z"}
+		]}}`),
+	)
+	setPATCreds(t, srv)
+	secretVersionsID, secretVersionsFormat = 1, "table"
+	defer func() { secretVersionsID = 0 }()
+
+	out := captureStdout(t, func() {
+		if err := runSecretVersions(secretVersionsCmd, nil); err != nil {
+			t.Fatalf("runSecretVersions: %v", err)
+		}
+	})
+	if !containsAll(out, "Latest Version: 2") {
+		t.Fatalf("expected the higher version number (2) to be reported as latest, got: %q", out)
+	}
+	if containsAll(out, "Latest Version: 1") {
+		t.Fatalf("latest version regressed to the oldest entry, got: %q", out)
+	}
+}
+
 func TestRunSecretDiff_RequiresProjectAndEnvironmentWithoutID(t *testing.T) {
 	secretDiffID, secretDiffProject, secretDiffEnv = 0, 0, 0
 	if err := runSecretDiff(secretDiffCmd, []string{"my-secret", "1", "2"}); err == nil {
