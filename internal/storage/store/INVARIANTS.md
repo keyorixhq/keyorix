@@ -109,6 +109,18 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   (`TestConcurrency_PurgeDeletedSecretsBefore_RestoreWinsRace`,
   `_PurgeDeletedUsersBefore_RestoreWinsRace`, `_PurgeDeletedProjectsBefore_RestoreWinsRace`).
 
+- **INV-STORE-21** A child row (share, ACL grant, lease, environment, config) never commits
+  live under a parent that a concurrent delete cascade soft-deleted or disabled. The child
+  write and a `lockLiveParent` re-read of the parent (`SELECT ... FOR SHARE` on Postgres) run
+  in ONE transaction, in that order (write first, then check), and the transaction rolls back
+  when the parent is gone. The delete side must UPDATE (row-lock) the parent row BEFORE it
+  sweeps the children. Checking before the write is not enough under READ COMMITTED: a
+  cascade that runs between the check and the write never sees the child. Why: #2646/#2647
+  (`CreateShareRecord` vs `DeleteSecret`), C-GUARD2-EXEMPT-REVIEW #2662. Guard (pg-gated,
+  two replicas): `internal/core/concurrency_check_then_act_exempt_review_postgres_test.go`
+  (`TestCTAReview_ShareSecret_vs_DeleteSecret_CrossReplicaPostgres`,
+  `_ShareSecretWithGroup_vs_DeleteSecret_`, `_ShareSecret_DeleteSecretAfterInsert_`).
+
 ## GORM hook / timezone correctness (`internal/storage/models`, `store`)
 
 - **INV-STORE-18** A raw `.Update()`/`.Updates()`/`.UpdateColumn()`/`.UpdateColumns()` call
