@@ -48,7 +48,8 @@ func newTestDB(t *testing.T) *gorm.DB {
 		&models.MFASecret{},
 		&models.DynamicSecretConfig{},
 		&models.DynamicSecretLease{},
-		&models.SystemMetadata{}, // holds the DEK-rotation redo marker written in the sweep txn
+		&models.NotificationChannel{}, // #2433: now swept by SweepAllTables too
+		&models.SystemMetadata{},      // holds the DEK-rotation redo marker written in the sweep txn
 	}
 	for _, m := range tables {
 		if err := db.AutoMigrate(m); err != nil {

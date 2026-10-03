@@ -70,6 +70,7 @@ func s25DB(t *testing.T) *gorm.DB {
 		&models.MFASecret{},
 		&models.DynamicSecretConfig{},
 		&models.DynamicSecretLease{},
+		&models.NotificationChannel{}, // #2433: now swept by SweepAllTables too
 		&models.SecretNode{},
 		&models.SecretVersion{},
 	))

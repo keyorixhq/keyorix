@@ -65,41 +65,27 @@ package http
 // scanning the DB for the RAW value additionally confirms that hashing property
 // live, not just secret-value encryption.
 //
-// KNOWN-OPEN EXCEPTION: NotificationChannel.URL (the webhook/Slack/Teams bearer
-// credential — internal/notifychan/delivery.go's own comment: "the destination URL
-// IS the bearer credential") is CONFIRMED, on this branch, to leak into
+// FIXED (#2432/#2433, was a KNOWN-OPEN EXCEPTION here): NotificationChannel.URL
+// (the webhook/Slack/Teams bearer credential — internal/notifychan/delivery.go's
+// own comment: "the destination URL IS the bearer credential") used to leak into
 // audit_events.Diff via internal/core/config_change_audit.go's
-// writeConfigChangeAuditEvent, which json.Marshals the full NotificationChannel
-// struct (internal/core/notification_channels.go:65-68 on create; :108,:126 on
-// update/delete). Tracked as #2432 (full trace, who-can-read analysis, and fix
-// options are in keyorix-private/adversarial-review/
-// NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19.md, private repo, not in this
-// tree). Expires 2026-12-31 -- revisit by then; this date is a backlog-hygiene
-// checkpoint to re-triage if still open, not an enforced CI gate the way
-// docs/adr-069-testing-strategy.md's QUARANTINE expiry is. buildCanaryWorld creates
-// ONE webhook channel with a canary URL and confirms the leak ONCE via f.Logf (not
-// t.Fatalf) — informational, not gating, and not repeated on every input
-// (re-confirming a known, unfixed, single-cause bug on every iteration adds cost
-// for no new information). The webhook canary is never added to the shared
-// knownCanaries map, so it plays no further part in any later scan.
-// SIBLING FINDING: NotificationChannel.URL also has NO at-rest encryption at all
-// (unlike the DSN/lease/MFA credentials this same fuzzer verifies ARE encrypted) --
-// tracked as #2433 (full investigation in keyorix-private/adversarial-review/
-// NOTIFICATION-CHANNEL-URL-PLAINTEXT-AT-REST-2026-09-19.md). Also expires
-// 2026-12-31. Once URLs are encrypted at rest, the db:raw-file exemption
-// specifically should be deleted (its plaintext bytes would no longer exist to leak
-// into the raw file at all); the other channel exemptions (db:audit_events.diff,
-// http:audit-search:body, http:audit-export-csv:body) depend on the SEPARATE
-// audit-diff finding (#2432) instead and have their own, independent fix.
+// writeConfigChangeAuditEvent (#2432), and had no at-rest encryption at all
+// (#2433). Both are now fixed: the audit diff carries only a redacted copy
+// (redactedNotificationChannelForAudit, internal/core/notification_channels.go),
+// and the URL is encrypted at rest the same way the dynamic-secret admin DSN and
+// the MFA TOTP seed are (encryptAuthSecret, same file). buildCanaryWorld creates
+// ONE webhook channel with a canary URL and, with no exemption left anywhere, it
+// is now zero-tolerance like every other canary this fuzzer plants -- see
+// keyorix-private/adversarial-review/NOTIFICATION-CHANNEL-URL-AUDIT-DIFF-LEAK-2026-09-19.md
+// and NOTIFICATION-CHANNEL-URL-PLAINTEXT-AT-REST-2026-09-19.md for the original
+// trace and who-can-read analysis.
 //
-// The webhook canary lives under its own literal prefix, webhookCanaryPrefix
+// The webhook canary still lives under its own literal prefix, webhookCanaryPrefix
 // ("kxhook-"), not canaryPrefix ("kxcanary-") -- see that const's doc comment for
 // why (it used to share canaryPrefix's shape via a reserved marker byte; the
 // separate prefix removes an entire class of raw-file ambiguity at the root
-// instead of narrowing it).
-// TODO(#2432, #2433): once BOTH are fixed, delete this paragraph and the
-// special-cased block in buildCanaryWorld, and fold the webhook canary into the
-// normal plant() flow.
+// instead of narrowing it). That design choice is independent of the exemption
+// removal above and stays in place.
 //
 // Every reachable output channel is captured in-process: stdlib `log` (the sole
 // logger in this codebase, redirected to a buffer), every other HTTP response body/
@@ -352,17 +338,6 @@ type canaryWorld struct {
 	// fixedCreds holds the one-time PAT/session/MFA credentials -- see fixedCredential.
 	fixedCreds []fixedCredential
 
-	// webhookExemptions holds the standing (value, channel) exceptions for the single
-	// known-open webhook-URL canary (see the file header's KNOWN-OPEN EXCEPTION
-	// section) -- one entry per EXACT channel where the finding is confirmed to
-	// surface (db:audit_events.diff, db:raw-file, db:notification_channels.url,
-	// http:audit-search:body, http:audit-export-csv:body). Each names one specific
-	// channel, never a family prefix -- http:audit-search:body does NOT also cover
-	// http:audit-search:headers, which stays zero-tolerance (the URL is never
-	// expected there). Every other channel (log/HTTP responses not listed/gRPC)
-	// never receives this set, so the SAME value is still zero-tolerance there.
-	webhookExemptions []exemption
-
 	// dbWatermarks tracks, per table, the highest SQLite rowid scanDBGeneric has
 	// already scanned -- see that function's doc comment for why (bounds per-input
 	// DB-scan cost to rows added since the last scan, not total accumulated rows).
@@ -423,25 +398,13 @@ func (w *canaryWorld) adminReq(method, target, body string) *httptest.ResponseRe
 // scanOp applies the zero-tolerance oracle (against the FULL canary history) to an
 // ordinary (non-value-disclosure) HTTP call's body, headers, and the log lines
 // emitted while handling it. Every op in this fuzzer other than the three designated
-// read endpoints, and other than the audit-record-surfacing ones (see
-// scanOpAuditSurface), goes through this.
+// read endpoints goes through this -- including the audit-search/export endpoints,
+// which used to need a twin (scanOpAuditSurface) exempting the webhook-URL canary
+// here; now that #2432/#2433 are fixed and that exemption is gone, they go through
+// this same zero-tolerance path like everything else.
 func (w *canaryWorld) scanOp(t *testing.T, opIdx int, channel, principal string, rec *httptest.ResponseRecorder) {
 	t.Helper()
 	w.scanOpExempt(t, opIdx, channel, principal, rec, nil)
-}
-
-// scanOpAuditSurface is scanOp's twin for the audit-search/export endpoints, which
-// legitimately return audit_events content (including Diff) to any audit.read
-// holder. It exempts the KNOWN-OPEN webhook-URL canary (see the file header) from
-// the body/headers checks -- proven live: a 5-minute burst caught this channel
-// surfacing the same known bug the DB scan already exempts (GET /api/v1/audit/search
-// returns the offending Diff verbatim), which is expected and already documented in
-// the private finding doc's "who can read it" section, not a new bug -- while
-// keeping log zero-tolerance (a webhook URL landing in a LOG line would be a
-// genuinely different, new problem).
-func (w *canaryWorld) scanOpAuditSurface(t *testing.T, opIdx int, channel, principal string, rec *httptest.ResponseRecorder) {
-	t.Helper()
-	w.scanOpExempt(t, opIdx, channel, principal, rec, w.webhookExemptions)
 }
 
 func (w *canaryWorld) scanOpExempt(t *testing.T, opIdx int, channel, principal string, rec *httptest.ResponseRecorder, exemptions []exemption) {
@@ -545,9 +508,13 @@ func snippetAround(haystack []byte, idx, matchLen int) string {
 	return fmt.Sprintf("context=%q", string(haystack[start:end]))
 }
 
-// exemption is ONE specific, known-open finding accepted at ONE specific channel --
-// see the file header's KNOWN-OPEN EXCEPTION section. A candidate must equal `value`
-// exactly (or, for a truncated/malformed byte-stream match, satisfy
+// exemption is ONE specific, known-open finding accepted at ONE specific channel.
+// No real exemption is active in this file today (the one that used to exist,
+// NotificationChannel.URL, was fixed by #2432/#2433 -- see the file header); this
+// machinery remains the correct mechanism for any FUTURE one, exercised today
+// only by TestScanCanaryLeaks_AmbiguousRawFileFragmentFailsClosed's synthetic
+// values. A candidate must equal `value` exactly (or, for a truncated/malformed
+// byte-stream match, satisfy
 // exemptionMinMatchLen -- see matchesAcceptedPartial) AND the scan's `channel` string
 // must have `channelPrefix` as a prefix. Both checks are required: a DIFFERENT
 // canary on the SAME channel, or this SAME value surfacing on a DIFFERENT
@@ -707,11 +674,12 @@ func hexEncodedCandidateAt(haystack []byte, pos, prefixPatternLen int) (string, 
 // NEVER fail here -- checked in addition to `allowed` -- unlike `allowed` (one
 // call's own legitimate disclosure), an exemption is permanent for every call whose
 // channel matches its channelPrefix. In THIS function (the canaryPrefix-family
-// scan), the exemptions list passed in is always webhookExemptions -- but since the
-// webhook canary now lives under its own separate literal prefix
-// (webhookCanaryPrefix, "kxhook-" -- see scanWebhookCanaryLeaks), none of those
-// entries' values can ever match a canaryPrefix-shaped partial or candidate here;
-// this parameter is exercised in practice only by
+// scan), every current caller passes nil (no exemption is active today -- see the
+// file header); even if one were active, the webhook canary lives under its own
+// separate literal prefix (webhookCanaryPrefix, "kxhook-" -- see
+// scanWebhookCanaryLeaks), so none of its entries could ever match a
+// canaryPrefix-shaped partial or candidate here anyway. This parameter is
+// exercised in practice only by
 // TestScanCanaryLeaks_AmbiguousRawFileFragmentFailsClosed's synthetic values,
 // preserved as the correct machinery for any FUTURE canaryPrefix-shaped exemption.
 // Pass nil for channels where no such standing exception exists (most of them).
@@ -747,8 +715,8 @@ const rawFileChannel = "db:raw-file"
 // only ever sees complete matches there.
 //
 // exemptions here is assumed to describe entries all pertaining to this one webhook
-// canary (true of every current caller, which always passes w.webhookExemptions) --
-// channelPrefix alone is checked, not value, since attribution is already certain
+// canary -- every current caller passes nil (no exemption is active; see the file
+// header) -- channelPrefix alone is checked, not value, since attribution is already certain
 // by construction; a hypothetical future exemptions list mixing webhook and
 // non-webhook entries would need this function to check .value too.
 func scanWebhookCanaryLeaks(t *testing.T, channel string, opIdx int, principal string, haystack []byte, exemptions []exemption) {
@@ -1868,7 +1836,7 @@ func FuzzCanarySecretLeakage(f *testing.F) {
 			}
 			rec := httptest.NewRecorder()
 			w.router.ServeHTTP(rec, req)
-			w.scanOpAuditSurface(t, opIdx, "http:audit-search", label, rec)
+			w.scanOp(t, opIdx, "http:audit-search", label, rec)
 		}
 
 		inventoryCSV := func(mode byte) {
@@ -1892,7 +1860,7 @@ func FuzzCanarySecretLeakage(f *testing.F) {
 			}
 			rec := httptest.NewRecorder()
 			w.router.ServeHTTP(rec, req)
-			w.scanOpAuditSurface(t, opIdx, "http:audit-export-csv", label, rec)
+			w.scanOp(t, opIdx, "http:audit-export-csv", label, rec)
 		}
 
 		// hostileMutate drives rotation/update/delete attempts -- incl. malformed,
@@ -2061,19 +2029,21 @@ func FuzzCanarySecretLeakage(f *testing.F) {
 		if err != nil {
 			t.Fatalf("db scan: get sql.DB: %v", err)
 		}
-		scanDBGeneric(t, sqlDB, w.knownCanaries, w.fixedCreds, w.webhookExemptions, w.dbWatermarks)
+		// #2432/#2433: no exemption is active (nil) -- the webhook canary is now
+		// zero-tolerance in the DB and raw-file scans too, like everywhere else.
+		scanDBGeneric(t, sqlDB, w.knownCanaries, w.fixedCreds, nil, w.dbWatermarks)
 
 		diagExecCount++
 		if diagFile != nil {
 			rawScanStart := time.Now()
-			scanRawDBFile(t, w.dbPath, w.knownCanaries, w.fixedCreds, w.webhookExemptions)
+			scanRawDBFile(t, w.dbPath, w.knownCanaries, w.fixedCreds, nil)
 			rawScanDur := time.Since(rawScanStart)
 			if fi, statErr := os.Stat(w.dbPath); statErr == nil {
 				_, _ = fmt.Fprintf(diagFile, "pid=%d iter=%d elapsed=%s dbSizeBytes=%d rawScanDur=%s\n",
 					os.Getpid(), diagExecCount, time.Since(diagBurstStart).Round(time.Millisecond), fi.Size(), rawScanDur)
 			}
 		} else {
-			scanRawDBFile(t, w.dbPath, w.knownCanaries, w.fixedCreds, w.webhookExemptions)
+			scanRawDBFile(t, w.dbPath, w.knownCanaries, w.fixedCreds, nil)
 		}
 	})
 }
