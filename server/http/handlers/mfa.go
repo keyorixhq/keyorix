@@ -5,9 +5,11 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -153,9 +155,22 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	}
 	// F2 (2026-09-20): reserve before the (slow) TOTP/recovery-code check —
 	// see reserveLoginAttempt's doc (reserved after decode, matching Login).
-	h.reserveLoginAttempt(r.Context(), ip)
+	//
+	// CR3 (2026-10-02): unlike every sibling reserveLoginAttempt call site, this
+	// one releases the reservation below when VerifyMFALogin fails with
+	// core.ErrMFAVerificationStorageFailure — a storage/internal error never
+	// reaches a verdict on the code at all, so it must not consume the same
+	// budget slot a genuine wrong guess (or a success) does. Found by the
+	// fuzzer reserving before ANY of VerifyMFACredentials' storage calls run,
+	// so a fault on the FIRST one (e.g. GetUser, CI seed 877139548d2805a6)
+	// already shows the same orphaned-LoginAttempt-row symptom GetMFASecret's
+	// finding did — see docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md.
+	attemptID, reserved := h.coreService.ReserveLoginAttempt(r.Context(), ip)
 	session, user, err := h.coreService.VerifyMFALogin(r.Context(), body.Challenge, body.Code, r.Header.Get("User-Agent"), ip)
 	if err != nil {
+		if reserved && errors.Is(err, core.ErrMFAVerificationStorageFailure) {
+			h.coreService.ReleaseLoginAttempt(r.Context(), attemptID)
+		}
 		sendError(w, "Unauthorized", "Invalid or expired code", http.StatusUnauthorized, nil)
 		return
 	}

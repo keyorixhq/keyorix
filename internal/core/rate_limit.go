@@ -74,6 +74,34 @@ func (c *KeyorixCore) RecordFailedLogin(ctx context.Context, ip string) {
 	_ = c.storage.RecordLoginAttempt(ctx, CanonicalIP(ip), c.now())
 }
 
+// ReserveLoginAttempt is RecordFailedLogin's releasable counterpart: it
+// reserves a login-attempt slot up front (same race-closing placement F2
+// documents on reserveLoginAttempt — before the slow credential check runs,
+// not after), but returns a handle the caller can use to undo the write via
+// ReleaseLoginAttempt if that check turns out to be a storage/internal error
+// rather than a confirmed result. Returns ok=false (no handle) on an empty IP
+// or a storage error — same fail-open posture as every sibling limiter in
+// this file; a caller that gets ok=false has nothing to release and should
+// not call ReleaseLoginAttempt.
+func (c *KeyorixCore) ReserveLoginAttempt(ctx context.Context, ip string) (id uint, ok bool) {
+	if ip == "" {
+		return 0, false
+	}
+	id, err := c.storage.ReserveLoginAttempt(ctx, CanonicalIP(ip), c.now())
+	if err != nil {
+		return 0, false
+	}
+	return id, true
+}
+
+// ReleaseLoginAttempt undoes a ReserveLoginAttempt reservation. Best-effort,
+// mirroring RecordFailedLogin: a storage error here does not surface to the
+// caller, it just leaves the reservation counted as if release had never been
+// attempted.
+func (c *KeyorixCore) ReleaseLoginAttempt(ctx context.Context, id uint) {
+	_ = c.storage.ReleaseLoginAttempt(ctx, id)
+}
+
 // ErrInvalidLoginAttemptKey is returned by RecordLoginAttemptRelay when the
 // caller-supplied key is neither a valid IP address nor a known namespace
 // prefix followed by one.
