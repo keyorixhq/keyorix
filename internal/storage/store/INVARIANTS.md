@@ -155,3 +155,14 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   `TestDeleteAuditLogsBefore_ConcurrentAppendNotStalledOrDropped_SQLite` — lock order;
   `TestDeleteAuditLogsBefore_InvertedEventTime_Postgres`,
   `TestDeleteAuditLogsBefore_HoldsKEYAUDITUntilCommit_Postgres` — pg-gated).
+## Last-admin guard
+
+- **INV-STORE-21** `RemoveGlobalAdminRoleGuarded` counts a surviving global admin grant only
+  when it resolves to a live holder (`globalAdminAssignmentHasLiveHolder`): a user that is not
+  soft-deleted, `is_active`, and in a login-capable `account_state`
+  (`globalAdminLiveAccountStates`); or a non-deleted group with at least one such member at
+  `user_groups.project_id = 0`. Grant rows outlive soft-delete, deactivation and membership
+  removal, so counting rows let the last real admin be removed (#2658). Guard:
+  `internal/core` `TestCTAReview_RemoveUserRole_LastGlobalAdmin_AfterAdminGroupDeleted`
+  (+ `_Postgres`), `TestGlobalAdminLiveAccountStates_MatchAccountLoginBlocked` (drift between
+  the state list and `core.AccountLoginBlocked`).

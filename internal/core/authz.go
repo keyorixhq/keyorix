@@ -1115,7 +1115,8 @@ func (c *KeyorixCore) resolveGlobalAdminHolders(ctx context.Context, adminIDs ma
 }
 
 // filterActiveHolders drops every holder whose account is no longer usable as a
-// fallback admin (soft-deleted, or IsActive=false) — see resolveGlobalAdminHolders'
+// fallback admin (soft-deleted, IsActive=false, or a login-blocked
+// account_state such as suspended) — see resolveGlobalAdminHolders'
 // #G03 doc comment above for why a surviving grant ROW is not sufficient on its own.
 func (c *KeyorixCore) filterActiveHolders(ctx context.Context, holders map[uint]bool) (map[uint]bool, error) {
 	for id := range holders {
@@ -1129,7 +1130,11 @@ func (c *KeyorixCore) filterActiveHolders(ctx context.Context, holders map[uint]
 			}
 			return nil, err
 		}
-		if !user.IsActive {
+		// #2658: a suspended/deprovisioned admin keeps IsActive=true (setAccountState
+		// changes only account_state) but cannot log in, so it is no fallback admin
+		// either. Same predicate the storage-level RemoveGlobalAdminRoleGuarded check
+		// applies (store.GlobalAdminLiveAccountStates).
+		if !user.IsActive || AccountLoginBlocked(user.ID, user.AccountState) {
 			delete(holders, id)
 		}
 	}

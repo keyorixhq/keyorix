@@ -80,6 +80,15 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   security-closures `FIX-2-primitive`/`FIX-2-sso`. Guard: `last_admin_guard_wiring_test.go`,
   `last_admin_guard_external_test.go`, `group_admin_guard_test.go`,
   `project_scoped_group_admin_guard_test.go`, `scim_guards_test.go`.
+  Every path counts **live holders, not grant rows** (#2658): a user grant counts only for
+  a non-deleted, `IsActive`, non-login-blocked user (not suspended/deprovisioned); a group
+  grant only for a non-deleted group with at least one such global member. Core's
+  `filterActiveHolders` and storage's `RemoveGlobalAdminRoleGuarded`
+  (`globalAdminAssignmentHasLiveHolder`) apply the same rule, and `RemoveUserRole`'s global
+  admin branch holds `lastAdminGuardLockKey` like every other last-admin writer. Guard:
+  `TestCTAReview_RemoveUserRole_LastGlobalAdmin_AfterAdminGroupDeleted` (+ `_Postgres`),
+  `TestCTAReview_RemoveUserRole_LiveAdminStillCounts`,
+  `TestGlobalAdminLiveAccountStates_MatchAccountLoginBlocked`.
 - **INV-CORE-16** The last-admin check fails closed when `IsGlobalAdmin` itself errors, never
   silently allows. Guard: `scim_guards_test.go:TestGuardLastAdminDeactivation_FailsClosedOnIsGlobalAdminError`.
 - **INV-CORE-17** A direct-grant race and a group-role-grant race against the last-admin / SoD
