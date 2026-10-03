@@ -290,11 +290,11 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 	// relative paths cfg.Storage.Encryption expects, so the exact same
 	// internal/encryption code path `admin diagnose`/`admin backup` use
 	// works unmodified, just pointed elsewhere.
-	kekStagingDir, err := stageKeyFilesForKEKUnwrap(cfg, stagingDir, manifest.KeyFiles)
+	stagedCfg, kekStagingDir, err := stageKeyFilesForKEKUnwrap(cfg, stagingDir, manifest.KeyFiles, targetKeyPaths)
 	if err != nil {
 		return err
 	}
-	manifestKey, err := unwrapManifestKey(cfg, kekStagingDir, restorePassphraseSource, nil)
+	manifestKey, err := unwrapManifestKey(stagedCfg, kekStagingDir, restorePassphraseSource, nil)
 	if err != nil {
 		return err
 	}
@@ -470,46 +470,54 @@ func validateKeyFileSetV2(archived []backupfmt.KeyFileEntry, target []string) er
 }
 
 // stageKeyFilesForKEKUnwrap copies each archive key file's ALREADY-STAGED,
-// checksum-verified bytes (in stagingDir/<TarName>, per ExtractArchive) to
-// a fresh subdirectory laid out with the exact relative paths
-// cfg.Storage.Encryption expects (via the same internal/keyfiles.Registry
-// call every other path in this codebase uses) -- so unwrapManifestKey can
-// point a real encryption.Service at it unmodified. Returns the new
-// subdirectory's path.
-func stageKeyFilesForKEKUnwrap(cfg *config.Config, stagingDir string, keyFileEntries []backupfmt.KeyFileEntry) (string, error) {
+// checksum-verified bytes (in stagingDir/<TarName>, per ExtractArchive) into
+// a fresh subdirectory mirroring the paths cfg.Storage.Encryption expects,
+// and returns a copy of cfg whose key paths point at that mirror -- so
+// unwrapManifestKey can point a real encryption.Service at it unmodified.
+//
+// #2604: every staged path must land INSIDE the staging directory. A
+// relative key path already did; an ABSOLUTE one (the Docker image's
+// /app/keys/... config) used to resolve, via keyfiles.Registry, to the real
+// target path itself, so this "staging" step wrote the archive's key files
+// straight into the target's key directory -- and commitRestoredFile's
+// concurrent-creation guard then (correctly) refused to overwrite them,
+// failing every restore onto a fresh, empty keys volume. stagedKeyPath/
+// stagedEncryptionConfig (backup.go) re-root absolute paths under the
+// staging directory instead; the guard itself is unchanged.
+//
+// targetKeyPaths is expectedKeyFilePaths(cfg), already validated 1:1 against
+// keyFileEntries by validateKeyFileSetV2. Destinations are derived from it
+// (config), never from the archive's own key-file metadata.
+func stageKeyFilesForKEKUnwrap(cfg *config.Config, stagingDir string, keyFileEntries []backupfmt.KeyFileEntry, targetKeyPaths []string) (*config.Config, string, error) {
 	kekDir := filepath.Join(stagingDir, "kek-material")
 	if err := os.MkdirAll(kekDir, 0700); err != nil {
-		return "", fmt.Errorf("create KEK-unwrap staging directory: %w", err)
+		return nil, "", fmt.Errorf("create KEK-unwrap staging directory: %w", err)
 	}
-	specs, err := keyfiles.Registry(&cfg.Storage.Encryption, kekDir)
-	if err != nil {
-		return "", fmt.Errorf("build key-file registry for staging: %w", err)
-	}
-	if len(specs) != len(keyFileEntries) {
-		return "", fmt.Errorf("internal error: %d key-file registry entries but %d archive key files", len(specs), len(keyFileEntries))
+	if len(targetKeyPaths) != len(keyFileEntries) {
+		return nil, "", fmt.Errorf("internal error: %d expected key-file paths but %d archive key files", len(targetKeyPaths), len(keyFileEntries))
 	}
 	for i, entry := range keyFileEntries {
 		data, err := os.ReadFile(filepath.Join(stagingDir, entry.TarName)) // #nosec G304 -- our own staged file, already checksum-verified by ExtractArchive
 		if err != nil {
-			return "", fmt.Errorf("read staged key file %q: %w", entry.TarName, err)
+			return nil, "", fmt.Errorf("read staged key file %q: %w", entry.TarName, err)
 		}
-		// dest is specs[i].Path -- computed entirely from cfg.Storage.Encryption
-		// and kekDir via keyfiles.Registry, never from entry (the archive-
-		// controlled key-file metadata data was read from above). gosec's taint
+		// dest is computed from targetKeyPaths[i] (cfg.Storage.Encryption via
+		// keyfiles.Registry) and kekDir only -- never from entry, the
+		// archive-controlled metadata data was read from above. gosec's taint
 		// analysis (G703) flags this write because data and dest both trace
-		// back through the same loop iteration over archive-derived
-		// keyFileEntries, but dest itself never incorporates any archive
-		// content -- only its ARRAY INDEX correlates with entry, not its path
-		// value.
-		dest := specs[i].Path
+		// back through the same loop iteration, but only the ARRAY INDEX
+		// correlates with entry, not the path value.
+		dest := stagedKeyPath(kekDir, targetKeyPaths[i])
 		if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
-			return "", fmt.Errorf("create directory for staged key file %q: %w", dest, err)
+			return nil, "", fmt.Errorf("create directory for staged key file %q: %w", dest, err)
 		}
 		if err := os.WriteFile(dest, data, 0600); err != nil { // #nosec G703 -- dest is config-derived (see above), not archive-controlled
-			return "", fmt.Errorf("stage key file at %q: %w", dest, err)
+			return nil, "", fmt.Errorf("stage key file at %q: %w", dest, err)
 		}
 	}
-	return kekDir, nil
+	stagedCfg := *cfg
+	stagedCfg.Storage.Encryption = stagedEncryptionConfig(cfg.Storage.Encryption, kekDir)
+	return &stagedCfg, kekDir, nil
 }
 
 // checkpointBundleToHighWaterString converts a v2 manifest's structured
