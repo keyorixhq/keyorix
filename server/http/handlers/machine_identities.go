@@ -488,7 +488,7 @@ func (h *CatalogHandler) GrantMachineRole(w http.ResponseWriter, r *http.Request
 	h.changeMachineRole(w, r, true)
 }
 
-// RemoveMachineRole handles DELETE /api/v1/projects/{id}/machine-identities/{machineId}/roles/{roleId}.
+// RemoveMachineRole handles DELETE /api/v1/projects/{id}/machine-identities/{machineId}/roles/{roleId}[?environment_id=N].
 func (h *CatalogHandler) RemoveMachineRole(w http.ResponseWriter, r *http.Request) {
 	h.changeMachineRole(w, r, false)
 }
@@ -535,6 +535,18 @@ func (h *CatalogHandler) changeMachineRole(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		roleID = uint(rid)
+		// Optional ?environment_id=N names the environment of an environment-scoped
+		// grant (matches the grant body's environment_id); absent/0 = the project-wide
+		// grant. Parsed strictly: a malformed value must not silently fall back to the
+		// project-wide grant and remove the wrong one.
+		if v := r.URL.Query().Get("environment_id"); v != "" {
+			eid, perr := strconv.ParseUint(v, 10, 32)
+			if perr != nil {
+				sendError(w, "InvalidParameter", "Invalid environment_id", http.StatusBadRequest, nil)
+				return
+			}
+			environmentID = uint(eid)
+		}
 	}
 
 	scope := core.Scope{ProjectID: uint(projectID), EnvironmentID: environmentID}
