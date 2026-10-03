@@ -2,11 +2,13 @@
 // through the real Profile → Security UI (no mocked routes, same real-backend
 // shape as pages.spec.ts) and a subsequent login.
 //
-// Both tests below are marked test.fail() for two separate, confirmed product
-// bugs (filed as GitHub issues #2441 and #2442) rather than skipped: skipping
-// would silently stop proving anything, while test.fail() stays RED on CI
-// until the real fix lands and flips to a loud "unexpectedly passing" the
-// moment someone fixes the underlying code without updating this file.
+// WEB-FIX1: the first test below (#2441, enrollment) is now a real passing
+// test -- EnrollModal was fixed to collect and send the account password
+// ActivateMFA requires. The second test (#2442, login) is still marked
+// test.fail(): that fix is a separate, not-yet-landed PR. test.fail() (not
+// skip) keeps it RED on CI until the real fix lands, and flips to a loud
+// "unexpectedly passing" the moment someone fixes the underlying code
+// without updating this file.
 //
 // Note on "bootstrap admin via the UI" (SESSION-WEB-E2E item 1's own wording):
 // there is no such UI flow in this app. POST /system/init (internal/core's
@@ -148,7 +150,13 @@ async function createDedicatedUser(usernamePrefix: string): Promise<{ username: 
         // of the display name, and "MFA Test User <stamp>" has `stamp` as one
         // of those words. A shared stamp here silently 400s the create-user
         // call with a generic "ValidationError". Confirmed live.
-        const password = `Quartz-Falcon-${Math.random().toString(36).slice(2, 10)}-Garnet!`;
+        //
+        // The trailing "-7" guarantees at least one digit: base36
+        // (Math.random().toString(36)) can land on an all-letters slice often
+        // enough to flake in practice -- confirmed live, a real run 400'd with
+        // "password must contain a digit" with no digit anywhere in the
+        // random segment.
+        const password = `Quartz-Falcon-${Math.random().toString(36).slice(2, 10)}-7-Garnet!`;
         const createRes = await api.post('/api/v1/users', {
             headers: { Authorization: `Bearer ${token}` },
             data: {
@@ -167,20 +175,14 @@ async function createDedicatedUser(usernamePrefix: string): Promise<{ username: 
     }
 }
 
-test('MFA enrollment via Profile → Security currently cannot complete (known bug #2441)', async ({ page }) => {
-    // https://github.com/keyorixhq/keyorix/issues/2441 -- server/http/handlers/mfa.go's
-    // ActivateMFA requires BOTH the TOTP code and the account password
-    // (internal/core/mfa.go's requireReauth falls through to the
-    // password-compare branch, since MFAEnabled is still false during
-    // enrollment). web/src/features/account/MfaSection.tsx's EnrollModal only
-    // ever collects the 6-digit code -- there is no password field -- so
-    // mfaApi.activate(code) always sends {code} alone and the backend always
-    // rejects it with "invalid code or password", regardless of whether the
-    // code itself is correct. Confirmed live both through this UI flow and
-    // directly against the API with the exact same request shape the UI
-    // sends (see issue #2441's repro).
-    test.fail(true, 'issue #2441 -- EnrollModal never collects/sends the password ActivateMFA requires');
-
+test('MFA enrollment via Profile → Security', async ({ page }) => {
+    // https://github.com/keyorixhq/keyorix/issues/2441 -- FIXED by WEB-FIX1.
+    // server/http/handlers/mfa.go's ActivateMFA requires BOTH the TOTP code
+    // and the account password (internal/core/mfa.go's requireReauth falls
+    // through to the password-compare branch, since MFAEnabled is still
+    // false during enrollment). web/src/features/account/MfaSection.tsx's
+    // EnrollModal used to only ever collect the 6-digit code -- fixed to
+    // also collect the account password and send both.
     const user = await createDedicatedUser('mfaenroll');
     await realLogin(page, user.username, user.password);
 
@@ -194,25 +196,48 @@ test('MFA enrollment via Profile → Security currently cannot complete (known b
     const secret = (await secretLocator.textContent())?.trim();
     expect(secret, 'enrollment must render a non-empty setup key').toBeTruthy();
 
-    // A genuinely correct code, straight from the real secret -- so the only
-    // thing this can be exercising is the missing-password bug, not a test
-    // bug in totpCode() itself.
+    // A genuinely correct code, straight from the real secret.
     await page.getByPlaceholder('123456').fill(totpCode(secret as string));
+    await page.getByLabel('Account password').fill(user.password);
     await page.getByRole('button', { name: 'Verify & enable' }).click();
 
-    // What SHOULD happen: recovery codes render, confirming activation.
+    // Recovery codes render, confirming activation. This specifically was the
+    // part #2441's fix had to get right beyond just "the request succeeds":
+    // internal/core/mfa.go's ActivateMFA invalidates the CURRENT session the
+    // instant it succeeds (an intentional security upgrade -- a pre-MFA
+    // session must not outlive it), and the query client's global
+    // refetchOnWindowFocus default refetches every ACTIVE query on a focus
+    // event, not just ones explicitly invalidated. Before useMfaRecoveryStatus
+    // was gated inactive for the enrollment modal's lifetime
+    // (web/src/features/account/index.ts), that combination raced this exact
+    // assertion: a focus-triggered background refetch of the recovery-code
+    // status hit the now-invalid session, which the apiClient interceptor
+    // turned into an automatic hard-redirect to /login -- tearing down the
+    // one-time codes screen before this could even observe it. Confirmed live
+    // (this assertion genuinely failed, deterministically, before that fix).
     await expect(page.getByText('Save your recovery codes')).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'Done' }).click();
+
+    // Clicking Done re-activates the recovery-status query, which now (by
+    // design, not a bug) finds the current session invalidated and the app
+    // redirects to /login -- the user must re-authenticate under the new
+    // MFA-enforced policy. Confirming that landing, not a stuck/broken page.
+    // The redirect lands on /login?logout_error=1 (G65's "server-side logout
+    // couldn't be confirmed" path, since the session was already gone by the
+    // time the explicit logout call fired) -- '**/login' alone wouldn't match
+    // that query string, confirmed live.
+    await page.waitForURL(/\/login(\?|$)/, { timeout: 15_000 });
 });
 
-// enableMfaViaApi is test SETUP ONLY, not a UI shortcut this test is avoiding
-// out of laziness: issue #2441 (above) means there is currently no way to
-// reach an MFA-enabled account through the UI at all, so the only way to get
-// into the precondition state the login test below needs is the same direct
-// API path issue #2441's own repro uses. Operates on the dedicated user
-// created below, NEVER on the shared admin -- enabling MFA is a one-way,
-// session-breaking mutation on whichever account it's applied to, so doing
-// this to ADMIN_USERNAME would make every later spec's admin login
-// order-dependent on this one running (or not) first.
+// enableMfaViaApi is test SETUP ONLY, not a UI shortcut: the login test below
+// (#2442) is specifically testing what happens once an account already HAS
+// MFA enabled, so enrollment itself (covered by the test above) isn't what's
+// under test here -- going straight to the API keeps this test focused and
+// avoids depending on the enrollment test's own UI flow having run first.
+// Operates on the dedicated user created below, NEVER on the shared admin --
+// enabling MFA is a one-way, session-breaking mutation on whichever account
+// it's applied to, so doing this to ADMIN_USERNAME would make every later
+// spec's admin login order-dependent on this one running (or not) first.
 async function enableMfaViaApi(username: string, password: string): Promise<string> {
     const token = await apiLogin(username, password);
     const auth = { Authorization: `Bearer ${token}` };

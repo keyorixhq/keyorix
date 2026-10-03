@@ -40,6 +40,7 @@ import {
     useCreatePersonalToken,
     useRevokePersonalToken,
     useMfaRecoveryStatus,
+    useInvalidateMfaRecoveryStatus,
     useEnrollMfa,
     useActivateMfa,
     useDisableMfa,
@@ -115,9 +116,11 @@ describe('sensitive mutation cache eviction (G28)', () => {
         const { result, unmount } = renderHook(() => useActivateMfa(), { wrapper });
 
         act(() => {
-            result.current.mutate('123456');
+            // #2441: ActivateMFA requires the account password alongside the code.
+            result.current.mutate({ code: '123456', password: 'hunter2' });
         });
         await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(mfaMock.activate).toHaveBeenCalledWith('123456', 'hunter2');
         expect(queryClient.getMutationCache().getAll()).toHaveLength(1);
 
         unmount();
@@ -226,6 +229,29 @@ describe('MFA self-service', () => {
 
         await waitFor(() => expect(result.current.isSuccess).toBe(true));
         expect(result.current.data).toEqual({ total: 5, remaining: 3 });
+    });
+
+    // #2441 (follow-on): MfaSection passes enabled=false for the whole time
+    // the enrollment modal is open, so this query is excluded from the query
+    // client's global refetchOnWindowFocus batch -- see this hook's own doc
+    // comment for the real session-invalidation race that protects against.
+    it('useMfaRecoveryStatus does not fetch when disabled', async () => {
+        const { wrapper } = createWrapper();
+        renderHook(() => useMfaRecoveryStatus(false), { wrapper });
+        await act(async () => {});
+        expect(mfaMock.recoveryCodesStatus).not.toHaveBeenCalled();
+    });
+
+    it('useInvalidateMfaRecoveryStatus invalidates the recovery-status query on demand', async () => {
+        const { wrapper, queryClient } = createWrapper();
+        const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+        const { result } = renderHook(() => useInvalidateMfaRecoveryStatus(), { wrapper });
+
+        act(() => {
+            result.current();
+        });
+
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['account-mfa-recovery'] });
     });
 
     it('useDisableMfa disables MFA and invalidates the recovery-status query', async () => {

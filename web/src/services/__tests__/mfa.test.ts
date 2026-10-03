@@ -32,16 +32,19 @@ describe('mfaApi.enroll', () => {
 // ── activate ──────────────────────────────────────────────────────────────────
 
 describe('mfaApi.activate', () => {
-    it('POSTs the code and returns the recovery codes', async () => {
+    // #2441: ActivateMFA requires the account password alongside the code --
+    // the code alone only proves control of the just-generated pending
+    // secret, not that this is really the account holder.
+    it('POSTs the code AND password, and returns the recovery codes', async () => {
         mock.post.mockResolvedValueOnce({ data: { data: { recovery_codes: ['abc123', 'def456'] } } });
-        const result = await mfaApi.activate('123456');
-        expect(mock.post).toHaveBeenCalledWith('/api/v1/auth/mfa/activate', { code: '123456' });
+        const result = await mfaApi.activate('123456', 'hunter2');
+        expect(mock.post).toHaveBeenCalledWith('/api/v1/auth/mfa/activate', { code: '123456', password: 'hunter2' });
         expect(result).toEqual(['abc123', 'def456']);
     });
 
     it('returns [] when recovery_codes is missing', async () => {
         mock.post.mockResolvedValueOnce({ data: { data: {} } });
-        await expect(mfaApi.activate('123456')).resolves.toEqual([]);
+        await expect(mfaApi.activate('123456', 'hunter2')).resolves.toEqual([]);
     });
 });
 

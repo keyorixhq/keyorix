@@ -12,7 +12,14 @@ import { Alert } from '../../components/ui/Alert';
 import { Spinner } from '../../components/ui/Loading';
 import { Modal } from '../../components/ui/Modal';
 import { copyToClipboard } from '../../utils';
-import { useMfaRecoveryStatus, useEnrollMfa, useActivateMfa, useDisableMfa, useRegenerateRecoveryCodes } from './index';
+import {
+    useMfaRecoveryStatus,
+    useEnrollMfa,
+    useActivateMfa,
+    useDisableMfa,
+    useRegenerateRecoveryCodes,
+    useInvalidateMfaRecoveryStatus,
+} from './index';
 import { useAutoClearOnIdle } from '../../hooks/useAutoClearOnIdle';
 
 // LOW_CODES_THRESHOLD is when we nudge the user to regenerate recovery codes.
@@ -64,9 +71,16 @@ const RecoveryCodes: React.FC<{ codes: string[] }> = ({ codes }) => {
 const EnrollModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
     const enroll = useEnrollMfa();
     const activate = useActivateMfa();
+    const invalidateRecoveryStatus = useInvalidateMfaRecoveryStatus();
     const [secret, setSecret] = useState('');
     const [uri, setUri] = useState('');
     const [code, setCode] = useState('');
+    // #2441: ActivateMFA requires the account password as well as the code --
+    // the code alone only proves control of the just-generated pending secret
+    // (which an attacker with a stolen session/PAT could have generated
+    // themselves via EnrollMFA), not that this is really the account holder.
+    // See server/http/handlers/mfa.go's ActivateMFA doc comment.
+    const [password, setPassword] = useState('');
     const [codes, setCodes] = useState<string[] | null>(null);
     const [error, setError] = useState('');
 
@@ -88,10 +102,19 @@ const EnrollModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpe
         setSecret('');
         setUri('');
         setCode('');
+        setPassword('');
         setCodes(null);
         setError('');
     };
     const close = () => {
+        // #2441 (follow-on): only now, once the user is actually done with the
+        // recovery-codes screen -- not the instant activation succeeds -- does
+        // this refresh the recovery-code status. See useActivateMfa's doc
+        // comment for why: that refetch is what was racing the user's one
+        // chance to read/copy their codes against a hard redirect to /login
+        // (ActivateMFA invalidates the current session as part of the
+        // security upgrade, which this refetch would otherwise hit instantly).
+        if (codes !== null) invalidateRecoveryStatus();
         reset();
         onClose();
     };
@@ -104,10 +127,16 @@ const EnrollModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpe
     const submit = (e: React.SubmitEvent<HTMLFormElement>) => {
         e.preventDefault();
         setError('');
-        activate.mutate(code, {
-            onSuccess: (newCodes) => setCodes(newCodes),
-            onError: (err) => setError(errMessage(err, 'Invalid code. Try again.')),
-        });
+        activate.mutate(
+            { code, password },
+            {
+                onSuccess: (newCodes) => setCodes(newCodes),
+                // Mirrors the API's own message exactly (mfaSafeMessages'
+                // "invalid code or password") rather than guessing which of
+                // the two was wrong -- the server doesn't say either.
+                onError: (err) => setError(errMessage(err, 'Invalid code or password. Try again.')),
+            }
+        );
     };
 
     return (
@@ -167,11 +196,19 @@ const EnrollModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpe
                                 value={code}
                                 onChange={(e) => setCode(e.target.value)}
                             />
+                            <Input
+                                label="Account password"
+                                type="password"
+                                autoComplete="current-password"
+                                placeholder="Your current password"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                            />
                             <div className="flex justify-end gap-2">
                                 <Button type="button" variant="outline" onClick={close}>
                                     Cancel
                                 </Button>
-                                <Button type="submit" disabled={activate.isPending || code.length < 6}>
+                                <Button type="submit" disabled={activate.isPending || code.length < 6 || !password}>
                                     {activate.isPending && <Spinner size="sm" className="mr-2" />}
                                     Verify &amp; enable
                                 </Button>
@@ -271,10 +308,12 @@ const ReauthModal: React.FC<{
 // MfaSection is the Profile → Security two-factor block: it shows enable/enrol when
 // MFA is off, and status + recovery-code management + disable when it is on.
 export const MfaSection: React.FC = () => {
-    const { data: status, isLoading, isError } = useMfaRecoveryStatus();
+    const [enrolling, setEnrolling] = useState(false);
+    // #2441 (follow-on): inactive for the whole time the enrollment modal is
+    // open -- see useMfaRecoveryStatus's own doc comment for why.
+    const { data: status, isLoading, isError } = useMfaRecoveryStatus(!enrolling);
     const disable = useDisableMfa();
     const regenerate = useRegenerateRecoveryCodes();
-    const [enrolling, setEnrolling] = useState(false);
     const [regenOpen, setRegenOpen] = useState(false);
     const [disableOpen, setDisableOpen] = useState(false);
 

@@ -15,6 +15,7 @@ const enrollMutate = vi.fn();
 const activateMutate = vi.fn();
 const disableMutate = vi.fn();
 const regenerateMutate = vi.fn();
+const invalidateRecoveryStatusMock = vi.fn();
 
 vi.mock('../index', () => ({
     useMfaRecoveryStatus: () => ({ data: recoveryStatus, isLoading: statusLoading, isError: statusError }),
@@ -22,6 +23,7 @@ vi.mock('../index', () => ({
     useActivateMfa: () => ({ mutate: activateMutate, isPending: activatePending }),
     useDisableMfa: () => ({ mutateAsync: disableMutate, isPending: disablePending }),
     useRegenerateRecoveryCodes: () => ({ mutateAsync: regenerateMutate, isPending: regeneratePending }),
+    useInvalidateMfaRecoveryStatus: () => invalidateRecoveryStatusMock,
 }));
 
 beforeEach(() => {
@@ -36,6 +38,7 @@ beforeEach(() => {
     activateMutate.mockReset();
     disableMutate.mockReset();
     regenerateMutate.mockReset();
+    invalidateRecoveryStatusMock.mockReset();
 });
 
 describe('MfaSection', () => {
@@ -109,8 +112,12 @@ describe('MfaSection enrolment flow', () => {
         enrollMutate.mockImplementation((_vars, opts) => {
             opts.onSuccess({ secret: 'JBSWY3DPEHPK3PXP', otpauth_uri: 'otpauth://totp/test' });
         });
-        activateMutate.mockImplementation((code, opts) => {
-            expect(code).toBe('123456');
+        activateMutate.mockImplementation((proof, opts) => {
+            // #2441: ActivateMFA requires the account password alongside the
+            // code -- the code alone only proves control of the
+            // just-generated pending secret, not that this is really the
+            // account holder.
+            expect(proof).toEqual({ code: '123456', password: 'hunter2' });
             opts.onSuccess(['code-1', 'code-2']);
         });
 
@@ -124,6 +131,7 @@ describe('MfaSection enrolment flow', () => {
         );
 
         fireEvent.change(screen.getByLabelText('6-digit code'), { target: { value: '123456' } });
+        fireEvent.change(screen.getByLabelText('Account password'), { target: { value: 'hunter2' } });
         fireEvent.click(screen.getByRole('button', { name: /verify/i }));
 
         expect(screen.getByText('code-1')).toBeInTheDocument();
@@ -167,7 +175,7 @@ describe('MfaSection enrolment flow', () => {
         enrollMutate.mockImplementation((_vars, opts) => {
             opts.onSuccess({ secret: 'SECRET', otpauth_uri: '' });
         });
-        activateMutate.mockImplementation((_code, opts) => {
+        activateMutate.mockImplementation((_proof, opts) => {
             opts.onError({});
         });
 
@@ -176,12 +184,13 @@ describe('MfaSection enrolment flow', () => {
         expect(screen.queryByRole('link', { name: /open in authenticator app/i })).not.toBeInTheDocument();
 
         fireEvent.change(screen.getByLabelText('6-digit code'), { target: { value: '654321' } });
+        fireEvent.change(screen.getByLabelText('Account password'), { target: { value: 'wrong-pw' } });
         fireEvent.click(screen.getByRole('button', { name: /verify/i }));
 
-        expect(screen.getByText('Invalid code. Try again.')).toBeInTheDocument();
+        expect(screen.getByText('Invalid code or password. Try again.')).toBeInTheDocument();
     });
 
-    it('Cancel resets and closes the enrolment modal', () => {
+    it('Cancel resets and closes the enrolment modal, without invalidating recovery status', () => {
         enrollMutate.mockImplementation((_vars, opts) => {
             opts.onSuccess({ secret: 'SECRET', otpauth_uri: 'otpauth://x' });
         });
@@ -192,6 +201,38 @@ describe('MfaSection enrolment flow', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
         expect(screen.queryByText('Set up two-factor authentication')).not.toBeInTheDocument();
+        // #2441 (follow-on): nothing was ever activated here, so there is no
+        // reason to refresh the recovery-code status -- and no session to
+        // accidentally race against doing so.
+        expect(invalidateRecoveryStatusMock).not.toHaveBeenCalled();
+    });
+
+    // #2441 (follow-on): internal/core/mfa.go's ActivateMFA invalidates the
+    // CURRENT session the instant it succeeds. The recovery-code status query
+    // must NOT be invalidated/refetched until the user has actually finished
+    // with the one-time codes screen (Done), or a refetch racing that
+    // now-invalid session could tear the screen down before they've read or
+    // copied their codes -- confirmed live against the real backend (see
+    // web/e2e/real/mfa-login.spec.ts).
+    it('does not invalidate recovery status while codes are showing, only once Done is clicked', () => {
+        enrollMutate.mockImplementation((_vars, opts) => {
+            opts.onSuccess({ secret: 'SECRET', otpauth_uri: 'otpauth://x' });
+        });
+        activateMutate.mockImplementation((_proof, opts) => {
+            opts.onSuccess(['code-1', 'code-2']);
+        });
+
+        render(<MfaSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+        fireEvent.change(screen.getByLabelText('6-digit code'), { target: { value: '123456' } });
+        fireEvent.change(screen.getByLabelText('Account password'), { target: { value: 'hunter2' } });
+        fireEvent.click(screen.getByRole('button', { name: /verify/i }));
+
+        expect(screen.getByText('code-1')).toBeInTheDocument();
+        expect(invalidateRecoveryStatusMock).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+        expect(invalidateRecoveryStatusMock).toHaveBeenCalledTimes(1);
     });
 
     it('shows a spinner while enrolment begins, before the setup key is available', () => {
@@ -321,7 +362,7 @@ describe('MfaSection auto-clear (G28)', () => {
         enrollMutate.mockImplementation((_vars, opts) => {
             opts.onSuccess({ secret: 'JBSWY3DPEHPK3PXP', otpauth_uri: 'otpauth://totp/test' });
         });
-        activateMutate.mockImplementation((_code, opts) => {
+        activateMutate.mockImplementation((_proof, opts) => {
             opts.onSuccess(['idle-code-1', 'idle-code-2']);
         });
         vi.useFakeTimers();
@@ -329,6 +370,7 @@ describe('MfaSection auto-clear (G28)', () => {
         render(<MfaSection />);
         fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
         fireEvent.change(screen.getByLabelText('6-digit code'), { target: { value: '123456' } });
+        fireEvent.change(screen.getByLabelText('Account password'), { target: { value: 'hunter2' } });
         fireEvent.click(screen.getByRole('button', { name: /verify/i }));
         expect(screen.getByText('idle-code-1')).toBeInTheDocument();
 
