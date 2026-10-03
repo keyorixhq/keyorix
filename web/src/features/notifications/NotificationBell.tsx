@@ -3,10 +3,11 @@ import { useNavigate } from 'react-router';
 import { BellIcon } from '@heroicons/react/24/outline';
 import { useNotifications, useMarkNotificationRead, useMarkAllNotificationsRead } from './api';
 import type { NotificationItem } from '../../services/notifications';
+import { parseServerDate } from '../../utils';
 
 // timeAgo renders a compact relative time ("3m", "2h", "5d") from an ISO string.
 function timeAgo(iso: string): string {
-    const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+    const s = Math.max(0, (Date.now() - parseServerDate(iso).getTime()) / 1000);
     if (s < 60) return 'just now';
     if (s < 3600) return `${Math.floor(s / 60)}m ago`;
     if (s < 86400) return `${Math.floor(s / 3600)}h ago`;

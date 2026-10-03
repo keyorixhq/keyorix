@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ChartBarIcon, FireIcon, MoonIcon } from '@heroicons/react/24/outline';
 import { useMostAccessedSecrets, useUnusedSecrets } from '../../features/secrets/useUsageAnalytics';
 import { Loading } from '../../components/ui/Loading';
+import { parseServerDate } from '../../utils';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -9,7 +10,7 @@ const fmt = (n: number) => n.toLocaleString();
 
 function relativeFromNow(d: string | null): string {
     if (!d) return 'never';
-    const days = Math.floor((Date.now() - new Date(d).getTime()) / 86_400_000);
+    const days = Math.floor((Date.now() - parseServerDate(d).getTime()) / 86_400_000);
     if (days <= 0) return 'today';
     if (days === 1) return 'yesterday';
     if (days < 30) return `${days}d ago`;

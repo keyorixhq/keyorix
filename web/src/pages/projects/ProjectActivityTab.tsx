@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { DocumentTextIcon, ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import { useAuditLog } from '../../features/audit/api';
 import { Button } from '../../components/ui/Button';
+import { parseServerDate } from '../../utils';
 
 interface ProjectActivityTabProps {
     projectId: number;
@@ -22,13 +23,13 @@ function badgeStyle(eventType: string) {
 }
 
 function relativeTime(ts: string): string {
-    const diff = Date.now() - new Date(ts).getTime();
+    const diff = Date.now() - parseServerDate(ts).getTime();
     const mins = Math.floor(diff / 60_000);
     if (mins < 1) return 'just now';
     if (mins < 60) return `${mins}m ago`;
     const hrs = Math.floor(mins / 60);
     if (hrs < 24) return `${hrs}h ago`;
-    return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return parseServerDate(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 /**
