@@ -28,6 +28,13 @@ import (
 // rather than a generic 500 — letting an admin fix the config.
 var ErrSetupBaseURLRequired = errors.New("credential_delivery.base_url is required to issue a setup link")
 
+// ErrResendThrottleUnverifiable is wrapped by checkResendThrottle when the
+// throttle's own count query fails. The throttle fails CLOSED (no link is
+// issued), but this is a storage fault, not a throttle verdict: unlike a real
+// "limit reached", a caller that had not yet persisted anything must not
+// persist anything either (#2599, see provisionInvitationSetupLink).
+var ErrResendThrottleUnverifiable = errors.New("could not verify resend limits, please try again")
+
 // auditCredentialDisplayedOutOfBand records that a human saw a credential
 // out-of-band (ADR-028's one audited "a human saw this" checkpoint). Deliberately
 // takes ONLY the non-sensitive fields the description needs (subject email, actor,
@@ -283,14 +290,14 @@ func (c *KeyorixCore) checkResendThrottle(ctx context.Context, purpose, email st
 	// setup-link mail to a victim address.
 	n, err := c.storage.CountSetupTokensSince(ctx, purpose, key, c.now().Add(-24*time.Hour))
 	if err != nil {
-		return fmt.Errorf("%s: could not verify resend limits, please try again", i18n.T("ErrorValidation", nil))
+		return fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ErrResendThrottleUnverifiable)
 	}
 	if n >= resendDailyCap {
 		return fmt.Errorf("%s: resend limit reached (max %d per day)", i18n.T("ErrorValidation", nil), resendDailyCap)
 	}
 	m, err := c.storage.CountSetupTokensSince(ctx, purpose, key, c.now().Add(-resendMinInterval))
 	if err != nil {
-		return fmt.Errorf("%s: could not verify resend limits, please try again", i18n.T("ErrorValidation", nil))
+		return fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ErrResendThrottleUnverifiable)
 	}
 	if m >= 1 {
 		return fmt.Errorf("%s: please wait before requesting another setup link", i18n.T("ErrorValidation", nil))
