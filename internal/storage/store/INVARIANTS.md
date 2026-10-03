@@ -121,3 +121,27 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   `TestVerifyAuditChain_ValidatesRowWithNonUTCEventTime`,
   `TestGetAuditLogs_RangeQuery_FindsRowWithNonUTCEventTime`); sibling
   `g81_dynamic_lease_timezone_test.go` (same class, not individually re-read).
+
+## Audit chain retention
+
+- **INV-STORE-22** The audit retention purge (`DeleteAuditLogsBefore`) deletes only a
+  contiguous id prefix of `audit_events`: every row with id <= P, where P is the largest id
+  such that every row with id <= P has `event_time < cutoff` (a NULL `event_time` ends the
+  prefix). It never deletes more than a plain `event_time < cutoff` would. It runs under the
+  same serialization `LogAuditEvent` appends under: `pg_advisory_xact_lock(KEYAUDIT)` inside
+  the delete's transaction on Postgres, the transaction's write lock on SQLite, plus
+  `auditChainMu`, taken before BEGIN, only when called on a base (non-transactional) store.
+  Inside a caller's transaction it must NOT wait on `auditChainMu`: that transaction already
+  holds the SQLite write lock, and an appender holding the mutex while it waits for that lock
+  would deadlock against it. It anchors on the first surviving id. Why: the hash chain links
+  rows in id order, not event_time order, and the two disagree under concurrent writers or HA
+  clock skew. A plain `event_time < cutoff` delete removed a row from the middle (or the tail)
+  of the chain, and verify-audit then reported tampering. #2633, ADR-115 (#2628) §7. Guard:
+  `audit_retention_prefix_test.go`
+  (`TestDeleteAuditLogsBefore_InvertedPair_DeletesOnlyContiguousIDPrefix`,
+  `_InvertedPair_InsideTransaction`, `_OldestRowNewer_DeletesNothing`,
+  `_NullEventTime_StopsThePrefix`, `_WaitsForAuditChainMutex`,
+  `_InTx_DoesNotWaitOnAuditChainMu`, `_ConcurrentAppendsAndTxPurges_ProductionSQLiteDSN`);
+  `audit_retention_prefix_postgres_test.go`
+  (`TestDeleteAuditLogsBefore_InvertedPair_Postgres`,
+  `_WaitsForKeyauditAdvisoryLock_Postgres`, pg-gated).

@@ -332,54 +332,114 @@ func (ls *LocalStorage) CountUnusedSecretsByProject(ctx context.Context, project
 	return counts, nil
 }
 
-// DeleteAuditLogsBefore hard-deletes all AuditEvent rows whose event_time is
-// before cutoff. It returns the number of rows deleted, plus a re-anchor
-// candidate (storage.AuditChainAnchor) when the delete reached into the
-// chained (post-ADR-029) hash-chain region rather than just the pre-ADR-029
-// unchained legacy prefix: the new earliest surviving row's own
-// id/prev_hash/entry_hash. That row's prev_hash still points at its
-// now-deleted predecessor — without authenticating and persisting this as a
-// retention anchor, VerifyAuditChain can never again walk past this row (see
-// the ADR-029 retention-purge finding this closes). The caller
-// (core.PurgeAuditLogs) is responsible for HMAC-signing and persisting it,
-// inside the same transaction as this delete, via SetSystemMetadata.
+// DeleteAuditLogsBefore hard-deletes the contiguous id prefix of audit_events
+// whose rows are all older than cutoff: every row with id <= P, where P is the
+// largest id such that EVERY row with id <= P has event_time < cutoff
+// (INV-STORE-22, #2633). It stops at the first row, in id order, whose
+// event_time is at or after cutoff (or NULL) — rows above that one survive even
+// when their own event_time is older. The hash chain links rows in id order,
+// not event_time order, and the two disagree whenever concurrent writers or HA
+// replicas with skewed clocks commit out of event_time order: a plain
+// "event_time < cutoff" delete then removes a row out of the MIDDLE of the
+// chain (or off its tail), which no retention anchor can bridge and which
+// VerifyAuditChain reports as tampering. The deleted set is always a subset of
+// what "event_time < cutoff" alone deletes — this never purges more rows.
+//
+// The purge runs under the same serialization LogAuditEvent appends under, so
+// the prefix computation, the delete, and the head read below see one chain
+// state: on Postgres, pg_advisory_xact_lock(auditAdvisoryLockKey) ("KEYAUDIT")
+// inside the delete's transaction, held until the outermost transaction
+// commits; on SQLite, the database write lock that transaction holds (an
+// append's read-head+insert is itself one write transaction, so the two can
+// never interleave). auditChainMu is additionally taken, BEFORE the transaction
+// begins — the same order LogAuditEvent uses — when this is called on a base
+// (non-transactional) store. Inside a caller's transaction (core.PurgeAuditLogs)
+// it is deliberately NOT taken: that transaction already holds the SQLite write
+// lock from BEGIN (_txlock=immediate), and an appender holding auditChainMu
+// while it waits for that write lock would otherwise deadlock against us until
+// its write timeout, dropping its audit event.
+//
+// It returns the number of rows deleted, plus a re-anchor candidate
+// (storage.AuditChainAnchor) when the delete reached into the chained
+// (post-ADR-029) hash-chain region rather than just the pre-ADR-029 unchained
+// legacy prefix: the new earliest surviving row's own id/prev_hash/entry_hash.
+// That row's prev_hash still points at its now-deleted predecessor — without
+// authenticating and persisting this as a retention anchor, VerifyAuditChain
+// can never again walk past this row (see the ADR-029 retention-purge finding
+// this closes). The caller (core.PurgeAuditLogs) is responsible for
+// HMAC-signing and persisting it, inside the same transaction as this delete,
+// via SetSystemMetadata.
 //
 // candidate is nil when nothing was deleted, the table is now empty, or the
 // new earliest surviving row already legitimately starts at genesis (the
 // purge only removed the unchained legacy prefix) — nothing to re-anchor.
 func (ls *LocalStorage) DeleteAuditLogsBefore(ctx context.Context, cutoff time.Time) (int64, *storage.AuditChainAnchor, error) {
-	result := ls.db.WithContext(ctx).
-		Where("event_time < ?", cutoff).
-		Delete(&models.AuditEvent{})
-	if result.Error != nil || result.RowsAffected == 0 {
-		return result.RowsAffected, nil, result.Error
+	if _, inTx := ls.db.Statement.ConnPool.(gorm.TxCommitter); !inTx {
+		ls.auditChainMu.Lock()
+		defer ls.auditChainMu.Unlock()
 	}
 
-	var head struct {
-		ID        uint
-		PrevHash  string
-		EntryHash string
+	var deleted int64
+	var anchor *storage.AuditChainAnchor
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if tx.Dialector.Name() == "postgres" {
+			if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(auditAdvisoryLockKey)).Error; err != nil {
+				return err
+			}
+		}
+
+		// firstKept is the lowest id that must survive: the first row, in id
+		// order, that is NOT older than cutoff (NULL event_time counts as not
+		// older — keep it). With no such row, every row is old: fall back to one
+		// past the highest id. On an empty table both are NULL, id < NULL is
+		// never true, and nothing is deleted. "event_time < ?" is kept as well so
+		// the deleted set can never exceed the pre-#2633 one.
+		firstKept := tx.Session(&gorm.Session{NewDB: true}).Model(&models.AuditEvent{}).
+			Select("MIN(id)").
+			Where("event_time >= ? OR event_time IS NULL", cutoff)
+		pastLast := tx.Session(&gorm.Session{NewDB: true}).Model(&models.AuditEvent{}).
+			Select("MAX(id) + 1")
+		result := tx.Where("event_time < ? AND id < COALESCE((?), (?))", cutoff, firstKept, pastLast).
+			Delete(&models.AuditEvent{})
+		if result.Error != nil {
+			return result.Error
+		}
+		deleted = result.RowsAffected
+		if deleted == 0 {
+			return nil
+		}
+
+		var head struct {
+			ID        uint
+			PrevHash  string
+			EntryHash string
+		}
+		if err := tx.Model(&models.AuditEvent{}).
+			Select("id, prev_hash, entry_hash").
+			Order("id ASC").
+			Limit(1).
+			Scan(&head).Error; err != nil {
+			return err
+		}
+		if head.ID == 0 || head.PrevHash == "" || head.PrevHash == auditGenesisHash {
+			// Table now empty, or the surviving prefix already legitimately starts at
+			// genesis (the purge only removed pre-ADR-029 legacy/unchained rows, or
+			// the next append will restart the chain from genesis) — no re-anchor
+			// needed; VerifyAuditChain's normal genesis walk already handles this.
+			return nil
+		}
+		anchor = &storage.AuditChainAnchor{
+			RowID:     head.ID,
+			PrevHash:  head.PrevHash,
+			EntryHash: head.EntryHash,
+		}
+		return nil
+	})
+	if err != nil {
+		// Rolled back: nothing was deleted.
+		return 0, nil, err
 	}
-	if err := ls.db.WithContext(ctx).
-		Model(&models.AuditEvent{}).
-		Select("id, prev_hash, entry_hash").
-		Order("id ASC").
-		Limit(1).
-		Scan(&head).Error; err != nil {
-		return result.RowsAffected, nil, err
-	}
-	if head.ID == 0 || head.PrevHash == "" || head.PrevHash == auditGenesisHash {
-		// Table now empty, or the surviving prefix already legitimately starts at
-		// genesis (the purge only removed pre-ADR-029 legacy/unchained rows, or
-		// the next append will restart the chain from genesis) — no re-anchor
-		// needed; VerifyAuditChain's normal genesis walk already handles this.
-		return result.RowsAffected, nil, nil
-	}
-	return result.RowsAffected, &storage.AuditChainAnchor{
-		RowID:     head.ID,
-		PrevHash:  head.PrevHash,
-		EntryHash: head.EntryHash,
-	}, nil
+	return deleted, anchor, nil
 }
 
 // AuditRetentionStats returns the total audit event count plus the oldest and
