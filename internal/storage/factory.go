@@ -393,16 +393,20 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 	if dbPath == "" {
 		dbPath = "./secrets.db"
 	}
-	if err := prepareLocalStorageFile(dbPath); err != nil {
-		return nil, err
-	}
 
 	// #1636: log which file is actually about to be opened, and whether it
-	// already existed, BEFORE gorm.Open's implicit create-if-missing makes that
-	// distinction unrecoverable. dbPath itself is deliberately left untouched
-	// here (still cwd-relative if configured that way, still fed as-is into
-	// sqliteDSN/withMigrationLock below) -- this is diagnostics only, not a fix
-	// for the underlying resolution defect (tracked separately). Best-effort:
+	// already existed, BEFORE anything below creates it -- both
+	// prepareLocalStorageFile's O_CREATE pre-create (#1647) and gorm.Open's
+	// implicit create-if-missing make that distinction unrecoverable. This
+	// stat must stay ahead of prepareLocalStorageFile: #1652 originally landed
+	// that call above it, so every missing path was reported as "opening
+	// existing" and the warning below never fired (#2504; guarded by
+	// TestCreateLocalStorage_MissingPath_LogsNewEmptyDatabase). dbPath itself
+	// is deliberately left untouched here (still cwd-relative if configured
+	// that way, still fed as-is into sqliteDSN/withMigrationLock below) --
+	// this is diagnostics only, not a fix for the underlying resolution
+	// defect (tracked separately), and not the refuse-on-missing check
+	// ADR-095 Task 3 recommends (#2504, pending sign-off). Best-effort:
 	// filepath.Abs only fails if os.Getwd() fails, which would already be a
 	// more fundamental problem than this log line; never block startup on it.
 	logDbPath := dbPath
@@ -413,6 +417,9 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 		log.Printf("storage: opening existing SQLite database at %s (configured: %q)", logDbPath, cfg.Storage.Database.Path)
 	} else {
 		log.Printf("storage: no database found at %s (configured: %q) -- a NEW, EMPTY database will be created here", logDbPath, cfg.Storage.Database.Path)
+	}
+	if err := prepareLocalStorageFile(dbPath); err != nil {
+		return nil, err
 	}
 
 	// Hold migrationMu across gorm.Open too, not just the migration that follows
