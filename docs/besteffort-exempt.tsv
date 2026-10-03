@@ -1,0 +1,92 @@
+# Best-effort-after-commit guard exemption list — GUARD-1 session.
+#
+# internal/core/besteffort_guard_test.go (TestBestEffortGuard_UnprotectedPostWriteDiscard),
+# server/http/handlers/besteffort_guard_test.go, and
+# server/grpc/services/besteffort_guard_test.go each fail the build when a
+# non-test function discards a call's result/error (`_ = f(...)`) that
+# textually follows a storage-write call in the same function, and the
+# discard is not routed through goSafe(...)/besteffort.Run(...) (package
+# internal/besteffort). Every hit must either be migrated to besteffort.Run,
+# or get a reviewed row here.
+#
+# Format: <package>:<function>\t<reason>
+# <package> is the scanned root (internal/core, server/http/handlers,
+# server/grpc/services) so identically-named functions in different packages
+# don't collide. <function> matches the guard's own fn label: "Name" for a
+# free function, "(*Type).Name" for a method.
+#
+# Seeded 2026-10-03 (GUARD-1): every row below is a caller-side discard of a
+# callee that ALREADY recovers its own panic internally (the callee is its
+# own choke point -- evictUserSessionCache, deleteSessionsForUserAndEvict,
+# notifyBreakGlassAdmins, revokeProjectDynamicSecretLeases,
+# seedProjectEnvironment, evictMachineIdentityCacheOrFlush, emitAudit) —
+# this caller-side AST walk cannot see that the callee is already safe, so
+# every one of its callers that discards the result shows up as a hit here.
+# None of these are migrated to besteffort.Run at the call site because the
+# callee's own protection is the correct layer (re-wrapping at every call
+# site would duplicate the recover, and some of these callees have bespoke
+# audit-on-panic/fail-closed-cache-flush logic besteffort.Run's generic
+# recover would not reproduce — see each callee's own doc comment).
+
+# The callee itself: account.go's evictUserSessionCache recovers its own
+# panic and logs, called from several role-removal sites (rbac_management.go)
+# with no return value to discard at all, so it produces no caller-side hit —
+# listed for completeness of the "callee already protected" corpus.
+internal/core:(*KeyorixCore).evictUserSessionCache	callee recovers its own panic (account.go); no bespoke logic to lose, but re-wrapping at every call site would duplicate the recover for no benefit.
+
+# The callee itself: account.go's deleteSessionsForUserAndEvict recovers its
+# own panic, sets a named return (err = nil) so the discard is literally
+# correct either way, AND writes EventSessionRevocationPanicked under the
+# affected user's ID on a panic — besteffort.Run's generic log would lose
+# that per-user audit trail.
+internal/core:(*KeyorixCore).deleteSessionsForUserAndEvict	callee recovers its own panic + audits under the affected user's ID (account.go); besteffort.Run's generic log would lose that audit trail.
+
+# Every caller-side discard of deleteSessionsForUserAndEvict above: the
+# callee is already safe, so these are not independently vulnerable. Found by
+# this guard's own AST walk, which cannot see protection inside a callee.
+internal/core:(*KeyorixCore).ActivateMFA	discards deleteSessionsForUserAndEvict, whose own recover already closes the gap (mfa.go).
+internal/core:(*KeyorixCore).DisableMFA	discards deleteSessionsForUserAndEvict, whose own recover already closes the gap (mfa.go).
+internal/core:(*KeyorixCore).DeleteWebAuthnCredential	discards deleteSessionsForUserAndEvict, whose own recover already closes the gap (webauthn.go).
+internal/core:(*KeyorixCore).FinishWebAuthnRegistration	discards deleteSessionsForUserAndEvict, whose own recover already closes the gap (webauthn.go).
+internal/core:(*KeyorixCore).UpdateSCIMUser	discards deleteSessionsForUserAndEvict, whose own recover already closes the gap (scim.go); the "write" this guard matched (Unlock@263) is a mutex unlock, not a storage write — a benign false match, left here rather than silently dropped.
+
+# break_glass.go's notifyBreakGlassAdmins: whole-function choke point with a
+# named return (err = nil on panic) and its own EventBreakGlassNotifyPanicked
+# audit write under the affected project's ID — same shape as
+# deleteSessionsForUserAndEvict above.
+internal/core:(*KeyorixCore).notifyBreakGlassAdmins	callee recovers its own panic + audits under the affected project's ID (break_glass.go); besteffort.Run's generic log would lose that audit trail.
+
+# catalog.go's revokeProjectDynamicSecretLeases: whole-function choke point
+# that writes dynamic_secret.project_cascade_failed on both the returned-error
+# AND the panic path — a richer failure record than besteffort.Run's generic
+# log, read by the lease-revocation sweep/manual-retry tooling.
+internal/core:(*KeyorixCore).revokeProjectDynamicSecretLeases	callee recovers its own panic + writes a structured cascade-failure audit event read by the lease sweep (catalog.go); besteffort.Run's generic log would lose that.
+
+# catalog.go's seedProjectEnvironment: runs inside the SAME outer transaction
+# (storage.WithTransaction) that created the project row, via a nested
+# SAVEPOINT -- its own doc comment explains why an audit write from inside
+# here would self-deadlock SQLite's single writer (a different connection via
+# c.storage while tx itself still holds an open write transaction). It also
+# returns a structured *projectEnvSeedFailure, not a plain error, for the
+# caller to audit AFTER the outer transaction commits. besteffort.Run doesn't
+# fit this shape without reproducing all of that by hand.
+internal/core:seedProjectEnvironment	runs inside a nested SAVEPOINT with a documented deadlock-avoidance constraint and a structured non-error return value; not a besteffort.Run shape.
+
+# machine_identities.go's evictMachineIdentityCacheOrFlush: on panic, its
+# recover does MORE than log -- it fails closed by flushing every
+# machine-token cache entry system-wide (c.machineTokenCacheFlusher) when the
+# exact credential hashes can't be determined. besteffort.Run's generic
+# recover has no hook for that fail-closed fallback.
+internal/core:(*KeyorixCore).evictMachineIdentityCacheOrFlush	callee's recover triggers a fail-closed, system-wide cache flush fallback (machine_identities.go); besteffort.Run has no equivalent hook.
+
+# service.go's emitAudit: the single busiest choke point in the system —
+# every c.Log*/writeAuditEvent* call funnels through it (confirmed by
+# TestDirectLogAuditEventCallersAreSafe). Its recover already closes the
+# panic gap, keeps its own specific "SECURITY: failed to persist audit
+# event..." log wording (existing log-based alerting may key off it), and
+# its returned-error branch already deliberately skips the auditForwarder/
+# auditStream side effects on failure — re-deriving that exact control flow
+# through besteffort.Run's generic wrapper is pure churn risk on the hottest
+# path in the codebase for no behavioral gain.
+internal/core:(*KeyorixCore).emitAudit	callee already recovers + has its own specific SECURITY log wording on the hottest path in the system; migrating is pure churn risk for no gain.
+

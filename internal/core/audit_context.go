@@ -24,8 +24,9 @@ package core
 
 import (
 	"context"
-	"log"
 	"sync"
+
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 )
 
 // Actor types stamped on every audit event (ADR-023). They distinguish a human
@@ -177,7 +178,9 @@ func DetachedAuditContext(parent context.Context) context.Context {
 // #481, an unrecovered-coverage gap in the #243 fix). goSafe closes that gap:
 // any panic in fn is recovered and logged instead of taking the server down.
 // This mirrors server/http/handlers' goSafe, duplicated here because that
-// package cannot be imported from internal/core.
+// package cannot be imported from internal/core -- both delegate their
+// actual recover/log/metric logic to besteffort.RunRecover (package
+// besteffort) so that logic itself has one home instead of three.
 // goSafeWG tracks in-flight goSafe goroutines so tests can deterministically wait
 // for detached audit/side-effect writes instead of guessing with a sleep — see
 // DrainBackgroundGoroutines. Mirrors server/http/handlers' identical addition.
@@ -193,11 +196,7 @@ func goSafe(fn func()) {
 	goSafeWG.Add(1)
 	go func() {
 		defer goSafeWG.Done()
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("recovered from panic in background goroutine: %v", r)
-			}
-		}()
+		defer besteffort.RunRecover("core.goSafe")()
 		fn()
 	}()
 }

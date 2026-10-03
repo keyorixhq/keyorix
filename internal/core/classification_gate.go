@@ -33,9 +33,9 @@ package core
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -474,32 +474,28 @@ func (c *KeyorixCore) checkAccessRequestApprovalClockNotRegressed(now time.Time)
 // secret rather than a suggested role (there isn't one on this path).
 func (c *KeyorixCore) notifySecretAccessRequested(ctx context.Context, req *models.AccessRequest, secret *models.SecretNode) {
 	// Best-effort, but called AFTER RequestSecretAccess has already committed
-	// the AccessRequest row — same "best-effort helper masks an
-	// already-successful primary operation" shape evictUserSessionCache
-	// (account.go) guards against, and the identical recover()+SECURITY-log
-	// shape. Without this, a panic in ListProjectMembers propagates past the
-	// already-committed write and the HTTP layer reports the whole request as
-	// failed even though it succeeded (docs/findings/2026-09-24-FINDING-secret-access-request-notify-panic.md).
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("SECURITY: notifySecretAccessRequested panicked for request %d (best-effort, primary operation already succeeded): %v", req.ID, r)
+	// the AccessRequest row — without besteffort.Run's recover, a panic in
+	// ListProjectMembers would propagate past the already-committed write and
+	// the HTTP layer would report the whole request as failed even though it
+	// succeeded (docs/findings/2026-09-24-FINDING-secret-access-request-notify-panic.md).
+	besteffort.Run(ctx, "classification_gate.notifySecretAccessRequested", func() error {
+		members, err := c.storage.ListProjectMembers(ctx, req.ProjectID)
+		if err != nil {
+			return err
 		}
-	}()
-	members, err := c.storage.ListProjectMembers(ctx, req.ProjectID)
-	if err != nil {
-		return
-	}
-	pid := req.ProjectID
-	link := fmt.Sprintf("/projects/%d", req.ProjectID)
-	for _, mbr := range members {
-		if mbr.UserID == req.UserID || !isApproverRole(mbr.RoleName) {
-			continue
+		pid := req.ProjectID
+		link := fmt.Sprintf("/projects/%d", req.ProjectID)
+		for _, mbr := range members {
+			if mbr.UserID == req.UserID || !isApproverRole(mbr.RoleName) {
+				continue
+			}
+			c.notify(ctx, mbr.UserID, NotificationAccessRequested,
+				"New secret access request",
+				fmt.Sprintf("User %d requested access to read secret %q.", req.UserID, secret.Name),
+				&pid, link)
 		}
-		c.notify(ctx, mbr.UserID, NotificationAccessRequested,
-			"New secret access request",
-			fmt.Sprintf("User %d requested access to read secret %q.", req.UserID, secret.Name),
-			&pid, link)
-	}
+		return nil
+	})
 }
 
 // notifySecretAccessResolved tells the requester their secret-scoped request was
