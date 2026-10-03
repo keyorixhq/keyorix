@@ -91,12 +91,22 @@ describe('rbacApi.getGroupSharedSecrets', () => {
 // ── getRoles ──────────────────────────────────────────────────────────────────
 
 describe('rbacApi.getRoles', () => {
-    it('normalizes lowercase field names', async () => {
+    it('passes bypasses_permission_checks through from the server', async () => {
         mocked.get.mockResolvedValueOnce({
             data: {
                 data: [
-                    { id: 1, name: 'admin', description: 'Admins', permissions: [], created_at: '', updated_at: '' },
+                    { id: 1, name: 'super_admin', description: '', bypasses_permission_checks: true, permissions: [] },
                 ],
+            },
+        });
+        const roles = await rbacApi.getRoles();
+        expect(roles[0].bypasses_permission_checks).toBe(true);
+    });
+
+    it('normalizes lowercase field names', async () => {
+        mocked.get.mockResolvedValueOnce({
+            data: {
+                data: [{ id: 1, name: 'admin', description: 'Admins', permissions: [] }],
             },
         });
         const roles = await rbacApi.getRoles();
@@ -108,9 +118,7 @@ describe('rbacApi.getRoles', () => {
         mocked.get.mockResolvedValueOnce({
             data: {
                 data: {
-                    roles: [
-                        { id: 3, name: 'editor', description: '', permissions: [], created_at: '', updated_at: '' },
-                    ],
+                    roles: [{ id: 3, name: 'editor', description: '', permissions: [] }],
                 },
             },
         });
@@ -127,8 +135,6 @@ describe('rbacApi.getRoles', () => {
                         name: 'admin',
                         description: '',
                         permissions: ['secrets.read'],
-                        created_at: '',
-                        updated_at: '',
                     },
                 ],
             },
@@ -139,7 +145,7 @@ describe('rbacApi.getRoles', () => {
 
     it('defaults the resource/action split when a string permission has no dot', async () => {
         mocked.get.mockResolvedValueOnce({
-            data: { data: [{ id: 1, name: 'admin', permissions: ['adminonly'], created_at: '', updated_at: '' }] },
+            data: { data: [{ id: 1, name: 'admin', permissions: ['adminonly'] }] },
         });
         const roles = await rbacApi.getRoles();
         expect(roles[0].permissions[0]).toMatchObject({ name: 'adminonly', resource: 'adminonly', action: '' });
@@ -155,8 +161,6 @@ describe('rbacApi.getRoles', () => {
                         permissions: [
                             { id: 5, name: 'secrets.read', description: 'read', resource: 'secrets', action: 'read' },
                         ],
-                        created_at: '',
-                        updated_at: '',
                     },
                 ],
             },
@@ -180,9 +184,8 @@ describe('rbacApi.getRoles', () => {
             id: 0,
             name: '',
             description: '',
+            bypasses_permission_checks: false,
             permissions: [{ id: 0, name: '', description: '', resource: '', action: '' }],
-            created_at: '',
-            updated_at: '',
         });
     });
 
@@ -205,7 +208,7 @@ describe('rbacApi.getRoles', () => {
 describe('rbacApi.getRole', () => {
     it('fetches and normalizes a single role', async () => {
         mocked.get.mockResolvedValueOnce({
-            data: { data: { id: 5, name: 'ops', description: '', permissions: [], created_at: '', updated_at: '' } },
+            data: { data: { id: 5, name: 'ops', description: '', permissions: [] } },
         });
         const role = await rbacApi.getRole(5);
         expect(role).toMatchObject({ id: 5, name: 'ops' });
