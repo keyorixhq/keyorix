@@ -136,7 +136,7 @@ func (w *writeWorld) runWrites(t *testing.T, clients, perClient int) []writeOutc
 	return out
 }
 
-func summarizeOutcomes(os []writeOutcome) (errs int, firstErr error, p99, max time.Duration) {
+func summarizeOutcomes(os []writeOutcome) (errs int, p99, max time.Duration, firstErr error) {
 	durs := make([]time.Duration, 0, len(os))
 	for _, o := range os {
 		if o.err != nil {
@@ -148,7 +148,7 @@ func summarizeOutcomes(os []writeOutcome) (errs int, firstErr error, p99, max ti
 		durs = append(durs, o.dur)
 	}
 	sort.Slice(durs, func(i, j int) bool { return durs[i] < durs[j] })
-	return errs, firstErr, durs[len(durs)*99/100], durs[len(durs)-1]
+	return errs, durs[len(durs)*99/100], durs[len(durs)-1], firstErr
 }
 
 // TestSQLite_ConcurrentDistinctSecretWrites_SucceedOrFailFast is the #2630 guard
@@ -169,7 +169,7 @@ func TestSQLite_ConcurrentDistinctSecretWrites_SucceedOrFailFast(t *testing.T) {
 	}
 	w := newCompressedWriteWorld(t, true)
 	outcomes := w.runWrites(t, 60, 6)
-	errs, firstErr, p99, max := summarizeOutcomes(outcomes)
+	errs, p99, max, firstErr := summarizeOutcomes(outcomes)
 	t.Logf("gated: ops=%d errors=%d p99=%s max=%s", len(outcomes), errs, p99, max)
 	require.Zero(t, errs, "every write to a distinct secret must succeed; first error: %v", firstErr)
 	// Latency is not bounded by busy_timeout here: creates in one environment
@@ -201,7 +201,7 @@ func TestSQLite_ConcurrentDistinctSecretWrites_UngatedControlFails(t *testing.T)
 	}
 	w := newCompressedWriteWorld(t, false)
 	outcomes := w.runWrites(t, 60, 6)
-	errs, firstErr, p99, max := summarizeOutcomes(outcomes)
+	errs, p99, max, firstErr := summarizeOutcomes(outcomes)
 	t.Logf("ungated control: ops=%d errors=%d (first: %v) p99=%s max=%s", len(outcomes), errs, firstErr, p99, max)
 	require.Positive(t, errs, "control must reproduce SQLITE_BUSY failures without the gate (max=%s)", max)
 	require.Contains(t, firstErr.Error(), "SQLITE_BUSY")

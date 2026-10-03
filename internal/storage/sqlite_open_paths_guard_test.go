@@ -63,8 +63,8 @@ func TestSQLiteOpenPaths_AllGoThroughTheWriteGate(t *testing.T) {
 		if !strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, "_test.go") {
 			return nil
 		}
-		for _, pos := range sqliteOpenCalls(t, path) {
-			found[rel] = append(found[rel], pos)
+		if sites := sqliteOpenCalls(t, path); len(sites) > 0 {
+			found[rel] = append(found[rel], sites...)
 		}
 		return nil
 	})
