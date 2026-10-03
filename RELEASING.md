@@ -8,7 +8,12 @@ tag fires three workflows that publish everything a user consumes.
 1. Make sure `main` is green and `CHANGELOG.md` has an entry for the new version.
 2. (If the chart changed) bump `version`/`appVersion` in
    `deploy/helm/keyorix/Chart.yaml`.
-3. Tag and push:
+3. Bump the image pins in `docker-compose.yml` (`keyorix-server` and `keyorix-web`)
+   to the new version (no leading `v`: release `v0.3.0` -> image `0.3.0`), in the
+   same PR as the `CHANGELOG.md` entry. `go test ./deploy/` (`TestComposeImagePinsMatchLatestRelease`)
+   fails if the pins don't match the newest `## vX.Y.Z` heading in `CHANGELOG.md`.
+   The images only exist once the tag is pushed, so tag right after that PR merges.
+4. Tag and push:
 
    ```sh
    git checkout main && git pull
