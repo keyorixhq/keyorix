@@ -174,6 +174,18 @@ jobs:
       # running them on every push to main is the safer default over
       # silently skipping.
       boot_smoke_relevant: ${{ steps.filter.outputs.boot_smoke_relevant }}
+      # True (POSITIVE match, same shape as boot_smoke_relevant) when this
+      # run could plausibly affect the real-backend web UI smoke
+      # (web-e2e-real-smoke below): web/** (the UI itself) or server/http/**
+      # (the API it actually calls against a real backend -- unlike the
+      # mocked web/e2e suite, this one would catch a contract break there),
+      # or ci.yml itself (same self-skip-proofing reasoning as every other
+      # positive-match output above). Always true for a non-pull_request run
+      # (there is no PR file list to check, and QA-2's own item 5 restricts
+      # web-e2e-real-smoke to pull_request only anyway, so this value is
+      # moot for push/merge_group/dispatch today -- computed the same way
+      # regardless, so it stays correct if that restriction is ever lifted).
+      web_e2e_relevant: ${{ steps.filter.outputs.web_e2e_relevant }}
     steps:
       - name: Detect docs-only / web-only / go-unaffected / operator-only / boot-smoke-relevant changes
         id: filter
@@ -197,6 +209,7 @@ jobs:
             echo "Changed files (merge group):"
             echo "$changed"
             echo "boot_smoke_relevant=true" >> "$GITHUB_OUTPUT"
+            echo "web_e2e_relevant=true" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event_name }}" != "pull_request" ]; then
             {
               echo "docs_only=false"
@@ -204,6 +217,7 @@ jobs:
               echo "go_unaffected=false"
               echo "operator_only=false"
               echo "boot_smoke_relevant=true"
+              echo "web_e2e_relevant=true"
             } >> "$GITHUB_OUTPUT"
             exit 0
           else
@@ -252,6 +266,13 @@ jobs:
             echo "operator_only=false" >> "$GITHUB_OUTPUT"
           else
             echo "operator_only=true" >> "$GITHUB_OUTPUT"
+          fi
+          if echo "$changed" | grep -qx '\.github/workflows/ci\.yml'; then
+            echo "web_e2e_relevant=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$changed" ] && echo "$changed" | grep -qE '^(web/|server/http/)'; then
+            echo "web_e2e_relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "web_e2e_relevant=false" >> "$GITHUB_OUTPUT"
           fi
 
   # web/ (ADR-070) has its own pnpm-workspace.yaml. pnpm resolves its
@@ -1216,6 +1237,86 @@ jobs:
       # docs/TESTING_GUIDE.md "Customer journeys".
       - name: Customer journeys (fast tier)
         run: make e2e-journeys
+
+  # QA-2 session (2026-10): the real-backend web UI smoke
+  # (scripts/e2e/web-real-smoke.sh) previously ran ONLY nightly
+  # (e2e-nightly.yml's e2e-web-smoke job) -- a web/server-http contract
+  # break (the exact #2441/#2442/#2450 bug class) could sit on main for up
+  # to a day before anything caught it. This runs the SAME script on every
+  # PR that touches web/ or server/http/ instead of waiting for nightly.
+  # Deliberately pull_request ONLY, not merge_group: CI runner capacity is
+  # tight (per COMMON-RULES/this session's own brief), and this is strictly
+  # additional signal on top of e2e-nightly's existing, more thorough
+  # (Postgres + upgrade-path + containers) nightly coverage -- a merge_group
+  # re-run of the identical SQLite-only check the PR already passed adds
+  # cost without adding confidence.
+  #
+  # Runtime budget: measured live at ~25s end to end (go build ~11s +
+  # web-real-smoke.sh ~25s including pnpm/playwright) against today's 2 spec
+  # files/1 budget group (scripts/e2e/web-real-smoke.sh's own
+  # MAX_SPECS_PER_GROUP=2 grouping, SESSION-WEB-E2E) -- comfortably inside
+  # the ~10 minute target with real margin for CI-environment overhead
+  # (checkout, dependency install, Playwright browser setup) this local
+  # measurement doesn't include. Each additional group adds roughly another
+  # 20-30s sequentially (this job runs every group in one step, matching how
+  # the nightly e2e-web-smoke job already invokes the same script) -- if the
+  # spec count grows enough to approach the budget (rough rule of thumb:
+  # more than ~15-20 groups), split this into a matrix over groups instead
+  # of adding more sequential time to one job; not done here because it
+  # isn't needed yet and a speculative matrix split today would be
+  # unverifiable complexity against a problem that doesn't exist.
+  web-e2e-real-smoke:
+    needs: [changes]
+    if: github.event_name == 'pull_request' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.operator_only != 'true' && needs.changes.outputs.web_e2e_relevant == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      # --ignore-scripts: same supply-chain rationale as web-ci.yml.
+      - name: Install web dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      # Keyed on the lockfile hash, same cache key shape as e2e-nightly.yml's
+      # own Playwright cache for this exact reason: any dependency bump
+      # (including a Playwright version bump) always changes pnpm-lock.yaml
+      # too, so this is a correct invalidation key, not an approximation.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-${{ runner.os }}-${{ hashFiles('web/pnpm-lock.yaml') }}
+      - name: Install Playwright browser
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        working-directory: web
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Install Playwright OS dependencies (cache hit -- browser binary already present)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        working-directory: web
+        run: pnpm exec playwright install-deps chromium
+      - name: Real-backend web UI smoke
+        run: make e2e-web-smoke
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-e2e-real-smoke-playwright-report
+          path: web/playwright-report/
+          retention-days: 7
 
   lint:
     needs: [changes]
