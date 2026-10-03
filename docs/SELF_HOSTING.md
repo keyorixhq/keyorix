@@ -41,10 +41,17 @@ in is `keyorix-server admin recover-admin` on the server host — and by
 default it also requires this key (`security.recover_admin.keyless_mode` is an
 explicit, less-secure opt-out documented in `configs/keyorix.yaml.tpl`, not the
 default, `security.recover_admin.keyless_mode: true` in server config opts
-out). No key exists until you generate one:
+out). No key exists until you generate one. Like every `keyorix-server admin`
+command except a Postgres backup, it needs the database to itself — it holds
+the exclusive admin lock for the whole rotation, so a concurrent
+`recover-admin` can never see a half-rotated key, and it refuses while the
+server is running. Stop `backend`, run it in a throwaway container, start
+`backend` again (a few seconds of downtime):
 
 ```sh
-docker compose exec backend ./keyorix-server admin recovery-key rotate
+docker compose stop backend
+docker compose run --rm backend ./keyorix-server admin recovery-key rotate
+docker compose start backend
 ```
 
 This prints a 256-bit key **exactly once** — save it somewhere durable and
@@ -82,7 +89,7 @@ Two ways to permanently lose every stored secret:
 
 1. **Changing `KEYORIX_MASTER_PASSWORD`** after first boot. The KEK no longer
    derives, the DEK can't be unwrapped. (To rotate it intentionally, use
-   `keyorix encryption rotate` — see below — never by editing `.env`.)
+   `keyorix-server admin encryption rotate-kek` — never by editing `.env`.)
 2. **Losing the `keyorix_keys` volume.** Back it up (next section).
 
 ### DEK rotation procedure
@@ -92,16 +99,16 @@ To generate a new Data Encryption Key and re-encrypt every secret in the databas
 ```sh
 # 1. Stop the server (rotation acquires an exclusive lock; it refuses if the
 #    server process is running and holding the key lock).
-docker compose stop keyorix
+docker compose stop backend
 
 # 2. Preview what will be re-encrypted — no changes made, no --confirm needed.
-docker compose run --rm keyorix keyorix encryption rotate --dry-run
+docker compose run --rm backend ./keyorix-server admin encryption rotate --dry-run
 
 # 3. Perform the rotation.  --confirm is required (acknowledges write-lock).
-docker compose run --rm keyorix keyorix encryption rotate --confirm
+docker compose run --rm backend ./keyorix-server admin encryption rotate --confirm
 
 # 4. Restart the server.
-docker compose start keyorix
+docker compose start backend
 ```
 
 The rotation re-encrypts all secrets, credentials, and session tokens in a
@@ -134,7 +141,7 @@ unwraps the backed-up DEK).
 this stack is configured for):
 
 ```sh
-docker compose exec backend keyorix-server admin backup --output /tmp/backup.tar.gz
+docker compose exec backend ./keyorix-server admin backup --output /tmp/backup.tar.gz
 docker compose cp backend:/tmp/backup.tar.gz ./keyorix-backup-$(date +%F).tar.gz
 ```
 
@@ -154,7 +161,7 @@ running one):
 ```sh
 docker compose stop backend
 docker compose cp ./keyorix-backup-YYYY-MM-DD.tar.gz backend:/tmp/backup.tar.gz
-docker compose run --rm backend keyorix-server admin restore --input /tmp/backup.tar.gz
+docker compose run --rm backend ./keyorix-server admin restore --input /tmp/backup.tar.gz
 docker compose up -d backend
 ```
 
