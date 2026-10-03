@@ -5,6 +5,19 @@ All notable changes to Keyorix are documented here. This project follows
 
 ## Unreleased
 
+### Security
+- **Every break-glass activation can now be reviewed after the fact**
+  (ADR-112, secure-by-default baseline, break-glass review item 5):
+  `POST /api/v1/projects/{id}/break-glass/{activationId}/review` records who
+  reviewed an activation, when, and a note — exactly once (a second attempt
+  is refused, not a silent overwrite), regardless of whether the activation
+  is still active, expired, or already revoked. Activation itself remains
+  single-person, by design (an emergency path that needs a second person
+  fails exactly when it's needed) — review is a separate, after-the-fact
+  check, not a second approver. A new `break_glass.review_window` setting
+  (default 72h) is how long an activation may go unreviewed before this
+  becomes visible as a deviation in the posture report (a later release).
+
 ## v0.95.3 — 2026-10-01
 
 ### Security

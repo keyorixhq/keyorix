@@ -65,6 +65,12 @@ var ErrWouldStrandLastAdmin = errors.New("refusing to remove the last install ad
 // rather than a generic error.
 var ErrBreakGlassNotActive = errors.New("break-glass activation is not active")
 
+// ErrBreakGlassAlreadyReviewed is returned (wrapped) when
+// ReviewBreakGlassActivation's conditional UPDATE finds reviewed_at already
+// set — either a genuine second review attempt, or two concurrent
+// submissions racing for the same activation (only the first wins).
+var ErrBreakGlassAlreadyReviewed = errors.New("break-glass activation has already been reviewed")
+
 // ErrDuplicateActiveMembership is returned (wrapped) by CreateProjectMembership when the
 // insert collides with the partial unique index on (project_id, user_id) scoped to
 // non-revoked rows. InviteMember's own "no active membership" check races with a

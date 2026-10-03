@@ -905,6 +905,13 @@ Deliberately not RBAC-gated — the point is access the caller does *not* have �
 the controls are: it must be enabled here, every use is justified + audited +
 alerted, the grant expires, and an admin can revoke it early.
 
+`POST …/break-glass/{activationId}/review` (ADR-112 §3) records a separate,
+after-the-fact check — who reviewed it, when, and a note — exactly once per
+activation, regardless of whether it's still active, expired, or already
+revoked. Activation itself stays single-person by design (decided 2026-10-02:
+an emergency path needing a second person fails exactly when it's needed);
+review is not a second approver, it's a record that someone looked.
+
 ```yaml
 break_glass:
   enabled: true
@@ -913,6 +920,8 @@ break_glass:
                                        # is REJECTED at activation time
   default_ttl: "4h"                 # grant lifetime when none is requested
   max_ttl: "24h"                    # ceiling on a requested TTL
+  review_window: "72h"               # how long an activation may go unreviewed
+                                      # before it's a posture-report deviation
 ```
 
 ## dual_control

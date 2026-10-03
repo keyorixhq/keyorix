@@ -485,6 +485,21 @@ type Storage interface {
 	// revoke because of what a clock-derived State happens to read; only an
 	// already-'revoked' row is excluded.
 	RevokeBreakGlassActivation(ctx context.Context, id, revokedBy, revokedByMachineID uint, revokedAt time.Time) error
+	// ReviewBreakGlassActivation (ADR-112 §3, break-glass review item 5)
+	// atomically records a post-activation review -- reviewer, when, and an
+	// optional note -- via a single conditional UPDATE guarded on
+	// reviewed_at IS NULL, the same shape as RevokeBreakGlassActivation's
+	// guard, so two concurrent review submissions for the same activation
+	// cannot both "win": only the first is recorded, the second gets
+	// ErrBreakGlassAlreadyReviewed. Allowed regardless of the activation's
+	// active/expired/revoked state -- a review is a record about what
+	// happened, not a control over whether the grant is still live.
+	ReviewBreakGlassActivation(ctx context.Context, id, reviewerID uint, note string, reviewedAt time.Time) error
+	// ListUnreviewedBreakGlassActivationsBefore returns every activation
+	// (across all projects) with reviewed_at still NULL and created_at at or
+	// before cutoff -- the posture report's (item 4) source for "open
+	// break-glass activations without review."
+	ListUnreviewedBreakGlassActivationsBefore(ctx context.Context, cutoff time.Time) ([]*models.BreakGlassActivation, error)
 	// Machine identities (ADR-023) — non-human project members.
 	CreateMachineIdentity(ctx context.Context, m *models.MachineIdentity) (*models.MachineIdentity, error)
 	GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error)
