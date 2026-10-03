@@ -7857,6 +7857,7 @@ components:
       type: object
       description: One entry in a secret's effective access list (owner, direct share, or group share).
       properties:
+        user_id: {type: integer}
         username: {type: string}
         permission: {type: string}
         source: {type: string, description: "How access was granted: owner, direct share, or group share."}
@@ -8155,16 +8156,20 @@ components:
         notify_on_breach: {type: boolean}
         is_active: {type: boolean}
         created_by: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
     RotationPolicyEvaluation:
       type: object
       description: >-
         One policy-covered secret's rotation posture, as returned by
         GET /api/v1/rotation-policies/evaluate (ADR-108 PR 1 addition).
       properties:
+        policy_id: {type: integer, format: uint32}
         policy_name: {type: string}
         secret_id: {type: integer, format: uint32}
         secret_name: {type: string}
         project_id: {type: integer, format: uint32}
+        last_rotated_at: {type: string, format: date-time, nullable: true}
         days_overdue: {type: integer}
         is_overdue: {type: boolean}
         is_approaching: {type: boolean}
