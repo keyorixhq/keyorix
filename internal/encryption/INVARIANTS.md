@@ -156,5 +156,18 @@ Format: `INV-ENCRYPTION-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#is
   genuinely absent).
 - **INV-ENCRYPTION-27** The TPM 2.0 KEK provider (tier 2) seals the KEK to the specific TPM —
   it must not unseal on different hardware. Why: ADR-038 tier-2,
-  `internal/crypto/tpm_provider.go`. UNGUARDED pending a located test in this pass (#issue:
-  confirm/cite coverage of the seal-is-hardware-bound property).
+  `internal/crypto/tpm_provider.go`. Guard (all in `internal/crypto`, against the go-tpm-tools
+  in-process simulator, where "different hardware" is a simulator with a different seed):
+  `tpm_provider_test.go:TestTPMKeyProvider_DifferentTPMCannotUnseal`, and
+  `tpm_binding_test.go` — `TestTPMBinding_BlobCopiedToOtherHostDoesNotUnseal` (a copied blob
+  fails on six other TPMs, never silently re-seals, still unseals on the sealing TPM),
+  `TestTPMBinding_DiskBlobDoesNotContainKEK` (no raw/base64/hex KEK in the file),
+  `TestTPMBinding_TamperedPrivateDoesNotUnseal`, and `TestTPMSeal_ObjectIsFixedToTPMAndParent`
+  (the sealed object carries `FixedTPM`+`FixedParent`, so a real TPM refuses to duplicate it to
+  other hardware). **Gap, not automatable in CI today:** CI has no physical TPM, so the
+  device-open path (`transport.OpenTPM`) and a real chip's enforcement of `FixedTPM`/
+  `FixedParent` are not exercised; the tests check that the provider requests that enforcement,
+  not that a chip performs it. Manual check on TPM hardware: seal on host A, copy the blob to
+  host B, confirm `KEK()` fails with "unseal failed" and the blob is unchanged. Also not
+  covered by design: no PCR policy is enforced (see the `tpm_provider.go` package doc), so the
+  seal is bound to the chip, not to a boot state (#2514).
