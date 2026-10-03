@@ -196,13 +196,6 @@ func fetchRunSecrets(ctx context.Context, client *apiclient.ClientWithResponses,
 	return result, nil
 }
 
-func derefProjectSummarySlice[T any](s *[]T) []T {
-	if s == nil {
-		return nil
-	}
-	return *s
-}
-
 func derefEnvironmentSlice(s *[]apiclient.Environment) []apiclient.Environment {
 	if s == nil {
 		return nil

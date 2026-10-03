@@ -188,15 +188,6 @@ func listProjects(ctx context.Context, client *apiclient.ClientWithResponses) ([
 	return data.Projects, nil
 }
 
-func findProjectByName(projects []projectListItem, name string) (projectListItem, bool) {
-	for _, p := range projects {
-		if strings.EqualFold(p.Name, name) {
-			return p, true
-		}
-	}
-	return projectListItem{}, false
-}
-
 func printProjects(projects []projectListItem) {
 	if len(projects) == 0 {
 		fmt.Println("No projects found.")
