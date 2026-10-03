@@ -15,7 +15,7 @@ import {
 } from '../../features/projects/api';
 import { CampaignProgress, AccessReviewItem } from '../../services/projects';
 import { apiClient } from '../../services/client';
-import { triggerBlobDownload } from '../../utils';
+import { triggerBlobDownload, parseServerDate } from '../../utils';
 
 interface Props {
     projectId: number;
@@ -29,7 +29,7 @@ export const lastUsedInfo = (e: {
 }): { label: string; dormant: boolean } => {
     if (e.principalType !== 'user') return { label: '', dormant: false };
     if (!e.lastUsedAt) return { label: 'never used', dormant: true };
-    const days = Math.floor((Date.now() - new Date(e.lastUsedAt).getTime()) / 86_400_000);
+    const days = Math.floor((Date.now() - parseServerDate(e.lastUsedAt).getTime()) / 86_400_000);
     return { label: days <= 0 ? 'used today' : `used ${days}d ago`, dormant: days >= 90 };
 };
 
