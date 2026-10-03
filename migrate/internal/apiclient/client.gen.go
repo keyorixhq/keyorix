@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/oapi-codegen/runtime"
 )
@@ -112,6 +113,54 @@ type ClientInterface interface {
 	CreateProjectEnvironmentWithBody(ctx context.Context, id uint32, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	CreateProjectEnvironment(ctx context.Context, id uint32, body CreateProjectEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListMachineIdentities request
+	ListMachineIdentities(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateMachineIdentityWithBody request with any body
+	CreateMachineIdentityWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateMachineIdentity(ctx context.Context, id int, body CreateMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// TransitionMachineIdentityWithBody request with any body
+	TransitionMachineIdentityWithBody(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	TransitionMachineIdentity(ctx context.Context, id int, machineId int, body TransitionMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListOIDCBindings request
+	ListOIDCBindings(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateOIDCBindingWithBody request with any body
+	CreateOIDCBindingWithBody(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateOIDCBinding(ctx context.Context, id int, machineId int, body CreateOIDCBindingJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListMachineRoles request
+	ListMachineRoles(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GrantMachineRoleWithBody request with any body
+	GrantMachineRoleWithBody(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	GrantMachineRole(ctx context.Context, id int, machineId int, body GrantMachineRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListMachineTokens request
+	ListMachineTokens(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IssueMachineTokenWithBody request with any body
+	IssueMachineTokenWithBody(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	IssueMachineToken(ctx context.Context, id int, machineId int, body IssueMachineTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListRoles request
+	ListRoles(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateRoleWithBody request with any body
+	CreateRoleWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateRole(ctx context.Context, body CreateRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetRoleByName request
+	GetRoleByName(ctx context.Context, params *GetRoleByNameParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSecrets request
 	ListSecrets(ctx context.Context, params *ListSecretsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -237,6 +286,222 @@ func (c *Client) CreateProjectEnvironmentWithBody(ctx context.Context, id uint32
 
 func (c *Client) CreateProjectEnvironment(ctx context.Context, id uint32, body CreateProjectEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateProjectEnvironmentRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListMachineIdentities(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListMachineIdentitiesRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateMachineIdentityWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateMachineIdentityRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateMachineIdentity(ctx context.Context, id int, body CreateMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateMachineIdentityRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) TransitionMachineIdentityWithBody(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTransitionMachineIdentityRequestWithBody(c.Server, id, machineId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) TransitionMachineIdentity(ctx context.Context, id int, machineId int, body TransitionMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTransitionMachineIdentityRequest(c.Server, id, machineId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListOIDCBindings(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListOIDCBindingsRequest(c.Server, id, machineId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateOIDCBindingWithBody(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateOIDCBindingRequestWithBody(c.Server, id, machineId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateOIDCBinding(ctx context.Context, id int, machineId int, body CreateOIDCBindingJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateOIDCBindingRequest(c.Server, id, machineId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListMachineRoles(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListMachineRolesRequest(c.Server, id, machineId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GrantMachineRoleWithBody(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGrantMachineRoleRequestWithBody(c.Server, id, machineId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GrantMachineRole(ctx context.Context, id int, machineId int, body GrantMachineRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGrantMachineRoleRequest(c.Server, id, machineId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListMachineTokens(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListMachineTokensRequest(c.Server, id, machineId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) IssueMachineTokenWithBody(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIssueMachineTokenRequestWithBody(c.Server, id, machineId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) IssueMachineToken(ctx context.Context, id int, machineId int, body IssueMachineTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIssueMachineTokenRequest(c.Server, id, machineId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListRoles(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListRolesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateRoleWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateRoleRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateRole(ctx context.Context, body CreateRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateRoleRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetRoleByName(ctx context.Context, params *GetRoleByNameParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetRoleByNameRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -610,6 +875,538 @@ func NewCreateProjectEnvironmentRequestWithBody(server string, id uint32, conten
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListMachineIdentitiesRequest generates requests for ListMachineIdentities
+func NewListMachineIdentitiesRequest(server string, id int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateMachineIdentityRequest calls the generic CreateMachineIdentity builder with application/json body
+func NewCreateMachineIdentityRequest(server string, id int, body CreateMachineIdentityJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateMachineIdentityRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewCreateMachineIdentityRequestWithBody generates requests for CreateMachineIdentity with any type of body
+func NewCreateMachineIdentityRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewTransitionMachineIdentityRequest calls the generic TransitionMachineIdentity builder with application/json body
+func NewTransitionMachineIdentityRequest(server string, id int, machineId int, body TransitionMachineIdentityJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewTransitionMachineIdentityRequestWithBody(server, id, machineId, "application/json", bodyReader)
+}
+
+// NewTransitionMachineIdentityRequestWithBody generates requests for TransitionMachineIdentity with any type of body
+func NewTransitionMachineIdentityRequestWithBody(server string, id int, machineId int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "machineId", runtime.ParamLocationPath, machineId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListOIDCBindingsRequest generates requests for ListOIDCBindings
+func NewListOIDCBindingsRequest(server string, id int, machineId int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "machineId", runtime.ParamLocationPath, machineId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities/%s/oidc-bindings", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateOIDCBindingRequest calls the generic CreateOIDCBinding builder with application/json body
+func NewCreateOIDCBindingRequest(server string, id int, machineId int, body CreateOIDCBindingJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateOIDCBindingRequestWithBody(server, id, machineId, "application/json", bodyReader)
+}
+
+// NewCreateOIDCBindingRequestWithBody generates requests for CreateOIDCBinding with any type of body
+func NewCreateOIDCBindingRequestWithBody(server string, id int, machineId int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "machineId", runtime.ParamLocationPath, machineId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities/%s/oidc-bindings", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListMachineRolesRequest generates requests for ListMachineRoles
+func NewListMachineRolesRequest(server string, id int, machineId int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "machineId", runtime.ParamLocationPath, machineId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities/%s/roles", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGrantMachineRoleRequest calls the generic GrantMachineRole builder with application/json body
+func NewGrantMachineRoleRequest(server string, id int, machineId int, body GrantMachineRoleJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewGrantMachineRoleRequestWithBody(server, id, machineId, "application/json", bodyReader)
+}
+
+// NewGrantMachineRoleRequestWithBody generates requests for GrantMachineRole with any type of body
+func NewGrantMachineRoleRequestWithBody(server string, id int, machineId int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "machineId", runtime.ParamLocationPath, machineId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities/%s/roles", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListMachineTokensRequest generates requests for ListMachineTokens
+func NewListMachineTokensRequest(server string, id int, machineId int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "machineId", runtime.ParamLocationPath, machineId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities/%s/tokens", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewIssueMachineTokenRequest calls the generic IssueMachineToken builder with application/json body
+func NewIssueMachineTokenRequest(server string, id int, machineId int, body IssueMachineTokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIssueMachineTokenRequestWithBody(server, id, machineId, "application/json", bodyReader)
+}
+
+// NewIssueMachineTokenRequestWithBody generates requests for IssueMachineToken with any type of body
+func NewIssueMachineTokenRequestWithBody(server string, id int, machineId int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "machineId", runtime.ParamLocationPath, machineId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/projects/%s/machine-identities/%s/tokens", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListRolesRequest generates requests for ListRoles
+func NewListRolesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/roles")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateRoleRequest calls the generic CreateRole builder with application/json body
+func NewCreateRoleRequest(server string, body CreateRoleJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateRoleRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateRoleRequestWithBody generates requests for CreateRole with any type of body
+func NewCreateRoleRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/roles")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetRoleByNameRequest generates requests for GetRoleByName
+func NewGetRoleByNameRequest(server string, params *GetRoleByNameParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/roles/by-name")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "name", runtime.ParamLocationQuery, params.Name); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -1147,6 +1944,54 @@ type ClientWithResponsesInterface interface {
 
 	CreateProjectEnvironmentWithResponse(ctx context.Context, id uint32, body CreateProjectEnvironmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateProjectEnvironmentResponse, error)
 
+	// ListMachineIdentitiesWithResponse request
+	ListMachineIdentitiesWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ListMachineIdentitiesResponse, error)
+
+	// CreateMachineIdentityWithBodyWithResponse request with any body
+	CreateMachineIdentityWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateMachineIdentityResponse, error)
+
+	CreateMachineIdentityWithResponse(ctx context.Context, id int, body CreateMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMachineIdentityResponse, error)
+
+	// TransitionMachineIdentityWithBodyWithResponse request with any body
+	TransitionMachineIdentityWithBodyWithResponse(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TransitionMachineIdentityResponse, error)
+
+	TransitionMachineIdentityWithResponse(ctx context.Context, id int, machineId int, body TransitionMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*TransitionMachineIdentityResponse, error)
+
+	// ListOIDCBindingsWithResponse request
+	ListOIDCBindingsWithResponse(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*ListOIDCBindingsResponse, error)
+
+	// CreateOIDCBindingWithBodyWithResponse request with any body
+	CreateOIDCBindingWithBodyWithResponse(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateOIDCBindingResponse, error)
+
+	CreateOIDCBindingWithResponse(ctx context.Context, id int, machineId int, body CreateOIDCBindingJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOIDCBindingResponse, error)
+
+	// ListMachineRolesWithResponse request
+	ListMachineRolesWithResponse(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*ListMachineRolesResponse, error)
+
+	// GrantMachineRoleWithBodyWithResponse request with any body
+	GrantMachineRoleWithBodyWithResponse(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GrantMachineRoleResponse, error)
+
+	GrantMachineRoleWithResponse(ctx context.Context, id int, machineId int, body GrantMachineRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*GrantMachineRoleResponse, error)
+
+	// ListMachineTokensWithResponse request
+	ListMachineTokensWithResponse(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*ListMachineTokensResponse, error)
+
+	// IssueMachineTokenWithBodyWithResponse request with any body
+	IssueMachineTokenWithBodyWithResponse(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueMachineTokenResponse, error)
+
+	IssueMachineTokenWithResponse(ctx context.Context, id int, machineId int, body IssueMachineTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueMachineTokenResponse, error)
+
+	// ListRolesWithResponse request
+	ListRolesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListRolesResponse, error)
+
+	// CreateRoleWithBodyWithResponse request with any body
+	CreateRoleWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateRoleResponse, error)
+
+	CreateRoleWithResponse(ctx context.Context, body CreateRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRoleResponse, error)
+
+	// GetRoleByNameWithResponse request
+	GetRoleByNameWithResponse(ctx context.Context, params *GetRoleByNameParams, reqEditors ...RequestEditorFn) (*GetRoleByNameResponse, error)
+
 	// ListSecretsWithResponse request
 	ListSecretsWithResponse(ctx context.Context, params *ListSecretsParams, reqEditors ...RequestEditorFn) (*ListSecretsResponse, error)
 
@@ -1262,8 +2107,12 @@ func (r ListProjectsResponse) StatusCode() int {
 type CreateProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON401      *Error
+	JSON201      *struct {
+		// Data A project. Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's projectWire) -- internal/storage/models.Project itself carries no `json:` tags and is never serialized directly.
+		Data *Project `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -1313,8 +2162,12 @@ func (r ListProjectEnvironmentsResponse) StatusCode() int {
 type CreateProjectEnvironmentResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON401      *Error
+	JSON201      *struct {
+		// Data A project environment. Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's environmentWire) -- internal/storage/models.Environment itself carries no `json:` tags and is never serialized directly.
+		Data *Environment `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -1327,6 +2180,359 @@ func (r CreateProjectEnvironmentResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r CreateProjectEnvironmentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListMachineIdentitiesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			MachineIdentities *[]MachineIdentity `json:"machine_identities,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListMachineIdentitiesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListMachineIdentitiesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreateMachineIdentityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *struct {
+		Data *struct {
+			// MachineIdentity A project-scoped machine identity (ADR-023).
+			MachineIdentity *MachineIdentity `json:"machine_identity,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateMachineIdentityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateMachineIdentityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type TransitionMachineIdentityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON401      *Error
+	JSON403      *Error
+	JSON404      *Error
+	JSON409      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r TransitionMachineIdentityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r TransitionMachineIdentityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListOIDCBindingsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			Bindings *[]OIDCBinding `json:"bindings,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListOIDCBindingsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListOIDCBindingsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreateOIDCBindingResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *struct {
+		// Data An OIDC federation binding (ADR-031) mapping an external (issuer, subject) to a machine identity.
+		Data *OIDCBinding `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
+	JSON409 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateOIDCBindingResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateOIDCBindingResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListMachineRolesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			Roles *[]RoleRef `json:"roles,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListMachineRolesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListMachineRolesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GrantMachineRoleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON401      *Error
+	JSON403      *Error
+	JSON404      *Error
+	JSON409      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GrantMachineRoleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GrantMachineRoleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListMachineTokensResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			Tokens *[]MachineToken `json:"tokens,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListMachineTokensResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListMachineTokensResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type IssueMachineTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *struct {
+		Data *struct {
+			ExpiresAt *time.Time `json:"expires_at"`
+			Id        *int       `json:"id,omitempty"`
+			Prefix    *string    `json:"prefix,omitempty"`
+
+			// Token Plaintext token, shown only in this response
+			Token *string `json:"token,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
+	JSON404 *Error
+	JSON409 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r IssueMachineTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IssueMachineTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListRolesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			Roles *[]RoleWithPermissions `json:"roles,omitempty"`
+			Total *int                   `json:"total,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON401 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListRolesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListRolesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreateRoleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *struct {
+		Data *struct {
+			Permissions *[]Permission `json:"permissions,omitempty"`
+
+			// Role A role (internal/storage/models.Role), via the handler-level roleWire type (server/http/handlers/rbac_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
+			Role *Role `json:"role,omitempty"`
+		} `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON409 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateRoleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateRoleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetRoleByNameResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		// Data A role (internal/storage/models.Role), via the handler-level roleWire type (server/http/handlers/rbac_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
+		Data *Role `json:"data,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON404 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetRoleByNameResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetRoleByNameResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -1370,7 +2576,7 @@ type CreateSecretResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON201      *struct {
-		// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
+		// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
 		Data *Secret `json:"data,omitempty"`
 	}
 	JSON400 *Error
@@ -1398,7 +2604,7 @@ type GetSecretByNameResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *struct {
-		// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
+		// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
 		Data *Secret `json:"data,omitempty"`
 	}
 	JSON400 *Error
@@ -1481,7 +2687,7 @@ type UpdateSecretResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *struct {
-		// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
+		// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
 		Data *Secret `json:"data,omitempty"`
 	}
 	JSON400 *Error
@@ -1607,6 +2813,162 @@ func (c *ClientWithResponses) CreateProjectEnvironmentWithResponse(ctx context.C
 		return nil, err
 	}
 	return ParseCreateProjectEnvironmentResponse(rsp)
+}
+
+// ListMachineIdentitiesWithResponse request returning *ListMachineIdentitiesResponse
+func (c *ClientWithResponses) ListMachineIdentitiesWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ListMachineIdentitiesResponse, error) {
+	rsp, err := c.ListMachineIdentities(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListMachineIdentitiesResponse(rsp)
+}
+
+// CreateMachineIdentityWithBodyWithResponse request with arbitrary body returning *CreateMachineIdentityResponse
+func (c *ClientWithResponses) CreateMachineIdentityWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateMachineIdentityResponse, error) {
+	rsp, err := c.CreateMachineIdentityWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateMachineIdentityResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateMachineIdentityWithResponse(ctx context.Context, id int, body CreateMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMachineIdentityResponse, error) {
+	rsp, err := c.CreateMachineIdentity(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateMachineIdentityResponse(rsp)
+}
+
+// TransitionMachineIdentityWithBodyWithResponse request with arbitrary body returning *TransitionMachineIdentityResponse
+func (c *ClientWithResponses) TransitionMachineIdentityWithBodyWithResponse(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TransitionMachineIdentityResponse, error) {
+	rsp, err := c.TransitionMachineIdentityWithBody(ctx, id, machineId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTransitionMachineIdentityResponse(rsp)
+}
+
+func (c *ClientWithResponses) TransitionMachineIdentityWithResponse(ctx context.Context, id int, machineId int, body TransitionMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*TransitionMachineIdentityResponse, error) {
+	rsp, err := c.TransitionMachineIdentity(ctx, id, machineId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTransitionMachineIdentityResponse(rsp)
+}
+
+// ListOIDCBindingsWithResponse request returning *ListOIDCBindingsResponse
+func (c *ClientWithResponses) ListOIDCBindingsWithResponse(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*ListOIDCBindingsResponse, error) {
+	rsp, err := c.ListOIDCBindings(ctx, id, machineId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListOIDCBindingsResponse(rsp)
+}
+
+// CreateOIDCBindingWithBodyWithResponse request with arbitrary body returning *CreateOIDCBindingResponse
+func (c *ClientWithResponses) CreateOIDCBindingWithBodyWithResponse(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateOIDCBindingResponse, error) {
+	rsp, err := c.CreateOIDCBindingWithBody(ctx, id, machineId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateOIDCBindingResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateOIDCBindingWithResponse(ctx context.Context, id int, machineId int, body CreateOIDCBindingJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOIDCBindingResponse, error) {
+	rsp, err := c.CreateOIDCBinding(ctx, id, machineId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateOIDCBindingResponse(rsp)
+}
+
+// ListMachineRolesWithResponse request returning *ListMachineRolesResponse
+func (c *ClientWithResponses) ListMachineRolesWithResponse(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*ListMachineRolesResponse, error) {
+	rsp, err := c.ListMachineRoles(ctx, id, machineId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListMachineRolesResponse(rsp)
+}
+
+// GrantMachineRoleWithBodyWithResponse request with arbitrary body returning *GrantMachineRoleResponse
+func (c *ClientWithResponses) GrantMachineRoleWithBodyWithResponse(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GrantMachineRoleResponse, error) {
+	rsp, err := c.GrantMachineRoleWithBody(ctx, id, machineId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGrantMachineRoleResponse(rsp)
+}
+
+func (c *ClientWithResponses) GrantMachineRoleWithResponse(ctx context.Context, id int, machineId int, body GrantMachineRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*GrantMachineRoleResponse, error) {
+	rsp, err := c.GrantMachineRole(ctx, id, machineId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGrantMachineRoleResponse(rsp)
+}
+
+// ListMachineTokensWithResponse request returning *ListMachineTokensResponse
+func (c *ClientWithResponses) ListMachineTokensWithResponse(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*ListMachineTokensResponse, error) {
+	rsp, err := c.ListMachineTokens(ctx, id, machineId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListMachineTokensResponse(rsp)
+}
+
+// IssueMachineTokenWithBodyWithResponse request with arbitrary body returning *IssueMachineTokenResponse
+func (c *ClientWithResponses) IssueMachineTokenWithBodyWithResponse(ctx context.Context, id int, machineId int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueMachineTokenResponse, error) {
+	rsp, err := c.IssueMachineTokenWithBody(ctx, id, machineId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIssueMachineTokenResponse(rsp)
+}
+
+func (c *ClientWithResponses) IssueMachineTokenWithResponse(ctx context.Context, id int, machineId int, body IssueMachineTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueMachineTokenResponse, error) {
+	rsp, err := c.IssueMachineToken(ctx, id, machineId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIssueMachineTokenResponse(rsp)
+}
+
+// ListRolesWithResponse request returning *ListRolesResponse
+func (c *ClientWithResponses) ListRolesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListRolesResponse, error) {
+	rsp, err := c.ListRoles(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListRolesResponse(rsp)
+}
+
+// CreateRoleWithBodyWithResponse request with arbitrary body returning *CreateRoleResponse
+func (c *ClientWithResponses) CreateRoleWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateRoleResponse, error) {
+	rsp, err := c.CreateRoleWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateRoleResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateRoleWithResponse(ctx context.Context, body CreateRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRoleResponse, error) {
+	rsp, err := c.CreateRole(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateRoleResponse(rsp)
+}
+
+// GetRoleByNameWithResponse request returning *GetRoleByNameResponse
+func (c *ClientWithResponses) GetRoleByNameWithResponse(ctx context.Context, params *GetRoleByNameParams, reqEditors ...RequestEditorFn) (*GetRoleByNameResponse, error) {
+	rsp, err := c.GetRoleByName(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetRoleByNameResponse(rsp)
 }
 
 // ListSecretsWithResponse request returning *ListSecretsResponse
@@ -1812,6 +3174,16 @@ func ParseCreateProjectResponse(rsp *http.Response) (*CreateProjectResponse, err
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			// Data A project. Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's projectWire) -- internal/storage/models.Project itself carries no `json:` tags and is never serialized directly.
+			Data *Project `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -1889,6 +3261,16 @@ func ParseCreateProjectEnvironmentResponse(rsp *http.Response) (*CreateProjectEn
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			// Data A project environment. Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's environmentWire) -- internal/storage/models.Environment itself carries no `json:` tags and is never serialized directly.
+			Data *Environment `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -1902,6 +3284,653 @@ func ParseCreateProjectEnvironmentResponse(rsp *http.Response) (*CreateProjectEn
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListMachineIdentitiesResponse parses an HTTP response from a ListMachineIdentitiesWithResponse call
+func ParseListMachineIdentitiesResponse(rsp *http.Response) (*ListMachineIdentitiesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListMachineIdentitiesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				MachineIdentities *[]MachineIdentity `json:"machine_identities,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateMachineIdentityResponse parses an HTTP response from a CreateMachineIdentityWithResponse call
+func ParseCreateMachineIdentityResponse(rsp *http.Response) (*CreateMachineIdentityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateMachineIdentityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			Data *struct {
+				// MachineIdentity A project-scoped machine identity (ADR-023).
+				MachineIdentity *MachineIdentity `json:"machine_identity,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseTransitionMachineIdentityResponse parses an HTTP response from a TransitionMachineIdentityWithResponse call
+func ParseTransitionMachineIdentityResponse(rsp *http.Response) (*TransitionMachineIdentityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &TransitionMachineIdentityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListOIDCBindingsResponse parses an HTTP response from a ListOIDCBindingsWithResponse call
+func ParseListOIDCBindingsResponse(rsp *http.Response) (*ListOIDCBindingsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListOIDCBindingsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				Bindings *[]OIDCBinding `json:"bindings,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateOIDCBindingResponse parses an HTTP response from a CreateOIDCBindingWithResponse call
+func ParseCreateOIDCBindingResponse(rsp *http.Response) (*CreateOIDCBindingResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateOIDCBindingResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			// Data An OIDC federation binding (ADR-031) mapping an external (issuer, subject) to a machine identity.
+			Data *OIDCBinding `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListMachineRolesResponse parses an HTTP response from a ListMachineRolesWithResponse call
+func ParseListMachineRolesResponse(rsp *http.Response) (*ListMachineRolesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListMachineRolesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				Roles *[]RoleRef `json:"roles,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGrantMachineRoleResponse parses an HTTP response from a GrantMachineRoleWithResponse call
+func ParseGrantMachineRoleResponse(rsp *http.Response) (*GrantMachineRoleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GrantMachineRoleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListMachineTokensResponse parses an HTTP response from a ListMachineTokensWithResponse call
+func ParseListMachineTokensResponse(rsp *http.Response) (*ListMachineTokensResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListMachineTokensResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				Tokens *[]MachineToken `json:"tokens,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseIssueMachineTokenResponse parses an HTTP response from a IssueMachineTokenWithResponse call
+func ParseIssueMachineTokenResponse(rsp *http.Response) (*IssueMachineTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IssueMachineTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			Data *struct {
+				ExpiresAt *time.Time `json:"expires_at"`
+				Id        *int       `json:"id,omitempty"`
+				Prefix    *string    `json:"prefix,omitempty"`
+
+				// Token Plaintext token, shown only in this response
+				Token *string `json:"token,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListRolesResponse parses an HTTP response from a ListRolesWithResponse call
+func ParseListRolesResponse(rsp *http.Response) (*ListRolesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListRolesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				Roles *[]RoleWithPermissions `json:"roles,omitempty"`
+				Total *int                   `json:"total,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateRoleResponse parses an HTTP response from a CreateRoleWithResponse call
+func ParseCreateRoleResponse(rsp *http.Response) (*CreateRoleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateRoleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			Data *struct {
+				Permissions *[]Permission `json:"permissions,omitempty"`
+
+				// Role A role (internal/storage/models.Role), via the handler-level roleWire type (server/http/handlers/rbac_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
+				Role *Role `json:"role,omitempty"`
+			} `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetRoleByNameResponse parses an HTTP response from a GetRoleByNameWithResponse call
+func ParseGetRoleByNameResponse(rsp *http.Response) (*GetRoleByNameResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetRoleByNameResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			// Data A role (internal/storage/models.Role), via the handler-level roleWire type (server/http/handlers/rbac_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
+			Data *Role `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	}
 
@@ -1979,7 +4008,7 @@ func ParseCreateSecretResponse(rsp *http.Response) (*CreateSecretResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
 		var dest struct {
-			// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
+			// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
 			Data *Secret `json:"data,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2029,7 +4058,7 @@ func ParseGetSecretByNameResponse(rsp *http.Response) (*GetSecretByNameResponse,
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest struct {
-			// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
+			// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
 			Data *Secret `json:"data,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2190,7 +4219,7 @@ func ParseUpdateSecretResponse(rsp *http.Response) (*UpdateSecretResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest struct {
-			// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
+			// Data A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
 			Data *Secret `json:"data,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

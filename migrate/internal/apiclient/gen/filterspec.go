@@ -32,6 +32,18 @@ var keptPaths = []string{
 	// valid, not near expiry, and scoped to write in the target project/environment, before
 	// any Vault traffic or Keyorix write happens.
 	"/api/v1/auth/tokens",
+	// ADR-114 (Vault access-model migration): `vault plan-access`/`vault apply-access` need
+	// to look up, and later create, roles and machine identities (+ their role grants and
+	// OIDC bindings). Added together, covering both the read-only plan command and the
+	// write-executing apply command, so this module's generated client is regenerated once
+	// for both PRs rather than twice for the same path set.
+	"/api/v1/roles",
+	"/api/v1/roles/by-name",
+	"/api/v1/projects/{id}/machine-identities",
+	"/api/v1/projects/{id}/machine-identities/{machineId}",
+	"/api/v1/projects/{id}/machine-identities/{machineId}/tokens",
+	"/api/v1/projects/{id}/machine-identities/{machineId}/roles",
+	"/api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings",
 }
 
 func main() {
