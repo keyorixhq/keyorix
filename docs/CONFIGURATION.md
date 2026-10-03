@@ -314,6 +314,19 @@ deprecated alias that also warns when used. A start-to-start diff audits any
 security-relevant setting that changes between two starts of the same
 deployment.
 
+**`keyorix-server admin validate --posture`** (ADR-112 §4) reports every
+secure-baseline deviation in one place instead of warnings scattered across
+separate start-up log lines, and exits non-zero if any is found: an
+`insecure_` setting in effect, `enable_file_permission_check` disabled, a real
+file-permission/encryption/database problem, an incomplete or
+mixed-generation key-file set, a cleartext listener contradicting
+`require_transport_tls`, an admin without MFA or a passkey, and a break-glass
+activation past `review_window` with no review. A setting still awaiting a
+product decision (see the registry's own `NEEDS ANDREI` entries) and a
+grace-period setting that's merely relying on its new implicit default are
+reported for visibility but never counted toward the exit code — a default
+install reports zero.
+
 With `require_mfa: true` (the default), an interactive (session-authenticated) user
 **without** a second factor is confined to the MFA-enrolment endpoints until they
 enrol. A TOTP secret **or** a passkey satisfies it. Non-interactive credentials —

@@ -40,9 +40,6 @@ func runAdminValidate(cmd *cobra.Command, args []string) error { // NOSONAR -- c
 		configPath = config.ResolvedPath("")
 	}
 
-	fmt.Println("Validating Keyorix System")
-	fmt.Println("=========================")
-
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		fmt.Printf("Config file not found: %s\n", configPath)
 		fmt.Println("Run 'keyorix-server admin init' to create the configuration")
@@ -61,6 +58,17 @@ func runAdminValidate(cmd *cobra.Command, args []string) error { // NOSONAR -- c
 		return err
 	}
 	defer lock.Release() //nolint:errcheck
+
+	// --posture reports ADR-112 secure-baseline deviations instead of running
+	// the ordinary config/permissions/encryption/database validation below —
+	// a distinct report shape (named deviations + exit code), not an addition
+	// to the one above.
+	if postureFlag {
+		return runAdminValidatePosture(cfg)
+	}
+
+	fmt.Println("Validating Keyorix System")
+	fmt.Println("=========================")
 
 	// fixIssues (--fix) is read here and forwarded explicitly, so the flag
 	// actually drives remediation instead of silently depending on the

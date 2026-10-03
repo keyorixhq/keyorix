@@ -65,7 +65,7 @@ All notable changes to Keyorix are documented here. This project follows
   fails exactly when it's needed) — review is a separate, after-the-fact
   check, not a second approver. A new `break_glass.review_window` setting
   (default 72h) is how long an activation may go unreviewed before this
-  becomes visible as a deviation in the posture report (a later release).
+  becomes visible as a deviation in the posture report below.
 - **The server now refuses to start if its key files are an incomplete or
   mixed-generation set** (ADR-112, follow-up from #2400). #2400 made a
   single restore operation atomic (every file in a key-material set is
@@ -82,6 +82,24 @@ All notable changes to Keyorix are documented here. This project follows
   The wrapped DEK is exempt from this timing check: routine DEK rotation
   legitimately rewraps it on its own schedule without touching the rest of
   the set.
+- **New `keyorix-server admin validate --posture` command** (ADR-112,
+  secure-by-default baseline, item 4) reports every secure-baseline
+  deviation in one place and exits non-zero if any is found: an
+  `insecure_` setting in effect (items 2's registry, excluding settings still
+  awaiting a product decision — those print separately as informational),
+  `security.enable_file_permission_check` disabled outright, a real
+  file-permission/encryption/database problem, an incomplete or
+  mixed-generation key-file set (item 6), an enabled listener with no TLS
+  while `security.require_transport_tls` is set, an admin-tier holder with
+  neither TOTP MFA nor a passkey enrolled, and a break-glass activation older
+  than `break_glass.review_window` with no review (item 5). A grace-period
+  setting (item 1) that is still enforcing only via its new secure-by-default
+  value, with the underlying condition it covers still non-compliant, is
+  reported as its own deviation referencing the detail above it. TLS mode,
+  KEK salt-file age (no rotation-age threshold is defined anywhere in this
+  codebase, so this is informational only), and settings still awaiting a
+  product decision are reported for visibility but never counted toward the
+  exit code. A default install reports zero.
 
 ## v0.95.3 — 2026-10-01
 
