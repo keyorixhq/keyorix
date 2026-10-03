@@ -100,7 +100,12 @@ func displayVersionsTable(secret *apiclient.Secret, versions []apiclient.SecretV
 		fmt.Printf("%-8d %-10d %-20s\n", derefSecretInt(v.VersionNumber), derefSecretInt(v.ReadCount), created)
 	}
 	if len(versions) > 0 {
-		latest := versions[len(versions)-1]
+		latest := versions[0]
+		for _, v := range versions[1:] {
+			if derefSecretInt(v.VersionNumber) > derefSecretInt(latest.VersionNumber) {
+				latest = v
+			}
+		}
 		created := ""
 		if latest.CreatedAt != nil {
 			created = latest.CreatedAt.Format("2006-01-02 15:04:05")
