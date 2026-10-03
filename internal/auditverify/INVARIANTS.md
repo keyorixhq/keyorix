@@ -60,9 +60,13 @@ Format: `INV-AUDITVERIFY-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#i
   archive tar member, never listed in `internal/keyfiles.Registry`) so it survives being
   overwritten by `admin restore`. Why: witness.go — comparing an old archive against its own
   (also-old) embedded witness would prove nothing. Guard: `TestWitnessPath_SiblingOfDBFile`
-  proves the path relationship; the "never a tar member / never in keyfiles.Registry" half has
-  no direct cross-package test found — UNGUARDED (#issue: add a test in internal/backupfmt or
-  internal/keyfiles asserting the witness filename is excluded from both).
+  proves the path relationship;
+  `internal/keyfiles/witness_exclusion_test.go:TestRegistry_NeverIncludesAuditHighWaterWitness`
+  (every path-bearing Registry branch, witness on disk beside every key file) and
+  `internal/backupfmt/witness_exclusion_test.go:TestBackupArchive_NeverContainsAuditHighWaterWitness`
+  (closed-world archive member set, no witness name or bytes in any member) prove the
+  exclusion half. Not covered: a config that names the witness file directly as a key path —
+  Registry follows config and nothing rejects that (#2517).
 - **INV-AUDITVERIFY-12** The backup-manifest signing key must be domain-separated from (never
   equal to) the audit-checkpoint signing key, even when both are derived from the same KEK.
   Guard: `TestDeriveBackupManifestKey_DomainSeparatedFromAuditCheckpointKey`.
