@@ -127,13 +127,52 @@ func withMigrationLock(db *gorm.DB, isPostgres bool, dbPath string, fn func(*gor
 	return fn(db)
 }
 
-// defaultMaxOpenConns bounds the DB connection pool when the operator hasn't set
-// max_open_conns — Go's own default is unlimited, which lets a request flood exhaust the
-// backing database's connection limit. A conservative cap is safer out of the box.
-const defaultMaxOpenConns = 25
+// DefaultSQLiteMaxOpenConns and DefaultPostgresMaxOpenConns bound the DB connection
+// pool when the operator hasn't set max_open_conns. Go's own default is unlimited,
+// which lets a request flood exhaust the backing database's connection limit.
+// Exported so test harnesses that must mirror production's pool (e.g.
+// server/http's linearizability fuzzer) reference them instead of copying a number.
+//
+// The two dialects get different values because they fail differently (#2631,
+// Detected-by: PERF-2; measured with the real server over HTTP, 30s runs, 4 vCPU,
+// docs/CONFIGURATION.md has the tables):
+//
+//   - SQLite: 8. One writer at a time, and modernc.org/sqlite is pure Go, so every
+//     connection's query work competes for the same CPUs; past ~2x the cores, more
+//     connections only add contention. Against the old 25, in both harnesses (the
+//     real server over HTTP, and BenchmarkPoolSize through core), 8 did more total
+//     work per second and roughly halved read p99 (BenchmarkPoolSize: 469-654ms vs
+//     912-948ms). How the gain splits between reads and writes depends on the mix,
+//     so no per-side claim is made. 4 was within noise of 8 in-process but slower
+//     for reads over HTTP; 8 is the measured middle.
+//   - Postgres: 25, unchanged. 10, 25 and 50 are within run-to-run noise of each
+//     other for reads; 25 was best for writes. 100 failed requests outright
+//     (SQLSTATE 53300 "too many clients"): Postgres's own max_connections defaults
+//     to 100, and every replica brings its own pool. See warnPostgresPoolHeadroom.
+const (
+	DefaultSQLiteMaxOpenConns   = 8
+	DefaultPostgresMaxOpenConns = 25
+)
+
+// defaultMaxOpenConnsFor returns the dialect's default max_open_conns.
+func defaultMaxOpenConnsFor(dialect string) int {
+	if dialect == "postgres" {
+		return DefaultPostgresMaxOpenConns
+	}
+	return DefaultSQLiteMaxOpenConns
+}
+
+// effectiveMaxOpenConns is the pool cap applyPoolSettings sets: the operator's
+// max_open_conns when positive, else the dialect default.
+func effectiveMaxOpenConns(db *gorm.DB, dbCfg *config.DatabaseConfig) int {
+	if dbCfg.MaxOpenConns > 0 {
+		return dbCfg.MaxOpenConns
+	}
+	return defaultMaxOpenConnsFor(db.Dialector.Name())
+}
 
 // applyPoolSettings (below) matches MaxIdleConns to the EFFECTIVE MaxOpenConns
-// (whichever of the operator's own max_open_conns or defaultMaxOpenConns above is
+// (whichever of the operator's own max_open_conns or the dialect default above is
 // in force) when the operator hasn't set max_idle_conns (SESSION-PERF, #2403
 // follow-up). Go's own idle default is 2 — far below any sensible open ceiling —
 // so without this, a deployment that never sets max_idle_conns (the shipped
@@ -469,6 +508,7 @@ func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (stora
 	if err := applyPoolSettings(db, &cfg.Storage.Database); err != nil {
 		return nil, err
 	}
+	warnPostgresPoolHeadroom(db, &cfg.Storage.Database)
 
 	if err := withMigrationLock(db, true, "", f.migrateDatabase); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
@@ -486,27 +526,59 @@ func applyPoolSettings(db *gorm.DB, dbCfg *config.DatabaseConfig) error {
 	// Always cap open connections. Go's default is UNLIMITED, so without a cap a flood of
 	// concurrent requests (even unauthenticated ones like /readyz, which pings the DB) can
 	// open connections without bound and exhaust the backing database's max_connections.
-	effectiveMaxOpenConns := defaultMaxOpenConns
-	if dbCfg.MaxOpenConns > 0 {
-		effectiveMaxOpenConns = dbCfg.MaxOpenConns
-	}
-	sqlDB.SetMaxOpenConns(effectiveMaxOpenConns)
+	maxOpen := effectiveMaxOpenConns(db, dbCfg)
+	sqlDB.SetMaxOpenConns(maxOpen)
 	// Match the idle cap to the EFFECTIVE open cap by default (whether that came from the
-	// operator's own max_open_conns or defaultMaxOpenConns above), not a separate fixed
+	// operator's own max_open_conns or the dialect default), not a separate fixed
 	// constant — see defaultMaxIdleConns' doc comment. This keeps a connection, once
 	// opened, warm for reuse rather than opened and immediately closed again under any
 	// concurrency above Go's built-in default of 2, for whatever open ceiling is actually
 	// in effect. (database/sql itself silently caps idle to open if idle is ever set
-	// higher than open, so this can never exceed effectiveMaxOpenConns regardless.)
+	// higher than open, so this can never exceed maxOpen regardless.)
 	if dbCfg.MaxIdleConns > 0 {
 		sqlDB.SetMaxIdleConns(dbCfg.MaxIdleConns)
 	} else {
-		sqlDB.SetMaxIdleConns(effectiveMaxOpenConns)
+		sqlDB.SetMaxIdleConns(maxOpen)
 	}
 	if dbCfg.ConnMaxLifetimeMinutes > 0 {
 		sqlDB.SetConnMaxLifetime(time.Duration(dbCfg.ConnMaxLifetimeMinutes) * time.Minute)
 	}
 	return nil
+}
+
+// warnPostgresPoolHeadroom logs a startup warning when this process's pool alone
+// can exceed the Postgres server's usable connection slots (max_connections minus
+// superuser_reserved_connections). Past that point requests fail with SQLSTATE
+// 53300 "sorry, too many clients already" instead of queueing in the pool, measured
+// at max_open_conns 100 against a default max_connections of 100 (#2631). It is a
+// warning, not a refusal: the server's limit can be raised later without a restart
+// of this process, and a lookup failure must never block boot. It cannot see other
+// replicas' pools, and the message says so.
+func warnPostgresPoolHeadroom(db *gorm.DB, dbCfg *config.DatabaseConfig) {
+	var maxConn, reserved int
+	if err := db.Raw("SELECT current_setting('max_connections')::int").Scan(&maxConn).Error; err != nil {
+		return
+	}
+	if err := db.Raw("SELECT current_setting('superuser_reserved_connections')::int").Scan(&reserved).Error; err != nil {
+		return
+	}
+	if msg := postgresPoolHeadroomWarning(effectiveMaxOpenConns(db, dbCfg), maxConn, reserved); msg != "" {
+		log.Print(msg)
+	}
+}
+
+// postgresPoolHeadroomWarning is warnPostgresPoolHeadroom's decision, separated so
+// it is testable without a server. Empty means no warning.
+func postgresPoolHeadroomWarning(maxOpen, maxConnections, reserved int) string {
+	usable := maxConnections - reserved
+	if maxConnections <= 0 || maxOpen <= usable {
+		return ""
+	}
+	return fmt.Sprintf("WARNING: storage.database.max_open_conns is %d but the Postgres server allows only %d "+
+		"non-superuser connections (max_connections=%d minus superuser_reserved_connections=%d). Under load, "+
+		"requests past that fail with SQLSTATE 53300 \"too many clients\" instead of queueing. Lower "+
+		"max_open_conns so that (replicas x max_open_conns) stays below %d, or raise max_connections.",
+		maxOpen, usable, maxConnections, reserved, usable)
 }
 
 // columnExists reports whether table already has column, branching on the

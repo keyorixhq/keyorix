@@ -108,15 +108,17 @@ storage:
     # password: ""  # use KEYORIX_DB_PASSWORD environment variable instead
     # ssl_mode: require  # always use require or verify-full in production
 
-    max_open_conns: 25
-    # Matches max_open_conns (SESSION-PERF, #2403 follow-up): leaving this lower than
-    # max_open_conns means a connection, once opened to serve a burst above the idle
-    # cap, gets closed again instead of kept warm -- under any sustained concurrency
-    # above the idle cap, every such request pays a fresh connection handshake
-    # (full TCP + Postgres SCRAM-SHA-256/PBKDF2 authentication) instead of reusing a
-    # pooled connection. factory.go defaults to matching max_open_conns too, so this
-    # explicit value exists to stay consistent with that default, not to override it.
-    max_idle_conns: 25
+    # Connection pool. Leave max_open_conns unset to get the measured default for
+    # your storage.type: 8 for SQLite, 25 for Postgres (#2631; docs/CONFIGURATION.md
+    # has the measurements). On Postgres keep (replicas x max_open_conns) below the
+    # server's max_connections minus superuser_reserved_connections, or requests fail
+    # with SQLSTATE 53300 "too many clients". The server warns at boot when a single
+    # pool already exceeds it.
+    # max_open_conns: 8
+    # max_idle_conns defaults to the effective max_open_conns, so an opened
+    # connection stays warm instead of being closed and re-opened (SESSION-PERF,
+    # #2403 follow-up). Set it only to deliberately keep fewer idle.
+    # max_idle_conns: 8
     conn_max_lifetime_minutes: 30
 
   encryption:
