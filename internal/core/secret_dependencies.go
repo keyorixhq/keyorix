@@ -17,9 +17,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"sort"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -362,31 +362,29 @@ func (c *KeyorixCore) requireSecret(ctx context.Context, id uint) (*models.Secre
 // (oracle (a): reported ERROR, but SecretNode state changed anyway). An error
 // return was already handled correctly; only the panic path was missing.
 func (c *KeyorixCore) emitDependencyLifecycleEvents(ctx context.Context, eventType string, actorID, secretID, projectID uint, secretName string) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("Warning: dependency-lifecycle event emission for secret %d panicked (best-effort, primary operation already succeeded): %v", secretID, r)
+	besteffort.Run(ctx, "secret_dependencies.emitDependencyLifecycleEvents", func() error {
+		edges, err := c.storage.ListSecretDependenciesForProject(ctx, projectID)
+		if err != nil {
+			return err // best-effort; the primary operation already succeeded
 		}
-	}()
-	edges, err := c.storage.ListSecretDependenciesForProject(ctx, projectID)
-	if err != nil {
-		return // best-effort; the primary operation already succeeded
-	}
-	for _, e := range edges {
-		switch secretID {
-		case e.DependsOnSecretID:
-			// secretID is the "depends-on" target — its dependent loses its upstream.
-			dep := e.DependentSecretID
-			c.writeAuditEvent(ctx, eventType, actorPtr(actorID), &dep,
-				fmt.Sprintf("dependency of secret %d on %q (id %d) %s due to secret lifecycle event",
-					e.DependentSecretID, secretName, secretID, lifecycleVerb(eventType)))
-		case e.DependentSecretID:
-			// secretID is the dependent — the edge it owns is now unresolvable.
-			src := e.DependentSecretID
-			c.writeAuditEvent(ctx, eventType, actorPtr(actorID), &src,
-				fmt.Sprintf("dependency of %q (id %d) on secret %d %s due to secret lifecycle event",
-					secretName, secretID, e.DependsOnSecretID, lifecycleVerb(eventType)))
+		for _, e := range edges {
+			switch secretID {
+			case e.DependsOnSecretID:
+				// secretID is the "depends-on" target — its dependent loses its upstream.
+				dep := e.DependentSecretID
+				c.writeAuditEvent(ctx, eventType, actorPtr(actorID), &dep,
+					fmt.Sprintf("dependency of secret %d on %q (id %d) %s due to secret lifecycle event",
+						e.DependentSecretID, secretName, secretID, lifecycleVerb(eventType)))
+			case e.DependentSecretID:
+				// secretID is the dependent — the edge it owns is now unresolvable.
+				src := e.DependentSecretID
+				c.writeAuditEvent(ctx, eventType, actorPtr(actorID), &src,
+					fmt.Sprintf("dependency of %q (id %d) on secret %d %s due to secret lifecycle event",
+						secretName, secretID, e.DependsOnSecretID, lifecycleVerb(eventType)))
+			}
 		}
-	}
+		return nil
+	})
 }
 
 // lifecycleVerb returns a short past-tense word for an audit description.

@@ -10,8 +10,8 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
-	"log"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/identity"
@@ -464,14 +464,9 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 	// Seed password history with the initial password (ADR-025), best-effort
 	// and after commit, exactly as CreateUser does for every other user.
 	if c.passwordPolicy.HistoryCount > 0 {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("Warning: seeding password history for bootstrap admin %d panicked (best-effort): %v", createdUser.ID, r)
-				}
-			}()
-			_ = c.storage.AddPasswordHistory(ctx, createdUser.ID, hash, c.now())
-		}()
+		besteffort.Run(ctx, "auth_bootstrap.BootstrapSystem.AddPasswordHistory", func() error {
+			return c.storage.AddPasswordHistory(ctx, createdUser.ID, hash, c.now())
+		})
 	}
 
 	// The bootstrap token is single-use: clear it so a captured/logged token (see
