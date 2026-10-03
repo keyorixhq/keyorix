@@ -543,8 +543,9 @@ func runSecretDelete(cmd *cobra.Command, args []string) error {
 
 	if !secretDeleteForce {
 		fmt.Println()
-		fmt.Println("This action cannot be undone!")
-		fmt.Println("All versions and metadata will be permanently deleted.")
+		fmt.Println("This soft-deletes the secret and all its versions -- it stops appearing in")
+		fmt.Println("normal listings immediately, and can be restored with 'keyorix secret restore'")
+		fmt.Println("until the retention window configured for this server expires.")
 		fmt.Println()
 		if !confirmSecretDeletion(secretName) {
 			fmt.Println("Deletion cancelled")
