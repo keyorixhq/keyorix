@@ -437,14 +437,25 @@ func (c *KeyorixCore) AssignMachineRole(ctx context.Context, machineID, roleID u
 	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, actorIsMachine); err != nil {
 		return err
 	}
-	if err := c.requireMachineGrantNoSoDViolation(ctx, machineID, roleID); err != nil {
-		return err
-	}
-	if err := c.storage.AssignMachineRole(ctx, machineID, roleID, scope); err != nil {
-		return err
-	}
-	c.logMachineEvent(ctx, "machine_identity.role_granted", m, actorID)
-	return nil
+	// GUARD-2: the check-then-write below must be serialized across every
+	// replica of an HA deployment, not just within this process — mirrors
+	// AssignUserRole/AssignRoleToGroup's identical WithNamedLock use
+	// (#1646/#1780). AssignMachineRole had NO serialization at all (not even
+	// an in-process mutex) before this: two concurrent grants of two
+	// individually-clean roles to the SAME machine identity could each pass
+	// requireMachineGrantNoSoDViolation against a stale pre-grant permission
+	// set and both commit, jointly completing a toxic SoD pair on a machine
+	// credential.
+	return c.storage.WithNamedLock(ctx, sodGrantLockKey("machine", machineID), func(ctx context.Context) error {
+		if err := c.requireMachineGrantNoSoDViolation(ctx, machineID, roleID); err != nil {
+			return err
+		}
+		if err := c.storage.AssignMachineRole(ctx, machineID, roleID, scope); err != nil {
+			return err
+		}
+		c.logMachineEvent(ctx, "machine_identity.role_granted", m, actorID)
+		return nil
+	})
 }
 
 // RemoveMachineRole revokes a machine identity's role grant at the given scope.
