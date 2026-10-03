@@ -850,7 +850,11 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// fresh red build instead of this same already-tracked finding). Filed as
 	// #2565 (cross-links #2548 and #2398's own "CR3" note, since the root
 	// cause is shared across every reserveLoginAttempt call site, not
-	// MFA-specific).
+	// MFA-specific). A THIRD trigger (ConsumeWebAuthnSession#1/error, cited
+	// by the coordinator as #2603) already matches this same wildcard entry
+	// -- same op, same kind, same LoginAttempt-only diff -- confirmed by
+	// direct replay; no separate tolerance entry needed for it. #2603 and
+	// #2565 look like the same tracked finding under two issue numbers.
 	{
 		op: "REST POST /auth/webauthn/login/finish", kind: faultstorage.KindError,
 		nth: 1, oracle: "a", issue: "#2565", expires: "2026-10-17",
@@ -873,6 +877,44 @@ var knownOpenTolerances = []knownOpenTolerance{
 		nth: 1, oracle: "a", issue: "#2567", expires: "2026-10-17",
 		tables:     []string{"MFASecret", "LoginAttempt"},
 		findingDoc: "#2567",
+	},
+	// Coordinator priority (12:34Z): random pre-existing fuzz findings were
+	// blocking unrelated PRs (e.g. #2556). Added here, into this PR's own
+	// branch, so the hotspot file stays serialized through one PR rather than
+	// several concurrent ones touching the same lines.
+	//
+	// REST POST /api/v1/invitations, CountSetupTokensSince, error, nth 1,
+	// oracle a: checkResendThrottle's CountSetupTokensSince call is on the
+	// SUCCESS path (reported success, final state is [SetupToken AuditEvent]
+	// different from the fault-free reference) -- traces through
+	// provisionSetupLink/provisionSetupLinkThrottled -> InviteGlobalWithLink,
+	// the identical architectural tradeoff PR #2393's own body already
+	// documents as its deferred "#4" item (same shape as #2382's own bonus
+	// finding #1: two-separate-top-level-calls, "invitation created but setup
+	// link failed" still returns 201) -- not independently fixed here, same
+	// reasoning #2393 gives, pending that coordinator decision.
+	{
+		op: "REST POST /api/v1/invitations", method: "CountSetupTokensSince", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2599", expires: "2026-10-17",
+		tables:     []string{"SetupToken", "AuditEvent"},
+		findingDoc: "#2599",
+	},
+	// REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide,
+	// ListProjectRoleAssignments, error, nth 1, oracle a: a ListProjectRoleAssignments
+	// storage error reports failure but AccessReviewItem's decision state
+	// still committed. Entirely unrelated to MFA/auth -- same finding this
+	// session already surfaced and filed as #2570 during the #2392 rebase's
+	// own live fuzzing (deliberately not tolerated there, per this file's
+	// "don't expand scope indefinitely" precedent); coordinator independently
+	// filed #2606 for the same symptom. Citing #2606 per the coordinator's
+	// explicit instruction -- #2570 is a duplicate worth closing in favor of
+	// this one.
+	{
+		op:     "REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide",
+		method: "ListProjectRoleAssignments", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2606", expires: "2026-10-17",
+		tables:     []string{"AccessReviewItem"},
+		findingDoc: "#2606",
 	},
 }
 
