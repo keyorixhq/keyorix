@@ -70,7 +70,12 @@ server:
       - https://keyorix.example.com
     tls:
       enabled: false              # commonly terminated at a reverse proxy
-      auto_cert: false            # ACME/autocert when true
+      auto_cert: false            # ACME/autocert when true — needs a public domain and inbound 80/443
+      cert_file: ""               # PEM certificate (chain), for TLS without ACME — see below
+      key_file: ""                # PEM private key matching cert_file
+      domains: []                 # ACME only: domains to request certs for
+      cert_cache_dir: "certs"     # ACME only: where autocert persists certs between restarts
+      allowed_ciphers: []         # optional allowlist of TLS 1.2 cipher suite names; leave empty for the built-in secure default
     ratelimit:
       enabled: true
       requests_per_second: 50
@@ -90,6 +95,22 @@ server:
       requests_per_second: 25
       burst: 50
 ```
+
+`auto_cert` is ACME — it needs a public domain and inbound 80/443, so it does not work
+for a local, internal-only, or air-gapped deployment. For those, set `cert_file`/
+`key_file` to a PEM cert and key instead (gRPC's `tls:` block takes the same two
+fields; `domains`/`cert_cache_dir`/`allowed_ciphers` apply to HTTP only). A quick
+self-signed pair for local use:
+
+```sh
+openssl req -x509 -newkey rsa:4096 -nodes -keyout key.pem -out cert.pem \
+  -days 365 -subj "/CN=localhost"
+```
+
+Then set `server.http.tls.enabled: true`, `cert_file: ./cert.pem`, `key_file: ./key.pem`.
+Browsers will warn on the self-signed cert (expected) — use a CA-issued one, or the
+bundled Caddy `tls` profile ([SELF_HOSTING.md](SELF_HOSTING.md) §7), for anything
+beyond local testing.
 
 ## storage
 
