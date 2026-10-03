@@ -14,18 +14,18 @@ silently removing it.
 
 | Package | File | Invariants | Guarded | UNGUARDED |
 |---|---|---|---|---|
-| `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 40 | 33 | 7 |
-| `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 35 | 26 | 9 |
-| `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 20 | 15 | 5 |
-| `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 27 | 23 | 4 |
-| `internal/auditverify` | [internal/auditverify/INVARIANTS.md](../internal/auditverify/INVARIANTS.md) | 15 | 11 | 4 |
-| `server/middleware` | [server/middleware/INVARIANTS.md](../server/middleware/INVARIANTS.md) | 22 | 19 | 3 |
-| `server/http` (+ `handlers`) | [server/http/INVARIANTS.md](../server/http/INVARIANTS.md) | 19 | 18 | 1 |
-| `server/grpc` (+ `interceptors`) | [server/grpc/INVARIANTS.md](../server/grpc/INVARIANTS.md) | 13 | 8 | 5 |
-| `server/grpc/services` | [server/grpc/services/INVARIANTS.md](../server/grpc/services/INVARIANTS.md) | 8 | 7 | 1 |
-| `cli` | [cli/INVARIANTS.md](../cli/INVARIANTS.md) | 13 | 9 | 4 |
-| `web/src` | [web/src/INVARIANTS.md](../web/src/INVARIANTS.md) | 7 | 0 | 7 |
-| **Total** | | **219** | **169** | **50** |
+| `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 40 | 35 | 5 |
+| `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 35 | 27 | 8 |
+| `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 20 | 16 | 4 |
+| `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 27 | 24 | 3 |
+| `internal/auditverify` | [internal/auditverify/INVARIANTS.md](../internal/auditverify/INVARIANTS.md) | 15 | 12 | 3 |
+| `server/middleware` | [server/middleware/INVARIANTS.md](../server/middleware/INVARIANTS.md) | 22 | 20 | 2 |
+| `server/http` (+ `handlers`) | [server/http/INVARIANTS.md](../server/http/INVARIANTS.md) | 19 | 19 | 0 |
+| `server/grpc` (+ `interceptors`) | [server/grpc/INVARIANTS.md](../server/grpc/INVARIANTS.md) | 13 | 9 | 4 |
+| `server/grpc/services` | [server/grpc/services/INVARIANTS.md](../server/grpc/services/INVARIANTS.md) | 8 | 8 | 0 |
+| `cli` | [cli/INVARIANTS.md](../cli/INVARIANTS.md) | 13 | 10 | 3 |
+| `web/src` | [web/src/INVARIANTS.md](../web/src/INVARIANTS.md) | 7 | 2 | 5 |
+| **Total** | | **219** | **182** | **37** |
 
 ## Highest-priority UNGUARDED gaps
 
@@ -58,6 +58,10 @@ but no ledger entry).
 
 - Package-count and guarded/unguarded totals above are a snapshot as of this writing
   (2026-10-03). They will drift as invariants are added, closed, or re-guarded — re-derive by
-  counting `- **INV-<PKG>-NN` lines and `UNGUARDED` occurrences per file rather than trusting
-  this table blindly if it looks stale.
+  counting `- **INV-<PKG>-NN` bullets per file, and per bullet whether its own text contains
+  `UNGUARDED`. **Do not `grep -c UNGUARDED` the whole file** — every file's own intro line
+  ("Format: `INV-<PKG>-NN ... UNGUARDED (#issue)`") contains the literal word and will inflate
+  a naive count by one per file (this is exactly what happened on the first draft of this
+  table: a raw `grep -c` gave 50 UNGUARDED/169 guarded; the real, bullet-boundary-aware count
+  is 37/182, corrected before any issue was filed against the wrong number).
 - When a package not yet covered here gets its first `INVARIANTS.md`, add a row.
