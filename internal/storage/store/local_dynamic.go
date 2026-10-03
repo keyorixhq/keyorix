@@ -9,6 +9,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"gorm.io/gorm"
 )
 
 func (ls *LocalStorage) CreateDynamicSecretConfig(ctx context.Context, c *models.DynamicSecretConfig) (*models.DynamicSecretConfig, error) {
@@ -82,8 +83,36 @@ func (ls *LocalStorage) CountDynamicSecretConfigsByClassification(ctx context.Co
 	return countByClassification(ctx, ls.db, &models.DynamicSecretConfig{})
 }
 
+// CreateDynamicSecretLease inserts a lease row. An ACTIVE lease (a live credential
+// handed to a caller) is inserted in one transaction with a lockLiveParent re-read of
+// its config, still enabled, and rolls back with ErrDynamicSecretConfigDisabled if the
+// config was disabled meanwhile (#2652, INV-STORE-21). DeleteProject's #369 cascade and
+// the config disable kill switch both UPDATE (row-lock) the config row and list leases
+// to revoke only after they commit, so either they see this lease, or this insert sees
+// the disable and the caller revokes the just-minted credential. Any other status
+// (revoke_failed: the tracking row for a credential that could not be dropped) is
+// always recorded, disabled config or not: refusing it would hide a live credential.
 func (ls *LocalStorage) CreateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) (*models.DynamicSecretLease, error) {
-	if err := ls.db.WithContext(ctx).Create(l).Error; err != nil {
+	if l.Status != "active" {
+		if err := ls.db.WithContext(ctx).Create(l).Error; err != nil {
+			return nil, err
+		}
+		return l, nil
+	}
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(l).Error; err != nil {
+			return err
+		}
+		live, err := lockLiveParent(tx, &models.DynamicSecretConfig{}, "id = ? AND disabled = ?", l.ConfigID, false)
+		if err != nil {
+			return err
+		}
+		if !live {
+			return storage.ErrDynamicSecretConfigDisabled
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	return l, nil

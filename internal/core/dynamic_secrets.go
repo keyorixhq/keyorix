@@ -580,7 +580,13 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 		ExpiresAt:      expiresAt,
 	})
 	if err != nil {
+		// Also the #2652 path: storage refuses an active lease whose config a
+		// concurrent DeleteProject (#369) or disable committed after the cfg.Disabled
+		// check above, so the credential minted for it is revoked here, not leaked.
 		c.cleanupOrphanedRole(ctx, cfg, engine, adminDSN, roleName, userID)
+		if errors.Is(err, storage.ErrDynamicSecretConfigDisabled) {
+			return nil, fmt.Errorf("dynamic-secret config is disabled")
+		}
 		return nil, fmt.Errorf("failed to persist lease: %w", err)
 	}
 	uid := userID

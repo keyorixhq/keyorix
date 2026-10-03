@@ -91,3 +91,34 @@ func TestCreateDynamicSecretConfig_DifferentScopeAllowed(t *testing.T) {
 	})
 	assert.NoError(t, err, "a different name in the same project/environment must succeed")
 }
+
+// TestCreateDynamicSecretLease_ActiveRefusedOnDisabledConfig: the single-process half
+// of INV-STORE-21 for leases (#2652). An ACTIVE lease against a disabled config is
+// refused with ErrDynamicSecretConfigDisabled and leaves no row; a revoke_failed
+// tracking row for the same config is still recorded, because it is the only record
+// of a credential still live on the target.
+func TestCreateDynamicSecretLease_ActiveRefusedOnDisabledConfig(t *testing.T) {
+	ctx := context.Background()
+	ls := newDynamicConfigTestStore(t)
+	require.NoError(t, ls.db.AutoMigrate(&models.DynamicSecretLease{}))
+	cfg, err := ls.CreateDynamicSecretConfig(ctx, &models.DynamicSecretConfig{
+		Name: "app-db", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres",
+	})
+	require.NoError(t, err)
+	require.NoError(t, ls.db.Model(cfg).Update("disabled", true).Error)
+
+	_, err = ls.CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
+		ConfigID: cfg.ID, LeaseID: "lease-active", RoleName: "r1", Status: "active",
+	})
+	require.ErrorIs(t, err, coreStorage.ErrDynamicSecretConfigDisabled)
+
+	_, err = ls.CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
+		ConfigID: cfg.ID, LeaseID: "lease-orphan", RoleName: "r2", Status: "revoke_failed",
+	})
+	require.NoError(t, err, "a revoke_failed tracking row must be recorded even under a disabled config")
+
+	leases, err := ls.ListDynamicSecretLeases(ctx, cfg.ID)
+	require.NoError(t, err)
+	require.Len(t, leases, 1)
+	assert.Equal(t, "lease-orphan", leases[0].LeaseID, "the refused active lease must have been rolled back")
+}
