@@ -1386,9 +1386,17 @@ jobs:
   # would have caught it. One job, not a matrix: `make smoke` builds the CLI
   # itself and the whole run takes seconds, so it isn't worth sharding or
   # reusing another job's build artifact.
+  #
+  # Skipped on merge_group (CI-1, 2026-10-03): this job carries no event
+  # gating, so it already runs on every pull_request push AND on every push
+  # to main -- a merge_group run re-validates the exact same commit content
+  # a second time for zero new signal (unlike e2e-smoke just above, which is
+  # deliberately pull_request-skipped so merge_group is the only place it
+  # ever runs for real). Not a required context either, so this can't stall
+  # the merge queue. Measured over 3 days / 82 merge_group runs: 0 failures.
   smoke:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: github.event_name != 'merge_group' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2623,9 +2631,15 @@ jobs:
   # is caught in CI rather than discovered by a consumer. The OAS ruleset is
   # used as-is: it only fails on ERRORs by default, so warnings are surfaced
   # without blocking, and the .spectral.yaml at the repo root controls overrides.
+  #
+  # Skipped on merge_group (CI-1, 2026-10-03): same reasoning as smoke's own
+  # comment above -- no event gating, already runs on every pull_request push
+  # and on push to main, a structural contract lint with no cross-PR
+  # integration risk a synthetic merge commit could newly expose. Not a
+  # required context. Measured over 3 days / 82 merge_group runs: 0 failures.
   openapi-lint:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: github.event_name != 'merge_group' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
