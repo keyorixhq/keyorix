@@ -1,0 +1,40 @@
+# GUARD-2 Item 4: reviewed exemptions for TestCheckThenActLockGuard_UnlockedSecurityCheck
+# (internal/core/check_then_act_lock_guard_test.go). Every hit from this guard's first run
+# (31) was individually read against the real code and classified below — none is a genuine
+# new cross-replica race. See https://github.com/keyorixhq/keyorix/issues/2564 for the full
+# per-class writeup (cross-referenced here once instead of per-row, since all 31 share one of
+# six verified-safe classes).
+#
+# Columns: function <TAB> class <TAB> reason
+#
+(*KeyorixCore).ActivateMFA	REAUTH-FRESHNESS	requireReauth checks the caller's own recent-auth freshness, not shared state a concurrent writer contends on; see #2564.
+(*KeyorixCore).AddSecretDependency	EXISTENCE-CHECK	requireSecret is an existence/accessibility check; the actual exclusivity decision is CreateSecretDependencyExclusive's own atomic DB primitive (inventory item 17), not this check; see #2564.
+(*KeyorixCore).ApproveSecretAccessRequest	COND-UPDATE	storage.UpdateAccessRequest is a conditional UPDATE ... WHERE state='pending' (returns ok bool), fails closed on a stale read; requireAdminAuthorityAt is an actor-authority check unrelated to the race; see #2564.
+(*KeyorixCore).CreateDynamicSecretConfig	AUTHZ-ACTOR	requireDynamicSecretAdminAuthority is an actor-authority check; the two writes (insert then encrypt-and-update) are sequential by construction on a row not yet visible to any other caller (cfg.ID unreturned until commit) — explicitly documented in-code; see #2564.
+(*KeyorixCore).CreateOIDCBinding	AUTHZ-ACTOR	requireAdminAuthorityAt is an actor-authority check, not shared mutable state; see #2564.
+(*KeyorixCore).CreateUserWithAssignments	AUTHZ-ACTOR	requireGranterHoldsRolePermissionsNoBaseline is an actor-authority check; the flagged write (AddPasswordHistory) is an unconditional history record, not part of the authorization decision; see #2564.
+(*KeyorixCore).DeleteSessionsForUserExcept	AUTHZ-ACTOR	requireUserCredentialsRevokeAuthority is an actor-authority check; the revoke write is idempotent and lock-free-safe per inventory item 16; see #2564.
+(*KeyorixCore).FinishWebAuthnRegistration	REAUTH-FRESHNESS	requireReauth checks the caller's own recent-auth freshness, not shared state; see #2564.
+(*KeyorixCore).GrantSecretACL	EXISTENCE-CHECK	requireSecretOrFolderNode is an existence/accessibility check, not a security decision a concurrent writer contends on; see #2564.
+(*KeyorixCore).InviteGlobal	AUTHZ-ACTOR	requireGranterHoldsRolePermissionsNoBaseline is an actor-authority check, not shared mutable state; see #2564.
+(*KeyorixCore).InviteToProject	AUTHZ-ACTOR	requireGranterHoldsRolePermissions is an actor-authority check, not shared mutable state; see #2564.
+(*KeyorixCore).IssueLease	EXISTENCE-CHECK	requireLiveProjectAndEnvironment is an existence check, not a security decision; see #2564.
+(*KeyorixCore).RejectSecretAccessRequest	COND-UPDATE	Delegates to RejectAccessRequest, whose write is a conditional UPDATE ... WHERE state='pending' (ok bool), fails closed on a stale read; requireAdminAuthorityAt is an actor-authority check; see #2564.
+(*KeyorixCore).RemoveSecretDependency	EXISTENCE-CHECK	requireSecret is an existence/accessibility check, not the race-relevant decision; see #2564.
+(*KeyorixCore).RemoveUserFromGroup	NESTED-LOCK	The write runs inside withGroupProjectAdminGuardLocks, which already wraps storage.WithNamedLock(lastAdminGuardLockKey, ...) around both guards and the write (#2352) — invisible to this guard's non-interprocedural AST walk; see #2564.
+(*KeyorixCore).RenewLease	EXISTENCE-CHECK	requireLiveProjectAndEnvironment is an existence check, not a security decision; see #2564.
+(*KeyorixCore).RestoreEnvironment	AUTHZ-ACTOR	requireAuthorityToReinstateProjectRoles is an actor-authority check, not shared mutable state; see #2564.
+(*KeyorixCore).RestoreGroup	AUTHZ-ACTOR	requireGlobalAdminToReinstateAdminRoles is an actor-authority check, not shared mutable state; see #2564.
+(*KeyorixCore).RestoreProject	AUTHZ-ACTOR	requireAuthorityToReinstateProjectRoles is an actor-authority check, not shared mutable state; see #2564.
+(*KeyorixCore).RevokeAllPersonalAccessTokensForUser	AUTHZ-ACTOR	requireUserCredentialsRevokeAuthority is an actor-authority check; the revoke write is idempotent and lock-free-safe per inventory item 16; see #2564.
+(*KeyorixCore).RevokeUserSessions	AUTHZ-ACTOR	requireAdminRankCeilingForTarget is an actor-authority check; the revoke write is idempotent and lock-free-safe per inventory item 16; see #2564.
+(*KeyorixCore).SetSecretAutoRotate	AUTHZ-ACTOR	requireAdminAuthorityAt is an actor-authority check, not shared mutable state; see #2564.
+(*KeyorixCore).ShareSecret	AUTHZ-ACTOR	requireLiveOwnerAuthority is an actor-authority (ownership) check, not shared mutable state; see #2564.
+(*KeyorixCore).ShareSecretWithGroup	AUTHZ-ACTOR	requireLiveOwnerAuthority is an actor-authority (ownership) check, not shared mutable state; see #2564.
+(*KeyorixCore).StartImpersonation	AUTHZ-ACTOR	requireEqualOrGreaterAdminAuthority is an actor-authority check, not shared mutable state; see #2564.
+(*KeyorixCore).TransitionMembership	NESTED-LOCK	The flagged write (RemoveProjectMember) already wraps its own write in storage.WithNamedLock(projectAdminGuardLockKey, ...) (inventory item 10) — invisible to this guard's non-interprocedural AST walk; see #2564.
+(*KeyorixCore).UpdateOwnProfile	NESTED-LOCK	The flagged write (UpdateUser) already wraps its own deactivating write in storage.WithNamedLock(lastAdminGuardLockKey, ...) (inventory item 1); requireReauth is additionally a REAUTH-FRESHNESS check; see #2564.
+(*KeyorixCore).UpdateSharePermission	AUTHZ-ACTOR	requireLiveOwnerAuthority is an actor-authority (ownership) check, not shared mutable state; see #2564.
+(*KeyorixCore).UpdateUser	CONTROL-FLOW-FP	This guard's AST walk has no control-flow awareness: requireAdminRankCeilingForTarget precedes the NON-deactivating branch's write (UpdateUserIfActiveStateMatches); the actual last-admin-relevant deactivating branch is correctly wrapped in storage.WithNamedLock(lastAdminGuardLockKey, ...) a few lines earlier (inventory item 1); see #2564.
+(*KeyorixCore).deleteGroupGuarded	NESTED-LOCK	The write runs inside withGroupProjectAdminGuardLocks, which already wraps storage.WithNamedLock(lastAdminGuardLockKey, ...) around both guards and the write — invisible to this guard's non-interprocedural AST walk; see #2564.
+(*KeyorixCore).inviteMemberWithMode	NESTED-LOCK	The flagged write (AddProjectMember) already wraps its own write in storage.WithNamedLock(projectAdminGuardLockKey, ...) (inventory item 10) — invisible to this guard's non-interprocedural AST walk; see #2564.
