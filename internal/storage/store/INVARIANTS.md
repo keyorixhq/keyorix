@@ -121,3 +121,26 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   `TestVerifyAuditChain_ValidatesRowWithNonUTCEventTime`,
   `TestGetAuditLogs_RangeQuery_FindsRowWithNonUTCEventTime`); sibling
   `g81_dynamic_lease_timezone_test.go` (same class, not individually re-read).
+
+## Audit retention purge (`DeleteAuditLogsBefore`)
+
+- **INV-STORE-22** The audit retention purge deletes only a contiguous id prefix of
+  `audit_events`: every row with id below the lowest id whose `event_time` is NOT before the
+  cutoff (and only rows with `event_time < cutoff`, so the deleted set is always a subset of
+  the pre-#2633 `event_time < cutoff` delete — an out-of-order row is retained, never removed
+  early). It re-anchors on the first surviving id, and it runs under the KEYAUDIT advisory
+  lock (`auditAdvisoryLockKey`, transaction-scoped, held until the caller's purge transaction
+  commits) that `LogAuditEvent` appends under — Postgres-only, exactly as in the append path.
+  It must NOT take `auditChainMu`: it runs inside a transaction that already holds SQLite's
+  writer lock (`_txlock=immediate`), and `LogAuditEvent` takes the mutex before that lock, so
+  taking it here inverts the order and a concurrent append is dropped after its 10s write
+  deadline (confirmed by mutation). Why: #2633 — id order and `event_time` order disagree
+  under concurrent writers / HA clock skew, and an `event_time`-only purge deleted a mid-chain
+  row, making `VerifyAuditChain` report tampering; ADR-115 (#2628) §7 precondition. Guard:
+  `audit_retention_prefix_test.go`
+  (`TestDeleteAuditLogsBefore_InvertedEventTime_DeletesOnlyContiguousIDPrefix`,
+  `TestDeleteAuditLogsBefore_NeverDeletesMoreThanEventTimeCutoff` — randomized orders against
+  a Go oracle, asserts subset-of-old-delete and post-purge chain verification;
+  `TestDeleteAuditLogsBefore_ConcurrentAppendNotStalledOrDropped_SQLite` — lock order;
+  `TestDeleteAuditLogsBefore_InvertedEventTime_Postgres`,
+  `TestDeleteAuditLogsBefore_HoldsKEYAUDITUntilCommit_Postgres` — pg-gated).
