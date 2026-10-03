@@ -35,6 +35,7 @@ type SweepResult struct {
 	MFASecretsSwept           int
 	DynamicSecretConfigsSwept int
 	DynamicSecretLeasesSwept  int
+	NotificationChannelsSwept int
 	LegacyAADUpgraded         int
 }
 
@@ -103,6 +104,16 @@ func SweepAllTables(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionSe
 	}
 	result.DynamicSecretLeasesSwept = sweptDynLeases
 	result.LegacyAADUpgraded += legacyDynLeases
+
+	// #2433: notification_channels.url_enc (the webhook/Slack/Teams bearer
+	// credential) is also DEK-encrypted and AAD-bound -- same reason as the
+	// three sweeps above, same upgrade-in-place shape for still-legacy rows.
+	sweptNotifChannels, legacyNotifChannels, err := sweepNotificationChannels(tx, oldSvc, newSvc, newKeyVersion, dryRun)
+	if err != nil {
+		return nil, fmt.Errorf("notification_channels sweep failed: %w", err)
+	}
+	result.NotificationChannelsSwept = sweptNotifChannels
+	result.LegacyAADUpgraded += legacyNotifChannels
 
 	return result, nil
 }

@@ -211,14 +211,14 @@ func DryRunRotation(cfg *config.Config, passSrc crypto.PassphraseSource) error {
 	return nil
 }
 
-// printSweepResult prints every field of a SweepResult — all 7 per-table "Swept"
+// printSweepResult prints every field of a SweepResult — all 8 per-table "Swept"
 // counts plus LegacyAADUpgraded — so an operator sees the FULL sweep outcome
 // (real or previewed).
 func printSweepResult(result *encryption.SweepResult) {
-	fmt.Printf("📋 secret_versions: %d, api_tokens: %d, api_clients: %d, password_resets: %d, mfa_secrets: %d, dynamic_secret_configs: %d, dynamic_secret_leases: %d (legacy AAD upgraded: %d)\n",
+	fmt.Printf("📋 secret_versions: %d, api_tokens: %d, api_clients: %d, password_resets: %d, mfa_secrets: %d, dynamic_secret_configs: %d, dynamic_secret_leases: %d, notification_channels: %d (legacy AAD upgraded: %d)\n",
 		result.SecretVersionsSwept, result.APITokensSwept, result.APIClientsSwept,
 		result.AccountResetsSwept, result.MFASecretsSwept, result.DynamicSecretConfigsSwept, result.DynamicSecretLeasesSwept,
-		result.LegacyAADUpgraded)
+		result.NotificationChannelsSwept, result.LegacyAADUpgraded)
 }
 
 // UpgradeAADWithConfig is the testable core of `encryption upgrade-aad`.
