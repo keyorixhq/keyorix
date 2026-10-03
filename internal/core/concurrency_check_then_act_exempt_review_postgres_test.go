@@ -391,8 +391,18 @@ func TestCTAReview_GrantSecretACL_DeleteSecretAfterUpsert_CrossReplicaPostgres(t
 // event, and no RestoreSecret parent-liveness check. (The same stale Save
 // also overwrites a concurrent admin's rotation-backend binding and a
 // concurrent ClearProjectSecretOwnership — see the issue.)
+//
+// Bug origin (#2650):
+//
+//	Introduced-by: SetSecretAutoRotate persisting its snapshot via UpdateSecret's Save
+//	Detected-by:   C-GUARD2-EXEMPT-REVIEW #2662
+//	Class:         cross-replica check-then-act
+//	Severity:      high (a deleted secret is live again without RestoreSecret)
+//	Guard:         this test (pg-gated) + TestSetSecretAutoRotate_IsColumnScoped
+//	Fix:           UpdateSecretRotationConfig — rotation columns only, WHERE the
+//	               row is live, in the same project, and still bound to the
+//	               pre-read backend; matching no row fails closed
 func TestCTAReview_SetSecretAutoRotate_vs_DeleteSecret_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2650: SetSecretAutoRotate's stale full-row Save undeletes/overwrites concurrent secret changes; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	s := f.secret("cta-rotate-secret", f.adminID)

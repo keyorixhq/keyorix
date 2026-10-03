@@ -664,6 +664,39 @@ func (ls *LocalStorage) TransitionSecretStatus(ctx context.Context, secret *mode
 	return res.RowsAffected == 1, nil
 }
 
+// UpdateSecretRotationConfig writes only the auto-rotation columns of secret,
+// conditional on the row still being live (GORM scopes the soft-delete model to
+// deleted_at IS NULL), in secret.ProjectID, and bound to fromBackend — see the
+// interface doc in internal/core/storage/interface.go.
+//
+// Bug origin (#2650):
+//
+//	Introduced-by: core.SetSecretAutoRotate persisting its pre-read snapshot
+//	               through UpdateSecret's full-row Save
+//	Detected-by:   C-GUARD2-EXEMPT-REVIEW #2662
+//	Class:         cross-replica check-then-act (stale Save upsert)
+//	Severity:      high (a deleted secret is live again with no RestoreSecret,
+//	               no secret.restored audit event; an admin backend binding or a
+//	               cleared ownership is silently reverted)
+//	Guard:         TestCTAReview_SetSecretAutoRotate_vs_DeleteSecret_CrossReplicaPostgres,
+//	               TestSetSecretAutoRotate_IsColumnScoped
+func (ls *LocalStorage) UpdateSecretRotationConfig(ctx context.Context, secret *models.SecretNode, fromBackend string) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
+		Where("id = ? AND project_id = ? AND rotation_backend = ?", secret.ID, secret.ProjectID, fromBackend).
+		Updates(map[string]interface{}{
+			"auto_rotate":      secret.AutoRotate,
+			"rotation_length":  secret.RotationLength,
+			"rotation_charset": secret.RotationCharset,
+			"rotation_backend": secret.RotationBackend,
+			"rotation_ref":     secret.RotationRef,
+			"updated_at":       secret.UpdatedAt,
+		})
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}
+
 // SetSecretCertNotAfter caches a certificate-typed secret's parsed leaf expiry — a
 // targeted single-column update that touches nothing else (ADR-056).
 func (ls *LocalStorage) SetSecretCertNotAfter(ctx context.Context, secretID uint, notAfter *time.Time) error {
