@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -155,26 +156,42 @@ func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
 // roles.assign (the router's permission gate) who is themselves a member of an
 // admin-conferring group that was soft-deleted (e.g. an incident-response
 // revocation) could restore it and get their admin access back.
-func (c *KeyorixCore) RestoreGroup(ctx context.Context, actorID, id uint) error {
+func (c *KeyorixCore) RestoreGroup(ctx context.Context, actorID, id uint) (*models.Group, error) {
 	if id == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
 	}
 	roles, err := c.storage.GetGroupRoles(ctx, id)
 	if err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	roleIDs := make([]uint, 0, len(roles))
 	for _, r := range roles {
 		roleIDs = append(roleIDs, r.ID)
 	}
 	if err := c.requireGlobalAdminToReinstateAdminRoles(ctx, actorID, roleIDs, "group"); err != nil {
-		return err
+		return nil, err
 	}
-	if err := c.storage.RestoreGroup(ctx, id); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	// The restore and the read-back that builds the caller's response share one
+	// transaction (#2428): a GetGroup read failing AFTER an unwrapped RestoreGroup
+	// had already committed used to report the whole call as failed while the
+	// group was, in fact, already active again (with its memberships and grants)
+	// -- the caller had no way to tell. Wrapping both means a failure here rolls
+	// the restore back too, so "reported failed" and "nothing happened" stay in
+	// sync, matching #2354/#2381's CreateRole fix for the identical class of bug.
+	var restored *models.Group
+	err = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		if err := tx.RestoreGroup(ctx, id); err != nil {
+			return err
+		}
+		var gerr error
+		restored, gerr = tx.GetGroup(ctx, id)
+		return gerr
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	c.writeAuditEvent(ctx, EventGroupRestored, actorPtr(actorID), nil, fmt.Sprintf("group %d restored", id))
-	return nil
+	return restored, nil
 }
 
 // ListGroups lists all groups.

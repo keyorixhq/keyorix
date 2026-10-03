@@ -132,6 +132,20 @@ func withMigrationLock(db *gorm.DB, isPostgres bool, dbPath string, fn func(*gor
 // backing database's connection limit. A conservative cap is safer out of the box.
 const defaultMaxOpenConns = 25
 
+// applyPoolSettings (below) matches MaxIdleConns to the EFFECTIVE MaxOpenConns
+// (whichever of the operator's own max_open_conns or defaultMaxOpenConns above is
+// in force) when the operator hasn't set max_idle_conns (SESSION-PERF, #2403
+// follow-up). Go's own idle default is 2 — far below any sensible open ceiling —
+// so without this, a deployment that never sets max_idle_conns (the shipped
+// keyorix.docker.yaml does not) churns connections under any concurrency above
+// ~2: each request beyond the idle cap opens a fresh connection (full TCP
+// handshake + Postgres SCRAM-SHA-256/PBKDF2 authentication) only to have it
+// closed, rather than kept warm, the moment it's returned. Measured cost of the
+// gap this closes: at c=50 concurrent reads, Postgres's own connection log showed
+// ~1 new-connection+disconnect cycle per 3.5 requests, and a CPU profile
+// attributed 5.28% of total server CPU time to PBKDF2/SCRAM connection
+// handshakes alone.
+
 // sqliteBusyTimeoutMillis is how long a SQLite connection waits for a lock held by
 // another connection before returning SQLITE_BUSY (#465). SQLite's own default is 0
 // (fail immediately), which surfaces as spurious write failures under the concurrent
@@ -472,13 +486,22 @@ func applyPoolSettings(db *gorm.DB, dbCfg *config.DatabaseConfig) error {
 	// Always cap open connections. Go's default is UNLIMITED, so without a cap a flood of
 	// concurrent requests (even unauthenticated ones like /readyz, which pings the DB) can
 	// open connections without bound and exhaust the backing database's max_connections.
+	effectiveMaxOpenConns := defaultMaxOpenConns
 	if dbCfg.MaxOpenConns > 0 {
-		sqlDB.SetMaxOpenConns(dbCfg.MaxOpenConns)
-	} else {
-		sqlDB.SetMaxOpenConns(defaultMaxOpenConns)
+		effectiveMaxOpenConns = dbCfg.MaxOpenConns
 	}
+	sqlDB.SetMaxOpenConns(effectiveMaxOpenConns)
+	// Match the idle cap to the EFFECTIVE open cap by default (whether that came from the
+	// operator's own max_open_conns or defaultMaxOpenConns above), not a separate fixed
+	// constant — see defaultMaxIdleConns' doc comment. This keeps a connection, once
+	// opened, warm for reuse rather than opened and immediately closed again under any
+	// concurrency above Go's built-in default of 2, for whatever open ceiling is actually
+	// in effect. (database/sql itself silently caps idle to open if idle is ever set
+	// higher than open, so this can never exceed effectiveMaxOpenConns regardless.)
 	if dbCfg.MaxIdleConns > 0 {
 		sqlDB.SetMaxIdleConns(dbCfg.MaxIdleConns)
+	} else {
+		sqlDB.SetMaxIdleConns(effectiveMaxOpenConns)
 	}
 	if dbCfg.ConnMaxLifetimeMinutes > 0 {
 		sqlDB.SetConnMaxLifetime(time.Duration(dbCfg.ConnMaxLifetimeMinutes) * time.Minute)
@@ -1285,6 +1308,33 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	connectRefGrantExists := tableExists(db, "connect_ref_grants")
 	connectorProjectBindingsExists := tableExists(db, "connector_project_bindings")
 	groupsExists := tableExists(db, "groups")
+	// The remaining flags below back freshInstallComplete (see its own doc
+	// comment, near the former `if projectsExists { return nil }` gate):
+	// every one of them is a model migrated by the fresh-install-only
+	// transactional block, snapshotted up front for the exact same pgx
+	// reason as every flag above -- these must never be queried AFTER any
+	// AutoMigrate call in this function, including the ones inside that
+	// block itself.
+	environmentExists := tableExists(db, "environments")
+	userExists := tableExists(db, "users")
+	roleExists := tableExists(db, "roles")
+	permissionExists := tableExists(db, "permissions")
+	rolePermissionExists := tableExists(db, "role_permissions")
+	userRoleExists := tableExists(db, "user_roles")
+	userGroupExists := tableExists(db, "user_groups")
+	groupRoleExists := tableExists(db, "group_roles")
+	secretNodeExists := tableExists(db, "secret_nodes")
+	secretVersionExists := tableExists(db, "secret_versions")
+	shareRecordExists := tableExists(db, "share_records")
+	sessionExists := tableExists(db, "sessions")
+	tagExists := tableExists(db, "tags")
+	secretTagExists := tableExists(db, "secret_tags")
+	auditEventExists := tableExists(db, "audit_events")
+	systemMetadataExists := tableExists(db, "system_metadata")
+	anomalyAlertExists := tableExists(db, "anomaly_alerts")
+	anomalyConfigRecordExists := tableExists(db, "anomaly_config_records")
+	statsSnapshotExists := tableExists(db, "stats_snapshots")
+	deploymentStatsSnapshotExists := tableExists(db, "deployment_stats_snapshots")
 	secretACLExists := tableExists(db, "secret_acls")
 	scheduleExists := tableExists(db, "secret_access_schedules")
 	secretTemplateExists := tableExists(db, "secret_templates")
@@ -2069,28 +2119,42 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		}
 	}
 
-	// Skip full AutoMigrate if already initialised (projects table present).
-	if projectsExists {
+	// freshInstallComplete is true only when EVERY model the transactional
+	// block below migrates already has its table -- not just "projects"
+	// present. A database left half-migrated by a crash BEFORE this and the
+	// surrounding transaction (#2383) existed can have projects (and maybe
+	// several more) but still be missing a later model's table; checking
+	// projects alone (the original gate) would wrongly treat that database
+	// as fully initialised forever, exactly the bug #2383's transaction
+	// prevents going FORWARD but cannot retroactively repair for a database
+	// that was already left in that state before the fix shipped.
+	freshInstallComplete := projectsExists && environmentExists && userExists &&
+		roleExists && permissionExists && rolePermissionExists && userRoleExists &&
+		groupsExists && userGroupExists && groupRoleExists && secretNodeExists &&
+		secretVersionExists && shareRecordExists && sessionExists && tagExists &&
+		secretTagExists && auditEventExists && systemMetadataExists && anomalyAlertExists &&
+		anomalyConfigRecordExists && statsSnapshotExists && deploymentStatsSnapshotExists &&
+		mfaStepUpGrantExists
+	if freshInstallComplete {
 		return nil
 	}
-	// Everything from here to the end of the function runs ONLY on a genuinely
-	// fresh install (projectsExists was false above) and must apply atomically:
-	// without this transaction, each AutoMigrate/index/backfill call below
-	// auto-commits independently on SQLite, so a process crash partway through
-	// leaves models.Project's table created but a later model's (e.g.
-	// models.User, or models.MFAStepUpGrant at the end of the loop) missing.
-	// The NEXT boot's migrateDatabase call then re-reads tableExists(db,
-	// "projects") as true and takes the early return above BEFORE ever
-	// reaching this code again -- permanently leaving the half-created schema
-	// in place with no loud failure, only a later runtime "no such table"
-	// error. Wrapping the whole fresh-install tail in one transaction means an
-	// interruption anywhere in it rolls back EVERYTHING, including the
-	// projects table itself, so the next boot's tableExists check correctly
-	// reads false and retries the full sequence from scratch. SQLite supports
-	// transactional DDL (CREATE/ALTER TABLE, CREATE INDEX), so this is safe
-	// there; on Postgres this nests as a savepoint inside withMigrationLock's
-	// already-transactional wrapper (harmless, not required for correctness
-	// there, since Postgres was already atomic end to end).
+	// Everything from here to the end of the function applies atomically,
+	// whether this is a genuinely fresh install (every flag above false) or a
+	// database left half-migrated by a pre-#2383 crash (some flags true, some
+	// false): AutoMigrate on a model whose table already exists is a safe,
+	// idempotent no-op, so this transaction either performs a full fresh
+	// install or FINISHES an interrupted one, never re-creating or
+	// corrupting what already exists. The transaction itself still matters
+	// going forward even with freshInstallComplete's broader check: without
+	// it, each AutoMigrate/index/backfill call below would auto-commit
+	// independently on SQLite, so a NEW crash partway through could leave
+	// yet another half-migrated state for a future boot to detect and
+	// finish -- correct, but needlessly repeating the same multi-boot dance
+	// instead of completing in one shot. SQLite supports transactional DDL
+	// (CREATE/ALTER TABLE, CREATE INDEX), so this is safe there; on Postgres
+	// this nests as a savepoint inside withMigrationLock's already-
+	// transactional wrapper (harmless, not required for correctness there,
+	// since Postgres was already atomic end to end).
 	return db.Transaction(func(tx *gorm.DB) error {
 		// Migrated one model per AutoMigrate call, not as one bulk variadic call: on a
 		// fresh Postgres, re-inspecting a table that AutoMigrate already created

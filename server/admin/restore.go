@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -203,6 +204,20 @@ func peekFormatVersion(path string) (int, error) {
 	return probe.FormatVersion, nil
 }
 
+// saturatingQuadruple returns n*4, clamped to math.MaxInt64 rather than
+// silently overflowing into a negative int64 -- archiveInfo.Size() is a real
+// file's size and realistically nowhere near this range on any filesystem
+// today, but CheckFreeSpace's own fail-closed guarantee (internal/backupfmt/
+// preflight.go) is only as good as what its caller hands it, and a negative
+// requiredBytes here would otherwise reach CheckFreeSpace's own refusal for
+// a different, confusing reason.
+func saturatingQuadruple(n int64) int64 {
+	if n < 0 || n > math.MaxInt64/4 {
+		return math.MaxInt64
+	}
+	return n * 4
+}
+
 // runAdminRestoreV2 is the current (design-b3-backup-v2.md) restore path.
 func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive complexity, orchestrates §5.3's full stage-then-verify-then-commit sequence in one place deliberately
 	isPG := isPostgresStorage(cfg)
@@ -236,7 +251,7 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 	// what's already on disk (the compressed archive itself); 4x the
 	// compressed size is a deliberately generous, simple estimate (design
 	// §7.4 doesn't mandate a precise compression-ratio calculation).
-	if err := backupfmt.CheckFreeSpace(restoreInput, archiveInfo.Size()*4); err != nil {
+	if err := backupfmt.CheckFreeSpace(restoreInput, saturatingQuadruple(archiveInfo.Size())); err != nil {
 		return fmt.Errorf("preflight free-space check (design §7.4): %w", err)
 	}
 

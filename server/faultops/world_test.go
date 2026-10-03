@@ -209,14 +209,25 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 	// derived from httpServer's own ephemeral origin, matching this exact
 	// codebase's own established precedent for a webauthn.New call inside a
 	// test world (server/http/handlers/mfa_webauthn_reauth_test.go uses the
-	// identical RPID/RPOrigins): WebAuthn's origin check validates the
-	// request's Origin HEADER against RPOrigins, not the TCP port the request
-	// actually arrived on, so a fixed RP identity is real and correct as long
-	// as whatever ceremony Setup/Execute code sends a matching Origin header
-	// (PR B's concern when it wires the first WebAuthn operation — none exists
-	// in opCatalog yet, hence no request-header change here).
+	// identical RPID/RPOrigins).
+	//
+	// Session FI2: RPID/RPOrigins changed from "localhost" to "example.org" /
+	// "https://example.org" to wire the first two WebAuthn opCatalog entries
+	// (register/finish, login/finish). Those ops need go-webauthn's REAL
+	// cryptographic verification path, which a hand-rolled fixture cannot
+	// produce (see internal/core/webauthn_spec_vectors_test.go's file doc) —
+	// the only real fixture available is the W3C spec test vectors
+	// (https://www.w3.org/TR/webauthn-3/#sctn-test-vectors-none-es256), whose
+	// authenticatorData RPIDHash and clientDataJSON "origin" field are baked
+	// in at RPID "example.org" / origin "https://example.org" and can't be
+	// re-targeted. Safe to change unconditionally (not just for those two
+	// ops): no op in opCatalog used the old "localhost" identity before this,
+	// and WebAuthn's origin check is clientDataJSON's own "origin" field
+	// (part of what the authenticator signs), not an HTTP header — so this is
+	// a one-time fixed RP identity, same as the old value, not something any
+	// request needs to echo back per-call.
 	rp, err := webauthn.New(&webauthn.Config{
-		RPID: "localhost", RPDisplayName: "Keyorix", RPOrigins: []string{"https://localhost"},
+		RPID: "example.org", RPDisplayName: "Keyorix", RPOrigins: []string{"https://example.org"},
 	})
 	if err != nil {
 		t.Fatalf("webauthn.New: %v", err)

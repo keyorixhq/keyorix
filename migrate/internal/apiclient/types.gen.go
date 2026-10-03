@@ -11,6 +11,14 @@ const (
 	BearerAuthScopes = "bearerAuth.Scopes"
 )
 
+// Defines values for MachineIdentityState.
+const (
+	Active    MachineIdentityState = "active"
+	Pending   MachineIdentityState = "pending"
+	Revoked   MachineIdentityState = "revoked"
+	Suspended MachineIdentityState = "suspended"
+)
+
 // Defines values for ListProjectsParamsIncludeDeleted.
 const (
 	ListProjectsParamsIncludeDeletedFalse ListProjectsParamsIncludeDeleted = "false"
@@ -23,6 +31,13 @@ const (
 	ListProjectEnvironmentsParamsIncludeDeletedTrue  ListProjectEnvironmentsParamsIncludeDeleted = "true"
 )
 
+// Defines values for TransitionMachineIdentityJSONBodyAction.
+const (
+	Activate TransitionMachineIdentityJSONBodyAction = "activate"
+	Revoke   TransitionMachineIdentityJSONBodyAction = "revoke"
+	Suspend  TransitionMachineIdentityJSONBodyAction = "suspend"
+)
+
 // Defines values for ListSecretsParamsClassification.
 const (
 	Confidential ListSecretsParamsClassification = "confidential"
@@ -32,13 +47,52 @@ const (
 	Unclassified ListSecretsParamsClassification = "unclassified"
 )
 
-// Environment A project environment (internal/storage/models.Environment). No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, Name, CreatedAt, UpdatedAt), not snake_case. Unlike Permission/RoleWithPermissions above, ProjectID/CreatedAt/UpdatedAt do NOT case-insensitively match a snake_case tag (the underscore makes "project_id" a different string from "projectid"), so a generated client MUST use these exact capitalized property names to decode correctly.
+// Environment A project environment. Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's environmentWire) -- internal/storage/models.Environment itself carries no `json:` tags and is never serialized directly.
 type Environment struct {
-	CreatedAt *time.Time `json:"CreatedAt,omitempty"`
-	ID        *int       `json:"ID,omitempty"`
-	Name      *string    `json:"Name,omitempty"`
-	ProjectID *int       `json:"ProjectID,omitempty"`
-	UpdatedAt *time.Time `json:"UpdatedAt,omitempty"`
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	Id        *int       `json:"id,omitempty"`
+	Name      *string    `json:"name,omitempty"`
+	ProjectId *int       `json:"project_id,omitempty"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+// MachineIdentity A project-scoped machine identity (ADR-023).
+type MachineIdentity struct {
+	Classification             *string               `json:"classification,omitempty"`
+	CreatedAt                  *time.Time            `json:"created_at,omitempty"`
+	CreatedBy                  *int                  `json:"created_by,omitempty"`
+	CreatedByMachineIdentityId *int                  `json:"created_by_machine_identity_id,omitempty"`
+	Description                *string               `json:"description,omitempty"`
+	Id                         *int                  `json:"id,omitempty"`
+	IdentityType               *string               `json:"identity_type,omitempty"`
+	LastSeenAt                 *time.Time            `json:"last_seen_at"`
+	Name                       *string               `json:"name,omitempty"`
+	ProjectId                  *int                  `json:"project_id,omitempty"`
+	RevokedAt                  *time.Time            `json:"revoked_at"`
+	State                      *MachineIdentityState `json:"state,omitempty"`
+	UpdatedAt                  *time.Time            `json:"updated_at,omitempty"`
+}
+
+// MachineIdentityState defines model for MachineIdentity.State.
+type MachineIdentityState string
+
+// MachineToken Machine identity token metadata (never the raw secret, except once at issuance).
+type MachineToken struct {
+	ExpiresAt  *time.Time `json:"expires_at"`
+	Id         *int       `json:"id,omitempty"`
+	LastUsedAt *time.Time `json:"last_used_at"`
+	Name       *string    `json:"name,omitempty"`
+	Prefix     *string    `json:"prefix,omitempty"`
+	Revoked    *bool      `json:"revoked,omitempty"`
+}
+
+// OIDCBinding An OIDC federation binding (ADR-031) mapping an external (issuer, subject) to a machine identity.
+type OIDCBinding struct {
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	Id        *int       `json:"id,omitempty"`
+	Issuer    *string    `json:"issuer,omitempty"`
+	Subject   *string    `json:"subject,omitempty"`
 }
 
 // PATToken A personal access token (ADR-027/ADR-042). The raw secret is never returned except once, in the create response.
@@ -56,94 +110,146 @@ type PATToken struct {
 	TokenPrefix      *string    `json:"token_prefix,omitempty"`
 }
 
-// Secret A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
+// Permission A permission (internal/storage/models.Permission), via the handler-level permissionWire type (server/http/handlers/rbac_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
+type Permission struct {
+	Action      *string `json:"action,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Id          *int    `json:"id,omitempty"`
+	Name        *string `json:"name,omitempty"`
+	Resource    *string `json:"resource,omitempty"`
+}
+
+// Project A project. Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's projectWire) -- internal/storage/models.Project itself carries no `json:` tags and is never serialized directly.
+type Project struct {
+	CreatedAt   *time.Time `json:"created_at,omitempty"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
+	Description *string    `json:"description,omitempty"`
+	Id          *int       `json:"id,omitempty"`
+	Name        *string    `json:"name,omitempty"`
+	RequireMfa  *bool      `json:"require_mfa,omitempty"`
+	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
+}
+
+// Role A role (internal/storage/models.Role), via the handler-level roleWire type (server/http/handlers/rbac_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
+type Role struct {
+	BypassesPermissionChecks *bool   `json:"bypasses_permission_checks,omitempty"`
+	Description              *string `json:"description,omitempty"`
+	Id                       *int    `json:"id,omitempty"`
+	Name                     *string `json:"name,omitempty"`
+}
+
+// RoleRef A minimal role reference (id, name only) -- GET /api/v1/users/{id}/roles's shape.
+type RoleRef struct {
+	Id   *int    `json:"id,omitempty"`
+	Name *string `json:"name,omitempty"`
+}
+
+// RoleWithPermissions A role with its assigned permissions (internal/core.RoleWithPermissions, embeds models.Role), via the handler-level roleWithPermissionsWire type (server/http/handlers/rbac_wire.go) -- fixed from the previous bare-Go-field-name leak (the embedded Role's fields promoted under their own untagged names) as part of the API-hygiene casing campaign.
+type RoleWithPermissions struct {
+	BypassesPermissionChecks *bool         `json:"bypasses_permission_checks,omitempty"`
+	Description              *string       `json:"description,omitempty"`
+	Id                       *int          `json:"id,omitempty"`
+	Name                     *string       `json:"name,omitempty"`
+	Permissions              *[]Permission `json:"permissions,omitempty"`
+}
+
+// Secret A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
 type Secret struct {
-	AutoRotate     *bool      `json:"AutoRotate,omitempty"`
-	Classification *string    `json:"Classification,omitempty"`
-	CreatedAt      *time.Time `json:"CreatedAt,omitempty"`
-	CreatedBy      *string    `json:"CreatedBy,omitempty"`
-	Description    *string    `json:"Description,omitempty"`
-	EnvironmentID  *int       `json:"EnvironmentID,omitempty"`
-	Expiration     *time.Time `json:"Expiration"`
-	ID             *int       `json:"ID,omitempty"`
+	AutoRotate     *bool      `json:"auto_rotate,omitempty"`
+	Classification *string    `json:"classification,omitempty"`
+	CreatedAt      *time.Time `json:"created_at,omitempty"`
+	CreatedBy      *string    `json:"created_by,omitempty"`
+	Description    *string    `json:"description,omitempty"`
+	EnvironmentId  *int       `json:"environment_id,omitempty"`
+	Expiration     *time.Time `json:"expiration"`
+	Id             *int       `json:"id,omitempty"`
 
 	// IsSecret false = this node is a folder.
-	IsSecret               *bool      `json:"IsSecret,omitempty"`
-	IsShared               *bool      `json:"IsShared,omitempty"`
-	LastRotatedAt          *time.Time `json:"LastRotatedAt"`
-	MaxReads               *int       `json:"MaxReads"`
-	Name                   *string    `json:"Name,omitempty"`
-	OwnerID                *int       `json:"OwnerID,omitempty"`
-	OwnerMachineIdentityID *int       `json:"OwnerMachineIdentityID,omitempty"`
-	ParentID               *int       `json:"ParentID"`
-	ProjectID              *int       `json:"ProjectID,omitempty"`
-	ReadCount              *int       `json:"ReadCount,omitempty"`
-	RotationBackend        *string    `json:"RotationBackend,omitempty"`
-	RotationCharset        *string    `json:"RotationCharset,omitempty"`
-	RotationLength         *int       `json:"RotationLength,omitempty"`
-	RotationRef            *string    `json:"RotationRef,omitempty"`
-	Status                 *string    `json:"Status,omitempty"`
-	Type                   *string    `json:"Type,omitempty"`
-	UpdatedAt              *time.Time `json:"UpdatedAt,omitempty"`
+	IsSecret               *bool      `json:"is_secret,omitempty"`
+	IsShared               *bool      `json:"is_shared,omitempty"`
+	LastRotatedAt          *time.Time `json:"last_rotated_at"`
+	MaxReads               *int       `json:"max_reads"`
+	Name                   *string    `json:"name,omitempty"`
+	OwnerId                *int       `json:"owner_id,omitempty"`
+	OwnerMachineIdentityId *int       `json:"owner_machine_identity_id,omitempty"`
+	ParentId               *int       `json:"parent_id"`
+	ProjectId              *int       `json:"project_id,omitempty"`
+	ReadCount              *int       `json:"read_count,omitempty"`
+	RotationBackend        *string    `json:"rotation_backend,omitempty"`
+	RotationCharset        *string    `json:"rotation_charset,omitempty"`
+	RotationLength         *int       `json:"rotation_length,omitempty"`
+	RotationRef            *string    `json:"rotation_ref,omitempty"`
+	Status                 *string    `json:"status,omitempty"`
+	Type                   *string    `json:"type,omitempty"`
+	UpdatedAt              *time.Time `json:"updated_at,omitempty"`
 }
 
 // SecretGetResult GET /api/v1/secrets/{id}'s response `data`: the bare Secret fields directly (metadata-only), OR, when include_value=true, `{secret, value}` instead. Declared as one flat schema combining both shapes' properties (rather than oneOf) since the CLI always knows in advance which branch a given request will get -- it controls include_value.
 type SecretGetResult struct {
-	Classification *string    `json:"Classification,omitempty"`
-	CreatedAt      *time.Time `json:"CreatedAt,omitempty"`
-	CreatedBy      *string    `json:"CreatedBy,omitempty"`
-	Description    *string    `json:"Description,omitempty"`
-	EnvironmentID  *int       `json:"EnvironmentID,omitempty"`
-	Expiration     *time.Time `json:"Expiration"`
-	ID             *int       `json:"ID,omitempty"`
-	IsSecret       *bool      `json:"IsSecret,omitempty"`
-	IsShared       *bool      `json:"IsShared,omitempty"`
-	LastRotatedAt  *time.Time `json:"LastRotatedAt"`
-	MaxReads       *int       `json:"MaxReads"`
-	Name           *string    `json:"Name,omitempty"`
-	OwnerID        *int       `json:"OwnerID,omitempty"`
-	ParentID       *int       `json:"ParentID"`
-	ProjectID      *int       `json:"ProjectID,omitempty"`
-	ReadCount      *int       `json:"ReadCount,omitempty"`
-	Status         *string    `json:"Status,omitempty"`
-	Type           *string    `json:"Type,omitempty"`
-	UpdatedAt      *time.Time `json:"UpdatedAt,omitempty"`
+	Classification *string    `json:"classification,omitempty"`
+	CreatedAt      *time.Time `json:"created_at,omitempty"`
+	CreatedBy      *string    `json:"created_by,omitempty"`
+	Description    *string    `json:"description,omitempty"`
+	EnvironmentId  *int       `json:"environment_id,omitempty"`
+	Expiration     *time.Time `json:"expiration"`
+	Id             *int       `json:"id,omitempty"`
+	IsSecret       *bool      `json:"is_secret,omitempty"`
+	IsShared       *bool      `json:"is_shared,omitempty"`
+	LastRotatedAt  *time.Time `json:"last_rotated_at"`
+	MaxReads       *int       `json:"max_reads"`
+	Name           *string    `json:"name,omitempty"`
+	OwnerId        *int       `json:"owner_id,omitempty"`
+	ParentId       *int       `json:"parent_id"`
+	ProjectId      *int       `json:"project_id,omitempty"`
+	ReadCount      *int       `json:"read_count,omitempty"`
 
-	// Secret A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. No `json:` tags on the model -- wire keys are the bare Go field names (ID, ProjectID, ...), not snake_case (ADR-108 PR 4/5).
-	Secret *Secret `json:"secret,omitempty"`
+	// Secret A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
+	Secret    *Secret    `json:"secret,omitempty"`
+	Status    *string    `json:"status,omitempty"`
+	Type      *string    `json:"type,omitempty"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 
 	// Value The decrypted value. Present only when include_value=true.
 	Value *string `json:"value,omitempty"`
 }
 
-// SecretListEntry One row of GET /api/v1/secrets's data.secrets[] (internal/storage/models.SecretWithSharingInfo, which anonymously embeds *SecretNode -- Go's encoding/json promotes the embedded struct's fields onto this same object). Wire keys are a genuine MIX of case conventions: SecretNode's own fields are bare capitalized (ID, Name, IsShared, ...), while SecretWithSharingInfo's own fields are snake_case (project_name, is_shared, ...) -- IsShared and is_shared are both present as DIFFERENT keys on the same object, from the two different structs.
+// SecretListEntry One row of GET /api/v1/secrets's data.secrets[], via the handler-level secretWithSharingInfoWire type (server/http/handlers/secrets_wire.go). Flat, all snake_case: the embedded secret-node fields promote using their own correct tags, and is_shared is the sharing-computed value (it correctly shadows the embedded node's raw stored one, matching Go's shallower-field-wins collision rule) -- fixed from the previous mixed-case duplicate-key leak as part of the API-hygiene casing campaign.
 type SecretListEntry struct {
-	Classification *string    `json:"Classification,omitempty"`
-	CreatedAt      *time.Time `json:"CreatedAt,omitempty"`
-	CreatedBy      *string    `json:"CreatedBy,omitempty"`
-	Description    *string    `json:"Description,omitempty"`
-	EnvironmentID  *int       `json:"EnvironmentID,omitempty"`
-	Expiration     *time.Time `json:"Expiration"`
-	ID             *int       `json:"ID,omitempty"`
-	IsSecret       *bool      `json:"IsSecret,omitempty"`
-
-	// IsShared From the embedded SecretNode. SecretWithSharingInfo's own is_shared field also exists on the wire, distinct from this one -- omitted here (oapi-codegen mangles snake_case to the same Go field name, IsShared, as this property, causing a real generation collision) since no CLI command reads it.
-	IsShared        *bool      `json:"IsShared,omitempty"`
-	MaxReads        *int       `json:"MaxReads"`
-	Name            *string    `json:"Name,omitempty"`
-	OwnerID         *int       `json:"OwnerID,omitempty"`
-	ParentID        *int       `json:"ParentID"`
-	ProjectID       *int       `json:"ProjectID,omitempty"`
-	ReadCount       *int       `json:"ReadCount,omitempty"`
-	Status          *string    `json:"Status,omitempty"`
-	Type            *string    `json:"Type,omitempty"`
-	UpdatedAt       *time.Time `json:"UpdatedAt,omitempty"`
+	AutoRotate      *bool      `json:"auto_rotate,omitempty"`
+	Classification  *string    `json:"classification,omitempty"`
+	CreatedAt       *time.Time `json:"created_at,omitempty"`
+	CreatedBy       *string    `json:"created_by,omitempty"`
+	Description     *string    `json:"description,omitempty"`
+	EnvironmentId   *int       `json:"environment_id,omitempty"`
 	EnvironmentName *string    `json:"environment_name,omitempty"`
+	Expiration      *time.Time `json:"expiration"`
+	Id              *int       `json:"id,omitempty"`
 	IsOwnedByUser   *bool      `json:"is_owned_by_user,omitempty"`
-	OwnerUsername   *string    `json:"owner_username,omitempty"`
-	ProjectName     *string    `json:"project_name,omitempty"`
-	ShareCount      *int       `json:"share_count,omitempty"`
-	UserPermission  *string    `json:"user_permission,omitempty"`
+	IsSecret        *bool      `json:"is_secret,omitempty"`
+
+	// IsShared Sharing-computed, not the raw stored node flag.
+	IsShared               *bool      `json:"is_shared,omitempty"`
+	LastRotatedAt          *time.Time `json:"last_rotated_at"`
+	MaxReads               *int       `json:"max_reads"`
+	Name                   *string    `json:"name,omitempty"`
+	OwnerId                *int       `json:"owner_id,omitempty"`
+	OwnerMachineIdentityId *int       `json:"owner_machine_identity_id,omitempty"`
+	OwnerUsername          *string    `json:"owner_username,omitempty"`
+	ParentId               *int       `json:"parent_id"`
+	ProjectId              *int       `json:"project_id,omitempty"`
+	ProjectName            *string    `json:"project_name,omitempty"`
+	ReadCount              *int       `json:"read_count,omitempty"`
+	RotationBackend        *string    `json:"rotation_backend,omitempty"`
+	RotationCharset        *string    `json:"rotation_charset,omitempty"`
+	RotationLength         *int       `json:"rotation_length,omitempty"`
+	RotationRef            *string    `json:"rotation_ref,omitempty"`
+	ShareCount             *int       `json:"share_count,omitempty"`
+	SharedAt               *time.Time `json:"shared_at"`
+	SharedBy               *string    `json:"shared_by,omitempty"`
+	Status                 *string    `json:"status,omitempty"`
+	Type                   *string    `json:"type,omitempty"`
+	UpdatedAt              *time.Time `json:"updated_at,omitempty"`
+	UserPermission         *string    `json:"user_permission,omitempty"`
 }
 
 // Error defines model for Error.
@@ -206,6 +312,63 @@ type ListProjectEnvironmentsParamsIncludeDeleted string
 // CreateProjectEnvironmentJSONBody defines parameters for CreateProjectEnvironment.
 type CreateProjectEnvironmentJSONBody struct {
 	Name string `json:"name"`
+}
+
+// CreateMachineIdentityJSONBody defines parameters for CreateMachineIdentity.
+type CreateMachineIdentityJSONBody struct {
+	// Classification Data classification: public | internal | confidential | restricted
+	Classification *string `json:"classification,omitempty"`
+	Description    *string `json:"description,omitempty"`
+	IdentityType   *string `json:"identity_type,omitempty"`
+	Name           string  `json:"name"`
+}
+
+// TransitionMachineIdentityJSONBody defines parameters for TransitionMachineIdentity.
+type TransitionMachineIdentityJSONBody struct {
+	Action TransitionMachineIdentityJSONBodyAction `json:"action"`
+}
+
+// TransitionMachineIdentityJSONBodyAction defines parameters for TransitionMachineIdentity.
+type TransitionMachineIdentityJSONBodyAction string
+
+// CreateOIDCBindingJSONBody defines parameters for CreateOIDCBinding.
+type CreateOIDCBindingJSONBody struct {
+	// Issuer The token's iss claim
+	Issuer string `json:"issuer"`
+
+	// Subject The token's sub claim
+	Subject string `json:"subject"`
+}
+
+// GrantMachineRoleJSONBody defines parameters for GrantMachineRole.
+type GrantMachineRoleJSONBody struct {
+	// EnvironmentId Scope the grant to one environment in this project; 0 or omitted = global (every environment).
+	EnvironmentId *int `json:"environment_id,omitempty"`
+	RoleId        int  `json:"role_id"`
+}
+
+// IssueMachineTokenJSONBody defines parameters for IssueMachineToken.
+type IssueMachineTokenJSONBody struct {
+	// Classification Data classification: public | internal | confidential | restricted
+	Classification *string `json:"classification,omitempty"`
+
+	// ExpiresInDays Optional; omit or 0 for no expiry
+	ExpiresInDays *int   `json:"expires_in_days,omitempty"`
+	Name          string `json:"name"`
+}
+
+// CreateRoleJSONBody defines parameters for CreateRole.
+type CreateRoleJSONBody struct {
+	Description string `json:"description"`
+	Name        string `json:"name"`
+
+	// Permissions Permission names.
+	Permissions []string `json:"permissions"`
+}
+
+// GetRoleByNameParams defines parameters for GetRoleByName.
+type GetRoleByNameParams struct {
+	Name string `form:"name" json:"name"`
 }
 
 // ListSecretsParams defines parameters for ListSecrets.
@@ -278,6 +441,24 @@ type CreateProjectJSONRequestBody CreateProjectJSONBody
 
 // CreateProjectEnvironmentJSONRequestBody defines body for CreateProjectEnvironment for application/json ContentType.
 type CreateProjectEnvironmentJSONRequestBody CreateProjectEnvironmentJSONBody
+
+// CreateMachineIdentityJSONRequestBody defines body for CreateMachineIdentity for application/json ContentType.
+type CreateMachineIdentityJSONRequestBody CreateMachineIdentityJSONBody
+
+// TransitionMachineIdentityJSONRequestBody defines body for TransitionMachineIdentity for application/json ContentType.
+type TransitionMachineIdentityJSONRequestBody TransitionMachineIdentityJSONBody
+
+// CreateOIDCBindingJSONRequestBody defines body for CreateOIDCBinding for application/json ContentType.
+type CreateOIDCBindingJSONRequestBody CreateOIDCBindingJSONBody
+
+// GrantMachineRoleJSONRequestBody defines body for GrantMachineRole for application/json ContentType.
+type GrantMachineRoleJSONRequestBody GrantMachineRoleJSONBody
+
+// IssueMachineTokenJSONRequestBody defines body for IssueMachineToken for application/json ContentType.
+type IssueMachineTokenJSONRequestBody IssueMachineTokenJSONBody
+
+// CreateRoleJSONRequestBody defines body for CreateRole for application/json ContentType.
+type CreateRoleJSONRequestBody CreateRoleJSONBody
 
 // CreateSecretJSONRequestBody defines body for CreateSecret for application/json ContentType.
 type CreateSecretJSONRequestBody CreateSecretJSONBody

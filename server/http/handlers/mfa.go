@@ -159,8 +159,10 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Unauthorized", "Invalid or expired code", http.StatusUnauthorized, nil)
 		return
 	}
-	resp := h.buildLoginResponse(r.Context(), session, user)
-	h.setSessionCookies(w, session)
+	resp, ok := h.completeLogin(w, r, session, user)
+	if !ok {
+		return
+	}
 	goSafe(func() {
 		h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, r.Header.Get("User-Agent"))
 	}) // #nosec G118

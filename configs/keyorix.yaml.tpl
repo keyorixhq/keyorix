@@ -109,7 +109,14 @@ storage:
     # ssl_mode: require  # always use require or verify-full in production
 
     max_open_conns: 25
-    max_idle_conns: 5
+    # Matches max_open_conns (SESSION-PERF, #2403 follow-up): leaving this lower than
+    # max_open_conns means a connection, once opened to serve a burst above the idle
+    # cap, gets closed again instead of kept warm -- under any sustained concurrency
+    # above the idle cap, every such request pays a fresh connection handshake
+    # (full TCP + Postgres SCRAM-SHA-256/PBKDF2 authentication) instead of reusing a
+    # pooled connection. factory.go defaults to matching max_open_conns too, so this
+    # explicit value exists to stay consistent with that default, not to override it.
+    max_idle_conns: 25
     conn_max_lifetime_minutes: 30
 
   encryption:

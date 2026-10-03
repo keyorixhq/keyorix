@@ -124,6 +124,14 @@ func (c *KeyorixCore) SetMachineTokenCacheFlusher(fn func()) {
 	c.machineTokenCacheFlusher = fn
 }
 
+// SetTokenCacheClearer wires the HTTP auth-cache's delete-only-if-cached eviction
+// function (middleware.ClearTokenCacheIfCached), for a core path that must clear a
+// STALE existing cache entry without ever creating a new negative one for a
+// never-cached credential. Called once at startup, alongside SetTokenCacheInvalidator.
+func (c *KeyorixCore) SetTokenCacheClearer(fn func(hash string)) {
+	c.tokenCacheClearer = fn
+}
+
 // invalidateTokenCache evicts the given token hashes from the auth cache when an
 // invalidator is wired (a no-op otherwise — e.g. tests, where the cache doesn't exist).
 func (c *KeyorixCore) invalidateTokenCache(hashes ...string) {
@@ -137,12 +145,40 @@ func (c *KeyorixCore) invalidateTokenCache(hashes ...string) {
 	}
 }
 
+// clearCachedTokens deletes the given token hashes from the auth cache ONLY where an
+// entry already exists (see tokenCacheClearer) — a no-op when the clearer is unwired
+// (tests, remote mode), same as invalidateTokenCache.
+func (c *KeyorixCore) clearCachedTokens(hashes ...string) {
+	if c.tokenCacheClearer == nil {
+		return
+	}
+	for _, h := range hashes {
+		if h != "" {
+			c.tokenCacheClearer(h)
+		}
+	}
+}
+
 // evictUserSessionCache evicts every one of the user's active sessions from the HTTP
 // auth cache WITHOUT deleting the sessions themselves — unlike
 // deleteSessionsForUserAndEvict, the user stays logged in. Used after a permission
 // change (e.g. role removal) where the goal is only to force the NEXT request to
 // re-resolve the user's permissions from storage instead of serving a stale,
 // positively-cached authorization decision for up to validTokenTTL.
+//
+// Uses clearCachedTokens (delete-ONLY-if-already-cached), not invalidateTokenCache:
+// the credential itself is still perfectly valid here — only its PRIVILEGES may have
+// changed — so writing a new negative tombstone would be wrong, not just unnecessary.
+// Found live by FuzzAuthCacheDifferential (G5, #2402): RemoveUserRole's own call to
+// this function (via removeUserRoleUnguarded) could tombstone a session token that
+// had NEVER been used/cached yet (e.g. login immediately followed by a role
+// grant+removal, before the session's first authenticated request) — the next request
+// hit the tombstone and got 401 from the cache while a cache-bypassed, fresh check of
+// the SAME token got 403 (valid session, but the downstream authorization check
+// denied for an unrelated reason). Same bug class PR #2206 fixed for setAccountState's
+// own "becoming active" branch, reached through a different call site: any
+// credential-lifecycle helper that only needs to force re-resolution (not revoke
+// outright) must never use the tombstone-writing primitive.
 //
 // Every caller of this function calls it AFTER its own primary operation has
 // already committed — the same "best-effort helper, primary effect already
@@ -163,7 +199,7 @@ func (c *KeyorixCore) evictUserSessionCache(ctx context.Context, userID uint) {
 		}
 	}()
 	hashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, userID)
-	c.invalidateTokenCache(hashes...)
+	c.clearCachedTokens(hashes...)
 }
 
 // EventSessionRevocationPanicked audits a panic recovered inside

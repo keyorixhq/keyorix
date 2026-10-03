@@ -14,15 +14,19 @@
 package faultops
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -185,7 +189,7 @@ var multiStepAmbiguousCommitExceptions = []nonLoadBearingException{}
 // environment seeding in one outer WithTransaction, with EACH environment
 // seeded via its own NESTED tx.WithTransaction (a SAVEPOINT) — deliberately,
 // per that function's own extensive comment: a per-environment seeding
-// failure is caught, logged ("created without its default environment ...:
+// failure is caught, logged ("created without its environment ...:
 // %v"), and non-fatal by design, so the project itself still commits. Found
 // live: FuzzStorageFaultOperations op="REST POST /api/v1/projects"
 // fault=WithTransaction#4/error (CI, PR #2252) — NthCall=4 lands on one of
@@ -213,6 +217,19 @@ var multiStepAmbiguousCommitExceptions = []nonLoadBearingException{}
 // signal" half of the original gap — the missing environment is still
 // non-fatal by design, but it is now DISCOVERABLE via the audit trail
 // instead of only a server log line.
+//
+// requireLogSubstring (session-M follow-up, inbox/CORE.md's "2026-09-30
+// session-m" entry): minNthCall alone rules out the OUTER transaction fault,
+// but says nothing about WHETHER the per-environment seeding actually hit the
+// documented best-effort path — a diff of exactly [Environment] with
+// NthCall>=2 is also the shape a SILENT bug (env seeding skipped with no
+// warning logged) would produce, and that shape must not be waved through
+// just because it resembles the accepted tradeoff. Requiring the warning
+// substring to actually appear in the op's own captured log output (see
+// execLog on oracleInput, populated from stdlib log output captured around
+// op.Execute) ties the exemption to evidence the known, reviewed code path
+// fired, not to the table-diff shape alone. Silent missing envs stay a
+// violation.
 var opScopedBestEffortTables = []struct {
 	op, method string
 	tables     []string
@@ -220,18 +237,30 @@ var opScopedBestEffortTables = []struct {
 	// 1-indexed call number; 0 means unrestricted (every pre-existing entry's
 	// behavior, unchanged).
 	minNthCall int
+	// requireLogSubstring, when non-empty, additionally requires this exact
+	// substring to appear in the op's captured log output (execLog) for this
+	// exemption to apply. Empty (the zero value, every pre-existing entry)
+	// means no log-evidence check — unchanged behavior for those entries.
+	requireLogSubstring string
 }{
 	{op: "REST POST /api/v1/users/", method: "AssignRole", tables: []string{"UserRole"}},
 	{op: "REST POST /api/v1/users/", method: "GetRoleByName", tables: []string{"UserRole"}},
-	{op: "REST POST /api/v1/projects", method: "WithTransaction", tables: []string{"Environment", "AuditEvent"}, minNthCall: 2},
+	{
+		op: "REST POST /api/v1/projects", method: "WithTransaction", tables: []string{"Environment", "AuditEvent"},
+		minNthCall:          2,
+		requireLogSubstring: "created without its environment",
+	},
 }
 
-func opScopedAcceptableByDesign(op, method string, nth int, diff []string) bool {
+func opScopedAcceptableByDesign(op, method string, nth int, diff []string, execLog string) bool {
 	for _, e := range opScopedBestEffortTables {
 		if e.op != op || e.method != method {
 			continue
 		}
 		if e.minNthCall > 0 && nth < e.minNthCall {
+			continue
+		}
+		if e.requireLogSubstring != "" && !strings.Contains(execLog, e.requireLogSubstring) {
 			continue
 		}
 		allowedSet := make(map[string]bool, len(e.tables))
@@ -513,8 +542,19 @@ func runOneFuzzIterationWithWorlds(t *testing.T, data []byte, reusedRef, reusedW
 
 	var result opResult
 	var execErr error
+	var execLog string
 	func() {
+		// Capture the standard logger's output for the duration of Execute only
+		// — narrowly scoped to "this iteration", per opScopedBestEffortTables'
+		// requireLogSubstring: evidence must come from THIS call, not from
+		// Setup or an earlier/later iteration's output. Same redirect pattern
+		// as internal/core's captureLog helper (audit_write_failure_test.go).
+		var logBuf bytes.Buffer
+		prevOut := log.Writer()
+		log.SetOutput(&logBuf)
 		defer func() {
+			log.SetOutput(prevOut)
+			execLog = logBuf.String()
 			if r := recover(); r != nil {
 				t.Errorf("panic escaped the transport layer entirely for op %q (fault %s/%d/%s) — "+
 					"the real Recovery middleware/RecoveryInterceptor should have converted this to "+
@@ -552,7 +592,7 @@ func runOneFuzzIterationWithWorlds(t *testing.T, data []byte, reusedRef, reusedW
 
 	oi := oracleInput{
 		op: op.Key, method: decoded.methodName, nth: decoded.nthCall, kind: decoded.kind,
-		result: result, before: before, after: after, refAfter: refAfter,
+		result: result, before: before, after: after, refAfter: refAfter, execLog: execLog,
 	}
 	if observe != nil {
 		observe(oi)
@@ -568,6 +608,11 @@ type oracleInput struct {
 	before     dbSnapshot
 	after      dbSnapshot
 	refAfter   dbSnapshot
+	// execLog is everything the standard logger wrote during op.Execute for
+	// this iteration — used by opScopedAcceptableByDesign's requireLogSubstring
+	// check (evidence that a best-effort code path actually fired, not just
+	// that the table diff resembles it).
+	execLog string
 }
 
 // knownOpenTolerance narrowly fingerprints one already-filed, not-yet-fixed
@@ -578,9 +623,30 @@ type oracleInput struct {
 // downgraded from Errorf to Logf. A fix landing that makes this tolerance
 // stop matching is the intended way to notice the finding is closed — remove
 // the entry then, don't leave it tolerating a bug that no longer exists.
+//
+// issue and expires are REQUIRED on every entry (docs/adr-069-testing-strategy.md's
+// QUARANTINE convention: an issue reference plus an explicit expiry date, so a
+// tolerance is visible and bounded, not a silent permanent carve-out). issue is a
+// GitHub issue reference ("#1234"); expires is "YYYY-MM-DD", a backlog-hygiene
+// checkpoint to re-triage if still open by then -- not an enforced CI gate the way
+// the QUARANTINE preflight check is. findingDoc stays as the pointer to the fuller
+// write-up (a docs/findings/*.md path, or a keyorix-private doc).
+//
+// nth and oracle (added alongside the first real entry, #2449) narrow the
+// match further: nth is the exact 1-indexed fault call number
+// (oracleInput.nth), and oracle is the exact letter ("a".."e") of the ONE
+// GOAL oracle this tolerance covers. Without them, (op, method, kind) alone
+// would match EVERY call number and EVERY oracle that happens to report a
+// violation on this triple -- silently swallowing a different, unrelated
+// violation (a different nth, or a different oracle) that happens to share
+// the same op/method/kind. Both are required, same as issue/expires.
 type knownOpenTolerance struct {
 	op, method string
 	kind       faultstorage.FaultKind
+	nth        int
+	oracle     string
+	issue      string
+	expires    string
 	findingDoc string
 }
 
@@ -598,15 +664,57 @@ type knownOpenTolerance struct {
 // test (see the committed seed
 // testdata/fuzz/FuzzStorageFaultOperations/630357d238f9c51b); no entry needed
 // unless a new finding is filed.
-var knownOpenTolerances = []knownOpenTolerance{}
+//
+// GRPC keyorix.v1.UserService.CreateUser, CountProjectMembershipsByUsers,
+// KindPanic, NthCall=1, oracle (a): found live by CI fuzz shard 0 on an
+// unrelated PR (#2434), confirmed pre-existing on main by replaying input
+// 5900200031 directly against origin/main (not caused by that PR). A panic
+// inside CountProjectMembershipsByUsers (call #1, injected post-commit) --
+// server/grpc/services/user_service.go's userToProto -> projectCounts ->
+// internal/core.ProjectMembershipCounts -- propagates past the ALREADY
+// committed User/UserRole/PasswordHistory/AuditEvent rows from CreateUser's
+// own write, which happens earlier and is unaffected; RecoveryInterceptor
+// catches the panic and the RPC reports an error even though the user was
+// genuinely created. Filed as #2449; not fixed here.
+var knownOpenTolerances = []knownOpenTolerance{
+	{
+		op: "GRPC keyorix.v1.UserService.CreateUser", method: "CountProjectMembershipsByUsers",
+		kind: faultstorage.KindPanic, nth: 1, oracle: "a",
+		issue: "#2449", expires: "2026-10-16",
+		findingDoc: "#2449",
+	},
+}
 
-func matchingKnownOpen(in oracleInput) *knownOpenTolerance {
+func matchingKnownOpen(in oracleInput, oracle string) *knownOpenTolerance {
 	for i, k := range knownOpenTolerances {
-		if k.op == in.op && k.method == in.method && k.kind == in.kind {
+		if k.op == in.op && k.method == in.method && k.kind == in.kind && k.nth == in.nth && k.oracle == oracle {
 			return &knownOpenTolerances[i]
 		}
 	}
 	return nil
+}
+
+// TestKnownOpenTolerances_CarryIssueAndExpiry enforces knownOpenTolerance's own
+// doc comment: issue and expires are required, not optional decoration. Passes
+// trivially while knownOpenTolerances is empty (today) -- it exists for the next
+// entry, not this one; see docs/adr-069-testing-strategy.md's QUARANTINE
+// expiry-check precedent for why a tolerance without a checked issue+expiry pair
+// tends to become a silent permanent carve-out instead of the bounded, visible
+// one it's meant to be.
+func TestKnownOpenTolerances_CarryIssueAndExpiry(t *testing.T) {
+	for _, k := range knownOpenTolerances {
+		label := fmt.Sprintf("%s/%s/%s", k.op, k.method, k.kind)
+		if k.issue == "" {
+			t.Errorf("knownOpenTolerance %s: issue is empty -- every tolerance must cite a GitHub issue (\"#1234\")", label)
+		}
+		if k.expires == "" {
+			t.Errorf("knownOpenTolerance %s: expires is empty -- every tolerance must carry an explicit \"YYYY-MM-DD\" expiry", label)
+			continue
+		}
+		if _, err := time.Parse("2006-01-02", k.expires); err != nil {
+			t.Errorf("knownOpenTolerance %s: expires %q does not parse as YYYY-MM-DD: %v", label, k.expires, err)
+		}
+	}
 }
 
 // bestEffortTables maps a storage method this codebase deliberately calls
@@ -696,9 +804,9 @@ func checkOracles(t *testing.T, in oracleInput) {
 	t.Helper()
 	label := fmt.Sprintf("op=%s fault=%s#%d/%s", in.op, in.method, in.nth, in.kind)
 
-	report := func(format string, args ...any) {
+	report := func(oracle, format string, args ...any) {
 		msg := fmt.Sprintf(format, args...)
-		if known := matchingKnownOpen(in); known != nil {
+		if known := matchingKnownOpen(in, oracle); known != nil {
 			t.Logf("KNOWN-OPEN (%s): %s", known.findingDoc, msg)
 			return
 		}
@@ -710,7 +818,7 @@ func checkOracles(t *testing.T, in oracleInput) {
 	// reference run (the write happens anyway), which (a) alone would not flag.
 	if authzReadMethods[in.method] && in.kind != faultstorage.KindEffectThenError && in.result.Success &&
 		!nonLoadBearingAuthzRead(in.op, in.method, in.nth) {
-		report("%s: ORACLE (c) VIOLATION — a fault on an authz-resolution read produced a SUCCESSFUL "+
+		report("c", "%s: ORACLE (c) VIOLATION — a fault on an authz-resolution read produced a SUCCESSFUL "+
 			"result instead of an error/deny: %s", label, in.result.Detail)
 		return
 	}
@@ -719,7 +827,7 @@ func checkOracles(t *testing.T, in oracleInput) {
 	if !in.result.Success {
 		for _, frag := range canaryFragments {
 			if strings.Contains(in.result.Detail, frag) {
-				report("%s: ORACLE (e) VIOLATION — error response leaked secret plaintext %q: %s",
+				report("e", "%s: ORACLE (e) VIOLATION — error response leaked secret plaintext %q: %s",
 					label, frag, in.result.Detail)
 				return
 			}
@@ -736,10 +844,18 @@ func checkOracles(t *testing.T, in oracleInput) {
 					"as best-effort/non-fatal (see acceptableByDesign's doc comment)", label, diff, in.method)
 				return
 			}
-			if opScopedAcceptableByDesign(in.op, in.method, in.nth, diff) {
+			if opScopedAcceptableByDesign(in.op, in.method, in.nth, diff, in.execLog) {
 				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in %v, which this op/method pair "+
 					"explicitly documents as best-effort/non-fatal (see opScopedBestEffortTables' doc comment)",
 					label, diff)
+				return
+			}
+			if bulkPartialFailureAccountsForDiff(in) {
+				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges from the reference only in %v, but this "+
+					"run's own before/after state is byte-for-byte unchanged and the response body's own "+
+					"\"failed\" array already reports this item as not deleted — this op's documented "+
+					"partial-success design (see bulkPartialFailureAccountsForDiff's doc comment), not an "+
+					"unreported business-state change", label, diff)
 				return
 			}
 			// Generalized AuditEvent-only case: every traced instance of
@@ -759,7 +875,7 @@ func checkOracles(t *testing.T, in oracleInput) {
 					"benign audit-content degradation, not a business-state inconsistency", label, diff)
 				return
 			}
-			report("%s: ORACLE (a) VIOLATION — reported SUCCESS but final state does not match the "+
+			report("a", "%s: ORACLE (a) VIOLATION — reported SUCCESS but final state does not match the "+
 				"fault-free reference run's state (partial/incorrect commit). Differing tables: %v",
 				label, diff)
 		}
@@ -789,14 +905,14 @@ func checkOracles(t *testing.T, in oracleInput) {
 					label)
 				return
 			}
-			report("%s: ORACLE (d) VIOLATION — effect-then-error state matches NEITHER the pre-fault "+
+			report("d", "%s: ORACLE (d) VIOLATION — effect-then-error state matches NEITHER the pre-fault "+
 				"state nor the fault-free reference state (a genuine partial/mixed commit, not just an "+
 				"ambiguous-but-consistent one). Differing tables vs before: %v; vs reference: %v",
 				label, diffTables(in.before, in.after), diffTables(in.refAfter, in.after))
 		}
 	default:
 		if in.after.Hash != in.before.Hash {
-			report("%s: ORACLE (a) VIOLATION — reported an ERROR but logical state changed anyway "+
+			report("a", "%s: ORACLE (a) VIOLATION — reported an ERROR but logical state changed anyway "+
 				"(partial commit). Differing tables: %v", label, diffTables(in.before, in.after))
 		}
 	}
@@ -824,6 +940,67 @@ func onlyOutcomeLogTables(diff []string) bool {
 		}
 	}
 	return true
+}
+
+// bulkPartialSuccessOps names ops whose success response body is
+// {"data":{"deleted":[ids],"failed":[{"secret_id":id,...}],"total":N}} —
+// BulkDeleteSecrets' own documented shape (internal/core/bulk_delete.go: "Partial
+// success is allowed — individual failures are collected in Failed"). A
+// per-item failure here is accurately reported in the body even though the
+// HTTP-level call still reports overall success — by this op's own design, not
+// a bug. Scoped to exactly this op for now: a sibling bulk op (bulk-rename,
+// bulk-rotate, extend-expiring) sharing the same partial-success shape would
+// need its own entry here, not inferred from this one (CLAUDE.md's "an
+// enumeration is only as complete as the idioms it knows about").
+var bulkPartialSuccessOps = map[string]bool{
+	"REST POST /api/v1/projects/{id}/secrets/bulk-delete": true,
+}
+
+// bulkPartialFailureAccountsForDiff reports whether in.op's response body
+// (in.result.Detail, "HTTP <code>: <json body>") shows EVERY requested item
+// failed (an empty "deleted" array, a non-empty "failed" array — the only
+// shape FuzzStorageFaultOperations' bulk-delete op, which always submits
+// exactly one secret_id, can currently produce) AND this run's final state is
+// BYTE-FOR-BYTE IDENTICAL to its own pre-fault snapshot (in.before == in.after).
+//
+// Deliberately NOT "diff confined to the tables a delete would touch" —
+// coordinator review caught that an earlier version of this check compared
+// against ONLY the fault-free reference run and accepted any diff limited to
+// {SecretNode, AuditEvent, SecretAccessLog}, which is too broad: it would wave
+// through a REAL bug where an audit event or access-log row gets written for
+// an item the body itself reports as failed (both runs would still show a
+// non-empty AuditEvent table, just with different content, and a table-name-
+// only diff can't tell those apart). Zero reported deletions means literally
+// nothing should have changed in the database during this call — the
+// strictest, most direct statement of "this item's effect never committed,
+// and the body correctly says so." Deliberately does NOT generalize to a true
+// mixed batch (some deleted, some failed): this fuzz op never exercises that
+// shape, so nothing here has been red/green-tested against it.
+func bulkPartialFailureAccountsForDiff(in oracleInput) bool {
+	if !bulkPartialSuccessOps[in.op] {
+		return false
+	}
+	detail := in.result.Detail
+	sep := strings.Index(detail, ": ")
+	if sep < 0 {
+		return false
+	}
+	var body struct {
+		Data struct {
+			Deleted []uint `json:"deleted"`
+			Failed  []struct {
+				SecretID uint   `json:"secret_id"`
+				Error    string `json:"error"`
+			} `json:"failed"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(detail[sep+2:]), &body); err != nil {
+		return false
+	}
+	if len(body.Data.Deleted) != 0 || len(body.Data.Failed) == 0 {
+		return false
+	}
+	return in.before.Hash == in.after.Hash
 }
 
 func diffTables(before, after dbSnapshot) []string {
@@ -869,27 +1046,43 @@ func hashExcluding(snap dbSnapshot, excludeTables ...string) string {
 // comment says never even reaches this success-branch check in practice —
 // this test pins that assumption as an explicit, checked invariant rather
 // than an implicit one.
+//
+// Extended for the session-M follow-up (inbox/CORE.md's "2026-09-30
+// session-m" entry) with the requireLogSubstring cases: an Environment-only
+// diff at a qualifying NthCall must ALSO have the warning log actually
+// present — a planted bug that silently skips env seeding with no warning
+// (e.g. a swallowed error that never reaches catalog.go's log.Printf) must
+// stay a violation, not get waved through just because the diff shape
+// matches. Red without the requireLogSubstring check: the "no log" and
+// "unrelated log" cases below would both wrongly return true.
 func TestOpScopedAcceptableByDesign_ProjectWithTransaction_RequiresNthCallTwo(t *testing.T) {
 	const op = "REST POST /api/v1/projects"
 	const method = "WithTransaction"
+	const warningLog = `2026/10/02 14:13:33 Warning: project 2 (fuzz-project) created without its environment "production": fault-fuzz injected failure` + "\n"
 
-	assert.False(t, opScopedAcceptableByDesign(op, method, 1, []string{"Environment"}),
+	assert.False(t, opScopedAcceptableByDesign(op, method, 1, []string{"Environment"}, warningLog),
 		"NthCall=1 (the OUTER transaction) must NOT be exempted -- only an inner per-environment SAVEPOINT fault (NthCall>=2) is the documented, accepted tradeoff")
-	assert.True(t, opScopedAcceptableByDesign(op, method, 2, []string{"Environment"}),
-		"NthCall=2 (the first per-environment SAVEPOINT) with an Environment-only diff must be exempted")
-	assert.True(t, opScopedAcceptableByDesign(op, method, 5, []string{"Environment"}),
+	assert.True(t, opScopedAcceptableByDesign(op, method, 2, []string{"Environment"}, warningLog),
+		"NthCall=2 (the first per-environment SAVEPOINT) with an Environment-only diff AND the warning log present must be exempted")
+	assert.True(t, opScopedAcceptableByDesign(op, method, 5, []string{"Environment"}, warningLog),
 		"a later per-environment SAVEPOINT (NthCall=5) must be exempted the same way as NthCall=2")
-	assert.False(t, opScopedAcceptableByDesign(op, method, 2, []string{"Environment", "Project"}),
-		"a diff touching a table OUTSIDE the allowed set must never be exempted, regardless of NthCall")
-	assert.False(t, opScopedAcceptableByDesign("REST POST /api/v1/other", method, 2, []string{"Environment"}),
+	assert.False(t, opScopedAcceptableByDesign(op, method, 2, []string{"Environment", "Project"}, warningLog),
+		"a diff touching a table OUTSIDE the allowed set must never be exempted, regardless of NthCall or log evidence")
+	assert.False(t, opScopedAcceptableByDesign("REST POST /api/v1/other", method, 2, []string{"Environment"}, warningLog),
 		"an unrelated op must never match this op-scoped entry")
+	assert.False(t, opScopedAcceptableByDesign(op, method, 2, []string{"Environment"}, ""),
+		"EVIDENCE REQUIRED: an Environment-only diff with NO captured log output must NOT be exempted -- a silent env-seed skip (no warning logged) stays an oracle (a) violation")
+	assert.False(t, opScopedAcceptableByDesign(op, method, 2, []string{"Environment"}, "some unrelated log line\n"),
+		"EVIDENCE REQUIRED: log output present but not containing the specific warning substring must NOT be exempted")
 }
 
 // TestOpScopedAcceptableByDesign_UnrestrictedEntriesIgnoreNthCall proves the
-// two pre-existing opScopedBestEffortTables entries (minNthCall: 0, the zero
-// value) are unaffected by adding minNthCall to the struct -- they must keep
-// matching at every NthCall, exactly as before this field existed.
+// two pre-existing opScopedBestEffortTables entries (minNthCall: 0 and
+// requireLogSubstring: "", both zero values) are unaffected by adding
+// minNthCall/requireLogSubstring to the struct -- they must keep matching at
+// every NthCall with no log evidence required, exactly as before either
+// field existed.
 func TestOpScopedAcceptableByDesign_UnrestrictedEntriesIgnoreNthCall(t *testing.T) {
-	assert.True(t, opScopedAcceptableByDesign("REST POST /api/v1/users/", "AssignRole", 1, []string{"UserRole"}))
-	assert.True(t, opScopedAcceptableByDesign("REST POST /api/v1/users/", "GetRoleByName", 99, []string{"UserRole"}))
+	assert.True(t, opScopedAcceptableByDesign("REST POST /api/v1/users/", "AssignRole", 1, []string{"UserRole"}, ""))
+	assert.True(t, opScopedAcceptableByDesign("REST POST /api/v1/users/", "GetRoleByName", 99, []string{"UserRole"}, ""))
 }

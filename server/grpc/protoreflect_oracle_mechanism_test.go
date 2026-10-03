@@ -121,7 +121,7 @@ func TestUnexplainedWrite_RedOnUnexemptedTableWrite(t *testing.T) {
 	}
 	after := snapshotDB(t, db)
 
-	if !before.unexplainedWrite(after) {
+	if !before.unexplainedWrite(after, "zero-grant") {
 		t.Fatal("expected unexplainedWrite to report true for a write to a non-exempt table, got false")
 	}
 }
@@ -142,7 +142,7 @@ func TestUnexplainedWrites_NamesTheDifferingTable(t *testing.T) {
 	}
 	after := snapshotDB(t, db)
 
-	diffs := before.unexplainedWrites(after)
+	diffs := before.unexplainedWrites(after, "zero-grant")
 	if len(diffs) != 1 || diffs[0].table != "widgets" || diffs[0].n != 2 {
 		t.Fatalf("expected exactly one diff {widgets, 2}, got %v", diffs)
 	}
@@ -161,7 +161,7 @@ func TestUnexplainedWrite_GreenOnExemptedTableInsert(t *testing.T) {
 	}
 	after := snapshotDB(t, db)
 
-	if before.unexplainedWrite(after) {
+	if before.unexplainedWrite(after, "zero-grant") {
 		t.Fatal("expected unexplainedWrite to report false for an INSERT into the documented exempt table, got true")
 	}
 }
@@ -192,7 +192,7 @@ func TestUnexplainedWrite_GreenOnExemptedTableNoOpUpdate(t *testing.T) {
 	}
 	after := snapshotDB(t, db)
 
-	if before.unexplainedWrite(after) {
+	if before.unexplainedWrite(after, "zero-grant") {
 		t.Fatal("expected unexplainedWrite to report false for a same-value UPDATE to the documented exempt table, got true (this is the exact false positive the trigger-based mechanism replaced a content-hash approach to fix)")
 	}
 }
@@ -210,7 +210,7 @@ func TestUnexplainedWrite_RedOnMixedExemptAndNonExemptWrite(t *testing.T) {
 	}
 	after := snapshotDB(t, db)
 
-	diffs := before.unexplainedWrites(after)
+	diffs := before.unexplainedWrites(after, "zero-grant")
 	if len(diffs) != 1 || diffs[0].table != "widgets" {
 		t.Fatalf("expected a diff naming only 'widgets' (widgets_audit is exempt), got %v -- exempting one table must never mask a write to another", diffs)
 	}
@@ -260,7 +260,7 @@ func TestUnexplainedWrite_GreenOnSessionsLastSeenUpdate(t *testing.T) {
 	}
 	after := snapshotDB(t, db)
 
-	if before.unexplainedWrite(after) {
+	if before.unexplainedWrite(after, "zero-grant") {
 		t.Fatal("expected unexplainedWrite to report false for a sessions UPDATE touching only last_seen_at, got true")
 	}
 }
@@ -279,7 +279,7 @@ func TestUnexplainedWrite_RedOnSessionsInsert(t *testing.T) {
 	}
 	after := snapshotDB(t, db)
 
-	diffs := before.unexplainedWrites(after)
+	diffs := before.unexplainedWrites(after, "zero-grant")
 	if len(diffs) != 1 || diffs[0].table != "sessions" || diffs[0].n != 1 {
 		t.Fatalf("expected unexplainedWrites to report exactly {sessions, 1} for a sessions INSERT, got %v -- narrowing the exemption to UPDATE must not also exempt INSERT", diffs)
 	}
@@ -299,7 +299,7 @@ func TestUnexplainedWrite_RedOnSessionsDelete(t *testing.T) {
 	}
 	after := snapshotDB(t, db)
 
-	diffs := before.unexplainedWrites(after)
+	diffs := before.unexplainedWrites(after, "zero-grant")
 	if len(diffs) != 1 || diffs[0].table != "sessions" || diffs[0].n != 1 {
 		t.Fatalf("expected unexplainedWrites to report exactly {sessions, 1} for a sessions DELETE, got %v -- narrowing the exemption to UPDATE must not also exempt DELETE", diffs)
 	}
@@ -322,7 +322,7 @@ func TestUnexplainedWrite_RedOnSessionsUpdateTouchingOtherColumn(t *testing.T) {
 	}
 	after := snapshotDB(t, db)
 
-	diffs := before.unexplainedWrites(after)
+	diffs := before.unexplainedWrites(after, "zero-grant")
 	if len(diffs) != 1 || diffs[0].table != "sessions" || diffs[0].n != 1 {
 		t.Fatalf("expected unexplainedWrites to report exactly {sessions, 1} for an UPDATE touching last_seen_at AND expires_at, got %v -- the column-scoped exemption must not cover a multi-column change", diffs)
 	}
@@ -344,7 +344,7 @@ func TestUnexplainedWrite_RedOnSessionsUpdateOfOtherColumnAlone(t *testing.T) {
 	}
 	after := snapshotDB(t, db)
 
-	diffs := before.unexplainedWrites(after)
+	diffs := before.unexplainedWrites(after, "zero-grant")
 	if len(diffs) != 1 || diffs[0].table != "sessions" || diffs[0].n != 1 {
 		t.Fatalf("expected unexplainedWrites to report exactly {sessions, 1} for an UPDATE of expires_at alone, got %v -- only a last_seen_at-only change is exempt", diffs)
 	}
@@ -399,8 +399,8 @@ func TestUnexplainedWrite_GreenOnSecretNodesReadCountUpdate(t *testing.T) {
 	}
 	after := snapshotDB(t, db)
 
-	if before.unexplainedWrite(after) {
-		t.Fatal("expected unexplainedWrite to report false for a secret_nodes UPDATE touching only read_count, got true")
+	if before.unexplainedWrite(after, "read-only") {
+		t.Fatal("expected unexplainedWrite to report false for a secret_nodes UPDATE touching only read_count by the read-only principal, got true")
 	}
 }
 
@@ -416,8 +416,8 @@ func TestUnexplainedWrite_GreenOnSecretVersionsReadCountUpdate(t *testing.T) {
 	}
 	after := snapshotDB(t, db)
 
-	if before.unexplainedWrite(after) {
-		t.Fatal("expected unexplainedWrite to report false for a secret_versions UPDATE touching only read_count, got true")
+	if before.unexplainedWrite(after, "read-only") {
+		t.Fatal("expected unexplainedWrite to report false for a secret_versions UPDATE touching only read_count by the read-only principal, got true")
 	}
 }
 
@@ -438,9 +438,9 @@ func TestUnexplainedWrite_RedOnSecretNodesUpdateTouchingOtherColumn(t *testing.T
 	}
 	after := snapshotDB(t, db)
 
-	diffs := before.unexplainedWrites(after)
+	diffs := before.unexplainedWrites(after, "read-only")
 	if len(diffs) != 1 || diffs[0].table != "secret_nodes" || diffs[0].n != 1 {
-		t.Fatalf("expected unexplainedWrites to report exactly {secret_nodes, 1} for an UPDATE touching read_count AND value, got %v -- the column-scoped exemption must not cover a multi-column change", diffs)
+		t.Fatalf("expected unexplainedWrites to report exactly {secret_nodes, 1} for an UPDATE touching read_count AND value, got %v -- the column-scoped exemption must not cover a multi-column change, even for a principal the read_count exemption itself allows", diffs)
 	}
 }
 
@@ -456,9 +456,72 @@ func TestUnexplainedWrite_RedOnSecretNodesUpdateOfOtherColumnAlone(t *testing.T)
 	}
 	after := snapshotDB(t, db)
 
-	diffs := before.unexplainedWrites(after)
+	diffs := before.unexplainedWrites(after, "read-only")
 	if len(diffs) != 1 || diffs[0].table != "secret_nodes" || diffs[0].n != 1 {
 		t.Fatalf("expected unexplainedWrites to report exactly {secret_nodes, 1} for an UPDATE of value alone, got %v -- only a read_count-only change is exempt", diffs)
+	}
+}
+
+// TestUnexplainedWrite_RedOnSecretNodesReadCountUpdateByZeroGrant and its
+// secret_versions twin are #2401's direct red-proof: the read_count
+// exemption is scoped to principals read-only/admin
+// (bestEffortSideEffectTables), so the EXACT SAME read_count-only UPDATE
+// that TestUnexplainedWrite_GreenOnSecretNodesReadCountUpdate proves exempt
+// for "read-only" must be flagged as unexplained for "zero-grant" -- a
+// zero-grant caller incrementing another principal's burn-after-N-reads
+// counter is exactly the authz-bypass shape this oracle exists to catch,
+// not a documented side effect.
+func TestUnexplainedWrite_RedOnSecretNodesReadCountUpdateByZeroGrant(t *testing.T) {
+	db := newReadCountShapedTestDB(t, "secret_nodes")
+	if _, err := db.Exec("INSERT INTO secret_nodes (id, read_count, value) VALUES (1, 0, 'v')"); err != nil {
+		t.Fatalf("seed insert (outside the measured window): %v", err)
+	}
+
+	before := snapshotDB(t, db)
+	if _, err := db.Exec("UPDATE secret_nodes SET read_count = 1 WHERE id = 1"); err != nil {
+		t.Fatalf("read_count increment: %v", err)
+	}
+	after := snapshotDB(t, db)
+
+	if !before.unexplainedWrite(after, "zero-grant") {
+		t.Fatal("expected unexplainedWrite to report true for a secret_nodes read_count-only UPDATE by the zero-grant principal, got false -- the read_count exemption must not cover a principal that can't legitimately reach it")
+	}
+}
+
+func TestUnexplainedWrite_RedOnSecretVersionsReadCountUpdateByZeroGrant(t *testing.T) {
+	db := newReadCountShapedTestDB(t, "secret_versions")
+	if _, err := db.Exec("INSERT INTO secret_versions (id, read_count, value) VALUES (1, 0, 'v')"); err != nil {
+		t.Fatalf("seed insert (outside the measured window): %v", err)
+	}
+
+	before := snapshotDB(t, db)
+	if _, err := db.Exec("UPDATE secret_versions SET read_count = 1 WHERE id = 1"); err != nil {
+		t.Fatalf("read_count increment: %v", err)
+	}
+	after := snapshotDB(t, db)
+
+	if !before.unexplainedWrite(after, "zero-grant") {
+		t.Fatal("expected unexplainedWrite to report true for a secret_versions read_count-only UPDATE by the zero-grant principal, got false -- the read_count exemption must not cover a principal that can't legitimately reach it")
+	}
+}
+
+// TestUnexplainedWrite_GreenOnSecretNodesReadCountUpdateByAdmin proves the
+// exemption's principals list covers admin too, not only read-only --
+// bestEffortSideEffectTables names both.
+func TestUnexplainedWrite_GreenOnSecretNodesReadCountUpdateByAdmin(t *testing.T) {
+	db := newReadCountShapedTestDB(t, "secret_nodes")
+	if _, err := db.Exec("INSERT INTO secret_nodes (id, read_count, value) VALUES (1, 0, 'v')"); err != nil {
+		t.Fatalf("seed insert (outside the measured window): %v", err)
+	}
+
+	before := snapshotDB(t, db)
+	if _, err := db.Exec("UPDATE secret_nodes SET read_count = 1 WHERE id = 1"); err != nil {
+		t.Fatalf("read_count increment: %v", err)
+	}
+	after := snapshotDB(t, db)
+
+	if before.unexplainedWrite(after, "admin") {
+		t.Fatal("expected unexplainedWrite to report false for a secret_nodes UPDATE touching only read_count by the admin principal, got true")
 	}
 }
 

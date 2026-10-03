@@ -311,6 +311,13 @@ func TestAssignPermissionToRole_NonBuiltinRole_NoSignal(t *testing.T) {
 // auth-cache TTL. Unlike those stronger events, the user's sessions themselves must
 // NOT be deleted (they stay logged in; only the cached authorization decision is
 // forced to re-resolve from storage on the next request).
+//
+// Uses SetTokenCacheClearer, not SetTokenCacheInvalidator: evictUserSessionCache
+// (#2402, FuzzAuthCacheDifferential) switched to the delete-only-if-cached primitive
+// specifically so a session that was never actually cached yet (e.g. a fresh login,
+// immediately followed by a role grant+removal before its first authenticated
+// request) does not get spuriously tombstoned as a false negative — the credential
+// itself is still valid here, only its privileges may have changed.
 func TestRemoveUserRole_EvictsSessionCacheWithoutLoggingOut(t *testing.T) {
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
@@ -321,13 +328,13 @@ func TestRemoveUserRole_EvictsSessionCacheWithoutLoggingOut(t *testing.T) {
 	require.NoError(t, db.Create(&models.Session{UserID: userID, SessionToken: "session-hash-a"}).Error)
 	require.NoError(t, db.Create(&models.Session{UserID: userID, SessionToken: "session-hash-b"}).Error)
 
-	var evicted []string
-	c.SetTokenCacheInvalidator(func(h string) { evicted = append(evicted, h) })
+	var cleared []string
+	c.SetTokenCacheClearer(func(h string) { cleared = append(cleared, h) })
 
 	require.NoError(t, c.RemoveUserRole(ctx, 0, userID, 1, Scope{ProjectID: 5}))
 
-	assert.ElementsMatch(t, []string{"session-hash-a", "session-hash-b"}, evicted,
-		"every one of the user's session hashes must be evicted from the auth cache")
+	assert.ElementsMatch(t, []string{"session-hash-a", "session-hash-b"}, cleared,
+		"every one of the user's session hashes must be cleared from the auth cache")
 
 	var remaining int64
 	require.NoError(t, db.Model(&models.Session{}).Where("user_id = ?", userID).Count(&remaining).Error)

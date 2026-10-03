@@ -53,7 +53,7 @@ func TestRestoreGroup_RefusesNonAdminWhenGroupHoldsAdminRole(t *testing.T) {
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: g.ID, RoleID: 1}).Error) // admin role
 	require.NoError(t, c.DeleteGroup(ctx, 2, g.ID))
 
-	err = c.RestoreGroup(ctx, 1, g.ID) // actor 1 has no roles at all
+	_, err = c.RestoreGroup(ctx, 1, g.ID) // actor 1 has no roles at all
 	require.Error(t, err)
 	assert.True(t, strings.Contains(err.Error(), "administrator"), "got: %v", err)
 
@@ -74,7 +74,8 @@ func TestRestoreGroup_AllowsGlobalAdmin(t *testing.T) {
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: g.ID, RoleID: 1}).Error)
 	require.NoError(t, c.DeleteGroup(ctx, 2, g.ID))
 
-	require.NoError(t, c.RestoreGroup(ctx, 2, g.ID))
+	_, err = c.RestoreGroup(ctx, 2, g.ID)
+	require.NoError(t, err)
 	restored, err := c.GetGroup(ctx, g.ID)
 	require.NoError(t, err)
 	assert.Equal(t, g.ID, restored.ID)
@@ -92,7 +93,8 @@ func TestRestoreGroup_AllowsNonAdminWhenGroupHoldsOnlyNonAdminRole(t *testing.T)
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: g.ID, RoleID: 2}).Error) // viewer, non-admin
 	require.NoError(t, c.DeleteGroup(ctx, 1, g.ID))
 
-	require.NoError(t, c.RestoreGroup(ctx, 1, g.ID), "a non-admin role set needs no elevated authority to restore")
+	_, err = c.RestoreGroup(ctx, 1, g.ID)
+	require.NoError(t, err, "a non-admin role set needs no elevated authority to restore")
 }
 
 // #161: a principal with no admin authority must be refused restoring a

@@ -351,6 +351,13 @@ type KeyorixCore struct {
 	// token (e.g. revoking PATs on a password change) take effect immediately rather than
 	// after the positive-cache TTL. core cannot import the middleware directly (cycle).
 	tokenCacheInvalidator func(hash string)
+	// tokenCacheClearer deletes a bearer token's HTTP auth-cache entry ONLY if one
+	// already exists -- unlike tokenCacheInvalidator, it never writes a new tombstone.
+	// Wired at startup (SetTokenCacheClearer) to the middleware's ClearTokenCacheIfCached.
+	// Used for a transition where a brand-new, never-cached credential must not be
+	// spuriously negative-cached (setAccountState's "becoming active" branch) but any
+	// EXISTING stale entry still needs clearing so it doesn't outlive the transition.
+	tokenCacheClearer func(hash string)
 	// machineTokenCacheFlusher tombstones every machine-token entry in the HTTP auth
 	// cache. Wired at startup (SetMachineTokenCacheFlusher); nil in tests/remote mode,
 	// same as tokenCacheInvalidator above. Fail-closed fallback for

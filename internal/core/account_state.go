@@ -274,23 +274,37 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 	// more restrictive than plain active — i.e. it blocks login (AccountLoginBlocked) or
 	// imposes a restriction (AccountRestricted, e.g. password_reset_required). Both
 	// predicates fail closed to true for every state except AccountActive, so this is
-	// exactly "skip the sweep only when the account is becoming fully unrestricted."
-	// Moving TOWARD active never needs a proactive evict for correctness: an
-	// over-restrictive cached decision is already safe (fail-closed), and any EXISTING
-	// positive cache entry already gets its AccountState/Restricted refreshed on every
-	// hit by serveAuthCacheHit's own re-check (server/middleware/auth.go), independent of
-	// this sweep. See TestSetAccountState_ReactivationDoesNotTombstoneUncachedPAT for the
-	// bug this guard closes: FuzzAuthCacheDifferential (G5) found that reactivating an
-	// account (or any OTHER transition into active) unconditionally wrote a negative
-	// cache tombstone (InvalidateTokenCacheByHash's own doc comment: "a short-lived
-	// tombstone... negative-caches... for invalidTokenTTL") for every one of the user's
-	// PAT hashes, including PATs that had NEVER been cached at all — e.g. a PAT created
-	// WHILE the account was suspended, then hit by the reactivation's own sweep the
-	// moment the account went back to active. The result: a brand-new, fully valid PAT
-	// was spuriously rejected (401) for up to invalidTokenTTL immediately after an
-	// unrelated account-state transition, even though the account was already active
-	// again and nothing about that credential was ever wrong.
+	// exactly "skip the TOMBSTONING sweep only when the account is becoming fully
+	// unrestricted." Moving TOWARD active never needs a proactive TOMBSTONE for
+	// correctness: any EXISTING positive cache entry already gets its
+	// AccountState/Restricted refreshed on every hit by serveAuthCacheHit's own re-check
+	// (server/middleware/auth.go), independent of this sweep. See
+	// TestReactivateUser_DoesNotTombstoneNeverCachedPAT (server/http) for the bug this
+	// guard closes: FuzzAuthCacheDifferential (G5) found that reactivating an account (or
+	// any OTHER transition into active) unconditionally wrote a negative cache tombstone
+	// (InvalidateTokenCacheByHash's own doc comment: "a short-lived tombstone...
+	// negative-caches... for invalidTokenTTL") for every one of the user's PAT hashes,
+	// including PATs that had NEVER been cached at all — e.g. a PAT created WHILE the
+	// account was suspended, then hit by the reactivation's own sweep the moment the
+	// account went back to active. The result: a brand-new, fully valid PAT was
+	// spuriously rejected (401) for up to invalidTokenTTL, even though the account was
+	// already active again and nothing about that credential was ever wrong.
 	needsCacheEvictionSweep := AccountLoginBlocked(userID, state) || AccountRestricted(state)
+	// G5 follow-up (#2402): skipping the sweep entirely on the "becoming active" branch
+	// left a DIFFERENT, narrower bug open — an EXISTING negative cache entry, written
+	// while the account WAS blocked/restricted (e.g. the very first use of a token
+	// created during that window, which the sweep above correctly tombstones as
+	// negative), now outlives the account becoming active again: nothing ever clears it,
+	// so it keeps answering "denied" for up to invalidTokenTTL after the account is
+	// already fine again. FuzzAuthCacheDifferential found this too — same mechanism,
+	// opposite direction from the #2206 bug: both paths still deny (not an authz bypass,
+	// since a stale negative can never grant more than a fresh check would), but the
+	// cache's REASON disagrees with storage's (e.g. 401 "unauthenticated" from the stale
+	// tombstone vs whatever status a fresh check now gives). Clearing via
+	// clearCachedTokens (delete-ONLY-if-cached, never writes a new tombstone) is safe
+	// here specifically because it cannot recreate the #2206 bug: a hash that was never
+	// cached is simply not in the map to delete.
+	needsCacheClearSweep := !needsCacheEvictionSweep
 
 	var sessionHashes []string
 	err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
@@ -299,7 +313,7 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 		if _, err := tx.LockUserForUpdate(ctx, userID); err != nil {
 			return err
 		}
-		if needsCacheEvictionSweep {
+		if needsCacheEvictionSweep || needsCacheClearSweep {
 			// Capture the user's current session-token HASHES BEFORE mutating so we can
 			// evict their auth-cache entries after commit. The HTTP auth cache fast path
 			// serves a frozen identity without re-reading the DB, so without eviction a
@@ -307,12 +321,13 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 			// TTL — a window where a blocked user keeps full access. The stored
 			// session_token IS the SHA-256 hash, which is exactly the cache key.
 			sessionHashes, _ = tx.ListSessionTokenHashesForUser(ctx, userID)
-			// Also collect PAT hashes for cache eviction for any transition INTO a
-			// blocked or restricted state (e.g. password_reset_required). Without this, a
-			// cached PAT bypasses the restriction for up to validTokenTTL (30 s) —
-			// ValidatePATToken sees the old identity from the cache and never re-checks
-			// the new account state (#r125-H2). We evict here without revoking; revoking
-			// follows for blocked states below.
+			// Also collect PAT hashes — for a transition INTO a blocked or restricted
+			// state (e.g. password_reset_required), without this a cached PAT bypasses
+			// the restriction for up to validTokenTTL (30 s): ValidatePATToken sees the
+			// old identity from the cache and never re-checks the new account state
+			// (#r125-H2). We evict here without revoking; revoking follows for blocked
+			// states below. For a transition TOWARD active, this is what lets the clear
+			// sweep below reach a stale negative PAT entry too, not just session ones.
 			if pats, _ := tx.ListPersonalAccessTokensByUser(ctx, userID); len(pats) > 0 {
 				sessionHashes = append(sessionHashes, activePATHashes(pats)...)
 			}
@@ -340,9 +355,17 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 	}
 	// Evict the captured session/PAT-token hashes from the auth cache — AFTER commit,
 	// so a rolled-back transaction never evicts a still-valid cache entry — so the new
-	// state (blocked, or merely restricted) is reflected on the very next request, not
-	// after the cache TTL.
-	c.invalidateTokenCache(sessionHashes...)
+	// state is reflected on the very next request, not after the cache TTL. A
+	// blocked/restricted target TOMBSTONES (denies even a never-cached credential, since
+	// the whole point is "deny effective immediately"); a target becoming active only
+	// CLEARS an existing entry, never creates a new negative one (see needsCacheClearSweep's
+	// doc comment above for why these need different primitives, not just a different
+	// condition on the same one).
+	if needsCacheEvictionSweep {
+		c.invalidateTokenCache(sessionHashes...)
+	} else if needsCacheClearSweep {
+		c.clearCachedTokens(sessionHashes...)
+	}
 	aid := adminID
 	c.writeAuditEventFull(ctx, eventType, &aid, nil, nil, "",
 		fmt.Sprintf("user %d account state set to %s", userID, state))
