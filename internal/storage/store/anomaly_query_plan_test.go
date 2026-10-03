@@ -52,7 +52,7 @@ func explainSQLite(t *testing.T, db *gorm.DB, sql string) string {
 	t.Helper()
 	rows, err := db.Raw("EXPLAIN QUERY PLAN " + sql).Rows()
 	require.NoError(t, err)
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var plan []string
 	for rows.Next() {
 		var id, parent, notused int
