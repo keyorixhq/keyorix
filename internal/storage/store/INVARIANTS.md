@@ -81,10 +81,18 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   serialization strategy stays matched to `TransitionMachineIdentityState`'s usage, and the
   lock is always taken INSIDE the same `WithTransaction` the write uses (a standalone,
   unwrapped `FOR UPDATE` is a no-op on Postgres — confirmed historical test-only defect, see
-  CLAUDE.md top-matter). Why: `local_machine_identities.go:32-37` doc comment, #388. UNGUARDED
-  pending re-verification (#issue: re-confirm current test coverage wraps the lock+write in one
-  transaction; the historical defect was in the TEST harness, not production, but re-check on
-  every future change to this call site).
+  CLAUDE.md top-matter). Why: `local_machine_identities.go:32-37` doc comment, #388. Guard:
+  `local_machine_identity_lock_dialect_test.go:TestLockMachineIdentityForUpdate_DialectMatchedLocking`
+  (generated SQL per dialect; the Postgres subtest is the load-bearing one — the SQLite subtest
+  only guards the driver's own clause-dropping) and
+  `concurrency_machine_identity_lock_postgres_test.go`
+  (`TestConcurrency_LockMachineIdentityForUpdate_MultiInstancePostgres`: the lock blocks a second
+  connection inside a transaction and demonstrably does not outside one;
+  `TestConcurrency_MachineIdentityTransition_MultiInstancePostgres_RevokedAlwaysWins`: production
+  lock+read+CAS-write shape in one `WithTransaction`, asserts the interleaving-independent
+  invariant that 'revoked' is always the final value; pg-gated). Verified red by removing the
+  Postgres locking clause.
+
 - **INV-STORE-16** Per-secret and per-grant `max_reads` counters never exceed their cap even
   under concurrent reads — atomic conditional UPDATE, fail closed. Why: "atomic security
   counters" review-finding pattern. Guard: `concurrency_max_reads_test.go`
