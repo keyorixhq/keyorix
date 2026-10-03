@@ -795,6 +795,23 @@ var knownOpenTolerances = []knownOpenTolerance{
 		tables:     []string{"AuditEvent"},
 		findingDoc: "docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md",
 	},
+	// THIRD distinct (method, nth) trigger of the identical bulk-approve gap,
+	// found by yet another CI shard: GetRolePermissions#1/error, same
+	// [AuditEvent]-only diff. See the coordinator-flag comment on this PR --
+	// three independent storage calls inside BulkApproveAccessRequests' own
+	// per-item loop (GetAccessRequest, RoleSetBypassesPermissionChecks,
+	// GetRolePermissions -- all reachable from ApproveAccessRequest's
+	// Authorize call for a single item) now confirm the root cause is
+	// structural to the WHOLE LOOP, not any specific call within it.
+	// Reproduced directly: op="REST POST /api/v1/access-requests/bulk-approve"
+	// fault=(method=GetRolePermissions, NthCall=1, kind=error) -- oracle (a)
+	// VIOLATION, differing tables: [AuditEvent].
+	{
+		op: "REST POST /api/v1/access-requests/bulk-approve", method: "GetRolePermissions", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2549", expires: "2026-10-17",
+		tables:     []string{"AuditEvent"},
+		findingDoc: "docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md",
+	},
 	// docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md
 	// (SESSION-FI, AT5, out of OWNS, not fixed there): loadTOTPSecret's
 	// GetMFASecret error is checked with `err == nil` as the gate to even
