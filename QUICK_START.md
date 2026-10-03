@@ -41,6 +41,27 @@ Keep `keys/` and the database file together and back them up together. Losing
 `keys/kek.salt` means losing every secret in the database; there is no recovery
 path, by design.
 
+### Generate the admin recovery key
+
+If every admin account is ever locked out (lost password, lost MFA device), the
+only way back in is `keyorix-server admin recover-admin` on this host — and by
+default it also requires an admin recovery key. No key exists until you
+generate one, so do it now, while the server is not running yet:
+
+```bash
+./bin/keyorix-server admin recovery-key rotate --config ./keyorix.yaml
+```
+
+It prints a 256-bit key **exactly once**. Store it offline and away from this
+host (a password manager, a sealed envelope) — not next to the database or
+`keys/`. Only a one-way verifier is stored server-side, so a lost key cannot be
+recovered: run the command again to replace it (the old key stops working
+immediately). It needs the database to itself and refuses while the server is
+running — to rotate the key later, stop the server, run it, then start the
+server again. `--recipient <age1...>`
+prints it age-encrypted instead of in plaintext; see
+`docs/design-b2-recover-admin.md` for the design.
+
 ## Start the server and bootstrap the admin account
 
 The CLI is REST-only — it always talks to a running `keyorix-server` over the
