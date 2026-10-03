@@ -10,6 +10,19 @@ import (
 // gone?" — should match it with errors.Is rather than treating any error as absence.
 var ErrUserNotFound = errors.New("user not found")
 
+// ErrMFAChallengeInvalid is returned (wrapped or bare) by ConsumeMFAChallenge
+// when no unused, unexpired challenge matches — the expected negative result for
+// a stale, replayed or guessed challenge token — as distinct from a genuine
+// storage failure. core.FinishWebAuthnLogin matches it with errors.Is: an
+// invalid challenge is an ordinary failed attempt (counted toward the per-IP
+// login budget), a storage failure is not an attempt that was ever evaluated
+// (#2565).
+var ErrMFAChallengeInvalid = errors.New("invalid or expired challenge")
+
+// ErrWebAuthnSessionInvalid is ConsumeWebAuthnSession's counterpart of
+// ErrMFAChallengeInvalid: no unused, unexpired ceremony session matched.
+var ErrWebAuthnSessionInvalid = errors.New("invalid or expired webauthn session")
+
 // ErrRoleNotFound is returned (wrapped) by GetRole when the role positively does
 // not exist, as distinct from a transient retrieval failure. isGlobalAdminRoleName
 // (internal/core/sod.go) matches it with errors.Is: a dangling user-role/group-role

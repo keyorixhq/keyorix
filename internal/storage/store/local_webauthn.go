@@ -166,7 +166,7 @@ func (ls *LocalStorage) ConsumeWebAuthnSession(ctx context.Context, tokenHash st
 	// against (a backward-stepped host clock letting an expired-but-never-
 	// consumed session be consumed for the first time past its real window).
 	if ls.consumeClockLooksRegressed(now) {
-		return nil, fmt.Errorf("invalid or expired webauthn session")
+		return nil, storage.ErrWebAuthnSessionInvalid
 	}
 	var sess *models.WebAuthnSession
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -177,7 +177,7 @@ func (ls *LocalStorage) ConsumeWebAuthnSession(ctx context.Context, tokenHash st
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			return fmt.Errorf("invalid or expired webauthn session")
+			return storage.ErrWebAuthnSessionInvalid
 		}
 		var loaded models.WebAuthnSession
 		if err := tx.Where("token_hash = ?", tokenHash).First(&loaded).Error; err != nil {

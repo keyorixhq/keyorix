@@ -34,6 +34,20 @@ type Storage interface {
 	CountRecentLoginAttempts(ctx context.Context, ip string, since time.Time) (int64, error)
 	PruneLoginAttempts(ctx context.Context, before time.Time) (int64, error)
 
+	// ReserveLoginAttempt is RecordLoginAttempt's releasable counterpart: it writes
+	// the same row but returns its id, so a caller that reserves BEFORE a slow
+	// check runs (closing the concurrent-burst race RecordLoginAttempt's own
+	// callers rely on — see core.ReserveLoginAttempt) can undo the write via
+	// ReleaseLoginAttempt if that check turns out not to be a confirmed negative
+	// result. Every other rate-limit call site stays on the fire-and-forget
+	// RecordLoginAttempt; only /auth/mfa/verify and /auth/webauthn/login/finish
+	// need this pair today.
+	ReserveLoginAttempt(ctx context.Context, ip string, at time.Time) (id uint, err error)
+	// ReleaseLoginAttempt deletes the LoginAttempt row `id`, undoing a prior
+	// ReserveLoginAttempt. A no-op, not an error, if the row is already gone
+	// (e.g. a maintenance prune raced it).
+	ReleaseLoginAttempt(ctx context.Context, id uint) error
+
 	// WithSchedulerLock runs fn only if this process can take the named scheduler
 	// lock, so a background job runs on a single replica at a time (HA, ADR-039).
 	// On PostgreSQL it uses a session advisory lock (pg_try_advisory_lock); on
