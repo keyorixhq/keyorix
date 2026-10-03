@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 
 	"github.com/keyorixhq/keyorix/migrate/internal/accessplan"
@@ -44,7 +45,10 @@ func (c *Client) ListProjects(ctx context.Context) ([]accessplan.ProjectRef, err
 
 // ListEnvironments returns every environment under projectID, for PathMapper construction.
 func (c *Client) ListEnvironments(ctx context.Context, projectID int) ([]accessplan.EnvironmentRef, error) {
-	resp, err := c.api.ListProjectEnvironmentsWithResponse(ctx, uint32(projectID), nil) //nolint:gosec // projectID always comes from ListProjects' own result, never user input directly cast past int range.
+	if projectID < 0 || projectID > math.MaxUint32 {
+		return nil, fmt.Errorf("list environments: project id %d out of range", projectID)
+	}
+	resp, err := c.api.ListProjectEnvironmentsWithResponse(ctx, uint32(projectID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("list environments for project %d: %w", projectID, err)
 	}
