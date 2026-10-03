@@ -102,7 +102,7 @@ func TestVerifyMFALogin_RejectsSuspendedAccount(t *testing.T) {
 	require.NoError(t, err)
 	actCode, err := totp.GenerateCode(secret, fixed)
 	require.NoError(t, err)
-	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword)
+	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword, "")
 	require.NoError(t, err)
 
 	// A login is in flight (valid challenge), then the admin suspends the account.
@@ -143,7 +143,7 @@ func TestMFA_FullFlow(t *testing.T) {
 	// Use the previous time-step for activation so step T (fixed) remains fresh for login.
 	code, err := totp.GenerateCode(secret, fixed.Add(-30*time.Second))
 	require.NoError(t, err)
-	codes, err := c.ActivateMFA(ctx, 1, code, mfaTestPassword)
+	codes, err := c.ActivateMFA(ctx, 1, code, mfaTestPassword, "")
 	require.NoError(t, err)
 	assert.Len(t, codes, 10)
 
@@ -198,7 +198,7 @@ func TestMFA_FullFlow(t *testing.T) {
 	// grant, e.g. from an ordinary login, would not satisfy this gate — see
 	// TestUpdateOwnProfile_EmailChange_AmbientLoginPurposeGrantRejected).
 	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
-	require.NoError(t, c.DisableMFA(ctx, 1, mfaTestPassword))
+	require.NoError(t, c.DisableMFA(ctx, 1, mfaTestPassword, ""))
 	require.NoError(t, db.First(&user, 1).Error)
 	assert.False(t, user.MFAEnabled)
 	_, err = c.storage.GetMFASecret(ctx, 1)
@@ -211,7 +211,7 @@ func TestMFA_ActivateRejectsWrongCode(t *testing.T) {
 	ctx := context.Background()
 	_, _, err := c.BeginMFAEnrollment(ctx, 1)
 	require.NoError(t, err)
-	_, err = c.ActivateMFA(ctx, 1, "000000", mfaTestPassword)
+	_, err = c.ActivateMFA(ctx, 1, "000000", mfaTestPassword, "")
 	require.Error(t, err)
 	u, err := c.storage.GetUser(ctx, 1)
 	require.NoError(t, err)
@@ -238,7 +238,7 @@ func TestMFA_ActivateRequiresReauth(t *testing.T) {
 	// the attacker's position with a stolen session/PAT: they can complete
 	// BeginMFAEnrollment and compute a correct code for their own pending secret,
 	// but they do not know the account password.
-	_, err = c.ActivateMFA(ctx, 1, code, "wrong-password")
+	_, err = c.ActivateMFA(ctx, 1, code, "wrong-password", "")
 	require.Error(t, err, "activation must reject a correct code without the account password")
 
 	u, err := c.storage.GetUser(ctx, 1)
@@ -246,7 +246,7 @@ func TestMFA_ActivateRequiresReauth(t *testing.T) {
 	assert.False(t, u.MFAEnabled, "a reauth failure must not enable MFA")
 
 	// The same valid code WITH the correct password succeeds.
-	codes, err := c.ActivateMFA(ctx, 1, code, mfaTestPassword)
+	codes, err := c.ActivateMFA(ctx, 1, code, mfaTestPassword, "")
 	require.NoError(t, err, "activation must succeed with the correct password")
 	assert.Len(t, codes, 10)
 
@@ -272,7 +272,7 @@ func TestMFA_ActivateDoesNotAcceptPendingSecretAsReauth(t *testing.T) {
 	// Passing the pending secret's own code as BOTH the activation code and the
 	// "password" must still fail — a code is never accepted as a password, and
 	// there is no active TOTP secret yet to validate it against as a code either.
-	_, err = c.ActivateMFA(ctx, 1, code, code)
+	_, err = c.ActivateMFA(ctx, 1, code, code, "")
 	require.Error(t, err, "the pending secret's own code must not double as re-auth")
 }
 
@@ -287,7 +287,7 @@ func activateMFAForTest(t *testing.T, c *KeyorixCore, fixed time.Time) (secret s
 	// subsequent TOTP calls in the test; ActivateMFA marks the step it validates.
 	code, err := totp.GenerateCode(secret, fixed.Add(-30*time.Second))
 	require.NoError(t, err)
-	codes, err = c.ActivateMFA(ctx, 1, code, mfaTestPassword)
+	codes, err = c.ActivateMFA(ctx, 1, code, mfaTestPassword, "")
 	require.NoError(t, err)
 	return secret, codes
 }
@@ -384,7 +384,7 @@ func TestVerifyMFALogin_RejectsReplayedTOTPCode(t *testing.T) {
 	// Activate with the previous step so the current step (fixed) is fresh for replay testing.
 	actCode, err := totp.GenerateCode(secret, fixed.Add(-30*time.Second))
 	require.NoError(t, err)
-	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword)
+	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword, "")
 	require.NoError(t, err)
 
 	code, err := totp.GenerateCode(secret, fixed)
@@ -419,7 +419,7 @@ func TestVerifyMFALogin_FailedCodesFeedAccountLockout(t *testing.T) {
 	require.NoError(t, err)
 	actCode, err := totp.GenerateCode(secret, fixed)
 	require.NoError(t, err)
-	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword)
+	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword, "")
 	require.NoError(t, err)
 
 	// Three wrong codes → the account locks.
@@ -469,7 +469,7 @@ func TestLogin_PasswordOnlyDoesNotClearLockoutWhenMFARequired(t *testing.T) {
 	require.NoError(t, err)
 	actCode, err := totp.GenerateCode(secret, fixed)
 	require.NoError(t, err)
-	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword)
+	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword, "")
 	require.NoError(t, err)
 
 	// Two prior failed password attempts (below the MaxAttempts=5 threshold) leave a
@@ -515,7 +515,7 @@ func TestLogin_FullMFACompletionClearsLockout(t *testing.T) {
 	require.NoError(t, err)
 	actCode, err := totp.GenerateCode(secret, clock)
 	require.NoError(t, err)
-	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword)
+	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword, "")
 	require.NoError(t, err)
 
 	user, err := c.storage.GetUser(ctx, 1)
@@ -558,7 +558,7 @@ func TestDisableMFA_FailedCodesFeedAccountLockout(t *testing.T) {
 	secret, _ := activateMFAForTest(t, c, fixed)
 
 	for i := 0; i < 3; i++ {
-		err := c.DisableMFA(ctx, 1, "000000")
+		err := c.DisableMFA(ctx, 1, "000000", "")
 		require.Error(t, err)
 	}
 
@@ -570,7 +570,7 @@ func TestDisableMFA_FailedCodesFeedAccountLockout(t *testing.T) {
 	// Even a VALID TOTP code is now refused while the lock is active.
 	good, err := totp.GenerateCode(secret, fixed)
 	require.NoError(t, err)
-	err = c.DisableMFA(ctx, 1, good)
+	err = c.DisableMFA(ctx, 1, good, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "locked")
 
@@ -591,7 +591,7 @@ func TestDisableMFA_SuccessClearsLoginFailures(t *testing.T) {
 
 	// Two wrong attempts accrue failures but don't yet reach the lockout threshold.
 	for i := 0; i < 2; i++ {
-		require.Error(t, c.DisableMFA(ctx, 1, "000000"))
+		require.Error(t, c.DisableMFA(ctx, 1, "000000", ""))
 	}
 	var mid models.User
 	require.NoError(t, db.First(&mid, 1).Error)
@@ -603,7 +603,7 @@ func TestDisableMFA_SuccessClearsLoginFailures(t *testing.T) {
 	// MFAStepUpPurposeReauth grant, proving the caller recently re-verified the
 	// second factor FOR THIS SPECIFIC PURPOSE.
 	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
-	require.NoError(t, c.DisableMFA(ctx, 1, mfaTestPassword))
+	require.NoError(t, c.DisableMFA(ctx, 1, mfaTestPassword, ""))
 	var after models.User
 	require.NoError(t, db.First(&after, 1).Error)
 	assert.Zero(t, after.FailedLoginAttempts)
@@ -666,7 +666,7 @@ func TestMFA_TOTPSecretTransplantBetweenUsersFailsToDecrypt(t *testing.T) {
 	require.NoError(t, err)
 	aliceCode, err := totp.GenerateCode(aliceSecret, fixed)
 	require.NoError(t, err)
-	_, err = c.ActivateMFA(ctx, 1, aliceCode, mfaTestPassword)
+	_, err = c.ActivateMFA(ctx, 1, aliceCode, mfaTestPassword, "")
 	require.NoError(t, err)
 
 	_, _, err = c.BeginMFAEnrollment(ctx, 2)
@@ -814,7 +814,7 @@ func TestDisableMFA_PasswordAloneRefusedWhenMFAEnabled(t *testing.T) {
 	ctx := context.Background()
 	activateMFAForTest(t, c, fixed)
 
-	err := c.DisableMFA(ctx, 1, mfaTestPassword)
+	err := c.DisableMFA(ctx, 1, mfaTestPassword, "")
 	require.Error(t, err, "the CORRECT password alone must not satisfy DisableMFA's re-auth once MFA is enabled")
 
 	u, gerr := c.storage.GetUser(ctx, 1)
@@ -838,7 +838,7 @@ func TestVerifyMFALogin_RecordsMFAStepupWhenGateEnabled(t *testing.T) {
 	// Activate with the previous step so the current step (fixed) is fresh for the verify call.
 	actCode, err := totp.GenerateCode(secret, fixed.Add(-30*time.Second))
 	require.NoError(t, err)
-	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword)
+	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword, "")
 	require.NoError(t, err)
 
 	ch, err := c.CreateMFAChallenge(ctx, 1)

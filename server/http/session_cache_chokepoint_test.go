@@ -287,7 +287,7 @@ func TestSessionCacheChokepoint_CoversEveryVulnerableCallSite(t *testing.T) {
 		if err != nil {
 			t.Fatalf("generate totp: %v", err)
 		}
-		if _, err := w.cShadow.ActivateMFA(ctx, victim.ID, code, "Xk7#Qp2$Rn5@Wv9!"); err != nil {
+		if _, err := w.cShadow.ActivateMFA(ctx, victim.ID, code, "Xk7#Qp2$Rn5@Wv9!", ""); err != nil {
 			t.Fatalf("ActivateMFA: %v", err)
 		}
 		w.assertDenied(t, token)
@@ -306,7 +306,7 @@ func TestSessionCacheChokepoint_CoversEveryVulnerableCallSite(t *testing.T) {
 		if err != nil {
 			t.Fatalf("generate totp: %v", err)
 		}
-		if _, err := w.cShadow.ActivateMFA(ctx, victim.ID, code, "Xk7#Qp2$Rn5@Wv9!"); err != nil {
+		if _, err := w.cShadow.ActivateMFA(ctx, victim.ID, code, "Xk7#Qp2$Rn5@Wv9!", ""); err != nil {
 			t.Fatalf("ActivateMFA precondition: %v", err)
 		}
 		sess, _, err := w.cRouter.Login(ctx, &core.LoginRequest{Username: "scc-dismfa", Password: "Xk7#Qp2$Rn5@Wv9!"})
@@ -334,7 +334,7 @@ func TestSessionCacheChokepoint_CoversEveryVulnerableCallSite(t *testing.T) {
 		if err != nil {
 			t.Fatalf("generate totp: %v", err)
 		}
-		if err := w.cShadow.DisableMFA(ctx, victim.ID, freshCode); err != nil {
+		if err := w.cShadow.DisableMFA(ctx, victim.ID, freshCode, ""); err != nil {
 			t.Fatalf("DisableMFA: %v", err)
 		}
 		w.assertDenied(t, sess.SessionToken)
@@ -420,7 +420,7 @@ func TestSessionCacheChokepoint_CoversEveryVulnerableCallSite(t *testing.T) {
 		if err != nil {
 			t.Fatalf("generate totp: %v", err)
 		}
-		if _, err := w.cShadow.ActivateMFA(ctx, victim.ID, code, "Xk7#Qp2$Rn5@Wv9!"); err != nil {
+		if _, err := w.cShadow.ActivateMFA(ctx, victim.ID, code, "Xk7#Qp2$Rn5@Wv9!", ""); err != nil {
 			t.Fatalf("ActivateMFA precondition: %v", err)
 		}
 		// The precondition itself deleted the primed session (ActivateMFA purges

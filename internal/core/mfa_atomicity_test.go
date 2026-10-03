@@ -99,7 +99,7 @@ func TestActivateMFA_AtomicOnRecoveryCodesFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	c.storage = &failingStorage{Storage: c.storage, failMethod: "CreateMFARecoveryCodes"}
-	_, err = c.ActivateMFA(ctx, 1, code, mfaTestPassword)
+	_, err = c.ActivateMFA(ctx, 1, code, mfaTestPassword, "")
 	require.Error(t, err)
 
 	var user models.User
@@ -131,7 +131,7 @@ func TestDisableMFA_AtomicOnDeleteFailure(t *testing.T) {
 	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
 
 	c.storage = &failingStorage{Storage: c.storage, failMethod: "DeleteMFAForUser"}
-	err := c.DisableMFA(ctx, 1, mfaTestPassword)
+	err := c.DisableMFA(ctx, 1, mfaTestPassword, "")
 	require.Error(t, err)
 
 	var user models.User

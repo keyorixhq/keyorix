@@ -21,8 +21,14 @@ export const mfaApi = {
     },
 
     // Confirm enrolment with a TOTP code; returns the one-time recovery codes.
-    async activate(code: string): Promise<string[]> {
-        const response = await apiClient.post('/api/v1/auth/mfa/activate', { code });
+    // Requires the account password too (#2441): server/http/handlers/mfa.go's
+    // ActivateMFA re-authenticates the caller via requireReauth, which falls
+    // through to the password-compare branch during enrolment (MFAEnabled is
+    // still false at this point, so its TOTP-step-up branch never applies) —
+    // the code alone proves control of the just-generated pending secret, not
+    // that this is really the account holder.
+    async activate(code: string, password: string): Promise<string[]> {
+        const response = await apiClient.post('/api/v1/auth/mfa/activate', { code, password });
         return (response.data.data?.recovery_codes ?? []) as string[];
     },
 

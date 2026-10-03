@@ -115,7 +115,7 @@ describe('sensitive mutation cache eviction (G28)', () => {
         const { result, unmount } = renderHook(() => useActivateMfa(), { wrapper });
 
         act(() => {
-            result.current.mutate('123456');
+            result.current.mutate({ code: '123456', password: 'hunter2' });
         });
         await waitFor(() => expect(result.current.isSuccess).toBe(true));
         expect(queryClient.getMutationCache().getAll()).toHaveLength(1);

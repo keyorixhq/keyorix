@@ -49,7 +49,7 @@ func (h *AuthHandler) ActivateMFA(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
-	codes, err := h.coreService.ActivateMFA(r.Context(), userCtx.UserID, body.Code, body.Password)
+	codes, err := h.coreService.ActivateMFA(r.Context(), userCtx.UserID, body.Code, body.Password, extractBearerToken(r))
 	if err != nil {
 		h.writeMFAErr(w, err)
 		return
@@ -78,7 +78,7 @@ func (h *AuthHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 	if proof == "" {
 		proof = body.Password
 	}
-	if err := h.coreService.DisableMFA(r.Context(), userCtx.UserID, proof); err != nil {
+	if err := h.coreService.DisableMFA(r.Context(), userCtx.UserID, proof, extractBearerToken(r)); err != nil {
 		h.writeMFAErr(w, err)
 		return
 	}
