@@ -1056,6 +1056,28 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		if err := exec("CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_alerted ON anomaly_alerts (alerted)"); err != nil {
 			return err
 		}
+		// Companion composite index for CreateAnomalyAlert's dedup count (see
+		// models.AnomalyAlert's doc comment). Every column already exists on any
+		// anomaly_alerts table this code can meet (accessed_by/ip_address/detected_at
+		// are in the table's original shape), so no column gate is needed. Purely
+		// additive: an older binary ignores an extra index, so no schema-epoch bump.
+		if err := exec("CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_dedup ON anomaly_alerts (secret_node_id, alert_type, accessed_by, ip_address, detected_at)"); err != nil {
+			return err
+		}
+	}
+	// Companion indexes for models.SecretAccessLog (see its doc comment). An install
+	// that predates them, or that gained the table via the SESSION-U U1 AutoMigrate
+	// below before they existed, would otherwise keep full-scanning this table once
+	// per secret per anomaly pass. On Postgres a plain CREATE INDEX blocks writes to
+	// secret_access_logs for the build's duration — once, during boot, under the
+	// migration lock, like every other index in this function.
+	if tableExists(db, "secret_access_logs") {
+		if err := exec("CREATE INDEX IF NOT EXISTS idx_secret_access_logs_secret_time ON secret_access_logs (secret_node_id, access_time)"); err != nil {
+			return err
+		}
+		if err := exec("CREATE INDEX IF NOT EXISTS idx_secret_access_logs_access_time ON secret_access_logs (access_time, secret_node_id)"); err != nil {
+			return err
+		}
 	}
 
 	// Track last successful login per user (nil = never logged in).

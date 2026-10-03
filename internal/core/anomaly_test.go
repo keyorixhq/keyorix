@@ -18,6 +18,7 @@ type captureStore struct {
 	createErr    error
 	createdCount int
 	auditCount   int
+	meta         map[string]string
 }
 
 func (c *captureStore) ListSecretAccessLogs(_ context.Context, _ uint, since time.Time) ([]models.SecretAccessLog, error) {
@@ -42,6 +43,24 @@ func (c *captureStore) PrincipalSecretFirstSeen(_ context.Context, _ time.Time) 
 }
 func (c *captureStore) LogAuditEvent(_ context.Context, _ *models.AuditEvent) error {
 	c.auditCount++
+	return nil
+}
+
+// ListSecretIDsAccessedSince reports secrets 1 and 2 as active — consistent with
+// ListSecretAccessLogs above returning a row for every secret — so the incremental
+// sweep evaluates exactly the secrets these tests pass in.
+func (c *captureStore) ListSecretIDsAccessedSince(_ context.Context, _ time.Time) ([]uint, error) {
+	return []uint{1, 2}, nil
+}
+func (c *captureStore) GetSystemMetadata(_ context.Context, key string) (string, bool, error) {
+	v, ok := c.meta[key]
+	return v, ok, nil
+}
+func (c *captureStore) SetSystemMetadata(_ context.Context, key, value string) error {
+	if c.meta == nil {
+		c.meta = map[string]string{}
+	}
+	c.meta[key] = value
 	return nil
 }
 

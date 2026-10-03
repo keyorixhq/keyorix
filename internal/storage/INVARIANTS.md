@@ -72,6 +72,15 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   created by migration. Guard: `factory_break_glass_index_test.go:TestBreakGlassActiveIndex_CreatedByMigration`.
 - **INV-STORAGE-14** Companion/sibling indexes are created on upgrade, not only fresh install.
   Guard: `factory_companion_index_test.go:TestCompanionIndexes_CreatedOnUpgrade`.
+- **INV-STORAGE-36** The anomaly hot-path indexes — `idx_anomaly_alerts_dedup` (matching
+  `CreateAnomalyAlert`'s dedup predicate), `idx_secret_access_logs_secret_time`,
+  `idx_secret_access_logs_access_time` — exist on a fresh install (struct tags) AND converge on
+  an upgraded one (`CREATE INDEX IF NOT EXISTS` in `migrateDatabase`), on both dialects. They
+  are additive, so no schema-epoch bump. Why: PERF-2 performance study (the dedup count was
+  the single most expensive query; per-secret access-log reads full-scanned). Guard:
+  `factory_companion_index_test.go:TestCompanionIndexes_CreatedOnUpgrade` (SQLite),
+  `factory_anomaly_index_postgres_test.go:TestAnomalyIndexes_Postgres_CreatedOnUpgrade`
+  (pg-gated).
 
 ## Backfills and fatal-migration discipline
 

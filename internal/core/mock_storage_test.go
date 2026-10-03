@@ -1323,6 +1323,14 @@ func (m *MockStorage) CountSecretReadsBySecretIDs(ctx context.Context, secretIDs
 	return args.Get(0).(map[uint]int), args.Error(1)
 }
 
+func (m *MockStorage) ListSecretIDsAccessedSince(ctx context.Context, since time.Time) ([]uint, error) {
+	args := m.Called(ctx, since)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]uint), args.Error(1)
+}
+
 func (m *MockStorage) PrincipalSecretFirstSeen(ctx context.Context, since time.Time) (map[string]map[uint]time.Time, error) {
 	args := m.Called(ctx, since)
 	if args.Get(0) == nil {
