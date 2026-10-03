@@ -36,3 +36,20 @@ func (ls *LocalStorage) PruneLoginAttempts(ctx context.Context, before time.Time
 	res := ls.db.WithContext(ctx).Where("attempted_at < ?", before).Delete(&models.LoginAttempt{})
 	return res.RowsAffected, res.Error
 }
+
+// ReserveLoginAttempt is RecordLoginAttempt plus returning the new row's id —
+// see the Storage interface doc for why only one caller needs this.
+func (ls *LocalStorage) ReserveLoginAttempt(ctx context.Context, ip string, at time.Time) (uint, error) {
+	row := &models.LoginAttempt{IP: ip, AttemptedAt: at}
+	if err := ls.db.WithContext(ctx).Create(row).Error; err != nil {
+		return 0, err
+	}
+	return row.ID, nil
+}
+
+// ReleaseLoginAttempt undoes a ReserveLoginAttempt write. Deleting zero rows
+// (already gone) is not an error — GORM's Delete only errors on a genuine
+// storage failure, not on a missing row.
+func (ls *LocalStorage) ReleaseLoginAttempt(ctx context.Context, id uint) error {
+	return ls.db.WithContext(ctx).Delete(&models.LoginAttempt{}, id).Error
+}
