@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -812,10 +813,19 @@ func (c *KeyorixCore) persistUpdatedCredential(ctx context.Context, userID uint,
 	}
 	now := c.now()
 
-	c.webauthnCredentialMu.Lock()
-	defer c.webauthnCredentialMu.Unlock()
-
-	_, _ = c.storage.AdvanceWebAuthnCredentialCounter(ctx, cred.ID, userID, blob, cred.Authenticator.SignCount, now)
+	// Best-effort: called from inside FinishWebAuthnLogin/FinishWebAuthnPasswordlessLogin/
+	// VerifyMFAStepUp BEFORE mintSession, after checkLockAndClearLoginFailures may
+	// already have cleared this user's lockout counters -- an unrecovered panic
+	// here would propagate past that write and report the whole login/reauth as
+	// failed even though lockout state already changed. besteffort.Run closes
+	// that gap; found by besteffort_guard_test.go (GUARD-1), no returned-error
+	// protection existed here at all before this fix, let alone a panic recover.
+	besteffort.Run(ctx, "webauthn.persistUpdatedCredential", func() error {
+		c.webauthnCredentialMu.Lock()
+		defer c.webauthnCredentialMu.Unlock()
+		_, err := c.storage.AdvanceWebAuthnCredentialCounter(ctx, cred.ID, userID, blob, cred.Authenticator.SignCount, now)
+		return err
+	})
 }
 
 func (c *KeyorixCore) auditWebAuthnFailed(ctx context.Context, userID uint, phase string) {
