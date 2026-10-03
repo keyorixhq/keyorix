@@ -440,7 +440,6 @@ func TestCTAReview_CreateDynamicSecretConfig_vs_DeleteProject_CrossReplicaPostgr
 // active, never-revoked credential. DeleteProject's lease revocation lists
 // leases BEFORE A's lease row exists, and nothing re-checks afterwards.
 func TestCTAReview_IssueLease_vs_DeleteProject_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2652: IssueLease vs DeleteProject leaves an active, unrevoked credential under a deleted project; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	fake := &dynamictest.FakeEngine{NativeExpiry: true}
@@ -468,6 +467,50 @@ func TestCTAReview_IssueLease_vs_DeleteProject_CrossReplicaPostgres(t *testing.T
 	}
 	assert.Zero(t, active,
 		"#369 violated: an active, never-revoked dynamic-secret lease exists under a deleted project and a disabled config")
+}
+
+// TestCTAReview_IssueLease_DeleteProjectAfterInsert_CrossReplicaPostgres: B's
+// DeleteProject commits after A's lease INSERT ran but before A commits. B's
+// post-commit lease revocation lists leases before A's row is visible, so a check
+// before the insert would pass and leave the credential live and never revoked.
+//
+// Bug origin (#2652):
+//
+//	Introduced-by: #369's DeleteProject cascade, which disables configs in its
+//	  transaction and revokes only the leases it can list after committing;
+//	  IssueLease's liveness check, mint, then insert never serialized against it.
+//	Detected-by: C-GUARD2-EXEMPT-REVIEW #2662
+//	Class: cross-replica check-then-act
+//	Severity: HIGH (a live database credential under a deleted project, never revoked
+//	  until its TTL)
+//	Guard: this test, the one above, and lockLiveParent's write-then-FOR-SHARE re-check
+//	  of the config in LocalStorage.CreateDynamicSecretLease (INV-STORE-21).
+func TestCTAReview_IssueLease_DeleteProjectAfterInsert_CrossReplicaPostgres(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	fake := &dynamictest.FakeEngine{NativeExpiry: true}
+	for _, c := range []*KeyorixCore{f.setup, f.coreA, f.coreB} {
+		c.SetDynamicEngineFactory(func(string) (dynamic.CredentialEngine, error) { return fake, nil })
+	}
+	cfg, err := f.setup.CreateDynamicSecretConfig(f.ctx, &CreateDynamicSecretConfigRequest{
+		Name: "cta-lease-after", ProjectID: f.projectID, EnvironmentID: f.envID, BackendType: "postgres",
+		AdminDSN:          "postgres://admin:s3cr3t@db.internal:5432/app",
+		CreationTemplate:  "GRANT SELECT ON ALL TABLES IN SCHEMA public TO {{name}};",
+		DefaultTTLSeconds: 3600, CreatedBy: "admin", ActorID: f.adminID,
+	})
+	require.NoError(t, err)
+
+	var errB error
+	fired := f.afterA("create", "dynamic_secret_leases", func() { errB = f.coreB.DeleteProject(f.ctx, f.projectID, true) })
+	_, errA := f.coreA.IssueLease(f.ctx, cfg.ID, 0, f.adminID)
+	t.Logf("IssueLease (A) err=%v, DeleteProject (B) err=%v, backend revocations: %v", errA, errB, fake.Revoked)
+	require.True(t, fired(), "the hook must have run B's DeleteProject after A's lease INSERT")
+	require.NoError(t, errB)
+
+	assert.Error(t, errA, "A must fail closed: its config was disabled before it committed")
+	assert.Zero(t, f.countLive(&models.DynamicSecretLease{}, "config_id = ? AND status = ?", cfg.ID, "active"),
+		"#369 violated: an active, never-revoked dynamic-secret lease exists under a deleted project and a disabled config")
+	assert.Len(t, fake.Revoked, 1, "the credential minted for the refused lease must have been revoked on the target")
 }
 
 // TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres: an admin's

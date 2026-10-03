@@ -148,6 +148,12 @@ var ErrBreakGlassAlreadyActive = errors.New("an active break-glass grant already
 // constraint-violation message.
 var ErrDuplicateDynamicSecretConfig = errors.New("a dynamic-secret config with this name already exists in this project and environment")
 
+// ErrDynamicSecretConfigDisabled is returned by CreateDynamicSecretLease when an
+// ACTIVE lease's config was disabled (DeleteProject's #369 cascade, or the config
+// disable kill switch) before the lease row could commit (#2652). The insert is
+// rolled back; the caller must revoke the credential it just minted.
+var ErrDynamicSecretConfigDisabled = errors.New("dynamic-secret config is disabled")
+
 // ErrDuplicateRolePermission is returned (wrapped) by AssignPermissionToRole
 // when the insert collides with role_permissions' composite primary key
 // (role_id, permission_id) -- i.e. the role already has this permission.

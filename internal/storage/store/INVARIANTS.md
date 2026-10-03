@@ -123,6 +123,11 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   ACL grants (#2649, `CreateOrUpdateSecretACL` vs `DeleteSecret`'s CWE-284 cascade):
   `_GrantSecretACL_vs_DeleteSecret_`, `_GrantSecretACL_DeleteSecretAfterUpsert_`, and
   `local_secret_acl_test.go:TestLocalACL_RefusesSoftDeletedSecret` (default-ci).
+  Active leases (#2652, `CreateDynamicSecretLease` vs `DeleteProject`'s #369 config disable;
+  the parent is the config, `disabled = false`): `_IssueLease_vs_DeleteProject_`,
+  `_IssueLease_DeleteProjectAfterInsert_`, and `local_dynamic_test.go:
+  TestCreateDynamicSecretLease_ActiveRefusedOnDisabledConfig` (default-ci). A `revoke_failed`
+  tracking row is always recorded: it is the only record of a credential still live.
 
 ## GORM hook / timezone correctness (`internal/storage/models`, `store`)
 
