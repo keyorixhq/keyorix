@@ -33,7 +33,7 @@ func TestValidateEncryption_ValidSaltAndWrappedDEK(t *testing.T) {
 	salt := writeKeyFile(t, dir, "kek.salt", 32)
 	dek := writeKeyFile(t, dir, "dek.key", 60) // 12 nonce + 32 key + 16 tag
 
-	if err := validateEncryption(encCfg(salt, dek), &ValidationResult{}); err != nil {
+	if err := validateEncryption(encCfg(salt, dek), &ValidationResult{}, false); err != nil {
 		t.Fatalf("expected valid config to pass, got: %v", err)
 	}
 }
@@ -43,7 +43,7 @@ func TestValidateEncryption_MissingSalt(t *testing.T) {
 	dek := writeKeyFile(t, dir, "dek.key", 60)
 	salt := filepath.Join(dir, "absent.salt")
 
-	if err := validateEncryption(encCfg(salt, dek), &ValidationResult{}); err == nil {
+	if err := validateEncryption(encCfg(salt, dek), &ValidationResult{}, false); err == nil {
 		t.Fatal("expected error for missing salt file")
 	}
 }
@@ -53,7 +53,7 @@ func TestValidateEncryption_WrongSaltSize(t *testing.T) {
 	salt := writeKeyFile(t, dir, "kek.salt", 16) // too short
 	dek := writeKeyFile(t, dir, "dek.key", 60)
 
-	if err := validateEncryption(encCfg(salt, dek), &ValidationResult{}); err == nil {
+	if err := validateEncryption(encCfg(salt, dek), &ValidationResult{}, false); err == nil {
 		t.Fatal("expected error for 16-byte salt (must be 32)")
 	}
 }
@@ -63,7 +63,7 @@ func TestValidateEncryption_DEKTooSmall(t *testing.T) {
 	salt := writeKeyFile(t, dir, "kek.salt", 32)
 	dek := writeKeyFile(t, dir, "dek.key", 32) // a bare key, not a wrapped one
 
-	if err := validateEncryption(encCfg(salt, dek), &ValidationResult{}); err == nil {
+	if err := validateEncryption(encCfg(salt, dek), &ValidationResult{}, false); err == nil {
 		t.Fatal("expected error for 32-byte DEK (wrapped DEK is >= 60 bytes)")
 	}
 }

@@ -270,25 +270,42 @@ secrets:
 
 File-permission self-checks, plus the **deployment-wide MFA mandate** (ADR-034).
 
+**Both `enable_file_permission_check` and `require_mfa` default to `true` when
+omitted** (ADR-112, secure-by-default baseline) — a fresh install enforces both
+from its first start with no config changes needed. An existing deployment that
+never set either key explicitly keeps booting during a grace period (a loud
+`ADR-112` start-up warning instead of an instant behavior change); see the
+CHANGELOG's Unreleased entry for exactly what that softens. Set either key
+explicitly — to `true` once you've confirmed compliance, or to `false` to opt
+out visibly — to silence the warning.
+
 ```yaml
 security:
   enable_file_permission_check: true
   auto_fix_file_permissions: true
-  allow_unsafe_file_permissions: false
-  require_mfa: false              # true = mandate a second factor for interactive login
+  insecure_allow_unsafe_file_permissions: false   # deprecated alias: allow_unsafe_file_permissions
+  require_mfa: true               # false = don't mandate a second factor for interactive login
   login_lockout:
     enabled: false                # opt-in per-account lockout (brute-force protection)
     max_attempts: 5               # failed password logins within the window before locking
     window: "15m"                 # consecutive-failure window
     base_cooldown: "1m"           # lock duration for the first lockout
     max_cooldown: "1h"            # ceiling for the exponential backoff
+    insecure_disable_login_lockout: false   # deprecated alias: disabled
 ```
 
-With `require_mfa: true`, an interactive (session-authenticated) user **without** a
-second factor is confined to the MFA-enrolment endpoints until they enrol. A TOTP
-secret **or** a passkey satisfies it. Non-interactive credentials — personal
-access tokens, machine tokens, OIDC — are **exempt** so automation is never broken.
-Per-project MFA (ADR-037) is set per project via the API
+Every setting named `insecure_*` is part of ADR-112's opt-out rule: it weakens
+the baseline below its secure default, is warned about at every start it's in
+effect, and (renamed settings only, for now) keeps its old name working as a
+deprecated alias that also warns when used. A start-to-start diff audits any
+security-relevant setting that changes between two starts of the same
+deployment.
+
+With `require_mfa: true` (the default), an interactive (session-authenticated) user
+**without** a second factor is confined to the MFA-enrolment endpoints until they
+enrol. A TOTP secret **or** a passkey satisfies it. Non-interactive credentials —
+personal access tokens, machine tokens, OIDC — are **exempt** so automation is
+never broken. Per-project MFA (ADR-037) is set per project via the API
 (`PUT /projects/{id}` `{ "require_mfa": true }`), independent of this flag.
 
 **Per-account login lockout** (`login_lockout`, opt-in) is brute-force protection
@@ -802,6 +819,7 @@ encryption off the scheduler logs a warning and does nothing.
 audit_checkpoints:
   enabled: true
   schedule: "12h"         # Go duration between checkpoint writes (default 24h)
+  insecure_disable_audit_checkpoints: false   # deprecated alias: disabled
 ```
 
 **External-notary anchoring** (`audit.checkpoint_notary`, opt-in). The checkpoint

@@ -5,6 +5,48 @@ All notable changes to Keyorix are documented here. This project follows
 
 ## Unreleased
 
+### Security
+- **`security.enable_file_permission_check` and `security.require_mfa` now
+  default to the secure state** (ADR-112, secure-by-default baseline, item 1).
+  A fresh install enforces file-permission/DEK-salt-size/database-reachability
+  startup checks and admin MFA from its very first start, with no config
+  changes needed. **Upgrade note:** an existing deployment that never set
+  either key explicitly keeps booting during a grace period: a real
+  file-permission or startup-validation problem now logs a loud `ADR-112`
+  warning naming the setting and how to comply, instead of refusing to start;
+  `require_mfa` confines a session-authenticated admin without MFA enrolled to
+  the enrolment endpoints (non-interactive PAT/machine credentials are
+  unaffected) and logs an equivalent warning. Set either key explicitly (to
+  `true` once compliant, or `false` to opt out visibly) to silence the
+  warning and get the key's exact pre-upgrade behavior back.
+- **16 security-weakening settings renamed to an `insecure_` prefix** (ADR-112,
+  secure-by-default baseline, item 2) — `security.allow_unsafe_file_permissions`,
+  `security.login_lockout.disabled`, `security.recover_admin.keyless_mode`,
+  `audit.siem.allow_private_network_target`/`allow_insecure_transport`,
+  `evidence_delivery.webhook.allow_private_network_target`/`allow_insecure_transport`,
+  `notifications.webhook.allow_private_network_target`/`allow_insecure_transport`,
+  `dynamic_secrets.allow_private_network_targets`/`allow_insecure_transport`,
+  `storage.encryption.key_provider.kms_allow_context_fallback`/`allow_weaker_fallback`,
+  `sso.providers[].trust_asserted_email`, `sso.providers[].saml.allow_idp_initiated`,
+  and `audit_checkpoints.disabled`. **Upgrade note:** every old name still
+  works exactly as before — it's a deprecated alias, not a removal — but now
+  logs a start-up warning naming the current name to use instead. Every
+  setting that is currently in effect (whether under its old or new name)
+  also gets its own start-up warning, and a start-to-start settings diff now
+  writes an audit event (old value → new value) for any security-relevant
+  setting that changes between two starts of the same deployment. A new
+  structural test enforces that every entry in the registry carries the
+  `insecure_` prefix and is wired into both the warning and the audit diff.
+  Several other security-weakening settings (`require_transport_tls`,
+  `enable_file_permission_check`, `storage.encryption.enabled`,
+  `membership.validation_mode`, SSO `auto_provision`/`group_sync`,
+  `metrics_token`, `max_request_body_bytes`, `storage.database.ssl_mode`,
+  rate limiting, and the credential-delivery/SMTP cleartext opt-outs) are
+  covered by the same warning and audit mechanism under their existing
+  names, but were not renamed in this change — each needs either a
+  polarity-inverting rename of a load-bearing flag or a restructuring from a
+  non-boolean field, both deferred pending a product decision.
+
 ## v0.95.3 — 2026-10-01
 
 ### Security
