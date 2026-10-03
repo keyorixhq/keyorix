@@ -256,9 +256,22 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 	}
 	// F2 (2026-09-20): reserve before the (slow) assertion verification — see
 	// reserveLoginAttempt's doc (reserved after decode+parse, matching Login).
-	h.reserveLoginAttempt(r.Context(), ip)
+	//
+	// #2565: releasable, like VerifyMFA's. When FinishWebAuthnLogin fails with
+	// core.ErrWebAuthnLoginNotEvaluated (a storage error before any verdict on
+	// the assertion), the login is still denied but the reservation is
+	// released: a request that was never evaluated must not consume the
+	// budget slot a genuine failed assertion does. An invalid/expired
+	// challenge or session, or a failed assertion, stays counted.
+	attemptID, reserved := h.coreService.ReserveLoginAttempt(r.Context(), ip)
 	session, user, err := h.coreService.FinishWebAuthnLogin(r.Context(), body.Challenge, body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed)
 	if err != nil {
+		if errors.Is(err, core.ErrWebAuthnLoginNotEvaluated) {
+			log.Printf("FinishWebAuthnLogin: %v", err)
+			if reserved {
+				h.coreService.ReleaseLoginAttempt(r.Context(), attemptID)
+			}
+		}
 		sendError(w, "Unauthorized", "Assertion failed or challenge expired", http.StatusUnauthorized, nil)
 		return
 	}
