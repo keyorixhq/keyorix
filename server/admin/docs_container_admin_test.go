@@ -72,19 +72,23 @@ var liveSafeDespiteLockCall = map[string]string{
 func adminPackageFuncs(t *testing.T) map[string]*ast.FuncDecl {
 	t.Helper()
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
+	entries, err := os.ReadDir(".")
 	if err != nil {
-		t.Fatalf("parse server/admin: %v", err)
+		t.Fatalf("read server/admin: %v", err)
 	}
 	out := map[string]*ast.FuncDecl{}
-	for _, p := range pkgs {
-		for _, f := range p.Files {
-			for _, d := range f.Decls {
-				if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Body != nil {
-					out[fd.Name.Name] = fd
-				}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("parse server/admin/%s: %v", name, err)
+		}
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Body != nil {
+				out[fd.Name.Name] = fd
 			}
 		}
 	}
