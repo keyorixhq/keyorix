@@ -18,6 +18,7 @@ import {
 } from '@heroicons/react/24/outline';
 import {
     useSecretVersions,
+    useSecretValue,
     useRotateSecret,
     useSecretRisk,
     useClassifySecret,
@@ -937,7 +938,11 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
         }
     };
 
-    const { data: versions, isLoading, error } = useSecretVersions(secret.id, showValue);
+    const { data: versions } = useSecretVersions(secret.id, showValue);
+    // #2450: the actual plaintext comes from a separate endpoint
+    // (GET /secrets/{id}?include_value=true) -- GET .../versions never carries
+    // a value field at all (see secretsApi.getValue's doc comment).
+    const { data: secretValue = null, isLoading, error } = useSecretValue(secret.id, showValue);
     const queryClient = useQueryClient();
     // Revealed plaintext otherwise lingers in the React Query cache for the
     // default gcTime after the value is hidden or the view is closed —
@@ -945,11 +950,13 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
     useEffect(() => {
         if (!showValue) {
             queryClient.removeQueries({ queryKey: queryKeys.secrets.versions(secret.id) });
+            queryClient.removeQueries({ queryKey: queryKeys.secrets.value(secret.id) });
         }
     }, [showValue, secret.id, queryClient]);
     useEffect(() => {
         return () => {
             queryClient.removeQueries({ queryKey: queryKeys.secrets.versions(secret.id) });
+            queryClient.removeQueries({ queryKey: queryKeys.secrets.value(secret.id) });
         };
     }, [secret.id, queryClient]);
     // G28: revealed plaintext otherwise stays rendered in the DOM indefinitely —
@@ -1002,7 +1009,6 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
     };
 
     const latestVersion = computeLatestVersion(versions);
-    const secretValue = latestVersion ? atob(latestVersion.EncryptedValue) : null;
 
     const handleCopyValue = async (value: string): Promise<void> => {
         try {

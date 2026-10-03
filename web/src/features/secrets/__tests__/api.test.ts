@@ -11,6 +11,7 @@ vi.mock('../../../services/secrets', () => ({
         update: vi.fn(),
         delete: vi.fn(),
         getVersions: vi.fn(),
+        getValue: vi.fn(),
         rotate: vi.fn(),
         rollback: vi.fn(),
         transferOwnership: vi.fn(),
@@ -42,6 +43,7 @@ import {
     useSecrets,
     useSecret,
     useSecretVersions,
+    useSecretValue,
     useCreateSecret,
     useUpdateSecret,
     useSecretRisk,
@@ -125,6 +127,25 @@ describe('useSecretVersions', () => {
         const { result } = renderHook(() => useSecretVersions(1), { wrapper });
         await waitFor(() => expect(result.current.isSuccess).toBe(true));
         expect(mock.getVersions).toHaveBeenCalledWith(1);
+    });
+});
+
+// #2450: useSecretValue (GET /secrets/{id}?include_value=true via
+// secretsApi.getValue) is the ONLY source of the actual plaintext --
+// useSecretVersions, above, never carries a value field.
+describe('useSecretValue', () => {
+    it('fetches the current plaintext value for a secret', async () => {
+        mock.getValue!.mockResolvedValueOnce('sup3r-secret');
+        const { result } = renderHook(() => useSecretValue(1), { wrapper });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(mock.getValue).toHaveBeenCalledWith(1);
+        expect(result.current.data).toBe('sup3r-secret');
+    });
+
+    it('does not fetch when disabled', async () => {
+        renderHook(() => useSecretValue(1, false), { wrapper });
+        await act(async () => {});
+        expect(mock.getValue).not.toHaveBeenCalled();
     });
 });
 

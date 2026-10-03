@@ -3,14 +3,14 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { useSecretReveal } from '../useSecretReveal';
 import { Secret } from '../../../types';
 
-const { getVersionsMock, copyToClipboardMock } = vi.hoisted(() => ({
-    getVersionsMock: vi.fn(),
+const { getValueMock, copyToClipboardMock } = vi.hoisted(() => ({
+    getValueMock: vi.fn(),
     copyToClipboardMock: vi.fn(),
 }));
 
 vi.mock('../../../services/secrets', () => ({
     secretsApi: {
-        getVersions: getVersionsMock,
+        getValue: getValueMock,
     },
 }));
 
@@ -44,13 +44,15 @@ describe('useSecretReveal', () => {
         vi.useRealTimers();
     });
 
-    it('copies the decoded value of the first (latest) version and clears copiedSecretId after 2s', async () => {
+    // #2450: this hook used to call secretsApi.getVersions and atob()-decode
+    // EncryptedValue off the first entry -- a field the real API never
+    // returns (it's version metadata only). Fixed to call secretsApi.getValue
+    // (GET /secrets/{id}?include_value=true), the endpoint that actually
+    // returns a plaintext value.
+    it('copies the plaintext value and clears copiedSecretId after 2s', async () => {
         vi.useFakeTimers();
         const secret = makeSecret({ id: 42 });
-        getVersionsMock.mockResolvedValue([
-            { EncryptedValue: btoa('super-secret-value'), VersionNumber: 3, CreatedAt: '2026-06-01T00:00:00Z' },
-            { EncryptedValue: btoa('older-value'), VersionNumber: 2, CreatedAt: '2026-05-01T00:00:00Z' },
-        ]);
+        getValueMock.mockResolvedValue('super-secret-value');
         copyToClipboardMock.mockResolvedValue(undefined);
 
         const { result } = renderHook(() => useSecretReveal());
@@ -59,7 +61,7 @@ describe('useSecretReveal', () => {
             await result.current.handleCopySecretValue(secret);
         });
 
-        expect(getVersionsMock).toHaveBeenCalledWith(42);
+        expect(getValueMock).toHaveBeenCalledWith(42);
         expect(copyToClipboardMock).toHaveBeenCalledWith('super-secret-value');
         expect(result.current.copyingSecretId).toBeNull();
         expect(result.current.copiedSecretId).toBe(42);
@@ -72,10 +74,10 @@ describe('useSecretReveal', () => {
         expect(result.current.copiedSecretId).toBeNull();
     });
 
-    it('sets copyErrorId (not copiedSecretId) when no versions are returned, and clears after 2s', async () => {
+    it('sets copyErrorId (not copiedSecretId) when getValue rejects, and clears after 2s', async () => {
         vi.useFakeTimers();
         const secret = makeSecret({ id: 7 });
-        getVersionsMock.mockResolvedValue([]);
+        getValueMock.mockRejectedValue(new Error('Forbidden'));
 
         const { result } = renderHook(() => useSecretReveal());
 
@@ -95,25 +97,9 @@ describe('useSecretReveal', () => {
         expect(result.current.copyErrorId).toBeNull();
     });
 
-    it('sets copyErrorId when versions is undefined', async () => {
-        const secret = makeSecret({ id: 8 });
-        getVersionsMock.mockResolvedValue(undefined);
-
-        const { result } = renderHook(() => useSecretReveal());
-
-        await act(async () => {
-            await result.current.handleCopySecretValue(secret);
-        });
-
-        expect(result.current.copyErrorId).toBe(8);
-        expect(result.current.copiedSecretId).toBeNull();
-    });
-
     it('sets copyErrorId when copyToClipboard rejects', async () => {
         const secret = makeSecret({ id: 9 });
-        getVersionsMock.mockResolvedValue([
-            { EncryptedValue: btoa('value'), VersionNumber: 1, CreatedAt: '2026-06-01T00:00:00Z' },
-        ]);
+        getValueMock.mockResolvedValue('value');
         copyToClipboardMock.mockRejectedValue(new Error('clipboard denied'));
 
         const { result } = renderHook(() => useSecretReveal());
@@ -126,32 +112,12 @@ describe('useSecretReveal', () => {
         expect(result.current.copiedSecretId).toBeNull();
     });
 
-    it('sets copyErrorId when the base64 decode fails (atob throws)', async () => {
-        const secret = makeSecret({ id: 10 });
-        // Not valid base64 — atob throws a DOMException/InvalidCharacterError.
-        getVersionsMock.mockResolvedValue([
-            { EncryptedValue: 'not-valid-base64!!', VersionNumber: 1, CreatedAt: '2026-06-01T00:00:00Z' },
-        ]);
-
-        const { result } = renderHook(() => useSecretReveal());
-
-        await act(async () => {
-            await result.current.handleCopySecretValue(secret);
-        });
-
-        expect(copyToClipboardMock).not.toHaveBeenCalled();
-        expect(result.current.copyErrorId).toBe(10);
-        expect(result.current.copiedSecretId).toBeNull();
-    });
-
     it('sets copyingSecretId synchronously while the request is in flight', async () => {
         const secret = makeSecret({ id: 11 });
-        let resolveVersions: (
-            value: { EncryptedValue: string; VersionNumber: number; CreatedAt: string }[]
-        ) => void = () => {};
-        getVersionsMock.mockReturnValue(
+        let resolveValue: (value: string) => void = () => {};
+        getValueMock.mockReturnValue(
             new Promise((resolve) => {
-                resolveVersions = resolve;
+                resolveValue = resolve;
             })
         );
         copyToClipboardMock.mockResolvedValue(undefined);
@@ -169,7 +135,7 @@ describe('useSecretReveal', () => {
 
         expect(result.current.copyingSecretId).toBe(11);
 
-        resolveVersions([{ EncryptedValue: btoa('value'), VersionNumber: 1, CreatedAt: '2026-06-01T00:00:00Z' }]);
+        resolveValue('value');
 
         await waitFor(() => expect(result.current.copyingSecretId).toBeNull());
         expect(result.current.copiedSecretId).toBe(11);
