@@ -15,7 +15,7 @@ silently removing it.
 | Package | File | Invariants | Guarded | UNGUARDED |
 |---|---|---|---|---|
 | `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 40 | 35 | 5 |
-| `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 35 | 27 | 8 |
+| `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 35 | 28 | 7 |
 | `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 20 | 16 | 4 |
 | `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 27 | 24 | 3 |
 | `internal/auditverify` | [internal/auditverify/INVARIANTS.md](../internal/auditverify/INVARIANTS.md) | 15 | 12 | 3 |
@@ -25,7 +25,7 @@ silently removing it.
 | `server/grpc/services` | [server/grpc/services/INVARIANTS.md](../server/grpc/services/INVARIANTS.md) | 8 | 8 | 0 |
 | `cli` | [cli/INVARIANTS.md](../cli/INVARIANTS.md) | 13 | 10 | 3 |
 | `web/src` | [web/src/INVARIANTS.md](../web/src/INVARIANTS.md) | 7 | 2 | 5 |
-| **Total** | | **219** | **182** | **37** |
+| **Total** | | **219** | **183** | **36** |
 
 ## Highest-priority UNGUARDED gaps
 
@@ -62,6 +62,9 @@ but no ledger entry).
   `UNGUARDED`. **Do not `grep -c UNGUARDED` the whole file** — every file's own intro line
   ("Format: `INV-<PKG>-NN ... UNGUARDED (#issue)`") contains the literal word and will inflate
   a naive count by one per file (this is exactly what happened on the first draft of this
-  table: a raw `grep -c` gave 50 UNGUARDED/169 guarded; the real, bullet-boundary-aware count
-  is 37/182, corrected before any issue was filed against the wrong number).
+  table: a raw `grep -c` gave 50 UNGUARDED/169 guarded; the bullet-boundary-aware count caught
+  that, then a second pass found INV-STORAGE-34 was already resolved by a guard discovered in
+  a different package's research — `cli/internal/depguard` — moving it from UNGUARDED to
+  guarded. Both corrections landed before any issue was filed against a wrong number; final:
+  36 UNGUARDED / 183 guarded).
 - When a package not yet covered here gets its first `INVARIANTS.md`, add a row.
