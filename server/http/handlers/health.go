@@ -3,12 +3,23 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"time"
 )
 
 // processStart is captured when the package loads (≈ server start) so /health can report
 // a real uptime.
 var processStart = time.Now()
+
+// instanceNonce is empty in every real deployment. The e2e journey harness
+// (scripts/e2e/harness) sets KEYORIX_E2E_INSTANCE_NONCE to a random value per
+// server boot and this echoes it back, so the harness can prove the process
+// answering a health check is the exact child it started -- not another
+// journey's server that won the FreeTCPPort race (#2459, see
+// harness.WaitHealthy). Omitted from the response entirely when unset, so
+// this changes nothing about /health's real-deployment shape or its
+// deliberate omission of version/commit info below.
+var instanceNonce = os.Getenv("KEYORIX_E2E_INSTANCE_NONCE")
 
 // HealthCheck handles GET /health — a lightweight liveness signal: it reports that the
 // process is up and responsive. It deliberately does NOT check the database or other
@@ -22,6 +33,9 @@ func HealthCheck(w http.ResponseWriter, r *http.Request) {
 		"status":    "healthy",
 		"timestamp": time.Now().UTC(),
 		"uptime":    time.Since(processStart).String(),
+	}
+	if instanceNonce != "" {
+		health["instance_nonce"] = instanceNonce
 	}
 
 	w.Header().Set("Content-Type", "application/json")
