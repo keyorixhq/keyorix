@@ -254,6 +254,7 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   detect stale rows, see the TSV's `STALE` class). Open: #2646 #2647 #2648 #2649 #2650 #2651
   #2652 #2653 #2654 #2656 #2657 #2659.
   detect stale rows, see the TSV's `STALE` class). Open: #2648 #2649 #2650 #2651
+  detect stale rows, see the TSV's `STALE` class). Open: #2648 #2650 #2651
   #2652 #2653 #2654 #2655 #2656 #2657 #2659. Closed rows move to class `PARENT-LOCKED`
   (INV-STORE-21) or are removed when a `WithNamedLock` now covers them.
 - **INV-CORE-42** A write that persists a pre-read snapshot must not overwrite columns the
