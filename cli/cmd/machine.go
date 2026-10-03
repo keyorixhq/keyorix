@@ -45,8 +45,9 @@ func machineAPIClient() (*apiclient.ClientWithResponses, error) {
 	return newAPIClient(serverURL, token)
 }
 
-// resolveMachineProjectID resolves a project name (flag or KEYORIX_PROJECT) to its
-// numeric ID via GET /api/v1/projects.
+// resolveMachineProjectID resolves a project name or numeric ID (flag or
+// KEYORIX_PROJECT) to its numeric ID via resolveProjectRef (#2562: a
+// project-scoped caller can pass the numeric ID).
 func resolveMachineProjectID(client *apiclient.ClientWithResponses, flagValue string) (string, int, error) {
 	name := flagValue
 	if name == "" {
@@ -55,19 +56,11 @@ func resolveMachineProjectID(client *apiclient.ClientWithResponses, flagValue st
 	if name == "" {
 		return "", 0, fmt.Errorf("no project given: pass --project or set KEYORIX_PROJECT")
 	}
-	resp, err := client.ListProjectsWithResponse(context.Background(), nil)
+	_, id, err := resolveProjectRef(context.Background(), client, name, false)
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to list projects: %w", err)
+		return "", 0, err
 	}
-	if resp.JSON200 == nil || resp.JSON200.Data == nil || resp.JSON200.Data.Projects == nil {
-		return "", 0, fmt.Errorf("failed to list projects: HTTP %d", resp.StatusCode())
-	}
-	for _, p := range *resp.JSON200.Data.Projects {
-		if p.Name != nil && *p.Name == name {
-			return name, derefInt(p.Id), nil
-		}
-	}
-	return "", 0, fmt.Errorf("project %q not found", name)
+	return name, id, nil
 }
 
 // fetchMachineIdentities lists a project's machine identities.
@@ -129,7 +122,7 @@ var machineCreateCmd = &cobra.Command{
 }
 
 func init() {
-	machineCreateCmd.Flags().StringVar(&machineCreateProjectName, "project", "", "Project name")
+	machineCreateCmd.Flags().StringVar(&machineCreateProjectName, "project", "", "Project name or numeric ID")
 	machineCreateCmd.Flags().StringVar(&machineCreateName, "name", "", "Machine identity name (required)")
 	machineCreateCmd.Flags().StringVar(&machineCreateType, "type", "other", "Identity type: ci | k8s | service | automation | other | node")
 	machineCreateCmd.Flags().StringVar(&machineCreateDescription, "description", "", "Description")
@@ -184,7 +177,7 @@ var machineListCmd = &cobra.Command{
 }
 
 func init() {
-	machineListCmd.Flags().StringVar(&machineListProjectName, "project", "", "Project name")
+	machineListCmd.Flags().StringVar(&machineListProjectName, "project", "", "Project name or numeric ID")
 	machineCmd.AddCommand(machineListCmd)
 }
 
@@ -229,7 +222,7 @@ var machineDescribeCmd = &cobra.Command{
 }
 
 func init() {
-	machineDescribeCmd.Flags().StringVar(&machineDescribeProjectName, "project", "", "Project name")
+	machineDescribeCmd.Flags().StringVar(&machineDescribeProjectName, "project", "", "Project name or numeric ID")
 	machineCmd.AddCommand(machineDescribeCmd)
 }
 
@@ -370,7 +363,7 @@ var machineGrantRoleCmd = &cobra.Command{
 }
 
 func init() {
-	machineGrantRoleCmd.Flags().StringVar(&machineGrantRoleProjectName, "project", "", "Project name")
+	machineGrantRoleCmd.Flags().StringVar(&machineGrantRoleProjectName, "project", "", "Project name or numeric ID")
 	machineGrantRoleCmd.Flags().StringVar(&machineGrantRoleName, "role", "", "Role name to grant (required)")
 	machineCmd.AddCommand(machineGrantRoleCmd)
 }
@@ -416,7 +409,7 @@ var machineRevokeRoleCmd = &cobra.Command{
 }
 
 func init() {
-	machineRevokeRoleCmd.Flags().StringVar(&machineRevokeRoleProjectName, "project", "", "Project name")
+	machineRevokeRoleCmd.Flags().StringVar(&machineRevokeRoleProjectName, "project", "", "Project name or numeric ID")
 	machineRevokeRoleCmd.Flags().StringVar(&machineRevokeRoleName, "role", "", "Role name to revoke (required)")
 	machineCmd.AddCommand(machineRevokeRoleCmd)
 }
@@ -461,7 +454,7 @@ var machineRolesCmd = &cobra.Command{
 }
 
 func init() {
-	machineRolesCmd.Flags().StringVar(&machineRolesProjectName, "project", "", "Project name")
+	machineRolesCmd.Flags().StringVar(&machineRolesProjectName, "project", "", "Project name or numeric ID")
 	machineCmd.AddCommand(machineRolesCmd)
 }
 
