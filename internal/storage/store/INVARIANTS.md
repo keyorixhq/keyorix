@@ -33,9 +33,12 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   (`TestConcurrency_WithNamedLock_MultiInstancePostgres_SameKeySerializes`,
   `_DifferentKeysDontContend`, pg-gated).
 - **INV-STORE-07** `WithSchedulerLock` runs a scheduler tick on exactly one replica at a time
-  via Postgres advisory lock (SQLite: always runs, re-entrant). Why: ADR-039. UNGUARDED
-  (#issue: ADR-039's "Verification" section cites this but no specific test function was
-  confirmed in this pass — locate or add a dedicated `scheduler_lock` test and cite it here).
+  via Postgres advisory lock (SQLite: always runs, re-entrant). Why: ADR-039. Guard:
+  `concurrency_scheduler_lock_postgres_test.go:TestConcurrency_WithSchedulerLock_MultiInstancePostgres_ExactlyOneRunsAtOnce`
+  (8 independent connections, one key: exactly one runs, max concurrency 1; pg-gated) and, for the
+  SQLite always-runs half, `local_scheduler_lock_test.go:TestWithSchedulerLock_SQLiteAlwaysRuns`.
+  Verified red: forcing `locked` to always pass makes all 8 run. (The row-lease variant RemoteStorage
+  uses is separate: `TestConcurrency_SchedulerLockLease_MultiInstancePostgres`.)
 
 ## Break-glass
 
@@ -45,10 +48,10 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
 - **INV-STORE-09** `reconcileBreakGlassIDsToExpired`'s UPDATE re-checks `state = 'active'` at
   write time (never trusts a stale Pluck'd ID list) — a concurrent revoke landing between read
   and write must not be silently overwritten back to 'expired'. Why: Part 2 regression audit
-  doc comment in `local_purge.go`. Guard: referenced in that comment as
-  `TestDeleteExpiredBreakGlassBefore_ConcurrentRevokeBetweenPluckAndUpdate` — exact file path
-  not independently confirmed in this pass; verify before relying on the name, otherwise treat
-  as UNGUARDED (#issue: confirm or add).
+  doc comment in `local_purge.go`. Guard:
+  `local_retention_test.go:TestDeleteExpiredBreakGlassBefore_ConcurrentRevokeBetweenPluckAndUpdate`
+  (deterministic interleave: real pluck, real revoke, real reconcile; verified red by dropping
+  `AND state = ?` from the UPDATE: row flips to 'expired').
 - **INV-STORE-10** `DeleteExpiredBreakGlassBefore`'s reconcile-update-fails and final-delete-fails
   paths propagate errors correctly. Guard: `local_purge_cascade_sweep_test.go`
   (`TestDeleteExpiredBreakGlassBefore_ReconcileUpdateFails`, `_FinalDeleteFails`).
