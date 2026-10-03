@@ -23,6 +23,17 @@ import (
 // server has no relying party configured (no webauthn block in the config).
 var ErrWebAuthnDisabled = errors.New("webauthn is not enabled on this server")
 
+// ErrWebAuthnLoginNotEvaluated is wrapped by FinishWebAuthnLogin when a storage
+// lookup the assertion check depends on fails before any verdict is reached:
+// consuming the login challenge or the ceremony session (other than the
+// expected storage.ErrMFAChallengeInvalid / storage.ErrWebAuthnSessionInvalid
+// negatives), or loading the user and their passkeys. The login is still
+// denied, but no credential was evaluated, so the HTTP handler releases the
+// per-IP login-attempt slot it reserved instead of counting the request as a
+// failed attempt, and the per-account lockout counter is never touched (#2565,
+// same class as ErrMFAVerificationStorageFailure on /auth/mfa/verify).
+var ErrWebAuthnLoginNotEvaluated = errors.New("webauthn login not evaluated: storage lookup failed")
+
 const webauthnSessionTTL = 5 * time.Minute
 
 // EventWebAuthnCloneDetected is the loud, authentication-rejecting audit event
@@ -456,10 +467,16 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 	// Consume the challenge first — it is the single-use login gate.
 	ch, err := c.storage.ConsumeMFAChallenge(ctx, sha256Hex(challenge), c.now())
 	if err != nil {
+		if !errors.Is(err, storage.ErrMFAChallengeInvalid) {
+			return nil, nil, fmt.Errorf("%w: consuming login challenge: %w", ErrWebAuthnLoginNotEvaluated, err)
+		}
 		return nil, nil, fmt.Errorf("invalid or expired challenge")
 	}
 	sess, err := c.storage.ConsumeWebAuthnSession(ctx, sha256Hex(sessionToken), c.now())
 	if err != nil {
+		if !errors.Is(err, storage.ErrWebAuthnSessionInvalid) {
+			return nil, nil, fmt.Errorf("%w: consuming webauthn session: %w", ErrWebAuthnLoginNotEvaluated, err)
+		}
 		return nil, nil, fmt.Errorf("invalid or expired webauthn session")
 	}
 	if sess.Purpose != "login" || sess.UserID != ch.UserID {
@@ -471,7 +488,12 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 	}
 	wu, err := c.loadWebAuthnUser(ctx, ch.UserID)
 	if err != nil {
-		return nil, nil, err
+		// GetUser / ListWebAuthnCredentials failed. The user ID came from a
+		// challenge that was just validly consumed (the first factor already
+		// passed), so this is never a credential guess: either a storage error
+		// or the account being deleted mid-ceremony. Neither evaluated the
+		// assertion, so neither may count as a failed attempt.
+		return nil, nil, fmt.Errorf("%w: loading webauthn user: %w", ErrWebAuthnLoginNotEvaluated, err)
 	}
 	// A second-factor WebAuthn login still mints a session, so a suspended or
 	// deactivated account must be refused — the challenge may have been issued just

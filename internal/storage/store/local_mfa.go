@@ -4,9 +4,9 @@ package store
 
 import (
 	"context"
-	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -129,7 +129,7 @@ func (ls *LocalStorage) ConsumeMFAChallenge(ctx context.Context, tokenHash strin
 	// letting an expired-but-never-consumed challenge be consumed for the
 	// first time past its real window).
 	if ls.consumeClockLooksRegressed(now) {
-		return nil, fmt.Errorf("invalid or expired challenge")
+		return nil, storage.ErrMFAChallengeInvalid
 	}
 	var ch *models.MFAChallenge
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -140,7 +140,7 @@ func (ls *LocalStorage) ConsumeMFAChallenge(ctx context.Context, tokenHash strin
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			return fmt.Errorf("invalid or expired challenge")
+			return storage.ErrMFAChallengeInvalid
 		}
 		var loaded models.MFAChallenge
 		if err := tx.Where("token_hash = ?", tokenHash).First(&loaded).Error; err != nil {

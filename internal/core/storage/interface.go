@@ -41,6 +41,8 @@ type Storage interface {
 	// ReleaseLoginAttempt if that check turns out not to be a confirmed negative
 	// result. Every other rate-limit call site stays on the fire-and-forget
 	// RecordLoginAttempt; only /auth/mfa/verify needs this pair today.
+	// RecordLoginAttempt; only /auth/mfa/verify and /auth/webauthn/login/finish
+	// need this pair today.
 	ReserveLoginAttempt(ctx context.Context, ip string, at time.Time) (id uint, err error)
 	// ReleaseLoginAttempt deletes the LoginAttempt row `id`, undoing a prior
 	// ReserveLoginAttempt. A no-op, not an error, if the row is already gone

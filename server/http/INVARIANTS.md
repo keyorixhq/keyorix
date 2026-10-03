@@ -136,6 +136,17 @@ Format: `INV-HTTP-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   closed as a follow-up). Guard: `TestLogin_ConcurrentBurst_RateLimitBoundsCredentialChecks`,
   `FuzzLoginThrottleConcurrency` (deterministic controlled-interleaving harness checking
   ground-truth `login_attempts` row counts, never wall-clock timing).
+- **INV-HTTP-20** `FinishWebAuthnLogin` still reserves first (INV-HTTP-19), but releases the
+  reservation when core reports `core.ErrWebAuthnLoginNotEvaluated` — a storage error before any
+  verdict on the assertion (consuming the challenge or ceremony session, loading the user or
+  their passkeys). The login is still denied; it just is not counted as a failed attempt, and the
+  per-account lockout counter is never touched. An invalid/expired challenge or session
+  (`storage.ErrMFAChallengeInvalid`/`ErrWebAuthnSessionInvalid`) and a failed assertion stay
+  counted. Why: #2565, found by `FuzzStorageFaultOperations`. Guard:
+  `webauthn_finish_storage_error_test.go`
+  (`TestFinishWebAuthnLogin_StorageErrorBeforeVerdict_IsNotAFailedAttempt`,
+  `TestFinishWebAuthnLogin_InvalidChallengeStillCounted`), corpus seeds `2565_*`. Not covered:
+  `FinishWebAuthnPasswordlessLogin` still counts a pre-verdict storage error as an attempt.
 
 ## Fuzzer oracles exercising server/http directly
 
