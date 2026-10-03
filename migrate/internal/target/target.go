@@ -10,10 +10,53 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/keyorixhq/keyorix/migrate/internal/apiclient"
+	"github.com/keyorixhq/keyorix/migrate/internal/migrateversion"
 )
+
+// clientOriginHeader mirrors internal/core.ClientOriginHeader (module boundary — migrate cannot
+// import it). The server records its value on the write's audit event as a labelled,
+// client-asserted note, so a migrated secret is distinguishable from a hand-created one in the
+// audit trail (#2545). It carries this tool's name/version and the source LOCATOR — never a
+// value.
+const clientOriginHeader = "X-Keyorix-Client-Origin"
+
+type sourceOriginKey struct{}
+
+// WithSourceOrigin tags ctx with the human-readable source locator (plan.Entry.Path, e.g.
+// "vault:secret/team-a/db#password") of the item a Create/UpdateValue call is writing.
+func WithSourceOrigin(ctx context.Context, path string) context.Context {
+	return context.WithValue(ctx, sourceOriginKey{}, path)
+}
+
+// SourceOrigin returns the locator WithSourceOrigin attached, or "".
+func SourceOrigin(ctx context.Context) string {
+	s, _ := ctx.Value(sourceOriginKey{}).(string)
+	return s
+}
+
+// originEditor sets clientOriginHeader for a write. Control characters are dropped: Go's HTTP
+// client refuses a header value containing them, which would otherwise turn an odd Vault key
+// name into a failed write.
+func originEditor(ctx context.Context) apiclient.RequestEditorFn {
+	return func(_ context.Context, req *http.Request) error {
+		v := "keyorix-migrate/" + migrateversion.Version
+		if src := SourceOrigin(ctx); src != "" {
+			v += " source=" + src
+		}
+		req.Header.Set(clientOriginHeader, strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) {
+				return -1
+			}
+			return r
+		}, v))
+		return nil
+	}
+}
 
 // patTokenPrefixLen mirrors internal/core/pat.go's `raw[:len(patPrefix)+6]` (patPrefix =
 // "kx_pat_", so 7+6 = 13) -- used by Preflight to identify which of the account's own PATs
@@ -120,7 +163,7 @@ func (c *Client) Create(ctx context.Context, name, value string, metadata map[st
 	if len(metadata) > 0 {
 		body.Metadata = &metadata
 	}
-	resp, err := c.api.CreateSecretWithResponse(ctx, body)
+	resp, err := c.api.CreateSecretWithResponse(ctx, body, originEditor(ctx))
 	if err != nil {
 		return 0, fmt.Errorf("create secret %q: %w", name, err)
 	}
@@ -131,7 +174,7 @@ func (c *Client) Create(ctx context.Context, name, value string, metadata map[st
 }
 
 func (c *Client) UpdateValue(ctx context.Context, id int, value string) error {
-	resp, err := c.api.UpdateSecretWithResponse(ctx, id, apiclient.UpdateSecretJSONRequestBody{Value: &value})
+	resp, err := c.api.UpdateSecretWithResponse(ctx, id, apiclient.UpdateSecretJSONRequestBody{Value: &value}, originEditor(ctx))
 	if err != nil {
 		return fmt.Errorf("update secret %d: %w", id, err)
 	}

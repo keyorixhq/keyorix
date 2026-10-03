@@ -25,6 +25,7 @@ package core
 import (
 	"context"
 	"log"
+	"strings"
 	"sync"
 )
 
@@ -161,7 +162,52 @@ func DetachedAuditContext(parent context.Context) context.Context {
 	if machineID, ok := machineActorFromContext(parent); ok {
 		ctx = WithMachineActor(ctx, machineID)
 	}
+	if origin, ok := clientOriginFromContext(parent); ok {
+		ctx = WithClientOrigin(ctx, origin)
+	}
 	return ctx
+}
+
+// ClientOriginHeader is the request header a client may set to say which tool, and which
+// source item, a write came from — e.g. keyorix-migrate sends
+// "keyorix-migrate/<version> source=vault:secret/team-a/db#password" (#2545). The value is
+// CLIENT-ASSERTED: any caller can send any text, so it is recorded only as a labelled note in
+// the audit event's description. It is never used to decide ActorType, attribution, or any
+// authorization — those still come solely from the authenticated principal.
+const ClientOriginHeader = "X-Keyorix-Client-Origin"
+
+// maxClientOriginRunes caps the recorded origin so a client cannot bloat audit rows.
+const maxClientOriginRunes = 256
+
+type clientOriginKey struct{}
+
+// WithClientOrigin tags ctx with a client-asserted origin (see ClientOriginHeader). The value
+// is sanitized (control characters dropped, same as every audit description) and capped at
+// maxClientOriginRunes; an empty result leaves ctx untouched.
+func WithClientOrigin(ctx context.Context, origin string) context.Context {
+	origin = strings.TrimSpace(sanitizeAuditText(origin))
+	if r := []rune(origin); len(r) > maxClientOriginRunes {
+		origin = string(r[:maxClientOriginRunes]) + "…"
+	}
+	if origin == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, clientOriginKey{}, origin)
+}
+
+func clientOriginFromContext(ctx context.Context) (string, bool) {
+	origin, ok := ctx.Value(clientOriginKey{}).(string)
+	return origin, ok && origin != ""
+}
+
+// withClientOriginNote appends the client-asserted origin, if ctx carries one, to an audit
+// description — labelled as client-asserted so no reader mistakes it for verified attribution.
+func withClientOriginNote(ctx context.Context, description string) string {
+	origin, ok := clientOriginFromContext(ctx)
+	if !ok {
+		return description
+	}
+	return description + " [client-asserted origin: " + origin + "]"
 }
 
 // goSafe runs fn in a detached goroutine with panic recovery. Several core
