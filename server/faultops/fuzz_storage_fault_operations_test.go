@@ -774,6 +774,27 @@ var knownOpenTolerances = []knownOpenTolerance{
 		tables:     []string{"AuditEvent"},
 		findingDoc: "docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md",
 	},
+	// A SECOND distinct (method, nth) trigger of the identical #2549 gap on
+	// the SAME op, found by the next CI run: BulkApproveAccessRequests' loop
+	// calls Authorize (which calls RoleSetBypassesPermissionChecks) per item,
+	// so a fault on ANY per-item storage call -- not just GetAccessRequest --
+	// reaches the same unconditional final audit write and produces the
+	// identical AuditEvent-only diff. Narrowly re-added per-(method, nth) as
+	// its own entry rather than widening to a method wildcard, since the
+	// existing knownOpenTolerance struct has no nth-wildcard mechanism (unlike
+	// method's blank-matches-any) and inventing one is a shared-mechanism
+	// change, not a data entry -- flagging for the coordinator to decide
+	// whether that's worth building, since CI's fuzz-changed will likely keep
+	// finding new (method, nth) pairs within this same loop otherwise.
+	// Reproduced directly: op="REST POST /api/v1/access-requests/bulk-approve"
+	// fault=(method=RoleSetBypassesPermissionChecks, NthCall=4, kind=error) --
+	// oracle (a) VIOLATION, differing tables: [AuditEvent].
+	{
+		op: "REST POST /api/v1/access-requests/bulk-approve", method: "RoleSetBypassesPermissionChecks", kind: faultstorage.KindError,
+		nth: 4, oracle: "a", issue: "#2549", expires: "2026-10-17",
+		tables:     []string{"AuditEvent"},
+		findingDoc: "docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md",
+	},
 	// docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md
 	// (SESSION-FI, AT5, out of OWNS, not fixed there): loadTOTPSecret's
 	// GetMFASecret error is checked with `err == nil` as the gate to even
