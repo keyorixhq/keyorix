@@ -260,8 +260,13 @@ export const complianceApi = {
         await apiClient.post('/api/v1/legal-hold', { reason });
     },
 
-    async liftLegalHold(): Promise<void> {
-        await apiClient.delete('/api/v1/legal-hold');
+    async liftLegalHold(reason: string): Promise<void> {
+        // DELETE with a body is unusual, but genuinely how this route's wire
+        // protocol works (server/http/handlers/openapi.yaml's liftLegalHold:
+        // LiftLegalHold requires a non-empty reason, mapped to 400 when
+        // absent). Previously sent no body at all -- every real "Lift hold"
+        // click 400'd.
+        await apiClient.delete('/api/v1/legal-hold', { data: { reason } });
     },
 
     async getSoDViolations(): Promise<SoDViolation[]> {

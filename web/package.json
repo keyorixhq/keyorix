@@ -20,7 +20,8 @@
         "format:check": "prettier --check \"src/**/*.{ts,tsx,js,jsx,json,css,md}\"",
         "analyze": "npx vite-bundle-analyzer",
         "generate:api-types": "openapi-typescript ../server/http/handlers/openapi.yaml -o src/types/api-generated.ts",
-        "check:api-types-fresh": "node scripts/check-api-types-fresh.mjs"
+        "check:api-types-fresh": "node scripts/check-api-types-fresh.mjs",
+        "check:api-contract": "node scripts/check-api-contract.mjs"
     },
     "dependencies": {
         "@heroicons/react": "^2.2.0",
@@ -63,6 +64,7 @@
         "eslint-plugin-react-refresh": "^0.5.7",
         "globals": "^17.12.0",
         "jest-axe": "^11.0.0",
+        "js-yaml": "^4.1.0",
         "jsdom": "^30.1.1",
         "openapi-typescript": "^7.6.1",
         "postcss": "^8.5.28",
