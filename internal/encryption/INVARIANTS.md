@@ -1,0 +1,160 @@
+# internal/encryption invariants
+
+Read this before changing anything in `internal/encryption` (KEK/DEK key management, AEAD
+encryption, chunking, key-provider integration). Two-tier key architecture: a Key Encryption
+Key (KEK, from `internal/crypto`'s pluggable providers) wraps a Data Encryption Key (DEK) that
+actually encrypts secret values.
+
+Format: `INV-ENCRYPTION-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
+
+## First-boot / cross-process coordination
+
+- **INV-ENCRYPTION-01** `AcquireExclusiveKeyLock` is acquired BEFORE `Initialize`, not after —
+  the loser of a first-boot race is refused immediately at the lock step, before it ever
+  touches salt/DEK files, rather than racing key-material generation and only surfacing as a
+  corrupted/mismatched key pair on a LATER restart. Why: first-boot key-bootstrap race. Guard:
+  `firstboot_lock_order_test.go:TestFirstBootKeyBootstrap_LockBeforeInitialize_ExactlyOneWinner`.
+- **INV-ENCRYPTION-02** DEK rotation (`RotateDEKWithSweep`) refuses to run while a live server
+  (or another rotation) already holds the exclusive key lock, so the rotation CLI — a separate
+  OS process — can never promote a new DEK to disk while the server still caches the old one in
+  memory. Why: #92. Guard: `exclusive_lock_test.go:TestRotateDEKWithSweep_RefusesWhileServerHoldsLock`.
+- **INV-ENCRYPTION-03** `RewrapDEKWithProvider` (the `migrate-provider` command) also takes the
+  cross-process exclusive key lock RotateDEKWithSweep/RotateKEKPassphrase already require — it
+  did not, originally, and could race a live server or an in-progress rotation on the same key
+  file. Why: G62. Guard: `g62_dek_safety_test.go:TestRewrapDEKWithProvider_RefusesWhileServerHoldsLock`
+  (+ positive-control sibling).
+- **INV-ENCRYPTION-04** `RewrapDEK` and `RotateDEKWithSweep` running concurrently against a
+  shared on-disk DEK and shared database must leave the DEK on disk matching whichever one the
+  database was actually re-encrypted under, never a stale superseded one, regardless of which
+  operation "wins" the race. Why: #195. Guard: `keymanager_lock_test.go`
+  (`TestAcquireExclusiveKeyLock_MutualExclusion`,
+  `TestRewrapAndRotate_ConcurrentRace_FinalDEKMatchesDB`).
+
+## Crash consistency (write-pending → rename → fsync)
+
+- **INV-ENCRYPTION-05** A torn/short write during first-time DEK generation never leaves a
+  corrupt-but-existing `dek.key` at the final path — `os.Stat`/`IsNotExist` still sees "no DEK
+  yet" on the next attempt, so a retry self-heals instead of failing forever. Why: found via
+  `FuzzFaultInjectedOperations`/opInit. Guard:
+  `keymanager_init_dek_torn_write_test.go:TestEnsureWrappedDEKExists_ShortWriteSelfHeals`.
+- **INV-ENCRYPTION-06** KEK-passphrase rotation's two coupled files (`dek.key`, `kek.salt`) —
+  persisted via write-pending → rename → fsync — maintain, at EVERY possible crash point
+  between any two steps: AVAILABILITY (some combination of surviving files plus a credential
+  the operator legitimately holds recovers EXACTLY the pre-rotation DEK) and CONFIDENTIALITY
+  (once rotation has fully completed, the OLD passphrase no longer unwraps the active DEK).
+  Guard: `keymanager_crash_consistency_fuzz_test.go:FuzzKEKRotationCrashConsistency`.
+- **INV-ENCRYPTION-07** KEK-provider migration (`RewrapDEK`, ADR-041) maintains the same
+  AVAILABILITY/CONFIDENTIALITY invariant pair across its own crash points (old provider before
+  rename, new provider after). Guard:
+  `keymanager_rewrap_crash_consistency_fuzz_test.go:FuzzDEKRewrapCrashConsistency`.
+- **INV-ENCRYPTION-08** A true DEK rotation with full re-encryption sweep (`RotateDEKWithSweep`,
+  ADR-010) is durable across a crash at any of its four ordered steps (write pending DEK →
+  sweep+commit rows under new DEK → rename pending to active → fsync directory);
+  `CleanPendingDEK()` on restart unconditionally removes a leftover `.pending` file and loads
+  the active DEK. Guard: `keymanager_sweep_crash_consistency_fuzz_test.go:FuzzDEKSweepCrashConsistency`.
+- **INV-ENCRYPTION-09** Beyond crash-BETWEEN-steps (the trilogy above), the same recoverability
+  property holds when the ENVIRONMENT fails WHILE the process keeps running (ENOSPC/EIO/short
+  write on the write itself, an fsync reporting failure after data already landed, a SQL
+  statement that never executes). Guard:
+  `fault_injected_operations_fuzz_test.go:FuzzFaultInjectedOperations` (reuses the trilogy's own
+  `recoverDEK`/`recoverRewrap`/`tryOpen`/`tryOpenProvider` oracle helpers).
+- **INV-ENCRYPTION-10** DEK-rotation file-durability recovery holds under a REAL process exit
+  (SIGKILL/crash), not only an in-process panic — this is the one place in the trilogy that
+  actually terminates the process rather than simulating a crash in-process. Guard:
+  `keymanager_subprocess_crash_test.go` (re-execs the test binary as a crash-test worker).
+- **INV-ENCRYPTION-11** `commitNewKEKFiles`'s rename-dek error cleanup only deletes
+  `kek.salt.pending` when the rename is CONFIRMED not to have applied (verified against actual
+  on-disk content) — unconditionally deleting it on ANY rename error (including an
+  NFS lost-reply/retransmit ambiguity where the rename DID apply) orphans the DEK, making every
+  secret undecryptable. Why: security-closures `kek-rename-dek-cleanup-dataloss-001`. Guard:
+  `FuzzFaultInjectedOperations`; fix is `dekRenameActuallySucceeded`.
+
+## Key derivation / domain separation
+
+- **INV-ENCRYPTION-12** The audit-checkpoint signing key (ADR-029) is derived from the KEK,
+  never the DEK, so a routine DEK rotation does not affect it — it only changes on a genuine
+  KEK change (a KEK-provider migration, ADR-041). Why: #502. Guard:
+  `audit_checkpoint_key_test.go`.
+- **INV-ENCRYPTION-13** The evidence-signing key (used to sign exported compliance-evidence
+  packs) is derived from the KEK, never the DEK, so a routine DEK rotation does not silently
+  and permanently invalidate every previously-signed pack. Why: #268. Guard:
+  `evidence_sign_key_test.go:TestEvidenceSignKey_StableAcrossDEKRotation` (byte-identical
+  signing key and version before/after a full `RotateDEKWithSweep`).
+- **INV-ENCRYPTION-14** The backup-manifest signing key (design-b3-backup-v2.md §5.2) is
+  KEK-derived (not DEK-derived), independently domain-separated from the audit-checkpoint key,
+  and wiped on shutdown alongside every other derived key. Guard: `backup_manifest_key_test.go`
+  (mirrors `audit_checkpoint_key_test.go`'s own tests).
+- **INV-ENCRYPTION-15** A key-provider fallback chain that falls back, AT RUNTIME, to a
+  provider weaker than an earlier higher-tier provider in the chain is recorded as a queryable
+  audit event (`EventKeyProviderFallbackDowngrade`), not just a log line — distinct from the
+  config-time `AllowWeakerFallback` startup refusal, which fires whenever the config PERMITS a
+  downgrade regardless of whether one ever actually happens. Guard:
+  `key_provider_downgrade.go` wiring + `TestNewKeyProviderFromConfig_WeakFallback_RuntimeAuditEvent`.
+- **INV-ENCRYPTION-16** `wireKMSAuditSink` actually connects a `Service`'s audit sink to a
+  directly-configured KMS key provider's underlying client for every supported provider shape
+  (including gcp-kms) — the production-wiring counterpart to each provider's own
+  fallback-audit unit tests. Guard: `gcpkms_audit_sink_wiring_test.go`.
+
+## AEAD / AAD binding
+
+- **INV-ENCRYPTION-17** A ciphertext sealed with `MFASecretAAD(userID)` cannot be decrypted
+  under a different user's identity — prevents a DB-write attacker from copying user A's
+  encrypted TOTP seed into user B's `mfa_secrets` row to produce a stealthy, persistent MFA
+  bypass. Why: #94. Guard: `aad_auth_transplant_test.go:TestAEAD_MFASecretAADBindsCiphertextToOwningUser`.
+- **INV-ENCRYPTION-18** The legacy nil-AAD fallback in `DecryptSecretWithAAD` (for rows
+  encrypted before the AAD migration, no `AADVersion` set) cannot be used to DOWNGRADE a
+  v2 (AAD-sealed) ciphertext — the GCM tag, not the `AADVersion` metadata flag, is the real
+  boundary: a ciphertext sealed with AAD simply cannot open with nil AAD, so a downgraded row
+  fails closed (at worst bricks the row, never transplants). Guard:
+  `aad_downgrade_test.go:TestAAD_NoLegacyDowngradeBypass`.
+- **INV-ENCRYPTION-19** Every byte of ciphertext/tag/AAD tamper must be detected by AEAD
+  authentication, not silently decrypted. Guard: `aead_tamper_test.go`.
+- **INV-ENCRYPTION-20** Chunked encryption of a large secret reassembles byte-identically to
+  the original plaintext across chunk-size boundaries. Guard: `chunk_integrity_test.go`.
+
+## Path / permission handling
+
+- **INV-ENCRYPTION-21** An absolute `dek_path`/`salt_path` boots correctly — `baseDir=""`
+  (server/main.go's convention for "self-contained path, no base-dir restriction") must be a
+  convention `normalizeKeyPaths` actually implements, not one that silently fails every boot.
+  Why: regression that went unnoticed because nothing in the test suite used an absolute key
+  path before the DAST workflow found it. Guard: `absolute_key_paths_test.go`.
+- **INV-ENCRYPTION-22** Azure-KMS has no AAD input for RSA-OAEP key wrap, so a configured
+  `kms_encryption_context` can never actually bind the wrapped KEK to this install — this is a
+  hard startup error (checked BEFORE `azurekms.New` is reached), never a log warning that's
+  easy to miss. Why: #123. Guard:
+  `keyprovider_context_test.go:TestNewKeyProviderFromConfig_AzureKMSRejectsEncryptionContext`.
+- **INV-ENCRYPTION-23** A KMS `Encrypt` response with a missing/empty/null `CiphertextBlob` is
+  rejected as an error, never treated as a successful wrap (a wrapped-KEK file persisted from
+  an empty blob appears to succeed at first-run but is unusable on the next restart). Why:
+  security-closures `awskms-encrypt-empty-ciphertext-001`; structurally identical to the
+  already-fixed `awssm.go` `SecretString==""` gap. Guard:
+  `TestAWSKMS_Encrypt_EmptyCiphertextBlobRejected` (internal/crypto/awskms).
+
+## Memory hygiene
+
+- **INV-ENCRYPTION-24** `EncryptionService.dek` (and the pre-rotation `EncryptionService` that
+  `RotateDEKWithSweep` discards once superseded) is wiped via `wipeBytes` on shutdown/
+  replacement, matching every other DEK-bearing variable in this package — it was not,
+  originally. Why: G62. Guard: `g62_dek_safety_test.go`
+  (`TestServiceShutdown_WipesEncryptionServiceDEK`, `TestRotateDEKWithSweep_WipesSupersededEncryptionServiceDEK`
+  — memory-scan-style tests proving no DEK bytes remain afterward).
+- **INV-ENCRYPTION-25** Every KEK/DEK/evidence-sign/audit-checkpoint/backup-manifest key
+  variable passed through a `defer wipeBytes(...)` or explicit `wipeBytes(...)` call at the end
+  of its rotation/use site — confirmed call sites in `keymanager_rotation.go` and
+  `keymanager_kek_rotation.go`. UNGUARDED as a repo-wide completeness sweep (#issue: no AST scan
+  enumerates every key-shaped `[]byte` local in this package and asserts a `wipeBytes` call on
+  every exit path, analogous to `internal/core`'s `atomicity_guard_test.go`; today's coverage is
+  point-fixes per historical finding, same shape as `internal/core`'s best-effort-panic gap).
+
+## Shamir / TPM key custody (ADR-038)
+
+- **INV-ENCRYPTION-26** `ShamirKeyProvider` reconstructs the KEK only from K-of-N shares — no
+  single custodian holds the key. Why: ADR-038. Guard: not independently confirmed in this
+  pass beyond the doc comment at `internal/crypto/shamir.go`/`shamir_provider.go` — UNGUARDED
+  pending a located test (#issue: confirm/cite the Shamir K-of-N threshold test, or add one if
+  genuinely absent).
+- **INV-ENCRYPTION-27** The TPM 2.0 KEK provider (tier 2) seals the KEK to the specific TPM —
+  it must not unseal on different hardware. Why: ADR-038 tier-2,
+  `internal/crypto/tpm_provider.go`. UNGUARDED pending a located test in this pass (#issue:
+  confirm/cite coverage of the seal-is-hardware-bound property).
