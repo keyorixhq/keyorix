@@ -559,6 +559,8 @@ func (h *CatalogHandler) changeMachineRole(w http.ResponseWriter, r *http.Reques
 			status = http.StatusNotFound
 		case strings.Contains(msg, "already") || strings.Contains(msg, "not assigned"):
 			status = http.StatusConflict
+		case strings.Contains(msg, "does not belong to project"):
+			status = http.StatusBadRequest
 		default:
 			log.Printf("Error changing machine role for machine %d in project %d: %v", machineID, projectID, err)
 			msg = clientSafe(err)

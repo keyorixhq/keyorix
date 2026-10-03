@@ -39,6 +39,8 @@ func setupMachineRoleGrantScopeCore(t *testing.T) *core.KeyorixCore {
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "project-a"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 10, ProjectID: 1, Name: "dev"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 11, ProjectID: 1, Name: "prod"}).Error)
+	require.NoError(t, db.Create(&models.Project{ID: 2, Name: "project-b"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 20, ProjectID: 2, Name: "b-prod"}).Error)
 
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "admin", Email: "admin@test.com", IsActive: true, CreatedAt: now, UpdatedAt: now}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
@@ -93,4 +95,36 @@ func TestGrantMachineRole_ScopedToOneEnvironment(t *testing.T) {
 	prodAllowed, err := coreService.AuthorizePrincipal(t.Context(), core.ActorTypeMachine, 10, "secrets.read", core.Scope{ProjectID: 1, EnvironmentID: 11})
 	require.NoError(t, err)
 	require.False(t, prodAllowed, fmt.Sprintf("a grant scoped to environment 10 (dev) must NOT also authorize environment 11 (prod) -- got allowed=%v", prodAllowed))
+}
+
+// #2595 review: environment_id is caller-supplied, so a grant naming an environment
+// of a DIFFERENT project must be rejected and must store nothing.
+func TestGrantMachineRole_CrossProjectEnvironmentRejected(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+
+	coreService := setupMachineRoleGrantScopeCore(t)
+	router, err := NewRouter(&config.Config{}, coreService)
+	require.NoError(t, err)
+	server := httptest.NewServer(router)
+	defer server.Close()
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	body, err := json.Marshal(map[string]any{"role_id": 2, "environment_id": 20})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/projects/1/machine-identities/10/roles", bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer admin-tok")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	require.GreaterOrEqual(t, resp.StatusCode, 400, "a cross-project environment_id must be rejected")
+	require.Less(t, resp.StatusCode, 500, "rejection must be a client error, not a server error")
+
+	for _, sc := range []core.Scope{{ProjectID: 1, EnvironmentID: 20}, {ProjectID: 2, EnvironmentID: 20}, {ProjectID: 1}} {
+		allowed, err := coreService.AuthorizePrincipal(t.Context(), core.ActorTypeMachine, 10, "secrets.read", sc)
+		require.NoError(t, err)
+		require.False(t, allowed, fmt.Sprintf("no grant may have been stored; got allowed at %+v", sc))
+	}
 }
