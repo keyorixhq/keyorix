@@ -59,5 +59,11 @@ func InspectMigrationState(db *gorm.DB) (upToDate bool, detail string, err error
 	if dbEpoch < currentSchemaEpoch {
 		return false, fmt.Sprintf("database schema epoch %d is behind this binary's %d -- migrations are pending; run `keyorix-server admin migrate`", dbEpoch, currentSchemaEpoch), nil
 	}
+	if dbEpoch > currentSchemaEpoch {
+		// checkSchemaEpoch above already let this through, which it only does
+		// when a recorded ADR-101 compatibility floor covers this binary.
+		return true, fmt.Sprintf("database schema epoch %d is newer than this binary's %d, but its recorded minimum "+
+			"compatible schema epoch covers this binary (ADR-101) -- no migrations pending for this binary", dbEpoch, currentSchemaEpoch), nil
+	}
 	return true, fmt.Sprintf("database schema epoch %d matches this binary", dbEpoch), nil
 }

@@ -10,7 +10,10 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
 ## Schema epoch (ADR-097, ADR-101)
 
 - **INV-STORAGE-01** An older binary refuses to start against a database migrated by a newer
-  schema epoch. Why: ADR-097. Guard: `TestSchemaEpoch_NewerRecordedEpoch_RefusesToStart`.
+  schema epoch, unless an ADR-101 compatibility floor recorded by that newer migration
+  explicitly covers the older binary (INV-STORAGE-04). With no floor recorded, the refusal is
+  unconditional. Why: ADR-097, ADR-101. Guard: `TestSchemaEpoch_NewerRecordedEpoch_RefusesToStart`,
+  `TestSchemaEpochFloor_RefusesOutsideSupportedRange/db_epoch_above_binary,_no_floor_recorded`.
 - **INV-STORAGE-02** `currentSchemaEpoch` has not silently bumped past 1 without the
   accompanying ADR-101 compatibility-floor work landing — this is a deliberate tripwire, not a
   claim that raising the epoch is wrong. Guard: `schema_epoch_tripwire_test.go:TestCurrentSchemaEpoch_StillOne_SeeADR101`.
@@ -18,10 +21,19 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   closed (refuses boot), not proceed silently. Why: ADR-097 "Corrupt value" section. UNGUARDED
   (#issue: no test located beyond the two epoch tests above directly asserting this; likely
   covered incidentally by `checkSchemaEpoch`'s own tests — confirm and cite precisely, or add).
-- **INV-STORAGE-04** Rolling back past a future `minCompatibleEpoch` floor must still refuse;
-  an additive-safe migration must NOT raise that floor. Why: ADR-101 design (not yet
-  implemented — `minCompatibleEpoch` does not exist in `system_metadata` yet). UNGUARDED
-  (#issue: implement `minCompatibleEpoch` per ADR-101 before any migration that would need it).
+- **INV-STORAGE-04** Rolling back past a recorded `minCompatibleEpoch` floor
+  (`system_metadata` key `schema_min_compatible_epoch`, declared by `minCompatibleSchemaEpoch`
+  in `factory.go`) must still refuse; an additive-safe migration must NOT raise that floor; a
+  recorded epoch or floor is never lowered by an older binary; a corrupt or sub-1 floor fails
+  closed. Why: ADR-101 (#2502). Guard: `factory_schema_epoch_floor_test.go`
+  (`TestSchemaEpochFloor_RefusesOutsideSupportedRange`, `_StartsInsideSupportedRange`,
+  `_AdditiveMigrationDoesNotRaiseFloor`, `_RecordNeverLowersEpochOrFloor`,
+  `_FreshInstall_RecordsDeclaredFloor`, `TestMinCompatibleSchemaEpoch_WithinRange`); Postgres
+  sibling `factory_schema_epoch_floor_postgres_test.go:TestSchemaEpochFloor_Postgres_RecordAndRefuse`.
+  `admin restore` deliberately keeps the strict no-floor rule (`SchemaEpochTooNew`): a backup
+  manifest carries no floor. `internal/backupfmt` skips the archived floor row exactly like the
+  `schema_epoch` row (guarded by the backup/restore round-trip tests, which fail on a UNIQUE
+  violation without the skip).
 
 ## AutoMigrate completeness
 
