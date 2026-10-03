@@ -2274,6 +2274,7 @@ paths:
               required: [role_id]
               properties:
                 role_id: {type: integer}
+                environment_id: {type: integer, description: "Scope the grant to one environment in this project; 0 or omitted = global (every environment)."}
       responses:
         '200':
           description: Envelope with null `data` and a confirmation message.
