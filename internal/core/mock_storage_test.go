@@ -2210,7 +2210,9 @@ func (m *MockStorage) UpsertMFASecret(_ context.Context, _ *models.MFASecret) er
 func (m *MockStorage) GetMFASecret(_ context.Context, _ uint) (*models.MFASecret, error) {
 	return nil, nil
 }
-func (m *MockStorage) ActivateMFASecret(_ context.Context, _ uint) error { return nil }
+func (m *MockStorage) ActivateMFASecret(_ context.Context, _ uint, _ []byte) (bool, error) {
+	return true, nil
+}
 func (m *MockStorage) MarkTOTPStepUsed(_ context.Context, _ uint, _ int64) (bool, error) {
 	return true, nil
 }

@@ -251,6 +251,8 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   (AST walk; no control-flow, interprocedural, or `tx.<Write>` awareness — and it does not
   detect stale rows, see the TSV's `STALE` class). Open: #2646 #2647 #2649 #2650 #2651
   #2652 #2653 #2654 #2655 #2656 #2657 #2659.
+  detect stale rows, see the TSV's `STALE` class). Open: #2646 #2647 #2648 #2649 #2650 #2651
+  #2652 #2653 #2654 #2656 #2657 #2659.
 - **INV-CORE-42** A write that persists a pre-read snapshot must not overwrite columns the
   operation did not change, and must not resurrect a soft-deleted row. GORM `Save(struct)` on
   a soft-delete model is a resurrection primitive under concurrency: its `UPDATE ... WHERE
@@ -262,6 +264,14 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `TestCTAReview_UpdateSharePermission_vs_RevokeShare_CrossReplicaPostgres` (pg-gated).
   UNGUARDED: #2650 secret undelete, #2651 dynamic config re-enable, #2653/#2654 user
   suspension/password revert.
+  Why: C-GUARD2-EXEMPT-REVIEW. Guard: UNGUARDED (#2648 share revoke, #2650 secret undelete,
+  #2651 dynamic config re-enable, #2653/#2654 user suspension/password revert).
+- **INV-CORE-43** `ActivateMFA` only ever activates the TOTP secret the submitted code was
+  validated against: `ActivateMFASecret` is a conditional write pinned to that row's
+  ciphertext, and a mismatch (a concurrent `BeginMFAEnrollment` swapped the secret) fails the
+  whole activation closed with `ErrMFAEnrollmentChanged`. Why: #2655. Guard:
+  `TestActivateMFA_SecretSwappedAfterValidation_FailsClosed` (default-ci),
+  `TestCTAReview_ActivateMFA_vs_BeginMFAEnrollment_CrossReplicaPostgres` (pg-gated).
 
 ## Account-state / exhaustiveness
 

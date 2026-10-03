@@ -423,11 +423,22 @@ func TestCTAReview_UpdateOwnProfile_vs_ChangePassword_CrossReplicaPostgres(t *te
 
 // TestCTAReview_ActivateMFA_vs_BeginMFAEnrollment_CrossReplicaPostgres: the
 // TOTP secret ActivateMFA activates must be the one the submitted code was
-// validated against. ActivateMFASecret is UPDATE ... WHERE user_id = ?, with
+// validated against. ActivateMFASecret was UPDATE ... WHERE user_id = ?, with
 // nothing pinning the secret; a re-enrolment (e.g. from a stolen session)
-// landing between validation and activation gets activated instead.
+// landing between validation and activation got activated instead. Fixed by
+// pinning the conditional write to the validated ciphertext: under the forced
+// interleaving activation must now fail closed, leaving MFA off and the
+// replacement secret unactivated.
+//
+// Bug origin
+//
+//	Introduced-by: #G08 (activation moved into one transaction, but the
+//	               activating UPDATE never re-asserted which secret it activates)
+//	Detected-by:   C-GUARD2-EXEMPT-REVIEW #2662
+//	Class:         cross-replica check-then-act
+//	Severity:      high (MFA bound to a secret an attacker controls)
+//	Guard:         this test + TestActivateMFA_SecretSwappedAfterValidation_FailsClosed
 func TestCTAReview_ActivateMFA_vs_BeginMFAEnrollment_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2655: ActivateMFA can activate a TOTP secret swapped in after code validation; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	victim := f.user("cta-mfa", "")
@@ -441,11 +452,29 @@ func TestCTAReview_ActivateMFA_vs_BeginMFAEnrollment_CrossReplicaPostgres(t *tes
 	_, errA := f.coreA.ActivateMFA(f.ctx, victim.ID, code, "UserPass123!xyz-long-enough", "")
 	t.Logf("ActivateMFA (A) err=%v, BeginMFAEnrollment (B) err=%v", errA, errB)
 	require.True(t, fired(), "the hook must have interleaved B's BeginMFAEnrollment before A's activation UPDATE")
-	require.NoError(t, errA)
+	require.NoError(t, errB)
+	assertActivationNeverBindsUnvalidatedSecret(t, f.setup, victim.ID, s1, errA)
+}
 
-	active, err := f.setup.loadTOTPSecret(f.ctx, victim.ID)
+// assertActivationNeverBindsUnvalidatedSecret: either ActivateMFA failed closed
+// (ErrMFAEnrollmentChanged, MFA off, stored secret not activated), or it
+// succeeded and the activated secret is the one the code was validated
+// against. With the swap forced before activation, only the first is legal.
+func assertActivationNeverBindsUnvalidatedSecret(t *testing.T, c *KeyorixCore, userID uint, validated string, activateErr error) {
+	t.Helper()
+	ctx := context.Background()
+	active, err := c.loadTOTPSecret(ctx, userID)
 	require.NoError(t, err)
-	assert.Equal(t, s1, active, "MFA was activated with a TOTP secret the account holder never validated a code against")
+	row, err := c.Storage().GetMFASecret(ctx, userID)
+	require.NoError(t, err)
+	user, err := c.Storage().GetUser(ctx, userID)
+	require.NoError(t, err)
+	t.Logf("activate err=%v, secret swapped=%v, activated=%v, MFAEnabled=%v", activateErr, active != validated, row.Activated, user.MFAEnabled)
+	assert.False(t, row.Activated && active != validated,
+		"MFA was activated with a TOTP secret the account holder never validated a code against")
+	require.ErrorIs(t, activateErr, ErrMFAEnrollmentChanged, "the secret was swapped before activation: it must fail closed")
+	assert.False(t, user.MFAEnabled, "a failed activation must roll back MFAEnabled")
+	assert.False(t, row.Activated)
 }
 
 // TestCTAReview_RestoreEnvironment_vs_DeleteProject_CrossReplicaPostgres:
