@@ -77,7 +77,7 @@ func newIdentityFailClosedTestHandler(t *testing.T) (*AuthHandler, *faultstorage
 	require.NoError(t, err)
 	actCode, err := totp.GenerateCode(secret, activationTime)
 	require.NoError(t, err)
-	_, err = c.ActivateMFA(ctx, 1, actCode, identityFailClosedTestPassword)
+	_, err = c.ActivateMFA(ctx, 1, actCode, identityFailClosedTestPassword, "")
 	require.NoError(t, err)
 
 	// Advance one full TOTP step past activation's own code so a verify call
