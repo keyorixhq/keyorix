@@ -68,6 +68,9 @@ type Item struct {
 	Outcome    Outcome
 	ExistingID int    // 0 unless a same-name secret already exists.
 	Reason     string // human-readable, for Skip/Conflict/Error — never includes a value.
+	// ValueTooLarge marks an Error that BuildPlan raised because the value exceeds Keyorix's
+	// hard maximum secret size (see checkValueSize) — its own failure class in the report.
+	ValueTooLarge bool
 }
 
 // BuildPlan classifies every entry against the target by name, then (for a name match) by
@@ -85,9 +88,38 @@ func BuildPlan(ctx context.Context, api target.API, entries []Entry) ([]Item, er
 			items = append(items, Item{Entry: e, Outcome: Error, Reason: err.Error()})
 			continue
 		}
-		items = append(items, item)
+		items = append(items, checkValueSize(item))
 	}
 	return items, nil
+}
+
+// checkValueSize flags, in the plan itself (so the dry run shows it before --apply ever runs),
+// any item that would write a value above the target's size limits (#2544). Above
+// target.MaxSecretSizeHardCeiling no Keyorix configuration can accept the value, so the item
+// becomes an Error and Apply never sends it — the rest of the run continues. Above
+// target.DefaultMaxSecretSize the write may still succeed (the target's limit may have been
+// raised), so the outcome is unchanged but the reason warns. Only outcomes that write a value
+// are checked; a Skip or an already-Error item is returned untouched.
+func checkValueSize(item Item) Item {
+	switch item.Outcome {
+	case Create, Update, Conflict:
+	default:
+		return item
+	}
+	size := len(item.Entry.Value)
+	switch {
+	case size > target.MaxSecretSizeHardCeiling:
+		item.Outcome = Error
+		item.ValueTooLarge = true
+		item.Reason = fmt.Sprintf("value too large: %s is %d bytes, above Keyorix's hard maximum secret size of %d bytes — no server configuration can accept it; split the value", item.Entry.Path, size, target.MaxSecretSizeHardCeiling)
+	case size > target.DefaultMaxSecretSize:
+		warn := fmt.Sprintf("value is %d bytes, above Keyorix's default max_secret_size of %d bytes — will fail unless the target's secrets.limits.max_secret_size is raised", size, target.DefaultMaxSecretSize)
+		if item.Reason != "" {
+			warn = item.Reason + "; " + warn
+		}
+		item.Reason = warn
+	}
+	return item
 }
 
 func planOne(ctx context.Context, api target.API, e Entry) (Item, error) {
@@ -127,6 +159,14 @@ type Result struct {
 	Item  Item
 	Ran   bool // false when Apply left the item untouched (Skip, or a Conflict without --force).
 	Error string
+	// ValueTooLarge is true when Error is the target rejecting the value as over its
+	// max_secret_size (target.ValueTooLargeError) — reported as its own class, not folded into
+	// a generic error (#2544).
+	ValueTooLarge bool
+}
+
+func failed(item Item, err error) Result {
+	return Result{Item: item, Ran: true, Error: err.Error(), ValueTooLarge: target.IsValueTooLarge(err)}
 }
 
 // Apply executes a plan built by BuildPlan. force turns a Conflict into an overwrite
@@ -149,12 +189,12 @@ func applyOne(ctx context.Context, api target.API, item Item, force bool) Result
 			return Result{Item: item, Ran: false}
 		}
 		if err := api.UpdateValue(ctx, item.ExistingID, item.Entry.Value); err != nil {
-			return Result{Item: item, Ran: true, Error: err.Error()}
+			return failed(item, err)
 		}
 		return Result{Item: item, Ran: true}
 	case Update:
 		if err := api.UpdateValue(ctx, item.ExistingID, item.Entry.Value); err != nil {
-			return Result{Item: item, Ran: true, Error: err.Error()}
+			return failed(item, err)
 		}
 		return Result{Item: item, Ran: true}
 	case Create:
@@ -172,7 +212,7 @@ func applyOne(ctx context.Context, api target.API, item Item, force bool) Result
 			metadata[item.Entry.SourceKind+"."+k] = v
 		}
 		if _, err := api.Create(ctx, item.Entry.Name, item.Entry.Value, metadata); err != nil {
-			return Result{Item: item, Ran: true, Error: err.Error()}
+			return failed(item, err)
 		}
 		return Result{Item: item, Ran: true}
 	default:

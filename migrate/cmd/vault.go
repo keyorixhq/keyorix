@@ -227,7 +227,7 @@ func runVault(cmd *cobra.Command, _ []string) error {
 				return fmt.Errorf("write report: %w", err)
 			}
 		}
-		printSummary(items)
+		printSummary(items, nil)
 		_, _ = fmt.Fprintln(os.Stdout, "\nDry run only — pass --apply to execute this plan.")
 		return nil
 	}
@@ -253,14 +253,17 @@ func runVault(cmd *cobra.Command, _ []string) error {
 			return fmt.Errorf("write report: %w", err)
 		}
 	}
-	printSummary(items)
+	printSummary(items, allResults)
 	return nil
 }
 
-func printSummary(items []plan.Item) {
+func printSummary(items []plan.Item, results []plan.Result) {
 	counts := report.Summary(items)
 	_, _ = fmt.Fprintf(os.Stdout, "\n%d create, %d update, %d skip, %d conflict, %d error\n",
 		counts[plan.Create], counts[plan.Update], counts[plan.Skip], counts[plan.Conflict], counts[plan.Error])
+	if notice := report.ValueTooLargeNotice(items, results); notice != "" {
+		_, _ = fmt.Fprintln(os.Stdout, notice)
+	}
 }
 
 func envDefault(flagVal, envVar string) string {
