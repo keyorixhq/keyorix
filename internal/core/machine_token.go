@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -430,6 +431,22 @@ func (c *KeyorixCore) AssignMachineRole(ctx context.Context, machineID, roleID u
 	m, err := c.machineInProject(ctx, scope.ProjectID, machineID)
 	if err != nil {
 		return err
+	}
+	// An environment-scoped grant must name an environment of THIS project (#2595):
+	// environment_id is caller-supplied, and a grant scoped to (project A, an
+	// environment of project B) must never be stored. Fail closed, same check as
+	// CreateSecret / dynamic secrets / rotation policies.
+	if scope.EnvironmentID != 0 {
+		env, eerr := c.storage.GetEnvironment(ctx, scope.EnvironmentID)
+		if eerr != nil {
+			if !isEnvironmentNotFoundErr(eerr) {
+				return fmt.Errorf("failed to verify target environment %d: %w", scope.EnvironmentID, eerr)
+			}
+			return fmt.Errorf("%s: environment %d not found", i18n.T("ErrorValidation", nil), scope.EnvironmentID)
+		}
+		if env.ProjectID != scope.ProjectID {
+			return fmt.Errorf("%s: environment %d does not belong to project %d", i18n.T("ErrorValidation", nil), scope.EnvironmentID, scope.ProjectID)
+		}
 	}
 	if _, err := c.storage.GetRole(ctx, roleID); err != nil {
 		return err
