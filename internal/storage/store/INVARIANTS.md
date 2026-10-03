@@ -72,19 +72,29 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   conditional `WHERE id = ? AND state/status = ?` + `Select("*")` + `Updates(m)` — the full
   mutated row is written in one statement, only when the row's current state still matches
   `fromState`. Why: #388; mirrors `UpdateProjectInvitation`'s shape; "atomic security counters"
-  review-finding pattern applied to state machines. Guard: inferred live from
-  `local_machine_identities.go:57` and `local_secrets.go:548` — dedicated test names not
-  independently confirmed in this pass. UNGUARDED pending confirmation (#issue: locate and
-  cite the exact test, or add one asserting a stale-fromState UPDATE affects 0 rows).
+  review-finding pattern applied to state machines. Guard (#2510): stale-`fromState` predicate —
+  `state_transition_cas_test.go:TestTransitionMachineIdentityState_StaleFromStateAffectsZeroRows`
+  and `local_secrets_transition_status_test.go:TestTransitionSecretStatus_ClosesRace` (each red
+  when its `AND state/status = ?` is dropped); full-row `Select("*")` —
+  `state_transition_cas_test.go:TestTransitionMachineIdentityState_PersistsFullRowIncludingZeroValues`
+  and `TestTransitionSecretStatus_PersistsFullRowIncludingZeroValues` (red when `Select("*")` is
+  dropped: a struct `Updates` skips fields the caller cleared).
 - **INV-STORE-15** `LockMachineIdentityForUpdate` takes `SELECT ... FOR UPDATE` on Postgres
   only (SQLite has no row lock, relies on single-process + transaction) — the two dialects'
   serialization strategy stays matched to `TransitionMachineIdentityState`'s usage, and the
   lock is always taken INSIDE the same `WithTransaction` the write uses (a standalone,
   unwrapped `FOR UPDATE` is a no-op on Postgres — confirmed historical test-only defect, see
-  CLAUDE.md top-matter). Why: `local_machine_identities.go:32-37` doc comment, #388. UNGUARDED
-  pending re-verification (#issue: re-confirm current test coverage wraps the lock+write in one
-  transaction; the historical defect was in the TEST harness, not production, but re-check on
-  every future change to this call site).
+  CLAUDE.md top-matter). Why: `local_machine_identities.go:32-37` doc comment, #388. Guard
+  (#2511): `concurrency_machine_identity_lock_postgres_test.go`
+  (`TestLockMachineIdentityForUpdate_Postgres_HoldsRowLockUntilCommit`, pg-gated: a contender
+  on an independent connection stays blocked while a holder's transaction has the lock, then
+  reads the holder's committed write — red every run when the `FOR UPDATE` clause is dropped;
+  `_Postgres_HarnessCalibration` proves the same harness observes a non-blocking contender,
+  including a standalone lock taken outside a transaction; `_SQLite_NoRowLockClauseInsideTransaction`
+  for the SQLite half — which holds even without the dialect check, since the SQLite dialector
+  drops `clause.Locking` itself). End-to-end through the real core caller:
+  `internal/core`'s `TestConcurrency_TransitionMachineIdentity_MultiInstancePostgres_RevokedIsTerminal`
+  (probabilistic — red 8/10 runs without the clause).
 - **INV-STORE-16** Per-secret and per-grant `max_reads` counters never exceed their cap even
   under concurrent reads — atomic conditional UPDATE, fail closed. Why: "atomic security
   counters" review-finding pattern. Guard: `concurrency_max_reads_test.go`
