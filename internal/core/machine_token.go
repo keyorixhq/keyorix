@@ -413,6 +413,29 @@ func machineRestrictionFrom(cred *models.MachineIdentityCredential) *MachineToke
 	return &MachineTokenRestriction{AllowedCIDRs: cidrs}
 }
 
+// requireEnvironmentInProject fails closed unless scope.EnvironmentID is 0
+// (global) or names an environment of scope.ProjectID. environment_id is
+// caller-supplied, and a machine-role grant or removal scoped to (project A, an
+// environment of project B) must never be stored or acted on (#2595). Same check
+// as CreateSecret / dynamic secrets / rotation policies. Shared by
+// AssignMachineRole and RemoveMachineRole so the two cannot drift.
+func (c *KeyorixCore) requireEnvironmentInProject(ctx context.Context, scope Scope) error {
+	if scope.EnvironmentID == 0 {
+		return nil
+	}
+	env, err := c.storage.GetEnvironment(ctx, scope.EnvironmentID)
+	if err != nil {
+		if !isEnvironmentNotFoundErr(err) {
+			return fmt.Errorf("failed to verify target environment %d: %w", scope.EnvironmentID, err)
+		}
+		return fmt.Errorf("%s: environment %d not found", i18n.T("ErrorValidation", nil), scope.EnvironmentID)
+	}
+	if env.ProjectID != scope.ProjectID {
+		return fmt.Errorf("%s: environment %d does not belong to project %d", i18n.T("ErrorValidation", nil), scope.EnvironmentID, scope.ProjectID)
+	}
+	return nil
+}
+
 // AssignMachineRole grants a role to a machine identity at the given scope and
 // audits it. The machine must belong to scope.ProjectID — the caller is only
 // proven to hold roles.assign at that project, so a machine in another project
@@ -432,21 +455,8 @@ func (c *KeyorixCore) AssignMachineRole(ctx context.Context, machineID, roleID u
 	if err != nil {
 		return err
 	}
-	// An environment-scoped grant must name an environment of THIS project (#2595):
-	// environment_id is caller-supplied, and a grant scoped to (project A, an
-	// environment of project B) must never be stored. Fail closed, same check as
-	// CreateSecret / dynamic secrets / rotation policies.
-	if scope.EnvironmentID != 0 {
-		env, eerr := c.storage.GetEnvironment(ctx, scope.EnvironmentID)
-		if eerr != nil {
-			if !isEnvironmentNotFoundErr(eerr) {
-				return fmt.Errorf("failed to verify target environment %d: %w", scope.EnvironmentID, eerr)
-			}
-			return fmt.Errorf("%s: environment %d not found", i18n.T("ErrorValidation", nil), scope.EnvironmentID)
-		}
-		if env.ProjectID != scope.ProjectID {
-			return fmt.Errorf("%s: environment %d does not belong to project %d", i18n.T("ErrorValidation", nil), scope.EnvironmentID, scope.ProjectID)
-		}
+	if err := c.requireEnvironmentInProject(ctx, scope); err != nil {
+		return err
 	}
 	if _, err := c.storage.GetRole(ctx, roleID); err != nil {
 		return err
@@ -465,9 +475,15 @@ func (c *KeyorixCore) AssignMachineRole(ctx context.Context, machineID, roleID u
 }
 
 // RemoveMachineRole revokes a machine identity's role grant at the given scope.
+// scope.EnvironmentID, when non-zero, must name an environment of scope.ProjectID
+// (fail closed, same as AssignMachineRole); storage matches the scope exactly, so
+// a project-wide (EnvironmentID 0) removal never touches an environment-scoped grant.
 func (c *KeyorixCore) RemoveMachineRole(ctx context.Context, machineID, roleID uint, scope Scope, actorID uint) error {
 	m, err := c.machineInProject(ctx, scope.ProjectID, machineID)
 	if err != nil {
+		return err
+	}
+	if err := c.requireEnvironmentInProject(ctx, scope); err != nil {
 		return err
 	}
 	if err := c.storage.RemoveMachineRole(ctx, machineID, roleID, scope); err != nil {
