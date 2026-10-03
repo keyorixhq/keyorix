@@ -202,7 +202,7 @@ func TestApplyPoolSettings_S23_MaxIdleConns(t *testing.T) {
 	// verify the call did not error and the default open-conns cap is still set.
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
-	assert.Equal(t, defaultMaxOpenConns, sqlDB.Stats().MaxOpenConnections)
+	assert.Equal(t, DefaultSQLiteMaxOpenConns, sqlDB.Stats().MaxOpenConnections)
 }
 
 // TestApplyPoolSettings_S23_ConnMaxLifetime verifies that a non-zero
