@@ -551,6 +551,20 @@ func FuzzStorageFaultOperations(f *testing.F) {
 	if s := seedFor("GRPC keyorix.v1.RoleService.CreateRole", "GetRole", 1, 0); s != nil {
 		f.Add(s)
 	}
+	// Harness completeness regression (REPLAY_HEX=c900cb0000): DynamicSecretLease.LeaseID
+	// is a random token (see snapshot_test.go's typeScopedPresenceOnlyFields entry, scoped to
+	// DynamicSecretLease so the exemption can never leak onto BreakGlassActivation.RoleName or
+	// AccessReviewItem.RoleName) that was missing
+	// from the snapshot comparison's presence-only list, so two independently-bootstrapped
+	// worlds' DynamicSecretLease rows (and RevokeLease's AuditEvent.Description, which
+	// embeds the same LeaseID verbatim) never matched regardless of any fault. This fault
+	// (GetUser#1/error) only ever lands in the auth middleware's cache-hit account-state
+	// recheck, which already degrades to the cached snapshot on a storage error by design
+	// (serveAuthCacheHit) -- RevokeLease's own write path is never faulted. Not a real
+	// bug; kept as a regression seed for the snapshot comparison gap itself.
+	if s := seedFor("REST POST /api/v1/dynamic-secrets/leases/{leaseID}/revoke", "GetUser", 1, 0); s != nil {
+		f.Add(s)
+	}
 	// Per-worker world reuse (M5): each `go test -fuzz` worker is a separate
 	// OS process (see world_reuse_test.go's doc comment), so building ref/w
 	// ONCE here, before f.Fuzz, is naturally scoped to one worker -- no
