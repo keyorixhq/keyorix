@@ -222,6 +222,35 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `dependency_guard_test.go:TestCoreIntegrationDepsAllowlistIsEmpty`,
   `TestCoreIntegrationDepsMatchADR109Allowlist`.
 
+## Cross-replica check-then-act serialization (GUARD-2)
+
+- **INV-CORE-41** Every security-relevant check-then-act decision in `internal/core` (an
+  authorizer/role/SoD/admin-count/quorum read that decides whether a write proceeds) that is
+  check-then-act at all serializes its check AND the write it gates under the SAME
+  `storage.WithNamedLock` acquisition (or an equivalent DB-level primitive — a row lock inside
+  `WithTransaction`, or a conditional `UPDATE ... WHERE` that fails closed on a stale read) —
+  never an in-process mutex alone, which only serializes callers within ONE process and is
+  silently absent the moment two replicas of an HA deployment (ADR-039) each take the request.
+  Extends INV-CORE-17's two originally-fixed cases (`AssignUserRole`/`AssignRoleToGroup`) with
+  two more found by this inventory sweep: `AssignMachineRole`'s SoD check (previously
+  serialized by NOTHING at all, not even an in-process mutex) and `UpdateSCIMUser`/
+  `DeprovisionSCIMUser`'s last-admin guard (previously `accountStateMu` only, cross-replica-
+  unsafe — a gap the code's own prior comment had already named and deliberately deferred).
+  Why: QA-1 report pattern #3 (~51 PRs of this shape), #1646, #1780, #1955.
+  Full inventory: `docs/specs/check-then-act-inventory.md`. Guard (regression, the two new
+  cases): `TestConcurrency_AssignMachineRole_CrossReplicaPostgres_SoDBypass`,
+  `TestConcurrency_UpdateSCIMUser_CrossReplicaPostgres_LastAdminGuard` (pg-gated). Guard
+  (structural, enforces this rule going forward for NEW code):
+  `check_then_act_lock_guard_test.go:TestCheckThenActLockGuard_UnlockedSecurityCheck` (AST
+  walk over every `require*`/`guard*` check call followed by a later write with no shared
+  `storage.WithNamedLock` — no control-flow awareness, same documented blind spot as
+  INV-CORE-35's atomicity guard; unclassified hits fail CI, reviewed false positives live in
+  `docs/check-then-act-lock-exempt.tsv`). CI: `.github/workflows/pg-race-tests.yml` runs every
+  pg-gated test in this family against real Postgres on any PR touching `internal/core` or
+  `internal/storage`, plus nightly on `main` — closing the gap where `ci.yml`'s own
+  Postgres-backed "core" leg only runs on `push`/`merge_group`/`ci:full`-labeled PRs, not an
+  ordinary PR.
+
 ## Fuzzer oracles exercising internal/core directly
 
 - Oracle (a) atomicity, (c) fail-closed authz on a storage-read fault, (d) effect-then-error
