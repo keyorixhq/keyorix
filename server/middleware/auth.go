@@ -213,6 +213,18 @@ var (
 	// misses, and a slow-path validation that began before a bump never
 	// caches its result. Guarded by tokenCacheMu.
 	machineCacheGen uint64
+	// clearedAt records, per key, the moment ClearTokenCacheIfCached last ran
+	// for it -- independent of tokenCache itself, which cacheGet's own
+	// read-time expiry/prune logic deletes from on its very next read (a
+	// `tokenCacheEntry` marker, however short-lived, does not survive long
+	// enough to guard anything). cacheSetValidatedGen checks this map the
+	// same way it checks an entry's own revokedAt: a slow-path validation
+	// whose validatedAt predates the recorded clear must not resurrect the
+	// stale permissions it read. Entries are pruned after validTokenTTL (see
+	// pruneLocked) -- a safe upper bound on how long any single slow-path
+	// validation can still be in flight, same bound #2423's own PR comment
+	// uses.
+	clearedAt = map[string]time.Time{}
 )
 
 // currentMachineCacheGen returns the machine-cache generation. The slow path
@@ -279,6 +291,11 @@ func cacheSetValidatedGen(key string, userCtx *UserContext, validatedAt time.Tim
 	if existing, ok := tokenCache[key]; ok && existing.revokedAt.After(validatedAt) {
 		return // revoked during our validation — do not re-cache the now-stale positive
 	}
+	if ca, ok := clearedAt[key]; ok && ca.After(validatedAt) {
+		return // cleared (ClearTokenCacheIfCached) during our validation — same refusal,
+		// via the separate clearedAt map since a clear's own tokenCache marker (if any)
+		// does not survive an intervening cacheGet long enough to check here directly.
+	}
 	entry := tokenCacheEntry{userCtx: userCtx, expiresAt: expiresAt}
 	if isMachineEntry(userCtx) {
 		if gen != machineCacheGen {
@@ -309,6 +326,14 @@ func pruneLocked() {
 		for k, v := range tokenCache {
 			if now.After(v.expiresAt) {
 				delete(tokenCache, k)
+			}
+		}
+		// clearedAt entries older than validTokenTTL have outlived any slow-path
+		// validation that could still be racing them (see cacheSetValidatedGen) --
+		// safe to drop on the same timed cadence as tokenCache itself.
+		for k, ca := range clearedAt {
+			if now.After(ca.Add(validTokenTTL)) {
+				delete(clearedAt, k)
 			}
 		}
 		lastPurge = now
@@ -1643,16 +1668,32 @@ func InvalidateTokenCacheByHash(hash string) {
 // genuine privilege-bypass window (a role removal's old permission grant
 // outliving the removal), not merely a wrong status code, and the exact
 // coordinator ask on #2423 ("confirm the cache can never ALLOW where the DB
-// denies") was not yet true before this fix. Closed by writing the SAME
-// revokedAt+immediate-expiry marker InvalidateTokenCacheByHash's tombstone uses
-// for the guard, but with expiresAt set to now (not now+invalidTokenTTL): the
-// marker blocks resurrection exactly like a real tombstone, while any ordinary
-// cacheGet a nanosecond later already finds it expired — no observable negative
-// window for a credential this call never saw, so the #2402 bug stays fixed.
+// denies") was not yet true before this fix.
+//
+// A revokedAt+immediate-expiry tokenCacheEntry marker (this function's first
+// attempt) does NOT close the gap either: cacheGet deletes any entry whose
+// expiresAt has passed on its very next read, marker included -- so a
+// concurrent request for the SAME key between this call and the slow-path
+// write removes the marker before cacheSetValidatedGen ever gets to check its
+// revokedAt, and the resurrection succeeds anyway (coordinator review on the
+// first version of this fix). Closed instead with a separate clearedAt map
+// (package-level var above), deliberately NOT subject to cacheGet's own
+// read-triggered deletion: cacheSetValidatedGen checks clearedAt directly,
+// independent of whatever cacheGet did to tokenCache in between. clearedAt is
+// pruned after validTokenTTL (pruneLocked), not immediately, so the guard
+// survives for as long as any single slow-path validation can still be in
+// flight. The map write is unconditional (not "only if already cached"): the
+// race this closes is specifically a credential that was NEVER cached before
+// the clear (first use raced by a concurrent role removal), so there is often
+// no existing tokenCache entry to condition on. tokenCache itself still gets
+// an unconditional delete, for the ordinary "make the next read a miss"
+// effect this function's name promises — but never a new tokenCacheEntry
+// write, so a hash this call never saw still never gains a negative-cache
+// window (the #2402 bug this function exists to avoid stays fixed).
 func ClearTokenCacheIfCached(hash string) {
 	tokenCacheMu.Lock()
-	now := time.Now()
-	tokenCache[hash] = tokenCacheEntry{userCtx: nil, expiresAt: now, revokedAt: now}
+	delete(tokenCache, hash)
+	clearedAt[hash] = time.Now()
 	tokenCacheMu.Unlock()
 }
 

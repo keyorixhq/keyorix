@@ -862,11 +862,16 @@ func TestCacheSetValidated_DropsResurrectionAfterRevoke(t *testing.T) {
 // the cache for up to validTokenTTL, a genuine privilege-bypass window, not merely
 // a wrong status code. Mirrors TestCacheSetValidated_DropsResurrectionAfterRevoke
 // above, using ClearTokenCacheIfCached as the eviction instead of
-// InvalidateTokenCacheByHash.
+// InvalidateTokenCacheByHash. This is the no-interleaving-read case; see
+// TestCacheSetValidated_DropsResurrectionAfterClear_SurvivesInterveningCacheGet
+// below for the harder case a first version of this fix missed (coordinator
+// review): an intervening cacheGet on the same key between the clear and the
+// stale write.
 func TestCacheSetValidated_DropsResurrectionAfterClear(t *testing.T) {
 	key := tokenKey("clear-race-token")
 	tokenCacheMu.Lock()
 	delete(tokenCache, key)
+	delete(clearedAt, key)
 	tokenCacheMu.Unlock()
 
 	validatedAt := time.Now() // slow path began (before its DB read saw the still-held role)
@@ -879,22 +884,74 @@ func TestCacheSetValidated_DropsResurrectionAfterClear(t *testing.T) {
 
 	entry, ok := cacheGet(key)
 	if !ok {
-		return // the self-expiring marker may have already aged out; the key point is no positive entry
+		return // no entry at all is also a pass; the key point is no positive entry
 	}
 	if entry.userCtx != nil {
 		t.Error("a token cleared mid-validation must NOT be resurrected as a positive cache entry carrying the removed role's permissions")
 	}
 }
 
-// ClearTokenCacheIfCached's self-expiring marker must not create an observable
-// negative-cache window for a hash that was never cached before -- the #2402 bug
-// this function exists to avoid. A plain cacheGet immediately after the clear
-// (same as any ordinary request would do) must see a miss, not a lingering
-// negative entry.
+// TestCacheSetValidated_DropsResurrectionAfterClear_SurvivesInterveningCacheGet is
+// the exact race the coordinator's review on the first version of this fix
+// identified: that version's guard was a tokenCacheEntry marker with
+// expiresAt=now, written into tokenCache by ClearTokenCacheIfCached. cacheGet
+// deletes any entry whose expiresAt has passed on its very next read -- so a
+// SECOND, unrelated request for the same key, landing between the clear and the
+// slow-path's positive write, deleted the marker before cacheSetValidatedGen ever
+// got to check its revokedAt, and the resurrection succeeded anyway. The fix
+// (a separate clearedAt map, checked directly by cacheSetValidatedGen,
+// independent of whatever cacheGet did to tokenCache) must survive exactly this
+// interleaving:
+//
+//  1. slow-path validation starts (captures validatedAt, reads the OLD permissions)
+//  2. role removed -> ClearTokenCacheIfCached(key)
+//  3. an intervening cacheGet(key) -- simulates a second, unrelated request for
+//     the same token landing right after the clear
+//  4. the slow-path validation finishes -> cacheSetValidatedGen(key, ...)
+//  5. assert: the stale positive was NOT cached
+func TestCacheSetValidated_DropsResurrectionAfterClear_SurvivesInterveningCacheGet(t *testing.T) {
+	key := tokenKey("clear-race-interleaved-token")
+	tokenCacheMu.Lock()
+	delete(tokenCache, key)
+	delete(clearedAt, key)
+	tokenCacheMu.Unlock()
+
+	// 1. Slow-path validation begins -- reads the user's OLD (still-held) role.
+	validatedAt := time.Now()
+	time.Sleep(2 * time.Millisecond)
+
+	// 2. Role removed concurrently.
+	ClearTokenCacheIfCached(key)
+
+	// 3. An intervening read for the SAME key -- a different, unrelated request.
+	// With the original tokenCacheEntry-marker design this call would delete the
+	// marker (its expiresAt already passed) before step 4 ever gets to check it.
+	if _, ok := cacheGet(key); ok {
+		t.Fatalf("expected a miss immediately after ClearTokenCacheIfCached, got a cached entry")
+	}
+
+	// 4. The slow-path validation (started in step 1, before the clear) now
+	// finishes and tries to cache its stale, pre-removal result.
+	cacheSetValidated(key, &UserContext{UserID: 1}, validatedAt, time.Now().Add(validTokenTTL))
+
+	// 5. The stale positive must NOT have been cached, despite the intervening
+	// cacheGet in step 3.
+	entry, ok := cacheGet(key)
+	if ok && entry.userCtx != nil {
+		t.Error("the stale positive write must be refused even after an intervening cacheGet deleted the clear's own tokenCache marker -- " +
+			"the removed role's permissions must not be resurrected via this interleaving")
+	}
+}
+
+// ClearTokenCacheIfCached must not create an observable negative-cache window
+// for a hash that was never cached before -- the #2402 bug this function exists
+// to avoid. A plain cacheGet immediately after the clear (same as any ordinary
+// request would do) must see a miss, not a lingering negative entry.
 func TestClearTokenCacheIfCached_NeverCachedHashHasNoObservableNegativeWindow(t *testing.T) {
 	key := tokenKey("never-cached-token")
 	tokenCacheMu.Lock()
 	delete(tokenCache, key)
+	delete(clearedAt, key)
 	tokenCacheMu.Unlock()
 
 	ClearTokenCacheIfCached(key)
