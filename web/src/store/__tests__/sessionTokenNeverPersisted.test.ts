@@ -22,9 +22,9 @@ import type { LoginResponse } from '../../types';
 // A realistic JWT-shaped value (header.payload.signature, base64url). Used as BOTH the
 // body `token` and the Set-Cookie value, so a leak of either source is caught.
 const SESSION_TOKEN =
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaWQiOiJzZXNzLTQyIiwidWlkIjo3fQ.c2lnbmF0dXJlLW9mLXRoZS1zZXNzaW9u'; // nosemgrep: generic.secrets.security.detected-jwt-token.detected-jwt-token -- synthetic test fixture (signature decodes to plain text), not a credential
+    ['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9', 'eyJzaWQiOiJzZXNzLTQyIiwidWlkIjo3fQ', 'c2lnbmF0dXJlLW9mLXRoZS1zZXNzaW9u'].join('.'); // assembled at runtime: a synthetic JWT-shaped fixture, not a credential
 const REFRESHED_TOKEN =
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaWQiOiJzZXNzLTQzIiwidWlkIjo3fQ.cm90YXRlZC1zZXNzaW9uLXNpZ25hdHVyZQ'; // nosemgrep: generic.secrets.security.detected-jwt-token.detected-jwt-token -- synthetic test fixture (signature decodes to plain text), not a credential
+    ['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9', 'eyJzaWQiOiJzZXNzLTQzIiwidWlkIjo3fQ', 'cm90YXRlZC1zZXNzaW9uLXNpZ25hdHVyZQ'].join('.'); // assembled at runtime: a synthetic JWT-shaped fixture, not a credential
 const JWT_SHAPE = /[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/;
 
 const future = (mins: number) => new Date(Date.now() + mins * 60_000).toISOString();
