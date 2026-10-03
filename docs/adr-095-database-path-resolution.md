@@ -138,7 +138,13 @@ Two independent pieces were on the table. What actually landed:
    directly answers "which database am I actually using," previously
    unanswerable from the logs.
 
-3. **Recommended, not built — move the SQLite migration lock inside the
+3. **Built later (2026-10-03, #2505) — see INV-STORAGE-23.** `withMigrationLock`
+   now runs the whole SQLite migration inside one `BEGIN EXCLUSIVE` transaction on a
+   dedicated `*sql.Conn` (`withSQLiteInDBMigrationLock`); the sidecar flock is kept
+   only as the same-path fail-fast. A second migrator waits up to `busy_timeout`
+   (10s) for the in-database lock, then fails with an actionable error. Hard-linked
+   aliases of the database file remain unserializable (SQLite's WAL index is per path
+   name). Original recommendation, kept for the record: **Recommended, not built — move the SQLite migration lock inside the
    database**, matching Postgres's `pg_advisory_lock` and the scheduler
    lease's `ON CONFLICT DO NOTHING`. On inspection, the scheduler-lease
    pattern specifically does **not** transfer cleanly here: it requires a

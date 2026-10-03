@@ -121,9 +121,17 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   silently create an empty DB. Why: ADR-095 "Task 3". UNGUARDED (#issue: `createLocalStorage`
   currently doesn't check for the file's prior existence; ADR-095 itself recommends this but it
   was not built).
-- **INV-STORAGE-23** The SQLite migration lock should move inside the database
-  (`BEGIN EXCLUSIVE`) instead of a file-based lock. Why: ADR-095 "Task 4.3". UNGUARDED (#issue:
-  explicitly recommended by the ADR, not built).
+- **INV-STORAGE-23** Two processes migrating the same SQLite file are serialized by SQLite
+  itself: `withMigrationLock` runs the whole migration inside one `BEGIN EXCLUSIVE` transaction
+  on a dedicated connection (`withSQLiteInDBMigrationLock`), so it holds however each process
+  spells the path (a symlink) and even if the `<db>.migration.lock` sidecar is deleted while
+  held; the sidecar flock stays only as the same-path fail-fast. A failed migration rolls back
+  completely. Not covered (documented in the test): hard-linked aliases (SQLite's WAL index is
+  per path name, so nothing inside SQLite can serialize them) and network filesystems. Why:
+  ADR-095 "Task 4.3" (#2505). Guard: `factory_sqlite_migration_lock_indb_test.go`
+  (`TestSQLiteMigrationLock_CrossProcess_SerializedBySQLiteItself` — two real OS processes,
+  `TestWithSQLiteInDBMigrationLock_HeldElsewhere_FailsCleanlyWithoutMigrating`,
+  `TestWithSQLiteInDBMigrationLock_ErrorRollsBackEverything`).
 
 ## Connection / transaction hazards — SQLite
 

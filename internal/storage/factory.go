@@ -59,10 +59,16 @@ var migrationMu sync.Mutex
 // Postgres's session-level advisory lock (pg_advisory_lock/pg_advisory_unlock),
 // used to serialize migrateDatabase ACROSS PROCESSES when running against
 // Postgres (e.g. multiple replicas booting against a shared, fresh database).
-// SQLite has no analogous multi-process advisory-lock primitive, but SQLite
-// deployments are single-process-per-file by construction, so migrationMu alone
-// is sufficient there; only Postgres needs the additional cross-process lock.
+// SQLite's cross-process equivalent is the write transaction withMigrationLock
+// runs migrateDatabase inside (INV-STORAGE-23, ADR-095 Task 4.3).
 const postgresMigrationLockKey = 872341
+
+// migrationLockHeldHook, when non-nil, is invoked by withMigrationLock once
+// every lock it takes is held, immediately before the migration itself runs.
+// It is nil in every production build; only the cross-process migration-lock
+// test installs it (factory_sqlite_migration_lock_indb_test.go), the same
+// nil-in-production seam pattern as migrationCheckpoint below.
+var migrationLockHeldHook func()
 
 // migrationCheckpoint, when non-nil, is invoked after each model is migrated in
 // migrateDatabase's fresh-install-only bulk AutoMigrate loop, with a stable label
@@ -89,23 +95,37 @@ func migrationCheckpointHook(label string) {
 //     same *gorm.DB, which GORM services from one checked-out *sql.Conn per call
 //     only within an explicit transaction; to guarantee same-connection acquire/
 //     release without depending on that, this wraps fn in db.Transaction.
-//   - Local SQLite (dbPath != ""): a non-blocking flock(2) sidecar lock on
-//     <dbPath>.migration.lock (#STORAGE-FACTORY-003). migrationMu alone only
-//     serializes goroutines within THIS process; SQLite has no advisory-lock
-//     primitive of its own, so this closes the same cross-process gap the
-//     Postgres branch closes via pg_advisory_lock — a second Keyorix OS process
-//     (another misconfigured replica, or a `keyorix encryption ...` CLI
-//     invocation) pointed at the same local SQLite file fails loud at the start
-//     of migrateDatabase instead of racing this process's DDL statements.
-//     Acquired AFTER migrationMu so only one goroutine in this process ever
-//     attempts it at a time — flock is scoped to the open file description, not
-//     the process, so two concurrent in-process goroutines contending for it
-//     directly (without migrationMu already serializing them) would spuriously
-//     fail one against the other rather than against a genuinely separate OS
-//     process.
+//   - SQLite: the whole migration runs inside ONE write transaction on the
+//     database itself (INV-STORAGE-23, ADR-095 Task 4.3; see
+//     withSQLiteInDBMigrationLock). SQLite's own file lock then serializes
+//     migrators across processes -- keyed on the database file, so it holds
+//     however a process spells the path (a symlink or hard link to the same
+//     file), whether or not a sidecar lock file survives, and for
+//     MigrateExisting callers that pass no dbPath at all. The OS releases it
+//     on crash, exactly like flock.
+//   - Local SQLite (dbPath != ""), additionally and FIRST: a non-blocking
+//     flock(2) sidecar lock on <dbPath>.migration.lock (#STORAGE-FACTORY-003),
+//     kept as the fast path -- a second process using the SAME path still
+//     fails immediately with an actionable error instead of waiting out
+//     busy_timeout on the in-database lock. It is no longer what guarantees
+//     serialization: it is keyed on the path string, not the file, so an
+//     aliased path or a deleted sidecar slips past it (the in-database lock
+//     above catches both). Acquired AFTER migrationMu so only one goroutine
+//     in this process ever attempts it at a time — flock is scoped to the
+//     open file description, not the process, so two concurrent in-process
+//     goroutines contending for it directly (without migrationMu already
+//     serializing them) would spuriously fail one against the other rather
+//     than against a genuinely separate OS process.
 func withMigrationLock(db *gorm.DB, isPostgres bool, dbPath string, fn func(*gorm.DB) error) error {
 	migrationMu.Lock()
 	defer migrationMu.Unlock()
+
+	run := func(h *gorm.DB) error {
+		if migrationLockHeldHook != nil {
+			migrationLockHeldHook()
+		}
+		return fn(h)
+	}
 
 	if isPostgres {
 		return db.Transaction(func(tx *gorm.DB) error {
@@ -113,7 +133,7 @@ func withMigrationLock(db *gorm.DB, isPostgres bool, dbPath string, fn func(*gor
 				return fmt.Errorf("acquire migration advisory lock: %w", err)
 			}
 			defer tx.Exec("SELECT pg_advisory_unlock(?)", postgresMigrationLockKey)
-			return fn(tx)
+			return run(tx)
 		})
 	}
 
@@ -124,7 +144,7 @@ func withMigrationLock(db *gorm.DB, isPostgres bool, dbPath string, fn func(*gor
 		}
 		defer osLock.release()
 	}
-	return fn(db)
+	return withSQLiteInDBMigrationLock(db, dbPath, run)
 }
 
 // defaultMaxOpenConns bounds the DB connection pool when the operator hasn't set
