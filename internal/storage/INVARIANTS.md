@@ -181,6 +181,20 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   `factory_sqlite_pragma_test.go` (`TestSQLitePragmas_EnabledOnFreshConnection`,
   `TestSQLiteForeignKeyEnforcement_RejectsOrphanInsert`).
 
+- **INV-STORAGE-37** In-process SQLite write transactions are serialized by a FIFO write gate
+  (`openSQLiteGorm`, `sqlite_write_gate.go`) instead of contending inside SQLite's polling busy
+  handler, which starves waiters past `busy_timeout` under concurrency (`SQLITE_BUSY`). Every
+  production SQLite open goes through the gate; read-only (`mode=ro`) opens are the only,
+  allowlisted exceptions. A gate wait is bounded (`sqliteWriteGateMaxWait`, equal to the
+  busy_timeout) and fails with `ErrSQLiteWriteContention`, or with the caller's ctx error.
+  Not covered: autocommit writes outside a transaction (none via GORM: no
+  `SkipDefaultTransaction`). Why: #2630 (PERF-2: 2.7–6.4% write failures, p99 at the client
+  timeout). Guard: `sqlite_concurrent_write_test.go`
+  (`TestSQLite_ConcurrentDistinctSecretWrites_SucceedOrFailFast` green,
+  `TestSQLite_ConcurrentDistinctSecretWrites_UngatedControlFails` red control,
+  `TestSQLiteWriteGate_FailsFastWithClearError`),
+  `sqlite_open_paths_guard_test.go:TestSQLiteOpenPaths_AllGoThroughTheWriteGate`.
+
 ## Connection / transaction hazards — Postgres
 
 - **INV-STORAGE-27** `CreateStorage`/`OpenGormDB` against Postgres succeed on the happy path,
