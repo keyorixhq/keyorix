@@ -403,7 +403,21 @@ func TestJourney_DisasterRecovery(t *testing.T) {
 			mid := len(b) / 2
 			b[mid] ^= 0xFF
 		})
-		assertRestoreRefused(t, serverBin, targetEnv, srcCfgRaw, tamperedPath, "integrity check")
+		// Not "integrity check" specifically: the archive is gzip-compressed,
+		// so a single flipped byte in the COMPRESSED stream almost always
+		// desyncs DEFLATE decoding from that point on (confirmed live,
+		// deterministically, across repeated runs -- never once reached
+		// backup_v1_legacy.go's own per-entry size/checksum integrity
+		// check), surfacing as archive/tar's own "invalid tar header"
+		// instead. Both are genuine proof the corruption was caught and the
+		// restore refused -- this journey's actual claim -- just at
+		// different layers (gzip/tar framing vs. post-extract content
+		// checksum); which one fires depends on exactly where in the
+		// compressed stream the flipped byte lands. "archive" matches both
+		// messages (and matches the sibling "truncated archive" case below,
+		// which already asserts this same broader substring for the same
+		// reason).
+		assertRestoreRefused(t, serverBin, targetEnv, srcCfgRaw, tamperedPath, "archive")
 	})
 
 	t.Run("negative: truncated archive is refused", func(t *testing.T) {
@@ -536,28 +550,25 @@ func waitHealthyBounded(s *harness.Server, seconds int) bool {
 // `exited=false` means it's still running (a hang, not a fast failure).
 // Used by the "old passphrase" negative case, which expects a genuine,
 // fast decrypt-failure exit, not merely "never became healthy" (which is
-// equally consistent with a hang). Safe to call even though the caller also
-// `defer`s s.Close(): harness.Server.Close() discards any error from a
-// second Kill()/Wait() on an already-exited process.
+// equally consistent with a hang). Waits via s.Exited() rather than calling
+// s.Cmd.Process.Wait() itself (the old approach): harness.startProcess
+// (#2459) now has its own background goroutine permanently blocked in
+// Wait() on this same process from the moment it starts, and os/exec
+// documents concurrent Wait() calls on one process as unsafe -- s.Exited()
+// is the one channel that goroutine closes once it has already reaped the
+// process, so this never races it. Safe to call even though the caller
+// also `defer`s s.Close(): Close() only Kills (never waits a second time)
+// once s.exited is already closed.
 func waitProcessExit(s *harness.Server, timeout time.Duration) (exitCode int, exited bool) {
 	if s.Cmd == nil || s.Cmd.Process == nil {
 		return 0, false
 	}
-	type result struct {
-		state *os.ProcessState
-		err   error
-	}
-	done := make(chan result, 1)
-	go func() {
-		state, err := s.Cmd.Process.Wait()
-		done <- result{state, err}
-	}()
 	select {
-	case r := <-done:
-		if r.err != nil || r.state == nil {
+	case <-s.Exited():
+		if s.Cmd.ProcessState == nil {
 			return -1, true
 		}
-		return r.state.ExitCode(), true
+		return s.Cmd.ProcessState.ExitCode(), true
 	case <-time.After(timeout):
 		return 0, false
 	}
