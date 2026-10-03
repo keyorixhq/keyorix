@@ -164,3 +164,17 @@ test('every main page loads with no console errors or failed API calls (single s
 
     expect(perPageFailures, 'one entry per page that failed its own check').toEqual([]);
 });
+
+// WEB-SA-1: the Service Accounts feature was retired (docs/adr-113-retire-
+// legacy-service-accounts.md) -- its page and API client were deleted, but
+// an old bookmark/link to either admin URL must redirect to Machine
+// Identities, not 404 or dead-end silently.
+test('old service-accounts and api-tokens URLs redirect to Machine Identities', async ({ page }) => {
+    await realLogin(page);
+
+    for (const oldPath of ['/admin/service-accounts', '/admin/api-tokens']) {
+        await page.goto(oldPath);
+        await page.waitForURL('/admin/machine-identities', { timeout: 15_000 });
+        await expect(page.getByRole('heading', { name: 'Machine Identities' })).toBeVisible();
+    }
+});

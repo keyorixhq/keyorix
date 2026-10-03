@@ -44,6 +44,14 @@ func newSoDGrantFixture(t *testing.T, dbFile string) (c *core.KeyorixCore, db *g
 		&models.User{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.UserRole{}, &models.SoDPolicy{}, &models.AuditEvent{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		// GetUserRoleIDsAt/GetUserGroupRoleIDsAt (isGlobalAdminRoleName's
+		// scopedRoleIDs) LEFT JOIN projects/environments unconditionally, even
+		// for a global-scope (ProjectID 0) query -- missing here, this always
+		// errored "no such table: projects", previously invisible because
+		// isGlobalAdminRoleName silently swallowed any resolution error into
+		// "" (docs/findings/2026-10-02-FINDING-sod-policy-create-getrole-error-
+		// misread-as-not-admin.md). A genuine fixture gap, not new with that fix.
+		&models.Project{}, &models.Environment{},
 	))
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "perm.a", Resource: "r", Action: "a"}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 2, Name: "perm.b", Resource: "r", Action: "a"}).Error)

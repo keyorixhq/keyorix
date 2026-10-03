@@ -80,14 +80,14 @@ mechanism and always self-expire -- see internal/dynamic's per-backend file
 header comments for why.
 
 Examples:
-  keyorix-next dynamic-secret create --name app-db --project-id 1 --backend postgres \
+  keyorix dynamic-secret create --name app-db --project-id 1 --backend postgres \
     --creation-template 'GRANT SELECT ON ALL TABLES IN SCHEMA public TO {{name}};'
-  keyorix-next dynamic-secret create --name cache --project-id 1 --backend redis \
+  keyorix dynamic-secret create --name cache --project-id 1 --backend redis \
     --creation-template '~app:* +@read'
   # cloud: paste the JSON config at the hidden prompt
-  keyorix-next dynamic-secret create --name aws-readonly --project-id 1 --backend aws-sts
-  keyorix-next dynamic-secret create --name gcp-token   --project-id 1 --backend gcp
-  keyorix-next dynamic-secret create --name k8s-token   --project-id 1 --backend kubernetes`,
+  keyorix dynamic-secret create --name aws-readonly --project-id 1 --backend aws-sts
+  keyorix dynamic-secret create --name gcp-token   --project-id 1 --backend gcp
+  keyorix dynamic-secret create --name k8s-token   --project-id 1 --backend kubernetes`,
 	RunE: runDynCreateConfig,
 }
 
@@ -234,7 +234,7 @@ func runDynCreateConfig(_ *cobra.Command, _ []string) error {
 	}
 	cfg := resp.JSON200.Data
 	fmt.Printf("Created dynamic-secret config #%d (%s, %s).\n", derefUint32(cfg.Id), derefStr(cfg.Name), derefStr((*string)(cfg.BackendType)))
-	fmt.Printf("Issue a credential with: keyorix-next dynamic-secret issue %d\n", derefUint32(cfg.Id))
+	fmt.Printf("Issue a credential with: keyorix dynamic-secret issue %d\n", derefUint32(cfg.Id))
 	return nil
 }
 

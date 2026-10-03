@@ -367,6 +367,111 @@ func TestWriteRestoredFile_FailureLeavesTargetUnchanged(t *testing.T) {
 	require.Zero(t, info.Size(), "target must be left unchanged (still empty) after a failed restore write")
 }
 
+// TestWriteRestoredFileSet_AllSucceed_InstallsEveryFile is the green case:
+// every file in a multi-file set installs, each with the same guarantees
+// (0600, correct content) a single writeRestoredFile call gives.
+func TestWriteRestoredFileSet_AllSucceed_InstallsEveryFile(t *testing.T) {
+	resetRestoreOverwriteFlag(t)
+	restoreOverwriteExisting = false
+
+	dir := t.TempDir()
+	paths := []string{
+		filepath.Join(dir, "salt.key"),
+		filepath.Join(dir, "dek.key"),
+		filepath.Join(dir, "provider.key"),
+	}
+	data := [][]byte{[]byte("salt-bytes"), []byte("dek-bytes"), []byte("provider-bytes")}
+
+	require.NoError(t, writeRestoredFileSet(paths, data, "20260101T000000Z"))
+
+	for i, p := range paths {
+		got, err := os.ReadFile(p)
+		require.NoError(t, err)
+		require.Equal(t, string(data[i]), string(got))
+		info, statErr := os.Stat(p)
+		require.NoError(t, statErr)
+		require.Equal(t, os.FileMode(restoreFileMode), info.Mode().Perm())
+	}
+}
+
+// TestWriteRestoredFileSet_PrepareFailureLeavesNothingInstalled is the
+// red/green proof for the atomicity gap this set-install replaces: the
+// previous code called writeRestoredFile for each key file in a simple
+// loop, so a failure partway through (file 1 OK, file 2 fails) left file 1
+// ALREADY INSTALLED on disk -- a partial, broken key-material set, and
+// (without --overwrite-existing) a retry would then fail on file 1's own
+// refuseNonEmptyExisting preflight check, since it's no longer empty.
+//
+// writeRestoredFileSet runs every file's PREPARE phase (write+fsync a temp
+// copy, touching nothing at the real target path) to completion before
+// installing any of them -- so when file 2's prepare fails here, file 1 must
+// NOT exist at its target path at all, proving a retry would see a clean
+// target directory, not a partial one.
+func TestWriteRestoredFileSet_PrepareFailureLeavesNothingInstalled(t *testing.T) {
+	resetRestoreOverwriteFlag(t)
+	restoreOverwriteExisting = false
+
+	dir := t.TempDir()
+	goodPath := filepath.Join(dir, "salt.key")
+
+	// blocker is a FILE, not a directory -- os.MkdirAll(filepath.Dir(badPath), ...)
+	// fails because a path component that must be a directory already
+	// exists as a regular file, deterministically failing badPath's
+	// prepareRestoredFile without touching the filesystem outside blocker
+	// itself (which pre-existed, not something this call created).
+	blocker := filepath.Join(dir, "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("not-a-directory"), 0600))
+	badPath := filepath.Join(blocker, "dek.key")
+
+	err := writeRestoredFileSet(
+		[]string{goodPath, badPath},
+		[][]byte{[]byte("salt-bytes"), []byte("dek-bytes")},
+		"20260101T000000Z",
+	)
+	require.Error(t, err)
+
+	_, statErr := os.Stat(goodPath)
+	require.True(t, os.IsNotExist(statErr),
+		"goodPath must NOT exist after a later file's prepare fails -- "+
+			"this is the whole point of preparing the entire set before committing any of it; got stat err: %v", statErr)
+}
+
+// TestWriteRestoredFileSet_CommitFailureCanStillLeavePartialInstall is the
+// honest counterpart to the test above: this guard narrows the unsafe
+// window, it does not close it. If a LATER file's COMMIT (not prepare)
+// fails, an earlier file in the set can still end up installed -- true
+// cross-file atomicity would need a filesystem transaction this code
+// doesn't have. The remaining window is just the commit loop's fast
+// rename/link syscalls, not the full write+fsync+rename cycle the old
+// per-file loop risked for every file.
+func TestWriteRestoredFileSet_CommitFailureCanStillLeavePartialInstall(t *testing.T) {
+	resetRestoreOverwriteFlag(t)
+	restoreOverwriteExisting = false
+
+	dir := t.TempDir()
+	goodPath := filepath.Join(dir, "salt.key")
+
+	// badPath pre-exists, non-empty -- prepareRestoredFile doesn't check
+	// target existence at all (only commitRestoredFile's own concurrent-
+	// creation re-check does), so its prepare phase succeeds; only its
+	// commit fails, exactly like something else occupying the path mid-
+	// restore (TestWriteRestoredFile_NoOverwrite_RefusesConcurrentNonEmptyFile's
+	// single-file case).
+	badPath := filepath.Join(dir, "dek.key")
+	require.NoError(t, os.WriteFile(badPath, []byte("someone-else-wrote-this"), 0600))
+
+	err := writeRestoredFileSet(
+		[]string{goodPath, badPath},
+		[][]byte{[]byte("salt-bytes"), []byte("dek-bytes")},
+		"20260101T000000Z",
+	)
+	require.Error(t, err)
+
+	got, readErr := os.ReadFile(goodPath)
+	require.NoError(t, readErr, "a commit failure on a LATER file in the set does not roll back an EARLIER file already committed -- documented, not silently assumed away")
+	require.Equal(t, "salt-bytes", string(got))
+}
+
 // --- test-only archive construction helpers ---
 
 func mustMarshalManifest(t *testing.T, m backupManifest) []byte {

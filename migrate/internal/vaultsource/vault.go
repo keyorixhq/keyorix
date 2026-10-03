@@ -239,9 +239,11 @@ type Entry struct {
 	CreatedAt string
 }
 
-// Skipped is one KV leaf Walk found but did not import, with a human-readable reason. Currently
-// only produced for a KV v2 leaf whose latest version is soft-deleted or destroyed (Andrei's
-// 2026-09-25 decision: these must be reported, not silently dropped).
+// Skipped is one KV leaf (or, for a multi-field leaf, one "path#field") Walk found but did not
+// import, with a human-readable reason. Produced for a KV v2 leaf whose latest version is
+// soft-deleted or destroyed (Andrei's 2026-09-25 decision: these must be reported, not silently
+// dropped), and for a leaf with no fields or a field with an empty value or name (#2543, same
+// rule).
 type Skipped struct {
 	Path   string
 	Reason string
@@ -313,25 +315,59 @@ func (c *Client) readLeaf(ctx context.Context, path string, out *[]Entry, skippe
 		*skipped = append(*skipped, Skipped{Path: path, Reason: r.skipReason})
 		return nil
 	}
-	if len(r.fields) == 0 {
+	if r.fields == nil {
 		return nil // never existed / 404 — nothing to report, not a skip.
+	}
+	if len(r.fields) == 0 {
+		// The leaf exists (a 200 read decoded a non-null, empty data object) but holds no
+		// fields at all — reported, not silently dropped (#2543).
+		*skipped = append(*skipped, Skipped{Path: path, Reason: emptyLeafSkipReason})
+		return nil
 	}
 	if len(r.fields) == 1 {
 		if v, ok := r.fields["value"]; ok {
-			if val := fmt.Sprintf("%v", v); val != "" {
-				*out = append(*out, Entry{Path: path, Field: "", Value: val, Metadata: r.metadata, Version: r.version, CreatedAt: r.createdAt})
+			if isEmptyFieldValue(v) {
+				*skipped = append(*skipped, Skipped{Path: path, Reason: emptyValueSkipReason})
+				return nil
 			}
+			*out = append(*out, Entry{Path: path, Field: "", Value: fmt.Sprintf("%v", v), Metadata: r.metadata, Version: r.version, CreatedAt: r.createdAt})
 			return nil
 		}
 	}
 	for k, v := range r.fields {
-		val := fmt.Sprintf("%v", v)
-		if k == "" || val == "" {
+		if k == "" {
+			*skipped = append(*skipped, Skipped{Path: path + "#", Reason: emptyFieldNameSkipReason})
 			continue
 		}
-		*out = append(*out, Entry{Path: path, Field: k, Value: val, Metadata: r.metadata, Version: r.version, CreatedAt: r.createdAt})
+		if isEmptyFieldValue(v) {
+			*skipped = append(*skipped, Skipped{Path: path + "#" + k, Reason: emptyValueSkipReason})
+			continue
+		}
+		*out = append(*out, Entry{Path: path, Field: k, Value: fmt.Sprintf("%v", v), Metadata: r.metadata, Version: r.version, CreatedAt: r.createdAt})
 	}
 	return nil
+}
+
+// emptyValueSkipReason / emptyFieldNameSkipReason are the Skipped reasons for a KV field this
+// tool cannot carry over faithfully (#2543). Keyorix has no empty-value secret to map an empty
+// Vault value onto, and a field with no name has no target name to derive -- so both are
+// refused, but always reported in the plan/report, never silently dropped: an absent row is
+// indistinguishable from a path that never existed.
+const (
+	emptyValueSkipReason     = "field has an empty value (Keyorix cannot store an empty secret) — not imported"
+	emptyFieldNameSkipReason = "field has an empty name (no Keyorix secret name can be derived) — not imported"
+	emptyLeafSkipReason      = "secret has no fields (nothing to import)"
+)
+
+// isEmptyFieldValue reports whether a decoded KV field value carries no data: the empty string
+// or a JSON null. A null is treated as empty rather than stringified, since fmt's "%v" would
+// otherwise import it as the literal text "<nil>".
+func isEmptyFieldValue(v interface{}) bool {
+	if v == nil {
+		return true
+	}
+	s, ok := v.(string)
+	return ok && s == ""
 }
 
 // list returns the child keys at path (sub-paths end in "/"); a 404 means path is not a

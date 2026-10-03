@@ -17,10 +17,12 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -107,31 +109,40 @@ func (c *KeyorixCore) requireAdminAuthorityAt(ctx context.Context, actorID, proj
 	return nil
 }
 
-// InviteToProject creates a pending invitation for an email to a project with an
-// intended role. It snapshots the current validation mode and sets a 14-day TTL.
-func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email, role string, invitedBy, invitedByMachineID uint) (*models.ProjectInvitation, error) {
+// buildProjectInvite validates email/role/the inviter's escalation-by-proxy
+// ceiling and constructs (but does NOT persist) the ProjectInvitation row for
+// InviteToProject/InviteToProjectWithLink -- split out so the WithLink variant
+// can run every check up front, before anything is written, and only then
+// decide whether the actual create needs to be atomic with a setup-token mint
+// (#2444 coordinator follow-up).
+// Returns the possibly-WithSelfMachineGranter-tagged ctx too: the tag is
+// applied AFTER GetRoleByName (matching this function's pre-refactor order
+// exactly, which existing mocked tests assert on precisely), so the caller
+// must use the RETURNED ctx, not its own original one, for anything after
+// this call (persistInvitation's audit closure, provisionInvitationSetupLink).
+func (c *KeyorixCore) buildProjectInvite(ctx context.Context, projectID uint, email, role string, invitedBy, invitedByMachineID uint) (context.Context, *models.ProjectInvitation, error) {
 	if projectID == 0 || email == "" || role == "" {
-		return nil, fmt.Errorf("project ID, email, and role are required")
+		return ctx, nil, fmt.Errorf("project ID, email, and role are required")
 	}
 	if !c.domainAllowed(email) {
-		return nil, fmt.Errorf("email domain is not on the allowlist")
+		return ctx, nil, fmt.Errorf("email domain is not on the allowlist")
 	}
 	inviteRole, err := c.storage.GetRoleByName(ctx, role)
 	if err != nil {
-		return nil, fmt.Errorf("unknown role %q: %w", role, err)
+		return ctx, nil, fmt.Errorf("unknown role %q: %w", role, err)
+	}
+	if invitedByMachineID != 0 {
+		ctx = WithSelfMachineGranter(ctx, invitedByMachineID)
 	}
 	// Escalation-by-proxy guard: the inviter must already hold every permission the
 	// invited role bundles (parallel to the access-request ceiling), not merely an
 	// admin-tier role name.
-	if invitedByMachineID != 0 {
-		ctx = WithSelfMachineGranter(ctx, invitedByMachineID)
-	}
 	if err := c.requireGranterHoldsRolePermissions(ctx, invitedBy, inviteRole.ID, Scope{ProjectID: projectID}, invitedByMachineID != 0); err != nil {
-		return nil, err
+		return ctx, nil, err
 	}
 	now := c.now()
 	expires := now.Add(invitationTTL)
-	inv := &models.ProjectInvitation{
+	return ctx, &models.ProjectInvitation{
 		ProjectID:                  projectID,
 		Email:                      email,
 		Role:                       role,
@@ -143,14 +154,125 @@ func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email
 		ValidationModeAtInvite: c.validationMode(),
 		ExpiresAt:              &expires,
 		CreatedAt:              now,
-	}
+	}, nil
+}
+
+// persistInvitation commits inv (built by buildProjectInvite/buildGlobalInvite,
+// not yet persisted) and runs auditFn with the committed row. Shared by the
+// standalone InviteToProject/InviteGlobal and by provisionInvitationSetupLink's
+// benign early-exit paths (base_url unset, throttled) below, which must keep
+// creating the invitation immediately and unconditionally -- those are
+// config/rate-limit conditions, not storage faults, so there is nothing to
+// roll back and the existing "caller can resend" contract stays intact.
+func (c *KeyorixCore) persistInvitation(ctx context.Context, inv *models.ProjectInvitation, auditFn func(*models.ProjectInvitation)) (*models.ProjectInvitation, error) {
 	created, err := c.storage.CreateProjectInvitation(ctx, inv)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create invitation: %w", err)
 	}
-	c.auditProjectScoped(ctx, "invitation.created", invitedBy, projectID,
-		fmt.Sprintf("invited %s to project %d as %s", email, projectID, role))
+	auditFn(created)
 	return created, nil
+}
+
+// createInvitationWithSetupTokenAtomically commits inv and mints its setup
+// token (supersede+create) in ONE outer transaction (#2444 coordinator
+// follow-up): a genuine storage fault in the mint step must roll the
+// invitation insert back too, not leave an orphan pending invitation with no
+// working link and no superseded-token side effect that could also block a
+// resend via a duplicate-pending check. mintSetupTokenOn's own WithTransaction
+// nests as a SAVEPOINT inside this one (see its doc comment), so the two
+// writes genuinely commit or roll back together. Neither inv's nor the
+// token's audit event is written here -- both happen only once this whole
+// transaction has actually committed (see provisionInvitationSetupLink).
+// invCtx (possibly WithSelfMachineGranter-tagged, see buildProjectInvite/
+// buildGlobalInvite) is used ONLY for the invitation insert, matching
+// pre-refactor behavior exactly; the mint step keeps using the caller's
+// original, untagged ctx (the same one IssueSetupToken was always called
+// with from this flow).
+func (c *KeyorixCore) createInvitationWithSetupTokenAtomically(ctx, invCtx context.Context, inv *models.ProjectInvitation, req IssueSetupTokenRequest) (*models.ProjectInvitation, *IssueSetupTokenResult, error) {
+	var created *models.ProjectInvitation
+	var issued *IssueSetupTokenResult
+	err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		var cerr error
+		created, cerr = tx.CreateProjectInvitation(invCtx, inv)
+		if cerr != nil {
+			return cerr
+		}
+		req.InvitationID = &created.ID
+		issued, cerr = c.mintSetupTokenOn(ctx, tx, req)
+		return cerr
+	})
+	if err != nil {
+		// mintSetupTokenOn already wraps a genuine mint-step failure with
+		// ErrSetupTokenIssuanceFailed; a CreateProjectInvitation failure (rarer,
+		// e.g. a storage error on the insert itself) reaches here unwrapped --
+		// wrap it the same way, since either case means the SAME thing to every
+		// caller: nothing committed, fail closed.
+		if !errors.Is(err, ErrSetupTokenIssuanceFailed) {
+			err = fmt.Errorf("%w: %w", ErrSetupTokenIssuanceFailed, err)
+		}
+		return nil, nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return created, issued, nil
+}
+
+// provisionInvitationSetupLink is InviteToProjectWithLink/InviteGlobalWithLink's
+// shared body: it mirrors provisionSetupLink's base_url/throttle/deliver
+// sequence, but creates inv together with the setup token's supersede+create
+// as one atomic unit via createInvitationWithSetupTokenAtomically (#2444
+// coordinator follow-up) instead of minting against an already-committed
+// invitation. inv must not be persisted yet (callers build it via
+// buildProjectInvite/buildGlobalInvite, which also return invCtx -- pass that
+// through here unchanged; every OTHER step keeps using the plain ctx callers
+// already passed to provisionSetupLink/IssueSetupToken pre-refactor). The
+// base_url-unset and throttled cases are UNCHANGED from before this fix:
+// neither is a storage fault, the invitation is still created and committed
+// immediately via persistInvitation, and the caller can fix config/wait and
+// resend -- only the actual mint attempt needs atomicity with the invitation
+// insert.
+func (c *KeyorixCore) provisionInvitationSetupLink(ctx, invCtx context.Context, inv *models.ProjectInvitation, auditFn func(*models.ProjectInvitation), req IssueSetupTokenRequest, displayName, assignmentSummary string) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
+	if c.setupBaseURL == "" {
+		created, err := c.persistInvitation(invCtx, inv, auditFn)
+		if err != nil {
+			return nil, nil, err
+		}
+		return created, nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ErrSetupBaseURLRequired)
+	}
+
+	c.setupResendMu.Lock()
+	if err := c.checkResendThrottle(ctx, req.Purpose, req.SubjectEmail); err != nil {
+		c.setupResendMu.Unlock()
+		created, cerr := c.persistInvitation(invCtx, inv, auditFn)
+		if cerr != nil {
+			return nil, nil, cerr
+		}
+		return created, nil, err
+	}
+	created, issued, err := c.createInvitationWithSetupTokenAtomically(ctx, invCtx, inv, req)
+	c.setupResendMu.Unlock()
+	if err != nil {
+		return nil, nil, err
+	}
+	auditFn(created)
+	c.auditSetupTokenIssued(ctx, req, issued.Token)
+
+	prov, err := c.deliverSetupLink(ctx, issued, req, displayName, assignmentSummary)
+	if err != nil {
+		return created, nil, err
+	}
+	return created, prov, nil
+}
+
+// InviteToProject creates a pending invitation for an email to a project with an
+// intended role. It snapshots the current validation mode and sets a 14-day TTL.
+func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email, role string, invitedBy, invitedByMachineID uint) (*models.ProjectInvitation, error) {
+	ctx, inv, err := c.buildProjectInvite(ctx, projectID, email, role, invitedBy, invitedByMachineID)
+	if err != nil {
+		return nil, err
+	}
+	return c.persistInvitation(ctx, inv, func(*models.ProjectInvitation) {
+		c.auditProjectScoped(ctx, "invitation.created", invitedBy, projectID,
+			fmt.Sprintf("invited %s to project %d as %s", email, projectID, role))
+	})
 }
 
 // InviteToProjectWithLink creates an invitation and provisions its accept link
@@ -181,22 +303,21 @@ func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email
 // cross-project side effect. A genuine same-project resend/re-invite still supersedes
 // the prior pending invite for that project, exactly as before.
 func (c *KeyorixCore) InviteToProjectWithLink(ctx context.Context, projectID uint, email, role string, invitedBy, invitedByMachineID uint) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
-	inv, err := c.InviteToProject(ctx, projectID, email, role, invitedBy, invitedByMachineID)
+	invCtx, inv, err := c.buildProjectInvite(ctx, projectID, email, role, invitedBy, invitedByMachineID)
 	if err != nil {
 		return nil, nil, err
 	}
-	prov, err := c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{
+	auditFn := func(*models.ProjectInvitation) {
+		c.auditProjectScoped(invCtx, "invitation.created", invitedBy, projectID,
+			fmt.Sprintf("invited %s to project %d as %s", email, projectID, role))
+	}
+	return c.provisionInvitationSetupLink(ctx, invCtx, inv, auditFn, IssueSetupTokenRequest{
 		Purpose:                    SetupPurposeInvitationAccept,
 		SubjectEmail:               email,
-		InvitationID:               &inv.ID,
 		CreatedBy:                  invitedBy,
 		CreatedByMachineIdentityID: invitedByMachineID,
 		SupersedeProjectID:         &projectID,
 	}, "", fmt.Sprintf("%s on project %d", role, projectID))
-	if err != nil {
-		return inv, nil, err
-	}
-	return inv, prov, nil
 }
 
 // InviteGlobal creates a non-project-scoped invitation (ProjectID 0) that, on
@@ -205,20 +326,42 @@ func (c *KeyorixCore) InviteToProjectWithLink(ctx context.Context, projectID uin
 // and every assignment (project + role) are validated and deduped up front, so
 // acceptance can't later fail on an unknown role or project. The per-project
 // grants are snapshotted as JSON on the invitation.
-func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string, assignments []ProjectAssignment, invitedBy, invitedByMachineID uint) (*models.ProjectInvitation, error) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
+func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string, assignments []ProjectAssignment, invitedBy, invitedByMachineID uint) (*models.ProjectInvitation, error) {
+	ctx, inv, sysRole, clean, err := c.buildGlobalInvite(ctx, email, systemRole, assignments, invitedBy, invitedByMachineID)
+	if err != nil {
+		return nil, err
+	}
+	return c.persistInvitation(ctx, inv, func(*models.ProjectInvitation) {
+		c.auditProjectScoped(ctx, "invitation.created", invitedBy, 0,
+			fmt.Sprintf("invited %s globally as %s with %d project assignment(s)", email, sysRole, len(clean)))
+	})
+}
+
+// buildGlobalInvite validates email/system role/every project assignment's
+// escalation-by-proxy ceiling and constructs (but does NOT persist) the
+// ProjectInvitation row for InviteGlobal/InviteGlobalWithLink -- split out for
+// the same reason as buildProjectInvite above (#2444 coordinator follow-up).
+// Returns the possibly-WithSelfMachineGranter-tagged ctx too, for the same
+// reason as buildProjectInvite: the tag is applied AFTER the sysRole lookup
+// (matching this function's pre-refactor order, which existing mocked tests
+// assert on precisely), so the caller must use the RETURNED ctx afterward.
+func (c *KeyorixCore) buildGlobalInvite(ctx context.Context, email, systemRole string, assignments []ProjectAssignment, invitedBy, invitedByMachineID uint) (outCtx context.Context, inv *models.ProjectInvitation, sysRole string, clean []ProjectAssignment, err error) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	if email == "" {
-		return nil, fmt.Errorf("email is required")
+		return ctx, nil, "", nil, fmt.Errorf("email is required")
 	}
 	if !c.domainAllowed(email) {
-		return nil, fmt.Errorf("email domain is not on the allowlist")
+		return ctx, nil, "", nil, fmt.Errorf("email domain is not on the allowlist")
 	}
-	sysRole := systemRole
+	sysRole = systemRole
 	if sysRole == "" {
 		sysRole = "system_viewer"
 	}
 	sysRoleModel, err := c.storage.GetRoleByName(ctx, sysRole)
 	if err != nil {
-		return nil, fmt.Errorf("unknown role %q (system): %w", sysRole, err)
+		return ctx, nil, "", nil, fmt.Errorf("unknown role %q (system): %w", sysRole, err)
+	}
+	if invitedByMachineID != 0 {
+		ctx = WithSelfMachineGranter(ctx, invitedByMachineID)
 	}
 	// Escalation-by-proxy guard (#231), mirroring InviteToProject: a global system
 	// role is the most powerful grant this flow can mint, so it needs the ceiling
@@ -232,41 +375,38 @@ func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string
 	// mirrors plain CreateUser's own unconditional auto-assign and is gated by
 	// users.write alone, same as this test file's own documented invariant
 	// ("inviting the default baseline (no role) is still allowed").
-	if invitedByMachineID != 0 {
-		ctx = WithSelfMachineGranter(ctx, invitedByMachineID)
-	}
 	if systemRole == "" {
 		if err := c.requireGranterHoldsRolePermissionsNoBaseline(ctx, invitedBy, sysRoleModel.ID, Scope{}, invitedByMachineID != 0); err != nil {
-			return nil, err
+			return ctx, nil, "", nil, err
 		}
 	} else if err := c.requireGranterHoldsRolePermissions(ctx, invitedBy, sysRoleModel.ID, Scope{}, invitedByMachineID != 0); err != nil {
-		return nil, err
+		return ctx, nil, "", nil, err
 	}
 
 	// Validate + dedup assignments before persisting anything.
 	seen := map[uint]bool{}
-	clean := make([]ProjectAssignment, 0, len(assignments))
+	clean = make([]ProjectAssignment, 0, len(assignments))
 	for _, a := range assignments {
 		if a.ProjectID == 0 || a.Role == "" {
-			return nil, fmt.Errorf("each project assignment needs a project_id and a role")
+			return ctx, nil, "", nil, fmt.Errorf("each project assignment needs a project_id and a role")
 		}
 		if seen[a.ProjectID] {
 			continue
 		}
 		seen[a.ProjectID] = true
 		if _, err := c.storage.GetProject(ctx, a.ProjectID); err != nil {
-			return nil, fmt.Errorf("unknown project %d: %w", a.ProjectID, err)
+			return ctx, nil, "", nil, fmt.Errorf("unknown project %d: %w", a.ProjectID, err)
 		}
 		assignRole, err := c.storage.GetRoleByName(ctx, a.Role)
 		if err != nil {
-			return nil, fmt.Errorf("unknown role %q: %w", a.Role, err)
+			return ctx, nil, "", nil, fmt.Errorf("unknown role %q: %w", a.Role, err)
 		}
 		// Same ceiling check InviteToProject applies to its own role parameter —
 		// without this, a non-admin roles.assign holder could bundle a
 		// permission-rich project assignment into an otherwise-innocuous global
 		// invite.
 		if err := c.requireGranterHoldsRolePermissions(ctx, invitedBy, assignRole.ID, Scope{ProjectID: a.ProjectID}, invitedByMachineID != 0); err != nil {
-			return nil, err
+			return ctx, nil, "", nil, err
 		}
 		clean = append(clean, ProjectAssignment{ProjectID: a.ProjectID, Role: a.Role})
 	}
@@ -274,14 +414,14 @@ func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string
 	if len(clean) > 0 {
 		b, err := json.Marshal(clean)
 		if err != nil {
-			return nil, fmt.Errorf("failed to encode assignments: %w", err)
+			return ctx, nil, "", nil, fmt.Errorf("failed to encode assignments: %w", err)
 		}
 		assignJSON = string(b)
 	}
 
 	now := c.now()
 	expires := now.Add(invitationTTL)
-	inv := &models.ProjectInvitation{
+	inv = &models.ProjectInvitation{
 		ProjectID:                  0, // global
 		Email:                      email,
 		Role:                       "",
@@ -294,13 +434,7 @@ func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string
 		ExpiresAt:                  &expires,
 		CreatedAt:                  now,
 	}
-	created, err := c.storage.CreateProjectInvitation(ctx, inv)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create invitation: %w", err)
-	}
-	c.auditProjectScoped(ctx, "invitation.created", invitedBy, 0,
-		fmt.Sprintf("invited %s globally as %s with %d project assignment(s)", email, sysRole, len(clean)))
-	return created, nil
+	return ctx, inv, sysRole, clean, nil
 }
 
 // InviteGlobalWithLink creates a global invitation and provisions its accept link
@@ -318,21 +452,20 @@ func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string
 // prior PROJECT-scoped invite to that address (there is no narrower boundary to draw
 // here; CORE-INVITATIONS-003 is specifically about project-vs-project interference).
 func (c *KeyorixCore) InviteGlobalWithLink(ctx context.Context, email, systemRole string, assignments []ProjectAssignment, invitedBy, invitedByMachineID uint) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
-	inv, err := c.InviteGlobal(ctx, email, systemRole, assignments, invitedBy, invitedByMachineID)
+	invCtx, inv, sysRole, clean, err := c.buildGlobalInvite(ctx, email, systemRole, assignments, invitedBy, invitedByMachineID)
 	if err != nil {
 		return nil, nil, err
 	}
-	prov, err := c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{
+	auditFn := func(*models.ProjectInvitation) {
+		c.auditProjectScoped(invCtx, "invitation.created", invitedBy, 0,
+			fmt.Sprintf("invited %s globally as %s with %d project assignment(s)", email, sysRole, len(clean)))
+	}
+	return c.provisionInvitationSetupLink(ctx, invCtx, inv, auditFn, IssueSetupTokenRequest{
 		Purpose:                    SetupPurposeInvitationAccept,
 		SubjectEmail:               email,
-		InvitationID:               &inv.ID,
 		CreatedBy:                  invitedBy,
 		CreatedByMachineIdentityID: invitedByMachineID,
-	}, "", fmt.Sprintf("%s + %d project assignment(s)", inv.SystemRole, len(assignments)))
-	if err != nil {
-		return inv, nil, err
-	}
-	return inv, prov, nil
+	}, "", fmt.Sprintf("%s + %d project assignment(s)", sysRole, len(assignments)))
 }
 
 // applyInvitationGrants materializes an invitation's role grants onto a freshly
@@ -861,73 +994,101 @@ func (c *KeyorixCore) recordPartialApproval(ctx context.Context, req *models.Acc
 
 // finalizeAccessRequestApproval handles the threshold-reached path: grants the role,
 // records the approval, and updates the request state atomically. On a concurrent
-// write race (!ok) the grant is reverted and the caller receives an error.
+// write race (!ok) nothing is granted at all — the whole sequence rolls back.
+//
+// The grant, the approval record, and the request-state update all run inside ONE
+// storage.WithTransaction, instead of granting first and compensating with a
+// separate RemoveUserRole call if a later step fails (the pre-fix shape, PR #2306).
+// Compensating-after-the-fact had two real costs this closes: (1) a window existed,
+// between the grant's own commit and the compensating revert's commit, where the
+// role was genuinely, visibly granted — anything reading UserRole state in that
+// window (an auth check, a token mint) saw an over-grant that was about to be
+// un-done; true atomicity removes that window entirely, not just shortens it. (2) a
+// CreateAccessRequestApproval storage error reverted correctly but still left a new
+// "approval_race_reverted" AuditEvent behind — the operation's only observable
+// effect for a reported failure — which FuzzStorageFaultOperations' oracle (a)
+// flags as "reported an ERROR but logical state changed anyway" (found via
+// REST PUT /api/v1/projects/{id}/access-requests/{requestId}, fault
+// CreateAccessRequestApproval#1/error, GH #2407). A clean rollback has no such
+// side effect: a reported failure now means PRECISELY "nothing happened," matching
+// every other mutating call's own error contract.
+//
+// Mirrors the SoD-grant locking AssignUserRole/AssignUserRoleWithExpiry use
+// (#1646, sodGrantLockKey): the lock must still span the SoD check and the write
+// so a concurrent grant cannot slip in between them, but the write itself needs to
+// also cover CreateAccessRequestApproval/UpdateAccessRequest atomically — grant
+// ceiling + SoD check stay as plain reads immediately before the lock/transaction
+// (same timing the two functions above already use), the lock is taken once, and
+// the transaction opens INSIDE it (pg_advisory_lock is session-scoped, independent
+// of transaction boundaries, so nesting a transaction inside an already-held
+// named lock is the same safe shape WithNamedLock's own call sites already rely
+// on elsewhere).
 func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *models.AccessRequest, approverID, approverMachineID uint, roleModel *models.Role, grantTTL time.Duration, received, required int) (*models.AccessRequest, error) {
 	now := c.now()
 	scope := storage.Scope{ProjectID: req.ProjectID}
-	// Grant the role FIRST so that a grant failure leaves the approval unrecorded
-	// (retryable) rather than stuck above-threshold-but-ungranted.
 	grantDesc := roleModel.Name
+	var expiresAt time.Time
 	if grantTTL > 0 {
-		expiresAt := now.Add(grantTTL)
-		// Routed through the audited wrapper so this grant lands in the RBAC audit
-		// trail with a structured RoleID, alongside the generic access_request.approved
-		// event below (#298). approverMachineID (mirroring ApproverMachineIdentityID's
-		// own attribution convention: approverID is 0 when the approver was a machine
-		// identity, and approverMachineID carries the real ID) closes the sibling gap
-		// #1542 left open here — a machine-driven approval no longer gets the trusted
-		// actorID==0 exemption unconditionally.
-		if err := c.AssignUserRoleWithExpiry(ctx, approverID, req.UserID, roleModel.ID, scope, expiresAt, approverMachineID != 0); err != nil {
-			return nil, fmt.Errorf("failed to grant role: %w", err)
-		}
+		expiresAt = now.Add(grantTTL)
 		grantDesc = fmt.Sprintf("%s until %s (TTL %s)", roleModel.Name, expiresAt.UTC().Format(time.RFC3339), grantTTL)
-	} else {
-		if err := c.AssignUserRole(ctx, approverID, req.UserID, roleModel.ID, scope, approverMachineID != 0); err != nil {
-			return nil, fmt.Errorf("failed to grant role: %w", err)
+	}
+	// Same two gates AssignUserRole(WithExpiry) apply, run once here up front: the
+	// escalation-by-proxy grant ceiling (#93/#107/#141) and (inside the lock below)
+	// the #419 separation-of-duties preventive check.
+	if err := c.requireGranterHoldsRolePermissions(ctx, approverID, roleModel.ID, scope, approverMachineID != 0); err != nil {
+		return nil, fmt.Errorf("failed to grant role: %w", err)
+	}
+
+	raceLost := false
+	err := c.storage.WithNamedLock(ctx, sodGrantLockKey("user", req.UserID), func(ctx context.Context) error {
+		if err := c.requireNoSoDViolation(ctx, req.UserID, roleModel.ID); err != nil {
+			return err
 		}
-	}
-	// revertGrant is the SAME compensating action the race-loss path below already
-	// used, generalized to cover every failure after the grant lands, not only the
-	// UpdateAccessRequest(!ok) race. Before this, a CreateAccessRequestApproval
-	// failure (or a genuine UpdateAccessRequest storage error, as opposed to the
-	// !ok optimistic-concurrency loss) left the role granted with NO approval
-	// record and the request never flipping to approved — access granted with
-	// zero audit trail of who approved it, and no way to tell from the request's
-	// own state that anything happened.
-	revertGrant := func(reason string) {
-		if rerr := c.RemoveUserRole(ctx, approverID, req.UserID, roleModel.ID, scope); rerr != nil {
-			c.auditProjectScoped(ctx, "access_request.approval_race_revoke_failed", approverID, req.ProjectID,
-				fmt.Sprintf("access request %d: %s granting %s to user %d, and reverting the grant failed: %v — MANUAL CLEANUP REQUIRED", req.ID, reason, roleModel.Name, req.UserID, rerr))
-		} else {
-			c.auditProjectScoped(ctx, "access_request.approval_race_reverted", approverID, req.ProjectID,
-				fmt.Sprintf("access request %d: %s; reverted the %s grant just made to user %d", req.ID, reason, roleModel.Name, req.UserID))
-		}
-	}
-	if err := c.storage.CreateAccessRequestApproval(ctx, &models.AccessRequestApproval{
-		RequestID: req.ID, ApproverID: approverID, ApproverMachineIdentityID: approverMachineID, CreatedAt: now,
-	}); err != nil {
-		revertGrant(fmt.Sprintf("failed to record approval (%v) after", err))
-		return nil, fmt.Errorf("failed to record approval: %w", err)
-	}
-	req.State = AccessRequestApproved
-	req.GrantedRole = roleModel.Name
-	req.ResolvedBy = approverID
-	req.ResolvedByMachineIdentityID = approverMachineID
-	req.ResolvedAt = &now
-	ok, err := c.storage.UpdateAccessRequest(ctx, req)
+		return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+			if grantTTL > 0 {
+				if err := tx.AssignRoleWithExpiry(ctx, req.UserID, roleModel.ID, scope, expiresAt); err != nil {
+					return fmt.Errorf("failed to grant role: %w", err)
+				}
+			} else if err := tx.AssignRole(ctx, req.UserID, roleModel.ID, scope); err != nil {
+				return fmt.Errorf("failed to grant role: %w", err)
+			}
+			if err := tx.CreateAccessRequestApproval(ctx, &models.AccessRequestApproval{
+				RequestID: req.ID, ApproverID: approverID, ApproverMachineIdentityID: approverMachineID, CreatedAt: now,
+			}); err != nil {
+				return fmt.Errorf("failed to record approval: %w", err)
+			}
+			req.State = AccessRequestApproved
+			req.GrantedRole = roleModel.Name
+			req.ResolvedBy = approverID
+			req.ResolvedByMachineIdentityID = approverMachineID
+			req.ResolvedAt = &now
+			ok, err := tx.UpdateAccessRequest(ctx, req)
+			if err != nil {
+				return fmt.Errorf("failed to update access request: %w", err)
+			}
+			if !ok {
+				// The request stopped being pending between the read in
+				// approveAccessRequestWithExpiryLocked and this write — most likely a
+				// concurrent WithdrawAccessRequest/RejectAccessRequest (neither takes
+				// this request's dualControlLockKey lock) won the race. Returning an
+				// error here rolls back the grant and the approval record together —
+				// nothing to revert afterward, since nothing committed.
+				raceLost = true
+				return fmt.Errorf("access request was concurrently withdrawn or resolved")
+			}
+			return nil
+		})
+	})
 	if err != nil {
-		revertGrant(fmt.Sprintf("failed to update access request (%v) after", err))
-		return nil, fmt.Errorf("failed to update access request: %w", err)
+		if raceLost {
+			return nil, fmt.Errorf("access request was concurrently withdrawn or resolved; no role was granted")
+		}
+		return nil, err
 	}
-	if !ok {
-		// The request stopped being pending between the read above and this write —
-		// most likely a concurrent WithdrawAccessRequest or RejectAccessRequest won
-		// the race after the role grant above already landed. The grant must not
-		// outlive a request that no longer reads as approved (#277): revoke it and
-		// fail closed rather than reporting success with a stale/contradictory state.
-		revertGrant("was concurrently withdrawn/rejected after")
-		return nil, fmt.Errorf("access request was concurrently withdrawn or resolved; the role grant was reverted")
-	}
+
+	// Only log/notify once the transaction has actually committed (#283's "no
+	// phantom audit on a failure" principle, applied to this whole sequence).
+	c.LogRoleAssigned(ctx, approverID, req.UserID, roleModel.ID, scope)
 	c.auditProjectScoped(ctx, "access_request.approved", approverID, req.ProjectID,
 		fmt.Sprintf("approved access request %d for user %d as %s (%d approval(s))", req.ID, req.UserID, grantDesc, received))
 	c.notifyAccessResolved(ctx, req, true)

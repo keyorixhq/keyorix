@@ -2594,6 +2594,24 @@ func (w *FaultyStorage) GetMachineIdentityCredentialByID(ctx context.Context, id
 	return w.real.GetMachineIdentityCredentialByID(ctx, id)
 }
 
+func (w *FaultyStorage) GetMachineIdentityCredentialWithIdentityStateByHash(ctx context.Context, hash string) (*models.MachineIdentityCredential, string, error) {
+	fire, kind, injected := w.check("GetMachineIdentityCredentialWithIdentityStateByHash")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 *models.MachineIdentityCredential
+			var zero2 string
+			return zero1, zero2, injected
+		case KindEffectThenError:
+			rv1, rv2, _ := w.real.GetMachineIdentityCredentialWithIdentityStateByHash(ctx, hash)
+			return rv1, rv2, injected
+		}
+	}
+	return w.real.GetMachineIdentityCredentialWithIdentityStateByHash(ctx, hash)
+}
+
 func (w *FaultyStorage) GetMachineRoleIDsAt(ctx context.Context, machineID uint, scope storage.Scope) ([]uint, error) {
 	fire, kind, injected := w.check("GetMachineRoleIDsAt")
 	if fire {
@@ -5349,6 +5367,22 @@ func (w *FaultyStorage) LogAuditEvent(ctx context.Context, event *models.AuditEv
 		}
 	}
 	return w.real.LogAuditEvent(ctx, event)
+}
+
+func (w *FaultyStorage) LogAuditEventWithAccessLog(ctx context.Context, event *models.AuditEvent, accessLog *models.SecretAccessLog) error {
+	fire, kind, injected := w.check("LogAuditEventWithAccessLog")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			return injected
+		case KindEffectThenError:
+			_ = w.real.LogAuditEventWithAccessLog(ctx, event, accessLog)
+			return injected
+		}
+	}
+	return w.real.LogAuditEventWithAccessLog(ctx, event, accessLog)
 }
 
 func (w *FaultyStorage) MarkAllNotificationsRead(ctx context.Context, userID uint) error {

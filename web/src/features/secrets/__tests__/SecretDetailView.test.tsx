@@ -12,9 +12,15 @@ const mockResumeMutate = vi.fn();
 const mockRotateMutate = vi.fn();
 const mockRotateReset = vi.fn();
 const mockCopyMutate = vi.fn();
-let mockVersions: { EncryptedValue: string; VersionNumber: number; CreatedAt: string }[] = [];
+let mockVersions: { VersionNumber: number; CreatedAt: string }[] = [];
 let mockVersionsLoading = false;
 let mockVersionsError: unknown = null;
+// #2450: the actual plaintext comes from a separate hook/endpoint than the
+// versions list (which is metadata-only -- see secretsApi.getValue's doc
+// comment) -- mocked independently so these tests exercise the real split.
+let mockSecretValue: string | null = null;
+let mockValueLoading = false;
+let mockValueError: unknown = null;
 let mockAccessors: { user_id: number; username: string; permission: string; source: string }[] = [];
 let mockAccessLog: { accessed_by: string; access_time: string; action: string; ip_address: string }[] = [];
 let mockAuditTrail: {
@@ -50,6 +56,7 @@ let mockCertificate: { data: any; isLoading: boolean; isError: boolean } = {
 
 vi.mock('../api', () => ({
     useSecretVersions: () => ({ data: mockVersions, isLoading: mockVersionsLoading, error: mockVersionsError }),
+    useSecretValue: () => ({ data: mockSecretValue, isLoading: mockValueLoading, error: mockValueError }),
     useRotateSecret: () => ({
         mutate: mockRotateMutate,
         reset: mockRotateReset,
@@ -157,9 +164,10 @@ describe('SecretDetailView version rollback', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockVersions = [
-            { VersionNumber: 1, EncryptedValue: btoa('v1'), CreatedAt: '2026-06-10T00:00:00Z' },
-            { VersionNumber: 2, EncryptedValue: btoa('v2'), CreatedAt: '2026-06-14T00:00:00Z' },
+            { VersionNumber: 1, CreatedAt: '2026-06-10T00:00:00Z' },
+            { VersionNumber: 2, CreatedAt: '2026-06-14T00:00:00Z' },
         ];
+        mockSecretValue = 'v2';
     });
 
     it('lists versions and rolls back a non-current one', () => {
@@ -622,14 +630,17 @@ describe('SecretDetailView secret value reveal', () => {
         mockVersions = [];
         mockVersionsLoading = false;
         mockVersionsError = null;
+        mockSecretValue = null;
+        mockValueLoading = false;
+        mockValueError = null;
         mockAccessors = [];
         mockAccessLog = [];
         mockAuditTrail = [];
         mockTags = [];
     });
 
-    it('reveals the decoded plaintext value and copies it to the clipboard', async () => {
-        mockVersions = [{ VersionNumber: 1, EncryptedValue: btoa('sup3r-secret'), CreatedAt: '2026-06-10T00:00:00Z' }];
+    it('reveals the actual plaintext value and copies it to the clipboard', async () => {
+        mockSecretValue = 'sup3r-secret';
         render(<SecretDetailView secret={makeSecret()} />);
 
         fireEvent.click(screen.getByRole('button', { name: /^Reveal$/i }));
@@ -649,7 +660,7 @@ describe('SecretDetailView secret value reveal', () => {
     it('logs and does not crash when the clipboard write fails', async () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         const writeTextSpy = vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValueOnce(new Error('denied'));
-        mockVersions = [{ VersionNumber: 1, EncryptedValue: btoa('sup3r-secret'), CreatedAt: '2026-06-10T00:00:00Z' }];
+        mockSecretValue = 'sup3r-secret';
         render(<SecretDetailView secret={makeSecret()} />);
 
         fireEvent.click(screen.getByRole('button', { name: /^Reveal$/i }));
@@ -666,22 +677,22 @@ describe('SecretDetailView secret value reveal', () => {
     });
 
     it('shows a loading state while the value is being fetched', () => {
-        mockVersionsLoading = true;
-        mockVersions = [{ VersionNumber: 1, EncryptedValue: btoa('x'), CreatedAt: '2026-06-10T00:00:00Z' }];
+        mockValueLoading = true;
+        mockSecretValue = 'x';
         render(<SecretDetailView secret={makeSecret()} />);
         fireEvent.click(screen.getByRole('button', { name: /Reveal/i }));
         expect(screen.getByText('Loading...')).toBeInTheDocument();
     });
 
     it('shows an error alert when the value fails to load', () => {
-        mockVersionsError = new Error('network down');
+        mockValueError = new Error('network down');
         render(<SecretDetailView secret={makeSecret()} />);
         fireEvent.click(screen.getByRole('button', { name: /^Reveal$/i }));
         expect(screen.getByText('Failed to load secret value')).toBeInTheDocument();
     });
 
-    it('shows nothing when revealed but there are no versions', () => {
-        mockVersions = [];
+    it('shows nothing when revealed but there is no value', () => {
+        mockSecretValue = null;
         render(<SecretDetailView secret={makeSecret()} />);
         fireEvent.click(screen.getByRole('button', { name: /^Reveal$/i }));
         expect(screen.queryByText(/Secret value is hidden/i)).not.toBeInTheDocument();
@@ -691,16 +702,14 @@ describe('SecretDetailView secret value reveal', () => {
     });
 
     it('pretty-prints a valid JSON value', () => {
-        mockVersions = [
-            { VersionNumber: 1, EncryptedValue: btoa(JSON.stringify({ a: 1 })), CreatedAt: '2026-06-10T00:00:00Z' },
-        ];
+        mockSecretValue = JSON.stringify({ a: 1 });
         render(<SecretDetailView secret={makeSecret({ type: 'json' })} />);
         fireEvent.click(screen.getByRole('button', { name: /^Reveal$/i }));
         expect(screen.getByText(/"a": 1/)).toBeInTheDocument();
     });
 
     it('falls back to the raw value when JSON parsing fails', () => {
-        mockVersions = [{ VersionNumber: 1, EncryptedValue: btoa('not-json'), CreatedAt: '2026-06-10T00:00:00Z' }];
+        mockSecretValue = 'not-json';
         render(<SecretDetailView secret={makeSecret({ type: 'json' })} />);
         fireEvent.click(screen.getByRole('button', { name: /^Reveal$/i }));
         expect(screen.getByText('not-json')).toBeInTheDocument();
@@ -713,9 +722,7 @@ describe('SecretDetailView secret value reveal', () => {
         });
 
         it('re-masks the revealed value after the idle timeout elapses, without an explicit Hide click', async () => {
-            mockVersions = [
-                { VersionNumber: 1, EncryptedValue: btoa('sup3r-secret'), CreatedAt: '2026-06-10T00:00:00Z' },
-            ];
+            mockSecretValue = 'sup3r-secret';
             vi.useFakeTimers();
             render(<SecretDetailView secret={makeSecret()} />);
 
@@ -732,9 +739,7 @@ describe('SecretDetailView secret value reveal', () => {
         });
 
         it('re-masks the revealed value when the tab is backgrounded, without an explicit Hide click', () => {
-            mockVersions = [
-                { VersionNumber: 1, EncryptedValue: btoa('sup3r-secret'), CreatedAt: '2026-06-10T00:00:00Z' },
-            ];
+            mockSecretValue = 'sup3r-secret';
             render(<SecretDetailView secret={makeSecret()} />);
 
             fireEvent.click(screen.getByRole('button', { name: /^Reveal$/i }));
@@ -752,9 +757,7 @@ describe('SecretDetailView secret value reveal', () => {
         });
 
         it('re-masks the revealed value on window blur, without an explicit Hide click', () => {
-            mockVersions = [
-                { VersionNumber: 1, EncryptedValue: btoa('sup3r-secret'), CreatedAt: '2026-06-10T00:00:00Z' },
-            ];
+            mockSecretValue = 'sup3r-secret';
             render(<SecretDetailView secret={makeSecret()} />);
 
             fireEvent.click(screen.getByRole('button', { name: /^Reveal$/i }));
@@ -775,9 +778,7 @@ describe('SecretDetailView secret value reveal', () => {
         });
 
         it('reverts the "Copied!" label back to "Copy" after the timeout elapses', async () => {
-            mockVersions = [
-                { VersionNumber: 1, EncryptedValue: btoa('sup3r-secret'), CreatedAt: '2026-06-10T00:00:00Z' },
-            ];
+            mockSecretValue = 'sup3r-secret';
             vi.useFakeTimers();
             render(<SecretDetailView secret={makeSecret()} />);
 
@@ -848,8 +849,8 @@ describe('SecretDetailView rollback pending/failure states', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockVersions = [
-            { VersionNumber: 1, EncryptedValue: btoa('v1'), CreatedAt: '2026-06-10T00:00:00Z' },
-            { VersionNumber: 2, EncryptedValue: btoa('v2'), CreatedAt: '2026-06-14T00:00:00Z' },
+            { VersionNumber: 1, CreatedAt: '2026-06-10T00:00:00Z' },
+            { VersionNumber: 2, CreatedAt: '2026-06-14T00:00:00Z' },
         ];
         mockAccessors = [];
         mockAccessLog = [];

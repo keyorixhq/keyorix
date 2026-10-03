@@ -176,6 +176,11 @@ func runAPISmokeAgainstServer(t *testing.T, srv *harness.Server, cliBin string, 
 
 	assertRouteCoverage(t, routes, c)
 
+	// Static check (no server dependency, see route_user_path_ratchet.go):
+	// every mutating-or-secret-disclosing route must be referenced by at
+	// least one of journeys/e2e/web-real, not just hit-or-skipped here.
+	TestRouteUserPathCoverageRatchet(t)
+
 	verifyAuditChain(t, srv, backend)
 }
 

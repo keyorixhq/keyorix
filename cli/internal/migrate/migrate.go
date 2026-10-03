@@ -1,5 +1,5 @@
 // Package migrate detects a server URL configured by the old, pre-ADR-108 CLI, so
-// `keyorix-next login` can offer to reuse it instead of asking the operator to retype
+// `keyorix login` can offer to reuse it instead of asking the operator to retype
 // a URL they already have on this machine. It never reads or copies a CREDENTIAL --
 // only a server URL. Silently copying the old CLI's stored API key would slip a
 // possibly-already-revoked or stale secret into the new credential store without the

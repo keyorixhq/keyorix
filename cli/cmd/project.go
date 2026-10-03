@@ -236,7 +236,7 @@ func runProjectUse(_ *cobra.Command, args []string) error {
 		return err
 	}
 	if _, ok := findProjectByName(projects, name); !ok {
-		return fmt.Errorf("project %q not found — run 'keyorix-next project list' to see available projects", name)
+		return fmt.Errorf("project %q not found — run 'keyorix project list' to see available projects", name)
 	}
 
 	store, err := resolveCredStore()
@@ -275,7 +275,7 @@ func runProjectCurrent(_ *cobra.Command, _ []string) error {
 	name, err := resolveActiveProjectName("")
 	if err != nil {
 		fmt.Println("No active project set.")
-		fmt.Println("Run 'keyorix-next project use <name>' or set KEYORIX_PROJECT to configure one.")
+		fmt.Println("Run 'keyorix project use <name>' or set KEYORIX_PROJECT to configure one.")
 		return nil
 	}
 	fmt.Println(name)
@@ -297,7 +297,7 @@ func resolveActiveProjectName(flagValue string) (string, error) {
 			return creds.ActiveProject, nil
 		}
 	}
-	return "", fmt.Errorf("no project specified — use --project, set KEYORIX_PROJECT, or run 'keyorix-next project use <name>'")
+	return "", fmt.Errorf("no project specified — use --project, set KEYORIX_PROJECT, or run 'keyorix project use <name>'")
 }
 
 // resolveProjectContext resolves the active (or flag-overridden) project name to its

@@ -52,24 +52,29 @@ func waitForAuditEventsToSettle(t *testing.T, s *harness.Server, adminToken stri
 // exactly this many of, against a completely fresh install (no other writes
 // happen before this journey runs). Derived empirically (a discovery pass
 // dumped the real histogram, then each count was hand-traced back to the
-// exact N1/N2 call that produces it -- e.g. secret.created=4 is N1's one
-// create + N2's secretA/secretB/editor's-in-A create) rather than guessed,
-// per this journey's own "assert the outcome" mandate. secret.read and
-// auth.login are deliberately excluded here -- both are high-frequency,
-// incidentally triggered by nearly every helper call in N1/N2 (including
-// admin verification readbacks that aren't part of either journey's own
+// exact N1/N2 call that produces it) rather than guessed, per this journey's
+// own "assert the outcome" mandate. secret.read and auth.login are
+// deliberately excluded here -- both are high-frequency, incidentally
+// triggered by nearly every helper call in N1/N2 (including admin
+// verification readbacks that aren't part of either journey's own
 // narrative), so pinning one aggregate magic number for them would be
 // fragile to unrelated changes elsewhere in N1/N2; both get their own
 // narrower, still-exact assertions below instead (viewer's own read count,
 // and total login count matching the exact number of adminLogin calls this
 // test file's own call graph makes).
+// #2394 (journey1 switched to keyorix-sdks/go v0.3.0) added SDK-only checks
+// to N1 that this journey also runs: a second project + machine identity for
+// the cross-project denial check (one extra project.created,
+// machine_identity.created/role_granted/token_issued each), and 24 extra
+// secrets that push one scope past the server's page_size=20 default for the
+// ListSecretsScoped pagination check (secret.created 4 -> 28).
 var n3ExactEventCounts = map[string]int{
-	"secret.created":                 4,
+	"secret.created":                 28,
 	"secret.updated":                 1,
 	"secret.rolled_back":             1,
-	"machine_identity.created":       1,
-	"machine_identity.role_granted":  1,
-	"machine_identity.token_issued":  1,
+	"machine_identity.created":       2,
+	"machine_identity.role_granted":  2,
+	"machine_identity.token_issued":  2,
 	"machine_identity.token_revoked": 1,
 	"role.assigned":                  3,
 	"role.removed":                   1,
@@ -81,7 +86,7 @@ var n3ExactEventCounts = map[string]int{
 	// ('default')"), not an N1/N2 action. See n3StaleKnownGapNote below for
 	// why these are asserted PRESENT here at all -- this was NOT true when
 	// N3 was first written.
-	"project.created": 4,
+	"project.created": 5,
 	"user.created":    4,
 }
 
@@ -221,6 +226,17 @@ func TestJourney_AuditTrail(t *testing.T) {
 	s.Close()
 
 	dbPath := filepath.Join(s.Dir, "keyorix.db")
+	// s.Close() kills the server (no graceful shutdown), and SQLite runs in
+	// WAL mode (internal/storage/factory.go's sqliteDSN) -- a recently
+	// written row can still be sitting only in keyorix.db-wal, never
+	// checkpointed into keyorix.db itself. copyFile below copies only
+	// keyorix.db, so without this, a row that exists only in the WAL
+	// wouldn't exist in the tampered copy at all: the UPDATE/DELETE below
+	// would silently affect zero rows, and verify-audit would report VALID
+	// on a copy that's missing the exact row this test tampers with (#2459
+	// item 4). Force everything into keyorix.db first so a single-file copy
+	// is always complete.
+	checkpointWAL(t, dbPath)
 	verdict, verifyErr := runVerifyAudit(t, s, dbPath)
 	if verifyErr != nil {
 		t.Fatalf("verify-audit on the untampered chain: want exit 0, got error: %v", verifyErr)
@@ -342,16 +358,37 @@ func runVerifyAudit(t *testing.T, s *harness.Server, dbPath string) (verifyAudit
 	return v, runErr
 }
 
-// copyFile copies src to dst byte-for-byte (used to tamper a COPY, never the
-// live DB file).
+// checkpointWAL forces any content sitting in dbPath's -wal sidecar into
+// dbPath itself (PRAGMA wal_checkpoint(TRUNCATE) also empties the -wal file
+// afterward) -- see this function's call site for why that matters here.
+func checkpointWAL(t *testing.T, dbPath string) {
+	t.Helper()
+	cmd := exec.Command("sqlite3", dbPath, "PRAGMA wal_checkpoint(TRUNCATE);") // #nosec G204 -- dbPath is this test's own tempdir-derived path, never attacker input
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("sqlite3 wal_checkpoint failed: %v\n%s", err, out)
+	}
+}
+
+// copyFile copies a SQLite database file AND its -wal/-shm companions. The
+// server is stopped with Kill (no clean shutdown), so the most recent
+// committed rows can still live only in the -wal file; copying the main file
+// alone silently drops them, and a tamper aimed at one of those rows then
+// edits nothing, so the verifier correctly reports VALID and the journey's
+// tamper assertion fails for the wrong reason (seen after #2394 grew N1's
+// write volume).
 func copyFile(t *testing.T, src, dst string) {
 	t.Helper()
-	data, err := os.ReadFile(src) // #nosec G304 -- src is this test's own harness-managed DB path
-	if err != nil {
-		t.Fatalf("read %s: %v", src, err)
-	}
-	if err := os.WriteFile(dst, data, 0o600); err != nil {
-		t.Fatalf("write %s: %v", dst, err)
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		data, err := os.ReadFile(src + suffix) // #nosec G304 -- src is this test's own harness-managed DB path
+		if err != nil {
+			if suffix != "" && os.IsNotExist(err) {
+				continue
+			}
+			t.Fatalf("read %s: %v", src+suffix, err)
+		}
+		if err := os.WriteFile(dst+suffix, data, 0o600); err != nil {
+			t.Fatalf("write %s: %v", dst+suffix, err)
+		}
 	}
 }
 

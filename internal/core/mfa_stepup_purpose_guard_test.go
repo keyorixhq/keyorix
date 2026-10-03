@@ -114,9 +114,9 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 		expectedPurpose: "",
 		reason:          "see internal/faultstorage/faulty_storage_generated.go:2232 — the second (KindEffectThenError) call to the real GetActiveMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
 	},
-	"internal/core/mfa.go:553": {
+	"internal/core/mfa.go:580": {
 		expectedPurpose: "MFAStepUpPurposeReauth",
-		reason: "requireReauth's account-security-factor-change gate (DisableMFA, " +
+		reason: "(Line shifted to :580 by merging main's #2465 doc-comment additions on requireReauth together with this PR's own CR3 fix -- same ConsumeMFAStepUpGrant call, same purpose, not a new site.) requireReauth's account-security-factor-change gate (DisableMFA, " +
 			"RegenerateMFARecoveryCodes, ActivateMFA, WebAuthn credential register/delete, email change). " +
 			"Must reject the ambient MFAStepUpPurposeRestrictedSecretRead grant a plain login mints -- " +
 			"accepting it here is the exact confused-deputy shape this fix closed (a leaked bearer token " +
@@ -124,9 +124,7 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 			"account takeover). Now calls the atomic-consume ConsumeMFAStepUpGrant instead of the " +
 			"read-only HasActiveMFAStepUp (single-use reauth grant fix, follow-up to #1775) -- accepting " +
 			"the grant here also invalidates it, so it cannot go on to authorize a second, different " +
-			"sensitive action within the same window. (Line shifted from :520 by this PR's CR3 fix, which " +
-			"added the ErrMFAVerificationStorageFailure sentinel and its doc comment earlier in this file " +
-			"-- same call site, not a new one.)",
+			"sensitive action within the same window.",
 	},
 	"internal/core/classification_gate.go:178": {
 		expectedPurpose: "MFAStepUpPurposeRestrictedSecretRead",

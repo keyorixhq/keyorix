@@ -342,8 +342,21 @@ func sanitizeAuditText(s string) string {
 
 // writeAccessLog persists a secret_access_logs row. A failure here is a gap in the
 // secret-access trail, so it is surfaced loudly rather than silently discarded —
-// mirroring emitAudit's handling of a failed audit_events write.
+// mirroring emitAudit's handling of a failed audit_events write. A panic from the
+// storage call is recovered the same way (best-effort, not a reason to report the
+// CALLER's already-committed primary mutation as failed) — found by
+// FuzzStorageFaultOperations on REST PATCH /api/v1/secrets/{id}/classification:
+// a panic here propagated past the point where the classification change (and its
+// own audit event) had already committed, reporting an already-successful request
+// as an error. Same shape, same fix, as #2408 (projectCounts) and #2416
+// (EnforceSessionLimit).
 func (c *KeyorixCore) writeAccessLog(ctx context.Context, secretID uint, accessedBy, action, ip, ua string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: writeAccessLog panicked persisting secret access log (secret=%d action=%q accessedBy=%q, best-effort, primary operation already succeeded): %v",
+				secretID, action, accessedBy, r)
+		}
+	}()
 	entry := &models.SecretAccessLog{
 		SecretNodeID: secretID,
 		AccessedBy:   accessedBy,
@@ -366,12 +379,45 @@ func (c *KeyorixCore) LogSecretRead(ctx context.Context, userID uint, secretID u
 	c.writeAccessLog(ctx, secretID, username, "read", ip, ua)
 }
 
-// LogSecretReadWithProject writes audit_events + secret_access_logs including project context.
-func (c *KeyorixCore) LogSecretReadWithProject(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
+// LogSecretReadWithProject writes audit_events + secret_access_logs including
+// project context, as ONE atomic unit, and BLOCKS until both are durably
+// committed (SESSION-PERF, #2403 follow-up, item 3 — audit-before-disclosure).
+// Returns an error if the write fails; the caller must treat that as "do not
+// disclose the value" (fail closed), never return the value and discard the
+// error. Unlike LogSecretCreated/LogSecretUpdated/etc. (still fire-and-forget
+// via writeAuditEventFull+writeAccessLog as two independent best-effort
+// writes, unchanged), this is the one audit-logging call in this file a
+// caller is required to wait on and check — because it is the only one that
+// gates a value disclosure the client hasn't seen yet when this runs.
+func (c *KeyorixCore) LogSecretReadWithProject(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) error { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
 	uid, sid, pid := userID, secretID, projectID
-	c.writeAuditEventFull(ctx, "secret.read", &uid, &sid, &pid, ip,
-		fmt.Sprintf("User %s read secret %s", username, secretName))
-	c.writeAccessLog(ctx, secretID, username, "read", ip, ua)
+	t := true
+	event := &models.AuditEvent{
+		EventType:    "secret.read",
+		UserID:       &uid,
+		SecretNodeID: &sid,
+		ProjectID:    &pid,
+		IPAddress:    ip,
+		Description:  sanitizeAuditText(fmt.Sprintf("User %s read secret %s", username, secretName)),
+		Success:      &t,
+		EventTime:    time.Now(),
+		ActorType:    actorTypeFromContext(ctx),
+	}
+	if adminID, ok := impersonatorFromContext(ctx); ok {
+		a := adminID
+		event.ImpersonatedBy = &a
+		event.ActingAs = &uid
+		event.Impersonation = true
+	}
+	accessLog := &models.SecretAccessLog{
+		SecretNodeID: secretID,
+		AccessedBy:   username,
+		AccessTime:   time.Now(),
+		Action:       "read",
+		IPAddress:    ip,
+		UserAgent:    ua,
+	}
+	return c.emitAuditWithAccessLog(ctx, event, accessLog)
 }
 
 // LogSecretCreated writes audit_events + secret_access_logs for a secret creation.

@@ -13,7 +13,7 @@ export GOWORK=off
 .PHONY: build test client-deps client
 
 build:
-	go build -o bin/keyorix-next .
+	go build -o bin/keyorix .
 
 test:
 	go test ./...

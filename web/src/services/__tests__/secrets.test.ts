@@ -204,13 +204,19 @@ describe('secretsApi.delete', () => {
 });
 
 describe('secretsApi.getVersions', () => {
-    it('returns versions with index 0 as the latest, carrying EncryptedValue', async () => {
+    // #2450: the real GET .../versions response NEVER carries a value field --
+    // internal/storage/models.SecretVersion.EncryptedValue is tagged `json:"-"`
+    // server-side, so it can never appear here. This mock used to fabricate an
+    // EncryptedValue field that the real API cannot produce, which is exactly
+    // how the #2450 regression went undetected: the test modeled a response
+    // shape the real system never sends. Metadata only, matching reality.
+    it('returns versions with index 0 as the latest (metadata only, no value)', async () => {
         mocked.get.mockResolvedValue({
             data: {
                 data: {
                     versions: [
-                        { EncryptedValue: 'ZW5jLWxhdGVzdA==', VersionNumber: 3, CreatedAt: '2026-06-01T00:00:00Z' },
-                        { EncryptedValue: 'ZW5jLW9sZA==', VersionNumber: 2, CreatedAt: '2026-05-01T00:00:00Z' },
+                        { VersionNumber: 3, CreatedAt: '2026-06-01T00:00:00Z', ReadCount: 0 },
+                        { VersionNumber: 2, CreatedAt: '2026-05-01T00:00:00Z', ReadCount: 2 },
                     ],
                 },
             },
@@ -220,11 +226,8 @@ describe('secretsApi.getVersions', () => {
 
         expect(mocked.get).toHaveBeenCalledWith('/api/v1/secrets/9/versions');
         expect(out).toHaveLength(2);
-        expect(out[0]).toEqual({
-            EncryptedValue: 'ZW5jLWxhdGVzdA==',
-            VersionNumber: 3,
-            CreatedAt: '2026-06-01T00:00:00Z',
-        });
+        expect(out[0]).toEqual({ VersionNumber: 3, CreatedAt: '2026-06-01T00:00:00Z', ReadCount: 0 });
+        expect(out[0]).not.toHaveProperty('EncryptedValue');
     });
 
     it('defaults to an empty array when versions is missing', async () => {
@@ -233,6 +236,21 @@ describe('secretsApi.getVersions', () => {
         const out = await secretsApi.getVersions(9);
 
         expect(out).toEqual([]);
+    });
+});
+
+// #2450: getValue is the ONLY endpoint that actually returns a secret's
+// plaintext -- GET /secrets/{id}?include_value=true.
+describe('secretsApi.getValue', () => {
+    it('GETs the secret with include_value=true and returns the plaintext value', async () => {
+        mocked.get.mockResolvedValue({
+            data: { data: { secret: { id: 9, name: 'db-password' }, value: 'sup3r-secret' } },
+        });
+
+        const out = await secretsApi.getValue(9);
+
+        expect(mocked.get).toHaveBeenCalledWith('/api/v1/secrets/9', { params: { include_value: true } });
+        expect(out).toBe('sup3r-secret');
     });
 });
 

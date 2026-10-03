@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -95,6 +96,46 @@ func httpJSONAs(ctx context.Context, w *faultWorld, token, method, path string, 
 	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, respBody, nil
+}
+
+// scimJSON is httpJSON for the /scim/v2 route group, which authenticates with
+// w.scimToken (SCIMToken middleware's own static bearer token) rather than
+// the normal session/PAT bearer w.adminToken every other operation uses.
+func scimJSON(ctx context.Context, w *faultWorld, method, path string, body any) (int, []byte, error) {
+	return httpJSONAs(ctx, w, w.scimToken, method, path, body)
+}
+
+// createSCIMUserForFuzz provisions a user through POST /scim/v2/Users (not
+// the ordinary /api/v1/users/ endpoint createUserForFuzz uses) and returns
+// its ID -- needed because scim_groups.go's member-add path (#167) only
+// accepts a SCIM-MANAGED account (one carrying an externalId set by SCIM
+// provisioning); a plain createUserForFuzz user is rejected with
+// "SCIM can only add SCIM-managed users to a group". The SCIM response body
+// has no {"data": ...} envelope (unlike the ordinary REST API) and encodes
+// "id" as a STRING (RFC 7644), not the ordinary API's numeric ID field.
+func createSCIMUserForFuzz(ctx context.Context, w *faultWorld, username string) (uint, error) {
+	st, body, err := scimJSON(ctx, w, http.MethodPost, "/scim/v2/Users", map[string]any{
+		"schemas":    []string{"urn:ietf:params:scim:schemas:core:2.0:User"},
+		"userName":   username + "@example.com",
+		"externalId": username,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if st/100 != 2 {
+		return 0, fmt.Errorf("setup SCIM CreateUser: HTTP %d: %s", st, body)
+	}
+	var decoded struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil || decoded.ID == "" {
+		return 0, fmt.Errorf("decoding SCIM CreateUser response: %w (body=%s)", err, body)
+	}
+	id, err := strconv.ParseUint(decoded.ID, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("parsing SCIM CreateUser id %q: %w", decoded.ID, err)
+	}
+	return uint(id), nil
 }
 
 func httpResult(st int, body []byte) opResult {
@@ -2606,6 +2647,78 @@ var opCatalog = []operation{
 		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
 			groupID := state.(uint)
 			st, body, err := httpJSON(ctx, w, http.MethodPost, fmt.Sprintf("/api/v1/groups/%d/restore", groupID), nil)
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// scim_groups.go's PatchGroup -> core.PatchSCIMGroup (the "add a member"
+		// shape, not the "members replace" shape that routes to
+		// ReplaceSCIMGroup instead -- see PatchGroup's own replaceAll switch).
+		// SESSION-AT AT5: /scim/v2 was never reachable in this harness at all
+		// (cfg.SCIM.Enabled was never set) until faultopsSCIMToken wired it in.
+		Key: "REST PATCH /scim/v2/Groups/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			groupID, err := createGroupForFuzz(ctx, w, "fuzz-at5-scim-patch-group")
+			if err != nil {
+				return nil, err
+			}
+			// Must be SCIM-managed (createSCIMUserForFuzz, not
+			// createUserForFuzz) -- scim_groups.go's member-add path (#167)
+			// rejects a plain, non-SCIM-provisioned account.
+			userID, err := createSCIMUserForFuzz(ctx, w, "fuzz-at5-scim-patch-user")
+			if err != nil {
+				return nil, err
+			}
+			return [2]uint{groupID, userID}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			ids := state.([2]uint)
+			st, body, err := scimJSON(ctx, w, http.MethodPatch, fmt.Sprintf("/scim/v2/Groups/%d", ids[0]), map[string]any{
+				"schemas": []string{"urn:ietf:params:scim:api:messages:2.0:PatchOp"},
+				"Operations": []map[string]any{
+					{"op": "add", "path": "members", "value": []map[string]any{
+						{"value": fmt.Sprintf("%d", ids[1])},
+					}},
+				},
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// scim_groups.go's ReplaceGroup -> core.ReplaceSCIMGroup (full
+		// rename + member-set replace). SESSION-AT AT5.
+		Key: "REST PUT /scim/v2/Groups/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createGroupForFuzz(ctx, w, "fuzz-at5-scim-replace-group")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			groupID := state.(uint)
+			st, body, err := scimJSON(ctx, w, http.MethodPut, fmt.Sprintf("/scim/v2/Groups/%d", groupID), map[string]any{
+				"schemas":     []string{"urn:ietf:params:scim:schemas:core:2.0:Group"},
+				"displayName": "fuzz-at5-scim-replace-group-renamed",
+				"members":     []map[string]any{},
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// scim_groups.go's DeleteGroup -> core.DeprovisionSCIMGroup. SESSION-AT AT5.
+		Key: "REST DELETE /scim/v2/Groups/{id}",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return createGroupForFuzz(ctx, w, "fuzz-at5-scim-deprovision-group")
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			groupID := state.(uint)
+			st, body, err := scimJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/scim/v2/Groups/%d", groupID), nil)
 			if err != nil {
 				return opResult{}, err
 			}

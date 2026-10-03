@@ -33,13 +33,22 @@ func testManifestKey() []byte {
 // minimal schema for just the tables it needs, using AutoMigrate directly
 // (GORM's own migration, not migrateDatabase's SQLite-workaround wrapping --
 // fine for a handful of plain tables with no legacy-column history).
-func openTestDB(t *testing.T) *gorm.DB {
+func openTestDB(t testing.TB) *gorm.DB {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "backupfmt_writer_test.db")
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.User{}, &models.Role{}))
 	return db
+}
+
+// testSeedModels is the small model subset openTestDB migrates, in a valid
+// restore-order-respecting sequence (Project before Environment, which
+// references it) -- shared by every fuzz target in this package that needs
+// a real archive built from a real (if tiny) database rather than the full
+// 78-table registry.
+func testSeedModels() []any {
+	return []any{&models.Project{}, &models.Environment{}, &models.User{}, &models.Role{}}
 }
 
 func TestWriteBackup_RoundTripsRowsAndManifest(t *testing.T) {

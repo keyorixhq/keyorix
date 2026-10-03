@@ -245,7 +245,7 @@ func TestRunDynCreateConfig_MatchesOldCLIOutputShape(t *testing.T) {
 		}
 	})
 	want := "Created dynamic-secret config #9 (app-db, postgres).\n" +
-		"Issue a credential with: keyorix-next dynamic-secret issue 9\n"
+		"Issue a credential with: keyorix dynamic-secret issue 9\n"
 	if out != want {
 		t.Fatalf("output = %q, want %q", out, want)
 	}

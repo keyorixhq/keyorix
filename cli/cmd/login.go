@@ -27,7 +27,7 @@ var loginCmd = &cobra.Command{
 	Short: "Authenticate to a Keyorix server and store the resulting token",
 	Long: `login exchanges a username and password for a session token via POST /auth/login,
 verifies it against GET /api/v1/auth/profile, and stores it (with the server URL) at the
-one credential-file location this CLI uses (see "keyorix-next status --help").`,
+one credential-file location this CLI uses (see "keyorix status --help").`,
 	RunE: runLogin,
 }
 

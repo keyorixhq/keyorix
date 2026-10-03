@@ -549,6 +549,10 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	// Let core token-revocation paths (e.g. revoking PATs on a password change) evict the
 	// HTTP auth cache immediately, rather than waiting out the positive-cache TTL.
 	coreService.SetTokenCacheInvalidator(middleware.InvalidateTokenCacheByHash)
+	// Let a transition toward active (ReactivateUser) clear a STALE existing cache
+	// entry without ever writing a new negative one for a never-cached credential —
+	// see setAccountState's "becoming active" branch.
+	coreService.SetTokenCacheClearer(middleware.ClearTokenCacheIfCached)
 	// Fail-closed fallback for TransitionMachineIdentity when it can't determine exactly
 	// which credential hashes to evict individually (see evictMachineIdentityCacheOrFlush).
 	coreService.SetMachineTokenCacheFlusher(middleware.InvalidateAllMachineTokenCache)
@@ -1782,7 +1786,7 @@ func startHTTPServer(ctx context.Context, cfg *config.Config, coreService *core.
 			if cfg.Server.HTTP.TLS.AutoCert {
 				// checkTransportTLSPosture already validated tls.allowed_ciphers at boot,
 				// so this should never fail in practice; handled defensively anyway.
-				autoCertTLSConfig, err := buildAutoCertTLSConfig(cfg.Server.HTTP.TLS.Domains, cfg.Server.HTTP.TLS)
+				autoCertTLSConfig, err := buildAutoCertTLSConfig(cfg.Server.HTTP.TLS.Domains, cfg.Server.HTTP.TLS, cfg.Server.HTTP.TLSMode)
 				if err != nil {
 					log.Printf("HTTP server error: %v", err)
 					return
@@ -1883,6 +1887,12 @@ func checkTransportTLSPosture(cfg *config.Config) error {
 		// took effect.
 		if len(inst.ProtocolVersions) > 0 {
 			log.Printf("WARNING: %s protocol_versions is set but NOT honored — the TLS 1.2 minimum is fixed in code.", name)
+		}
+		// tls.allowed_ciphers has no effect under tls_mode: strict (TLS 1.3 negotiates
+		// its own, always-AEAD suite set — see applyTLSHardening) — warn so an operator
+		// isn't misled into thinking a configured allowlist is still narrowing anything.
+		if inst.TLSMode == config.TLSModeStrict && len(inst.TLS.AllowedCiphers) > 0 {
+			log.Printf("WARNING: %s tls.allowed_ciphers is set but has no effect under tls_mode: strict (TLS 1.3 only).", name)
 		}
 		if inst.TLS.Enabled {
 			return nil
@@ -2087,7 +2097,7 @@ func createTLSConfig(cfg *config.Config) (*tls.Config, error) {
 	}
 
 	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}}
-	if err := applyTLSHardening(tlsConfig, cfg.Server.HTTP.TLS); err != nil {
+	if err := applyTLSHardening(tlsConfig, cfg.Server.HTTP.TLS, cfg.Server.HTTP.TLSMode); err != nil {
 		return nil, err
 	}
 	return tlsConfig, nil
@@ -2116,9 +2126,17 @@ var hardenedCipherSuites = []uint16{
 // their configured suite list is honored instead — validated against
 // config.SecureCipherSuiteNames, so a weak/deprecated/misspelled suite name fails
 // closed at startup rather than being silently ignored (the previous behavior) or
-// silently accepted. MinVersion stays fixed at TLS 1.2: TLS 1.3 has no equivalent
-// per-suite selection, so there is nothing for allowed_ciphers to configure there.
-func applyTLSHardening(tlsConfig *tls.Config, tlsCfg config.TLSConfig) error {
+// silently accepted. MinVersion stays fixed at TLS 1.2 UNLESS mode is
+// config.TLSModeStrict (ADR-112 §3, "tls_mode: strict"), in which case Min/MaxVersion
+// are both pinned to TLS 1.3 and CipherSuites is left untouched: TLS 1.3 has no
+// equivalent per-suite selection (crypto/tls negotiates its own, always-AEAD suite
+// set), so there is nothing for allowed_ciphers to configure under either mode.
+func applyTLSHardening(tlsConfig *tls.Config, tlsCfg config.TLSConfig, mode string) error {
+	if mode == config.TLSModeStrict {
+		tlsConfig.MinVersion = tls.VersionTLS13
+		tlsConfig.MaxVersion = tls.VersionTLS13
+		return nil
+	}
 	tlsConfig.MinVersion = tls.VersionTLS12
 	suites, err := tlsCfg.ResolveCipherSuites(hardenedCipherSuites)
 	if err != nil {
@@ -2134,7 +2152,7 @@ func applyTLSHardening(tlsConfig *tls.Config, tlsCfg config.TLSConfig) error {
 // MinVersion/CipherSuites as the non-AutoCert path (createTLSConfig) are layered on
 // top instead of being silently discarded (#172), honoring tls.allowed_ciphers the
 // same way createTLSConfig does (#333).
-func buildAutoCertTLSConfig(domains []string, tlsCfg config.TLSConfig) (*tls.Config, error) {
+func buildAutoCertTLSConfig(domains []string, tlsCfg config.TLSConfig, mode string) (*tls.Config, error) {
 	cacheDir := tlsCfg.CertCacheDir
 	if cacheDir == "" {
 		cacheDir = "certs"
@@ -2148,7 +2166,7 @@ func buildAutoCertTLSConfig(domains []string, tlsCfg config.TLSConfig) (*tls.Con
 		HostPolicy: autocert.HostWhitelist(domains...),
 	}
 	tlsConfig := m.TLSConfig()
-	if err := applyTLSHardening(tlsConfig, tlsCfg); err != nil {
+	if err := applyTLSHardening(tlsConfig, tlsCfg, mode); err != nil {
 		return nil, err
 	}
 	return tlsConfig, nil

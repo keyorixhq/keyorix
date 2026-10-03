@@ -1,0 +1,216 @@
+package handlers
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/pquerna/otp/totp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/faultstorage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
+)
+
+const identityFailClosedTestPassword = "Secret#Passw0rd!"
+
+const totpStepDuration = 30 * time.Second
+
+var identityFailClosedDBCounter atomic.Int64
+
+// newIdentityFailClosedTestHandler builds an AuthHandler over a FaultyStorage-
+// wrapped LocalStorage, with MFA enrolled and activated for user "alice" (id 1).
+// Each call gets its own private in-memory DB (a unique shared-cache name) so
+// concurrent/sequential test functions in this file never collide over user id
+// 1. Returns the handler, the fault wrapper (initially unarmed — a pure pass-
+// through), the TOTP secret, a clock ONE STEP PAST activation's own code (so
+// the caller's first verify code doesn't collide with the step
+// ActivateMFA's own anti-replay check already consumed), and the backing
+// *gorm.DB so a test can inspect what a request actually left behind in storage.
+func newIdentityFailClosedTestHandler(t *testing.T) (*AuthHandler, *faultstorage.FaultyStorage, string, time.Time, *gorm.DB) {
+	t.Helper()
+	dsn := fmt.Sprintf("file:kxidentityfailclosed%d?mode=memory&cache=shared&_timeout=30000", identityFailClosedDBCounter.Add(1))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.User{}, &models.MFASecret{}, &models.MFARecoveryCode{}, &models.MFAChallenge{},
+		&models.Session{}, &models.AuditEvent{}, &models.MFAStepupToken{}, &models.MFAStepUpGrant{},
+		&models.LoginAttempt{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
+		&models.UserRole{},
+	))
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(identityFailClosedTestPassword), bcrypt.DefaultCost)
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&models.User{
+		ID: 1, Username: "alice", UsernameFolded: "alice", Email: "alice@example.com", EmailFolded: "alice@example.com",
+		PasswordHash: string(hash), AccountState: "active",
+	}).Error)
+
+	real := store.NewLocalStorage(db)
+	fs := faultstorage.NewFaultyStorage(real, nil)
+	c := core.NewKeyorixCore(fs)
+
+	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())
+	require.NoError(t, enc.Initialize("test-passphrase"))
+	c.SetAuthEncryptor(enc)
+
+	activationTime := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
+	c.SetClockForTesting(func() time.Time { return activationTime })
+
+	ctx := context.Background()
+	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
+	require.NoError(t, err)
+	actCode, err := totp.GenerateCode(secret, activationTime)
+	require.NoError(t, err)
+	_, err = c.ActivateMFA(ctx, 1, actCode, identityFailClosedTestPassword, "")
+	require.NoError(t, err)
+
+	// Advance one full TOTP step past activation's own code so a verify call
+	// using "fixed" below presents a step ActivateMFA's anti-replay check
+	// (MarkTOTPStepUsed) never touched.
+	fixed := activationTime.Add(totpStepDuration)
+	c.SetClockForTesting(func() time.Time { return fixed })
+
+	return NewAuthHandler(c, false), fs, secret, fixed, db
+}
+
+func postVerifyMFA(t *testing.T, h *AuthHandler, challenge, code string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"mfa_challenge": challenge, "code": code})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/auth/mfa/verify", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.VerifyMFA(w, req)
+	return w
+}
+
+// TestVerifyMFA_GetUserPermissionsError_FailsClosed reproduces #2412 (CI fuzzing
+// on PR #2392, FuzzStorageFaultOperations input c67f27: "REST POST
+// /auth/mfa/verify", fault "GetUserPermissions#1/error", oracle (c)): a storage
+// error resolving the user's permissions — reached via buildLoginResponse's call
+// to GetUserIdentity, itself reached via VerifyMFA after VerifyMFALogin has
+// already minted a real session — must not produce a 200 with a live session
+// indistinguishable from a legitimate empty-permissions grant.
+//
+// Confirmed red on the unfixed handler (buildLoginResponse swallowing the
+// GetUserIdentity error, `if id, ierr := ...; ierr == nil`): the request still
+// returns 200 "Login successful" with Permissions: [] in the body, AND the
+// session minted by VerifyMFALogin is left live in storage — a fully
+// functional, fully authenticated session an attacker-observed storage blip
+// handed out with no indication anything failed.
+func TestVerifyMFA_GetUserPermissionsError_FailsClosed(t *testing.T) {
+	h, fs, secret, fixed, db := newIdentityFailClosedTestHandler(t)
+	ctx := context.Background()
+
+	ch, err := h.coreService.CreateMFAChallenge(ctx, 1)
+	require.NoError(t, err)
+	code, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+
+	fs.Arm(&faultstorage.FaultSpec{
+		Method: "GetUserPermissions", NthCall: 1, Kind: faultstorage.KindError,
+		Err: errors.New("simulated: permission lookup unavailable"),
+	})
+
+	w := postVerifyMFA(t, h, ch, code)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code, "a GetUserPermissions storage error must fail closed (500), not 200")
+	assert.True(t, fs.Fired(), "the armed fault must actually have fired on GetUserPermissions")
+
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, false, body["success"], "the response must self-report failure, not success")
+	assert.NotContains(t, body, "data", "no session/identity payload may be handed back when identity resolution failed")
+
+	// VerifyMFALogin minted a real session before the fault fired (it lives
+	// one layer below, in buildLoginResponse); the literal symptom this test
+	// guards against is that session surviving as a live, usable grant. A
+	// fixed handler must revoke it rather than leave it live but undisclosed.
+	var sessionCount int64
+	require.NoError(t, db.Model(&models.Session{}).Where("user_id = ?", 1).Count(&sessionCount).Error)
+	assert.Zero(t, sessionCount, "the session minted before the identity-resolution fault fired must be revoked, not left live")
+}
+
+// TestVerifyMFA_GetUserPermissionsError_FailsClosed_ThenClears confirms the
+// fault-clears half of red/green: once the storage fault is gone, a fresh,
+// never-before-used code still verifies normally and yields a real, live
+// session with populated permissions — the fail-closed path above is not a
+// permanent lockout.
+func TestVerifyMFA_GetUserPermissionsError_FailsClosed_ThenClears(t *testing.T) {
+	h, fs, secret, fixed, db := newIdentityFailClosedTestHandler(t)
+	ctx := context.Background()
+
+	// First attempt: fault armed, fails closed (same assertion as above, kept
+	// minimal here since it's fully covered by the previous test).
+	ch1, err := h.coreService.CreateMFAChallenge(ctx, 1)
+	require.NoError(t, err)
+	code1, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+	fs.Arm(&faultstorage.FaultSpec{
+		Method: "GetUserPermissions", NthCall: 1, Kind: faultstorage.KindError,
+		Err: errors.New("simulated: permission lookup unavailable"),
+	})
+	w1 := postVerifyMFA(t, h, ch1, code1)
+	require.NotEqual(t, http.StatusOK, w1.Code)
+
+	var sessionCount int64
+	require.NoError(t, db.Model(&models.Session{}).Where("user_id = ?", 1).Count(&sessionCount).Error)
+	require.Zero(t, sessionCount, "setup: session must have been revoked after the faulted attempt")
+
+	// Second attempt, one TOTP step later (the first step was already consumed
+	// by VerifyMFALogin's anti-replay marking, even though the overall request
+	// failed) with the fault cleared: a fresh challenge + fresh code must
+	// verify normally and leave a live session with real permissions behind.
+	fs.Arm(nil)
+	laterStep := fixed.Add(30 * time.Second)
+	ch2, err := h.coreService.CreateMFAChallenge(ctx, 1)
+	require.NoError(t, err)
+	code2, err := totp.GenerateCode(secret, laterStep)
+	require.NoError(t, err)
+	h.coreService.SetClockForTesting(func() time.Time { return laterStep })
+
+	w2 := postVerifyMFA(t, h, ch2, code2)
+	require.Equal(t, http.StatusOK, w2.Code, "once the storage fault clears, a fresh correct code must still verify")
+
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &body))
+	data, _ := body["data"].(map[string]interface{})
+	require.NotNil(t, data, "expected a data envelope in the success response")
+	assert.NotEmpty(t, data["token"], "a successful verify must hand back a session token")
+
+	require.NoError(t, db.Model(&models.Session{}).Where("user_id = ?", 1).Count(&sessionCount).Error)
+	assert.Equal(t, int64(1), sessionCount, "the successful second attempt must leave exactly one live session")
+}
+
+// TestBuildLoginResponse_IdentityError_PropagatesAndMintsNothing exercises
+// buildLoginResponse directly — the single function shared by every login-
+// completion handler (Login, ConsumeSetup, VerifyMFA,
+// FinishWebAuthnLogin/Passwordless) — confirming the fix lives in the one
+// place all five call sites share, not just in VerifyMFA's call site.
+func TestBuildLoginResponse_IdentityError_PropagatesAndMintsNothing(t *testing.T) {
+	h, fs, _, _, _ := newIdentityFailClosedTestHandler(t)
+
+	fs.Arm(&faultstorage.FaultSpec{
+		Method: "GetUserPermissions", NthCall: 1, Kind: faultstorage.KindError,
+		Err: errors.New("simulated: permission lookup unavailable"),
+	})
+
+	resp, err := h.buildLoginResponse(context.Background(), &models.Session{SessionToken: "irrelevant"}, &models.User{Username: "alice"})
+	require.Error(t, err, "a GetUserIdentity failure must propagate as an error, not be swallowed")
+	assert.Equal(t, loginResponseBody{}, resp, "an error return must not carry a partially-built response")
+}

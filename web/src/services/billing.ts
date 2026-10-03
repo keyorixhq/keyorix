@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { isAxiosError } from 'axios';
 import { apiClient } from './client';
 
 // One project's usage breakdown for a billing period, served by
@@ -87,7 +87,7 @@ export const billingApi = {
             const response = await apiClient.get('/api/v1/admin/billing/report', { params: query });
             return normalizeReport(response.data.data ?? response.data);
         } catch (err) {
-            if (axios.isAxiosError(err) && err.response?.status === 403) {
+            if (isAxiosError(err) && err.response?.status === 403) {
                 const message = (err.response.data as { message?: string } | undefined)?.message ?? '';
                 if (message.toLowerCase().includes('license')) {
                     throw new BillingLicenseRequiredError(message);

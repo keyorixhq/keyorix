@@ -1,7 +1,7 @@
 import React from 'react';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { secretsApi } from '../../services/secrets';
-import { queryKeys, invalidateQueries } from '../../lib/queryClient';
+import { queryKeys, invalidateQueries, SENSITIVE_GC_TIME } from '../../lib/queryClient';
 import { Secret, SecretFormData } from '../../types';
 
 export const useSecrets = (params?: {
@@ -32,6 +32,21 @@ export const useSecretVersions = (id: number, enabled = true) => {
         queryKey: queryKeys.secrets.versions(id),
         queryFn: () => secretsApi.getVersions(id),
         enabled,
+    });
+};
+
+// useSecretValue fetches the secret's current plaintext (GET
+// /secrets/{id}?include_value=true via secretsApi.getValue) -- separate from
+// useSecretVersions, which only ever returns version metadata. G28: this
+// response carries decrypted secret plaintext, so gcTime MUST be
+// SENSITIVE_GC_TIME (evicted from the cache as soon as the last observer
+// unmounts, not left around for the default 10 minutes).
+export const useSecretValue = (id: number, enabled = true) => {
+    return useQuery({
+        queryKey: queryKeys.secrets.value(id),
+        queryFn: () => secretsApi.getValue(id),
+        enabled,
+        gcTime: SENSITIVE_GC_TIME,
     });
 };
 

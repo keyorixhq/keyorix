@@ -3712,7 +3712,8 @@ func TestAuthHandler_buildLoginResponse_Direct(t *testing.T) {
 		DisplayName: "Alice",
 	}
 	user.ID = 1
-	resp := h.buildLoginResponse(context.Background(), session, user)
+	resp, err := h.buildLoginResponse(context.Background(), session, user)
+	require.NoError(t, err)
 	assert.Equal(t, "tok123", resp.Token)
 	assert.Equal(t, "alice", resp.Username)
 	assert.NotEmpty(t, resp.ExpiresAt)
@@ -3724,7 +3725,8 @@ func TestAuthHandler_buildLoginResponse_NoExpiry(t *testing.T) {
 	session := &models.Session{SessionToken: "tok"}
 	user := &models.User{Username: "bob", Email: "bob@example.com"}
 	user.ID = 99
-	resp := h.buildLoginResponse(context.Background(), session, user)
+	resp, err := h.buildLoginResponse(context.Background(), session, user)
+	require.NoError(t, err)
 	assert.Equal(t, "tok", resp.Token)
 	assert.Empty(t, resp.ExpiresAt)
 }

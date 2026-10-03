@@ -54,17 +54,46 @@ func (c *KeyorixCore) MigrateUserToMachine(ctx context.Context, username string,
 	// event below, which is gated behind audit.read.
 	desc := fmt.Sprintf("Migrated from user %q (id %d)", user.Username, user.ID)
 
-	m, err := c.CreateMachineIdentity(ctx, projectID, name, identityType, desc, "", actorID, 0)
-	if err != nil {
-		return nil, err
+	createIdentity := func(ctx context.Context) (*models.MachineIdentity, error) {
+		return c.CreateMachineIdentity(ctx, projectID, name, identityType, desc, "", actorID, 0)
 	}
 
+	var m *models.MachineIdentity
 	if suspendSource {
-		if err := c.SuspendUser(ctx, actorID, user.ID); err != nil {
+		// #2413: SuspendUser acquires lastAdminGuardLockKey itself, but it used
+		// to do so AFTER CreateMachineIdentity had already committed -- a
+		// failure to acquire the lock (not the guard check, which has its own
+		// documented partial-success handling below) reported an error for an
+		// identity that, in fact, already existed. Taking the SAME lock here
+		// first means a lock-acquisition failure leaves nothing committed at
+		// all: CreateMachineIdentity runs only once the lock is actually held.
+		// WithNamedLock is reentrant via the lock-marked ctx it hands fn
+		// (see its own doc comment), so SuspendUser's internal WithNamedLock
+		// call for the identical key just proceeds without re-locking.
+		var suspendErr error
+		lockErr := c.storage.WithNamedLock(ctx, lastAdminGuardLockKey, func(ctx context.Context) error {
+			var cerr error
+			m, cerr = createIdentity(ctx)
+			if cerr != nil {
+				return cerr
+			}
+			suspendErr = c.SuspendUser(ctx, actorID, user.ID)
+			return nil
+		})
+		if lockErr != nil {
+			return nil, lockErr
+		}
+		if suspendErr != nil {
 			// The identity exists; report the partial state so the operator can
 			// suspend the source user manually rather than silently leaving an
 			// active human login alongside the new machine identity.
-			return m, fmt.Errorf("machine identity %d created but failed to suspend source user %d: %w", m.ID, user.ID, err)
+			return m, fmt.Errorf("machine identity %d created but failed to suspend source user %d: %w", m.ID, user.ID, suspendErr)
+		}
+	} else {
+		var err error
+		m, err = createIdentity(ctx)
+		if err != nil {
+			return nil, err
 		}
 	}
 

@@ -3,8 +3,8 @@ module github.com/keyorixhq/keyorix
 go 1.27
 
 require (
-	cloud.google.com/go/kms v1.34.0
-	cloud.google.com/go/secretmanager v1.21.0
+	cloud.google.com/go/kms v1.35.0
+	cloud.google.com/go/secretmanager v1.22.0
 	filippo.io/age v1.3.2
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.1
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.1
@@ -33,7 +33,7 @@ require (
 	github.com/google/go-tpm-tools v0.4.10
 	github.com/googleapis/gax-go/v2 v2.26.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/keyorixhq/keyorix-go v0.2.1
+	github.com/keyorixhq/keyorix-sdks/go v0.3.0
 	github.com/mattermost/xml-roundtrip-validator v0.1.0
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
 	github.com/pquerna/otp v1.5.0

@@ -361,8 +361,20 @@ func (c *KeyorixCore) TouchMachineTokenLastUsed(ctx context.Context, credID uint
 // machine identity itself is no longer active (mirroring ValidateMachineToken's
 // own checks) — the caller must treat all three as "deny the request", not a
 // transient lookup failure to degrade past.
+//
+// SESSION-PERF (#2403 follow-up): this runs on EVERY cache hit (#G18's whole
+// point — the check must be fresh every time, never cached across requests),
+// which made it the single largest measured CPU/query cost on the machine-token
+// read path (67% of cumulative CPU time in a profile under load). The fix is
+// NOT to cache this result — that would reopen the exact staleness window #G18
+// closed (a revoked/expired/deactivated token trusted for up to validTokenTTL).
+// Instead, GetMachineIdentityCredentialWithIdentityStateByHash fetches the
+// credential AND the owning identity's State in ONE query (a JOIN) instead of
+// the two sequential round trips this function used before — same freshness,
+// same checks, same fail-closed behavior on every single call, just one DB
+// round trip instead of two.
 func (c *KeyorixCore) CurrentMachineTokenRestriction(ctx context.Context, raw string) (*MachineTokenRestriction, error) {
-	cred, err := c.storage.GetMachineIdentityCredentialByHash(ctx, sha256Hex(raw))
+	cred, identityState, err := c.storage.GetMachineIdentityCredentialWithIdentityStateByHash(ctx, sha256Hex(raw))
 	if err != nil {
 		return nil, err
 	}
@@ -372,12 +384,8 @@ func (c *KeyorixCore) CurrentMachineTokenRestriction(ctx context.Context, raw st
 	if cred.ExpiresAt != nil && c.authEffectiveNow().After(*cred.ExpiresAt) {
 		return nil, ErrMachineTokenExpired
 	}
-	m, err := c.storage.GetMachineIdentity(ctx, cred.MachineIdentityID)
-	if err != nil {
-		return nil, err
-	}
-	if m.State != MachineActive {
-		return nil, fmt.Errorf("machine identity is %s", m.State)
+	if identityState != MachineActive {
+		return nil, fmt.Errorf("machine identity is %s", identityState)
 	}
 	return machineRestrictionFrom(cred), nil
 }
@@ -429,14 +437,25 @@ func (c *KeyorixCore) AssignMachineRole(ctx context.Context, machineID, roleID u
 	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, actorIsMachine); err != nil {
 		return err
 	}
-	if err := c.requireMachineGrantNoSoDViolation(ctx, machineID, roleID); err != nil {
-		return err
-	}
-	if err := c.storage.AssignMachineRole(ctx, machineID, roleID, scope); err != nil {
-		return err
-	}
-	c.logMachineEvent(ctx, "machine_identity.role_granted", m, actorID)
-	return nil
+	// GUARD-2: the check-then-write below must be serialized across every
+	// replica of an HA deployment, not just within this process — mirrors
+	// AssignUserRole/AssignRoleToGroup's identical WithNamedLock use
+	// (#1646/#1780). AssignMachineRole had NO serialization at all (not even
+	// an in-process mutex) before this: two concurrent grants of two
+	// individually-clean roles to the SAME machine identity could each pass
+	// requireMachineGrantNoSoDViolation against a stale pre-grant permission
+	// set and both commit, jointly completing a toxic SoD pair on a machine
+	// credential.
+	return c.storage.WithNamedLock(ctx, sodGrantLockKey("machine", machineID), func(ctx context.Context) error {
+		if err := c.requireMachineGrantNoSoDViolation(ctx, machineID, roleID); err != nil {
+			return err
+		}
+		if err := c.storage.AssignMachineRole(ctx, machineID, roleID, scope); err != nil {
+			return err
+		}
+		c.logMachineEvent(ctx, "machine_identity.role_granted", m, actorID)
+		return nil
+	})
 }
 
 // RemoveMachineRole revokes a machine identity's role grant at the given scope.

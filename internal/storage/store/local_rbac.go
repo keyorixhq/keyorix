@@ -110,7 +110,10 @@ func (ls *LocalStorage) GetRole(ctx context.Context, id uint) (*models.Role, err
 	var role models.Role
 	if err := ls.db.WithContext(ctx).First(&role, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%s", i18n.T("ErrorRoleNotFound", nil))
+			// Wrap the typed sentinel so callers can distinguish "this role does
+			// not exist" from a transient failure (e.g. isGlobalAdminRoleName's
+			// dangling-role-reference tolerance).
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), storage.ErrRoleNotFound)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}

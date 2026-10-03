@@ -76,6 +76,7 @@ package serverguard
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -89,6 +90,26 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+// lockHeldErr marks an AcquireExclusive failure that means another live server or admin
+// command genuinely holds this guard's lock -- as opposed to any other acquisition failure
+// (a connection error, bad credentials, a misconfigured DSN), which means presence could not
+// be determined at all. #2362: the admin pre-flight check reported "a Keyorix server ...
+// appears to be using this database" even for a plain Postgres auth failure (SQLSTATE
+// 28P01) -- misleading, since nothing established whether a server was actually attached.
+// IsLockHeld lets a caller choose an accurate top-level message for each case while still
+// failing closed either way.
+type lockHeldErr struct{ err error }
+
+func (e *lockHeldErr) Error() string { return e.err.Error() }
+func (e *lockHeldErr) Unwrap() error { return e.err }
+
+// IsLockHeld reports whether err (as returned by AcquireExclusive) means another live server
+// or admin command genuinely holds the lock, as opposed to any other acquisition failure.
+func IsLockHeld(err error) bool {
+	var e *lockHeldErr
+	return errors.As(err, &e)
+}
 
 // serverPresenceLockKey is the Postgres advisory-lock key for this guard.
 // Arbitrary but fixed, distinct from internal/storage/factory.go's
@@ -251,7 +272,7 @@ func acquireSQLiteExclusive(cfg *config.Config) (*Exclusive, error) {
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("another process holds this database (a live server, or another admin command) via %s", path)
+		return nil, &lockHeldErr{fmt.Errorf("another process holds this database (a live server, or another admin command) via %s", path)}
 	}
 	return &Exclusive{release: func() error {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
@@ -342,7 +363,7 @@ func acquirePostgresExclusive(cfg *config.Config) (*Exclusive, error) {
 	if !acquired {
 		_ = conn.Close()
 		_ = sqlDB.Close()
-		return nil, fmt.Errorf("another process holds this database (a live server, or another admin command) via postgres advisory lock %d", serverPresenceLockKey)
+		return nil, &lockHeldErr{fmt.Errorf("another process holds this database (a live server, or another admin command) via postgres advisory lock %d", serverPresenceLockKey)}
 	}
 	return &Exclusive{release: func() error {
 		relCtx, relCancel := context.WithTimeout(context.Background(), 10*time.Second)

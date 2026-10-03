@@ -129,20 +129,25 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 		defer lock.Release() //nolint:errcheck
 	}
 
-	manifestKey, err := unwrapManifestKey(cfg, ".", backupPassphraseSource)
-	if err != nil {
-		return err
-	}
-	defer crypto.WipeBytes(manifestKey)
-
 	if err := preflightBackupFreeSpace(cfg); err != nil {
 		return fmt.Errorf("preflight free-space check (design §7.4): %w", err)
 	}
 
-	keyEntries, keyBlobs, err := readKeyFilesForBackup(cfg)
+	// readKeyFilesForBackup runs INSIDE unwrapManifestKey's onLocked callback
+	// (SESSION-AT AT1 area 3/4) -- while the exclusive key lock from the KEK
+	// derivation above is still held, not after it releases. See
+	// unwrapManifestKey's own doc comment for the race this closes.
+	var keyEntries []backupfmt.KeyFileEntry
+	var keyBlobs [][]byte
+	manifestKey, err := unwrapManifestKey(cfg, ".", backupPassphraseSource, func() error {
+		var kerr error
+		keyEntries, keyBlobs, kerr = readKeyFilesForBackup(cfg)
+		return kerr
+	})
 	if err != nil {
 		return err
 	}
+	defer crypto.WipeBytes(manifestKey)
 
 	gdb, err := storage.OpenGormDB(cfg)
 	if err != nil {
@@ -243,7 +248,27 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 // `admin restore` (design §5.3: unwrap from the archive's own STAGED, still
 // -wrapped key files, never the real target's, since a fresh restore target
 // has none yet).
-func unwrapManifestKey(cfg *config.Config, baseDir string, passphraseSource crypto.PassphraseSource) ([]byte, error) {
+//
+// onLocked, when non-nil, runs AFTER BackupManifestKey succeeds but BEFORE
+// the exclusive key lock releases (Shutdown runs via defer, after onLocked
+// returns) -- SESSION-AT AT1 area 3/4: `admin backup` passes
+// readKeyFilesForBackup here so the live key-file set it archives is read
+// while STILL holding the same exclusive lock that protects the KEK
+// derivation above, not after releasing it. Before this, the lock was
+// released the moment unwrapManifestKey returned, and readKeyFilesForBackup
+// ran its own, separately-timed, completely unlocked os.ReadFile loop over
+// MULTIPLE files (salt, wrapped-DEK, provider-specific) -- a concurrent
+// `admin encryption rotate-kek`/rotate-provider, which takes this SAME
+// exclusive lock for exactly this reason (AcquireExclusiveKeyLock's own doc
+// comment: serializes against "an in-progress rotation/migrate-provider"),
+// could acquire it, rewrite some but not all of those files, and release,
+// landing entirely inside that unlocked window -- archiving a key-material
+// set that is individually well-formed per file but mutually inconsistent
+// as a set, unusable by a later restore. `admin restore`'s own call passes
+// nil: it unwraps from the archive's own staged (already-extracted, static)
+// key files, never the live target's, so no concurrent-rotation race
+// applies there.
+func unwrapManifestKey(cfg *config.Config, baseDir string, passphraseSource crypto.PassphraseSource, onLocked func() error) ([]byte, error) {
 	providerType := cfg.Storage.Encryption.KeyProvider.Type
 	var passphrase string
 	if providerType == "" || providerType == "password" {
@@ -269,6 +294,11 @@ func unwrapManifestKey(cfg *config.Config, baseDir string, passphraseSource cryp
 	key, _, ok := svc.BackupManifestKey()
 	if !ok {
 		return nil, fmt.Errorf("backup-manifest signing key unavailable (encryption not enabled?)")
+	}
+	if onLocked != nil {
+		if err := onLocked(); err != nil {
+			return nil, err
+		}
 	}
 	return key, nil
 }

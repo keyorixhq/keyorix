@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -185,8 +186,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := h.buildLoginResponse(r.Context(), session, user)
-	h.setSessionCookies(w, session)
+	resp, ok := h.completeLogin(w, r, session, user)
+	if !ok {
+		return
+	}
 
 	// Audit log + last-login stamp (both non-blocking)
 	ua := r.Header.Get(hdrUserAgent)
@@ -199,7 +202,15 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 // buildLoginResponse assembles the session-token + identity payload returned on a
 // successful login. Shared with the setup-token consume flow so that "landing the
 // user logged in" yields exactly the same shape a normal login does.
-func (h *AuthHandler) buildLoginResponse(ctx context.Context, session *models.Session, user *models.User) loginResponseBody {
+//
+// Resolving the identity (GetUserIdentity, which reads roles + permissions) is not
+// best-effort: a storage error here must fail closed, not hand back a session whose
+// grant is indistinguishable from a legitimately empty one (#2412 — a storage fault
+// on this authz-resolution read previously still produced HTTP 200 with a fully
+// live, fully functional session, same as a real zero-permission account, because the
+// error was silently swallowed). The caller (completeLogin) is responsible for
+// revoking the just-minted session when this returns an error.
+func (h *AuthHandler) buildLoginResponse(ctx context.Context, session *models.Session, user *models.User) (loginResponseBody, error) {
 	resp := loginResponseBody{
 		Token:       session.SessionToken,
 		UserID:      user.ID,
@@ -215,15 +226,39 @@ func (h *AuthHandler) buildLoginResponse(ctx context.Context, session *models.Se
 	if session.AbsoluteExpiresAt != nil {
 		resp.AbsoluteExpiresAt = session.AbsoluteExpiresAt.UTC().Format(time.RFC3339)
 	}
-	// Surface roles + permissions so the UI can gate nav/routes. Best-effort:
-	// a failure here must not block an otherwise-successful login.
-	if id, ierr := h.coreService.GetUserIdentity(ctx, user.ID); ierr == nil {
-		resp.Role, resp.Roles, resp.Permissions = id.Role, id.Roles, id.Permissions
+	// Surface roles + permissions so the UI can gate nav/routes.
+	id, ierr := h.coreService.GetUserIdentity(ctx, user.ID)
+	if ierr != nil {
+		return loginResponseBody{}, fmt.Errorf("resolve user identity: %w", ierr)
 	}
+	resp.Role, resp.Roles, resp.Permissions = id.Role, id.Roles, id.Permissions
 	// Flag an expired/required password change so the UI can route (ADR-025).
 	resp.AccountState = core.NormalizeAccountState(user.AccountState)
 	resp.PasswordChangeRequired = h.coreService.PasswordExpired(user) || core.AccountRestricted(user.AccountState)
-	return resp
+	return resp, nil
+}
+
+// completeLogin finishes a login-completion flow for an already-minted session:
+// it resolves the identity payload, sets the session cookies, and returns the
+// response body to hand to sendSuccess. On a buildLoginResponse failure (the
+// identity read errored) it fails closed instead of handing back a session — it
+// revokes the session it was about to issue and writes a generic 500, and returns
+// ok=false so the caller stops without setting cookies or logging the login as
+// successful. Shared by every HTTP handler that mints a session and reaches the
+// same response shape: Login, ConsumeSetup, VerifyMFA, FinishWebAuthnLogin, and
+// FinishWebAuthnPasswordlessLogin (#2412).
+func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, session *models.Session, user *models.User) (loginResponseBody, bool) {
+	resp, err := h.buildLoginResponse(r.Context(), session, user)
+	if err != nil {
+		log.Printf("completeLogin: %v; revoking session %d for user %d", err, session.ID, user.ID)
+		if rerr := h.coreService.Logout(r.Context(), session.SessionToken); rerr != nil {
+			log.Printf("completeLogin: failed to revoke session after identity resolution error: %v", rerr)
+		}
+		sendError(w, "Internal", "Login could not be completed. Please try again.", http.StatusInternalServerError, nil)
+		return loginResponseBody{}, false
+	}
+	h.setSessionCookies(w, session)
+	return resp, true
 }
 
 // ── Setup-token endpoints (ADR-028) ─────────────────────────────────────────────
@@ -325,8 +360,10 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := h.buildLoginResponse(r.Context(), result.Session, result.User)
-	h.setSessionCookies(w, result.Session)
+	resp, ok := h.completeLogin(w, r, result.Session, result.User)
+	if !ok {
+		return
+	}
 	goSafe(func() {
 		h.coreService.LogAuthLogin(context.Background(), result.User.ID, result.User.Username, ip, r.Header.Get(hdrUserAgent))
 	}) // #nosec G118

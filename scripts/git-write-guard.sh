@@ -243,8 +243,28 @@ if [ "$MODE" = "gate" ]; then
     esac
 fi
 
-lock="$(git_at rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/write-lock.json"
-[ -z "$lock" ] && exit 0
+# A separate `git clone` is a different .git entirely and is exempt by
+# design (see header) from BOTH the write-lock below and the worktree-only
+# rule further down -- those two checks exist for the ONE shared main
+# checkout this repo's sessions operate in, not for every repo anyone
+# happens to gate a git command against. Compare the git-common-dir this
+# command actually targets (git_at, honouring -C) against the hook's own
+# ambient git-common-dir (plain `git`, no -C -- this hook process always
+# launches from the one shared main checkout's root, so an unqualified
+# `git rev-parse` from here IS that checkout's own git-common-dir, in both
+# gate and session-start mode, since GIT_C is only ever populated inside
+# `[ "$MODE" = "gate" ]` above). Equal means the command targets the main
+# checkout or one of its worktrees (they share one .git, by git's own
+# design) -- not equal means an independent clone, which never consults
+# this lock at all.
+main_gc="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+target_gc="$(git_at rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+[ -z "$target_gc" ] && exit 0
+if [ -n "$main_gc" ] && [ "$target_gc" != "$main_gc" ]; then
+    exit 0
+fi
+
+lock="$target_gc/write-lock.json"
 
 now="$(date -u +%s)"
 other_sid=""

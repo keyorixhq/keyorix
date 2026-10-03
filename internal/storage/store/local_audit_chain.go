@@ -24,6 +24,7 @@ import (
 	mathrand "math/rand"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -159,15 +160,11 @@ func computeAuditEntryHash(e *models.AuditEvent, prevHash string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// LogAuditEvent appends an audit event, linking it into the tamper-evidence
-// hash chain (ADR-029). The read-chain-head + insert is serialized so the chain
-// stays well-formed under concurrent writers.
-func (ls *LocalStorage) LogAuditEvent(ctx context.Context, event *models.AuditEvent) error {
-	// #1650: detach from the caller's cancellation before the transaction below runs —
-	// see auditWriteContext's doc comment for the full rationale.
-	ctx, cancel := auditWriteContext(ctx)
-	defer cancel()
-
+// normalizeAuditEventForHash applies the two GORM-default round-trip fixes
+// (ActorType, Success) that must happen BEFORE hashing, on every write path —
+// factored out so the batched and direct paths can't drift out of sync on
+// this (SESSION-PERF, #2403 follow-up; previously inline in LogAuditEvent).
+func normalizeAuditEventForHash(event *models.AuditEvent) {
 	// Truncate to microseconds before both hashing and storage so the stored
 	// timestamp equals the hashed one on every backend (Postgres timestamptz is
 	// µs-precision; an un-truncated nanosecond time would not round-trip).
@@ -193,6 +190,49 @@ func (ls *LocalStorage) LogAuditEvent(ctx context.Context, event *models.AuditEv
 		t := true
 		event.Success = &t
 	}
+}
+
+// LogAuditEvent appends an audit event, linking it into the tamper-evidence
+// hash chain (ADR-029). See logAuditEventBatched/logAuditEventDirect for which
+// path actually runs.
+func (ls *LocalStorage) LogAuditEvent(ctx context.Context, event *models.AuditEvent) error {
+	return ls.logAuditEvent(ctx, event, nil)
+}
+
+// LogAuditEventWithAccessLog is LogAuditEvent plus a secret_access_logs row,
+// committed together in the SAME transaction/batch as the audit event
+// (SESSION-PERF, #2403 follow-up, item 3) — one fsync covers both rows, and
+// they succeed or fail as one unit. accessLog may be nil (equivalent to
+// LogAuditEvent); event may never be nil.
+func (ls *LocalStorage) LogAuditEventWithAccessLog(ctx context.Context, event *models.AuditEvent, accessLog *models.SecretAccessLog) error {
+	return ls.logAuditEvent(ctx, event, accessLog)
+}
+
+func (ls *LocalStorage) logAuditEvent(ctx context.Context, event *models.AuditEvent, accessLog *models.SecretAccessLog) error {
+	normalizeAuditEventForHash(event)
+	// ls.auditFlusher is nil on a transaction-scoped LocalStorage (see
+	// WithTransaction/RemoveGlobalAdminRoleGuarded's clone construction) --
+	// batching across to a DIFFERENT, independent transaction would break the
+	// atomicity the caller's own WithTransaction is relying on, so that case
+	// (unexercised by any real caller today, but kept correct defensively)
+	// falls back to the original per-call direct path, same as before this
+	// change. Every other caller (the common case -- the root LocalStorage)
+	// goes through the batching flusher.
+	if ls.auditFlusher == nil {
+		return ls.logAuditEventDirect(ctx, event, accessLog)
+	}
+	return ls.logAuditEventBatched(ctx, event, accessLog)
+}
+
+// logAuditEventDirect is LogAuditEvent's ORIGINAL body (pre-#2403-item-3):
+// one event (and, now, optionally one access-log row) per transaction, one
+// fsync per call, serialized by auditChainMu + a Postgres advisory lock. Used
+// only for the transaction-scoped fallback above.
+func (ls *LocalStorage) logAuditEventDirect(ctx context.Context, event *models.AuditEvent, accessLog *models.SecretAccessLog) error {
+	// #1650: detach from the caller's cancellation before the transaction below runs —
+	// see auditWriteContext's doc comment for the full rationale.
+	ctx, cancel := auditWriteContext(ctx)
+	defer cancel()
 
 	ls.auditChainMu.Lock()
 	defer ls.auditChainMu.Unlock()
@@ -238,9 +278,27 @@ func (ls *LocalStorage) LogAuditEvent(ctx context.Context, event *models.AuditEv
 				prev = auditGenesisHash
 			}
 
+			// Zero at the start of each attempt (coordinator review, #2420,
+			// item 4): a retried attempt reuses this same event/accessLog
+			// pointer, and a PRIOR attempt's tx.Create(event) may have
+			// already assigned event.ID before accessLog's Create failed
+			// and rolled the whole transaction back — without this reset,
+			// the retry's tx.Create(event) would run with that stale ID
+			// still set, turning an auto-assigned insert into an
+			// explicit-primary-key one.
+			event.ID = 0
+			if accessLog != nil {
+				accessLog.ID = 0
+			}
 			event.PrevHash = prev
 			event.EntryHash = computeAuditEntryHash(event, prev)
-			return tx.Create(event).Error
+			if err := tx.Create(event).Error; err != nil {
+				return err
+			}
+			if accessLog != nil {
+				return tx.Create(accessLog).Error
+			}
+			return nil
 		})
 		if txErr == nil || !isSQLiteBusyErr(txErr) {
 			return txErr
@@ -256,6 +314,306 @@ func (ls *LocalStorage) LogAuditEvent(ctx context.Context, event *models.AuditEv
 			delay = auditBusyRetryMaxDelay
 		}
 	}
+}
+
+// auditQueueCapacity bounds the batching flusher's pending-item channel
+// (SESSION-PERF, #2403 follow-up, item 3) — the fix for Phase 1's finding that
+// the OLD one-goroutine-per-audit-event design let the backlog of not-yet-
+// durable audit entries grow WITHOUT BOUND under load (measured: 918 of 935
+// live goroutines blocked on auditChainMu, 10s into a single-client run).
+// Once this channel is full, a submitter's send blocks (see submitAuditBatchItem)
+// until the flusher drains space — deliberate backpressure: a caller whose
+// audit entry can't be queued yet WAITS rather than piling up an unbounded,
+// not-yet-durable backlog in memory. Sized well above any single batch
+// (auditFlusherMaxBatch) so a burst can queue up without immediately blocking
+// senders, while still being a small, fixed, auditable bound.
+const auditQueueCapacity = 4096
+
+// auditFlusherMaxBatch bounds how many pending items one flusher iteration
+// commits together. Unbounded batching would let an extreme burst hold the
+// FIRST queued item's caller waiting indefinitely while the batch keeps
+// growing; this caps the wait any one submitter can experience to "however
+// long it takes to commit up to this many rows," not "however long the queue
+// keeps growing."
+const auditFlusherMaxBatch = 256
+
+// auditFlusherIdleTimeout is how long the flusher goroutine waits for a new
+// item before exiting (and un-marking itself as running, so the next
+// submission starts a fresh one). Keeps this goroutine from leaking forever
+// on a LocalStorage that stops being used (every test that creates one, and
+// any production instance after its last audit write) — short enough that a
+// test binary doesn't accumulate thousands of long-lived blocked goroutines
+// across a full suite run, long enough that a production server under
+// continuous load essentially never pays the restart cost (a new item almost
+// always arrives well within this window).
+const auditFlusherIdleTimeout = 200 * time.Millisecond
+
+// auditBatchItem is one pending LogAuditEvent/LogAuditEventWithAccessLog
+// submission, queued for the flusher goroutine to commit as part of a batch.
+type auditBatchItem struct {
+	event     *models.AuditEvent
+	accessLog *models.SecretAccessLog // nil if this submission has no access-log row
+	ctx       context.Context         // the (already-detached) context to run the eventual DB work under
+	done      chan error              // buffered(1); the flusher sends exactly once, always
+}
+
+// auditFlusherState is LocalStorage's audit-batching flusher. nil on a
+// transaction-scoped LocalStorage (see logAuditEvent's dispatch) — only the
+// root LocalStorage returned by NewLocalStorage ever has one.
+type auditFlusherState struct {
+	mu      sync.Mutex
+	queue   chan *auditBatchItem
+	running bool
+}
+
+// submitAuditBatchItem hands item to the flusher goroutine (starting one if
+// none is currently running) and blocks until item's batch commits,
+// returning that batch's error (nil on success). Uses ONLY item.ctx
+// (already detached from the caller's own cancellation by
+// logAuditEventBatched, via auditWriteContext) for BOTH the wait for a queue
+// slot and the wait for the result — never the original caller context.
+// This is required, not a stylistic choice: #1650's whole point is that a
+// client disconnecting (cancelling the inbound request's context) must never
+// turn "the mutation committed" into "committed with zero audit record" —
+// using the caller's own ctx here would make a cancelled caller abandon the
+// wait early and return ctx.Err() instead of the batch's real outcome, even
+// though the write itself (correctly) keeps going to completion underneath.
+// TestLogAuditEventImplementations_DetachFromCallerCancellation and
+// TestLogAuditEvent_SucceedsWithAlreadyCanceledCallerContext exist
+// specifically to catch this regression.
+func (ls *LocalStorage) submitAuditBatchItem(item *auditBatchItem) error {
+	af := ls.auditFlusher
+	af.mu.Lock()
+	if !af.running {
+		af.running = true
+		af.queue = make(chan *auditBatchItem, auditQueueCapacity)
+		go ls.runAuditFlusher(af)
+	}
+	queue := af.queue
+	af.mu.Unlock()
+
+	select {
+	case queue <- item:
+	case <-item.ctx.Done():
+		return item.ctx.Err()
+	}
+	select {
+	case err := <-item.done:
+		return err
+	case <-item.ctx.Done():
+		return item.ctx.Err()
+	}
+}
+
+// runAuditFlusher is the ONE goroutine (per currently-active run; see the
+// idle-exit below) that actually commits every batched audit append for this
+// LocalStorage — replacing the old design's one-goroutine-per-audit-event
+// fan-out with a single serialized writer that batches whatever is currently
+// pending into one transaction/one fsync, same as a human reviewer would
+// expect "group commit" to mean. Chain order within a batch is exactly the
+// order items are drained here — the SAME total-ordering guarantee
+// auditChainMu provided before (a single serialization point imposing SOME
+// total order on concurrent arrivals, not a claim about real-world causal
+// order, which neither design ever provided).
+func (ls *LocalStorage) runAuditFlusher(af *auditFlusherState) {
+	for {
+		var batch []*auditBatchItem
+		select {
+		case item := <-af.queue:
+			batch = append(batch, item)
+		case <-time.After(auditFlusherIdleTimeout):
+			af.mu.Lock()
+			// Re-check for a race: a submitter's queue<-item may have
+			// succeeded between this timeout firing and acquiring af.mu
+			// (submitAuditBatchItem reads af.queue, releases af.mu, THEN
+			// sends -- so a send racing this exit is always into the SAME
+			// channel this goroutine still owns, never a channel nobody is
+			// reading). If the queue is genuinely empty, mark not-running
+			// (under the same lock submitAuditBatchItem checks before
+			// deciding whether to start a new goroutine) and exit; the next
+			// submission starts a fresh flusher.
+			select {
+			case item := <-af.queue:
+				batch = append(batch, item)
+				af.mu.Unlock()
+			default:
+				af.running = false
+				af.mu.Unlock()
+				return
+			}
+		}
+		// Linger (SESSION-PERF, #2403/#2420 follow-up, coordinator-requested
+		// tuning): after the first item arrives, deliberately wait up to
+		// ls.auditFlusherLingerWindow for MORE items to arrive, instead of only
+		// ever draining whatever happened to already be buffered at this exact
+		// instant. The field defaults to 0 (preserving the original behavior
+		// exactly: a non-blocking drain, `default:` fires immediately, no
+		// deliberate wait) and is only ever nonzero if a deployment has
+		// explicitly set config.DatabaseConfig.AuditFlusherLingerWindow — see
+		// that field's doc comment, and PR #2420's body, for why 0 is the
+		// shipped default rather than a tuned nonzero value.
+		if ls.auditFlusherLingerWindow <= 0 {
+			for len(batch) < auditFlusherMaxBatch {
+				select {
+				case item := <-af.queue:
+					batch = append(batch, item)
+				default:
+					goto commit
+				}
+			}
+		} else {
+			lingerTimer := time.NewTimer(ls.auditFlusherLingerWindow)
+		lingerLoop:
+			for len(batch) < auditFlusherMaxBatch {
+				select {
+				case item := <-af.queue:
+					batch = append(batch, item)
+				case <-lingerTimer.C:
+					break lingerLoop
+				}
+			}
+			lingerTimer.Stop()
+		}
+	commit:
+		errs := ls.commitAuditBatch(batch)
+		for i, item := range batch {
+			item.done <- errs[i]
+		}
+	}
+}
+
+// commitBatchAttempt runs ONE transaction attempt for batch: reads the
+// current chain head, assigns/recomputes prev_hash+entry_hash for every
+// item in order, and inserts them all — one fsync for the whole attempt.
+//
+// Zeros each item's event/accessLog ID at the START of this attempt
+// (coordinator review, #2420, item 4): tx.Create assigns the DB-generated ID
+// onto the Go struct the moment that individual statement succeeds, which
+// can happen for an EARLIER item in this same loop before a LATER item's
+// Create fails and rolls the whole transaction back. Without this reset, a
+// retried attempt's tx.Create for that earlier item would run with the
+// stale ID already set from the rolled-back attempt, turning what should be
+// a fresh auto-assigned insert into an explicit-primary-key insert — wrong
+// on every backend, and on Postgres specifically a correctness hazard: that
+// stale ID may not even be the one the sequence would hand out next.
+func (ls *LocalStorage) commitBatchAttempt(ctx context.Context, batch []*auditBatchItem) error {
+	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if tx.Dialector.Name() == "postgres" {
+			if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(auditAdvisoryLockKey)).Error; err != nil {
+				return err
+			}
+		}
+		var head struct{ EntryHash string }
+		if err := tx.Model(&models.AuditEvent{}).
+			Select("entry_hash").
+			Order("id DESC").
+			Limit(1).
+			Scan(&head).Error; err != nil {
+			return err
+		}
+		prev := head.EntryHash
+		if prev == "" {
+			prev = auditGenesisHash
+		}
+		for _, item := range batch {
+			item.event.ID = 0
+			if item.accessLog != nil {
+				item.accessLog.ID = 0
+			}
+			item.event.PrevHash = prev
+			item.event.EntryHash = computeAuditEntryHash(item.event, prev)
+			if err := tx.Create(item.event).Error; err != nil {
+				return err
+			}
+			prev = item.event.EntryHash
+			if item.accessLog != nil {
+				if err := tx.Create(item.accessLog).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
+
+// commitBatchWithBusyRetry attempts batch repeatedly, retrying ONLY on a
+// transient SQLite busy error — identical backoff shape to
+// logAuditEventDirect's own retry loop (see its doc comment for the full
+// rationale: SQLite's busy handler makes no fairness guarantee, so a
+// transaction already in the queue can be repeatedly overtaken by new
+// arrivals). Returns nil on success, or the final error (a genuine
+// non-busy failure, or the last busy error if ctx expired first).
+func (ls *LocalStorage) commitBatchWithBusyRetry(ctx context.Context, batch []*auditBatchItem) error {
+	delay := auditBusyRetryBaseDelay
+	for {
+		err := ls.commitBatchAttempt(ctx, batch)
+		if err == nil || !isSQLiteBusyErr(err) {
+			return err
+		}
+		// #nosec G404 -- jitter for retry timing, not a security-sensitive value.
+		jittered := delay/2 + time.Duration(mathrand.Int63n(int64(delay/2+1)))
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(jittered):
+		}
+		if delay *= 2; delay > auditBusyRetryMaxDelay {
+			delay = auditBusyRetryMaxDelay
+		}
+	}
+}
+
+// commitAuditBatch commits every item in batch, preferring ONE transaction
+// for the whole batch — the group-commit fast path, one fsync for every
+// item, identical hashing/locking semantics to the old per-call path
+// (computeAuditEntryHash, the Postgres cross-process advisory lock, the
+// SQLite busy-retry loop). Returns one error per item, in the SAME order as
+// batch (nil = that item's event, and access-log row if any, committed).
+//
+// A GENUINE (non-busy) failure on a multi-item batch does NOT fail every
+// item in the batch (coordinator review, #2420, item 3: "one bad item must
+// not fail the batch"). It bisects instead, retrying each half
+// independently — a single poisoned item (e.g. one access-log row
+// violating a constraint) only ever fails itself, isolated down through
+// O(log n) extra transaction attempts, not the N-1 unrelated reads that
+// happened to share its batch window. Every surviving item still gets full
+// chain-linkage: each sub-batch attempt re-reads the CURRENT chain head
+// fresh from the table, so whichever sub-batch commits first (these all run
+// sequentially on the one flusher goroutine, never concurrently with each
+// other) correctly becomes the next sub-batch's starting point — the same
+// "some total order, not a causal-order claim" guarantee the single
+// un-split batch always provided.
+//
+// A batch that fails only because busy-retry exhausted its budget (ctx
+// expired under sustained contention) bisects the same way and every leaf
+// gets the same outcome (nothing committed, same error) — bisection doesn't
+// change that case's result, only adds a few harmless extra attempts.
+func (ls *LocalStorage) commitAuditBatch(batch []*auditBatchItem) []error {
+	ctx := batch[0].ctx // auditWriteContext-derived; every item's ctx carries the same fixed deadline shape
+	err := ls.commitBatchWithBusyRetry(ctx, batch)
+	recordAuditFlush(len(batch))
+	if err == nil {
+		return make([]error, len(batch))
+	}
+	if len(batch) == 1 {
+		return []error{err}
+	}
+	mid := len(batch) / 2
+	left := ls.commitAuditBatch(batch[:mid])
+	right := ls.commitAuditBatch(batch[mid:])
+	return append(left, right...)
+}
+
+// logAuditEventBatched queues event (and optionally accessLog) with the
+// flusher and waits for its batch to commit.
+func (ls *LocalStorage) logAuditEventBatched(ctx context.Context, event *models.AuditEvent, accessLog *models.SecretAccessLog) error {
+	// #1650: detach from the caller's cancellation before the eventual transaction
+	// runs — see auditWriteContext's doc comment. Applied once here (not per-caller)
+	// since every batched item shares this same derivation.
+	itemCtx, cancel := auditWriteContext(ctx)
+	defer cancel()
+	item := &auditBatchItem{event: event, accessLog: accessLog, ctx: itemCtx, done: make(chan error, 1)}
+	return ls.submitAuditBatchItem(item)
 }
 
 // VerifyAuditChain re-walks the hash chain by ascending id in bounded batches.

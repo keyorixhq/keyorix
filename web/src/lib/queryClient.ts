@@ -69,6 +69,7 @@ export const queryKeys = {
         details: () => [...queryKeys.secrets.all, 'detail'] as const,
         detail: (id: number) => [...queryKeys.secrets.details(), id] as const,
         versions: (id: number) => [...queryKeys.secrets.detail(id), 'versions'] as const,
+        value: (id: number) => [...queryKeys.secrets.detail(id), 'value'] as const,
     },
 
     // Sharing

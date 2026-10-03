@@ -242,7 +242,11 @@ carries forward the parts worth keeping without copy-pasting blindly:
   original implementation did. `vaultsource.Client.Walk` returns a second
   slice, `[]Skipped{Path, Reason}`, alongside the imported entries; `cmd/vault.go`
   turns each into a `plan.Item{Outcome: Skip}` that flows through the same
-  report as every other item.
+  report as every other item. The same rule covers a field with an empty (or
+  JSON `null`) value, a field with an empty name, and a leaf with no fields at
+  all (#2543): each is a `skip` with a reason (multi-field leaves report as
+  `path#field`), never absent from the report — and a `null` is never
+  stringified into a literal `"<nil>"` secret (`TestWalk_EmptyValuesAreReportedAsSkips`).
   **A correction found while building this, not merely designed:** the
   original implementation (and this repo's existing `internal/connect/vault.go`
   `GetSecret` doc comment and `cli/cmd/secret/source_vault.go`, neither of

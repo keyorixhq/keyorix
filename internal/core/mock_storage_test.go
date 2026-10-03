@@ -1306,6 +1306,11 @@ func (m *MockStorage) LogAuditEvent(ctx context.Context, event *models.AuditEven
 	return args.Error(0)
 }
 
+func (m *MockStorage) LogAuditEventWithAccessLog(ctx context.Context, event *models.AuditEvent, accessLog *models.SecretAccessLog) error {
+	args := m.Called(ctx, event, accessLog)
+	return args.Error(0)
+}
+
 func (m *MockStorage) CreateSecretAccessLog(ctx context.Context, log *models.SecretAccessLog) error {
 	args := m.Called(ctx, log)
 	return args.Error(0)
@@ -1964,6 +1969,14 @@ func (m *MockStorage) GetMachineIdentityCredentialByHash(ctx context.Context, ha
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*models.MachineIdentityCredential), args.Error(1)
+}
+
+func (m *MockStorage) GetMachineIdentityCredentialWithIdentityStateByHash(ctx context.Context, hash string) (*models.MachineIdentityCredential, string, error) {
+	args := m.Called(ctx, hash)
+	if args.Get(0) == nil {
+		return nil, args.String(1), args.Error(2)
+	}
+	return args.Get(0).(*models.MachineIdentityCredential), args.String(1), args.Error(2)
 }
 
 func (m *MockStorage) GetMachineIdentityCredentialByID(ctx context.Context, id uint) (*models.MachineIdentityCredential, error) {

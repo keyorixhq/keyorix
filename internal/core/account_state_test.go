@@ -164,22 +164,22 @@ func TestAdminAccountTransitions(t *testing.T) {
 			store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
 				return e.EventType == tc.event
 			})).Return(nil)
-			// A transition INTO a blocked or restricted state evicts the user's cached
-			// session tokens AND PAT hashes from the auth cache (#r125-H2:
-			// password_reset_required previously skipped PAT eviction). A transition TO
-			// plain active (reactivate) does not need this proactive sweep — see
-			// setAccountState's own doc comment and
+			// A transition INTO a blocked or restricted state EVICTS the user's cached
+			// session tokens AND PAT hashes from the auth cache, tombstoning them
+			// (#r125-H2: password_reset_required previously skipped PAT eviction). A
+			// transition TO plain active (reactivate) CLEARS instead of tombstoning —
+			// see setAccountState's own doc comment and
 			// TestReactivateUser_DoesNotTombstoneNeverCachedPAT
 			// (server/http/account_state_reactivation_cache_test.go) for the real
-			// auth-cache/DB divergence this scoping fixes: the sweep used to
-			// unconditionally write a negative cache tombstone for every hash it
-			// collected, including on reactivate, which spuriously rejected a PAT that
-			// was created while the account was suspended and had never been cached at
-			// all.
-			if AccountLoginBlocked(1, tc.wantState) || AccountRestricted(tc.wantState) {
-				store.On("ListSessionTokenHashesForUser", ctx, uint(2)).Return([]string{}, nil)
-				store.On("ListPersonalAccessTokensByUser", ctx, uint(2)).Return([]*models.PersonalAccessToken{}, nil)
-			}
+			// auth-cache/DB divergence that distinction fixes. #2402 (G5 follow-up):
+			// the collection step itself (listing session/PAT hashes to act on) runs
+			// for BOTH branches now — a stale negative cache entry left over from
+			// BEFORE the account went active must still be cleared on reactivate, so
+			// skipping collection there left that stale-tombstone bug open. Unlike the
+			// eviction/clear choice below, this mock expectation is unconditional for
+			// every case.
+			store.On("ListSessionTokenHashesForUser", ctx, uint(2)).Return([]string{}, nil)
+			store.On("ListPersonalAccessTokensByUser", ctx, uint(2)).Return([]*models.PersonalAccessToken{}, nil)
 			// A login-blocking transition (suspend) must purge the user's sessions AND PATs.
 			if AccountLoginBlocked(1, tc.wantState) {
 				store.On("DeleteSessionsForUserExcept", ctx, uint(2), uint(0)).Return(nil)

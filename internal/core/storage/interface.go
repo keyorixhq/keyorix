@@ -549,6 +549,20 @@ type Storage interface {
 	// Machine-token credentials (ADR-030) — opaque bearer tokens, hashed at rest.
 	CreateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) (*models.MachineIdentityCredential, error)
 	GetMachineIdentityCredentialByHash(ctx context.Context, hash string) (*models.MachineIdentityCredential, error)
+	// GetMachineIdentityCredentialWithIdentityStateByHash is
+	// GetMachineIdentityCredentialByHash plus the owning MachineIdentity's State,
+	// fetched in ONE query (a JOIN) instead of the two sequential round trips
+	// GetMachineIdentityCredentialByHash + GetMachineIdentity would otherwise cost
+	// every call (SESSION-PERF, #2403 follow-up). Returns only the identity's State,
+	// not the full MachineIdentity row: CurrentMachineTokenRestriction — the one
+	// caller this exists for — never needed anything else from it, and returning a
+	// single scalar (rather than hand-listing every MachineIdentity column to avoid
+	// a name collision with MachineIdentityCredential's own, e.g. both have `id`/
+	// `name`/`created_at`/`classification`) keeps this safe from column drift if
+	// either model gains fields later. identityState is "" if the identity row is
+	// somehow missing (the INNER JOIN would have excluded it; treat as not-found,
+	// same as today's sequential GetMachineIdentity failing).
+	GetMachineIdentityCredentialWithIdentityStateByHash(ctx context.Context, hash string) (cred *models.MachineIdentityCredential, identityState string, err error)
 	GetMachineIdentityCredentialByID(ctx context.Context, id uint) (*models.MachineIdentityCredential, error)
 	ListMachineIdentityCredentials(ctx context.Context, machineID uint) ([]*models.MachineIdentityCredential, error)
 	// ListActiveMachineIdentityCredentials returns every non-revoked machine
@@ -1240,6 +1254,12 @@ type Storage interface {
 
 	// Audit Logging
 	LogAuditEvent(ctx context.Context, event *models.AuditEvent) error
+	// LogAuditEventWithAccessLog is LogAuditEvent plus a secret_access_logs row,
+	// committed together as one atomic unit (SESSION-PERF, #2403 follow-up, item 3)
+	// — a caller that needs both (e.g. a secret read) gets them as one call
+	// instead of two separate writes that could succeed/fail independently.
+	// accessLog may be nil.
+	LogAuditEventWithAccessLog(ctx context.Context, event *models.AuditEvent, accessLog *models.SecretAccessLog) error
 	CreateSecretAccessLog(ctx context.Context, log *models.SecretAccessLog) error
 	ListSecretAccessLogs(ctx context.Context, secretID uint, since time.Time) ([]models.SecretAccessLog, error)
 	// CountSecretReadsBySecretIDs returns, for every secret in secretIDs with at

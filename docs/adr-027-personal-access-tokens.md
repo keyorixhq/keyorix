@@ -90,6 +90,9 @@ throttling applies to session `last_seen_at`.
 
 ## What this is not
 
-- Not service accounts (those remain admin-managed, see `service_accounts_handler.go`).
+- Not service accounts. **Update (ADR-113):** service accounts (`APIClient`/
+  `APIToken`, `service_accounts_handler.go`) were retired 2026-07-03 (#552) —
+  their tokens were never accepted by any authentication path — in favour of
+  machine identities (ADR-030). See ADR-113 for the full history.
 - ~~Not scoped/least-privilege tokens (deferred).~~ **Scoped tokens shipped in ADR-042.**
 - Not OAuth/OIDC tokens (separate M2 work).

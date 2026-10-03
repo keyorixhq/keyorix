@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // PATRestriction bounds what a request authenticated by a personal access token
@@ -313,6 +314,21 @@ func (c *KeyorixCore) AuthorizeSecretPrincipal(ctx context.Context, actorType st
 	secret, err := c.storage.GetSecret(ctx, secretID)
 	if err != nil {
 		return false, err
+	}
+	return c.AuthorizeSecretPrincipalForSecret(ctx, actorType, principalID, secret, permission)
+}
+
+// AuthorizeSecretPrincipalForSecret is AuthorizeSecretPrincipal for a caller that
+// has already resolved the secret (e.g. the route's own scoped-permission
+// middleware), skipping the redundant storage.GetSecret fetch
+// AuthorizeSecretPrincipal would otherwise do internally to compute the same
+// scope (SESSION-PERF, #2403 follow-up). Identical decision logic to
+// AuthorizeSecretPrincipal — that function now delegates to this one after its
+// own fetch, so there is exactly one authorization-decision code path, not two
+// to keep in sync.
+func (c *KeyorixCore) AuthorizeSecretPrincipalForSecret(ctx context.Context, actorType string, principalID uint, secret *models.SecretNode, permission string) (bool, error) {
+	if actorType != ActorTypeMachine {
+		return c.AuthorizeSecret(ctx, principalID, secret.ID, permission)
 	}
 	scope := Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
 	return c.AuthorizePrincipal(ctx, actorType, principalID, permission, scope)

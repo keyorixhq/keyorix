@@ -299,6 +299,30 @@ func TestDynamicSecrets_CreateConfig_RejectsUnknownEnvironment(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
+// TestDynamicSecrets_CreateConfig_EnvironmentIDZeroIsProjectWide proves
+// EnvironmentID: 0 -- the CLI's own --environment-id flag help text says
+// "0 = project-wide" -- actually succeeds, rather than being rejected with
+// "environment 0 not found". Before the fix, CreateDynamicSecretConfig called
+// GetEnvironment(ctx, req.EnvironmentID) unconditionally, even when
+// EnvironmentID was the project-wide sentinel 0 (no environment ever has
+// primary key 0), so every project-wide config create failed regardless of
+// project or actor. Found while writing scripts/e2e/journeys/journey7
+// (R4 spec #1): `dynamic-secret create` with no --environment-id always
+// returned HTTP 400.
+func TestDynamicSecrets_CreateConfig_EnvironmentIDZeroIsProjectWide(t *testing.T) {
+	t.Parallel()
+	c, _, _, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+
+	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "project-wide-cfg", ProjectID: 1, EnvironmentID: 0, BackendType: "postgres",
+		AdminDSN: adminDSNPlain, DefaultTTLSeconds: 3600, CreatedBy: "alice", ActorID: testAdminActorID,
+	})
+	require.NoError(t, err)
+	assert.EqualValues(t, 0, cfg.EnvironmentID)
+	assert.EqualValues(t, 1, cfg.ProjectID)
+}
+
 func TestDynamicSecrets_ConfigEncryptsAdminDSN(t *testing.T) {
 	t.Parallel()
 	c, _, _, _ := newDynamicTestCore(t)

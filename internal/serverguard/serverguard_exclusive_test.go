@@ -32,8 +32,38 @@ func TestSQLite_AcquireExclusive_ConflictsWithAnotherExclusive(t *testing.T) {
 	}
 	defer first.Release() //nolint:errcheck
 
-	if _, err := AcquireExclusive(cfg); err == nil {
+	_, err = AcquireExclusive(cfg)
+	if err == nil {
 		t.Fatal("expected a second concurrent AcquireExclusive to fail")
+	}
+	if !IsLockHeld(err) {
+		t.Fatalf("expected IsLockHeld(err) == true for a genuine lock conflict, got: %v", err)
+	}
+}
+
+// TestPostgres_AcquireExclusive_ConnectFailureIsNotLockHeld is the direct regression test for
+// #2362: a failure before presence could even be checked (bad credentials, unreachable host,
+// any connection-level error) must NOT be reported as IsLockHeld -- callers (server/admin's
+// acquireDatabaseLock) use that distinction to avoid claiming "a server is using this
+// database" when nothing was actually determined. No real Postgres server is needed: pointing
+// at an address nothing listens on reproduces a connection failure deterministically and
+// quickly (unlike an auth failure, which needs a real server -- see the pg-gated
+// TestPostgres_AcquireExclusive_AuthFailureIsNotLockHeld for that exact reported shape).
+func TestPostgres_AcquireExclusive_ConnectFailureIsNotLockHeld(t *testing.T) {
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			Type: "postgres",
+			Database: config.DatabaseConfig{
+				Host: "127.0.0.1", Port: "1", Name: "nonexistent", User: "nouser", SSLMode: "disable",
+			},
+		},
+	}
+	_, err := AcquireExclusive(cfg)
+	if err == nil {
+		t.Fatal("expected AcquireExclusive to fail against an unreachable Postgres host")
+	}
+	if IsLockHeld(err) {
+		t.Fatalf("expected IsLockHeld(err) == false for a connection failure, got true: %v", err)
 	}
 }
 

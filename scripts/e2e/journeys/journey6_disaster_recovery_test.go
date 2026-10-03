@@ -78,6 +78,17 @@ func TestJourney_DisasterRecovery(t *testing.T) {
 	runCLI(t, cliBin, aEnv, "machine", "token", "revoke", n1MachineName,
 		strconv.Itoa(n6RevokedTokenID), "--project", n1ProjectName, "--force")
 
+	// A third token for the SAME machine identity, issued BEFORE the backup
+	// and never revoked -- the positive control for the revoked-token check
+	// below. Issued here (not fresh after restore) so it actually proves a
+	// pre-existing credential survives backup/restore; a token minted AFTER
+	// restore would only prove that issuing NEW tokens still works
+	// post-restore, a weaker claim that doesn't exercise the restore path
+	// for this credential at all.
+	controlIssueOut := runCLI(t, cliBin, aEnv, "machine", "token", "issue", n1MachineName,
+		"--project", n1ProjectName, "--name", "n6-positive-control-token")
+	n6ControlToken, _ := parseIssuedToken(t, controlIssueOut)
+
 	// secret.read is logged via a DETACHED, fire-and-forget goroutine (see
 	// N3's own doc comment on this exact issue) -- wait for the count to
 	// settle before taking the reference total this journey compares the
@@ -186,6 +197,25 @@ func TestJourney_DisasterRecovery(t *testing.T) {
 
 	restoredToken := adminLogin(t, restored, "smoketestadmin", harness.BootstrapAdminPassword)
 
+	// Every t.Run below (through the negative cases at the end of this
+	// function) is ORDER-DEPENDENT, not an independent subtest: each one
+	// mutates shared state the next one relies on -- the two rollbacks in
+	// "restored secret has the same value..." advance the secret to v2,
+	// which the pre-rotation backup/boot-and-readback subtest and the
+	// post-rotation value/version checks both assert against;
+	// n6RevokedToken/n6ControlToken are issued once, before the backup, and
+	// read by the revoked-token subtest; preRotationBackupPath and
+	// ciphertextBefore are captured once, between the "restored" and KEK-
+	// rotation sections, for subtests that run later. Running a subset via
+	// `-run` (other than the whole TestJourney_DisasterRecovery) will fail
+	// on a precondition a skipped earlier subtest was supposed to establish
+	// -- this is expected, not a flake.
+	//
+	// restored.Close()/postRotate.Close() are each called explicitly below
+	// (restore/backup/verify-audit all need the database to themselves)
+	// AND via their own t.Cleanup registration -- calling Close twice is
+	// deliberate, not a bug: harness.Server.Close() discards any error from
+	// a second Kill()/Wait() on an already-exited process.
 	t.Run("restored secret has the same value and full version history as the source", func(t *testing.T) {
 		afterValue, afterVersions := secretValueAndCount(t, restored, restoredToken, seeded.SecretID)
 		if afterValue != beforeValue {
@@ -228,18 +258,16 @@ func TestJourney_DisasterRecovery(t *testing.T) {
 			t.Errorf("revoked machine token REST read after restore: want exactly %d, got %d", http.StatusUnauthorized, restEnv.StatusCode)
 		}
 
-		// Positive control: a FRESH, never-revoked token for the SAME
-		// machine identity must still succeed after restore -- without
-		// this, the denial above could just as easily mean the restored
-		// route/credentials wiring is broken generally, not that
-		// revocation specifically survived.
-		aEnv := adminEnv(restored, restoredToken)
-		issueOut := runCLI(t, cliBin, aEnv, "machine", "token", "issue", n1MachineName,
-			"--project", n1ProjectName, "--name", "n6-positive-control-token")
-		controlToken, _ := parseIssuedToken(t, issueOut)
-		controlEnv := machineEnv(restored, controlToken)
+		// Positive control: n6ControlToken was issued for the SAME machine
+		// identity BEFORE the backup and never revoked -- it must still
+		// succeed after restore. Without this, the denial above could just
+		// as easily mean the restored route/credentials wiring is broken
+		// generally, not that revocation specifically survived. Issued
+		// before backup (not fresh after restore), so this actually proves
+		// a pre-existing credential survives backup/restore.
+		controlEnv := machineEnv(restored, n6ControlToken)
 		if _, err := runCLIRaw(cliBin, controlEnv, "secret", "get", "--ref", seeded.ProjectRef); err != nil {
-			t.Errorf("positive control: a fresh, non-revoked token for the same machine identity was denied after restore -- restored credential wiring itself is broken, not just revocation")
+			t.Errorf("positive control: a pre-existing, non-revoked token for the same machine identity was denied after restore -- restored credential wiring itself is broken, not just revocation")
 		}
 	})
 
@@ -284,7 +312,26 @@ func TestJourney_DisasterRecovery(t *testing.T) {
 		// hasn't booted yet.
 		failedBoot := attemptBoot(t, serverBin, targetDir, targetEnv, targetPort)
 		defer failedBoot.Close()
-		if healthy := waitHealthyBounded(failedBoot, 5); healthy {
+
+		// A genuine decrypt failure exits the process fast -- wait for the
+		// REAL exit and assert it's non-zero, instead of only polling
+		// /health for an arbitrary window (the previous version of this
+		// check used a 5s bound here against WaitHealthy's 30s for a
+		// successful boot, an unexplained asymmetry: a slow-but-correct
+		// failure could have been indistinguishable from "didn't check long
+		// enough"). 10s is generous for a fail-fast decrypt error; unlike
+		// WaitHealthy's 30s, it is not trying to rule out a slow SUCCESSFUL
+		// boot, so it doesn't need to match that bound.
+		exitCode, exited := waitProcessExit(failedBoot, 10*time.Second)
+		if !exited {
+			t.Fatal("server process using the OLD passphrase after KEK rotation did not exit within 10s -- expected a fast decrypt-failure exit, not a hang")
+		}
+		if exitCode == 0 {
+			t.Error("server exited 0 using the OLD passphrase after KEK rotation -- should have failed non-zero")
+		}
+		// The process has already exited at this point, so this is a cheap
+		// confirmatory check, not the primary signal.
+		if healthy := waitHealthyBounded(failedBoot, 1); healthy {
 			t.Error("server reported healthy using the OLD passphrase after KEK rotation -- should have failed to start")
 		}
 		logBytes, _ := os.ReadFile(failedBoot.LogPath) // #nosec G304 -- this test's own harness-managed log path
@@ -321,12 +368,31 @@ func TestJourney_DisasterRecovery(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(preRotationTargetDir, "keyorix.yaml"), srcCfgRaw, 0o600); err != nil {
 			t.Fatalf("write config: %v", err)
 		}
-		harness.RewritePort(t, preRotationTargetDir, harness.FreeTCPPort(t))
+		preRotationPort := harness.FreeTCPPort(t)
+		harness.RewritePort(t, preRotationTargetDir, preRotationPort)
 		preRotationEnv := replaceHome(targetEnv, preRotationTargetDir) // targetEnv still carries the OLD passphrase
 		out, err := harness.RunAdminCmd(serverBin, preRotationTargetDir, preRotationEnv,
 			"restore", "--config", "./keyorix.yaml", "--input", preRotationBackupPath)
 		if err != nil {
 			t.Fatalf("restore of a pre-rotation backup under the OLD passphrase: %v\n%s", err, out)
+		}
+
+		// Boot it and read the secret back -- "restore reported success" on
+		// its own doesn't prove the restored data is actually usable;
+		// matches the same value/version-count shape the main "restored"
+		// subtest above asserts. At this point in the journey the secret is
+		// at v2 (n1ValueV2) after the two rollbacks in that earlier
+		// subtest, beforeVersions+2 versions total -- preRotationBackupPath
+		// was taken after both, right before rotate-kek.
+		preRotationServer := bootRestoredServer(t, serverBin, preRotationTargetDir, preRotationEnv, preRotationPort)
+		defer preRotationServer.Close()
+		preRotationToken := adminLogin(t, preRotationServer, "smoketestadmin", harness.BootstrapAdminPassword)
+		value, versions := secretValueAndCount(t, preRotationServer, preRotationToken, seeded.SecretID)
+		if value != n1ValueV2 {
+			t.Errorf("pre-rotation backup's restored secret value: mismatch (redacted; want-len=%d got-len=%d)", len(n1ValueV2), len(value))
+		}
+		if versions != beforeVersions+2 {
+			t.Errorf("pre-rotation backup's restored version count: want %d, got %d", beforeVersions+2, versions)
 		}
 	})
 
@@ -337,7 +403,21 @@ func TestJourney_DisasterRecovery(t *testing.T) {
 			mid := len(b) / 2
 			b[mid] ^= 0xFF
 		})
-		assertRestoreRefused(t, serverBin, targetEnv, srcCfgRaw, tamperedPath, "integrity check")
+		// Not "integrity check" specifically: the archive is gzip-compressed,
+		// so a single flipped byte in the COMPRESSED stream almost always
+		// desyncs DEFLATE decoding from that point on (confirmed live,
+		// deterministically, across repeated runs -- never once reached
+		// backup_v1_legacy.go's own per-entry size/checksum integrity
+		// check), surfacing as archive/tar's own "invalid tar header"
+		// instead. Both are genuine proof the corruption was caught and the
+		// restore refused -- this journey's actual claim -- just at
+		// different layers (gzip/tar framing vs. post-extract content
+		// checksum); which one fires depends on exactly where in the
+		// compressed stream the flipped byte lands. "archive" matches both
+		// messages (and matches the sibling "truncated archive" case below,
+		// which already asserts this same broader substring for the same
+		// reason).
+		assertRestoreRefused(t, serverBin, targetEnv, srcCfgRaw, tamperedPath, "archive")
 	})
 
 	t.Run("negative: truncated archive is refused", func(t *testing.T) {
@@ -363,11 +443,18 @@ func TestJourney_DisasterRecovery(t *testing.T) {
 			t.Fatalf("write config: %v", err)
 		}
 		harness.RewritePort(t, nonEmptyDir, harness.FreeTCPPort(t))
-		// A pre-existing, non-empty database file at the config's own path.
-		if err := os.WriteFile(filepath.Join(nonEmptyDir, "keyorix.db"), []byte("not empty"), 0o600); err != nil {
-			t.Fatalf("seed a non-empty target db: %v", err)
-		}
 		nonEmptyEnv := replaceHome(targetEnv, nonEmptyDir)
+
+		// A REAL prior restore makes the target genuinely non-empty -- a
+		// synthetic placeholder file here would only prove refuseNonEmpty-
+		// Existing's os.Stat(path).Size()>0 check, not that the guard fires
+		// against actual previously-restored data.
+		seedOut, seedErr := harness.RunAdminCmd(serverBin, nonEmptyDir, nonEmptyEnv,
+			"restore", "--config", "./keyorix.yaml", "--input", backupPath)
+		if seedErr != nil {
+			t.Fatalf("restore a real backup first (to make the target genuinely non-empty): %v\n%s", seedErr, seedOut)
+		}
+
 		out, err := harness.RunAdminCmd(serverBin, nonEmptyDir, nonEmptyEnv,
 			"restore", "--config", "./keyorix.yaml", "--input", backupPath)
 		if err == nil {
@@ -458,6 +545,35 @@ func waitHealthyBounded(s *harness.Server, seconds int) bool {
 	return false
 }
 
+// waitProcessExit waits up to timeout for s's subprocess to exit on its own,
+// returning its exit code and whether it exited within the deadline --
+// `exited=false` means it's still running (a hang, not a fast failure).
+// Used by the "old passphrase" negative case, which expects a genuine,
+// fast decrypt-failure exit, not merely "never became healthy" (which is
+// equally consistent with a hang). Waits via s.Exited() rather than calling
+// s.Cmd.Process.Wait() itself (the old approach): harness.startProcess
+// (#2459) now has its own background goroutine permanently blocked in
+// Wait() on this same process from the moment it starts, and os/exec
+// documents concurrent Wait() calls on one process as unsafe -- s.Exited()
+// is the one channel that goroutine closes once it has already reaped the
+// process, so this never races it. Safe to call even though the caller
+// also `defer`s s.Close(): Close() only Kills (never waits a second time)
+// once s.exited is already closed.
+func waitProcessExit(s *harness.Server, timeout time.Duration) (exitCode int, exited bool) {
+	if s.Cmd == nil || s.Cmd.Process == nil {
+		return 0, false
+	}
+	select {
+	case <-s.Exited():
+		if s.Cmd.ProcessState == nil {
+			return -1, true
+		}
+		return s.Cmd.ProcessState.ExitCode(), true
+	case <-time.After(timeout):
+		return 0, false
+	}
+}
+
 // secretValueAndCount reads a secret's current decrypted value (admin-only
 // include_value=true readback, same route journey1 uses) plus its version
 // count (secretVersionCount, journey1_app_gets_secret_test.go).
@@ -469,7 +585,10 @@ func secretValueAndCount(t *testing.T, s *harness.Server, adminToken string, sec
 		Value string `json:"value"`
 	}
 	if err := json.Unmarshal(env.Data, &data); err != nil {
-		t.Fatalf("decode secret readback: %v\nraw: %s", err, env.Data)
+		// Never echo env.Data here -- it's the include_value=true response
+		// body and carries the secret's PLAINTEXT value; only the decode
+		// error and the body's length are safe to print on failure.
+		t.Fatalf("decode secret readback: %v (body length %d)", err, len(env.Data))
 	}
 	return data.Value, secretVersionCount(t, s, adminToken, secID)
 }

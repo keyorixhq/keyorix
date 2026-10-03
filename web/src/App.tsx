@@ -64,12 +64,6 @@ const RolesPoliciesPage = React.lazy(() =>
     import('./pages/admin/RolesPoliciesPage').then((m) => ({ default: m.RolesPoliciesPage }))
 );
 const GroupsPage = React.lazy(() => import('./pages/admin/GroupsPage').then((m) => ({ default: m.GroupsPage })));
-const ServiceAccountsPage = React.lazy(() =>
-    import('./pages/admin/ServiceAccountsPage').then((m) => ({ default: m.ServiceAccountsPage }))
-);
-const APITokensPage = React.lazy(() =>
-    import('./pages/admin/APITokensPage').then((m) => ({ default: m.APITokensPage }))
-);
 const MachineIdentitiesPage = React.lazy(() =>
     import('./pages/admin/MachineIdentitiesPage').then((m) => ({ default: m.MachineIdentitiesPage }))
 );
@@ -104,6 +98,18 @@ const RoadmapPage = React.lazy(() => import('./pages/roadmap/RoadmapPage').then(
 const PageSpinner = () => (
     <div className="min-h-screen flex items-center justify-center">
         <Spinner size="lg" />
+    </div>
+);
+
+const NotFoundPage = () => (
+    <div className="py-20 flex items-center justify-center">
+        <div className="text-center">
+            <h1 className="text-4xl font-bold mb-4 text-[var(--text-primary)]">404</h1>
+            <p className="mb-4 text-[var(--text-secondary)]">Page not found</p>
+            <a href={ROUTES.DASHBOARD} className="text-[var(--accent)]">
+                Go to Dashboard
+            </a>
+        </div>
     </div>
 );
 
@@ -195,11 +201,14 @@ function App() {
                                                         </AdminRoute>
                                                     }
                                                 />
+                                                {/* Legacy service-account URLs: retired (see docs/adr-113-retire-legacy-service-accounts.md)
+                                                    in favour of machine identities -- redirect rather than 404 for anyone with
+                                                    an old bookmark/link. */}
                                                 <Route
                                                     path="/admin/service-accounts"
                                                     element={
                                                         <AdminRoute>
-                                                            <ServiceAccountsPage />
+                                                            <Navigate to="/admin/machine-identities" replace />
                                                         </AdminRoute>
                                                     }
                                                 />
@@ -207,7 +216,7 @@ function App() {
                                                     path="/admin/api-tokens"
                                                     element={
                                                         <AdminRoute>
-                                                            <APITokensPage />
+                                                            <Navigate to="/admin/machine-identities" replace />
                                                         </AdminRoute>
                                                     }
                                                 />
@@ -264,6 +273,13 @@ function App() {
                                                 <Route path={ROUTES.CONNECT} element={<KeyorixConnectPage />} />
                                                 <Route path={ROUTES.SDKS_CLI} element={<SdksPage />} />
                                                 <Route path={ROUTES.ROADMAP} element={<RoadmapPage />} />
+                                                {/* Catch all. It must live here, not as a top-level `*`
+                                                    sibling: this layout route's `/*` has the same splat
+                                                    score and is declared first, so a top-level `*` is never
+                                                    matched and an unknown URL rendered an empty Layout. An
+                                                    unauthenticated visitor still gets ProtectedRoute's
+                                                    redirect to /login before reaching this. */}
+                                                <Route path="*" element={<NotFoundPage />} />
                                             </Routes>
                                         </RouteErrorBoundary>
                                     </Layout>
@@ -275,22 +291,6 @@ function App() {
 
                     {/* Default redirect */}
                     <Route path={ROUTES.HOME} element={<Navigate to={ROUTES.DASHBOARD} replace />} />
-
-                    {/* Catch all */}
-                    <Route
-                        path="*"
-                        element={
-                            <div className="min-h-screen flex items-center justify-center bg-app">
-                                <div className="text-center">
-                                    <h1 className="text-4xl font-bold mb-4 text-[var(--text-primary)]">404</h1>
-                                    <p className="mb-4 text-[var(--text-secondary)]">Page not found</p>
-                                    <a href={ROUTES.DASHBOARD} className="text-[var(--accent)]">
-                                        Go to Dashboard
-                                    </a>
-                                </div>
-                            </div>
-                        }
-                    />
                 </Routes>
             </Suspense>
 

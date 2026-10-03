@@ -71,6 +71,7 @@ server:
     tls:
       enabled: false              # commonly terminated at a reverse proxy
       auto_cert: false            # ACME/autocert when true
+    tls_mode: ""                  # "" (default: TLS 1.2 floor, forward-secret AEAD only) | "strict" (TLS 1.3 only)
     ratelimit:
       enabled: true
       requests_per_second: 50
@@ -85,11 +86,23 @@ server:
     reflection_enabled: false     # keep false in production
     tls:
       enabled: false
+    tls_mode: ""                  # same two values as server.http.tls_mode above
     ratelimit:
       enabled: true
       requests_per_second: 25
       burst: 50
 ```
+
+**`tls_mode: strict`** (ADR-112 §3) switches a listener from the default TLS
+posture (1.2 floor, restricted to forward-secret AEAD cipher suites — see
+`tls.allowed_ciphers` above) to TLS 1.3 only, with no fallback to 1.2. The
+default itself is **not** an `insecure_` opt-out: NIST SP 800-52 Rev. 2
+requires servers to support both 1.2 and 1.3, BSI TR-02102-2 prefers 1.3
+while planning 1.2's phase-out, and OT/legacy clients still commonly need
+1.2 — `tls_mode: strict` is an explicit upgrade an operator opts INTO when
+every client can be required to speak 1.3. `tls.allowed_ciphers` has no
+effect under strict mode (TLS 1.3 negotiates its own, always-AEAD suite set)
+and logs a warning if both are set.
 
 ## storage
 
@@ -103,8 +116,19 @@ storage:
     # dsn: "host=db user=keyorix dbname=keyorix port=5432 sslmode=require"
     # password: ""                # prefer KEYORIX_DB_PASSWORD
     max_open_conns: 25
-    max_idle_conns: 5
+    max_idle_conns: 25  # match max_open_conns, or a connection gets closed instead of reused
     conn_max_lifetime_minutes: 30
+    # audit_flusher_linger_window: ""  # e.g. "1ms"; default "" (0, no deliberate
+    #   wait — the audit-chain batching flusher commits whatever is already
+    #   queued immediately, instead of waiting for more writers to join the
+    #   same batch). A nonzero window increases audit-commit throughput under
+    #   HIGH concurrency (c=50-class load) at the cost of added per-request
+    #   latency at LOW concurrency and, on Postgres specifically, a measured
+    #   throughput REGRESSION at MODERATE concurrency (c=10-class) — see
+    #   SESSION-PERF's PR #2420 for the full before/after data. Left at its
+    #   safe default; only set this if production
+    #   keyorix_audit_flusher_batch_size/_flushes_total metrics (exposed on
+    #   the server's /metrics endpoint) justify it for your own load shape.
 ```
 
 `type: remote` points the CLI at a Keyorix server over the API; see the remote

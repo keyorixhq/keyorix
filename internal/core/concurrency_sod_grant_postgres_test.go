@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"sync"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -97,25 +96,13 @@ func TestConcurrency_AssignUserRole_CrossReplicaPostgres_SoDBypass(t *testing.T)
 	dbB := pgOpen(t, dsn)
 	coreB := NewKeyorixCore(localstore.NewLocalStorage(dbB))
 
-	var wg sync.WaitGroup
-	start := make(chan struct{})
-	var errA, errB error
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		<-start
-		errA = coreA.AssignUserRole(ctx, bootRes.User.ID, target.ID, roleA.ID, Scope{}, false)
-	}()
-	go func() {
-		defer wg.Done()
-		<-start
-		errB = coreB.AssignUserRole(ctx, bootRes.User.ID, target.ID, roleB.ID, Scope{}, false)
-	}()
-	close(start)
-	wg.Wait()
+	res := raceReplicas(t,
+		func() error { return coreA.AssignUserRole(ctx, bootRes.User.ID, target.ID, roleA.ID, Scope{}, false) },
+		func() error { return coreB.AssignUserRole(ctx, bootRes.User.ID, target.ID, roleB.ID, Scope{}, false) },
+	)
 
-	t.Logf("grant A (roles.assign) result: %v", errA)
-	t.Logf("grant B (secrets.delete) result: %v", errB)
+	t.Logf("grant A (roles.assign) result: %v", res.ErrA)
+	t.Logf("grant B (secrets.delete) result: %v", res.ErrB)
 
 	// Verify from a fresh connection, independent of either racing replica.
 	verifierDB := pgOpen(t, dsn)
@@ -136,7 +123,7 @@ func TestConcurrency_AssignUserRole_CrossReplicaPostgres_SoDBypass(t *testing.T)
 	if hasA && hasB {
 		t.Errorf("SoD BYPASS CONFIRMED: target holds BOTH roleA (roles.assign) and roleB (secrets.delete) -- "+
 			"the toxic combination the preventive gate exists to block, granted by two racing replicas that each "+
-			"passed an individually-clean check (errA=%v errB=%v)", errA, errB)
+			"passed an individually-clean check (errA=%v errB=%v)", res.ErrA, res.ErrB)
 	}
 	// Positive assertion: exactly one grant may have landed live.
 	assert.False(t, hasA && hasB, "at most one of the two toxic-pair roles may be live on the target")

@@ -352,10 +352,22 @@ type ServerConfig struct {
 }
 
 type ServerInstanceConfig struct {
-	Enabled           bool            `yaml:"enabled"`
-	Port              string          `yaml:"port"`
-	ProtocolVersions  []string        `yaml:"protocol_versions"`
-	TLS               TLSConfig       `yaml:"tls"`
+	Enabled          bool      `yaml:"enabled"`
+	Port             string    `yaml:"port"`
+	ProtocolVersions []string  `yaml:"protocol_versions"`
+	TLS              TLSConfig `yaml:"tls"`
+	// TLSMode switches the TLS posture from the default (TLS 1.2 floor,
+	// restricted to the forward-secret AEAD suites in hardenedCipherSuites /
+	// tls.allowed_ciphers) to "strict": TLS 1.3 only, nothing below it ever
+	// accepted. ADR-112 §3 (decided 2026-10-02): TLS 1.2 with modern ciphers
+	// stays compliant, not an insecure_ opt-out — NIST SP 800-52 Rev. 2
+	// requires servers to support both 1.2 and 1.3, BSI TR-02102-2 prefers
+	// 1.3 while planning 1.2's phase-out, and OT/legacy clients still need
+	// 1.2 — so "strict" is an explicit UPGRADE an operator opts INTO, not a
+	// downgrade to warn about. Empty ("") = the default (1.2 floor); any
+	// other value is rejected at Validate() time. See applyTLSHardening
+	// (server/main.go, server/grpc/server.go) for where this is wired in.
+	TLSMode           string          `yaml:"tls_mode,omitempty"`
 	RateLimit         RateLimitConfig `yaml:"ratelimit"`
 	SwaggerEnabled    bool            `yaml:"swagger_enabled,omitempty"`
 	ReflectionEnabled bool            `yaml:"reflection_enabled,omitempty"`
@@ -521,11 +533,35 @@ type DatabaseConfig struct {
 	MaxOpenConns           int `yaml:"max_open_conns"`
 	MaxIdleConns           int `yaml:"max_idle_conns"`
 	ConnMaxLifetimeMinutes int `yaml:"conn_max_lifetime_minutes"`
+
+	// AuditFlusherLingerWindow (SESSION-PERF, #2420 follow-up) is how long the
+	// audit-chain batching flusher deliberately waits, after its first queued
+	// item, for more items to arrive before committing — a Go duration string
+	// (e.g. "1ms"), or empty/unset for the default. Default is "0" (no
+	// deliberate wait — drain whatever's already queued and commit
+	// immediately), NOT a tuned nonzero value: measurement across 0/0.5/1/2ms
+	// found every nonzero window pays a fixed ~5.5-7ms tax on a single-client
+	// read regardless of its nominal size, and on Postgres specifically any
+	// nonzero window regresses c=10 throughput even though it roughly doubles
+	// c=50 throughput (see PR #2420's body for the full data). Left
+	// configurable, rather than removed, so a deployment with real production
+	// batch-size telemetry (keyorix_audit_flusher_batch_size,
+	// keyorix_audit_flusher_flushes_total) justifying a nonzero value can set
+	// one without a code change.
+	AuditFlusherLingerWindow string `yaml:"audit_flusher_linger_window"`
 }
 
 // GetPassword returns the resolved DB password, preferring the environment variable.
 func (d *DatabaseConfig) GetPassword() string {
 	return resolveSecret("KEYORIX_DB_PASSWORD", d.Password)
+}
+
+// GetAuditFlusherLingerWindow returns the configured audit-flusher linger
+// window, defaulting to 0 (no deliberate wait) when unset or unparseable.
+// See AuditFlusherLingerWindow's doc comment for why 0, not a tuned nonzero
+// value, is the default.
+func (d *DatabaseConfig) GetAuditFlusherLingerWindow() time.Duration {
+	return parseDurationDefault(d.AuditFlusherLingerWindow, 0)
 }
 
 // BuildPostgresDSN returns a ready-to-use PostgreSQL DSN.
@@ -2062,6 +2098,12 @@ func LoadConfig() (*Config, error) {
 
 // Validate checks the configuration for required fields and correctness.
 func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppress go:S3776
+	if err := validateTLSMode("server.http.tls_mode", c.Server.HTTP.TLSMode); err != nil {
+		return err
+	}
+	if err := validateTLSMode("server.grpc.tls_mode", c.Server.GRPC.TLSMode); err != nil {
+		return err
+	}
 	if c.Server.HTTP.Enabled && c.Server.HTTP.Port == "" {
 		return fmt.Errorf("HTTP server is enabled but no port is specified")
 	}

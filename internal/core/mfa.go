@@ -110,7 +110,7 @@ func (c *KeyorixCore) BeginMFAEnrollment(ctx context.Context, userID uint) (otpa
 // factor and so accept a current TOTP code OR the password), activation happens
 // before MFA is enabled, so there is no pre-existing TOTP factor to check against —
 // the password is the only trustworthy re-proof available at this step.
-func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, password string) ([]string, error) {
+func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, password, keepSessionToken string) ([]string, error) {
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("user not found")
@@ -153,11 +153,26 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 	}); err != nil {
 		return nil, err
 	}
-	// Invalidate any sessions minted before MFA was enabled (and evict them from the auth
-	// cache), so a pre-enrolment session cannot outlive the security upgrade — even for
-	// the cache TTL (same hygiene as password change / suspend). Best-effort: enrolment
-	// must not fail on a session-cleanup error.
-	_ = c.deleteSessionsForUserAndEvict(ctx, userID, 0, "")
+	// Invalidate any OTHER sessions minted before MFA was enabled (and evict them from
+	// the auth cache), so a pre-enrolment session cannot outlive the security upgrade —
+	// even for the cache TTL (same hygiene as ChangePassword). The CALLING session is
+	// kept (resolved the same way ChangePassword does, via keepSessionToken): it just
+	// proved both the pending TOTP secret AND the account password, which is strictly
+	// more proof of the account holder than an ordinary session carries — revoking it
+	// too served no security purpose and instead immediately 401'd the very session
+	// that needs to render the just-returned recovery codes (the UI's own
+	// recovery-codes-status query refetch, triggered by this call's own success,
+	// would otherwise race this purge and force a global logout before the user ever
+	// sees them). Best-effort: enrolment must not fail on a session-cleanup error.
+	var keepID uint
+	var keepHash string
+	if keepSessionToken != "" {
+		if s, serr := c.storage.GetSession(ctx, keepSessionToken); serr == nil {
+			keepID = s.ID
+			keepHash = s.SessionToken
+		}
+	}
+	_ = c.deleteSessionsForUserAndEvict(ctx, userID, keepID, keepHash)
 	uid := userID
 	c.writeAuditEventFull(ctx, "mfa.activated", &uid, nil, nil, "", fmt.Sprintf("user %s activated MFA", user.Username))
 	return codes, nil
@@ -165,7 +180,7 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 
 // DisableMFA turns MFA off after verifying a current TOTP code OR the account
 // password, then clears the secret and all recovery codes.
-func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPassword string) error {
+func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPassword, keepSessionToken string) error {
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("user not found")
@@ -188,11 +203,23 @@ func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPasswor
 	}); err != nil {
 		return err
 	}
-	// Purge all sessions now that MFA is disabled — the security downgrade must not
-	// leave sessions that were minted under MFA enforcement still valid (symmetric
-	// with ActivateMFA's session purge on upgrade). Best-effort: disable must not
-	// fail on a cleanup error.
-	_ = c.deleteSessionsForUserAndEvict(ctx, userID, 0, "")
+	// Purge all OTHER sessions now that MFA is disabled — the security downgrade must
+	// not leave sessions that were minted under MFA enforcement still valid (symmetric
+	// with ActivateMFA's session purge on upgrade). The CALLING session is kept (same
+	// keepSessionToken resolution as ActivateMFA/ChangePassword): it just proved a
+	// current code or the account password via requireReauth above, and revoking it
+	// too only forces an immediate, surprising logout of the very request that just
+	// disabled MFA, with no security benefit over letting it continue normally.
+	// Best-effort: disable must not fail on a cleanup error.
+	var keepID uint
+	var keepHash string
+	if keepSessionToken != "" {
+		if s, serr := c.storage.GetSession(ctx, keepSessionToken); serr == nil {
+			keepID = s.ID
+			keepHash = s.SessionToken
+		}
+	}
+	_ = c.deleteSessionsForUserAndEvict(ctx, userID, keepID, keepHash)
 	uid := userID
 	c.writeAuditEventFull(ctx, "mfa.disabled", &uid, nil, nil, "", fmt.Sprintf("user %s disabled MFA", user.Username))
 	return nil

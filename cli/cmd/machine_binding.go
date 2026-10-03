@@ -1,4 +1,4 @@
-// machine_binding.go — `keyorix-next machine binding` — manage a machine identity's
+// machine_binding.go — `keyorix machine binding` — manage a machine identity's
 // OIDC federation bindings (ADR-031).
 package cmd
 

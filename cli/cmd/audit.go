@@ -371,9 +371,9 @@ func runAuditMigrateChain(_ *cobra.Command, _ []string) error {
 		fmt.Printf("  retention anchor row:   %d (re-signed with the migrated entry_hash)\n", out.AnchorRowID)
 	}
 	if out.DryRun {
-		fmt.Println("\nRun 'keyorix-next audit migrate-chain-encoding --confirm' to apply.")
+		fmt.Println("\nRun 'keyorix audit migrate-chain-encoding --confirm' to apply.")
 	} else {
-		fmt.Println("\nRun 'keyorix-next audit verify' to confirm the chain now verifies end to end.")
+		fmt.Println("\nRun 'keyorix audit verify' to confirm the chain now verifies end to end.")
 	}
 	return nil
 }

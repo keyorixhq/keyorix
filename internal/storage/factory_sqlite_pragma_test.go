@@ -11,8 +11,13 @@ import (
 
 // TestSQLitePragmas_EnabledOnFreshConnection pins #436/#465: the default
 // local-storage (SQLite) backend must open every connection with foreign-key
-// CONSTRAINT enforcement on, a non-zero busy_timeout, and WAL journal mode —
-// none of which SQLite enables by default. Goes through the REAL production
+// CONSTRAINT enforcement on, a non-zero busy_timeout, WAL journal mode, and
+// FULL synchronous durability — none of which SQLite enables by default
+// (synchronous actually defaults to FULL already at the SQLite-library level,
+// but this DSN didn't say so explicitly until SESSION-PERF 2026-10-02, so
+// nothing previously stopped a later change from weakening it; see
+// sqliteDSN's doc comment for why FULL, not NORMAL, is required — this
+// database carries the audit hash-chain). Goes through the REAL production
 // path (CreateStorage, the same call startHTTPServer/startGRPCServer make)
 // against a temp-FILE-backed database, not ":memory:" (some pragmas, notably
 // journal_mode=WAL, behave differently or are silently downgraded to a
@@ -52,6 +57,14 @@ func TestSQLitePragmas_EnabledOnFreshConnection(t *testing.T) {
 	var journalMode string
 	require.NoError(t, sqlDB.QueryRow("PRAGMA journal_mode").Scan(&journalMode))
 	require.Equal(t, "wal", journalMode, "journal_mode must be WAL so readers and a writer don't block each other (#465)")
+
+	var synchronous int
+	require.NoError(t, sqlDB.QueryRow("PRAGMA synchronous").Scan(&synchronous))
+	require.Equal(t, 2, synchronous,
+		"synchronous must be FULL (2), not NORMAL (1): this database carries the audit "+
+			"hash-chain, and NORMAL in WAL mode only fsyncs at checkpoint boundaries, not on "+
+			"every COMMIT, letting a committed audit entry be lost on an OS crash/power loss "+
+			"that occurs before the next checkpoint (SESSION-PERF, see sqliteDSN's doc comment)")
 }
 
 // TestSQLiteForeignKeyEnforcement_RejectsOrphanInsert proves the #436 fix has

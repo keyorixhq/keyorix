@@ -55,7 +55,8 @@ func TestGroupCRUDAudit(t *testing.T) {
 	n, _ = lastActor(EventGroupDeleted)
 	assert.Equal(t, int64(1), n)
 
-	require.NoError(t, c.RestoreGroup(ctx, 42, g.ID))
+	_, err = c.RestoreGroup(ctx, 42, g.ID)
+	require.NoError(t, err)
 	n, actor = lastActor(EventGroupRestored)
 	assert.Equal(t, int64(1), n)
 	require.NotNil(t, actor)

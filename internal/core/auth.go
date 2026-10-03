@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -186,8 +187,22 @@ func (c *KeyorixCore) mintSession(ctx context.Context, userID uint, userAgent, i
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 	// Bound concurrent sessions per user so unbounded logins can't grow the table or
-	// enlarge the credential-theft blast radius. Best-effort — never fail a login on it.
-	_ = c.storage.EnforceSessionLimit(ctx, userID, maxSessionsPerUser)
+	// enlarge the credential-theft blast radius. Best-effort — never fail a login on
+	// it. The discarded return error already made that best-effort; a PANIC here
+	// did not, since it propagates straight past this line and out through the
+	// transport's own panic-recovery wrapper as a 500 — misreporting an
+	// already-committed session (and, for the MFA-verify caller, an already-
+	// consumed TOTP step) as a failed login. Same shape as users.go's identical
+	// best-effort-call recover wrap (found live by FuzzStorageFaultOperations,
+	// server/faultops, docs/findings/2026-10-02-FINDING-mfa-verify-enforcesessionlimit-panic-masks-successful-login.md).
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("Warning: EnforceSessionLimit panicked for user %d (session %d already minted, best-effort limit not enforced this time): %v", userID, created.ID, r)
+			}
+		}()
+		_ = c.storage.EnforceSessionLimit(ctx, userID, maxSessionsPerUser)
+	}()
 	return created, nil
 }
 
@@ -216,10 +231,26 @@ func (c *KeyorixCore) RecordLogin(ctx context.Context, userID uint) error {
 var ErrSessionNotFound = errors.New("session not found")
 
 // Logout invalidates the session identified by token.
+//
+// #2337 fixed the double-logout case (a prior logout already deleted the session) by
+// mapping it to ErrSessionNotFound -> 401, but did so by collapsing EVERY GetSession
+// error into that same sentinel — a real storage failure (DB down, a timeout) got the
+// identical 401 "session not found" as an ordinary already-logged-out token, silently
+// swallowing a genuine server fault. storage.IsSessionNotFound (backed by
+// storage.ErrSessionNotFound, which GetSession now wraps ONLY for a genuine
+// gorm.ErrRecordNotFound — see local_auth.go's GetSession) distinguishes the two: a
+// definitive "no such session" still maps to ErrSessionNotFound (401, unchanged
+// caller-visible behavior), while any other error propagates as-is for the HTTP
+// handler's existing non-ErrSessionNotFound branch (500) to report — that branch
+// already existed and was already correct; it was simply unreachable for this
+// specific failure before now.
 func (c *KeyorixCore) Logout(ctx context.Context, token string) error {
 	session, err := c.storage.GetSession(ctx, token)
 	if err != nil {
-		return ErrSessionNotFound
+		if storage.IsSessionNotFound(err) {
+			return ErrSessionNotFound
+		}
+		return fmt.Errorf("logout: session lookup failed: %w", err)
 	}
 	return c.storage.DeleteSession(ctx, session.ID)
 }

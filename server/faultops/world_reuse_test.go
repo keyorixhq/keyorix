@@ -157,8 +157,11 @@ func newWorldCore(tb tbLite, faulty *faultstorage.FaultyStorage) *core.KeyorixCo
 	}
 	testCore.SetCredentialDelivery(deliverer, "https://fuzz-world.invalid")
 
+	// Session FI2: RPID/RPOrigins match newFaultWorld's identical change in
+	// world_test.go (see that comment for why "example.org" / "https://example.org",
+	// the W3C spec test vectors' own baked-in RP identity, replaced "localhost").
 	rp, err := webauthn.New(&webauthn.Config{
-		RPID: "localhost", RPDisplayName: "Keyorix", RPOrigins: []string{"https://localhost"},
+		RPID: "example.org", RPDisplayName: "Keyorix", RPOrigins: []string{"https://example.org"},
 	})
 	if err != nil {
 		tb.Fatalf("webauthn.New: %v", err)

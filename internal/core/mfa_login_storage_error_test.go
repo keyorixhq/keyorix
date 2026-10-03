@@ -52,7 +52,7 @@ func TestVerifyMFALogin_GetMFASecretErrorDoesNotFeedLockout(t *testing.T) {
 	// so reusing the same step would make the later "good code" check a replay.
 	actCode, err := totp.GenerateCode(secret, fixed.Add(-30*time.Second))
 	require.NoError(t, err)
-	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword)
+	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword, "")
 	require.NoError(t, err)
 
 	good, err := totp.GenerateCode(secret, fixed)

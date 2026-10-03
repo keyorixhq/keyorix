@@ -19,6 +19,45 @@ func TestTLSConfig_ResolveCipherSuites_DefaultWhenUnset(t *testing.T) {
 	assert.Equal(t, def, got)
 }
 
+// ADR-112 §3: server.http/grpc.tls_mode accepts only "" (default) or
+// "strict" — a typo must fail closed at startup, not silently fall back to
+// the TLS 1.2 default while the operator believes strict mode is active.
+func TestValidate_TLSMode(t *testing.T) {
+	cases := []struct {
+		name    string
+		mode    string
+		wantErr bool
+	}{
+		{"empty is the default", "", false},
+		{"strict is valid", TLSModeStrict, false},
+		{"Strict (wrong case) is rejected", "Strict", true},
+		{"tls13 is rejected", "tls13", true},
+		{"typo is rejected", "strcit", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, which := range []string{"http", "grpc"} {
+				cfg := &Config{}
+				cfg.Server.HTTP.Port = "8080"
+				cfg.Server.GRPC.Port = "9090"
+				cfg.Storage.Type = "local"
+				cfg.Storage.Database.Path = "./test.db"
+				if which == "http" {
+					cfg.Server.HTTP.TLSMode = tc.mode
+				} else {
+					cfg.Server.GRPC.TLSMode = tc.mode
+				}
+				err := cfg.Validate()
+				if tc.wantErr {
+					assert.Error(t, err, "%s.tls_mode=%q should be rejected", which, tc.mode)
+				} else {
+					assert.NoError(t, err, "%s.tls_mode=%q should be accepted", which, tc.mode)
+				}
+			}
+		})
+	}
+}
+
 // #333: a configured, valid TLS 1.2 AEAD suite list must be resolved to the matching
 // []uint16 IDs, in the order given, ignoring the caller's default entirely.
 func TestTLSConfig_ResolveCipherSuites_HonorsConfiguredCiphers(t *testing.T) {

@@ -40,6 +40,16 @@ func (s *failOnceCreateAccessRequestApprovalStorage) CreateAccessRequestApproval
 // revert only covered the LAST write's failure (UpdateAccessRequest's !ok
 // race), leaving a CreateAccessRequestApproval failure with the role granted,
 // zero approval record, and the request never flipping to approved.
+//
+// Extended (GH #2407, FuzzStorageFaultOperations REPLAY_HEX=4f002c3230303030):
+// the ORIGINAL compensating-revert fix (#2306) got the STATE right (this test
+// already proved that) but still left an extra "approval_race_reverted"
+// AuditEvent behind -- the operation's only observable effect for a request
+// that was told it failed, flagged by the fuzzer's oracle (a) as "reported an
+// ERROR but logical state changed anyway." Wrapping the grant, the approval
+// record, and the request update in one storage.WithTransaction (this PR)
+// closes that too: a reported failure now leaves ZERO new audit rows, not
+// just a consistent UserRole/AccessRequest/AccessRequestApproval state.
 func TestFinalizeAccessRequestApproval_ApprovalRecordFailureRevertsGrant(t *testing.T) {
 	t.Parallel()
 	c, st := newBootstrappedCore(t)
@@ -55,6 +65,10 @@ func TestFinalizeAccessRequestApproval_ApprovalRecordFailureRevertsGrant(t *test
 	})
 	require.NoError(t, err)
 
+	beforeLogs, beforeCount, berr := st.GetAuditLogs(ctx, &storage.AuditFilter{ProjectID: &proj.ID, PageSize: 1000})
+	require.NoError(t, berr)
+	_ = beforeLogs
+
 	armed := true
 	c.storage = &failOnceCreateAccessRequestApprovalStorage{Storage: st, armed: &armed}
 
@@ -62,6 +76,13 @@ func TestFinalizeAccessRequestApproval_ApprovalRecordFailureRevertsGrant(t *test
 	_, err = c.ApproveAccessRequestWithExpiry(ctx, proj.ID, req.ID, 1, 0, "project_viewer", time.Hour)
 	require.Error(t, err)
 	require.False(t, armed, "the injected fault must actually have fired")
+
+	_, afterCount, aerr2 := st.GetAuditLogs(ctx, &storage.AuditFilter{ProjectID: &proj.ID, PageSize: 1000})
+	require.NoError(t, aerr2)
+	assert.Equal(t, beforeCount, afterCount,
+		"a reported failure must leave ZERO new audit rows -- the atomic transaction rolls everything back, "+
+			"including the former compensating-revert's own 'approval_race_reverted' audit write, instead of "+
+			"leaving an extra row behind for an op that reported failure")
 
 	roles, rerr := st.GetUserRoleIDsAt(ctx, requester.ID, storage.Scope{ProjectID: proj.ID})
 	require.NoError(t, rerr)

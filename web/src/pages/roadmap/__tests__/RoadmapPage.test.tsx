@@ -70,9 +70,6 @@ describe('RoadmapPage', () => {
                 'Compliance mapping reports (NIS2, DORA, ISO 27001, SOC 2, DORA, ENS) with per-framework scores'
             )
         ).toBeInTheDocument();
-        expect(
-            screen.getByText('OIDC service account authentication UI for CI/CD (backend in progress)')
-        ).toBeInTheDocument();
         expect(screen.getByText('Project switcher in sidebar header')).toBeInTheDocument();
         expect(
             screen.getByText('Effective permissions panel and role legend in project Members tab')
@@ -86,9 +83,6 @@ describe('RoadmapPage', () => {
     it('renders every roadmap item for the In Progress quarter', () => {
         render(<RoadmapPage />);
 
-        expect(
-            screen.getByText('Standalone service-account management UI (machine identities ship per-project today)')
-        ).toBeInTheDocument();
         expect(
             screen.getByText(
                 'OIDC / Kubernetes-JWT federation backend — token-exchange endpoint (bindings + admin UI already shipped)'

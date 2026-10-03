@@ -61,12 +61,19 @@ func sessionPermissionProbe(c *core.KeyorixCore, token, permission string) int {
 // token's cache-hit path does NOT re-check the user's roles/permissions —
 // only account state and session liveness — so this genuinely depends on
 // removeUserRoleUnguarded's active evictUserSessionCache call.
-// InvalidateTokenCacheByHash evicts by writing a short-lived NEGATIVE
-// tombstone (server/middleware/auth.go), so the observed result is 401 (the
-// whole token is momentarily blacklisted for invalidTokenTTL) rather than a
-// 403 from a fresh per-request permission recheck — a blunter instrument
-// than the machine-token path, but the same outcome that matters here:
-// access with this token is denied immediately, not served stale.
+//
+// #2423: evictUserSessionCache now uses ClearTokenCacheIfCached (delete-
+// only-if-cached), not InvalidateTokenCacheByHash's negative tombstone —
+// the credential itself is still perfectly valid after a role removal, only
+// its PRIVILEGES changed, so writing a new negative tombstone would be wrong
+// (the exact bug FuzzAuthCacheDifferential/G5/#2402 found: a token that was
+// never cached yet got spuriously tombstoned). So the observed result here
+// is 403, a fresh per-request permission recheck that correctly sees the
+// role already gone — NOT 401 from a negative-cache hit. The outcome that
+// matters is still proven: access with this token is denied immediately
+// (the stale POSITIVE cache entry populated by the probe above is cleared,
+// not served for up to invalidTokenTTL), just via a fresh deny rather than a
+// blanket token-level tombstone.
 func TestGRPCRemoveRole_ReflectsInHTTPPermissionCheckImmediately(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	t.Cleanup(h.Cleanup)
@@ -105,8 +112,9 @@ func TestGRPCRemoveRole_ReflectsInHTTPPermissionCheckImmediately(t *testing.T) {
 
 	// Immediately (no sleep, no 30s wait): HTTP must deny it, not serve the
 	// stale positive cache entry that still carries the (now-revoked) grant.
-	// 401, not 403: eviction writes a negative tombstone for the whole token
-	// (see doc comment above), not a per-permission recheck.
-	assert.Equal(t, http.StatusUnauthorized, sessionPermissionProbe(h.CoreService, token, "secrets.read"),
+	// 403, not 401: eviction clears the stale positive entry (see doc comment
+	// above) so this is a fresh per-request permission recheck, not a
+	// negative-cache hit.
+	assert.Equal(t, http.StatusForbidden, sessionPermissionProbe(h.CoreService, token, "secrets.read"),
 		"a role removed via gRPC RemoveRole must be reflected by HTTP immediately, not served from the positive auth cache")
 }
