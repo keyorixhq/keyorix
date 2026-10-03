@@ -244,6 +244,20 @@ var opScopedBestEffortTables = []struct {
 }{
 	{op: "REST POST /api/v1/users/", method: "AssignRole", tables: []string{"UserRole"}},
 	{op: "REST POST /api/v1/users/", method: "GetRoleByName", tables: []string{"UserRole"}},
+	// REST POST /api/v1/auth/mfa/disable, DeleteSessionsForUserExcept:
+	// DisableMFA's own comment ("Best-effort: disable must not fail on a
+	// cleanup error.") explicitly discards deleteSessionsForUserAndEvict's
+	// error after MFA is already flipped off and the secret/recovery codes
+	// already deleted (internal/core/mfa.go, `_ =
+	// c.deleteSessionsForUserAndEvict(ctx, userID, 0, "")`) — the security
+	// downgrade purging sessions is the control; a purge failure here must
+	// not report an already-successful MFA disable as failed. Found live by
+	// FuzzStorageFaultOperations (this PR's own newly-wired op). Scoped to
+	// this op, not a blanket bestEffortTables entry keyed by method name,
+	// since DeleteSessionsForUserExcept IS load-bearing at other call sites
+	// (RevokeUserSessions propagates its error as "failed to revoke
+	// sessions").
+	{op: "REST POST /api/v1/auth/mfa/disable", method: "DeleteSessionsForUserExcept", tables: []string{"Session"}},
 	{
 		op: "REST POST /api/v1/projects", method: "WithTransaction", tables: []string{"Environment", "AuditEvent"},
 		minNthCall:          2,
@@ -713,16 +727,32 @@ func diffSubsetOf(diff, allowed []string) bool {
 // was tolerated here and is now fixed (#2381, merged, dropped by this PR's own
 // adcfe1a1) -- RoleGRPCService's post-commit roleByID read no longer masks a
 // successful CreateRole. No entry needed unless a new finding is filed.
+//
+// docs/findings/2026-10-02-FINDING-mfa-verify-enforcesessionlimit-panic-masks-successful-login.md
+// was tolerated here and is now fixed (#2416, merged, landed on main the same
+// day this PR was authored) -- mintSession's EnforceSessionLimit call now
+// recovers a panic the same way it already handled a returned error. The
+// fuzzer is now the regression test (see the committed seed
+// testdata/fuzz/FuzzStorageFaultOperations/mfa-verify-enforcesessionlimit-panic-2416,
+// re-encoded for this PR's opCatalog wiring since #2416's own merge commit
+// could not commit a working seed before that wiring existed); no entry
+// needed unless a new finding is filed.
 var knownOpenTolerances = []knownOpenTolerance{
 	// docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md
 	// (SESSION-FI, AT5): NOT a bug -- BulkRejectAccessRequests' unconditional
 	// summary audit event legitimately differs in content (X/Y counts) when
 	// the one requested item fails. Same shape onlyOutcomeLogTables already
 	// accepts unconditionally in the SUCCESS branch; the error-reporting
-	// `default:` branch has no equivalent exemption yet, and extending it
-	// needs its own validation, not bundled into this op's own fix.
+	// `default:` branch has no equivalent exemption yet (filed as #2549,
+	// alongside the stepup NOTE below -- a harness-oracle gap, not a product
+	// bug, needs a decision on whether to build a general exemption).
+	// Reproduced directly against this PR's rebased opCatalog: op="REST POST
+	// /api/v1/access-requests/bulk-reject" fault=(method=GetAccessRequest,
+	// NthCall=1, kind=error) -- oracle (a) VIOLATION, differing tables:
+	// [AuditEvent].
 	{
 		op: "REST POST /api/v1/access-requests/bulk-reject", method: "GetAccessRequest", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2549", expires: "2026-10-17",
 		findingDoc: "docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md",
 	},
 	// docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md
@@ -731,16 +761,20 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// attempt TOTP validation; on error the whole branch is skipped,
 	// collapsing into the SAME path a genuine wrong code takes --
 	// audited as mfa.failed AND counted toward the account lockout, for a
-	// correct code that was never actually checked. Fix is PR #2398, not yet
-	// merged -- keep tolerating until it lands.
+	// correct code that was never actually checked. Filed as #2548. Fix is PR
+	// #2398, not yet merged -- keep tolerating until it lands. Reproduced
+	// directly against this PR's rebased opCatalog: op="REST POST
+	// /auth/mfa/verify" fault=(method=GetMFASecret, NthCall=1, kind=error) --
+	// oracle (a) VIOLATION, differing tables: [AuditEvent LoginAttempt].
 	{
 		op: "REST POST /auth/mfa/verify", method: "GetMFASecret", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2548", expires: "2026-10-17",
 		findingDoc: "docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md",
 	},
-	// Second trigger for the same finding (found by CI on PR #2392, input
-	// 877139548d2805a6, committed under testdata/): VerifyMFACredentials'
-	// OWN GetUser call (line 270) fails closed correctly -- it returns before
-	// ever reaching loadTOTPSecret/recordFailedLogin -- but the HANDLER
+	// Second trigger for the same finding (#2548), reached through a
+	// structurally different call site: VerifyMFACredentials' OWN GetUser
+	// call fails closed correctly -- it returns before ever reaching
+	// loadTOTPSecret/recordFailedLogin -- but the HANDLER
 	// (server/http/handlers/mfa.go's VerifyMFA) already called
 	// reserveLoginAttempt (RecordFailedLogin by IP) UNCONDITIONALLY, before
 	// VerifyMFALogin even runs, as its own rate-limiting bookkeeping (F2,
@@ -757,35 +791,80 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// LoginAttempt would be a different, unexplained issue and must still
 	// fail. Fix is PR #2398 (second commit), not yet merged -- keep
 	// tolerating until it lands; #2398's own body says to remove this entry
-	// once both it and #2392 have merged.
+	// once both it and #2392 have merged. Reproduced directly against this
+	// PR's rebased opCatalog (the originally-committed seed, 877139548d2805a6,
+	// now decodes to an unrelated op post-rebase -- see
+	// mfa-verify-getuser-loginattempt-2548 below): op="REST POST
+	// /auth/mfa/verify" fault=(method=GetUser, NthCall=1, kind=error) --
+	// oracle (a) VIOLATION, differing tables: [LoginAttempt].
 	{
 		op: "REST POST /auth/mfa/verify", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2548", expires: "2026-10-17",
 		tables:     []string{"LoginAttempt"},
 		findingDoc: "docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md",
-	},
-	// docs/findings/2026-10-02-FINDING-mfa-verify-enforcesessionlimit-panic-masks-successful-login.md
-	// (SESSION-FI2, found extending this op's own fuzz coverage, out of
-	// OWNS, not fixed here): mintSession's EnforceSessionLimit call is
-	// best-effort against a RETURNED error (`_ = ...`) but has no recover()
-	// for a PANIC, so a panic there reports an already-successful TOTP
-	// verification + session mint as a failed login.
-	{
-		op: "REST POST /auth/mfa/verify", method: "EnforceSessionLimit", kind: faultstorage.KindPanic,
-		tables:     []string{"LoginAttempt", "Session", "MFASecret"},
-		findingDoc: "docs/findings/2026-10-02-FINDING-mfa-verify-enforcesessionlimit-panic-masks-successful-login.md",
 	},
 	// docs/findings/2026-10-02-NOTE-mfa-stepup-consume-first-grant-failure-reported-as-error.md
 	// (SESSION-FI2): NOT a bug -- VerifyMFAStepUp's own doc comment and
 	// TestVerifyMFAStepUp_GrantFailureAfterConsume_FailsClosed already prove
 	// this exact shape (TOTP step consumed, then CreateMFAStepUpGrant fails,
-	// reported as an error) is the intended fail-closed design. The oracle's
-	// default (error) branch has no "acceptable-by-design" exemption the
-	// success branch's bestEffortTables/opScopedBestEffortTables have; see
-	// the bulk-access-request NOTE above for the same deferred gap.
+	// reported as an error) is the intended fail-closed design. Same harness-
+	// oracle gap as the bulk-access-request NOTE above; filed together as
+	// #2549. Reproduced directly against this PR's rebased opCatalog:
+	// op="REST POST /api/v1/auth/mfa/stepup"
+	// fault=(method=CreateMFAStepUpGrant, NthCall=1, kind=error) -- oracle (a)
+	// VIOLATION, differing tables: [MFASecret].
 	{
 		op: "REST POST /api/v1/auth/mfa/stepup", method: "CreateMFAStepUpGrant", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2549", expires: "2026-10-17",
 		tables:     []string{"MFASecret"},
 		findingDoc: "docs/findings/2026-10-02-NOTE-mfa-stepup-consume-first-grant-failure-reported-as-error.md",
+	},
+	// Pre-existing, unrelated to this PR's own MFA-reauth changes -- found by
+	// a live 2-minute FuzzStorageFaultOperations run during this PR's rebase,
+	// confirmed to reproduce identically on unmodified origin/main. Filed as
+	// #2554; fix is PR #2560 (open) -- remove this entry once it merges.
+	// writeAccessLog (internal/core/audit.go) already discards a RETURNED
+	// error from CreateSecretAccessLog but has no recover() for a PANIC, so a
+	// panic there propagates past the classification update's already-
+	// committed SecretNode row and its own AuditEvent.
+	{
+		op: "REST PATCH /api/v1/secrets/{id}/classification", method: "CreateSecretAccessLog", kind: faultstorage.KindPanic,
+		nth: 1, oracle: "a", issue: "#2554", expires: "2026-10-17",
+		tables:     []string{"AuditEvent", "SecretNode"},
+		findingDoc: "#2554",
+	},
+	// Pre-existing, unrelated to this PR's own MFA-reauth changes -- found by
+	// a live 2-minute FuzzStorageFaultOperations run during this PR's rebase.
+	// Same root-cause family as #2548's second (wildcard) entry above: the
+	// WebAuthn login/finish handler (server/http/handlers/webauthn.go) calls
+	// reserveLoginAttempt UNCONDITIONALLY, before the real assertion
+	// verification runs, so a storage error on ListWebAuthnCredentials (the
+	// first call the verification path makes) fails closed correctly but
+	// still leaves a LoginAttempt row behind. Filed as #2565 (cross-links
+	// #2548 and #2398's own "CR3" note, since the root cause is shared across
+	// every reserveLoginAttempt call site, not MFA-specific).
+	{
+		op: "REST POST /auth/webauthn/login/finish", method: "ListWebAuthnCredentials", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2565", expires: "2026-10-17",
+		tables:     []string{"LoginAttempt"},
+		findingDoc: "#2565",
+	},
+	// Pre-existing, unrelated to this PR's own MFA-reauth changes (#2392 only
+	// newly wires /auth/mfa/verify into the fuzzer, it doesn't touch this code
+	// path) -- found by a live 2-minute FuzzStorageFaultOperations run during
+	// this PR's rebase. VerifyMFACredentials (internal/core/mfa.go) calls
+	// MarkTOTPStepUsed (consuming the TOTP step) BEFORE mintSession's own,
+	// independent CreateSession call; a CreateSession failure reports the
+	// whole verify as an error with the step already burned, so the caller
+	// cannot retry with the same correct code. Filed as #2567 (cross-links
+	// #2548 -- same "distinguish a storage hiccup from a confirmed negative
+	// result before a real-consequence side effect runs" shape, different
+	// specific mechanism).
+	{
+		op: "REST POST /auth/mfa/verify", method: "CreateSession", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2567", expires: "2026-10-17",
+		tables:     []string{"MFASecret", "LoginAttempt"},
+		findingDoc: "#2567",
 	},
 }
 
