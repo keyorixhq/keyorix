@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -849,6 +850,14 @@ func checkOracles(t *testing.T, in oracleInput) {
 					label, diff)
 				return
 			}
+			if bulkPartialFailureAccountsForDiff(in) {
+				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges from the reference only in %v, but this "+
+					"run's own before/after state is byte-for-byte unchanged and the response body's own "+
+					"\"failed\" array already reports this item as not deleted — this op's documented "+
+					"partial-success design (see bulkPartialFailureAccountsForDiff's doc comment), not an "+
+					"unreported business-state change", label, diff)
+				return
+			}
 			// Generalized AuditEvent-only case: every traced instance of
 			// "reported SUCCESS, only AuditEvent differs" has turned out to
 			// be benign audit-content degradation (a best-effort enrichment
@@ -931,6 +940,67 @@ func onlyOutcomeLogTables(diff []string) bool {
 		}
 	}
 	return true
+}
+
+// bulkPartialSuccessOps names ops whose success response body is
+// {"data":{"deleted":[ids],"failed":[{"secret_id":id,...}],"total":N}} —
+// BulkDeleteSecrets' own documented shape (internal/core/bulk_delete.go: "Partial
+// success is allowed — individual failures are collected in Failed"). A
+// per-item failure here is accurately reported in the body even though the
+// HTTP-level call still reports overall success — by this op's own design, not
+// a bug. Scoped to exactly this op for now: a sibling bulk op (bulk-rename,
+// bulk-rotate, extend-expiring) sharing the same partial-success shape would
+// need its own entry here, not inferred from this one (CLAUDE.md's "an
+// enumeration is only as complete as the idioms it knows about").
+var bulkPartialSuccessOps = map[string]bool{
+	"REST POST /api/v1/projects/{id}/secrets/bulk-delete": true,
+}
+
+// bulkPartialFailureAccountsForDiff reports whether in.op's response body
+// (in.result.Detail, "HTTP <code>: <json body>") shows EVERY requested item
+// failed (an empty "deleted" array, a non-empty "failed" array — the only
+// shape FuzzStorageFaultOperations' bulk-delete op, which always submits
+// exactly one secret_id, can currently produce) AND this run's final state is
+// BYTE-FOR-BYTE IDENTICAL to its own pre-fault snapshot (in.before == in.after).
+//
+// Deliberately NOT "diff confined to the tables a delete would touch" —
+// coordinator review caught that an earlier version of this check compared
+// against ONLY the fault-free reference run and accepted any diff limited to
+// {SecretNode, AuditEvent, SecretAccessLog}, which is too broad: it would wave
+// through a REAL bug where an audit event or access-log row gets written for
+// an item the body itself reports as failed (both runs would still show a
+// non-empty AuditEvent table, just with different content, and a table-name-
+// only diff can't tell those apart). Zero reported deletions means literally
+// nothing should have changed in the database during this call — the
+// strictest, most direct statement of "this item's effect never committed,
+// and the body correctly says so." Deliberately does NOT generalize to a true
+// mixed batch (some deleted, some failed): this fuzz op never exercises that
+// shape, so nothing here has been red/green-tested against it.
+func bulkPartialFailureAccountsForDiff(in oracleInput) bool {
+	if !bulkPartialSuccessOps[in.op] {
+		return false
+	}
+	detail := in.result.Detail
+	sep := strings.Index(detail, ": ")
+	if sep < 0 {
+		return false
+	}
+	var body struct {
+		Data struct {
+			Deleted []uint `json:"deleted"`
+			Failed  []struct {
+				SecretID uint   `json:"secret_id"`
+				Error    string `json:"error"`
+			} `json:"failed"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(detail[sep+2:]), &body); err != nil {
+		return false
+	}
+	if len(body.Data.Deleted) != 0 || len(body.Data.Failed) == 0 {
+		return false
+	}
+	return in.before.Hash == in.after.Hash
 }
 
 func diffTables(before, after dbSnapshot) []string {
