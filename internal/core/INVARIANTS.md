@@ -306,6 +306,21 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `internal/storage`, plus nightly on `main` — closing the gap where `ci.yml`'s own
   Postgres-backed "core" leg only runs on `push`/`merge_group`/`ci:full`-labeled PRs, not an
   ordinary PR.
+## Anomaly detection
+
+- **INV-CORE-41** The incremental anomaly sweep records exactly the alerts a full sweep over
+  every secret would: its candidate horizon is never narrower than the widest per-secret rule
+  look-back (`cumulativeRateHorizon`, 24h), and a failed candidate query falls back to the full
+  sweep rather than skipping secrets. Why: PERF-2 performance study (C-PERF-FIXES); the obvious
+  "only secrets touched since the last run" filter silently drops `cumulative_rate`. Guard:
+  `anomaly_incremental_test.go` (`TestRunDetection_IncrementalSweepDetectsSameAnomaliesAsFullSweep`
+  — every rule type, real SQLite storage; `TestRunDetection_CandidateQueryFailureFallsBackToFullSweep`).
+- **INV-CORE-42** No access log falls between two anomaly passes unexamined: a pass's scan
+  window extends back to the persisted high-water mark of the last fully-successful pass
+  (capped at `maxDetectionCatchUp`), and a pass with storage failures does not advance it. This
+  is what makes the deferred, jittered first pass after startup safe. Guard:
+  `anomaly_incremental_test.go:TestRunDetection_HighWaterMarkClosesTheGapBetweenPasses`;
+  scheduler side `server/anomaly_scheduler_start_test.go:TestAnomalyScheduler_FirstPassIsDeferred`.
 
 ## Fuzzer oracles exercising internal/core directly
 

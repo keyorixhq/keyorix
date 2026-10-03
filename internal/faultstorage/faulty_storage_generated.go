@@ -4943,6 +4943,23 @@ func (w *FaultyStorage) ListSecretDependenciesForProjectForUpdate(ctx context.Co
 	return w.real.ListSecretDependenciesForProjectForUpdate(ctx, projectID)
 }
 
+func (w *FaultyStorage) ListSecretIDsAccessedSince(ctx context.Context, since time.Time) ([]uint, error) {
+	fire, kind, injected := w.check("ListSecretIDsAccessedSince")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 []uint
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ListSecretIDsAccessedSince(ctx, since)
+			return rv1, injected
+		}
+	}
+	return w.real.ListSecretIDsAccessedSince(ctx, since)
+}
+
 func (w *FaultyStorage) ListSecretTemplates(ctx context.Context) ([]*models.SecretTemplate, error) {
 	fire, kind, injected := w.check("ListSecretTemplates")
 	if fire {
