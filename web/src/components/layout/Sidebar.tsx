@@ -97,8 +97,6 @@ const NAV: NavItem[] = [
             { kind: 'leaf', name: 'Users', href: '/admin/users' },
             { kind: 'leaf', name: 'Groups', href: '/admin/groups' },
             { kind: 'leaf', name: 'Roles & Policies', href: '/admin/roles' },
-            { kind: 'leaf', name: 'Service Accounts', href: '/admin/service-accounts' },
-            { kind: 'leaf', name: 'API Tokens', href: '/admin/api-tokens' },
             { kind: 'leaf', name: 'Machine Identities', href: '/admin/machine-identities' },
         ],
     },

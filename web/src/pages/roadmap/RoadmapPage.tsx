@@ -95,7 +95,6 @@ export const RoadmapPage: React.FC = () => (
                 'RBAC audit log UI with actor / date filters and CSV export',
                 'Role creation and management UI',
                 'Compliance mapping reports (NIS2, DORA, ISO 27001, SOC 2, DORA, ENS) with per-framework scores',
-                'OIDC service account authentication UI for CI/CD (backend in progress)',
                 'Project switcher in sidebar header',
                 'Effective permissions panel and role legend in project Members tab',
                 'Dynamic secrets (database credentials, cloud keys)',
@@ -109,7 +108,6 @@ export const RoadmapPage: React.FC = () => (
             quarter="In Progress"
             badge="in-progress"
             items={[
-                'Standalone service-account management UI (machine identities ship per-project today)',
                 'OIDC / Kubernetes-JWT federation backend — token-exchange endpoint (bindings + admin UI already shipped)',
             ]}
         />

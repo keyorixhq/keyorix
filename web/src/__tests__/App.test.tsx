@@ -36,10 +36,6 @@ vi.mock('../pages/billing/BillingPage', () => ({ BillingPage: () => <div>Billing
 vi.mock('../pages/admin/UserDetailPage', () => ({ UserDetailPage: () => <div>User Detail</div> }));
 vi.mock('../pages/admin/RolesPoliciesPage', () => ({ RolesPoliciesPage: () => <div>Roles Policies</div> }));
 vi.mock('../pages/admin/GroupsPage', () => ({ GroupsPage: () => <div>Groups Page</div> }));
-vi.mock('../pages/admin/ServiceAccountsPage', () => ({
-    ServiceAccountsPage: () => <div>Service Accounts</div>,
-}));
-vi.mock('../pages/admin/APITokensPage', () => ({ APITokensPage: () => <div>API Tokens</div> }));
 vi.mock('../pages/admin/MachineIdentitiesPage', () => ({
     MachineIdentitiesPage: () => <div>Machine Identities</div>,
 }));
@@ -200,8 +196,9 @@ describe('App', () => {
             ['/settings/encryption', 'Encryption & Keys'],
             ['/settings/license', 'License Page'],
             ['/admin/users/42', 'User Detail'],
-            ['/admin/service-accounts', 'Service Accounts'],
-            ['/admin/api-tokens', 'API Tokens'],
+            // Legacy URLs: must redirect to Machine Identities, not 404 or dead-end.
+            ['/admin/service-accounts', 'Machine Identities'],
+            ['/admin/api-tokens', 'Machine Identities'],
             ['/admin/machine-identities', 'Machine Identities'],
         ])('renders %s for an admin', async (path, expectedText) => {
             setAuth({ isAuthenticated: true, user: { role: 'admin' } });

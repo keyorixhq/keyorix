@@ -64,12 +64,6 @@ const RolesPoliciesPage = React.lazy(() =>
     import('./pages/admin/RolesPoliciesPage').then((m) => ({ default: m.RolesPoliciesPage }))
 );
 const GroupsPage = React.lazy(() => import('./pages/admin/GroupsPage').then((m) => ({ default: m.GroupsPage })));
-const ServiceAccountsPage = React.lazy(() =>
-    import('./pages/admin/ServiceAccountsPage').then((m) => ({ default: m.ServiceAccountsPage }))
-);
-const APITokensPage = React.lazy(() =>
-    import('./pages/admin/APITokensPage').then((m) => ({ default: m.APITokensPage }))
-);
 const MachineIdentitiesPage = React.lazy(() =>
     import('./pages/admin/MachineIdentitiesPage').then((m) => ({ default: m.MachineIdentitiesPage }))
 );
@@ -195,11 +189,14 @@ function App() {
                                                         </AdminRoute>
                                                     }
                                                 />
+                                                {/* Legacy service-account URLs: retired (see docs/adr-113-retire-legacy-service-accounts.md)
+                                                    in favour of machine identities -- redirect rather than 404 for anyone with
+                                                    an old bookmark/link. */}
                                                 <Route
                                                     path="/admin/service-accounts"
                                                     element={
                                                         <AdminRoute>
-                                                            <ServiceAccountsPage />
+                                                            <Navigate to="/admin/machine-identities" replace />
                                                         </AdminRoute>
                                                     }
                                                 />
@@ -207,7 +204,7 @@ function App() {
                                                     path="/admin/api-tokens"
                                                     element={
                                                         <AdminRoute>
-                                                            <APITokensPage />
+                                                            <Navigate to="/admin/machine-identities" replace />
                                                         </AdminRoute>
                                                     }
                                                 />
