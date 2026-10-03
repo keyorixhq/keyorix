@@ -1,4 +1,5 @@
 import { apiClient } from './client';
+import type { operations } from '../types/api-generated';
 
 export interface Project {
     id: number;
@@ -23,15 +24,13 @@ export interface ProjectEnvironment {
     deleted?: boolean;
 }
 
-export interface CreateProjectPayload {
-    name: string;
-    description?: string | undefined;
-}
-
-export interface UpdateProjectPayload {
-    name: string;
-    description?: string | undefined;
-}
+// Generated from openapi.yaml's createProject/updateProject requestBody
+// schemas (see package.json's generate:api-types) rather than hand-written,
+// so a required field the spec adds (or drops) is a TypeScript compile
+// error here, not a runtime 400 discovered later -- see
+// src/types/api-contract-checks.ts for the regression this guards against.
+export type CreateProjectPayload = operations['createProject']['requestBody']['content']['application/json'];
+export type UpdateProjectPayload = operations['updateProject']['requestBody']['content']['application/json'];
 
 export interface ProjectMember {
     userId: number;
