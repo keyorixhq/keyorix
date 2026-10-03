@@ -19,6 +19,19 @@ All notable changes to Keyorix are documented here. This project follows
   unaffected) and logs an equivalent warning. Set either key explicitly (to
   `true` once compliant, or `false` to opt out visibly) to silence the
   warning and get the key's exact pre-upgrade behavior back.
+- **The CLI now supports MFA enrolment and MFA-gated login end to end**:
+  `keyorix mfa enroll` (returns a TOTP secret/QR URI), `keyorix mfa activate
+  --code --password` (confirms enrolment, prints one-time recovery codes),
+  and `keyorix login --mfa-code` (completes the two-step login an
+  already-enrolled account now requires). Needed because `require_mfa`
+  defaulting on (above) otherwise leaves a fresh install's bootstrap admin
+  confined to the enrolment endpoints with no CLI-only way to enrol or to log
+  back in afterward — enabling MFA invalidates the pre-enrolment session, so
+  a second login is required, not optional. `scripts/smoke.sh` and the
+  release-qa scenarios now enrol MFA for their bootstrap admin the same way a
+  real operator would (`scripts/totpgen` stands in for an authenticator app
+  in non-interactive test harnesses only — never part of the shipped CLI or
+  server binaries).
 
 ## v0.95.3 — 2026-10-01
 

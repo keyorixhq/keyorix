@@ -20,6 +20,7 @@ var (
 	loginServerURL string
 	loginUsername  string
 	loginPassword  string
+	loginMFACode   string
 )
 
 var loginCmd = &cobra.Command{
@@ -35,6 +36,7 @@ func init() {
 	loginCmd.Flags().StringVar(&loginServerURL, "server", "", "Server base URL (or set KEYORIX_SERVER)")
 	loginCmd.Flags().StringVar(&loginUsername, "username", "", "Username")
 	loginCmd.Flags().StringVar(&loginPassword, "password", "", "Password (omit to be prompted)")
+	loginCmd.Flags().StringVar(&loginMFACode, "mfa-code", "", "TOTP or recovery code, for an MFA-enabled account (INSECURE on the command line -- omit to be prompted)")
 }
 
 func runLogin(cmd *cobra.Command, args []string) error {
@@ -70,10 +72,26 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("contact %s: %w", serverURL, err)
 	}
-	if loginResp.StatusCode() != http.StatusOK || loginResp.JSON200 == nil || loginResp.JSON200.Data == nil || loginResp.JSON200.Data.Token == nil {
+	if loginResp.StatusCode() != http.StatusOK || loginResp.JSON200 == nil || loginResp.JSON200.Data == nil {
 		return fmt.Errorf("login failed: HTTP %d", loginResp.StatusCode())
 	}
-	token := *loginResp.JSON200.Data.Token
+
+	data := loginResp.JSON200.Data
+	var token string
+	if data.MfaRequired != nil && *data.MfaRequired {
+		if data.MfaChallenge == nil {
+			return fmt.Errorf("login failed: server reported mfa_required with no challenge")
+		}
+		token, err = completeMFALogin(ctx, client, serverURL, *data.MfaChallenge)
+		if err != nil {
+			return err
+		}
+	} else {
+		if data.Token == nil {
+			return fmt.Errorf("login failed: server did not return a session token")
+		}
+		token = *data.Token
+	}
 
 	// Verify the token before persisting anything -- a bad/mistyped server URL that
 	// happens to accept the login POST but isn't really Keyorix should be caught here,
@@ -144,6 +162,39 @@ func resolveLoginPassword(cmd *cobra.Command) (string, error) {
 		return "", fmt.Errorf("read password: %w", err)
 	}
 	return p, nil
+}
+
+// completeMFALogin finishes a two-step login for an MFA-enabled account: resolves a
+// code (the --mfa-code flag, warned as insecure same as --password, or an interactive
+// prompt naming the challenge as TOTP-or-recovery) and calls POST /auth/mfa/verify.
+// ADR-112 item 1 flipped security.require_mfa on by default, so this is now the
+// common path for a fresh install's bootstrap admin, not an edge case.
+func completeMFALogin(ctx context.Context, client *apiclient.ClientWithResponses, serverURL, challenge string) (string, error) {
+	code := loginMFACode
+	if code != "" {
+		fmt.Fprintln(os.Stderr, "Warning: --mfa-code is visible in your shell history and to other processes on this machine (ps/proc) -- prefer the interactive prompt.")
+	} else {
+		c, err := promptLine("MFA required. Enter TOTP or recovery code: ")
+		if err != nil {
+			return "", fmt.Errorf("read MFA code: %w", err)
+		}
+		code = c
+	}
+	if code == "" {
+		return "", fmt.Errorf("MFA code is required")
+	}
+
+	verifyResp, err := client.MfaVerifyWithResponse(ctx, apiclient.MfaVerifyJSONRequestBody{
+		MfaChallenge: challenge,
+		Code:         code,
+	})
+	if err != nil {
+		return "", fmt.Errorf("contact %s: %w", serverURL, err)
+	}
+	if verifyResp.StatusCode() != http.StatusOK || verifyResp.JSON200 == nil || verifyResp.JSON200.Data == nil || verifyResp.JSON200.Data.Token == nil {
+		return "", fmt.Errorf("MFA verification failed: HTTP %d", verifyResp.StatusCode())
+	}
+	return *verifyResp.JSON200.Data.Token, nil
 }
 
 // offerOldServerURLMigration looks for a server URL left behind by the old,

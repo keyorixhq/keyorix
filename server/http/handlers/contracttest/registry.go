@@ -214,8 +214,13 @@ var schemaExemptOperations = map[string]bool{
 // its entry here too, or the coverage check will report a false failure
 // (loud, not silent -- an out-of-date entry here fails closed).
 var exercisingTests = map[string][]string{
-	"authGetSetupToken":             {"TestGetSetupToken_HappyPath_S11"},
-	"authLogin":                     {"TestLogin_HappyPath_S8"},
+	"authGetSetupToken": {"TestGetSetupToken_HappyPath_S11"},
+	"authLogin":         {"TestLogin_HappyPath_S8"},
+	// ADR-112 item 1 follow-up: CLI MFA enrolment/login --
+	// openapi_contract_adr112_mfa_test.go.
+	"mfaEnroll":                     {"TestContractADR112_MFAEnrollActivateVerify"},
+	"mfaActivate":                   {"TestContractADR112_MFAEnrollActivateVerify"},
+	"mfaVerify":                     {"TestContractADR112_MFAEnrollActivateVerify"},
 	"authRefresh":                   {"TestRefreshToken_ValidToken_S7"},
 	"healthCheck":                   {"TestHealthCheck"},
 	"getVersion":                    {"TestVersionHandler_ExposesOnlySkewFields"},

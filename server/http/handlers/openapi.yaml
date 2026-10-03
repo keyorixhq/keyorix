@@ -92,6 +92,55 @@ paths:
                       permissions: {type: array, items: {type: string}}
                       password_change_required: {type: boolean}
                       account_state: {type: string}
+                      mfa_required: {type: boolean, description: 'Password was correct; a second factor is required. token is absent when this is true -- complete POST /auth/mfa/verify with mfa_challenge instead.'}
+                      mfa_challenge: {type: string, description: Short-lived challenge token for POST /auth/mfa/verify}
+                      totp_available: {type: boolean, description: This account has a TOTP factor enrolled}
+                      webauthn_available: {type: boolean, description: This account has a WebAuthn/passkey factor enrolled}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '429': {$ref: '#/components/responses/Error'}
+  /auth/mfa/verify:
+    post:
+      tags: [Auth]
+      summary: Complete the two-step login after mfa_required
+      description: >-
+        Consume the mfa_challenge from POST /auth/login and complete login with a TOTP
+        (or recovery) code. Returns the same session shape as a direct /auth/login success.
+      operationId: mfaVerify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mfa_challenge, code]
+              properties:
+                mfa_challenge: {type: string}
+                code: {type: string, description: TOTP code or a recovery code}
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: object
+                    properties:
+                      token: {type: string, description: Session bearer token}
+                      expires_at: {type: string, format: date-time}
+                      absolute_expires_at: {type: string, format: date-time}
+                      user_id: {type: integer}
+                      username: {type: string}
+                      email: {type: string}
+                      display_name: {type: string}
+                      role: {type: string}
+                      roles: {type: array, items: {type: string}}
+                      permissions: {type: array, items: {type: string}}
+                      password_change_required: {type: boolean}
+                      account_state: {type: string}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '429': {$ref: '#/components/responses/Error'}
@@ -451,6 +500,72 @@ paths:
       responses:
         '204': {description: Token revoked}
         '404': {$ref: '#/components/responses/Error'}
+  /api/v1/auth/mfa/enroll:
+    post:
+      tags: [Auth]
+      summary: Begin TOTP MFA enrolment for the caller
+      description: >-
+        Generates a fresh TOTP secret and stores it pending (not yet active). Returns the
+        otpauth:// provisioning URI (for a QR code) and the base32 secret (manual entry).
+        Confirm with POST /api/v1/auth/mfa/activate. Blocked under impersonation.
+      operationId: mfaEnroll
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Pending enrolment created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: object
+                    properties:
+                      otpauth_uri: {type: string}
+                      secret: {type: string, description: 'Base32 TOTP secret, for manual entry'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/auth/mfa/activate:
+    post:
+      tags: [Auth]
+      summary: Confirm TOTP enrolment with a code, enabling MFA
+      description: >-
+        Verifies a TOTP code against the pending secret from mfa/enroll and the account
+        password (re-authentication -- a code alone does not prove the caller is the real
+        account holder, since anyone who called mfa/enroll knows a valid code for it).
+        On success, enables MFA and returns one-time-shown recovery codes. Blocked under
+        impersonation.
+      operationId: mfaActivate
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, password]
+              properties:
+                code: {type: string, description: TOTP code from the authenticator app}
+                password: {type: string, format: password}
+      responses:
+        '200':
+          description: MFA enabled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: object
+                    properties:
+                      recovery_codes:
+                        type: array
+                        items: {type: string}
+                        description: Single-use recovery codes, shown once -- save them now
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
   /api/v1/auth/mfa/stepup:
     post:
       tags: [Auth]

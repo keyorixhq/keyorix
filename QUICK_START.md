@@ -94,6 +94,29 @@ Stores the session token (and server URL) at the CLI's one credential-file
 location — see `keyorix status --help`. Every command below reads it from there;
 none of them take `--server` again.
 
+## Enrol MFA
+
+`security.require_mfa` defaults on (ADR-112): until the admin enrols a second
+factor, this session can only reach the enrolment endpoints — every command in
+"Use it" below returns `This deployment requires multi-factor authentication`.
+Enrol once, right after the first login:
+
+```bash
+./bin/keyorix mfa enroll        # prints an otpauth:// URI (QR) and a base32 secret
+./bin/keyorix mfa activate      # prompts for the code your authenticator app shows, then your password
+```
+
+Save the recovery codes `mfa activate` prints — they are shown once. Enabling
+MFA invalidates the session from the first `login` above, so log in again,
+this time with a code from the app:
+
+```bash
+./bin/keyorix login --server http://localhost:8080 \
+  --username admin --password 'Correct-Horse-Battery9' --mfa-code 123456
+```
+
+(Set `security.require_mfa: false` explicitly, visibly, to opt out instead.)
+
 ## Use it
 
 Secrets live in a project and an environment. `system init --server` already

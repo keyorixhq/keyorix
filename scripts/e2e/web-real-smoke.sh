@@ -70,7 +70,19 @@ echo "==> keyorix-server admin init"
 "$SERVER_BIN" admin init --config "$CONFIG_PATH" || fail "admin init exited non-zero"
 [ -f "$CONFIG_PATH" ] || fail "admin init did not create $CONFIG_PATH"
 sed -i.bak -E "s/port: \"8080\"/port: \"$SERVER_PORT\"/" "$CONFIG_PATH"
-rm -f "$CONFIG_PATH.bak"
+# ADR-112 item 1: security.require_mfa defaults on, so the bootstrap admin
+# would be confined to MFA-enrolment endpoints (EnforceMFAEnrollment) until
+# it enrols -- blocking every Playwright spec below. scripts/smoke.sh and
+# the release-qa scenarios enrol for real via the CLI's `mfa enroll`/
+# `mfa activate` (scripts/totpgen stands in for an authenticator app); this
+# script can't do the same yet because the web UI's own enrolment/login
+# pages are a SEPARATE, not-yet-merged change (#2465-#2467) -- there is no
+# "real web UI" MFA flow to drive here until those land. Opt out visibly
+# (not silently) until then; remove this line once the UI PRs merge.
+sed -i.bak2 -E "/^security:/a\\
+  require_mfa: false
+" "$CONFIG_PATH"
+rm -f "$CONFIG_PATH.bak" "$CONFIG_PATH.bak2"
 
 echo "==> keyorix-server admin encryption init"
 "$SERVER_BIN" admin encryption init --config "$CONFIG_PATH" || fail "admin encryption init exited non-zero"

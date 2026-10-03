@@ -30,6 +30,11 @@ var keptPaths = []string{
 	"/api/v1/version",
 	"/auth/login",
 	"/auth/logout",
+	// ADR-112 item 1 follow-up: require_mfa now defaults on, so the CLI needs a
+	// real enrolment + login path, not just mfa/stepup's already-enrolled case.
+	"/auth/mfa/verify",
+	"/api/v1/auth/mfa/enroll",
+	"/api/v1/auth/mfa/activate",
 	"/api/v1/auth/profile",
 	// Item 3b (RELEASE-BLOCKERS): `keyorix change-password`, so the J5
 	// lost-admin recovery flow (docs/operator/j5-lost-admin.md) needs no raw
