@@ -46,8 +46,8 @@ keys, database) is "keyorix-server admin init", a separate host-filesystem tool 
 network-only CLI does not run.
 
 Examples:
-  keyorix-next system init --server http://localhost:8080
-  keyorix-next system init --server https://vault.example.com \
+  keyorix system init --server http://localhost:8080
+  keyorix system init --server https://vault.example.com \
       --admin-username admin --admin-password secret --admin-email admin@example.com`,
 	SilenceUsage: true,
 	RunE:         runSystemInit,
@@ -109,7 +109,7 @@ func runSystemInit(cmd *cobra.Command, _ []string) error {
 
 	if d.AlreadyInitialized != nil && *d.AlreadyInitialized {
 		fmt.Fprintf(os.Stderr, "Server at %s is already initialised.\n", server)
-		fmt.Fprintf(os.Stderr, "Use \"keyorix-next login\" to authenticate.\n")
+		fmt.Fprintf(os.Stderr, "Use \"keyorix login\" to authenticate.\n")
 		return nil
 	}
 
@@ -132,8 +132,8 @@ func runSystemInit(cmd *cobra.Command, _ []string) error {
 	fmt.Printf("  +-- Environments: %s\n", envList)
 	fmt.Printf("  +-- Admin user: %s (change password after first login)\n", username)
 	fmt.Printf("\nNext steps:\n")
-	fmt.Printf("  keyorix-next login --server %s\n", server)
-	fmt.Printf("  keyorix-next secret create my-first-secret --value \"hello\"\n")
+	fmt.Printf("  keyorix login --server %s\n", server)
+	fmt.Printf("  keyorix secret create my-first-secret --value \"hello\"\n")
 	return nil
 }
 

@@ -36,10 +36,10 @@ var runCmd = &cobra.Command{
 	Long: `Fetch secrets for a project + environment, expose them as environment
 variables, then execute the supplied command.
 
-'keyorix-next run' does not inject anything by default -- pick exactly one:
+'keyorix run' does not inject anything by default -- pick exactly one:
 
   --var NAME=secret-ref   (recommended) YOU choose the env var name.
-    keyorix-next run --env production --var DATABASE_URL=db-password -- node app.js
+    keyorix run --env production --var DATABASE_URL=db-password -- node app.js
     Repeatable. Only the named secrets are injected, under the names you gave
     them -- a secret's own NAME never determines what env var it lands under.
 
@@ -75,7 +75,7 @@ func init() {
 
 func runRun(cmd *cobra.Command, args []string) error {
 	if len(runVarMappings) == 0 && !runDeriveNames {
-		return errors.New(`'keyorix-next run' does not inject secrets by default. Choose explicitly:
+		return errors.New(`'keyorix run' does not inject secrets by default. Choose explicitly:
   --var NAME=secret-ref   (recommended) inject one secret, YOU name the env var
   --derive-names          (deprecated) restore the old auto-derived behavior
 See https://github.com/keyorixhq/keyorix/issues/1816 for why`)
@@ -184,7 +184,7 @@ func fetchRunSecrets(ctx context.Context, client *apiclient.ClientWithResponses,
 		}
 		secrets := derefSecretListEntrySlice(listResp.JSON200.Data.Secrets)
 		if len(result)+len(secrets) > maxRunInjectedSecrets {
-			return nil, fmt.Errorf("project %q/environment %q has more than %d secrets -- 'keyorix-next run' injects every secret as an env var and refuses to continue past this cap; narrow the environment or use a different injection method", project, env, maxRunInjectedSecrets)
+			return nil, fmt.Errorf("project %q/environment %q has more than %d secrets -- 'keyorix run' injects every secret as an env var and refuses to continue past this cap; narrow the environment or use a different injection method", project, env, maxRunInjectedSecrets)
 		}
 		for _, s := range secrets {
 			id := derefInt(s.Id)
@@ -236,7 +236,7 @@ func toEnvKey(name string) string {
 func setEnvKey(result map[string]string, envKeySources map[string]string, name, value string) error {
 	key := toEnvKey(name)
 	if existing, ok := envKeySources[key]; ok && existing != name {
-		return fmt.Errorf("secrets %q and %q both sanitize to the same environment variable %q -- 'keyorix-next run' refuses to continue since one of them would silently be dropped from the child process's environment; rename one of the secrets to avoid the collision", existing, name, key)
+		return fmt.Errorf("secrets %q and %q both sanitize to the same environment variable %q -- 'keyorix run' refuses to continue since one of them would silently be dropped from the child process's environment; rename one of the secrets to avoid the collision", existing, name, key)
 	}
 	envKeySources[key] = name
 	result[key] = value
@@ -321,7 +321,7 @@ func resolveChildEnvVars(secretsByName map[string]string, varMappings []string, 
 				return nil, nil, fmt.Errorf("invalid --var %q: %q is not a valid environment variable name", mapping, envName)
 			}
 			if existingRef, ok := varSources[envName]; ok && existingRef != secretRef {
-				return nil, nil, fmt.Errorf("--var %s is assigned to two different secrets (%q and %q) -- 'keyorix-next run' refuses to continue since one mapping would silently be dropped; use --var only once per name", envName, existingRef, secretRef)
+				return nil, nil, fmt.Errorf("--var %s is assigned to two different secrets (%q and %q) -- 'keyorix run' refuses to continue since one mapping would silently be dropped; use --var only once per name", envName, existingRef, secretRef)
 			}
 			value, ok := secretsByName[secretRef]
 			if !ok {

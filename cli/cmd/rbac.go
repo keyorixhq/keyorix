@@ -68,7 +68,7 @@ func resolveRBACProjectIDByName(ctx context.Context, client *apiclient.ClientWit
 			return derefInt(p.Id), nil
 		}
 	}
-	return 0, fmt.Errorf("project %q not found — run 'keyorix-next project list' to see available projects", name)
+	return 0, fmt.Errorf("project %q not found — run 'keyorix project list' to see available projects", name)
 }
 
 // resolveRBACEnvironmentIDByName finds an environment's ID by name WITHIN a
@@ -134,7 +134,7 @@ func resolveRoleIDByName(ctx context.Context, client *apiclient.ClientWithRespon
 			return derefInt(r.Id), nil
 		}
 	}
-	return 0, fmt.Errorf("role %q not found — run 'keyorix-next rbac list-roles' to see available roles", name)
+	return 0, fmt.Errorf("role %q not found — run 'keyorix rbac list-roles' to see available roles", name)
 }
 
 // fetchUserRoles returns the roles assigned to a user via GET /api/v1/users/{id}/roles.

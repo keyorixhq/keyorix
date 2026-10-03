@@ -68,7 +68,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	if token != "" {
 		profileResp, err := client.GetAuthProfileWithResponse(ctx)
 		if err == nil && profileResp.StatusCode() == http.StatusUnauthorized {
-			fmt.Println("Warning: stored token was rejected by the server (HTTP 401) -- run \"keyorix-next login\" again")
+			fmt.Println("Warning: stored token was rejected by the server (HTTP 401) -- run \"keyorix login\" again")
 		}
 	}
 

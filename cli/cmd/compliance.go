@@ -303,7 +303,7 @@ unless --force is passed (a scheduled/CI evidence run reusing a fixed path needs
 				return err
 			}
 			if !out.Signed {
-				fmt.Println("Note: evidence signing is unavailable on the server (encryption disabled) — this pack cannot be authenticated with `keyorix-next compliance verify`.")
+				fmt.Println("Note: evidence signing is unavailable on the server (encryption disabled) — this pack cannot be authenticated with `keyorix compliance verify`.")
 				return nil
 			}
 			// The signature is bound to out.Filename (the server-assigned canonical
@@ -321,7 +321,7 @@ unless --force is passed (a scheduled/CI evidence run reusing a fixed path needs
 		}
 		_, _ = os.Stdout.Write(data)
 		if out.Signed {
-			fmt.Fprintln(os.Stderr, "Note: signature not persisted (no --output) — re-run with --output FILE to produce a pack `keyorix-next compliance verify` can check.")
+			fmt.Fprintln(os.Stderr, "Note: signature not persisted (no --output) — re-run with --output FILE to produce a pack `keyorix compliance verify` can check.")
 		}
 		return nil
 	},

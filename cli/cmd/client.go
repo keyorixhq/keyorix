@@ -43,9 +43,9 @@ func resolveServerAndToken(store *credstore.FileStore) (serverURL, token string,
 	}
 	if serverURL == "" {
 		if loadErr != nil {
-			return "", "", fmt.Errorf("no server configured: run \"keyorix-next login\" first, or set KEYORIX_SERVER (%w)", loadErr)
+			return "", "", fmt.Errorf("no server configured: run \"keyorix login\" first, or set KEYORIX_SERVER (%w)", loadErr)
 		}
-		return "", "", fmt.Errorf("no server configured: run \"keyorix-next login\" first, or set KEYORIX_SERVER")
+		return "", "", fmt.Errorf("no server configured: run \"keyorix login\" first, or set KEYORIX_SERVER")
 	}
 	return serverURL, token, nil
 }

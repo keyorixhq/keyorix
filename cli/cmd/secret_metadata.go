@@ -109,9 +109,9 @@ var secretTagsCmd = &cobra.Command{
 	Long: `Show a secret's tags, or replace them with --set.
 
 Examples:
-  keyorix-next secret tags --id 42                   # list the secret's tags
-  keyorix-next secret tags --id 42 --set prod,tier1  # replace the tag set
-  keyorix-next secret tags --id 42 --set ""          # clear all tags`,
+  keyorix secret tags --id 42                   # list the secret's tags
+  keyorix secret tags --id 42 --set prod,tier1  # replace the tag set
+  keyorix secret tags --id 42 --set ""          # clear all tags`,
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if secretTagsID == 0 {
@@ -185,9 +185,9 @@ var secretDescriptionCmd = &cobra.Command{
 	Long: `Show a secret's free-text note, or replace it with --set.
 
 Examples:
-  keyorix-next secret description --id 42                       # show the note
-  keyorix-next secret description --id 42 --set "prod DB; dba@" # set the note
-  keyorix-next secret description --id 42 --set ""              # clear it`,
+  keyorix secret description --id 42                       # show the note
+  keyorix secret description --id 42 --set "prod DB; dba@" # set the note
+  keyorix secret description --id 42 --set ""              # clear it`,
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if secretDescID == 0 {

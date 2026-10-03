@@ -189,8 +189,8 @@ func requireAirgapUpdates(reg *trust.KeyRegistry) error {
 		return nil
 	}
 	return fmt.Errorf("`bundle import` is a commercial feature (%q) and requires a valid license "+
-		"(current state: %s). Install one with `keyorix-next license install` and pass it via --license, "+
-		"or check `keyorix-next license status`. `bundle verify` remains available without a license",
+		"(current state: %s). Install one with `keyorix license install` and pass it via --license, "+
+		"or check `keyorix license status`. `bundle verify` remains available without a license",
 		licenseverify.FeatureAirgapUpdates, st.State)
 }
 
