@@ -86,13 +86,11 @@ Format: `INV-CLI-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `GIT_SSH_COMMAND`) before injecting secrets into a child process's environment — a secret
   named `LD_PRELOAD` must never reach the child unfiltered (code execution against anyone
   running `keyorix run`). Why: CLI-RUN-001/#1816 — this is the exact bug class the old CLI had.
-  **No test file exists for this at all** — grepped every symbol
-  (`isDangerousEnvKey`/`dropDangerousEnvKeys`/`resolveChildEnvVars`/`buildChildEnv`) across the
-  whole module; only `run.go` itself references them, no `run_test.go` exists in `cli/cmd`.
-  UNGUARDED (#issue, HIGH PRIORITY: add `cli/cmd/run_test.go` asserting a secret literally named
-  `LD_PRELOAD`/`DYLD_INSERT_LIBRARIES`/`IFS`/etc. is filtered from the child environment — this
-  is precisely the regression this module was rebuilt to prevent, and it currently has zero
-  machine-checked coverage).
+  An explicit `--var NAME=secret-ref` mapping onto one of these names is a deliberate operator
+  choice and is allowed (with a warning), unlike `--derive-names`. Guard:
+  `cli/cmd/run_env_filter_test.go` (`TestIsDangerousEnvKey_*`, `TestDropDangerousEnvKeys_*`
+  incl. `_RedProof`, `TestResolveChildEnvVars_DeriveNames_DropsReservedNames`,
+  `TestResolveChildEnvVars_VarMapping_AllowsReservedNameExplicitly`) (#2527).
 - **INV-CLI-12** The old embedded/local-mode secret-fetch path for `run` (which had zero auth
   check and zero audit event) was deliberately NOT ported to the new CLI — `run` is REST-only
   now. Not a gap — a documented security fix by omission.
