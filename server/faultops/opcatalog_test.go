@@ -590,6 +590,59 @@ const fuzzUserPassword = "Xk7#Qm2$Lp9@Vn4!"
 // current password (ChangePassword, UpdateProfile).
 const faultAdminPassword = "FaultFuzzAdmin123!"
 
+// faultAdminUserID looks up the bootstrapped admin's ID directly (newFaultWorld
+// never stores it on faultWorld itself -- every existing op either doesn't need
+// a raw ID, or derives one from an HTTP response instead).
+func faultAdminUserID(w *faultWorld) (uint, error) {
+	var u models.User
+	if err := w.db.Where("username = ?", "faultadmin").First(&u).Error; err != nil {
+		return 0, err
+	}
+	return u.ID, nil
+}
+
+// enrolMFADirect enrols the bootstrapped admin in TOTP MFA via the real HTTP
+// enroll endpoint (so the stored secret is genuinely encrypted by
+// BeginMFAEnrollment, identical to every other MFA op's Setup) but then flips
+// Activated/MFAEnabled directly via storage instead of spending a TOTP step
+// through the real /activate endpoint -- so the FIRST code Execute generates
+// for its own op is still a fresh, never-consumed step, exactly as it would be
+// for a real account that enabled MFA in a prior, unrelated session. Returns
+// the plaintext secret (as `any`, to match every op's Setup return shape).
+func enrolMFADirect(ctx context.Context, w *faultWorld) (any, error) {
+	if err := w.ensureEncryption(); err != nil {
+		return nil, fmt.Errorf("ensureEncryption: %w", err)
+	}
+	st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/auth/mfa/enroll", nil)
+	if err != nil {
+		return nil, err
+	}
+	if st/100 != 2 {
+		return nil, fmt.Errorf("EnrollMFA: HTTP %d: %s", st, body)
+	}
+	var enrolled struct {
+		Data struct {
+			Secret string `json:"secret"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &enrolled); err != nil || enrolled.Data.Secret == "" {
+		return nil, fmt.Errorf("decoding EnrollMFA response: %w (body=%s)", err, body)
+	}
+	userID, err := faultAdminUserID(w)
+	if err != nil {
+		return nil, fmt.Errorf("faultAdminUserID: %w", err)
+	}
+	if err := w.db.Model(&models.MFASecret{}).Where("user_id = ?", userID).
+		Update("activated", true).Error; err != nil {
+		return nil, fmt.Errorf("activating mfa_secrets row directly: %w", err)
+	}
+	if err := w.db.Model(&models.User{}).Where("id = ?", userID).
+		Update("mfa_enabled", true).Error; err != nil {
+		return nil, fmt.Errorf("setting users.mfa_enabled directly: %w", err)
+	}
+	return enrolled.Data.Secret, nil
+}
+
 // loginForFuzz logs in as username/password via the real /auth/login endpoint
 // and returns the resulting session token (the raw kx_session cookie value) —
 // setup for operations whose real caller must be a specific non-admin user
@@ -2906,6 +2959,24 @@ var opCatalog = []operation{
 	},
 	{
 		// secrets_bulk_delete.go's BulkDeleteSecrets — batch 17.
+		//
+		// SESSION-FI (AT5): this op's Setup requests exactly ONE secret_id, so
+		// the single item's outcome IS the operation's outcome for fault-
+		// injection purposes -- but BulkDeleteSecrets always replies HTTP 200
+		// with a per-item {deleted,failed,total} breakdown in the body (bulk
+		// ops report partial results inside a success envelope, by design;
+		// there is no non-2xx "some items failed" status). httpResult's plain
+		// status-code mapping can't see that, so a fault that correctly,
+		// safely denies THIS ONE item (e.g. an authz-resolution read erroring,
+		// which the real code already fails closed on — the item lands in
+		// "failed", never "deleted") still reported opResult.Success=true,
+		// tripping oracle (c) ("a fault on an authz-resolution read produced a
+		// SUCCESSFUL result") on a response that never actually deleted
+		// anything. Found live by FuzzStorageFaultOperations (fault=
+		// GetUserGroupRoleIDsAt#2/error): response body was
+		// {"failed":[{"secret_id":1,"error":"secret not found"}],"deleted":[]} —
+		// correctly denied, just misread by the harness as a bare HTTP 200
+		// success. Parse the body instead of trusting the status code alone.
 		Key: "REST POST /api/v1/projects/{id}/secrets/bulk-delete",
 		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
 			return createSecretForFuzz(ctx, w)
@@ -2917,6 +2988,20 @@ var opCatalog = []operation{
 			})
 			if err != nil {
 				return opResult{}, err
+			}
+			if st/100 == 2 {
+				var parsed struct {
+					Data struct {
+						Deleted []uint `json:"deleted"`
+						Failed  []struct {
+							SecretID uint   `json:"secret_id"`
+							Error    string `json:"error"`
+						} `json:"failed"`
+					} `json:"data"`
+				}
+				if jerr := json.Unmarshal(body, &parsed); jerr == nil && len(parsed.Data.Failed) > 0 && len(parsed.Data.Deleted) == 0 {
+					return opResult{Success: false, Detail: fmt.Sprintf("HTTP %d (bulk-delete item failed): %s", st, body)}, nil
+				}
 			}
 			return httpResult(st, body), nil
 		},
@@ -2935,6 +3020,22 @@ var opCatalog = []operation{
 			if err != nil {
 				return opResult{}, err
 			}
+			// SESSION-FI (AT5): same per-item-vs-envelope gap fixed on the
+			// bulk-delete sibling above — BulkRenameSecrets always returns
+			// HTTP 200 with a renamed/skipped count, so a fault that
+			// correctly, safely skips THIS SINGLE requested rename must not
+			// be read as Success=true. Fixed proactively (not yet
+			// independently fuzzer-triggered) per "check fix siblings."
+			if st/100 == 2 {
+				var parsed struct {
+					Data struct {
+						Renamed int `json:"renamed"`
+					} `json:"data"`
+				}
+				if jerr := json.Unmarshal(body, &parsed); jerr == nil && parsed.Data.Renamed == 0 {
+					return opResult{Success: false, Detail: fmt.Sprintf("HTTP %d (bulk-rename item not renamed): %s", st, body)}, nil
+				}
+			}
 			return httpResult(st, body), nil
 		},
 	},
@@ -2946,6 +3047,25 @@ var opCatalog = []operation{
 			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/secrets/bulk-rotate", map[string]any{})
 			if err != nil {
 				return opResult{}, err
+			}
+			// SESSION-FI (AT5): same per-item-vs-envelope gap fixed on the
+			// bulk-delete sibling above — only flag a failure when something
+			// was actually attempted and every attempt failed (Total==0, no
+			// matching secrets at all, is a legitimate identical no-op in
+			// both the reference and faulted worlds, not a violation).
+			if st/100 == 2 {
+				var parsed struct {
+					Data struct {
+						Triggered []uint `json:"triggered"`
+						Failed    []struct {
+							SecretID uint   `json:"secret_id"`
+							Error    string `json:"error"`
+						} `json:"failed"`
+					} `json:"data"`
+				}
+				if jerr := json.Unmarshal(body, &parsed); jerr == nil && len(parsed.Data.Failed) > 0 && len(parsed.Data.Triggered) == 0 {
+					return opResult{Success: false, Detail: fmt.Sprintf("HTTP %d (bulk-rotate item failed): %s", st, body)}, nil
+				}
 			}
 			return httpResult(st, body), nil
 		},
@@ -3952,9 +4072,25 @@ var opCatalog = []operation{
 	},
 	{
 		// bulk_access_requests.go's BulkApproveAccessRequests — batch 18.
+		//
+		// SESSION-FI (AT5): ResolveAccessRequest's own "cannot approve their
+		// own" guard (see batch 15's op above) applies here too -- Setup must
+		// create the request as a non-admin user, not the admin that Execute
+		// approves as, or every approval attempt fails every time (confirmed:
+		// TestOpCatalog_SucceedsWithNoFaultArmed only caught this once the
+		// bulk-op per-item result fix below started actually checking the
+		// per-item outcome instead of trusting the HTTP envelope's
+		// unconditional 200).
 		Key: "REST POST /api/v1/access-requests/bulk-approve",
 		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
-			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/projects/1/access-requests", map[string]any{
+			if _, err := createUserForFuzz(ctx, w, "fuzz-b18-bulk-approve-requester"); err != nil {
+				return nil, err
+			}
+			token, err := loginForFuzz(ctx, w, "fuzz-b18-bulk-approve-requester", fuzzUserPassword)
+			if err != nil {
+				return nil, err
+			}
+			st, body, err := httpJSONAs(ctx, w, token, http.MethodPost, "/api/v1/projects/1/access-requests", map[string]any{
 				"suggested_role": "viewer", "reason": "fuzz bulk approve",
 			})
 			if err != nil {
@@ -3982,6 +4118,29 @@ var opCatalog = []operation{
 			})
 			if err != nil {
 				return opResult{}, err
+			}
+			// SESSION-FI (AT5): same per-item-vs-envelope gap fixed on the
+			// bulk-reject sibling above — BulkApproveAccessRequests always
+			// returns HTTP 200 with an {approved,failed} breakdown, so a fault
+			// that correctly, safely denies THIS SINGLE requested item (lands
+			// in "failed", never "approved") must not be read as Success=true.
+			// Fixed proactively here (not yet independently fuzzer-triggered)
+			// per "check fix siblings, not just original site."
+			if st/100 == 2 {
+				var parsed struct {
+					Data struct {
+						Result struct {
+							Approved []uint `json:"approved"`
+							Failed   []struct {
+								RequestID uint   `json:"request_id"`
+								Error     string `json:"error"`
+							} `json:"failed"`
+						} `json:"result"`
+					} `json:"data"`
+				}
+				if jerr := json.Unmarshal(body, &parsed); jerr == nil && len(parsed.Data.Result.Failed) > 0 && len(parsed.Data.Result.Approved) == 0 {
+					return opResult{Success: false, Detail: fmt.Sprintf("HTTP %d (bulk-approve item failed): %s", st, body)}, nil
+				}
 			}
 			return httpResult(st, body), nil
 		},
@@ -4018,6 +4177,34 @@ var opCatalog = []operation{
 			})
 			if err != nil {
 				return opResult{}, err
+			}
+			// SESSION-FI (AT5): same per-item-vs-envelope gap as the
+			// bulk-delete-secrets op above — BulkRejectAccessRequests always
+			// returns HTTP 200 with a {rejected,failed} breakdown, even when
+			// THIS SINGLE requested item correctly, safely failed (an authz-
+			// resolution fault inside RejectAccessRequest denies it, landing
+			// in "failed", never "rejected"). Found live by
+			// FuzzStorageFaultOperations (fault=GetAccessRequest#1/error):
+			// AccessRequest staying pending / no notification sent / the
+			// bulk_reject_attempted audit message saying "0 rejected" are all
+			// the correct, honest consequences of that one denial, not a
+			// partial commit — but httpResult's status-code-only mapping read
+			// the 200 envelope as Success=true regardless.
+			if st/100 == 2 {
+				var parsed struct {
+					Data struct {
+						Result struct {
+							Rejected []uint `json:"rejected"`
+							Failed   []struct {
+								RequestID uint   `json:"request_id"`
+								Error     string `json:"error"`
+							} `json:"failed"`
+						} `json:"result"`
+					} `json:"data"`
+				}
+				if jerr := json.Unmarshal(body, &parsed); jerr == nil && len(parsed.Data.Result.Failed) > 0 && len(parsed.Data.Result.Rejected) == 0 {
+					return opResult{Success: false, Detail: fmt.Sprintf("HTTP %d (bulk-reject item failed): %s", st, body)}, nil
+				}
 			}
 			return httpResult(st, body), nil
 		},
@@ -5270,6 +5457,110 @@ var opCatalog = []operation{
 			}
 			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/auth/mfa/activate", map[string]any{
 				"code": code, "password": faultAdminPassword,
+			})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// Coverage batch 26 (Session FI, AT5): disable/recovery-regenerate/stepup/
+		// verify were left StatusPending after batch 25 found requireReauth's
+		// MarkTOTPStepUsed watermark makes a SECOND TOTP proof impossible within
+		// one iteration if the first was spent going through the real HTTP
+		// enroll+activate round trip (activate's own code consumes step 0).
+		// Unblocked here by NOT calling /activate at all: enrolMFADirect enrols
+		// via the real HTTP endpoint (so the secret is genuinely encrypted by
+		// BeginMFAEnrollment, same as every other MFA op) but flips
+		// Activated/MFAEnabled directly in storage instead of spending a TOTP
+		// step through /activate — so step 0 is still completely unspent when
+		// Execute generates its own code for THIS op, exactly mirroring how a
+		// real account that enabled MFA in a previous, unrelated session would
+		// present to any of these four routes.
+		Key: "REST POST /api/v1/auth/mfa/disable",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return enrolMFADirect(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			secret := state.(string)
+			code, err := totp.GenerateCode(secret, time.Now())
+			if err != nil {
+				return opResult{}, fmt.Errorf("totp.GenerateCode: %w", err)
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/auth/mfa/disable", map[string]any{"code": code})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST POST /api/v1/auth/mfa/recovery-codes/regenerate",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return enrolMFADirect(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			secret := state.(string)
+			code, err := totp.GenerateCode(secret, time.Now())
+			if err != nil {
+				return opResult{}, fmt.Errorf("totp.GenerateCode: %w", err)
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/auth/mfa/recovery-codes/regenerate", map[string]any{"code": code})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		Key: "REST POST /api/v1/auth/mfa/stepup",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			return enrolMFADirect(ctx, w)
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			secret := state.(string)
+			code, err := totp.GenerateCode(secret, time.Now())
+			if err != nil {
+				return opResult{}, fmt.Errorf("totp.GenerateCode: %w", err)
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/auth/mfa/stepup", map[string]any{"code": code})
+			if err != nil {
+				return opResult{}, err
+			}
+			return httpResult(st, body), nil
+		},
+	},
+	{
+		// REST POST /auth/mfa/verify is the LOGIN-time second factor (distinct
+		// from the three reauth routes above): it needs a live MFAChallenge, not
+		// an authenticated bearer token, so Setup mints one directly via the core
+		// API (an exported call, same trust level as Setup's other direct-storage
+		// shortcuts -- this is prerequisite state, not the operation under test).
+		Key: "REST POST /auth/mfa/verify",
+		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
+			secret, err := enrolMFADirect(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			userID, err := faultAdminUserID(w)
+			if err != nil {
+				return nil, fmt.Errorf("setup faultAdminUserID: %w", err)
+			}
+			challenge, err := w.core.CreateMFAChallenge(ctx, userID)
+			if err != nil {
+				return nil, fmt.Errorf("setup CreateMFAChallenge: %w", err)
+			}
+			return [2]string{secret.(string), challenge}, nil
+		},
+		Execute: func(ctx context.Context, w *faultWorld, state any) (opResult, error) {
+			st2 := state.([2]string)
+			code, err := totp.GenerateCode(st2[0], time.Now())
+			if err != nil {
+				return opResult{}, fmt.Errorf("totp.GenerateCode: %w", err)
+			}
+			st, body, err := httpJSON(ctx, w, http.MethodPost, "/auth/mfa/verify", map[string]any{
+				"mfa_challenge": st2[1], "code": code,
 			})
 			if err != nil {
 				return opResult{}, err

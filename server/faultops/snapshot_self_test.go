@@ -172,3 +172,65 @@ func TestSnapshotDB_PresenceOnlyFieldTolerance(t *testing.T) {
 		t.Fatalf("a row with an EMPTY TokenHash hashed the same as one with a real token — presence check is not distinguishing written-vs-not")
 	}
 }
+
+// TestSnapshotDB_LastUsedStepPresenceOnlyTolerance red-proofs the
+// MFASecret.LastUsedStep presenceOnlyFields entry: two rows with DIFFERENT
+// step numbers (as two real TOTP verifications separated by real elapsed
+// time always produce, since the step is wall-clock derived) must hash the
+// SAME, and a row that never had a code accepted (nil) vs one that did must
+// still hash DIFFERENTLY — same shape as TestSnapshotDB_PresenceOnlyFieldTolerance
+// above, proving this reduces to a presence check, not a full skip of the
+// field. Found live: TestWorldReuseSoundness flagged "MFASecret.LastUsedStep
+// differs (N vs N-1)" between two passes of the same logical state taken
+// seconds apart (PR #2392's rebase, fuzz/mfa-reauth-ops).
+func TestSnapshotDB_LastUsedStepPresenceOnlyTolerance(t *testing.T) {
+	dbA := newSnapshotTestDB(t)
+	dbB := newSnapshotTestDB(t)
+	u := &models.User{Username: "u1", Email: "u1@example.com"}
+	if err := dbA.Create(u).Error; err != nil {
+		t.Fatal(err)
+	}
+	u2 := &models.User{Username: "u1", Email: "u1@example.com"}
+	if err := dbB.Create(u2).Error; err != nil {
+		t.Fatal(err)
+	}
+	stepA := int64(59700695)
+	stepB := int64(59700696)
+	if err := dbA.Create(&models.MFASecret{UserID: u.ID, Activated: true, LastUsedStep: &stepA}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := dbB.Create(&models.MFASecret{UserID: u2.ID, Activated: true, LastUsedStep: &stepB}).Error; err != nil {
+		t.Fatal(err)
+	}
+	sa, err := snapshotDB(dbA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb, err := snapshotDB(dbB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sa.Tables["MFASecret"].Hash != sb.Tables["MFASecret"].Hash {
+		t.Fatalf("two MFASecret rows differing only in LastUsedStep (%d vs %d, as two real verifications seconds apart "+
+			"always do) hashed differently — presence-only redaction did not apply", stepA, stepB)
+	}
+
+	// Now prove it's a real presence check, not a full skip: a NIL LastUsedStep
+	// (no code ever accepted — the state this field exists to distinguish) must
+	// still be distinguishable from a non-nil one.
+	dbC := newSnapshotTestDB(t)
+	u3 := &models.User{Username: "u1", Email: "u1@example.com"}
+	if err := dbC.Create(u3).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := dbC.Create(&models.MFASecret{UserID: u3.ID, Activated: true, LastUsedStep: nil}).Error; err != nil {
+		t.Fatal(err)
+	}
+	sc, err := snapshotDB(dbC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sa.Tables["MFASecret"].Hash == sc.Tables["MFASecret"].Hash {
+		t.Fatalf("a row with a NIL LastUsedStep hashed the same as one with a step recorded — presence check is not distinguishing accepted-vs-never")
+	}
+}

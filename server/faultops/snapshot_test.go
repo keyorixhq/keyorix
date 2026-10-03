@@ -96,6 +96,24 @@ var presenceOnlyFields = map[string]string{
 	"CredentialBlob": "authenticator-generated WebAuthn public key material",
 	"SessionToken":   "SHA-256 hash of a randomly generated per-login session token (models.go:1217) — two independent bootstrap logins (reference world vs fault world) never produce the same raw token, so never the same hash",
 	"FamilyID":       "randomly generated per-login refresh-token family identifier (models.go:1243) — same reasoning as SessionToken; found via this file's own Session-row debug dump when the structural timestamp fix alone didn't make two independently-bootstrapped worlds' Session tables match",
+	// LastUsedStep (models.go:530, MFASecret): the TOTP time-step (unix/period)
+	// of the most recently accepted code -- wall-clock derived (validateTOTPStep,
+	// internal/core/mfa.go), not randomly generated, but the same class of
+	// problem for a cross-pass comparison: two independent MFA-verify calls
+	// separated by real elapsed time (e.g. TestWorldReuseSoundness's baseline
+	// loop runs the WHOLE corpus once before the forward/reversed passes even
+	// start) can legitimately straddle a 30-second step boundary and compute a
+	// step number differing by exactly 1 -- not a state leak, just two
+	// snapshots taken seconds apart of a value that changes every 30 seconds.
+	// Found live: TestWorldReuseSoundness flagged "MFASecret.LastUsedStep
+	// differs (N vs N-1)" on PR #2392's rebase (fuzz/mfa-reauth-ops, the first
+	// PR to wire an op that calls validateTOTPStep into this corpus) -- did not
+	// reproduce locally on a fast run, consistent with a timing-window flake
+	// rather than a deterministic defect in the new MFA wiring. Presence-only
+	// (nil vs non-nil) still correctly distinguishes "a code was accepted" from
+	// "never verified" for every oracle that cares about that distinction; only
+	// the exact step NUMBER is exempted.
+	"LastUsedStep": "wall-clock TOTP time-step (unix/period) of the most recently accepted code -- changes every 30s, so two snapshots of the same logical state taken seconds apart can legitimately differ by 1 step",
 }
 
 // tableSnapshot is one table's canonical dump: Hash over every row's

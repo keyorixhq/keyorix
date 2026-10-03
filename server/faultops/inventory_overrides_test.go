@@ -290,36 +290,26 @@ var operationOverrides = map[string]overrideEntry{
 	// StatusFuzzed: see their own PENDING entries for why.
 	"REST POST /api/v1/auth/mfa/enroll":   {StatusFuzzed, "opCatalog[\"REST POST /api/v1/auth/mfa/enroll\"] — batch 25"},
 	"REST POST /api/v1/auth/mfa/activate": {StatusFuzzed, "opCatalog[\"REST POST /api/v1/auth/mfa/activate\"] — batch 25"},
+	// disable/recovery-codes-regenerate/stepup/verify (batch 26, Session FI
+	// AT5): batch 25 blocked on requireReauth needing a SECOND TOTP proof
+	// within one iteration after ActivateMFA already spent the first (and
+	// revoked the calling session) — core.validateTOTPStep's {-1,0,+1} window
+	// plus MarkTOTPStepUsed's monotonic watermark leaves no valid code left
+	// without real wall-clock time passing a 30s boundary. Unblocked by
+	// avoiding ActivateMFA entirely: enrolMFADirect (opcatalog_test.go) enrols
+	// via the real HTTP endpoint (secret genuinely encrypted, same as batch
+	// 25) but flips Activated/MFAEnabled directly via storage instead of
+	// spending a step through /activate, so the step each of these four ops'
+	// own Execute call generates is still completely fresh — exactly what a
+	// real account that enabled MFA in a prior, unrelated session presents.
+	// No session-minting seam needed. Confirmed empirically: all four reach
+	// TestOpCatalog_SucceedsWithNoFaultArmed green.
+	"REST POST /api/v1/auth/mfa/disable":                   {StatusFuzzed, "opCatalog[\"REST POST /api/v1/auth/mfa/disable\"] — batch 26"},
+	"REST POST /api/v1/auth/mfa/recovery-codes/regenerate": {StatusFuzzed, "opCatalog[\"REST POST /api/v1/auth/mfa/recovery-codes/regenerate\"] — batch 26"},
+	"REST POST /api/v1/auth/mfa/stepup":                    {StatusFuzzed, "opCatalog[\"REST POST /api/v1/auth/mfa/stepup\"] — batch 26"},
+	"REST POST /auth/mfa/verify":                           {StatusFuzzed, "opCatalog[\"REST POST /auth/mfa/verify\"] — batch 26"},
 
 	// --- StatusPending: real mutations, exact reason each is not yet wired ---
-	//
-	// disable/recovery-codes-regenerate/stepup all call requireReauth (#372),
-	// which -- once MFA is truly active -- requires a CURRENT, valid TOTP
-	// code (password alone is refused the instant a second factor exists).
-	// Getting the account into that state at all already spends two TOTP
-	// proofs within one iteration's real-time window: ActivateMFA consumes
-	// one step, and re-authenticating afterward (ActivateMFA revokes the
-	// calling session too, per core.ActivateMFA's own doc comment -- the
-	// world's original adminToken is dead once it returns) via the
-	// login+mfa/verify flow consumes a second. core.validateTOTPStep only
-	// accepts a code within {-1,0,+1} of the ACTUAL current step, and
-	// MarkTOTPStepUsed (internal/storage/store/local_mfa.go) enforces a
-	// MONOTONIC per-user watermark, not a per-step set -- "a code at or
-	// below the stored step ... is rejected as a replay" -- so once steps 0
-	// and +1 are both spent, no code in {-1,0,+1} can ever exceed the
-	// watermark again without real wall-clock time actually advancing past
-	// a 30s boundary. A ~30s+ sleep per iteration for 3 of ~245 operations
-	// is not an acceptable throughput cost for this fuzzer. Fixing this
-	// needs a lower-level test seam that mints a valid post-MFA session
-	// directly (bypassing login+verify's TOTP consumption) -- e.g. a
-	// storage-level CreateSession helper matching the real session-token
-	// hash scheme -- not yet built. Confirmed empirically: enroll+activate
-	// (batch 25) pass; all three of these failed on live HTTP 401/400
-	// (session revoked, then "invalid code or password") before being
-	// pulled out of opCatalog into this pending state.
-	"REST POST /api/v1/auth/mfa/disable":                   {StatusPending, "requireReauth needs a 3rd distinct TOTP proof within one iteration's real-time window; core's MarkTOTPStepUsed watermark makes that impossible without a ~30s sleep — needs a session-minting test seam, see batch 25's comment above"},
-	"REST POST /api/v1/auth/mfa/recovery-codes/regenerate": {StatusPending, "same requireReauth TOTP-watermark blocker as REST POST /api/v1/auth/mfa/disable"},
-	"REST POST /api/v1/auth/mfa/stepup":                    {StatusPending, "same requireReauth TOTP-watermark blocker as REST POST /api/v1/auth/mfa/disable"},
 	// E3 (FAULTOPS PR C): dynamic-secrets lifecycle family (ADR-035) — config
 	// CRUD/classification/enable-disable plus lease issue/renew/revoke/revoke-all,
 	// REST + gRPC. Branches from origin/main independent of #2224 (disjoint key
