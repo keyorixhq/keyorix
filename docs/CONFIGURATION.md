@@ -105,6 +105,17 @@ storage:
     max_open_conns: 25
     max_idle_conns: 25  # match max_open_conns, or a connection gets closed instead of reused
     conn_max_lifetime_minutes: 30
+    # audit_flusher_linger_window: ""  # e.g. "1ms"; default "" (0, no deliberate
+    #   wait — the audit-chain batching flusher commits whatever is already
+    #   queued immediately, instead of waiting for more writers to join the
+    #   same batch). A nonzero window increases audit-commit throughput under
+    #   HIGH concurrency (c=50-class load) at the cost of added per-request
+    #   latency at LOW concurrency and, on Postgres specifically, a measured
+    #   throughput REGRESSION at MODERATE concurrency (c=10-class) — see
+    #   SESSION-PERF's PR #2420 for the full before/after data. Left at its
+    #   safe default; only set this if production
+    #   keyorix_audit_flusher_batch_size/_flushes_total metrics (exposed on
+    #   the server's /metrics endpoint) justify it for your own load shape.
 ```
 
 `type: remote` points the CLI at a Keyorix server over the API; see the remote

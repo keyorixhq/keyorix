@@ -251,8 +251,16 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 		// Defensive fallback only: every route serving this handler's machine
 		// branch goes through that middleware, which always sets this on
 		// success (mirrors GetSecretValueByRef's identical defensive check).
+		//
+		// Coordinator review, #2420, item 5: trusting the resolved secret
+		// WITHOUT checking it actually matches this request's path id would
+		// let a future middleware or route wiring change serve one secret's
+		// value under another secret's authorization check (the middleware
+		// authorized THAT secret's scope, not necessarily this URL's id) --
+		// cheap to check, and it keeps this handler correct independent of
+		// what the middleware is trusted to have done.
 		secret = middleware.GetResolvedSecretFromContext(r.Context())
-		if secret == nil {
+		if secret == nil || secret.ID != uint(id) {
 			secret, err = h.coreService.GetSecret(r.Context(), uint(id))
 		}
 	} else {
@@ -293,19 +301,20 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 			}
 			return
 		}
-		response = map[string]interface{}{"secret": newSecretNodeWire(secret), "value": string(value)}
-	}
-
-	// AUDIT-001: emit secret.read ONLY when the value was actually returned. A
-	// metadata-only fetch (include_value omitted) does not expose the sensitive
-	// payload and must not be conflated with a value read in the audit trail.
-	if valueIncluded {
+		// AUDIT-001 / SESSION-PERF #2403 follow-up (item 3, audit-before-disclosure):
+		// the value is only assigned into `response` AFTER its audit entry has been
+		// durably committed, below. A metadata-only fetch (include_value omitted)
+		// never reaches this branch at all — it doesn't expose the sensitive payload
+		// and must not be conflated with a value read in the audit trail.
 		uid, sID, uname, sname := userCtx.UserID, uint(id), userCtx.Username, secret.Name
 		ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
 		auditCtx := core.DetachedAuditContext(r.Context())
-		goSafe(func() {
-			h.coreService.LogSecretReadWithProject(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua)
-		}) // #nosec G118
+		if auditErr := h.coreService.LogSecretReadWithProject(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua); auditErr != nil {
+			log.Printf("SECURITY: audit write failed for secret read (secret=%d): %v -- failing closed, value NOT returned", sID, auditErr)
+			h.sendError(w, "InternalError", "Failed to record audit trail", http.StatusInternalServerError, nil)
+			return
+		}
+		response = map[string]interface{}{"secret": newSecretNodeWire(secret), "value": string(value)}
 	}
 
 	h.sendSuccess(w, response, "")
@@ -363,11 +372,16 @@ func (h *SecretHandler) GetSecretByName(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Metadata-only response (no value disclosed below) — stays fire-and-forget,
+	// unlike the value-disclosing read paths in this file. Still logged, not
+	// silently discarded.
 	uid, sID, uname, sname := userCtx.UserID, secret.ID, userCtx.Username, secret.Name
 	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
 	auditCtx := core.DetachedAuditContext(r.Context())
 	goSafe(func() {
-		h.coreService.LogSecretReadWithProject(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua)
+		if auditErr := h.coreService.LogSecretReadWithProject(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua); auditErr != nil {
+			log.Printf("SECURITY: audit write failed for secret-by-name read (secret=%d): %v", sID, auditErr)
+		}
 	}) // #nosec G118
 
 	h.sendSuccess(w, newSecretNodeWire(secret), "")
@@ -421,12 +435,16 @@ func (h *SecretHandler) GetSecretValueByRef(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// SESSION-PERF #2403 follow-up (item 3, audit-before-disclosure): the value is
+	// only sent below AFTER its audit entry has been durably committed.
 	uid, sID, uname, sname := userCtx.UserID, secret.ID, userCtx.Username, secret.Name
 	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
 	auditCtx := core.DetachedAuditContext(r.Context())
-	goSafe(func() {
-		h.coreService.LogSecretReadWithProject(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua)
-	}) // #nosec G118
+	if auditErr := h.coreService.LogSecretReadWithProject(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua); auditErr != nil {
+		log.Printf("SECURITY: audit write failed for secret read by ref (secret=%d): %v -- failing closed, value NOT returned", sID, auditErr)
+		h.sendError(w, "InternalError", "Failed to record audit trail", http.StatusInternalServerError, nil)
+		return
+	}
 
 	h.sendSuccess(w, map[string]interface{}{"secret": newSecretNodeWire(secret), "value": string(value)}, "")
 }

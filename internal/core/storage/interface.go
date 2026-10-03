@@ -1241,6 +1241,12 @@ type Storage interface {
 
 	// Audit Logging
 	LogAuditEvent(ctx context.Context, event *models.AuditEvent) error
+	// LogAuditEventWithAccessLog is LogAuditEvent plus a secret_access_logs row,
+	// committed together as one atomic unit (SESSION-PERF, #2403 follow-up, item 3)
+	// — a caller that needs both (e.g. a secret read) gets them as one call
+	// instead of two separate writes that could succeed/fail independently.
+	// accessLog may be nil.
+	LogAuditEventWithAccessLog(ctx context.Context, event *models.AuditEvent, accessLog *models.SecretAccessLog) error
 	CreateSecretAccessLog(ctx context.Context, log *models.SecretAccessLog) error
 	ListSecretAccessLogs(ctx context.Context, secretID uint, since time.Time) ([]models.SecretAccessLog, error)
 	// CountSecretReadsBySecretIDs returns, for every secret in secretIDs with at

@@ -61,14 +61,19 @@ func (h *SecretHandler) GetSecretVersions(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Log as a secret read — fetching versions means the caller is accessing the secret value.
+	// Log as a secret read — fetching versions means the caller is accessing the
+	// secret value. SESSION-PERF #2403 follow-up (item 3, audit-before-disclosure):
+	// `versions` is only sent below AFTER its audit entry has been durably
+	// committed.
 	secret, sErr := h.coreService.GetSecret(r.Context(), uint(id))
 	if sErr == nil && secret != nil {
 		ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
 		auditCtx := core.DetachedAuditContext(r.Context())
-		goSafe(func() {
-			h.coreService.LogSecretReadWithProject(auditCtx, userCtx.UserID, uint(id), secret.ProjectID, userCtx.Username, secret.Name, ip, ua)
-		}) // #nosec G118
+		if auditErr := h.coreService.LogSecretReadWithProject(auditCtx, userCtx.UserID, uint(id), secret.ProjectID, userCtx.Username, secret.Name, ip, ua); auditErr != nil {
+			log.Printf("SECURITY: audit write failed for secret versions read (secret=%d): %v -- failing closed", id, auditErr)
+			h.sendError(w, "InternalError", "Failed to record audit trail", http.StatusInternalServerError, nil)
+			return
+		}
 	}
 
 	h.sendSuccess(w, map[string]any{"versions": versions}, "")

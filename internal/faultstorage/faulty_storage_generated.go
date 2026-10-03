@@ -5369,6 +5369,22 @@ func (w *FaultyStorage) LogAuditEvent(ctx context.Context, event *models.AuditEv
 	return w.real.LogAuditEvent(ctx, event)
 }
 
+func (w *FaultyStorage) LogAuditEventWithAccessLog(ctx context.Context, event *models.AuditEvent, accessLog *models.SecretAccessLog) error {
+	fire, kind, injected := w.check("LogAuditEventWithAccessLog")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			return injected
+		case KindEffectThenError:
+			_ = w.real.LogAuditEventWithAccessLog(ctx, event, accessLog)
+			return injected
+		}
+	}
+	return w.real.LogAuditEventWithAccessLog(ctx, event, accessLog)
+}
+
 func (w *FaultyStorage) MarkAllNotificationsRead(ctx context.Context, userID uint) error {
 	fire, kind, injected := w.check("MarkAllNotificationsRead")
 	if fire {

@@ -46,6 +46,22 @@ var auditWriteContextAllowlist = map[string]string{
 	// out from under it — a hand-edit defeats that. FaultyStorage has zero production
 	// callers (verified by grep: only server/faultops's *_test.go files construct it).
 	"faulty_storage_generated.go:FaultyStorage": "test-only fault-injection wrapper; forwards ctx unmodified to the wrapped real storage.Storage, which already detaches (and is independently covered by this test) — see internal/faultstorage's package doc comment",
+	// LocalStorage.LogAuditEvent (local_audit_chain.go, SESSION-PERF #2403 follow-up,
+	// item 3): now a thin dispatcher — LogAuditEvent(ctx, event) error { return
+	// ls.logAuditEvent(ctx, event, nil) } — that forwards ctx unmodified to
+	// logAuditEvent, which routes to EITHER logAuditEventDirect or
+	// logAuditEventBatched depending on whether this LocalStorage is transaction-
+	// scoped. Both of those (not "LogAuditEvent" by name, so invisible to this AST
+	// walk, which matches on method name) call auditWriteContext(ctx) as their own
+	// first real step before any I/O — logAuditEventDirect literally inline;
+	// logAuditEventBatched via auditWriteContext inside itself before handing the
+	// detached+bounded context to the batch item it submits. Exactly the same
+	// "wrapper forwards unmodified, the real implementation one layer down
+	// detaches" shape as the FaultyStorage exemption above — see
+	// TestLogAuditEventImplementations_DetachFromCallerCancellation's own
+	// companion runtime test (TestLogAuditEvent_SucceedsWithAlreadyCanceledCallerContext)
+	// for behavioral (not just structural) proof this still holds.
+	"local_audit_chain.go:LocalStorage": "thin dispatcher forwarding ctx unmodified to logAuditEventDirect/logAuditEventBatched, both of which call auditWriteContext themselves before any I/O — same shape as the FaultyStorage exemption above, verified behaviorally by TestLogAuditEvent_SucceedsWithAlreadyCanceledCallerContext",
 }
 
 func TestLogAuditEventImplementations_DetachFromCallerCancellation(t *testing.T) {

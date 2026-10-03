@@ -366,12 +366,45 @@ func (c *KeyorixCore) LogSecretRead(ctx context.Context, userID uint, secretID u
 	c.writeAccessLog(ctx, secretID, username, "read", ip, ua)
 }
 
-// LogSecretReadWithProject writes audit_events + secret_access_logs including project context.
-func (c *KeyorixCore) LogSecretReadWithProject(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
+// LogSecretReadWithProject writes audit_events + secret_access_logs including
+// project context, as ONE atomic unit, and BLOCKS until both are durably
+// committed (SESSION-PERF, #2403 follow-up, item 3 — audit-before-disclosure).
+// Returns an error if the write fails; the caller must treat that as "do not
+// disclose the value" (fail closed), never return the value and discard the
+// error. Unlike LogSecretCreated/LogSecretUpdated/etc. (still fire-and-forget
+// via writeAuditEventFull+writeAccessLog as two independent best-effort
+// writes, unchanged), this is the one audit-logging call in this file a
+// caller is required to wait on and check — because it is the only one that
+// gates a value disclosure the client hasn't seen yet when this runs.
+func (c *KeyorixCore) LogSecretReadWithProject(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) error { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
 	uid, sid, pid := userID, secretID, projectID
-	c.writeAuditEventFull(ctx, "secret.read", &uid, &sid, &pid, ip,
-		fmt.Sprintf("User %s read secret %s", username, secretName))
-	c.writeAccessLog(ctx, secretID, username, "read", ip, ua)
+	t := true
+	event := &models.AuditEvent{
+		EventType:    "secret.read",
+		UserID:       &uid,
+		SecretNodeID: &sid,
+		ProjectID:    &pid,
+		IPAddress:    ip,
+		Description:  sanitizeAuditText(fmt.Sprintf("User %s read secret %s", username, secretName)),
+		Success:      &t,
+		EventTime:    time.Now(),
+		ActorType:    actorTypeFromContext(ctx),
+	}
+	if adminID, ok := impersonatorFromContext(ctx); ok {
+		a := adminID
+		event.ImpersonatedBy = &a
+		event.ActingAs = &uid
+		event.Impersonation = true
+	}
+	accessLog := &models.SecretAccessLog{
+		SecretNodeID: secretID,
+		AccessedBy:   username,
+		AccessTime:   time.Now(),
+		Action:       "read",
+		IPAddress:    ip,
+		UserAgent:    ua,
+	}
+	return c.emitAuditWithAccessLog(ctx, event, accessLog)
 }
 
 // LogSecretCreated writes audit_events + secret_access_logs for a secret creation.

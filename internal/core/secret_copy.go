@@ -68,7 +68,13 @@ func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint
 	if targetEnv.ProjectID != source.ProjectID {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "target environment must be in the same project as the source")
 	}
-	c.LogSecretReadWithProject(ctx, actorID, source.ID, source.ProjectID, actorUsername, source.Name, ip, ua)
+	// SESSION-PERF #2403 follow-up (item 3): fail closed, matching this function's
+	// own stated reason for auditing the source read at all — a copy whose audit
+	// write failed would be exactly the invisible-to-anomaly-detection exfil
+	// channel this call exists to prevent.
+	if err := c.LogSecretReadWithProject(ctx, actorID, source.ID, source.ProjectID, actorUsername, source.Name, ip, ua); err != nil {
+		return nil, fmt.Errorf("failed to record audit trail for secret copy: %w", err)
+	}
 
 	name := strings.TrimSpace(newName)
 	if name == "" {
