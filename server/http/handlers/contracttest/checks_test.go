@@ -244,6 +244,23 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		"createProjectEnvironment": true,
 		"listEnvironments":         true,
 		"cloneEnvironment":         true,
+		// QA-2 session: closed a real contract gap found while investigating
+		// #2441/#2442 -- the self-service MFA lifecycle (enroll/activate/
+		// disable/recovery-codes/regenerate), the mfa_required branch of
+		// /auth/login (authLogin was already enforced; this just adds a
+		// second response shape to it), /auth/mfa/verify, and
+		// /auth/setup/consume had either NO openapi.yaml entry at all (the
+		// 5 MFA lifecycle routes, verifyMFALogin) or a prose-only one
+		// (authConsumeSetup). Each is exercised via
+		// openapi_contract_qa2_mfa_test.go (plus TestConsumeSetup_HappyPath_S11
+		// for authConsumeSetup).
+		"enrollMFA":                  true,
+		"activateMFA":                true,
+		"disableMFA":                 true,
+		"recoveryCodesStatus":        true,
+		"regenerateMFARecoveryCodes": true,
+		"verifyMFALogin":             true,
+		"authConsumeSetup":           true,
 	}
 
 	loadSpec()
