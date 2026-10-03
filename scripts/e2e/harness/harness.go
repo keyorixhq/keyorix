@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -143,6 +144,15 @@ type Server struct {
 	Env        []string
 	LogPath    string
 	Backend    DBBackend
+
+	// PreNonceBinary marks Binary as a release older than /health's
+	// instance_nonce echo (KEYORIX_E2E_INSTANCE_NONCE), e.g. the upgrade
+	// path's previous-release binary (#2596). Such a binary always answers
+	// with an empty nonce, so WaitHealthy proves the answer came from this
+	// boot's child via the child's own access log instead (see
+	// checkHealthIdentity). Never set it for a binary built from this
+	// checkout: those must echo the nonce.
+	PreNonceBinary bool
 
 	// bootEnv is the full environment startProcess launches Binary with,
 	// EXCLUDING KEYORIX_E2E_INSTANCE_NONCE (regenerated fresh every
@@ -364,17 +374,6 @@ var errBindLostRace = errors.New("keyorix-server exited before answering healthy
 // startup hang, not a port race.
 var errHealthTimeout = errors.New("timed out waiting for /health")
 
-// portConflictError records a /health response whose instance_nonce
-// doesn't match the nonce this boot's child was given -- live proof a
-// different process is bound to this exact port right now.
-type portConflictError struct {
-	got, want string
-}
-
-func (e *portConflictError) Error() string {
-	return fmt.Sprintf("health check answered with a different server's instance_nonce (got %q, want %q)", e.got, e.want)
-}
-
 // healthPollClient bounds a SINGLE /health request, separately from
 // pollHealthOrBindFailure's own overall deadline -- plain http.Get has no
 // timeout, so a port occupied by a listener that accepts connections but
@@ -387,7 +386,9 @@ var healthPollClient = &http.Client{Timeout: 2 * time.Second}
 // pollHealthOrBindFailure polls s.BaseURL/health until deadline. Returns nil
 // the moment a 200 response's instance_nonce matches s's own nonce (proof
 // the answering process is the child THIS boot started, not another
-// process that won the FreeTCPPort race -- #2459). Returns errBindLostRace
+// process that won the FreeTCPPort race -- #2459) -- or, for an
+// s.PreNonceBinary, the moment a 200 with no nonce is confirmed by the
+// child's own access log (checkHealthIdentity, #2596). Returns errBindLostRace
 // if s's own child exits first -- the caller's cue to retry on a new port.
 // Returns a *portConflictError the first time a 200 answers with a
 // DIFFERENT nonce, regardless of whether s's own child is still alive: a
@@ -402,26 +403,56 @@ func pollHealthOrBindFailure(s *Server, deadline time.Time) error {
 			return errBindLostRace
 		default:
 		}
-		resp, herr := healthPollClient.Get(s.BaseURL + "/health") // #nosec G107 -- fixed localhost test URL
+		// clientAddr is this probe connection's own local ip:port, which a
+		// pre-nonce binary's access log records (see checkHealthIdentity).
+		var clientAddr string
+		req, rerr := http.NewRequest(http.MethodGet, s.BaseURL+"/health", nil) // #nosec G107 -- fixed localhost test URL
+		if rerr != nil {
+			return fmt.Errorf("build /health request: %w", rerr)
+		}
+		req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
+			GotConn: func(info httptrace.GotConnInfo) { clientAddr = info.Conn.LocalAddr().String() },
+		}))
+		resp, herr := healthPollClient.Do(req)
 		if herr == nil {
 			body, _ := readAll(resp)
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
-				var health struct {
-					InstanceNonce string `json:"instance_nonce"`
-				}
-				if jsonErr := json.Unmarshal([]byte(body), &health); jsonErr != nil {
-					return fmt.Errorf("decode /health response: %w\nbody: %s", jsonErr, body)
-				}
-				if health.InstanceNonce != s.nonce {
-					return &portConflictError{got: health.InstanceNonce, want: s.nonce}
-				}
-				return nil
+				return checkHealthIdentity([]byte(body), s.nonce, s.PreNonceBinary, func() bool {
+					return childLoggedRequestFrom(s, clientAddr)
+				})
 			}
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 	return errHealthTimeout
+}
+
+// accessLogWait bounds how long childLoggedRequestFrom waits for the
+// child's access-log line: the server's request logger writes it after the
+// handler returns, so it can land a moment after the client has already
+// read the response.
+const accessLogWait = 5 * time.Second
+
+// childLoggedRequestFrom reports whether s's own child process logged
+// serving a 200 to clientAddr, polling s.LogPath for up to accessLogWait.
+// Gives up early (false) if the child exits.
+func childLoggedRequestFrom(s *Server, clientAddr string) bool {
+	deadline := time.Now().Add(accessLogWait)
+	for {
+		logBytes, _ := os.ReadFile(s.LogPath)
+		if accessLogShowsClient(logBytes, clientAddr) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		select {
+		case <-s.exited:
+			return false
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }
 
 // maxPortRetries bounds how many times WaitHealthy restarts Binary against
@@ -454,8 +485,8 @@ func WaitHealthy(t *testing.T, s *Server) {
 		var conflict *portConflictError
 		if errors.As(err, &conflict) {
 			logBytes, _ := os.ReadFile(s.LogPath)
-			t.Fatalf("health check on %s answered with instance_nonce %q, want %q -- a different process is bound to this port (#2459); our own server's log:\n%s",
-				s.BaseURL, conflict.got, conflict.want, logBytes)
+			t.Fatalf("health check on %s: %v -- a different process is bound to this port (#2459); our own server's log:\n%s",
+				s.BaseURL, conflict, logBytes)
 		}
 
 		if errors.Is(err, errBindLostRace) {
@@ -482,12 +513,21 @@ func WaitHealthy(t *testing.T, s *Server) {
 	}
 }
 
+// BootOption adjusts a *Server that BootAndBootstrap builds, before it boots.
+type BootOption func(*Server)
+
+// WithPreNonceBinary marks the binary as predating /health's instance_nonce
+// echo -- see Server.PreNonceBinary.
+func WithPreNonceBinary() BootOption {
+	return func(s *Server) { s.PreNonceBinary = true }
+}
+
 // BootAndBootstrap starts binary as a background server (serving at
 // 127.0.0.1:port, config at configPath inside dir), waits for it to become
 // healthy, then claims the first admin via POST /system/init (bootstrapToken
 // via header, InitSystem's preferred path). Returns the running *Server
-// (caller must eventually Close it).
-func BootAndBootstrap(t *testing.T, binary, dir string, env []string, configPath, port, bootstrapToken, username, email, password string) *Server {
+// (caller must eventually Close it). opts adjust the *Server before boot.
+func BootAndBootstrap(t *testing.T, binary, dir string, env []string, configPath, port, bootstrapToken, username, email, password string, opts ...BootOption) *Server {
 	t.Helper()
 	serverEnv := append(append([]string{}, env...),
 		"KEYORIX_BOOTSTRAP_TOKEN="+bootstrapToken,
@@ -497,6 +537,9 @@ func BootAndBootstrap(t *testing.T, binary, dir string, env []string, configPath
 		T: t, Dir: dir, ConfigPath: configPath, BaseURL: "http://127.0.0.1:" + port,
 		Binary: binary, Env: env, LogPath: filepath.Join(dir, "e2e-server-"+filepath.Base(binary)+".log"),
 		Backend: DBBackend{Name: username},
+	}
+	for _, opt := range opts {
+		opt(s)
 	}
 	StartBackgroundProcess(t, s, serverEnv)
 	WaitHealthy(t, s)

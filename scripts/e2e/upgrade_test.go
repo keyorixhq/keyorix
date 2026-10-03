@@ -127,8 +127,10 @@ func TestAPISmoke_UpgradePath(t *testing.T) {
 	harness.RewritePort(t, dir, port)
 
 	const bootstrapToken = "e2e-upgrade-bootstrap-token-0123456789"
+	// The previous release predates /health's instance_nonce echo, so
+	// WaitHealthy must confirm it via the old binary's access log (#2596).
 	oldSrv := harness.BootAndBootstrap(t, oldBinary, dir, env, configPath, port, bootstrapToken,
-		"upgradeadmin", "upgradeadmin@example.invalid", upgradeAdminPassword)
+		"upgradeadmin", "upgradeadmin@example.invalid", upgradeAdminPassword, harness.WithPreNonceBinary())
 
 	// Real pre-existing data under the OLD schema: an operator's install
 	// always has data by the time it's upgraded, not just an empty schema.
