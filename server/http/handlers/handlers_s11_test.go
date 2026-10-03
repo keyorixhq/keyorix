@@ -620,6 +620,7 @@ func TestConsumeSetup_HappyPath_S11(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/auth/setup/consume", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.ConsumeSetup(w, req)
+	contracttest.AssertOpenAPIResponse(t, req, w)
 	// Happy path → 200 (session issued).
 	assert.Equal(t, http.StatusOK, w.Code)
 }
