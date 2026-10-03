@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/migrate/internal/target"
 )
 
 // fakeAPI is an in-process target.API fake — no network, no Vault, no Keyorix — for testing
@@ -268,5 +270,36 @@ func TestSourceID_StableAndDistinct(t *testing.T) {
 	c := SourceID("addr", "mount", "other-path", "value")
 	if a == c {
 		t.Error("SourceID collided across different inputs")
+	}
+}
+
+// originAPI records the source origin each write's ctx carried (#2545).
+type originAPI struct {
+	*fakeAPI
+	origins []string
+}
+
+func (a *originAPI) Create(ctx context.Context, name, value string, metadata map[string]string) (int, error) {
+	a.origins = append(a.origins, target.SourceOrigin(ctx))
+	return a.fakeAPI.Create(ctx, name, value, metadata)
+}
+
+func (a *originAPI) UpdateValue(ctx context.Context, id int, value string) error {
+	a.origins = append(a.origins, target.SourceOrigin(ctx))
+	return a.fakeAPI.UpdateValue(ctx, id, value)
+}
+
+// TestApply_TagsEveryWriteWithSourceOrigin: Apply hands each write its item's source locator,
+// which target.Client sends as the audit client-origin header.
+func TestApply_TagsEveryWriteWithSourceOrigin(t *testing.T) {
+	api := &originAPI{fakeAPI: newFakeAPI()}
+	api.byName["existing"] = 9
+	items := []Item{
+		{Entry: Entry{Path: "vault:secret/new", Name: "new", Value: "v"}, Outcome: Create},
+		{Entry: Entry{Path: "vault:secret/existing", Name: "existing", Value: "v2"}, Outcome: Update, ExistingID: 9},
+	}
+	Apply(context.Background(), api, items, false)
+	if len(api.origins) != 2 || api.origins[0] != "vault:secret/new" || api.origins[1] != "vault:secret/existing" {
+		t.Errorf("write origins = %q, want each item's source path", api.origins)
 	}
 }
