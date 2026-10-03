@@ -223,6 +223,25 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	if req.ParentID != nil && *req.ParentID != 0 {
 		secret.ParentID = req.ParentID
 	}
+	// MIG-1: req.Metadata was validated and decoded all the way from the HTTP/gRPC
+	// request body down to this point, but never written onto the model being
+	// created — applyUpdateSecretFields (used only by UpdateSecret) has always done
+	// this correctly; CreateSecret never had an equivalent. Every metadata key a
+	// caller set at creation time (including keyorix-migrate's own idempotency
+	// marker, migrate.source-id) was silently discarded, which in turn breaks
+	// keyorix-migrate's documented "re-running is safe" guarantee outright: a
+	// re-run's conflict check reads this same metadata back and, finding it empty,
+	// classifies every already-migrated secret as a conflict with something it
+	// didn't create, instead of a skip (docs/design-keyorix-migrate.md's
+	// "Idempotency" section; found via docs/specs/vault-migration-fidelity.md's
+	// harness, MIG-1).
+	if len(req.Metadata) > 0 {
+		metadataJSON, err := json.Marshal(req.Metadata)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorInvalidMetadata", nil), err)
+		}
+		secret.Metadata = metadataJSON
+	}
 
 	// req.Value is forwarded as the optional plaintext argument (#499): LocalStorage
 	// ignores it (a no-op — the value still flows through the storeSecretVersion call
