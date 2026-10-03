@@ -47,6 +47,7 @@ import { Spinner, Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
 import { Modal } from '../../components/ui/Modal';
 import { Textarea } from '../../components/ui/Textarea';
+import { parseServerDate } from '../../utils';
 
 const formatDate = (d: string | Date) =>
     new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
@@ -54,7 +55,7 @@ const formatTime = (d: string | Date) =>
     new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit' }).format(new Date(d));
 
 const relativeFromNow = (d: string | Date): string => {
-    const days = Math.floor((Date.now() - new Date(d).getTime()) / 86_400_000);
+    const days = Math.floor((Date.now() - parseServerDate(d).getTime()) / 86_400_000);
     if (days <= 0) return 'today';
     if (days === 1) return 'yesterday';
     if (days < 30) return `${days} days ago`;

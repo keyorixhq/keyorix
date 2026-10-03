@@ -5,6 +5,7 @@ import {
     sanitizeInput,
     isValidEmail,
     formatRelativeTime,
+    parseServerDate,
     formatDateShort,
     generateId,
     generateSecret,
@@ -327,5 +328,42 @@ describe('url', () => {
             window.history.pushState({}, '', '/somewhere');
             expect(url.getQueryParams().size).toBe(0);
         });
+    });
+});
+
+// #2553: server timestamps without a zone designator were parsed as LOCAL time,
+// skewing relative times by the viewer's UTC offset. TZ is pinned to a non-UTC
+// zone (set before any Date is built) so the bug is observable; the guard below
+// fails loudly if the runtime ignored it, rather than passing vacuously in UTC.
+describe('parseServerDate / formatRelativeTime across timezones (#2553)', () => {
+    const NOW = new Date('2026-10-03T10:15:00Z');
+    let prevTZ: string | undefined;
+
+    beforeEach(() => {
+        prevTZ = process.env.TZ;
+        process.env.TZ = 'Europe/Madrid';
+        // Madrid is UTC+2 in October (CEST): getTimezoneOffset() === -120.
+        expect(new Date('2026-10-03T10:00:00Z').getTimezoneOffset()).toBe(-120);
+        vi.useFakeTimers();
+        vi.setSystemTime(NOW);
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        if (prevTZ === undefined) delete process.env.TZ;
+        else process.env.TZ = prevTZ;
+    });
+
+    it.each([
+        ['zone-less space form', '2026-10-03 10:00:00'],
+        ['zone-less ISO form', '2026-10-03T10:00:00'],
+        ['zone-less with nanoseconds', '2026-10-03 10:00:00.000000000'],
+        ['short +00 offset (pg text form)', '2026-10-03 10:00:00.000000+00'],
+        ['explicit Z', '2026-10-03T10:00:00Z'],
+        ['explicit +00:00', '2026-10-03T10:00:00+00:00'],
+        ['non-UTC offset', '2026-10-03T12:00:00+02:00'],
+    ])('%s is read as 10:00 UTC, i.e. "15 minutes ago"', (_n, ts) => {
+        expect(parseServerDate(ts).toISOString().slice(0, 19)).toBe('2026-10-03T10:00:00');
+        expect(formatRelativeTime(ts)).toBe('15 minutes ago');
     });
 });

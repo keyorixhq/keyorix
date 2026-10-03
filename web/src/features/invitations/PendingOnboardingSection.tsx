@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ClockIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { useProjectMemberships, useTransitionMembership } from '../projects/api';
 import type { ProjectMembership, MembershipState } from '../../services/projectMemberships';
+import { parseServerDate } from '../../utils';
 
 interface User {
     id: number;
@@ -33,7 +34,7 @@ const NEXT_ACTION: Record<string, { action: 'verify' | 'provision' | 'activate';
 
 const daysSince = (iso?: string): number | null => {
     if (!iso) return null;
-    const t = new Date(iso).getTime();
+    const t = parseServerDate(iso).getTime();
     if (Number.isNaN(t)) return null;
     return Math.floor((Date.now() - t) / (24 * 60 * 60 * 1000));
 };

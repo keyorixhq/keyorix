@@ -8,10 +8,35 @@ export function cn(...classes: (string | undefined | null | boolean)[]): string 
 }
 
 /**
+ * Parses a server-emitted timestamp into a Date, treating a timestamp with no
+ * zone designator as UTC. Server timestamps are UTC, but some paths (raw SQL
+ * scans, e.g. project last_activity) emit "2026-10-03 10:00:00.123" or
+ * "...+00" forms. `new Date()` reads a zone-less date-time as LOCAL time, which
+ * skews every relative time by the viewer's UTC offset ("6 hours ago" for a
+ * project created minutes earlier). Every relative-time call site must parse
+ * through this helper rather than `new Date(str)`.
+ */
+export function parseServerDate(value: string | Date): Date {
+    if (value instanceof Date) return value;
+    let s = value.trim();
+    // "YYYY-MM-DD HH:MM" -> ISO "T" separator.
+    s = s.replace(/^(\d{4}-\d{2}-\d{2}) (\d{2}:)/, '$1T$2');
+    // Only date-time strings can be zone-less; date-only ISO is already UTC.
+    if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+        // Trim sub-millisecond digits (not universally parseable).
+        s = s.replace(/(\.\d{3})\d+/, '$1');
+        if (/[+-]\d{2}$/.test(s))
+            s += ':00'; // "+00" -> "+00:00"
+        else if (!/(Z|[+-]\d{2}:?\d{2})$/i.test(s)) s += 'Z'; // no zone -> UTC
+    }
+    return new Date(s);
+}
+
+/**
  * Formats a date string to a human-readable format
  */
 export function formatDate(dateString: string): string {
-    const date = new Date(dateString);
+    const date = parseServerDate(dateString);
     return new Intl.DateTimeFormat('en-US', {
         year: 'numeric',
         month: 'short',
@@ -25,7 +50,7 @@ export function formatDate(dateString: string): string {
  * Formats a relative time (e.g., "2 hours ago")
  */
 export function formatRelativeTime(dateString: string): string {
-    const date = new Date(dateString);
+    const date = parseServerDate(dateString);
     const now = new Date();
     const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
 
