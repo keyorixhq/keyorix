@@ -5,9 +5,10 @@ import (
 	"strings"
 )
 
-// policyPathBlock is one `path "..." { capabilities = [...] }` stanza extracted from a raw ACL
-// policy's HCL text.
-type policyPathBlock struct {
+// PolicyPathBlock is one `path "..." { capabilities = [...] }` stanza extracted from a raw ACL
+// policy's HCL text. Exported (ADR-114) so `vault plan-access` can consume the same parse this
+// scan's own checks use, rather than re-implementing it.
+type PolicyPathBlock struct {
 	Path         string
 	Capabilities []string
 }
@@ -28,8 +29,8 @@ var pathBlockRE = regexp.MustCompile(`(?s)path\s+"([^"]+)"\s*\{(.*?)\}`)
 var capabilitiesRE = regexp.MustCompile(`capabilities\s*=\s*\[([^\]]*)\]`)
 var capabilityItemRE = regexp.MustCompile(`"([^"]+)"`)
 
-func parsePolicyHCL(raw string) []policyPathBlock {
-	var blocks []policyPathBlock
+func ParsePolicyHCL(raw string) []PolicyPathBlock {
+	var blocks []PolicyPathBlock
 	for _, m := range pathBlockRE.FindAllStringSubmatch(raw, -1) {
 		path, body := m[1], m[2]
 		var caps []string
@@ -38,7 +39,7 @@ func parsePolicyHCL(raw string) []policyPathBlock {
 				caps = append(caps, cim[1])
 			}
 		}
-		blocks = append(blocks, policyPathBlock{Path: path, Capabilities: caps})
+		blocks = append(blocks, PolicyPathBlock{Path: path, Capabilities: caps})
 	}
 	return blocks
 }
@@ -47,7 +48,7 @@ func parsePolicyHCL(raw string) []policyPathBlock {
 // restrictions on the path) or both "create" and "update" (full write) on a path this scan
 // treats as dangerously broad: exactly "*", or any path starting "sys/*" — the two glob shapes
 // SESSION-G2 item (g) names explicitly.
-func isWildcardSudoGrant(b policyPathBlock) bool {
+func isWildcardSudoGrant(b PolicyPathBlock) bool {
 	broad := b.Path == "*" || strings.HasPrefix(b.Path, "sys/*")
 	if !broad {
 		return false
