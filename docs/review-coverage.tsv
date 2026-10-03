@@ -45,6 +45,7 @@ cmd/keyorix-mcp	full-adversarial	baseline-2026-08-07, two independent passes (ba
 cmd/statemapgen	none	-	-	main-wiring
 cmd/validate-translations	full-adversarial	baseline-2026-08-07/baseline/cmd-validate-translations-findings.json (2026-08-07)	keyorix-private/adversarial-review/baseline-2026-08-07/baseline/cmd-validate-translations-findings.json — 1 MEDIUM finding (double base-dir join breaks every real invocation), confirmed by agent actually running the tool	-
 configs	none	-	new PR #1839 (system init first-run fix); single exported []byte var (DefaultConfigTemplate) populated by a go:embed directive, zero logic beyond the embed itself, guarded against an empty/corrupt embed by configs/embed_test.go	pending
+deploy	none	-	test-only package: deploy/compose_pins_test.go checks docker-compose.yml image pins against the latest release (no non-test Go code)	test-helper
 examples/new-architecture	none	-	-	example
 examples/secret_crud	none	-	-	example
 examples/system_init	none	-	-	example
