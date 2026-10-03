@@ -103,6 +103,19 @@ the plan immediately before executing each item (not trusting a plan computed
 and shown seconds or minutes earlier) — the source or the target could have
 changed in between.
 
+**Oversized values (#2544).** No API exposes the target's configured
+`secrets.limits.max_secret_size`, so the plan checks each value against the two
+bounds it can know (`target.DefaultMaxSecretSize` / `target.MaxSecretSizeHardCeiling`,
+mirrors of the server constants pinned by `TestSizeLimitsMatchServer`). A value
+above the 1 MiB hard ceiling is planned as `error` naming the path, its size and
+the limit, and is never sent: no server configuration can accept it. A value
+above the 64 KiB default stays `create`/`update` but carries a warning reason,
+because the target's limit may have been raised. A server-side 413 at apply time
+is classified as `target.ValueTooLargeError`. Either way the JSON report line
+carries `error_kind: "value_too_large"`, the human line shows `toolarge`
+instead of `error`, and the run summary counts that class separately. The run
+continues with every other item.
+
 ## Idempotency
 
 Every secret `keyorix-migrate` creates gets a stable **source-id** written to

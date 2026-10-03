@@ -116,7 +116,7 @@ func runCloudPlan(ctx context.Context, tgt *target.Client, keyorixTok string, it
 				return fmt.Errorf("write report: %w", err)
 			}
 		}
-		printCloudSummary(items)
+		printCloudSummary(items, nil)
 		_, _ = fmt.Fprintln(os.Stdout, "\nDry run only — pass --apply to execute this plan.")
 		return nil
 	}
@@ -146,12 +146,15 @@ func runCloudPlan(ctx context.Context, tgt *target.Client, keyorixTok string, it
 			return fmt.Errorf("write report: %w", err)
 		}
 	}
-	printCloudSummary(items)
+	printCloudSummary(items, allResults)
 	return nil
 }
 
-func printCloudSummary(items []plan.Item) {
+func printCloudSummary(items []plan.Item, results []plan.Result) {
 	counts := report.Summary(items)
 	_, _ = fmt.Fprintf(os.Stdout, "\n%d create, %d update, %d skip, %d conflict, %d error\n",
 		counts[plan.Create], counts[plan.Update], counts[plan.Skip], counts[plan.Conflict], counts[plan.Error])
+	if notice := report.ValueTooLargeNotice(items, results); notice != "" {
+		_, _ = fmt.Fprintln(os.Stdout, notice)
+	}
 }

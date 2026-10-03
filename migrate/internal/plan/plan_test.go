@@ -3,7 +3,11 @@ package plan
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/migrate/internal/target"
 )
 
 // fakeAPI is an in-process target.API fake — no network, no Vault, no Keyorix — for testing
@@ -268,5 +272,76 @@ func TestSourceID_StableAndDistinct(t *testing.T) {
 	c := SourceID("addr", "mount", "other-path", "value")
 	if a == c {
 		t.Error("SourceID collided across different inputs")
+	}
+}
+
+// tooLargeAPI wraps fakeAPI, rejecting any write above limit the way a real Keyorix server's
+// 413 is surfaced by target.Client (a *target.ValueTooLargeError).
+type tooLargeAPI struct {
+	*fakeAPI
+	limit int
+	sent  []string
+}
+
+func (a *tooLargeAPI) Create(ctx context.Context, name, value string, metadata map[string]string) (int, error) {
+	a.sent = append(a.sent, name)
+	if len(value) > a.limit {
+		return 0, &target.ValueTooLargeError{Size: len(value)}
+	}
+	return a.fakeAPI.Create(ctx, name, value, metadata)
+}
+
+// TestValueTooLarge_PlannedAndReportedDistinctly is #2544's plan-side guard: a value above
+// Keyorix's hard ceiling is refused in the plan itself (an Error naming the path and the limit,
+// never sent); a value above the default limit is planned with a warning; a server-side 413 at
+// apply time is classified as ValueTooLarge, not a generic error; and every other item in the
+// run is still processed.
+func TestValueTooLarge_PlannedAndReportedDistinctly(t *testing.T) {
+	api := &tooLargeAPI{fakeAPI: newFakeAPI(), limit: target.DefaultMaxSecretSize}
+	entries := []Entry{
+		{Path: "vault:secret/huge", Name: "huge", Value: strings.Repeat("x", target.MaxSecretSizeHardCeiling+1), SourceID: "s-huge"},
+		{Path: "vault:secret/big", Name: "big", Value: strings.Repeat("x", target.DefaultMaxSecretSize+1), SourceID: "s-big"},
+		{Path: "vault:secret/ok", Name: "ok", Value: "v", SourceID: "s-ok"},
+	}
+	items, err := BuildPlan(context.Background(), api, entries)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	huge, big, ok := items[0], items[1], items[2]
+	if huge.Outcome != Error || !huge.ValueTooLarge {
+		t.Errorf("huge: outcome=%q ValueTooLarge=%v, want Error/true", huge.Outcome, huge.ValueTooLarge)
+	}
+	for _, want := range []string{"vault:secret/huge", strconv.Itoa(target.MaxSecretSizeHardCeiling), strconv.Itoa(target.MaxSecretSizeHardCeiling + 1)} {
+		if !strings.Contains(huge.Reason, want) {
+			t.Errorf("huge: reason %q does not name %q", huge.Reason, want)
+		}
+	}
+	if big.Outcome != Create || big.ValueTooLarge || !strings.Contains(big.Reason, "max_secret_size") {
+		t.Errorf("big: outcome=%q ValueTooLarge=%v reason=%q, want Create with a max_secret_size warning", big.Outcome, big.ValueTooLarge, big.Reason)
+	}
+	if ok.Outcome != Create || ok.Reason != "" {
+		t.Errorf("ok: outcome=%q reason=%q, want a plain Create", ok.Outcome, ok.Reason)
+	}
+
+	results := Apply(context.Background(), api, items, false)
+	for _, name := range api.sent {
+		if name == "huge" {
+			t.Error("Apply sent the over-ceiling value to the target; the plan must refuse it")
+		}
+	}
+	if results[1].Error == "" || !results[1].ValueTooLarge {
+		t.Errorf("big: result error=%q ValueTooLarge=%v, want an error classified ValueTooLarge", results[1].Error, results[1].ValueTooLarge)
+	}
+	if results[2].Error != "" || results[2].ValueTooLarge || len(api.created) != 1 || api.created[0] != "ok" {
+		t.Errorf("ok: result error=%q ValueTooLarge=%v created=%v, want the rest of the run to proceed normally", results[2].Error, results[2].ValueTooLarge, api.created)
+	}
+}
+
+// TestApply_GenericErrorIsNotValueTooLarge: the converse — an ordinary write failure keeps the
+// generic classification.
+func TestApply_GenericErrorIsNotValueTooLarge(t *testing.T) {
+	res := failed(Item{Outcome: Create}, errors.New("create secret failed: boom (HTTP 500)"))
+	if res.ValueTooLarge {
+		t.Errorf("generic error classified ValueTooLarge: %q", res.Error)
 	}
 }
