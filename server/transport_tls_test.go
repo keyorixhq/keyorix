@@ -165,6 +165,41 @@ func TestCheckTransportTLSPosture_RejectsInvalidAllowedCiphers(t *testing.T) {
 	}
 }
 
+// ADR-112 §3: tls.allowed_ciphers has no effect under tls_mode: strict (TLS 1.3
+// negotiates its own suite set) — must warn, not silently ignore, so an operator
+// setting both doesn't believe the allowlist is still narrowing anything.
+func TestCheckTransportTLSPosture_WarnsWhenAllowedCiphersSetUnderStrictMode(t *testing.T) {
+	c := cfgWith(true, true, false, false, false)
+	c.Server.HTTP.TLSMode = config.TLSModeStrict
+	c.Server.HTTP.TLS.AllowedCiphers = []string{"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"}
+
+	logged := captureLogs(func() {
+		if err := checkTransportTLSPosture(c); err != nil {
+			t.Fatalf("a valid allowed_ciphers entry must not fail closed just because tls_mode is strict: %v", err)
+		}
+	})
+	if !strings.Contains(logged, "allowed_ciphers") || !strings.Contains(logged, "strict") {
+		t.Errorf("expected a warning naming allowed_ciphers and strict mode, got: %q", logged)
+	}
+}
+
+// Strict mode with NO allowed_ciphers set must warn about nothing extra —
+// this is the common case (an operator adopting strict mode fresh) and must
+// stay quiet.
+func TestCheckTransportTLSPosture_StrictModeAloneDoesNotWarnAboutCiphers(t *testing.T) {
+	c := cfgWith(true, true, false, false, false)
+	c.Server.HTTP.TLSMode = config.TLSModeStrict
+
+	logged := captureLogs(func() {
+		if err := checkTransportTLSPosture(c); err != nil {
+			t.Fatalf("strict mode alone must not fail closed: %v", err)
+		}
+	})
+	if strings.Contains(logged, "allowed_ciphers") {
+		t.Errorf("expected no allowed_ciphers warning with none configured, got: %q", logged)
+	}
+}
+
 // protocol_versions remains a separate, still-unwired tuning field (out of scope for
 // #333) — setting it must still only warn, not fail, and must not mention
 // allowed_ciphers (which is no longer a dead setting).
@@ -246,7 +281,7 @@ func TestCheckTransportTLSPosture_NoTrustedProxiesWarningForGRPC(t *testing.T) {
 // — buildAutoCertTLSConfig (the AutoCert-mode config builder) must apply the same
 // hardening as the non-AutoCert path (createTLSConfig).
 func TestBuildAutoCertTLSConfig_AppliesHardening(t *testing.T) {
-	tlsConfig, err := buildAutoCertTLSConfig([]string{"example.com"}, config.TLSConfig{})
+	tlsConfig, err := buildAutoCertTLSConfig([]string{"example.com"}, config.TLSConfig{}, "")
 	if err != nil {
 		t.Fatalf("buildAutoCertTLSConfig: %v", err)
 	}
@@ -309,7 +344,7 @@ func TestApplyTLSHardening_DefaultPreservedWhenAllowedCiphersUnset(t *testing.T)
 		t.Errorf("CipherSuites = %v, want the unchanged hardcoded default %v", tlsConfig.CipherSuites, hardenedCipherSuites)
 	}
 
-	autoCertTLSConfig, err := buildAutoCertTLSConfig([]string{"example.com"}, config.TLSConfig{})
+	autoCertTLSConfig, err := buildAutoCertTLSConfig([]string{"example.com"}, config.TLSConfig{}, "")
 	if err != nil {
 		t.Fatalf("buildAutoCertTLSConfig: %v", err)
 	}
@@ -342,7 +377,7 @@ func TestApplyTLSHardening_HonorsConfiguredAllowedCiphers(t *testing.T) {
 		t.Errorf("CipherSuites = %v, want the configured %v (not the hardcoded default %v)", tlsConfig.CipherSuites, want, hardenedCipherSuites)
 	}
 
-	autoCertTLSConfig, err := buildAutoCertTLSConfig([]string{"example.com"}, cfg.Server.HTTP.TLS)
+	autoCertTLSConfig, err := buildAutoCertTLSConfig([]string{"example.com"}, cfg.Server.HTTP.TLS, "")
 	if err != nil {
 		t.Fatalf("buildAutoCertTLSConfig: %v", err)
 	}
@@ -372,7 +407,7 @@ func TestApplyTLSHardening_RejectsWeakOrUnknownCipher(t *testing.T) {
 		if _, err := createTLSConfig(cfg); err == nil {
 			t.Errorf("createTLSConfig must reject weak/unknown cipher suite %q", name)
 		}
-		if _, err := buildAutoCertTLSConfig([]string{"example.com"}, cfg.Server.HTTP.TLS); err == nil {
+		if _, err := buildAutoCertTLSConfig([]string{"example.com"}, cfg.Server.HTTP.TLS, ""); err == nil {
 			t.Errorf("buildAutoCertTLSConfig must reject weak/unknown cipher suite %q", name)
 		}
 	}

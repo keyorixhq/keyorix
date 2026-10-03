@@ -6,6 +6,66 @@ All notable changes to Keyorix are documented here. This project follows
 ## Unreleased
 
 ### Security
+- **`security.enable_file_permission_check` and `security.require_mfa` now
+  default to the secure state** (ADR-112, secure-by-default baseline, item 1).
+  A fresh install enforces file-permission/DEK-salt-size/database-reachability
+  startup checks and admin MFA from its very first start, with no config
+  changes needed. **Upgrade note:** an existing deployment that never set
+  either key explicitly keeps booting during a grace period: a real
+  file-permission or startup-validation problem now logs a loud `ADR-112`
+  warning naming the setting and how to comply, instead of refusing to start;
+  `require_mfa` confines a session-authenticated admin without MFA enrolled to
+  the enrolment endpoints (non-interactive PAT/machine credentials are
+  unaffected) and logs an equivalent warning. Set either key explicitly (to
+  `true` once compliant, or `false` to opt out visibly) to silence the
+  warning and get the key's exact pre-upgrade behavior back.
+- **16 security-weakening settings renamed to an `insecure_` prefix** (ADR-112,
+  secure-by-default baseline, item 2) — `security.allow_unsafe_file_permissions`,
+  `security.login_lockout.disabled`, `security.recover_admin.keyless_mode`,
+  `audit.siem.allow_private_network_target`/`allow_insecure_transport`,
+  `evidence_delivery.webhook.allow_private_network_target`/`allow_insecure_transport`,
+  `notifications.webhook.allow_private_network_target`/`allow_insecure_transport`,
+  `dynamic_secrets.allow_private_network_targets`/`allow_insecure_transport`,
+  `storage.encryption.key_provider.kms_allow_context_fallback`/`allow_weaker_fallback`,
+  `sso.providers[].trust_asserted_email`, `sso.providers[].saml.allow_idp_initiated`,
+  and `audit_checkpoints.disabled`. **Upgrade note:** every old name still
+  works exactly as before — it's a deprecated alias, not a removal — but now
+  logs a start-up warning naming the current name to use instead. Every
+  setting that is currently in effect (whether under its old or new name)
+  also gets its own start-up warning, and a start-to-start settings diff now
+  writes an audit event (old value → new value) for any security-relevant
+  setting that changes between two starts of the same deployment. A new
+  structural test enforces that every entry in the registry carries the
+  `insecure_` prefix and is wired into both the warning and the audit diff.
+  Several other security-weakening settings (`require_transport_tls`,
+  `enable_file_permission_check`, `storage.encryption.enabled`,
+  `membership.validation_mode`, SSO `auto_provision`/`group_sync`,
+  `metrics_token`, `max_request_body_bytes`, `storage.database.ssl_mode`,
+  rate limiting, and the credential-delivery/SMTP cleartext opt-outs) are
+  covered by the same warning and audit mechanism under their existing
+  names, but were not renamed in this change — each needs either a
+  polarity-inverting rename of a load-bearing flag or a restructuring from a
+  non-boolean field, both deferred pending a product decision.
+- **New `server.http/grpc.tls_mode: strict` setting** (ADR-112, secure-by-default
+  baseline, item 3) switches a listener to TLS 1.3 only, with no fallback to
+  1.2. The existing default (TLS 1.2 floor, restricted to forward-secret AEAD
+  cipher suites — unchanged by this release) remains compliant, not a
+  downgrade to warn about: NIST SP 800-52 Rev. 2 requires servers to support
+  both 1.2 and 1.3, and OT/legacy clients often still need 1.2. `tls_mode` is
+  the opt-in upgrade for a deployment that can require 1.3-only clients.
+  `tls.allowed_ciphers` has no effect under strict mode (TLS 1.3 negotiates
+  its own suite set) and now warns if both are set.
+- **Every break-glass activation can now be reviewed after the fact**
+  (ADR-112, secure-by-default baseline, break-glass review item 5):
+  `POST /api/v1/projects/{id}/break-glass/{activationId}/review` records who
+  reviewed an activation, when, and a note — exactly once (a second attempt
+  is refused, not a silent overwrite), regardless of whether the activation
+  is still active, expired, or already revoked. Activation itself remains
+  single-person, by design (an emergency path that needs a second person
+  fails exactly when it's needed) — review is a separate, after-the-fact
+  check, not a second approver. A new `break_glass.review_window` setting
+  (default 72h) is how long an activation may go unreviewed before this
+  becomes visible as a deviation in the posture report below.
 - **The server now refuses to start if its key files are an incomplete or
   mixed-generation set** (ADR-112, follow-up from #2400). #2400 made a
   single restore operation atomic (every file in a key-material set is
@@ -22,6 +82,24 @@ All notable changes to Keyorix are documented here. This project follows
   The wrapped DEK is exempt from this timing check: routine DEK rotation
   legitimately rewraps it on its own schedule without touching the rest of
   the set.
+- **New `keyorix-server admin validate --posture` command** (ADR-112,
+  secure-by-default baseline, item 4) reports every secure-baseline
+  deviation in one place and exits non-zero if any is found: an
+  `insecure_` setting in effect (items 2's registry, excluding settings still
+  awaiting a product decision — those print separately as informational),
+  `security.enable_file_permission_check` disabled outright, a real
+  file-permission/encryption/database problem, an incomplete or
+  mixed-generation key-file set (item 6), an enabled listener with no TLS
+  while `security.require_transport_tls` is set, an admin-tier holder with
+  neither TOTP MFA nor a passkey enrolled, and a break-glass activation older
+  than `break_glass.review_window` with no review (item 5). A grace-period
+  setting (item 1) that is still enforcing only via its new secure-by-default
+  value, with the underlying condition it covers still non-compliant, is
+  reported as its own deviation referencing the detail above it. TLS mode,
+  KEK salt-file age (no rotation-age threshold is defined anywhere in this
+  codebase, so this is informational only), and settings still awaiting a
+  product decision are reported for visibility but never counted toward the
+  exit code. A default install reports zero.
 
 ## v0.95.3 — 2026-10-01
 

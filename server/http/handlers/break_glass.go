@@ -117,3 +117,48 @@ func (h *CatalogHandler) RevokeBreakGlass(w http.ResponseWriter, r *http.Request
 	}
 	sendSuccess(w, nil, "Emergency access revoked")
 }
+
+// ReviewBreakGlass handles POST /api/v1/projects/{id}/break-glass/{activationId}/review
+// (ADR-112 §3, break-glass review item 5): a post-activation check, distinct from and
+// independent of revoke -- an already-revoked or expired activation can still be
+// reviewed, since a review is a record about what happened, not a control over the grant.
+func (h *CatalogHandler) ReviewBreakGlass(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
+		return
+	}
+	activationID, err := strconv.ParseUint(chi.URLParam(r, "activationId"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid activation ID", http.StatusBadRequest, nil)
+		return
+	}
+	actor := middleware.GetUserFromContext(r.Context())
+	if actor == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	var body struct {
+		Note string `json:"note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	if err := h.coreService.ReviewBreakGlass(r.Context(), actor.UserID, uint(id), uint(activationID), body.Note); err != nil {
+		status := http.StatusInternalServerError
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "not found"):
+			status = http.StatusNotFound
+		case strings.Contains(msg, "already been reviewed") || strings.Contains(msg, "required") || strings.Contains(msg, "characters"):
+			status = http.StatusBadRequest
+		default:
+			log.Printf("Error reviewing break-glass activation %d for project %d: %v", activationID, id, err)
+			msg = clientSafe(err)
+		}
+		sendError(w, "Error", msg, status, nil)
+		return
+	}
+	sendSuccess(w, nil, "Break-glass activation reviewed")
+}

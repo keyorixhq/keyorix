@@ -71,6 +71,7 @@ server:
     tls:
       enabled: false              # commonly terminated at a reverse proxy
       auto_cert: false            # ACME/autocert when true
+    tls_mode: ""                  # "" (default: TLS 1.2 floor, forward-secret AEAD only) | "strict" (TLS 1.3 only)
     ratelimit:
       enabled: true
       requests_per_second: 50
@@ -85,11 +86,23 @@ server:
     reflection_enabled: false     # keep false in production
     tls:
       enabled: false
+    tls_mode: ""                  # same two values as server.http.tls_mode above
     ratelimit:
       enabled: true
       requests_per_second: 25
       burst: 50
 ```
+
+**`tls_mode: strict`** (ADR-112 §3) switches a listener from the default TLS
+posture (1.2 floor, restricted to forward-secret AEAD cipher suites — see
+`tls.allowed_ciphers` above) to TLS 1.3 only, with no fallback to 1.2. The
+default itself is **not** an `insecure_` opt-out: NIST SP 800-52 Rev. 2
+requires servers to support both 1.2 and 1.3, BSI TR-02102-2 prefers 1.3
+while planning 1.2's phase-out, and OT/legacy clients still commonly need
+1.2 — `tls_mode: strict` is an explicit upgrade an operator opts INTO when
+every client can be required to speak 1.3. `tls.allowed_ciphers` has no
+effect under strict mode (TLS 1.3 negotiates its own, always-AEAD suite set)
+and logs a warning if both are set.
 
 ## storage
 
@@ -270,25 +283,55 @@ secrets:
 
 File-permission self-checks, plus the **deployment-wide MFA mandate** (ADR-034).
 
+**Both `enable_file_permission_check` and `require_mfa` default to `true` when
+omitted** (ADR-112, secure-by-default baseline) — a fresh install enforces both
+from its first start with no config changes needed. An existing deployment that
+never set either key explicitly keeps booting during a grace period (a loud
+`ADR-112` start-up warning instead of an instant behavior change); see the
+CHANGELOG's Unreleased entry for exactly what that softens. Set either key
+explicitly — to `true` once you've confirmed compliance, or to `false` to opt
+out visibly — to silence the warning.
+
 ```yaml
 security:
   enable_file_permission_check: true
   auto_fix_file_permissions: true
-  allow_unsafe_file_permissions: false
-  require_mfa: false              # true = mandate a second factor for interactive login
+  insecure_allow_unsafe_file_permissions: false   # deprecated alias: allow_unsafe_file_permissions
+  require_mfa: true               # false = don't mandate a second factor for interactive login
   login_lockout:
     enabled: false                # opt-in per-account lockout (brute-force protection)
     max_attempts: 5               # failed password logins within the window before locking
     window: "15m"                 # consecutive-failure window
     base_cooldown: "1m"           # lock duration for the first lockout
     max_cooldown: "1h"            # ceiling for the exponential backoff
+    insecure_disable_login_lockout: false   # deprecated alias: disabled
 ```
 
-With `require_mfa: true`, an interactive (session-authenticated) user **without** a
-second factor is confined to the MFA-enrolment endpoints until they enrol. A TOTP
-secret **or** a passkey satisfies it. Non-interactive credentials — personal
-access tokens, machine tokens, OIDC — are **exempt** so automation is never broken.
-Per-project MFA (ADR-037) is set per project via the API
+Every setting named `insecure_*` is part of ADR-112's opt-out rule: it weakens
+the baseline below its secure default, is warned about at every start it's in
+effect, and (renamed settings only, for now) keeps its old name working as a
+deprecated alias that also warns when used. A start-to-start diff audits any
+security-relevant setting that changes between two starts of the same
+deployment.
+
+**`keyorix-server admin validate --posture`** (ADR-112 §4) reports every
+secure-baseline deviation in one place instead of warnings scattered across
+separate start-up log lines, and exits non-zero if any is found: an
+`insecure_` setting in effect, `enable_file_permission_check` disabled, a real
+file-permission/encryption/database problem, an incomplete or
+mixed-generation key-file set, a cleartext listener contradicting
+`require_transport_tls`, an admin without MFA or a passkey, and a break-glass
+activation past `review_window` with no review. A setting still awaiting a
+product decision (see the registry's own `NEEDS ANDREI` entries) and a
+grace-period setting that's merely relying on its new implicit default are
+reported for visibility but never counted toward the exit code — a default
+install reports zero.
+
+With `require_mfa: true` (the default), an interactive (session-authenticated) user
+**without** a second factor is confined to the MFA-enrolment endpoints until they
+enrol. A TOTP secret **or** a passkey satisfies it. Non-interactive credentials —
+personal access tokens, machine tokens, OIDC — are **exempt** so automation is
+never broken. Per-project MFA (ADR-037) is set per project via the API
 (`PUT /projects/{id}` `{ "require_mfa": true }`), independent of this flag.
 
 **Per-account login lockout** (`login_lockout`, opt-in) is brute-force protection
@@ -802,6 +845,7 @@ encryption off the scheduler logs a warning and does nothing.
 audit_checkpoints:
   enabled: true
   schedule: "12h"         # Go duration between checkpoint writes (default 24h)
+  insecure_disable_audit_checkpoints: false   # deprecated alias: disabled
 ```
 
 **External-notary anchoring** (`audit.checkpoint_notary`, opt-in). The checkpoint
@@ -905,6 +949,13 @@ Deliberately not RBAC-gated — the point is access the caller does *not* have �
 the controls are: it must be enabled here, every use is justified + audited +
 alerted, the grant expires, and an admin can revoke it early.
 
+`POST …/break-glass/{activationId}/review` (ADR-112 §3) records a separate,
+after-the-fact check — who reviewed it, when, and a note — exactly once per
+activation, regardless of whether it's still active, expired, or already
+revoked. Activation itself stays single-person by design (decided 2026-10-02:
+an emergency path needing a second person fails exactly when it's needed);
+review is not a second approver, it's a record that someone looked.
+
 ```yaml
 break_glass:
   enabled: true
@@ -913,6 +964,8 @@ break_glass:
                                        # is REJECTED at activation time
   default_ttl: "4h"                 # grant lifetime when none is requested
   max_ttl: "24h"                    # ceiling on a requested TTL
+  review_window: "72h"               # how long an activation may go unreviewed
+                                      # before it's a posture-report deviation
 ```
 
 ## dual_control
