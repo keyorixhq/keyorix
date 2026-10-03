@@ -222,7 +222,7 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   two-replica Postgres repro in `concurrency_check_then_act_exempt_review_postgres_test.go`.
   Guard: `check_then_act_lock_guard_test.go:TestCheckThenActLockGuard_UnlockedSecurityCheck`
   (AST walk; no control-flow, interprocedural, or `tx.<Write>` awareness — and it does not
-  detect stale rows, see the TSV's `STALE` class). Open: #2646 #2647 #2648 #2649 #2650 #2651
+  detect stale rows, see the TSV's `STALE` class). Open: #2646 #2647 #2649 #2650 #2651
   #2652 #2653 #2654 #2655 #2656 #2657 #2659.
 - **INV-CORE-42** A write that persists a pre-read snapshot must not overwrite columns the
   operation did not change, and must not resurrect a soft-deleted row. GORM `Save(struct)` on
@@ -230,8 +230,11 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   deleted_at IS NULL` matches 0 rows and it falls back to `INSERT ... ON CONFLICT (id) DO
   UPDATE SET <all columns>` including `deleted_at = NULL`; `Select("*").Updates(...)` reverts
   every column a narrower concurrent writer (`SetAccountState`, `SetPasswordHash`, …) changed.
-  Why: C-GUARD2-EXEMPT-REVIEW. Guard: UNGUARDED (#2648 share revoke, #2650 secret undelete,
-  #2651 dynamic config re-enable, #2653/#2654 user suspension/password revert).
+  Why: C-GUARD2-EXEMPT-REVIEW. Guard: share permission update (#2648, fixed):
+  `share_permission_column_scoped_guard_test.go:TestUpdateSharePermission_IsColumnScoped` +
+  `TestCTAReview_UpdateSharePermission_vs_RevokeShare_CrossReplicaPostgres` (pg-gated).
+  UNGUARDED: #2650 secret undelete, #2651 dynamic config re-enable, #2653/#2654 user
+  suspension/password revert.
 
 ## Account-state / exhaustiveness
 
