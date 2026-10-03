@@ -8,9 +8,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"regexp"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/identity"
@@ -217,22 +217,15 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 		// fail the whole CreateUser call, not just the non-fatal role grant —
 		// unlike SQLite, which has no equivalent transaction-abort behavior.
 		// Found reviewing PR #1996 before merge.
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("Warning: user %d (%s) created without its baseline system_viewer role: assignment panicked: %v", createdUser.ID, createdUser.Username, r)
-				}
-			}()
-			if err := tx.WithTransaction(ctx, func(savepoint storage.Storage) error {
+		besteffort.Run(ctx, "users.CreateUser.AssignBaselineRole", func() error {
+			return tx.WithTransaction(ctx, func(savepoint storage.Storage) error {
 				role, err := savepoint.GetRoleByName(ctx, "system_viewer")
 				if err != nil {
 					return err
 				}
 				return savepoint.AssignRole(ctx, createdUser.ID, role.ID, Scope{})
-			}); err != nil {
-				log.Printf("Warning: user %d (%s) created without its baseline system_viewer role: %v", createdUser.ID, createdUser.Username, err)
-			}
-		}()
+			})
+		})
 		return nil
 	})
 	if err != nil {
@@ -259,14 +252,9 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 	// docs/findings/2026-09-22-FINDING-secret-delete-restore-dependency-emission-panic-masks-success.md
 	// for the identical shape found first on DeleteSecret/RestoreSecret).
 	if c.passwordPolicy.HistoryCount > 0 {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("Warning: seeding password history for new user %d panicked (best-effort, user creation already succeeded): %v", createdUser.ID, r)
-				}
-			}()
-			_ = c.storage.AddPasswordHistory(ctx, createdUser.ID, hash, c.now())
-		}()
+		besteffort.Run(ctx, "users.CreateUser.AddPasswordHistory", func() error {
+			return c.storage.AddPasswordHistory(ctx, createdUser.ID, hash, c.now())
+		})
 	}
 	// Role assignment (system_viewer) now happens INSIDE the WithTransaction above,
 	// alongside the CreateUser write — see the fix/create-ops-atomicity comment there.
