@@ -965,6 +965,45 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 			return err
 		}
 	}
+	// #2433: notification_channels.url (the webhook/Slack/Teams bearer
+	// credential) was stored in plaintext. Add the url_enc/url_meta columns
+	// (the same ciphertext+metadata envelope as dynamic_secret_configs'
+	// admin_dsn_enc/admin_dsn_meta) and backfill every existing row's
+	// plaintext url into url_enc, then clear url -- this migration has no
+	// access to the application-layer encryptor (SetAuthEncryptor is wired
+	// into KeyorixCore at server startup, long after migrateDatabase runs),
+	// so it cannot produce real ciphertext for pre-existing rows here; it
+	// writes url's raw bytes into url_enc with a NULL url_meta, which is
+	// exactly the "plaintext marker" convention secret_value_crypto.go
+	// already defines for a disabled-encryption write. A deployment that
+	// later enables encryption re-encrypts a given channel's URL for real
+	// the next time it is created or updated (the same lazy-upgrade shape
+	// decryptAuthSecret's own doc comment describes for pre-#94 nil-AAD
+	// rows) -- what this migration guarantees NOW is that the plaintext
+	// column itself is never left holding the credential.
+	if tableExists(db, "notification_channels") {
+		blobType := "BLOB"
+		if db.Dialector.Name() == "postgres" {
+			blobType = "BYTEA"
+		}
+		if !columnExists(db, "notification_channels", "url_enc") {
+			if err := exec(fmt.Sprintf("ALTER TABLE notification_channels ADD COLUMN url_enc %s", blobType)); err != nil {
+				return err
+			}
+		}
+		if !columnExists(db, "notification_channels", "url_meta") {
+			if err := exec(fmt.Sprintf("ALTER TABLE notification_channels ADD COLUMN url_meta %s", blobType)); err != nil {
+				return err
+			}
+		}
+		if columnExists(db, "notification_channels", "url") {
+			if err := exec(fmt.Sprintf(
+				"UPDATE notification_channels SET url_enc = CAST(url AS %s), url = '' WHERE url_enc IS NULL AND url IS NOT NULL AND url <> ''",
+				blobType)); err != nil {
+				return err
+			}
+		}
+	}
 	// ADR-046: automated rotation opt-in. Additive auto_rotate (false = off).
 	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "auto_rotate") {
 		if err := exec("ALTER TABLE secret_nodes ADD COLUMN auto_rotate BOOLEAN NOT NULL DEFAULT false"); err != nil {

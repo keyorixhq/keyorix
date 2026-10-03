@@ -40,6 +40,9 @@ func TestCreateNotificationChannel_AuditsCreation(t *testing.T) {
 		Run(func(args mock.Arguments) {
 			args.Get(1).(*models.NotificationChannel).ID = 11
 		})
+	// #2433: the two-phase URL encryption persists url_enc/url_meta once
+	// ch.ID is known, via a second storage write.
+	store.On("UpdateNotificationChannel", ctx, mock.AnythingOfType("*models.NotificationChannel")).Return(nil)
 	var captured *models.AuditEvent
 	store.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).
 		Run(func(args mock.Arguments) { captured = args.Get(1).(*models.AuditEvent) }).
@@ -58,7 +61,10 @@ func TestCreateNotificationChannel_AuditsCreation(t *testing.T) {
 	require.NotNil(t, captured.UserID, "the acting admin must be attributed by numeric ID")
 	assert.Equal(t, actorID, *captured.UserID)
 	assert.Contains(t, captured.Diff, "siem-webhook", "the diff must carry the created channel's name")
-	assert.Contains(t, captured.Diff, "https://siem.example.com/hook", "the diff must carry the channel URL -- the security-relevant field an admin could redirect")
+	// #2432: the raw URL (the webhook bearer credential) must NEVER be
+	// marshaled into the audit diff -- only whether one is configured.
+	assert.NotContains(t, captured.Diff, "https://siem.example.com/hook", "the diff must never carry the raw channel URL -- it is a bearer credential, and audit.read is a wider authorization boundary than notification-channel management")
+	assert.Contains(t, captured.Diff, `"url_configured":true`, "the diff must still record THAT a destination was configured, without its value")
 	store.AssertExpectations(t)
 }
 
@@ -71,7 +77,8 @@ func TestUpdateNotificationChannel_AuditsURLChange(t *testing.T) {
 
 	existing := &models.NotificationChannel{
 		ID: 22, Name: "ops-webhook", Type: "webhook",
-		URL: "https://legit.example.com/hook", Enabled: true,
+		URL: "https://legit.example.com/hook", URLEnc: []byte("https://legit.example.com/hook"),
+		Enabled: true,
 	}
 	store.On("GetNotificationChannel", ctx, uint(22)).Return(existing, nil)
 	store.On("UpdateNotificationChannel", ctx, mock.AnythingOfType("*models.NotificationChannel")).Return(nil)
@@ -93,8 +100,12 @@ func TestUpdateNotificationChannel_AuditsURLChange(t *testing.T) {
 	assert.Equal(t, EventNotificationChannelUpdated, captured.EventType)
 	require.NotNil(t, captured.UserID)
 	assert.Equal(t, actorID, *captured.UserID)
-	assert.Contains(t, captured.Diff, "https://legit.example.com/hook", "the diff must carry the PRIOR (before) URL")
-	assert.Contains(t, captured.Diff, "https://attacker.example.net/collect", "the diff must carry the NEW (after) URL")
+	// #2432: neither the prior nor the new URL -- a repointed webhook bearer
+	// credential -- may ever appear in the diff, only that a destination
+	// remained configured across the change.
+	assert.NotContains(t, captured.Diff, "https://legit.example.com/hook", "the diff must never carry the PRIOR raw URL")
+	assert.NotContains(t, captured.Diff, "https://attacker.example.net/collect", "the diff must never carry the NEW raw URL")
+	assert.Contains(t, captured.Diff, `"url_configured":true`, "the diff must still show a destination was (and remains) configured")
 	store.AssertExpectations(t)
 }
 
@@ -107,7 +118,8 @@ func TestUpdateNotificationChannel_AuditsEnabledFlagChange(t *testing.T) {
 
 	existing := &models.NotificationChannel{
 		ID: 23, Name: "siem-webhook", Type: "webhook",
-		URL: "https://siem.example.com/hook", Enabled: true,
+		URL: "https://siem.example.com/hook", URLEnc: []byte("https://siem.example.com/hook"),
+		Enabled: true,
 	}
 	store.On("GetNotificationChannel", ctx, uint(23)).Return(existing, nil)
 	store.On("UpdateNotificationChannel", ctx, mock.AnythingOfType("*models.NotificationChannel")).Return(nil)

@@ -64,10 +64,13 @@ func freshNCCoreWithChannel(t *testing.T) (*core.KeyorixCore, uint) {
 		&models.AuditEvent{},
 		&models.NotificationChannel{},
 	))
+	// #2433: URL carries gorm:"-" (in-memory only); a direct db.Create must
+	// seed URLEnc (the physical column) instead, matching what
+	// core.CreateNotificationChannel's own encrypt-then-persist step writes.
 	ch := &models.NotificationChannel{
 		Name:    "test-channel",
 		Type:    "webhook",
-		URL:     "https://example.com/hook",
+		URLEnc:  []byte("https://example.com/hook"),
 		Enabled: true,
 	}
 	require.NoError(t, db.Create(ch).Error)

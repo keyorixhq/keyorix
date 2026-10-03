@@ -293,6 +293,17 @@ func DynamicSecretLeaseAAD(leaseID string, configID uint) []byte {
 	return []byte(fmt.Sprintf("keyorix:dynsecret-lease:v1:%s:%d", leaseID, configID))
 }
 
+// NotificationChannelURLAAD returns the AAD for a notification channel's
+// encrypted destination URL (#2433 -- the webhook/Slack/Teams bearer
+// credential, internal/notifychan/delivery.go's own doc comment), binding
+// the ciphertext to the channel's identity so a DB-write attacker cannot
+// transplant one channel's encrypted URL onto another's row. See
+// internal/core/notification_channels.go's encryptNotificationChannelURL/
+// decryptNotificationChannelURL.
+func NotificationChannelURLAAD(channelID uint) []byte {
+	return []byte(fmt.Sprintf("keyorix:notifychan-url:v1:%d", channelID))
+}
+
 // NotaryReceipt is proof an external timestamping authority anchored a
 // message. Mirrors internal/notary.Receipt.
 type NotaryReceipt struct {

@@ -143,3 +143,11 @@ func DynamicSecretConfigAAD(configID, projectID, environmentID uint) []byte {
 func DynamicSecretLeaseAAD(leaseID string, configID uint) []byte {
 	return ports.DynamicSecretLeaseAAD(leaseID, configID)
 }
+
+// NotificationChannelURLAAD returns the AAD for a notification channel's
+// encrypted destination URL (#2433), binding the ciphertext to the channel's
+// identity. See ports.NotificationChannelURLAAD's doc comment for the same
+// two-line-re-export rationale as SecretAAD above.
+func NotificationChannelURLAAD(channelID uint) []byte {
+	return ports.NotificationChannelURLAAD(channelID)
+}

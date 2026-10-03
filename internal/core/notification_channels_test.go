@@ -87,6 +87,9 @@ func TestNotificationChannel_CRUD(t *testing.T) {
 		ch := args.Get(1).(*models.NotificationChannel)
 		ch.ID = 1
 	})
+	// #2433: CreateNotificationChannel's own two-phase URL encryption issues a
+	// second storage write (insert, then encrypt+persist) once ch.ID is known.
+	store.On("UpdateNotificationChannel", ctx, mock.AnythingOfType("*models.NotificationChannel")).Return(nil)
 	var auditEvents []*models.AuditEvent
 	store.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).
 		Run(func(args mock.Arguments) { auditEvents = append(auditEvents, args.Get(1).(*models.AuditEvent)) }).

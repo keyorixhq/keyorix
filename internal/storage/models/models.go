@@ -2007,8 +2007,22 @@ type NotificationChannel struct {
 	Name    string `gorm:"uniqueIndex;not null" json:"name"`
 	Type    string `gorm:"not null" json:"type"` // webhook|slack|teams|email
 	Enabled bool   `gorm:"default:true" json:"enabled"`
-	// URL is the webhook endpoint (for webhook/slack/teams types)
-	URL string `json:"url,omitempty"`
+	// URL is the webhook endpoint (for webhook/slack/teams types). #2433: kept
+	// in-memory only (gorm:"-") -- the physical row stores only URLEnc/URLMeta
+	// below. Populated by core.GetNotificationChannel/ListNotificationChannels
+	// (decrypt), consumed by core.CreateNotificationChannel/UpdateNotificationChannel
+	// (encrypt) -- every other reader (dispatchToChannel, the CRUD HTTP handler)
+	// keeps reading this field exactly as before. Never read or written by GORM.
+	URL string `gorm:"-" json:"url,omitempty"`
+	// URLEnc/URLMeta hold URL's at-rest representation: AES-256-GCM ciphertext +
+	// metadata when storage.encryption/KEYORIX_MASTER_PASSWORD is configured
+	// (the same envelope scheme as the dynamic-secret admin DSN and MFA TOTP
+	// seed -- internal/core/service.go's encryptAuthSecret/decryptAuthSecret),
+	// or URL's own raw bytes with a nil/empty URLMeta (the "plaintext marker"
+	// convention internal/core/secret_value_crypto.go defines) when encryption
+	// is disabled. Never exposed in a JSON response.
+	URLEnc  []byte `gorm:"column:url_enc" json:"-"`
+	URLMeta []byte `gorm:"column:url_meta" json:"-"`
 	// Email is the recipient address (for email type)
 	Email string `json:"email,omitempty"`
 	// Events is a comma-separated list of event types this channel receives

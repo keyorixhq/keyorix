@@ -65,21 +65,26 @@ func TestGetNotificationChannelByName_Found(t *testing.T) {
 	assert.Equal(t, "slack", got.Type)
 }
 
+// TestUpdateNotificationChannel exercises the storage layer directly: URL is
+// gorm:"-" (in-memory only, never read/written by GORM -- #2433), so at THIS
+// layer the caller is expected to supply the at-rest representation
+// (URLEnc/URLMeta) itself -- the plaintext-to-ciphertext step happens one
+// layer up, in core.encryptNotificationChannelURL. Round-trips URLEnc, not URL.
 func TestUpdateNotificationChannel(t *testing.T) {
 	ctx := context.Background()
 	ls := newNotificationChannelTestStore(t)
 
-	ch := &models.NotificationChannel{Name: "teams-alerts", Type: "teams", URL: "https://outlook.office.com/webhook/abc", Enabled: true}
+	ch := &models.NotificationChannel{Name: "teams-alerts", Type: "teams", URLEnc: []byte("https://outlook.office.com/webhook/abc"), Enabled: true}
 	require.NoError(t, ls.CreateNotificationChannel(ctx, ch))
 
-	ch.URL = "https://outlook.office.com/webhook/xyz"
+	ch.URLEnc = []byte("https://outlook.office.com/webhook/xyz")
 	ch.Enabled = false
 	ch.Events = "secret.expiring"
 	require.NoError(t, ls.UpdateNotificationChannel(ctx, ch))
 
 	got, err := ls.GetNotificationChannel(ctx, ch.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "https://outlook.office.com/webhook/xyz", got.URL)
+	assert.Equal(t, []byte("https://outlook.office.com/webhook/xyz"), got.URLEnc)
 	assert.False(t, got.Enabled)
 	assert.Equal(t, "secret.expiring", got.Events)
 }

@@ -266,6 +266,9 @@ func TestRunAlertEscalation_DialTimeRefusesDNSRebind(t *testing.T) {
 	c := NewKeyorixCore(store)
 	c.now = fixedNow(now)
 	store.On("CreateNotificationChannel", mock.Anything, mock.Anything).Return(nil)
+	// #2433: the two-phase URL encryption persists url_enc/url_meta once
+	// the row's ID is known, via a second storage write.
+	store.On("UpdateNotificationChannel", mock.Anything, mock.Anything).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	created, err := c.CreateNotificationChannel(context.Background(), &models.NotificationChannel{
 		Name: "rebind-channel", Type: "webhook", URL: "https://" + rebindHost + "/hook", Enabled: true,
