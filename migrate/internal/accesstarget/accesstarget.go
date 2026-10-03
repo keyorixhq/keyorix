@@ -62,22 +62,26 @@ func (c *Client) ListEnvironments(ctx context.Context, projectID int) ([]accessp
 }
 
 // RoleDescriptionByName implements accessplan.KeyorixReader.
-func (c *Client) RoleDescriptionByName(ctx context.Context, name string) (string, bool, error) {
+func (c *Client) RoleDescriptionByName(ctx context.Context, name string) (int, string, bool, error) {
 	resp, err := c.api.GetRoleByNameWithResponse(ctx, &apiclient.GetRoleByNameParams{Name: name})
 	if err != nil {
-		return "", false, fmt.Errorf("look up role %q: %w", name, err)
+		return 0, "", false, fmt.Errorf("look up role %q: %w", name, err)
 	}
 	if resp.StatusCode() == http.StatusNotFound {
-		return "", false, nil
+		return 0, "", false, nil
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return "", false, apiErr("look up role", resp.StatusCode(), resp.Body)
+		return 0, "", false, apiErr("look up role", resp.StatusCode(), resp.Body)
+	}
+	id := 0
+	if resp.JSON200.Data.Id != nil {
+		id = *resp.JSON200.Data.Id
 	}
 	desc := ""
 	if resp.JSON200.Data.Description != nil {
 		desc = *resp.JSON200.Data.Description
 	}
-	return desc, true, nil
+	return id, desc, true, nil
 }
 
 // findMachineIdentity lists every machine identity in projectID and returns the one named name,
@@ -101,16 +105,20 @@ func (c *Client) findMachineIdentity(ctx context.Context, projectID int, name st
 }
 
 // MachineIdentityDescriptionByName implements accessplan.KeyorixReader.
-func (c *Client) MachineIdentityDescriptionByName(ctx context.Context, projectID int, name string) (string, bool, error) {
+func (c *Client) MachineIdentityDescriptionByName(ctx context.Context, projectID int, name string) (int, string, bool, error) {
 	m, found, err := c.findMachineIdentity(ctx, projectID, name)
 	if err != nil || !found {
-		return "", found, err
+		return 0, "", found, err
+	}
+	id := 0
+	if m.Id != nil {
+		id = *m.Id
 	}
 	desc := ""
 	if m.Description != nil {
 		desc = *m.Description
 	}
-	return desc, true, nil
+	return id, desc, true, nil
 }
 
 // MachineHasRoleGrant implements accessplan.KeyorixReader.
@@ -159,6 +167,92 @@ func (c *Client) MachineHasOIDCBinding(ctx context.Context, projectID int, machi
 		}
 	}
 	return false, nil
+}
+
+// CreateRole implements accessplan.KeyorixWriter.
+func (c *Client) CreateRole(ctx context.Context, name, description string, permissions []string) (int, error) {
+	resp, err := c.api.CreateRoleWithResponse(ctx, apiclient.CreateRoleJSONRequestBody{
+		Name: name, Description: description, Permissions: permissions,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("create role %q: %w", name, err)
+	}
+	if resp.JSON201 == nil || resp.JSON201.Data == nil || resp.JSON201.Data.Role == nil || resp.JSON201.Data.Role.Id == nil {
+		return 0, apiErr("create role", resp.StatusCode(), resp.Body)
+	}
+	return *resp.JSON201.Data.Role.Id, nil
+}
+
+// CreateMachineIdentity implements accessplan.KeyorixWriter. The identity is created in
+// Keyorix's default "pending" state; the caller (accessplan.Apply) always follows with
+// ActivateMachineIdentity before issuing a credential or granting a role.
+func (c *Client) CreateMachineIdentity(ctx context.Context, projectID int, name, identityType, description string) (int, error) {
+	resp, err := c.api.CreateMachineIdentityWithResponse(ctx, projectID, apiclient.CreateMachineIdentityJSONRequestBody{
+		Name: name, IdentityType: &identityType, Description: &description,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("create machine identity %q: %w", name, err)
+	}
+	if resp.JSON201 == nil || resp.JSON201.Data == nil || resp.JSON201.Data.MachineIdentity == nil || resp.JSON201.Data.MachineIdentity.Id == nil {
+		return 0, apiErr("create machine identity", resp.StatusCode(), resp.Body)
+	}
+	return *resp.JSON201.Data.MachineIdentity.Id, nil
+}
+
+// ActivateMachineIdentity implements accessplan.KeyorixWriter.
+func (c *Client) ActivateMachineIdentity(ctx context.Context, projectID, machineID int) error {
+	resp, err := c.api.TransitionMachineIdentityWithResponse(ctx, projectID, machineID, apiclient.TransitionMachineIdentityJSONRequestBody{
+		Action: apiclient.Activate,
+	})
+	if err != nil {
+		return fmt.Errorf("activate machine identity %d: %w", machineID, err)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		return apiErr("activate machine identity", resp.StatusCode(), resp.Body)
+	}
+	return nil
+}
+
+// IssueMachineCredential implements accessplan.KeyorixWriter. Returns the raw bearer token —
+// shown exactly once by the real API, and never logged, printed, or included in any report by
+// this tool (the caller writes it straight to a 0600 credentials file).
+func (c *Client) IssueMachineCredential(ctx context.Context, projectID, machineID int, name string) (string, error) {
+	resp, err := c.api.IssueMachineTokenWithResponse(ctx, projectID, machineID, apiclient.IssueMachineTokenJSONRequestBody{Name: name})
+	if err != nil {
+		return "", fmt.Errorf("issue credential for machine identity %d: %w", machineID, err)
+	}
+	if resp.JSON201 == nil || resp.JSON201.Data == nil || resp.JSON201.Data.Token == nil {
+		return "", apiErr("issue machine credential", resp.StatusCode(), resp.Body)
+	}
+	return *resp.JSON201.Data.Token, nil
+}
+
+// GrantMachineRole implements accessplan.KeyorixWriter.
+func (c *Client) GrantMachineRole(ctx context.Context, projectID, environmentID, machineID, roleID int) error {
+	resp, err := c.api.GrantMachineRoleWithResponse(ctx, projectID, machineID, apiclient.GrantMachineRoleJSONRequestBody{
+		RoleId: roleID, EnvironmentId: &environmentID,
+	})
+	if err != nil {
+		return fmt.Errorf("grant role %d to machine identity %d: %w", roleID, machineID, err)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		return apiErr("grant machine role", resp.StatusCode(), resp.Body)
+	}
+	return nil
+}
+
+// CreateOIDCBinding implements accessplan.KeyorixWriter.
+func (c *Client) CreateOIDCBinding(ctx context.Context, projectID, machineID int, issuer, subject string) error {
+	resp, err := c.api.CreateOIDCBindingWithResponse(ctx, projectID, machineID, apiclient.CreateOIDCBindingJSONRequestBody{
+		Issuer: issuer, Subject: subject,
+	})
+	if err != nil {
+		return fmt.Errorf("create oidc binding for machine identity %d: %w", machineID, err)
+	}
+	if resp.JSON201 == nil || resp.JSON201.Data == nil {
+		return apiErr("create oidc binding", resp.StatusCode(), resp.Body)
+	}
+	return nil
 }
 
 type apiErrorBody struct {

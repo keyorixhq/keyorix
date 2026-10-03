@@ -32,6 +32,10 @@ type Line struct {
 	ProposedOIDCSubject   string   `json:"proposed_oidc_subject,omitempty"`
 	ProposedRoleRef       string   `json:"proposed_role_ref,omitempty"`
 	ProposedMachineRef    string   `json:"proposed_machine_ref,omitempty"`
+	// ProvenanceKey carries the migrate.source-id apply-access needs to tag a created
+	// object's Description with — present in the JSON report (never in Markdown/HTML, which
+	// are for human review only) so `apply-access --plan <file>` can read it back.
+	ProvenanceKey string `json:"provenance_key,omitempty"`
 }
 
 func toLine(it accessplan.Item) Line {
@@ -42,8 +46,41 @@ func toLine(it accessplan.Item) Line {
 		ProposedEnvironmentID: it.ProposedEnvironmentID, ProposedPermissions: it.ProposedPermissions,
 		ProposedIdentityType: it.ProposedIdentityType, ProposedOIDCIssuer: it.ProposedOIDCIssuer,
 		ProposedOIDCSubject: it.ProposedOIDCSubject, ProposedRoleRef: it.ProposedRoleRef,
-		ProposedMachineRef: it.ProposedMachineRef,
+		ProposedMachineRef: it.ProposedMachineRef, ProvenanceKey: it.ProvenanceKey,
 	}
+}
+
+// toItem reconstructs the accessplan.Item fields apply-access needs to execute an item — the
+// inverse of toLine, used by ReadJSON. ExistingID and ConflictReason are deliberately NOT
+// round-tripped: apply-access always re-derives those fresh via accessplan.Reconcile against
+// LIVE Keyorix state (ADR-114: "re-derives and re-checks the plan immediately before executing
+// each item... never trusting the file's snapshot").
+func (l Line) toItem() accessplan.Item {
+	return accessplan.Item{
+		Kind: accessplan.ObjectKind(l.Kind), Outcome: accessplan.Outcome(l.Outcome), SourceRef: l.SourceRef,
+		Category: accessplan.UnmappableCategory(l.Category), Reason: l.Reason,
+		ProposedName: l.ProposedName, ProposedProjectID: l.ProposedProjectID,
+		ProposedEnvironmentID: l.ProposedEnvironmentID, ProposedPermissions: l.ProposedPermissions,
+		ProposedIdentityType: l.ProposedIdentityType, ProposedOIDCIssuer: l.ProposedOIDCIssuer,
+		ProposedOIDCSubject: l.ProposedOIDCSubject, ProposedRoleRef: l.ProposedRoleRef,
+		ProposedMachineRef: l.ProposedMachineRef, ProvenanceKey: l.ProvenanceKey,
+	}
+}
+
+// ReadJSON reads a plan-access JSON report (one Line object per line) back into Items, in file
+// order — apply-access's starting point before re-deriving and cross-checking against live
+// Vault/Keyorix state.
+func ReadJSON(r io.Reader) (accessplan.Plan, error) {
+	dec := json.NewDecoder(r)
+	var items []accessplan.Item
+	for dec.More() {
+		var l Line
+		if err := dec.Decode(&l); err != nil {
+			return accessplan.Plan{}, err
+		}
+		items = append(items, l.toItem())
+	}
+	return accessplan.Plan{Items: items}, nil
 }
 
 // Summary counts every item by outcome, for the report's header.
