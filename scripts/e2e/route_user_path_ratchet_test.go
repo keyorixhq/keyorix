@@ -66,8 +66,6 @@ var knownUncoveredUserPaths = map[string]string{
 	// though the literal-prefix scan (by construction) can't find a static
 	// call site for something that's mechanically unreachable without a
 	// real external ceremony.
-	"POST /api/v1/auth/mfa/enroll":                    "see coverage.go skipList -- TOTP ceremony, not yet automated anywhere",
-	"POST /api/v1/auth/mfa/activate":                  "see coverage.go skipList -- depends on mfa/enroll",
 	"POST /api/v1/auth/mfa/disable":                   "see coverage.go skipList -- depends on mfa/enroll+activate",
 	"POST /api/v1/auth/mfa/recovery-codes/regenerate": "see coverage.go skipList -- depends on mfa/enroll+activate",
 	"POST /api/v1/auth/mfa/stepup":                    "see coverage.go skipList -- depends on mfa/enroll+activate",
@@ -102,7 +100,6 @@ var knownUncoveredUserPaths = map[string]string{
 	"POST /api/v1/auth/end-impersonation":             "see coverage.go skipList -- impersonation start/end mutates session state, exercised by dedicated impersonation tests, not folded into this driver's shared session",
 	"POST /auth/saml/{provider}/acs":                  "see coverage.go skipList -- requires a real external SAML IdP to produce a valid assertion",
 	"POST /system/init":                               "see coverage.go skipList -- the bootstrap call itself, made directly by harness.StartServer before any client exists (this route IS exercised, just not through a scanned call site)",
-	"POST /auth/login":                                "called extensively by journeys via the adminLogin helper (helpers.go) and api-smoke's own client.login -- both use a raw http.Post, not restExpect/restCall/c.call, so this scanner's regex can't see it. Genuinely covered, not a real gap; a scanner limitation.",
 	"POST /scim/v2/Users":                             "SCIM provisioning surface -- see coverage.go skipList, same out-of-band-SCIMToken reasoning",
 	"PATCH /scim/v2/Users/{id}":                       "see coverage.go skipList -- SCIM provisioning surface",
 	"DELETE /scim/v2/Users/{id}":                      "see coverage.go skipList -- SCIM provisioning surface",
