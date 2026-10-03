@@ -86,6 +86,102 @@ export default defineConfig(
         },
     },
 
+    // INV-WEB-01 (#2528): every HTTP call in the app goes through one of the reviewed
+    // axios instances, which own withCredentials, the CSRF double-submit header, the
+    // X-Request-ID, and proactive session refresh:
+    //   - services/client.ts  `apiClient` (everything authenticated)
+    //   - services/auth.ts    `authApi`   (the auth surface; separate to break the
+    //                                      auth -> client -> authStore -> auth cycle)
+    //   - services/setup.ts   ADR-028 single-use setup-token flow — deliberately
+    //                         unauthenticated: no session cookie, the bearer is the
+    //                         token in the URL/body
+    // Anywhere else, a raw fetch/XHR/WebSocket/EventSource/sendBeacon or a new axios
+    // instance would silently skip all of that. Shapes recognised (each one is
+    // exercised by src/__tests__/structure/eslintGuards.test.ts, which fails if it
+    // stops firing):
+    //   - fetch(...), window/globalThis/self.fetch(...)
+    //   - new XMLHttpRequest / WebSocket / EventSource, navigator.sendBeacon(...)
+    //   - any axios import other than the allowlisted types/predicates below — so the
+    //     default export (the only route to axios.create/get/post/request) is banned
+    //     whatever local name it is bound to; also `axios/*` subpaths, dynamic
+    //     import('axios'), and re-exporting from axios.
+    // Not covered: an HTTP library other than axios (needs a package.json change a
+    // reviewer sees), or reaching fetch through an indirection such as
+    // `const f = window['fet' + 'ch']`.
+    {
+        files: ['src/**/*.{ts,tsx}'],
+        ignores: [
+            'src/services/client.ts',
+            'src/services/auth.ts',
+            'src/services/setup.ts',
+            'src/**/*.test.ts',
+            'src/**/*.test.tsx',
+            'src/**/__tests__/**',
+            'src/test/**',
+        ],
+        rules: {
+            'no-restricted-imports': [
+                'error',
+                {
+                    paths: [
+                        {
+                            name: 'axios',
+                            allowImportNames: [
+                                'isAxiosError',
+                                'isCancel',
+                                'AxiosError',
+                                'CanceledError',
+                                'AxiosResponse',
+                                'AxiosRequestConfig',
+                                'InternalAxiosRequestConfig',
+                                'AxiosInstance',
+                                'RawAxiosRequestHeaders',
+                                'HttpStatusCode',
+                            ],
+                            message:
+                                'INV-WEB-01: use apiClient (services/client.ts) or authApi (services/auth.ts); only types and isAxiosError/isCancel may be imported from axios here.',
+                        },
+                    ],
+                    patterns: [
+                        {
+                            group: ['axios/*'],
+                            message: 'INV-WEB-01: do not reach into axios internals; use apiClient/authApi.',
+                        },
+                    ],
+                },
+            ],
+            'no-restricted-syntax': [
+                'error',
+                {
+                    selector: "CallExpression[callee.type='Identifier'][callee.name='fetch']",
+                    message: 'INV-WEB-01: raw fetch() bypasses apiClient (CSRF, credentials, session refresh).',
+                },
+                {
+                    selector:
+                        "CallExpression[callee.type='MemberExpression'][callee.object.name=/^(window|globalThis|self)$/][callee.property.name='fetch']",
+                    message: 'INV-WEB-01: raw fetch() bypasses apiClient (CSRF, credentials, session refresh).',
+                },
+                {
+                    selector: 'NewExpression[callee.name=/^(XMLHttpRequest|WebSocket|EventSource)$/]',
+                    message: 'INV-WEB-01: raw network primitives bypass apiClient; add a service method instead.',
+                },
+                {
+                    selector: "CallExpression[callee.object.name='navigator'][callee.property.name='sendBeacon']",
+                    message: 'INV-WEB-01: navigator.sendBeacon bypasses apiClient.',
+                },
+                {
+                    selector: "ImportExpression[source.value='axios']",
+                    message: 'INV-WEB-01: dynamic import of axios bypasses the reviewed instances.',
+                },
+                {
+                    selector:
+                        "ExportNamedDeclaration[source.value='axios'], ExportAllDeclaration[source.value='axios']",
+                    message: 'INV-WEB-01: re-exporting axios hands callers a way around apiClient.',
+                },
+            ],
+        },
+    },
+
     // Relax rules further for test files
     {
         files: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'src/test/**/*'],
@@ -94,5 +190,5 @@ export default defineConfig(
             'no-console': 'off',
             '@typescript-eslint/no-empty-function': 'off',
         },
-    },
+    }
 );
