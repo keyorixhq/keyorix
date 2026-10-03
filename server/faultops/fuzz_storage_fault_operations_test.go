@@ -755,6 +755,25 @@ var knownOpenTolerances = []knownOpenTolerance{
 		nth: 1, oracle: "a", issue: "#2549", expires: "2026-10-17",
 		findingDoc: "docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md",
 	},
+	// Third instance of the identical #2549 harness-oracle gap, this time on
+	// BulkApproveAccessRequests' own sibling unconditional summary audit event
+	// (internal/core/bulk_access_requests.go: "Written unconditionally... a
+	// batch where every item fails ... would otherwise leave no trail that
+	// this bulk operation was attempted") -- same shape as the bulk-reject
+	// entry directly above, just the approve-side counterpart. Found live by
+	// CI's own fuzz shard 1 on this PR's own run (not caused by this PR --
+	// bulk-approve's opCatalog wiring and result-detection fix are #2392's
+	// own, but the underlying audit-write shape is pre-existing and shared
+	// with bulk-reject). Reproduced directly: op="REST POST
+	// /api/v1/access-requests/bulk-approve" fault=(method=GetAccessRequest,
+	// NthCall=1, kind=error) -- oracle (a) VIOLATION, differing tables:
+	// [AuditEvent].
+	{
+		op: "REST POST /api/v1/access-requests/bulk-approve", method: "GetAccessRequest", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2549", expires: "2026-10-17",
+		tables:     []string{"AuditEvent"},
+		findingDoc: "docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md",
+	},
 	// docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md
 	// (SESSION-FI, AT5, out of OWNS, not fixed there): loadTOTPSecret's
 	// GetMFASecret error is checked with `err == nil` as the gate to even
