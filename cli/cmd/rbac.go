@@ -56,19 +56,8 @@ func rbacAPIClient() (*apiclient.ClientWithResponses, error) {
 // case-insensitively -- matches the old CLI's rbac package exactly (distinct
 // from machine.go's resolveMachineProjectID, which matches case-sensitively).
 func resolveRBACProjectIDByName(ctx context.Context, client *apiclient.ClientWithResponses, name string) (int, error) {
-	resp, err := client.ListProjectsWithResponse(ctx, nil)
-	if err != nil {
-		return 0, fmt.Errorf("failed to list projects: %w", err)
-	}
-	if resp.JSON200 == nil || resp.JSON200.Data == nil || resp.JSON200.Data.Projects == nil {
-		return 0, fmt.Errorf("failed to list projects: HTTP %d", resp.StatusCode())
-	}
-	for _, p := range *resp.JSON200.Data.Projects {
-		if p.Name != nil && strings.EqualFold(*p.Name, name) {
-			return derefInt(p.Id), nil
-		}
-	}
-	return 0, fmt.Errorf("project %q not found — run 'keyorix-next project list' to see available projects", name)
+	_, id, err := resolveProjectRef(ctx, client, name, true)
+	return id, err
 }
 
 // resolveRBACEnvironmentIDByName finds an environment's ID by name WITHIN a

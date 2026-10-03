@@ -53,32 +53,13 @@ func requestProjectName(flagValue string) (string, error) {
 	return "", fmt.Errorf("no project specified — use --project or set KEYORIX_PROJECT")
 }
 
-type requestProjectItem struct {
-	ID   uint   `json:"ID"`
-	Name string `json:"Name"`
-}
-
 // resolveRequestProjectID finds a project's ID by exact name match via GET /api/v1/projects.
 func resolveRequestProjectID(ctx context.Context, client *apiclient.ClientWithResponses, name string) (uint, error) {
-	resp, err := client.ListProjectsWithResponse(ctx, nil)
-	if err != nil {
-		return 0, fmt.Errorf("failed to list projects: %w", err)
-	}
-	if resp.StatusCode() != 200 {
-		return 0, apiError("list projects", resp.StatusCode(), resp.Body)
-	}
-	data, err := decodeData[struct {
-		Projects []requestProjectItem `json:"projects"`
-	}](resp.Body)
+	_, id, err := resolveProjectRef(ctx, client, name, false)
 	if err != nil {
 		return 0, err
 	}
-	for _, p := range data.Projects {
-		if p.Name == name {
-			return p.ID, nil
-		}
-	}
-	return 0, fmt.Errorf("project %q not found", name)
+	return uint(id), nil // #nosec G115 -- resolveProjectRef only returns positive IDs
 }
 
 // requestAccessRequest mirrors models.AccessRequest's untagged, PascalCase wire shape

@@ -174,6 +174,12 @@ const (
 	ListProjectsParamsIncludeDeletedTrue  ListProjectsParamsIncludeDeleted = "true"
 )
 
+// Defines values for DeleteProjectParamsForce.
+const (
+	DeleteProjectParamsForceFalse DeleteProjectParamsForce = "false"
+	DeleteProjectParamsForceTrue  DeleteProjectParamsForce = "true"
+)
+
 // Defines values for ResolveAccessRequestJSONBodyAction.
 const (
 	ResolveAccessRequestJSONBodyActionApprove ResolveAccessRequestJSONBodyAction = "approve"
@@ -188,8 +194,8 @@ const (
 
 // Defines values for ListProjectEnvironmentsParamsIncludeDeleted.
 const (
-	ListProjectEnvironmentsParamsIncludeDeletedFalse ListProjectEnvironmentsParamsIncludeDeleted = "false"
-	ListProjectEnvironmentsParamsIncludeDeletedTrue  ListProjectEnvironmentsParamsIncludeDeleted = "true"
+	False ListProjectEnvironmentsParamsIncludeDeleted = "false"
+	True  ListProjectEnvironmentsParamsIncludeDeleted = "true"
 )
 
 // Defines values for TransitionMachineIdentityJSONBodyAction.
@@ -1635,6 +1641,21 @@ type CreateProjectJSONBody struct {
 	Name         string    `json:"name"`
 }
 
+// DeleteProjectParams defines parameters for DeleteProject.
+type DeleteProjectParams struct {
+	// Force When 'true', cascade-delete even when the project contains secrets (otherwise a non-empty project yields 409).
+	Force *DeleteProjectParamsForce `form:"force,omitempty" json:"force,omitempty"`
+}
+
+// DeleteProjectParamsForce defines parameters for DeleteProject.
+type DeleteProjectParamsForce string
+
+// UpdateProjectJSONBody defines parameters for UpdateProject.
+type UpdateProjectJSONBody struct {
+	Description *string `json:"description,omitempty"`
+	Name        *string `json:"name,omitempty"`
+}
+
 // CreateAccessRequestJSONBody defines parameters for CreateAccessRequest.
 type CreateAccessRequestJSONBody struct {
 	Reason *string `json:"reason,omitempty"`
@@ -2325,6 +2346,9 @@ type UpdateNotificationChannelJSONRequestBody UpdateNotificationChannelJSONBody
 
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody CreateProjectJSONBody
+
+// UpdateProjectJSONRequestBody defines body for UpdateProject for application/json ContentType.
+type UpdateProjectJSONRequestBody UpdateProjectJSONBody
 
 // CreateAccessRequestJSONRequestBody defines body for CreateAccessRequest for application/json ContentType.
 type CreateAccessRequestJSONRequestBody CreateAccessRequestJSONBody

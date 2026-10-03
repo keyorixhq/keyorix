@@ -52,14 +52,14 @@ var machineTokenRevokeCmd = &cobra.Command{
 }
 
 func init() {
-	machineTokenIssueCmd.Flags().StringVar(&machineTokenProjectName, "project", "", "Project name")
+	machineTokenIssueCmd.Flags().StringVar(&machineTokenProjectName, "project", "", "Project name or numeric ID")
 	machineTokenIssueCmd.Flags().StringVar(&machineTokenIssueName, "name", "", "Token label (required)")
 	machineTokenIssueCmd.Flags().IntVar(&machineTokenIssueExpiryDays, "expires-in-days", 0, "Token lifetime in days (0 = never expires)")
 	machineTokenIssueCmd.Flags().StringVar(&machineTokenIssueClass, "classification", "", "Data classification: public | internal | confidential | restricted")
 
-	machineTokenListCmd.Flags().StringVar(&machineTokenProjectName, "project", "", "Project name")
+	machineTokenListCmd.Flags().StringVar(&machineTokenProjectName, "project", "", "Project name or numeric ID")
 
-	machineTokenRevokeCmd.Flags().StringVar(&machineTokenProjectName, "project", "", "Project name")
+	machineTokenRevokeCmd.Flags().StringVar(&machineTokenProjectName, "project", "", "Project name or numeric ID")
 	machineTokenRevokeCmd.Flags().BoolVar(&machineTokenRevokeForce, "force", false, "Skip the confirmation prompt")
 
 	machineTokenCmd.AddCommand(machineTokenIssueCmd, machineTokenListCmd, machineTokenRevokeCmd)

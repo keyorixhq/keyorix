@@ -56,6 +56,9 @@ var keptPaths = []string{
 	"/api/v1/machine-token-hygiene",
 	"/api/v1/machine-identities/audit",
 	"/api/v1/projects",
+	// #2562: the per-project read a project-scoped (least-privilege) caller CAN
+	// use to resolve --project <id> when the global listing above correctly 403s.
+	"/api/v1/projects/{id}",
 	// PR 4 (docs/cli-split-inventory.md §7) -- secret core CRUD + metadata.
 	"/api/v1/secrets",
 	"/api/v1/secrets/{id}",
