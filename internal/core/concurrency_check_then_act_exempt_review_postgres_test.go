@@ -329,7 +329,6 @@ func TestCTAReview_UpdateSharePermission_vs_RevokeShare_CrossReplicaPostgres(t *
 // (DeleteSecret's own CWE-284 cascade exists so ACLs cannot reactivate on
 // restore).
 func TestCTAReview_GrantSecretACL_vs_DeleteSecret_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2649: GrantSecretACL vs DeleteSecret leaves an ACL grant on a deleted secret; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	grantee := f.user("cta-aclgrantee", "project_viewer")
@@ -342,6 +341,38 @@ func TestCTAReview_GrantSecretACL_vs_DeleteSecret_CrossReplicaPostgres(t *testin
 	require.True(t, fired(), "the hook must have interleaved B's DeleteSecret before A's ACL upsert")
 	require.NoError(t, errB)
 
+	assert.Zero(t, f.countLive(&models.SecretACL{}, "secret_id = ?", s.ID),
+		"CWE-284 cascade violated: an ACL grant exists on a soft-deleted secret (it reactivates on RestoreSecret)")
+}
+
+// TestCTAReview_GrantSecretACL_DeleteSecretAfterUpsert_CrossReplicaPostgres: B's
+// DeleteSecret commits after A's ACL upsert ran but before A commits, so B's CWE-284
+// ACL cascade cannot see A's row. A liveness check before the upsert would pass here.
+//
+// Bug origin (#2649):
+//
+//	Introduced-by: DeleteSecret's CWE-284 ACL cascade (local_secrets.go), which deletes
+//	  only the grants visible to its own transaction; GrantSecretACL's
+//	  requireSecretOrFolderNode-then-upsert never serialized against it.
+//	Detected-by: C-GUARD2-EXEMPT-REVIEW #2662
+//	Class: cross-replica check-then-act
+//	Severity: MEDIUM (an ACL grant severed by deleting the secret reactivates on restore)
+//	Guard: this test, the one above, and lockLiveParent's write-then-FOR-SHARE re-check
+//	  in LocalStorage.CreateOrUpdateSecretACL (INV-STORE-21).
+func TestCTAReview_GrantSecretACL_DeleteSecretAfterUpsert_CrossReplicaPostgres(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	grantee := f.user("cta-aclagrantee", "project_viewer")
+	s := f.secret("cta-acla-secret", f.adminID)
+
+	var errB error
+	fired := f.afterA("create", "secret_acls", func() { errB = f.coreB.DeleteSecret(f.ctx, s.ID) })
+	errA := f.coreA.GrantSecretACL(f.ctx, f.adminID, s.ID, grantee.ID, []string{"secrets.read"})
+	t.Logf("GrantSecretACL (A) err=%v, DeleteSecret (B) err=%v", errA, errB)
+	require.True(t, fired(), "the hook must have run B's DeleteSecret after A's ACL upsert")
+	require.NoError(t, errB)
+
+	assert.Error(t, errA, "A must fail closed: its secret was deleted before it committed")
 	assert.Zero(t, f.countLive(&models.SecretACL{}, "secret_id = ?", s.ID),
 		"CWE-284 cascade violated: an ACL grant exists on a soft-deleted secret (it reactivates on RestoreSecret)")
 }
