@@ -90,3 +90,28 @@ func (km *KeyManager) acquireExclusiveKeyLock() (*keyFileLock, error) {
 	}
 	return &keyFileLock{f: f}, nil
 }
+
+// tryAcquireSharedKeyLock takes a NON-blocking SHARED flock(2) on the same
+// <baseDir>/<dekPath>.lock file acquireExclusiveKeyLock serializes every
+// key-file rewriter on (RotateDEKWithSweep, RotateKEKPassphrase, RewrapDEK*).
+// Any number of shared holders coexist; a rewriter's exclusive request waits
+// (acquireExclusiveKeyLock blocks) until every shared holder releases, and a
+// shared request is refused while a rewriter already holds it. That makes it
+// the read side of the same protocol: a holder sees no key-file write and no
+// DEK-rotation sweep commit for as long as it holds the lock (#2602, a live
+// `admin backup`). Non-blocking, so a backup started mid-rotation fails fast
+// with a clear error instead of stalling behind it.
+func (km *KeyManager) tryAcquireSharedKeyLock() (*keyFileLock, error) {
+	lockPath := filepath.Join(km.baseDir, km.dekPath+".lock")
+	// #nosec G304 -- lockPath is derived from the key manager's own configured
+	// baseDir/dekPath (operator/config controlled), not attacker input.
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("open DEK lock file %s: %w", lockPath, err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("a key-management operation (rotate/rotate-kek/migrate-provider) holds %s: %w", lockPath, err)
+	}
+	return &keyFileLock{f: f}, nil
+}

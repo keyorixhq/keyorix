@@ -60,7 +60,7 @@ func postgresTargetIdentityPath(cfg *config.Config) (string, error) {
 // REPEATABLE READ snapshot connection backup uses or the GORM connection
 // migration/LoadArchive use.
 func postgresOpenSQL(cfg *config.Config) (*sql.DB, error) {
-	db, err := sql.Open("pgx", cfg.Storage.Database.DSN)
+	db, err := sql.Open("pgx", config.BuildPostgresDSN(&cfg.Storage.Database))
 	if err != nil {
 		return nil, fmt.Errorf("open postgres: %w", err)
 	}
@@ -235,7 +235,7 @@ func quoteIdentPG(ident string) string {
 // infrastructure -- internal/auditverify's own independence requirement
 // means it already speaks both dialects) instead of OpenSQLiteReadOnly.
 func verifyRestoredAuditPostgres(cfg *config.Config) error {
-	db, err := auditverify.OpenPostgres(cfg.Storage.Database.DSN)
+	db, err := auditverify.OpenPostgres(config.BuildPostgresDSN(&cfg.Storage.Database))
 	if err != nil {
 		return fmt.Errorf("open restored database for automatic verify-audit: %w", err)
 	}

@@ -147,9 +147,21 @@ docker compose cp backend:/tmp/backup.tar.gz ./keyorix-backup-$(date +%F).tar.gz
 
 On Postgres, this reads through a single `REPEATABLE READ` snapshot
 transaction by default — every table sees the identical point-in-time view,
-without taking the database offline. Pass `--exclusive` instead to take the
-same host-level exclusive lock a SQLite backup always holds, if you'd rather
-trade availability for that stronger guarantee.
+without taking the database offline, so it runs beside the live `backend`
+exactly as shown. The key files are read under the key-rotation read lock
+(no `rotate`/`rotate-kek`/`migrate-provider` can change them, or re-encrypt
+rows, until the backup's reads are done) and re-checked afterwards; if a key
+rotation is in progress or the key files changed mid-backup, the command
+fails and leaves no archive — retry it. Pass `--exclusive` instead to take
+the same host-level exclusive lock a SQLite backup always holds, if you'd
+rather trade availability for that stronger guarantee: that needs the
+database to itself, so stop the `backend` service first and use
+`docker compose run --rm backend ...` as for restore below.
+
+On **SQLite** (single binary, `QUICK_START.md`), a backup always needs the
+database to itself: stop the server, run `keyorix-server admin backup
+--output <path>`, start it again. A backup beside a live SQLite server is
+refused rather than taken inconsistently.
 
 **Restore** (with the *same* `KEYORIX_MASTER_PASSWORD` and the same storage
 config the backup was taken from). `admin restore` always takes this

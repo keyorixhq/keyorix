@@ -20,6 +20,7 @@ silently removing it.
 | `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 35 | 28 | 7 |
 | `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 21 | 17 | 4 |
 | `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 27 | 24 | 3 |
+| `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 28 | 25 | 3 |
 | `internal/auditverify` | [internal/auditverify/INVARIANTS.md](../internal/auditverify/INVARIANTS.md) | 15 | 12 | 3 |
 | `server/middleware` | [server/middleware/INVARIANTS.md](../server/middleware/INVARIANTS.md) | 22 | 20 | 2 |
 | `server/http` (+ `handlers`) | [server/http/INVARIANTS.md](../server/http/INVARIANTS.md) | 19 | 19 | 0 |
