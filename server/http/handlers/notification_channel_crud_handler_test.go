@@ -64,10 +64,15 @@ func freshNCCoreWithChannel(t *testing.T) (*core.KeyorixCore, uint) {
 		&models.AuditEvent{},
 		&models.NotificationChannel{},
 	))
+	// URLEnc, not URL (#2433): URL is gorm:"-" (not a persisted column) -- a raw
+	// db.Create setting only URL would silently persist no URL at all, and
+	// UpdateNotificationChannel (which TestNCUpdate_Success below drives) would
+	// then decrypt an empty URLEnc, failing webhook URL validation on any
+	// update that doesn't itself touch "url".
 	ch := &models.NotificationChannel{
 		Name:    "test-channel",
 		Type:    "webhook",
-		URL:     "https://example.com/hook",
+		URLEnc:  []byte("https://example.com/hook"),
 		Enabled: true,
 	}
 	require.NoError(t, db.Create(ch).Error)

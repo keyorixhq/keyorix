@@ -330,6 +330,68 @@ func sweepDynamicSecretLeases(tx *gorm.DB, oldSvc *EncryptionService, newSvc *En
 	return swept, legacyUpgraded, nil
 }
 
+// sweepNotificationChannels re-encrypts notification channel destination URLs
+// (notification_channels.url_enc), bound to NotificationChannelURLAAD(ID)
+// (#2433). Legacy rows are upgraded to AAD in place -- see sweepMFASecrets.
+// Missing this sweeper's re-encryption step entirely would leave the webhook/
+// Slack/Teams bearer credential undecryptable after a DEK rotation, silently
+// breaking every outbound alert escalation until each channel's URL was
+// manually re-entered. dryRun skips the final Updates() write only; every
+// other step still runs. Returns (rowsSwept, legacyRowsUpgraded, error).
+func sweepNotificationChannels(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, int, error) { // NOSONAR -- cognitive complexity 24, suppress go:S3776
+	var rows []models.NotificationChannel
+	if err := tx.Find(&rows).Error; err != nil {
+		return 0, 0, fmt.Errorf("failed to fetch notification_channels: %w", err)
+	}
+	swept, legacyUpgraded := 0, 0
+	for _, row := range rows {
+		if len(row.URLEnc) == 0 {
+			continue
+		}
+		encrypted, err := DeserializeEncryptedData(row.URLEnc)
+		if err != nil {
+			return swept, legacyUpgraded, fmt.Errorf("failed to deserialize notification_channel id=%d: %w", row.ID, err)
+		}
+		aad := NotificationChannelURLAAD(row.ID)
+		isLegacy := encrypted.Metadata.AADVersion == ""
+		var plaintext []byte
+		if isLegacy {
+			plaintext, err = oldSvc.Decrypt(encrypted)
+		} else {
+			plaintext, err = oldSvc.DecryptWithAAD(encrypted, aad)
+		}
+		if err != nil {
+			return swept, legacyUpgraded, fmt.Errorf("failed to decrypt notification_channel id=%d: %w", row.ID, err)
+		}
+		newEncrypted, err := newSvc.EncryptWithAAD(plaintext, newKeyVersion, aad)
+		wipeBytes(plaintext)
+		if err != nil {
+			return swept, legacyUpgraded, fmt.Errorf("failed to re-encrypt notification_channel id=%d: %w", row.ID, err)
+		}
+		newBytes, err := SerializeEncryptedData(newEncrypted)
+		if err != nil {
+			return swept, legacyUpgraded, fmt.Errorf("failed to serialize notification_channel id=%d: %w", row.ID, err)
+		}
+		metaBytes, err := json.Marshal(newEncrypted.Metadata)
+		if err != nil {
+			return swept, legacyUpgraded, fmt.Errorf("failed to marshal notification_channel metadata id=%d: %w", row.ID, err)
+		}
+		if !dryRun {
+			if err := tx.Model(&models.NotificationChannel{}).Where(sqlWhereID, row.ID).Updates(map[string]interface{}{
+				"url_enc":  newBytes,
+				"url_meta": metaBytes,
+			}).Error; err != nil {
+				return swept, legacyUpgraded, fmt.Errorf("failed to update notification_channel id=%d: %w", row.ID, err)
+			}
+		}
+		swept++
+		if isLegacy {
+			legacyUpgraded++
+		}
+	}
+	return swept, legacyUpgraded, nil
+}
+
 // dryRun skips the final Updates() write only; every other step still runs.
 // Returns (rowsSwept, legacyRowsUpgraded, error).
 func sweepPasswordResets(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, int, error) { // NOSONAR -- cognitive complexity 24, suppress go:S3776

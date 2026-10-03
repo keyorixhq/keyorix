@@ -49,7 +49,7 @@ func (f modelField) String() string { return f.Struct + "." + f.Field }
 // expectedSweptFields mirrors exactly what SweepAllTables (sweep.go's
 // sweepSecretVersions + sweep_auth.go's sweepAPITokens/sweepAPIClients/
 // sweepPasswordResets/sweepMFASecrets/sweepDynamicSecretConfigs/
-// sweepDynamicSecretLeases) re-encrypts today. Keep this in lockstep with
+// sweepDynamicSecretLeases/sweepNotificationChannels) re-encrypts today. Keep this in lockstep with
 // SweepAllTables — that's the entire point of this test. Session has no entry:
 // its EncryptedSessionToken/SessionTokenMetadata columns were dropped outright
 // (#1641), not swept — the live write path only ever hashed session tokens,
@@ -62,6 +62,7 @@ var expectedSweptFields = map[modelField]bool{
 	{"MFASecret", "SecretEnc"}:              true,
 	{"DynamicSecretConfig", "AdminDSNEnc"}:  true,
 	{"DynamicSecretLease", "CredentialEnc"}: true,
+	{"NotificationChannel", "URLEnc"}:       true,
 }
 
 // discoverEncryptedModelFields parses every non-test .go file in dir and
