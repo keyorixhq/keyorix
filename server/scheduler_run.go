@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"log"
+	"math/rand/v2"
 	"time"
 
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
@@ -21,8 +22,24 @@ import (
 // every interval until ctx is cancelled. Each tick's outcome and (when it actually
 // ran) its duration are recorded to Prometheus under name.
 func runScheduler(ctx context.Context, name string, interval time.Duration, tick func() middleware.SchedulerOutcome) {
+	runSchedulerAfter(ctx, name, interval, 0, tick)
+}
+
+// runSchedulerAfter is runScheduler with the first tick deferred by firstDelay (0 =
+// immediately, runScheduler's behaviour); later ticks follow every interval after
+// that first one. Cancelling ctx during the delay exits without ever ticking.
+func runSchedulerAfter(ctx context.Context, name string, interval, firstDelay time.Duration, tick func() middleware.SchedulerOutcome) {
 	middleware.RegisterScheduler(name)
 	go func() {
+		if firstDelay > 0 {
+			timer := time.NewTimer(firstDelay)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			}
+		}
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		run := func() {
@@ -45,7 +62,7 @@ func runScheduler(ctx context.Context, name string, interval time.Duration, tick
 			outcome := tick()
 			middleware.RecordSchedulerRun(name, outcome, time.Since(start))
 		}
-		run() // run once immediately on startup
+		run() // run once on startup (after firstDelay, if any)
 		for {
 			select {
 			case <-ticker.C:
@@ -72,3 +89,33 @@ func lockedRun(ctx context.Context, storage corestorage.Storage, key int64, errL
 	}
 	return middleware.SchedulerSuccess
 }
+
+// anomalyFirstPassBaseDelay and anomalyFirstPassMaxJitter bound when the first
+// anomaly-detection pass runs after process start (C-PERF-FIXES, Detected-by: PERF-2):
+// base + uniform[0, jitter), with the jitter clamped below the pass interval. The pass
+// used to run the instant the process started — a full sweep competing with startup
+// and first traffic, and, with every replica of a rolling restart doing the same,
+// repeated back to back. Deferring it drops no detection: the pass's scan window
+// extends back to the persisted high-water mark of the last successful pass
+// (core.AnomalyDetector.RunDetection), so the delay leaves no unexamined gap.
+const (
+	anomalyFirstPassBaseDelay = time.Minute
+	anomalyFirstPassMaxJitter = 4 * time.Minute
+)
+
+// anomalyFirstPassDelay returns the jittered delay before the first anomaly pass.
+// randN is rand.N in production; tests pass a deterministic stand-in.
+func anomalyFirstPassDelay(interval time.Duration, randN func(time.Duration) time.Duration) time.Duration {
+	jitter := anomalyFirstPassMaxJitter
+	if interval < jitter {
+		jitter = interval
+	}
+	if jitter <= 0 {
+		return anomalyFirstPassBaseDelay
+	}
+	return anomalyFirstPassBaseDelay + randN(jitter)
+}
+
+// defaultRandN is the production randN for anomalyFirstPassDelay. Scheduling jitter,
+// not a security value, so math/rand is appropriate.
+func defaultRandN(n time.Duration) time.Duration { return rand.N(n) } // #nosec G404 -- scheduling jitter, not security-sensitive

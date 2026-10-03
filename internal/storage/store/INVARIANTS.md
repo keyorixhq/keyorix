@@ -121,3 +121,14 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   `TestVerifyAuditChain_ValidatesRowWithNonUTCEventTime`,
   `TestGetAuditLogs_RangeQuery_FindsRowWithNonUTCEventTime`); sibling
   `g81_dynamic_lease_timezone_test.go` (same class, not individually re-read).
+
+## Query plans (anomaly detection hot path)
+
+- **INV-STORE-21** `CreateAnomalyAlert`'s dedup count, `ListSecretAccessLogs`, and
+  `ListSecretIDsAccessedSince` are index-served on SQLite — checked by EXPLAINing the SQL the
+  production methods actually issued (captured from gorm), not a copied predicate.
+  `ListSecretIDsAccessedSince`'s `DISTINCT +secret_node_id` is load-bearing: without the unary
+  plus SQLite full-scans the per-secret index instead of range-scanning the time index.
+  Postgres plans are deliberately NOT asserted (seq scans on tiny test tables regardless of
+  indexes). Why: PERF-2 performance study. Guard:
+  `anomaly_query_plan_test.go:TestAnomalyQueries_UseTheirIndexes`.
