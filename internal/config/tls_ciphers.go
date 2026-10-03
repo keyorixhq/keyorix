@@ -7,6 +7,22 @@ import (
 	"strings"
 )
 
+// TLSModeStrict is the only non-empty value server.http/grpc.tls_mode accepts
+// (ADR-112 §3): TLS 1.3 only, no fallback to 1.2. Empty ("") is the default
+// posture — the TLS 1.2 floor restricted to forward-secret AEAD suites.
+const TLSModeStrict = "strict"
+
+// validateTLSMode rejects any server.http/grpc.tls_mode value other than ""
+// (the default) or TLSModeStrict — a typo here (e.g. "Strict", "tls13")
+// must fail loudly at startup, not silently fall back to the TLS 1.2
+// default while the operator believes strict mode is active.
+func validateTLSMode(field, mode string) error {
+	if mode != "" && mode != TLSModeStrict {
+		return fmt.Errorf("%s: %q is not a recognized TLS mode (must be empty, or %q)", field, mode, TLSModeStrict)
+	}
+	return nil
+}
+
 // SecureCipherSuiteNames is the allowlist of TLS 1.2 cipher-suite names an operator may
 // list under tls.allowed_ciphers. It is deliberately restricted to modern AEAD suites
 // (AES-GCM and ChaCha20-Poly1305) — RC4, 3DES, and CBC-mode suites are excluded outright

@@ -16,6 +16,7 @@
 | Require TLS on every listener | `security.require_transport_tls` | `true` in production. Refuses to start an enabled HTTP/gRPC listener with no TLS configured — fail closed rather than silently serving bearer tokens and secret values in cleartext. Leave `false` only if a TLS-terminating reverse proxy sits in front (the server still warns loudly if it ends up serving cleartext either way). |
 | Server-terminated TLS | `server.http.tls.{enabled,cert_file,key_file}`, `server.grpc.tls.{enabled,cert_file,key_file}` | Set both if not using a front proxy or the Caddy profile. |
 | Cipher suite allowlist | `server.http.tls.allowed_ciphers` / `server.grpc.tls.allowed_ciphers` | Leave unset to use the built-in secure AEAD-only default; only set to *further* restrict — any name outside `SecureCipherSuiteNames` is rejected at startup, not silently ignored. |
+| TLS 1.3-only | `server.http.tls_mode` / `server.grpc.tls_mode` (`"strict"`) | Set once every client that will ever connect can speak TLS 1.3 — the default (1.2 floor, forward-secret AEAD ciphers) is already compliant, not a weaker fallback to graduate away from on a fixed timeline; `allowed_ciphers` has no effect once set. |
 | Bundled auto-HTTPS | `docker compose --profile tls up` | Simplest path for a real public domain — auto-provisions a publicly-trusted certificate via Caddy. |
 
 ## 2. Encryption key management

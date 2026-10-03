@@ -259,8 +259,16 @@ var hardenedCipherSuites = []uint16{
 // deployments); set means the operator's configured suite list is honored instead,
 // validated against config.SecureCipherSuiteNames so a weak/deprecated/misspelled
 // suite name fails closed rather than being silently ignored or accepted. MinVersion
-// stays fixed at TLS 1.2 — TLS 1.3 has no equivalent per-suite selection.
-func applyTLSHardening(tlsConfig *tls.Config, tlsCfg config.TLSConfig) error {
+// stays fixed at TLS 1.2 UNLESS mode is config.TLSModeStrict (ADR-112 §3,
+// "tls_mode: strict"), in which case Min/MaxVersion are both pinned to TLS 1.3 and
+// CipherSuites is left untouched — TLS 1.3 negotiates its own, always-AEAD suite
+// set, so there is nothing for allowed_ciphers to configure under either mode.
+func applyTLSHardening(tlsConfig *tls.Config, tlsCfg config.TLSConfig, mode string) error {
+	if mode == config.TLSModeStrict {
+		tlsConfig.MinVersion = tls.VersionTLS13
+		tlsConfig.MaxVersion = tls.VersionTLS13
+		return nil
+	}
 	tlsConfig.MinVersion = tls.VersionTLS12
 	suites, err := tlsCfg.ResolveCipherSuites(hardenedCipherSuites)
 	if err != nil {
@@ -277,7 +285,7 @@ func createGRPCTLSConfig(cfg *config.Config) (*tls.Config, error) {
 		// not wired up here — but the hardened MinVersion/CipherSuites below must
 		// still apply, matching the non-AutoCert path's posture (#172).
 		tlsConfig := &tls.Config{}
-		if err := applyTLSHardening(tlsConfig, cfg.Server.GRPC.TLS); err != nil {
+		if err := applyTLSHardening(tlsConfig, cfg.Server.GRPC.TLS, cfg.Server.GRPC.TLSMode); err != nil {
 			return nil, err
 		}
 		return tlsConfig, nil
@@ -290,7 +298,7 @@ func createGRPCTLSConfig(cfg *config.Config) (*tls.Config, error) {
 	}
 
 	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}}
-	if err := applyTLSHardening(tlsConfig, cfg.Server.GRPC.TLS); err != nil {
+	if err := applyTLSHardening(tlsConfig, cfg.Server.GRPC.TLS, cfg.Server.GRPC.TLSMode); err != nil {
 		return nil, err
 	}
 	return tlsConfig, nil
