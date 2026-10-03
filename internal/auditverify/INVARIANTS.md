@@ -27,10 +27,12 @@ Format: `INV-AUDITVERIFY-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#i
 - **INV-AUDITVERIFY-04** The high-water-mark and retention-anchor separator byte is `\x1f`
   (ASCII unit separator), never `\x00` — a Postgres text/varchar column rejects an embedded NUL
   outright, and this value is persisted as a plain string via `SetSystemMetadata`. Why:
-  checkpoint.go:50-53, retention.go:23-25. Guard: the `TestDifferential_*` suite exercises
-  real core-written values through this package's parser; no test asserts the separator byte
-  directly — UNGUARDED (#issue: add a direct unit test pinning the `\x1f` byte and a negative
-  case with `\x00`).
+  checkpoint.go:50-53, retention.go:23-25. Guard: `separator_test.go`
+  (`TestPersistedSeparators_AreUnitSeparatorNotNUL`, `TestEncodeHighWater_UsesUnitSeparatorAndNoNUL`,
+  `TestParseHighWater_RejectsNULSeparatedValue`,
+  `TestParseRetentionAnchor_UnitSeparatorAcceptedNULRejected`) pins the `\x1f` byte and rejects
+  a `\x00`-separated value. Not covered there: internal/core's own copies of the two
+  constants (#2515).
 - **INV-AUDITVERIFY-05** A verdict escalation only ever moves a `Result` toward the MORE
   severe finding, regardless of check order — never downgrades. Why: `verdictRank` doc comment,
   verify.go. Guard: `TestResult_Escalate_NeverDowngrades`.
