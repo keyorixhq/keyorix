@@ -6209,6 +6209,22 @@ func (w *FaultyStorage) SetAccountStateIfMatches(ctx context.Context, id uint, f
 	return w.real.SetAccountStateIfMatches(ctx, id, fromState, toState, updatedAt)
 }
 
+func (w *FaultyStorage) SetDynamicSecretConfigAdminDSN(ctx context.Context, id uint, enc []byte, meta []byte) error {
+	fire, kind, injected := w.check("SetDynamicSecretConfigAdminDSN")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			return injected
+		case KindEffectThenError:
+			_ = w.real.SetDynamicSecretConfigAdminDSN(ctx, id, enc, meta)
+			return injected
+		}
+	}
+	return w.real.SetDynamicSecretConfigAdminDSN(ctx, id, enc, meta)
+}
+
 func (w *FaultyStorage) SetMachineIdentityCredentialClassification(ctx context.Context, credentialID uint, fromClassification string, toClassification string) (bool, error) {
 	fire, kind, injected := w.check("SetMachineIdentityCredentialClassification")
 	if fire {
