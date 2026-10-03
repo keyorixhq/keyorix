@@ -55,6 +55,7 @@ type ctaReview struct {
 	setupDB   *gorm.DB
 	setup     *KeyorixCore
 	dbA       *gorm.DB
+	dbB       *gorm.DB
 	coreA     *KeyorixCore
 	coreB     *KeyorixCore
 	enc       ports.EncryptionProvider
@@ -95,10 +96,10 @@ func newCTAReview(t *testing.T) *ctaReview {
 	env, err := setup.CreateEnvironment(ctx, proj.ID, "cta-review-env")
 	require.NoError(t, err)
 
-	dbA := pgOpen(t, dsn)
+	dbA, dbB := pgOpen(t, dsn), pgOpen(t, dsn)
 	return &ctaReview{
 		t: t, ctx: ctx, setupDB: setupDB, setup: setup,
-		dbA: dbA, coreA: newCore(dbA), coreB: newCore(pgOpen(t, dsn)),
+		dbA: dbA, dbB: dbB, coreA: newCore(dbA), coreB: newCore(dbB),
 		enc: enc, adminID: boot.User.ID, projectID: proj.ID, envID: env.ID,
 	}
 }
@@ -625,7 +626,6 @@ func assertActivationNeverBindsUnvalidatedSecret(t *testing.T, c *KeyorixCore, u
 // environment under a deleted project — the exact state RestoreEnvironment's
 // own doc comment says it refuses to create.
 func TestCTAReview_RestoreEnvironment_vs_DeleteProject_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2656: RestoreEnvironment vs DeleteProject leaves a live environment under a deleted project; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	require.NoError(t, f.setup.DeleteEnvironment(f.ctx, f.envID))
@@ -638,6 +638,92 @@ func TestCTAReview_RestoreEnvironment_vs_DeleteProject_CrossReplicaPostgres(t *t
 	require.NoError(t, errB)
 
 	assert.EqualValues(t, 1, f.countLive(&models.Project{}, "id = ? AND deleted_at IS NOT NULL", f.projectID), "project must be deleted")
+	assert.Zero(t, f.countLive(&models.Environment{}, "project_id = ? AND deleted_at IS NULL", f.projectID),
+		"a live environment exists under a soft-deleted project")
+}
+
+// TestCTAReview_RestoreEnvironment_DeleteProjectAfterUpdate_CrossReplicaPostgres: B's
+// DeleteProject commits after A's environment UPDATE ran but before A commits. B's
+// environment sweep cannot see A's uncommitted un-delete, so a liveness check before
+// the UPDATE (or a FOR SHARE that DeleteProject only meets at its final project
+// UPDATE) would still leave E live under the deleted P.
+//
+// Bug origin (#2656):
+//
+//	Introduced-by: LocalStorage.RestoreEnvironment's parent-liveness guard, a separate
+//	  autocommit SELECT before an unconditional UPDATE; deleteProjectCascade swept
+//	  environments before it touched (locked) the project row.
+//	Detected-by: C-GUARD2-EXEMPT-REVIEW #2662
+//	Class: cross-replica check-then-act
+//	Severity: LOW (millisecond window, timed by the deleting admin)
+//	Guard: this test, the one above, deleteProjectCascade's up-front project row lock,
+//	  and lockLiveParent's write-then-FOR-SHARE re-check in RestoreEnvironment
+//	  (INV-STORE-21).
+//
+// TestCTAReview_RestoreEnvironment_InsideDeleteProjectCascade_CrossReplicaPostgres:
+// A's whole RestoreEnvironment runs between B's environment sweep and B's final
+// project UPDATE, the window the two tests above cannot reach because B always runs
+// to completion inside A's hook. Here a hook on B's own connection starts A in a
+// goroutine and waits for it (bounded). Without deleteProjectCascade's up-front
+// project row lock, A's FOR SHARE re-check passes (the project is not yet updated),
+// A commits, and B then deletes the project over the live environment. With the lock,
+// A blocks on it, the wait times out, B commits, and A's re-check then sees the
+// project deleted and rolls back.
+func TestCTAReview_RestoreEnvironment_InsideDeleteProjectCascade_CrossReplicaPostgres(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	require.NoError(t, f.setup.DeleteEnvironment(f.ctx, f.envID))
+
+	var errA error
+	doneA := make(chan struct{})
+	var once sync.Once
+	hit := false
+	require.NoError(t, f.dbB.Callback().Update().Before("gorm:update").Register("cta-review:b-before-update-projects", func(tx *gorm.DB) {
+		if tx.Statement.Table != "projects" {
+			return
+		}
+		once.Do(func() {
+			hit = true
+			go func() {
+				errA = f.coreA.RestoreEnvironment(f.ctx, f.adminID, f.projectID, f.envID)
+				close(doneA)
+			}()
+			select {
+			case <-doneA: // A finished inside the window: nothing held it back
+			case <-time.After(2 * time.Second): // A is blocked (on B's project row lock); let B commit
+			}
+		})
+	}))
+
+	errB := f.coreB.DeleteProject(f.ctx, f.projectID, true)
+	require.True(t, hit, "the hook must have fired before B's project UPDATE")
+	require.NoError(t, errB)
+	select {
+	case <-doneA:
+	case <-time.After(30 * time.Second):
+		t.Fatal("A's RestoreEnvironment never returned after B committed")
+	}
+	t.Logf("RestoreEnvironment (A) err=%v, DeleteProject (B) err=%v", errA, errB)
+
+	assert.EqualValues(t, 1, f.countLive(&models.Project{}, "id = ? AND deleted_at IS NOT NULL", f.projectID), "project must be deleted")
+	assert.Zero(t, f.countLive(&models.Environment{}, "project_id = ? AND deleted_at IS NULL", f.projectID),
+		"a live environment exists under a soft-deleted project")
+}
+
+func TestCTAReview_RestoreEnvironment_DeleteProjectAfterUpdate_CrossReplicaPostgres(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	require.NoError(t, f.setup.DeleteEnvironment(f.ctx, f.envID))
+
+	var errB error
+	fired := f.afterA("update", "environments", func() { errB = f.coreB.DeleteProject(f.ctx, f.projectID, true) })
+	errA := f.coreA.RestoreEnvironment(f.ctx, f.adminID, f.projectID, f.envID)
+	t.Logf("RestoreEnvironment (A) err=%v, DeleteProject (B) err=%v", errA, errB)
+	require.True(t, fired(), "the hook must have run B's DeleteProject after A's environment UPDATE")
+	require.NoError(t, errB)
+
+	assert.EqualValues(t, 1, f.countLive(&models.Project{}, "id = ? AND deleted_at IS NOT NULL", f.projectID), "project must be deleted")
+	assert.Error(t, errA, "A must fail closed: its project was deleted before it committed")
 	assert.Zero(t, f.countLive(&models.Environment{}, "project_id = ? AND deleted_at IS NULL", f.projectID),
 		"a live environment exists under a soft-deleted project")
 }
