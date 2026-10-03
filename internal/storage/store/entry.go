@@ -145,6 +145,27 @@ type LocalStorage struct {
 	// same underlying fact. A pointer for the same sharing reason as every
 	// other watermark/mutex field on this struct.
 	rbacClockWatermark *clockWatermark
+	// auditFlusher backs the batching audit-append writer (SESSION-PERF, #2403
+	// follow-up, item 3) — nil on a transaction-scoped LocalStorage (see
+	// WithTransaction/RemoveGlobalAdminRoleGuarded's clone construction, which
+	// deliberately does NOT copy this field), falling back there to the
+	// original per-call direct write (logAuditEventDirect): batching across to
+	// a DIFFERENT, independent transaction would break the atomicity a
+	// caller's own WithTransaction depends on. Only the root LocalStorage
+	// returned by NewLocalStorage gets a real one. NOT a pointer-shared-with-
+	// clones field like the mutexes above — deliberately so a forgotten update
+	// to a future clone-construction site defaults to nil (the SAFE,
+	// non-batching fallback), not to incorrectly sharing the root's flusher.
+	auditFlusher *auditFlusherState
+	// auditFlusherLingerWindow is how long runAuditFlusher deliberately waits,
+	// after its first queued item, for more to arrive before committing
+	// (SESSION-PERF, #2420 follow-up) — set once at construction from
+	// config.DatabaseConfig.GetAuditFlusherLingerWindow(), zero value (0,
+	// Go's own default) meaning "no deliberate wait." Not a pointer and not
+	// shared with transaction-scoped clones: it's read-only after
+	// construction and meaningless on a clone anyway (auditFlusher is nil
+	// there, so runAuditFlusher never runs for it).
+	auditFlusherLingerWindow time.Duration
 }
 
 // clockWatermark pairs a mutex with the time.Time it guards, so a single
@@ -156,7 +177,10 @@ type clockWatermark struct {
 	time time.Time
 }
 
-// NewLocalStorage creates a LocalStorage backed by the given *gorm.DB.
+// NewLocalStorage creates a LocalStorage backed by the given *gorm.DB. The
+// audit-chain batching flusher's linger window (SESSION-PERF, #2420
+// follow-up) defaults to 0 (no deliberate wait) — call
+// SetAuditFlusherLingerWindow to configure a nonzero value.
 func NewLocalStorage(db *gorm.DB) *LocalStorage {
 	return &LocalStorage{
 		db:                    db,
@@ -166,7 +190,21 @@ func NewLocalStorage(db *gorm.DB) *LocalStorage {
 		namedLockMu:           newNamedLockRegistry(),
 		consumeClockWatermark: &clockWatermark{},
 		rbacClockWatermark:    &clockWatermark{},
+		auditFlusher:          &auditFlusherState{},
 	}
+}
+
+// SetAuditFlusherLingerWindow configures how long the audit-chain batching
+// flusher deliberately waits, after its first queued item, for more to
+// arrive before committing (SESSION-PERF, #2420 follow-up) — see
+// config.DatabaseConfig.AuditFlusherLingerWindow's doc comment for why 0
+// (the zero value, and this type's default if never called) is the right
+// default, not a tuned nonzero one. Safe to call only before this
+// LocalStorage starts serving traffic — runAuditFlusher reads the field
+// once per batch with no synchronization, same as every other
+// construction-time-only field on this type (db, the mutex pointers).
+func (ls *LocalStorage) SetAuditFlusherLingerWindow(d time.Duration) {
+	ls.auditFlusherLingerWindow = d
 }
 
 // DB returns the underlying *gorm.DB. Exposed for test helpers that need direct

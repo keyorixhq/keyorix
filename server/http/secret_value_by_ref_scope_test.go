@@ -43,6 +43,14 @@ func setupByRefScopeCore(t *testing.T) *core.KeyorixCore {
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.SecretNode{}, &models.SecretVersion{}, &models.ShareRecord{}, &models.Session{},
 		&models.SecretAccessSchedule{},
+		// AuditEvent/SecretAccessLog: a successful value-by-ref read now writes
+		// these synchronously and checks the result (SESSION-PERF, #2403 follow-up,
+		// item 3, audit-before-disclosure) — previously fire-and-forget, so this
+		// fixture's missing tables went unnoticed (the write failed silently in a
+		// background goroutine while the response had already gone out with the
+		// value). Pre-existing coverage gap, surfaced by the new synchronous check,
+		// not a behavior regression — fixing the fixture, not weakening the check.
+		&models.AuditEvent{}, &models.SecretAccessLog{},
 	))
 
 	now := time.Now()

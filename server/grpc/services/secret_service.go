@@ -195,14 +195,18 @@ func (s *SecretGRPCService) GetSecretValue(ctx context.Context, req *pb.GetSecre
 	// HTTP reveal handler fires. Without it, a secret read over gRPC left no
 	// secret.read event and no access-log row, so the anomaly detector never saw it:
 	// secrets could be exfiltrated over gRPC invisibly to both the audit trail and
-	// anomaly detection. Detached + async like HTTP, so it neither blocks the RPC nor
-	// dies on its cancellation; DetachedAuditContext preserves the actor-type and
-	// impersonation tags the interceptor set.
+	// anomaly detection. SESSION-PERF #2403 follow-up (item 3, audit-before-
+	// disclosure): now synchronous and checked, matching the HTTP handler — the
+	// value below is only returned AFTER its audit entry has been durably
+	// committed; an audit-write failure fails the RPC instead of disclosing the
+	// value. DetachedAuditContext preserves the actor-type and impersonation tags
+	// the interceptor set, and (same as before) keeps the write from dying on the
+	// RPC's own cancellation.
 	auditCtx := core.DetachedAuditContext(ctx)
 	ip, ua := interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)
-	goSafe(func() {
-		s.core.LogSecretReadWithProject(auditCtx, user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, ip, ua)
-	}) // #nosec G118
+	if auditErr := s.core.LogSecretReadWithProject(auditCtx, user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, ip, ua); auditErr != nil {
+		return nil, status.Error(codes.Internal, "failed to record audit trail")
+	}
 	return &pb.SecretValue{
 		Id:    req.GetId(),
 		Name:  secret.Name,
@@ -425,9 +429,9 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 	if secret, sErr := s.core.GetSecret(ctx, uint(req.GetId())); sErr == nil && secret != nil {
 		auditCtx := core.DetachedAuditContext(ctx)
 		ip, ua := interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)
-		goSafe(func() {
-			s.core.LogSecretReadWithProject(auditCtx, user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, ip, ua)
-		}) // #nosec G118
+		if auditErr := s.core.LogSecretReadWithProject(auditCtx, user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, ip, ua); auditErr != nil {
+			return nil, status.Error(codes.Internal, "failed to record audit trail")
+		}
 	}
 	out := make([]*pb.SecretVersion, 0, len(versions))
 	for _, v := range versions {

@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -433,7 +432,7 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 	// switch; every later Open against an already-WAL file is a same-mode pragma
 	// no-op that always succeeds immediately, regardless of other open connections.
 	migrationMu.Lock()
-	db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath)), gormConfig())
+	db, err := openSQLiteGorm(sqliteDSN(dbPath))
 	migrationMu.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
@@ -451,7 +450,9 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
-	return store.NewLocalStorage(db), nil
+	ls := store.NewLocalStorage(db)
+	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
+	return ls, nil
 }
 
 // createPostgresStorage creates a PostgreSQL-backed local storage instance
@@ -474,7 +475,9 @@ func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (stora
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
-	return store.NewLocalStorage(db), nil
+	ls := store.NewLocalStorage(db)
+	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
+	return ls, nil
 }
 
 // applyPoolSettings configures the connection pool on the underlying *sql.DB

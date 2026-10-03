@@ -108,7 +108,7 @@ func TestLogSecretRead_FeedsAnomalyDetection(t *testing.T) {
 	// A burst of reads in the detection window, each recorded through the SAME call HTTP
 	// and gRPC use (LogSecretReadWithProject → writeAccessLog → CreateSecretAccessLog).
 	for i := 0; i < 12; i++ {
-		h.CoreService.LogSecretReadWithProject(ctx, 999, 700, 1, "mallory", "api-key", "203.0.113.5", "grpc-go/1.80")
+		require.NoError(t, h.CoreService.LogSecretReadWithProject(ctx, 999, 700, 1, "mallory", "api-key", "203.0.113.5", "grpc-go/1.80"))
 	}
 
 	// Detection must flag the burst as a frequency spike — proving the real logging path

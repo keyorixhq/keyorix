@@ -10,11 +10,16 @@
 //
 // These tests force a panic deep inside the audit write path (via a
 // core.AuditForwarder whose Forward implementation panics — the same
-// injectable seam SetAuditForwarder wires a real SIEM through) and prove
-// each of CreateSecret/GetSecret/UpdateSecret/DeleteSecret still (a) returns
-// its normal successful HTTP response and (b) does not crash the test
-// process — the goSafe wrapper added at each call site recovers the panic
-// instead.
+// injectable seam SetAuditForwarder wires a real SIEM through) and prove each
+// of CreateSecret/UpdateSecret/DeleteSecret still (a) returns its normal
+// successful HTTP response and (b) does not crash the test process — the
+// goSafe wrapper added at each call site recovers the panic instead.
+//
+// GetSecret (audit: secret.read) is the one exception, since SESSION-PERF
+// #2403 follow-up (item 3, audit-before-disclosure): its audit write is no
+// longer a detached goroutine, so a panic there must now fail the read
+// closed (500, no value) rather than succeed — see
+// TestGetSecret_PanicInAuditWriteFailsClosed's own doc comment.
 package handlers
 
 import (
@@ -129,10 +134,22 @@ func TestCreateSecret_PanicInDetachedAuditGoroutineDoesNotCrash(t *testing.T) {
 	}
 }
 
-// TestGetSecret_PanicInDetachedAuditGoroutineDoesNotCrash covers the #481
-// call site at secrets_crud.go's GetSecret (audit: secret.read) — the
-// highest-traffic path of the CRUD subsystem.
-func TestGetSecret_PanicInDetachedAuditGoroutineDoesNotCrash(t *testing.T) {
+// TestGetSecret_PanicInAuditWriteFailsClosed covers the #481 call site at
+// secrets_crud.go's GetSecret (audit: secret.read) — the highest-traffic path
+// of the CRUD subsystem. SESSION-PERF #2403 follow-up (item 3, audit-before-
+// disclosure) changed this ONE call site from a detached, fire-and-forget
+// goroutine (panic recovered, read still succeeds — the original #481 shape,
+// still correct and unchanged for CreateSecret/UpdateSecret/DeleteSecret
+// below) to a synchronous, checked call: a panic during the audit write is
+// recovered by emitAuditWithAccessLog itself and converted into a returned
+// error, and GetSecret must now treat that exactly like any other audit-write
+// failure — fail closed (500, no value in the response), never 200. The
+// original #481 concern (a panic anywhere on this path must never crash the
+// whole process) still holds and is still asserted here: the test process
+// reaching its own assertions below, synchronously, IS the proof, with no
+// separate goroutine/done-channel needed anymore since there's no longer a
+// separate goroutine on this path to synchronize with.
+func TestGetSecret_PanicInAuditWriteFailsClosed(t *testing.T) {
 	handler, _ := newPanicTestHandler(t)
 	created, err := handler.coreService.CreateSecret(context.Background(), &core.CreateSecretRequest{
 		Name: "target", Value: []byte("v"), ProjectID: 1, EnvironmentID: 10, Type: "static",
@@ -140,23 +157,19 @@ func TestGetSecret_PanicInDetachedAuditGoroutineDoesNotCrash(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	done := make(chan struct{})
-	handler.coreService.SetAuditForwarder(&panicAuditForwarder{done: done})
+	handler.coreService.SetAuditForwarder(&panicAuditForwarder{done: make(chan struct{})})
 
-	// AUDIT-001 (commit 25fd0861): secret.read is now emitted only when the value
-	// payload is returned (?include_value=true). Without it the audit goroutine is
-	// never launched and the test would time out waiting for done.
+	// AUDIT-001 (commit 25fd0861): secret.read is only emitted when the value
+	// payload is returned (?include_value=true).
 	url := "/api/v1/secrets/" + strconv.FormatUint(uint64(created.ID), 10) + "?include_value=true"
 	r := withIDParam(userReq(http.MethodGet, url, nil), created.ID)
 	rr := httptest.NewRecorder()
-	handler.GetSecret(rr, r)
-	assert.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
 
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("detached audit goroutine never ran")
-	}
+	// The call above (handler.GetSecret) runs entirely synchronously now; reaching
+	// this line at all — in the SAME test process, no crash — is the #481 proof.
+	handler.GetSecret(rr, r)
+	assert.Equal(t, http.StatusInternalServerError, rr.Code, rr.Body.String())
+	assert.NotContains(t, rr.Body.String(), "\"value\"", "a panicked audit write must never let the secret value reach the response")
 }
 
 // TestUpdateSecret_PanicInDetachedAuditGoroutineDoesNotCrash covers the #481

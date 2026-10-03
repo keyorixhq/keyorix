@@ -521,11 +521,35 @@ type DatabaseConfig struct {
 	MaxOpenConns           int `yaml:"max_open_conns"`
 	MaxIdleConns           int `yaml:"max_idle_conns"`
 	ConnMaxLifetimeMinutes int `yaml:"conn_max_lifetime_minutes"`
+
+	// AuditFlusherLingerWindow (SESSION-PERF, #2420 follow-up) is how long the
+	// audit-chain batching flusher deliberately waits, after its first queued
+	// item, for more items to arrive before committing — a Go duration string
+	// (e.g. "1ms"), or empty/unset for the default. Default is "0" (no
+	// deliberate wait — drain whatever's already queued and commit
+	// immediately), NOT a tuned nonzero value: measurement across 0/0.5/1/2ms
+	// found every nonzero window pays a fixed ~5.5-7ms tax on a single-client
+	// read regardless of its nominal size, and on Postgres specifically any
+	// nonzero window regresses c=10 throughput even though it roughly doubles
+	// c=50 throughput (see PR #2420's body for the full data). Left
+	// configurable, rather than removed, so a deployment with real production
+	// batch-size telemetry (keyorix_audit_flusher_batch_size,
+	// keyorix_audit_flusher_flushes_total) justifying a nonzero value can set
+	// one without a code change.
+	AuditFlusherLingerWindow string `yaml:"audit_flusher_linger_window"`
 }
 
 // GetPassword returns the resolved DB password, preferring the environment variable.
 func (d *DatabaseConfig) GetPassword() string {
 	return resolveSecret("KEYORIX_DB_PASSWORD", d.Password)
+}
+
+// GetAuditFlusherLingerWindow returns the configured audit-flusher linger
+// window, defaulting to 0 (no deliberate wait) when unset or unparseable.
+// See AuditFlusherLingerWindow's doc comment for why 0, not a tuned nonzero
+// value, is the default.
+func (d *DatabaseConfig) GetAuditFlusherLingerWindow() time.Duration {
+	return parseDurationDefault(d.AuditFlusherLingerWindow, 0)
 }
 
 // BuildPostgresDSN returns a ready-to-use PostgreSQL DSN.

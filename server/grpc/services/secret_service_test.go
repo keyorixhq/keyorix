@@ -328,6 +328,10 @@ func TestSecretService_GetSecret_NotFound(t *testing.T) {
 
 func TestSecretService_GetSecretValue(t *testing.T) {
 	r := newSecretTestRig(t)
+	// SESSION-PERF #2403 follow-up (item 3): GetSecretValue now checks its audit
+	// write synchronously (audit-before-disclosure) — same fixture gap/fix as
+	// TestSecretService_GetSecretValue_RecordsAccessLogAndAudit below.
+	require.NoError(t, r.db.AutoMigrate(&models.AuditEvent{}, &models.SecretAccessLog{}))
 	ctx := authCtx(1, "owner", "secrets.write", "secrets.read")
 	created := r.createSecret(t, ctx, "token", "the-value")
 
@@ -406,6 +410,10 @@ func TestSecretService_WriteOps_AuditedOverGRPC(t *testing.T) {
 
 func TestSecretService_UpdateSecret(t *testing.T) {
 	r := newSecretTestRig(t)
+	// SESSION-PERF #2403 follow-up (item 3): this test's own GetSecretValue call
+	// below now checks its audit write synchronously (audit-before-disclosure) —
+	// same fixture gap/fix as TestSecretService_GetSecretValue above.
+	require.NoError(t, r.db.AutoMigrate(&models.AuditEvent{}, &models.SecretAccessLog{}))
 	ctx := authCtx(1, "owner", "secrets.write", "secrets.read")
 	created := r.createSecret(t, ctx, "rotate-me", "old")
 
@@ -447,6 +455,10 @@ func TestSecretService_ListSecrets(t *testing.T) {
 
 func TestSecretService_GetSecretVersions(t *testing.T) {
 	r := newSecretTestRig(t)
+	// SESSION-PERF #2403 follow-up (item 3): GetSecretVersions' own best-effort
+	// audit-as-a-read call now checks its write synchronously and fails closed —
+	// same fixture gap/fix as TestSecretService_GetSecretValue above.
+	require.NoError(t, r.db.AutoMigrate(&models.AuditEvent{}, &models.SecretAccessLog{}))
 	ctx := authCtx(1, "owner", "secrets.write", "secrets.read")
 	created := r.createSecret(t, ctx, "versioned", "v1")
 
