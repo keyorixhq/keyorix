@@ -41,8 +41,14 @@ permissions: {}
 # before it even finishes, and this is by far the most expensive workflow here
 # (18 parallel test-suite shards among ~30 jobs) -- letting a superseded run
 # burn its full runtime is pure wasted Actions-minute spend.
+# A `labeled` event for any label other than ci:full gets its own group (suffixed
+# with run_id), so it never cancels the PR's in-flight run. Before this, every
+# review/triage label add killed a PR's queued CI mid-run; on 2026-10-03 that
+# left ~20 approved PRs with an all-cancelled run reported as a build-and-test
+# failure. A push (synchronize), reopen, or the ci:full label still supersede
+# the in-flight run exactly as before.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}${{ (github.event.action == 'labeled' && github.event.label.name != 'ci:full') && format('-label-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 env:
