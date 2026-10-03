@@ -200,6 +200,14 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
 
 ## Atomicity / transactions
 
+- **INV-CORE-42** `provisionInvitationSetupLink` (`InviteToProjectWithLink`/`InviteGlobalWithLink`)
+  persists the invitation without a link ONLY on a benign condition (base_url unset, a real
+  throttle verdict). A storage fault — the mint step (#2444) or the resend throttle's own count
+  query (`ErrResendThrottleUnverifiable`, #2599) — persists nothing and returns a nil invitation;
+  the throttle itself stays fail-closed either way. Why: #2599, found by
+  `FuzzStorageFaultOperations`. Guard:
+  `invitation_throttle_count_error_test.go` (`TestInviteGlobalWithLink_ThrottleCountErrorPersistsNothing`,
+  `TestInviteGlobalWithLink_ThrottleLimitReachedStillPersistsInvitation`), corpus seeds `2599_*`.
 - **INV-CORE-35** Every non-test `*KeyorixCore`/`*AnomalyDetector` function making 2+
   storage/core writes outside `WithTransaction` is a reviewed, classified entry in
   `docs/atomicity-exempt.tsv` (A fix-required / B consume-first / C independent-by-design /
