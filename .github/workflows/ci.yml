@@ -352,6 +352,27 @@ jobs:
           echo "'stacked-pr' label explicitly; otherwise retarget this PR at main."
           exit 1
 
+  # WARN-ONLY for its first week (2026-10-03 -- 2026-10-10, see the script's
+  # own header for the one-line switch to make it required after that).
+  # Checks that a PR titled fix(...)/fix: ... fills in the "Bug origin" block
+  # (.github/PULL_REQUEST_TEMPLATE.md, COMMON-RULES.md's "Definition of done
+  # and bug-origin tracking") -- Introduced-by/Detected-by/Class/Severity.
+  # Title/body are passed via env:, never interpolated into the script text,
+  # so untrusted PR content is read as data, never executed (same pattern as
+  # base-branch-check's BASE_REF/LABELS above).
+  bug-origin-block-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check Bug origin block on fix(...) PRs
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: ./scripts/ci/check-bug-origin-block.sh
+
   # Not gated by docs_only: docs/adr-*.md files ARE classified as docs, but
   # this check is a single find|sed|sort pass, cheap enough to always run
   # regardless of what this specific PR touches, matching
