@@ -1,5 +1,5 @@
-// machine_hygiene_audit.go — `keyorix-next machine token-hygiene` and
-// `keyorix-next machine audit`: deployment-wide, admin-only reports.
+// machine_hygiene_audit.go — `keyorix machine token-hygiene` and
+// `keyorix machine audit`: deployment-wide, admin-only reports.
 package cmd
 
 import (

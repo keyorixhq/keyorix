@@ -361,7 +361,7 @@ var accessReviewCampaignOpenCmd = &cobra.Command{
 		}
 		printCampaignDegradedWarning(out.Campaign)
 		fmt.Printf("Opened campaign %d (%q) for project %d — %s.\n", out.Campaign.ID, cliout.SanitizeForTerminal(out.Campaign.Name), campaignProject, progressStr(out.Progress))
-		fmt.Printf("Review items: keyorix-next access-review campaign show --project-id %d --campaign-id %d\n", campaignProject, out.Campaign.ID)
+		fmt.Printf("Review items: keyorix access-review campaign show --project-id %d --campaign-id %d\n", campaignProject, out.Campaign.ID)
 		return nil
 	},
 }

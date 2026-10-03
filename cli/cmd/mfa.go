@@ -47,7 +47,7 @@ func runMFAStepUp(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if token == "" {
-		return fmt.Errorf("MFA step-up requires an active session -- run \"keyorix-next login\" first")
+		return fmt.Errorf("MFA step-up requires an active session -- run \"keyorix login\" first")
 	}
 
 	code := mfaStepUpCode

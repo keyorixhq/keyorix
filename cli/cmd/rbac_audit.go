@@ -124,9 +124,9 @@ what role/permission in what scope (global, project, or environment).
 Supports table (default), JSON, and CSV output formats.
 
 Examples:
-  keyorix-next rbac export-matrix
-  keyorix-next rbac export-matrix --format csv --output access-review.csv
-  keyorix-next rbac export-matrix --format json --project production`,
+  keyorix rbac export-matrix
+  keyorix rbac export-matrix --format csv --output access-review.csv
+  keyorix rbac export-matrix --format json --project production`,
 	RunE: runRBACExportMatrix,
 }
 

@@ -13,7 +13,7 @@ import (
 	"github.com/keyorixhq/keyorix/cli/internal/apiclient"
 )
 
-// breakGlassCmd is the `keyorix-next break-glass` command.
+// breakGlassCmd is the `keyorix break-glass` command.
 var breakGlassCmd = &cobra.Command{
 	Use:   "break-glass",
 	Short: "Self-service emergency access (incident response)",

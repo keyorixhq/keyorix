@@ -221,7 +221,7 @@ func runRequestAccess(_ *cobra.Command, _ []string) error {
 	fmt.Printf("Requesting access to project %s...\n", accessProjectDisplay(projectID, projectName))
 	fmt.Println("Note: this request is self-service -- it is always attributed to the authenticated " +
 		"caller's own session. If you are requesting access on behalf of someone else, have them run " +
-		"this command themselves via their own 'keyorix-next login' session.")
+		"this command themselves via their own 'keyorix login' session.")
 
 	body := apiclient.CreateAccessRequestJSONRequestBody{}
 	if requestAccessRole != "" {
