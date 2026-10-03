@@ -507,8 +507,16 @@ func TestCTAReview_RestoreEnvironment_vs_DeleteProject_CrossReplicaPostgres(t *t
 // active CAS, THEN grants; a revoke landing between finds no grant
 // (ErrNotProjectMember, deliberately ignored) and reports success; the
 // activation's grant then lands.
+//
+// Bug origin
+//
+//	Introduced-by: #G42 (the state CAS made the transition conditional, but not
+//	               together with its grant side effect)
+//	Detected-by:   C-GUARD2-EXEMPT-REVIEW #2662
+//	Class:         cross-replica check-then-act
+//	Severity:      high (a revoked member keeps live project access)
+//	Guard:         this test; fixed by membershipLockKey (#2657)
 func TestCTAReview_TransitionMembership_ActivateVsRevoke_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2657: TransitionMembership activate vs revoke leaves a revoked membership with a live role grant; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	u := f.user("cta-member", "")
@@ -518,12 +526,14 @@ func TestCTAReview_TransitionMembership_ActivateVsRevoke_CrossReplicaPostgres(t 
 	require.NoError(t, err)
 
 	var errB error
-	fired := f.beforeA("create", "user_roles", func() {
+	fired, waitB := f.beforeAMayBlock("create", "user_roles", func() {
 		_, errB = f.coreB.TransitionMembership(f.ctx, f.projectID, m.ID, MembershipRevoked, f.adminID, false)
 	})
 	_, errA := f.coreA.TransitionMembership(f.ctx, f.projectID, m.ID, MembershipActive, f.adminID, false)
+	waitB()
 	t.Logf("activate (A) err=%v, revoke (B) err=%v", errA, errB)
-	require.True(t, fired(), "the hook must have interleaved B's revoke before A's role-grant INSERT")
+	require.True(t, fired(), "the hook must have started B's revoke before A's role-grant INSERT")
+	require.NoError(t, errA)
 	require.NoError(t, errB, "the revoke itself reported success")
 
 	got, err := f.setup.Storage().GetProjectMembership(f.ctx, m.ID)
@@ -540,15 +550,23 @@ func TestCTAReview_TransitionMembership_ActivateVsRevoke_CrossReplicaPostgres(t 
 // inviteMemberWithMode commits the membership straight as `active`, THEN
 // grants the role; a revoke landing between finds no grant and reports
 // success, and the invite's grant then lands.
+//
+// Bug origin
+//
+//	Introduced-by: open validation mode (inviteMemberWithMode commits `active`
+//	               before granting, with no lock shared with revoke)
+//	Detected-by:   C-GUARD2-EXEMPT-REVIEW #2662
+//	Class:         cross-replica check-then-act
+//	Severity:      high (a revoked member keeps live project access)
+//	Guard:         this test; fixed by membershipLockKey (#2659)
 func TestCTAReview_InviteMemberOpenMode_vs_Revoke_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2659: open-mode InviteMember vs revoke leaves a revoked membership with a live role grant; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	f.coreA.SetMembershipValidationMode(ValidationModeOpen)
 	u := f.user("cta-invitee", "")
 
 	var errB error
-	fired := f.beforeA("create", "user_roles", func() {
+	fired, waitB := f.beforeAMayBlock("create", "user_roles", func() {
 		m, err := f.coreB.Storage().GetActiveProjectMembership(f.ctx, f.projectID, u.ID)
 		if err != nil {
 			errB = err
@@ -557,8 +575,9 @@ func TestCTAReview_InviteMemberOpenMode_vs_Revoke_CrossReplicaPostgres(t *testin
 		_, errB = f.coreB.TransitionMembership(f.ctx, f.projectID, m.ID, MembershipRevoked, f.adminID, false)
 	})
 	created, errA := f.coreA.InviteMember(f.ctx, f.projectID, u.ID, "project_viewer", f.adminID, 0, false)
+	waitB()
 	t.Logf("invite (A) err=%v, revoke (B) err=%v", errA, errB)
-	require.True(t, fired(), "the hook must have interleaved B's revoke before A's role-grant INSERT")
+	require.True(t, fired(), "the hook must have started B's revoke before A's role-grant INSERT")
 	require.NoError(t, errA)
 	require.NoError(t, errB, "the revoke itself reported success")
 
