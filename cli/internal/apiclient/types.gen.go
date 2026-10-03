@@ -526,10 +526,12 @@ type Group struct {
 
 // GroupRoleGrant One role a group holds, with its time-bound expiry if any (internal/core/storage.GroupRoleGrant).
 type GroupRoleGrant struct {
-	Description *string    `json:"description,omitempty"`
-	ExpiresAt   *time.Time `json:"expires_at"`
-	Id          *int       `json:"id,omitempty"`
-	Name        *string    `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+
+	// ExpiresAt Omitted (never null) for a permanent grant.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Id        *int       `json:"id,omitempty"`
+	Name      *string    `json:"name,omitempty"`
 }
 
 // MachineAuditReport Deployment-wide machine identity audit report (GET /machine-identities/audit).
@@ -961,15 +963,21 @@ type SecretAccessor struct {
 
 // SecretAuditEntry One lifecycle event of a secret. Never carries a plaintext value.
 type SecretAuditEntry struct {
-	ActorType     *string                 `json:"actor_type,omitempty"`
-	Description   *string                 `json:"description,omitempty"`
-	Diff          *map[string]interface{} `json:"diff"`
-	EventType     *string                 `json:"event_type,omitempty"`
-	Id            *int                    `json:"id,omitempty"`
-	Impersonation *bool                   `json:"impersonation,omitempty"`
-	Success       *bool                   `json:"success,omitempty"`
-	Timestamp     *string                 `json:"timestamp,omitempty"`
-	UserId        *int                    `json:"user_id"`
+	ActorType   *string `json:"actor_type,omitempty"`
+	Description *string `json:"description,omitempty"`
+
+	// Diff Omitted (never null) when the event recorded no diff.
+	Diff      *map[string]interface{} `json:"diff,omitempty"`
+	EventType *string                 `json:"event_type,omitempty"`
+	Id        *int                    `json:"id,omitempty"`
+
+	// Impersonation Omitted when false.
+	Impersonation *bool   `json:"impersonation,omitempty"`
+	Success       *bool   `json:"success,omitempty"`
+	Timestamp     *string `json:"timestamp,omitempty"`
+
+	// UserId Omitted (never null) when the event has no acting user.
+	UserId *int `json:"user_id,omitempty"`
 }
 
 // SecretDependencies defines model for SecretDependencies.
