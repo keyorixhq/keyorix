@@ -257,5 +257,26 @@ describe('App', () => {
             renderAt('/');
             expect(await screen.findByText('Login Page')).toBeInTheDocument();
         });
+
+        // The authenticated `/*` layout route out-ranks a top-level `*` (equal splat
+        // score, declared first), so the not-found page must live INSIDE its nested
+        // <Routes> — otherwise an unknown URL renders an empty Layout.
+        it('renders the not-found page for an unknown URL when authenticated', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/definitely-not-a-route');
+            expect(await screen.findByText('Page not found')).toBeInTheDocument();
+        });
+
+        it('renders the not-found page for an unknown nested URL when authenticated', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/secrets/no-such-tab/deeper');
+            expect(await screen.findByText('Page not found')).toBeInTheDocument();
+        });
+
+        it('sends an unauthenticated visitor on an unknown URL to /login', async () => {
+            setAuth();
+            renderAt('/definitely-not-a-route');
+            expect(await screen.findByText('Login Page')).toBeInTheDocument();
+        });
     });
 });

@@ -37,7 +37,7 @@ export interface NavLeaf {
     adminOnly?: boolean; // hidden from non-admins, independent of the parent group
 }
 
-interface NavGroup {
+export interface NavGroup {
     kind: 'group';
     id: string;
     name: string;
@@ -46,9 +46,12 @@ interface NavGroup {
     adminOnly?: boolean; // hidden from non-admins (install-admin roles only)
 }
 
-type NavItem = NavLeaf | NavGroup;
+export type NavItem = NavLeaf | NavGroup;
 
-const NAV: NavItem[] = [
+// Exported for src/__tests__/structure/routeReachability.test.ts, which checks every
+// route App.tsx declares is reachable from here (or explicitly allowlisted) and every
+// href here resolves to a declared route.
+export const NAV: NavItem[] = [
     {
         kind: 'leaf',
         name: 'Dashboard',

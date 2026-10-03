@@ -101,6 +101,18 @@ const PageSpinner = () => (
     </div>
 );
 
+const NotFoundPage = () => (
+    <div className="py-20 flex items-center justify-center">
+        <div className="text-center">
+            <h1 className="text-4xl font-bold mb-4 text-[var(--text-primary)]">404</h1>
+            <p className="mb-4 text-[var(--text-secondary)]">Page not found</p>
+            <a href={ROUTES.DASHBOARD} className="text-[var(--accent)]">
+                Go to Dashboard
+            </a>
+        </div>
+    </div>
+);
+
 function App() {
     useAuth();
 
@@ -261,6 +273,13 @@ function App() {
                                                 <Route path={ROUTES.CONNECT} element={<KeyorixConnectPage />} />
                                                 <Route path={ROUTES.SDKS_CLI} element={<SdksPage />} />
                                                 <Route path={ROUTES.ROADMAP} element={<RoadmapPage />} />
+                                                {/* Catch all. It must live here, not as a top-level `*`
+                                                    sibling: this layout route's `/*` has the same splat
+                                                    score and is declared first, so a top-level `*` is never
+                                                    matched and an unknown URL rendered an empty Layout. An
+                                                    unauthenticated visitor still gets ProtectedRoute's
+                                                    redirect to /login before reaching this. */}
+                                                <Route path="*" element={<NotFoundPage />} />
                                             </Routes>
                                         </RouteErrorBoundary>
                                     </Layout>
@@ -272,22 +291,6 @@ function App() {
 
                     {/* Default redirect */}
                     <Route path={ROUTES.HOME} element={<Navigate to={ROUTES.DASHBOARD} replace />} />
-
-                    {/* Catch all */}
-                    <Route
-                        path="*"
-                        element={
-                            <div className="min-h-screen flex items-center justify-center bg-app">
-                                <div className="text-center">
-                                    <h1 className="text-4xl font-bold mb-4 text-[var(--text-primary)]">404</h1>
-                                    <p className="mb-4 text-[var(--text-secondary)]">Page not found</p>
-                                    <a href={ROUTES.DASHBOARD} className="text-[var(--accent)]">
-                                        Go to Dashboard
-                                    </a>
-                                </div>
-                            </div>
-                        }
-                    />
                 </Routes>
             </Suspense>
 
