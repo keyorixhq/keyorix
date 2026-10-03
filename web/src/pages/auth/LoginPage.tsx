@@ -1,17 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router';
-import { LoginForm, PasswordResetForm, useAuth } from '../../features/auth';
+import { LoginForm, MfaChallengeForm, PasswordResetForm, useAuth } from '../../features/auth';
 import { authService } from '../../services/auth';
 import { LoginFormData, PasswordResetRequest } from '../../types';
 import { ROUTES } from '../../constants';
 import { isSafeReturnTo } from '../../utils/routing';
 
-type AuthMode = 'login' | 'reset' | 'reset-success';
+type AuthMode = 'login' | 'reset' | 'reset-success' | 'mfa';
 
 export const LoginPage: React.FC = () => {
     const navigate = useNavigate();
     const location = useLocation();
-    const { login, isAuthenticated, isLoading, error, clearError } = useAuth();
+    const { login, verifyMfa, mfaChallenge, clearMfaChallenge, isAuthenticated, isLoading, error, clearError } =
+        useAuth();
 
     const [mode, setMode] = useState<AuthMode>('login');
     const [resetLoading, setResetLoading] = useState(false);
@@ -50,6 +51,15 @@ export const LoginPage: React.FC = () => {
         }
     }, [isAuthenticated, navigate, safeFrom]);
 
+    // #2442: login() returning with a pending mfaChallenge (instead of either
+    // throwing or landing an authenticated session) is the signal to show the
+    // code-entry step — it never resolves this any other way.
+    useEffect(() => {
+        if (mfaChallenge) {
+            setMode('mfa');
+        }
+    }, [mfaChallenge]);
+
     useEffect(() => {
         clearError();
         setResetError(null);
@@ -61,6 +71,20 @@ export const LoginPage: React.FC = () => {
         } catch {
             // Error handled by auth store
         }
+    };
+
+    const handleVerifyMfa = async (code: string) => {
+        try {
+            await verifyMfa(code);
+        } catch {
+            // Error handled by auth store (same pattern as handleLogin) — stay on
+            // the code-entry step so the user can retry against the same challenge.
+        }
+    };
+
+    const handleBackToLogin = () => {
+        clearMfaChallenge();
+        setMode('login');
     };
 
     const handlePasswordReset = async (data: PasswordResetRequest) => {
@@ -163,6 +187,14 @@ export const LoginPage: React.FC = () => {
                                 </div>
                             )}
                         </>
+                    )}
+                    {mode === 'mfa' && (
+                        <MfaChallengeForm
+                            onSubmit={handleVerifyMfa}
+                            onBack={handleBackToLogin}
+                            isLoading={isLoading}
+                            error={error}
+                        />
                     )}
                     {(mode === 'reset' || mode === 'reset-success') && (
                         <PasswordResetForm

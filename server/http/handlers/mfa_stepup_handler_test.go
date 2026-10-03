@@ -66,7 +66,7 @@ func activateMFAForStepUpTest(t *testing.T, coreService *core.KeyorixCore) (secr
 	// Activate using the previous step so the current step remains available for test calls.
 	actCode, err := totp.GenerateCode(secret, now.Add(-30*time.Second))
 	require.NoError(t, err)
-	codes, err = coreService.ActivateMFA(ctx, 1, actCode, stepUpTestPassword)
+	codes, err = coreService.ActivateMFA(ctx, 1, actCode, stepUpTestPassword, "")
 	require.NoError(t, err)
 	return secret, codes
 }

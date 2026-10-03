@@ -38,7 +38,7 @@ func TestVerifyMFALogin_MintFailureAfterConsume_FailsClosed(t *testing.T) {
 	require.NoError(t, err)
 	actCode, err := totp.GenerateCode(secret, fixed.Add(-30*time.Second))
 	require.NoError(t, err)
-	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword)
+	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword, "")
 	require.NoError(t, err)
 
 	code, err := totp.GenerateCode(secret, fixed)
@@ -81,7 +81,7 @@ func TestVerifyMFAStepUp_GrantFailureAfterConsume_FailsClosed(t *testing.T) {
 	require.NoError(t, err)
 	actCode, err := totp.GenerateCode(secret, fixed.Add(-30*time.Second))
 	require.NoError(t, err)
-	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword)
+	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword, "")
 	require.NoError(t, err)
 
 	code, err := totp.GenerateCode(secret, fixed)
