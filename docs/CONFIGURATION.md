@@ -270,12 +270,21 @@ secrets:
 
 File-permission self-checks, plus the **deployment-wide MFA mandate** (ADR-034).
 
+**Both `enable_file_permission_check` and `require_mfa` default to `true` when
+omitted** (ADR-112, secure-by-default baseline) — a fresh install enforces both
+from its first start with no config changes needed. An existing deployment that
+never set either key explicitly keeps booting during a grace period (a loud
+`ADR-112` start-up warning instead of an instant behavior change); see the
+CHANGELOG's Unreleased entry for exactly what that softens. Set either key
+explicitly — to `true` once you've confirmed compliance, or to `false` to opt
+out visibly — to silence the warning.
+
 ```yaml
 security:
   enable_file_permission_check: true
   auto_fix_file_permissions: true
   allow_unsafe_file_permissions: false
-  require_mfa: false              # true = mandate a second factor for interactive login
+  require_mfa: true               # false = don't mandate a second factor for interactive login
   login_lockout:
     enabled: false                # opt-in per-account lockout (brute-force protection)
     max_attempts: 5               # failed password logins within the window before locking
@@ -284,11 +293,11 @@ security:
     max_cooldown: "1h"            # ceiling for the exponential backoff
 ```
 
-With `require_mfa: true`, an interactive (session-authenticated) user **without** a
-second factor is confined to the MFA-enrolment endpoints until they enrol. A TOTP
-secret **or** a passkey satisfies it. Non-interactive credentials — personal
-access tokens, machine tokens, OIDC — are **exempt** so automation is never broken.
-Per-project MFA (ADR-037) is set per project via the API
+With `require_mfa: true` (the default), an interactive (session-authenticated) user
+**without** a second factor is confined to the MFA-enrolment endpoints until they
+enrol. A TOTP secret **or** a passkey satisfies it. Non-interactive credentials —
+personal access tokens, machine tokens, OIDC — are **exempt** so automation is
+never broken. Per-project MFA (ADR-037) is set per project via the API
 (`PUT /projects/{id}` `{ "require_mfa": true }`), independent of this flag.
 
 **Per-account login lockout** (`login_lockout`, opt-in) is brute-force protection

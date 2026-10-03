@@ -171,6 +171,14 @@ type ClientInterface interface {
 
 	ChangePassword(ctx context.Context, body ChangePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// MfaActivateWithBody request with any body
+	MfaActivateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	MfaActivate(ctx context.Context, body MfaActivateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MfaEnroll request
+	MfaEnroll(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// MfaStepUpWithBody request with any body
 	MfaStepUpWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -952,6 +960,11 @@ type ClientInterface interface {
 	// AuthLogout request
 	AuthLogout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// MfaVerifyWithBody request with any body
+	MfaVerifyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	MfaVerify(ctx context.Context, body MfaVerifyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// HealthCheck request
 	HealthCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1299,6 +1312,42 @@ func (c *Client) ChangePasswordWithBody(ctx context.Context, contentType string,
 
 func (c *Client) ChangePassword(ctx context.Context, body ChangePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewChangePasswordRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) MfaActivateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMfaActivateRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) MfaActivate(ctx context.Context, body MfaActivateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMfaActivateRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) MfaEnroll(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMfaEnrollRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -4729,6 +4778,30 @@ func (c *Client) AuthLogout(ctx context.Context, reqEditors ...RequestEditorFn) 
 	return c.Client.Do(req)
 }
 
+func (c *Client) MfaVerifyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMfaVerifyRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) MfaVerify(ctx context.Context, body MfaVerifyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMfaVerifyRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) HealthCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewHealthCheckRequest(c.Server)
 	if err != nil {
@@ -6042,6 +6115,73 @@ func NewChangePasswordRequestWithBody(server string, contentType string, body io
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewMfaActivateRequest calls the generic MfaActivate builder with application/json body
+func NewMfaActivateRequest(server string, body MfaActivateJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewMfaActivateRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewMfaActivateRequestWithBody generates requests for MfaActivate with any type of body
+func NewMfaActivateRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/auth/mfa/activate")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewMfaEnrollRequest generates requests for MfaEnroll
+func NewMfaEnrollRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/auth/mfa/enroll")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -14923,6 +15063,46 @@ func NewAuthLogoutRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewMfaVerifyRequest calls the generic MfaVerify builder with application/json body
+func NewMfaVerifyRequest(server string, body MfaVerifyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewMfaVerifyRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewMfaVerifyRequestWithBody generates requests for MfaVerify with any type of body
+func NewMfaVerifyRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/auth/mfa/verify")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewHealthCheckRequest generates requests for HealthCheck
 func NewHealthCheckRequest(server string) (*http.Request, error) {
 	var err error
@@ -15113,6 +15293,14 @@ type ClientWithResponsesInterface interface {
 	ChangePasswordWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ChangePasswordResponse, error)
 
 	ChangePasswordWithResponse(ctx context.Context, body ChangePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*ChangePasswordResponse, error)
+
+	// MfaActivateWithBodyWithResponse request with any body
+	MfaActivateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MfaActivateResponse, error)
+
+	MfaActivateWithResponse(ctx context.Context, body MfaActivateJSONRequestBody, reqEditors ...RequestEditorFn) (*MfaActivateResponse, error)
+
+	// MfaEnrollWithResponse request
+	MfaEnrollWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*MfaEnrollResponse, error)
 
 	// MfaStepUpWithBodyWithResponse request with any body
 	MfaStepUpWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MfaStepUpResponse, error)
@@ -15895,6 +16083,11 @@ type ClientWithResponsesInterface interface {
 	// AuthLogoutWithResponse request
 	AuthLogoutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AuthLogoutResponse, error)
 
+	// MfaVerifyWithBodyWithResponse request with any body
+	MfaVerifyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MfaVerifyResponse, error)
+
+	MfaVerifyWithResponse(ctx context.Context, body MfaVerifyJSONRequestBody, reqEditors ...RequestEditorFn) (*MfaVerifyResponse, error)
+
 	// HealthCheckWithResponse request
 	HealthCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*HealthCheckResponse, error)
 
@@ -16449,6 +16642,68 @@ func (r ChangePasswordResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r ChangePasswordResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type MfaActivateResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			// RecoveryCodes Single-use recovery codes, shown once -- save them now
+			RecoveryCodes *[]string `json:"recovery_codes,omitempty"`
+		} `json:"data,omitempty"`
+		Message *string `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r MfaActivateResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MfaActivateResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type MfaEnrollResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			OtpauthUri *string `json:"otpauth_uri,omitempty"`
+
+			// Secret Base32 TOTP secret
+			Secret *string `json:"secret,omitempty"`
+		} `json:"data,omitempty"`
+		Message *string `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r MfaEnrollResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MfaEnrollResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -22029,20 +22284,32 @@ type AuthLoginResponse struct {
 	JSON200      *struct {
 		Data *struct {
 			// AbsoluteExpiresAt Hard ceiling past which refresh is refused
-			AbsoluteExpiresAt      *time.Time `json:"absolute_expires_at,omitempty"`
-			AccountState           *string    `json:"account_state,omitempty"`
-			DisplayName            *string    `json:"display_name,omitempty"`
-			Email                  *string    `json:"email,omitempty"`
-			ExpiresAt              *time.Time `json:"expires_at,omitempty"`
-			PasswordChangeRequired *bool      `json:"password_change_required,omitempty"`
-			Permissions            *[]string  `json:"permissions,omitempty"`
-			Role                   *string    `json:"role,omitempty"`
-			Roles                  *[]string  `json:"roles,omitempty"`
+			AbsoluteExpiresAt *time.Time `json:"absolute_expires_at,omitempty"`
+			AccountState      *string    `json:"account_state,omitempty"`
+			DisplayName       *string    `json:"display_name,omitempty"`
+			Email             *string    `json:"email,omitempty"`
+			ExpiresAt         *time.Time `json:"expires_at,omitempty"`
+
+			// MfaChallenge Short-lived challenge token for POST /auth/mfa/verify
+			MfaChallenge *string `json:"mfa_challenge,omitempty"`
+
+			// MfaRequired Password was correct; a second factor is required. token is absent when this is true -- complete POST /auth/mfa/verify with mfa_challenge instead.
+			MfaRequired            *bool     `json:"mfa_required,omitempty"`
+			PasswordChangeRequired *bool     `json:"password_change_required,omitempty"`
+			Permissions            *[]string `json:"permissions,omitempty"`
+			Role                   *string   `json:"role,omitempty"`
+			Roles                  *[]string `json:"roles,omitempty"`
 
 			// Token Session bearer token
-			Token    *string `json:"token,omitempty"`
-			UserId   *int    `json:"user_id,omitempty"`
-			Username *string `json:"username,omitempty"`
+			Token *string `json:"token,omitempty"`
+
+			// TotpAvailable This account has a TOTP factor enrolled
+			TotpAvailable *bool   `json:"totp_available,omitempty"`
+			UserId        *int    `json:"user_id,omitempty"`
+			Username      *string `json:"username,omitempty"`
+
+			// WebauthnAvailable This account has a WebAuthn/passkey factor enrolled
+			WebauthnAvailable *bool `json:"webauthn_available,omitempty"`
 		} `json:"data,omitempty"`
 		Message *string `json:"message,omitempty"`
 	}
@@ -22083,6 +22350,49 @@ func (r AuthLogoutResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r AuthLogoutResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type MfaVerifyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			AbsoluteExpiresAt      *time.Time `json:"absolute_expires_at,omitempty"`
+			AccountState           *string    `json:"account_state,omitempty"`
+			DisplayName            *string    `json:"display_name,omitempty"`
+			Email                  *string    `json:"email,omitempty"`
+			ExpiresAt              *time.Time `json:"expires_at,omitempty"`
+			PasswordChangeRequired *bool      `json:"password_change_required,omitempty"`
+			Permissions            *[]string  `json:"permissions,omitempty"`
+			Role                   *string    `json:"role,omitempty"`
+			Roles                  *[]string  `json:"roles,omitempty"`
+
+			// Token Session bearer token
+			Token    *string `json:"token,omitempty"`
+			UserId   *int    `json:"user_id,omitempty"`
+			Username *string `json:"username,omitempty"`
+		} `json:"data,omitempty"`
+		Message *string `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON429 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r MfaVerifyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MfaVerifyResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -22404,6 +22714,32 @@ func (c *ClientWithResponses) ChangePasswordWithResponse(ctx context.Context, bo
 		return nil, err
 	}
 	return ParseChangePasswordResponse(rsp)
+}
+
+// MfaActivateWithBodyWithResponse request with arbitrary body returning *MfaActivateResponse
+func (c *ClientWithResponses) MfaActivateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MfaActivateResponse, error) {
+	rsp, err := c.MfaActivateWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMfaActivateResponse(rsp)
+}
+
+func (c *ClientWithResponses) MfaActivateWithResponse(ctx context.Context, body MfaActivateJSONRequestBody, reqEditors ...RequestEditorFn) (*MfaActivateResponse, error) {
+	rsp, err := c.MfaActivate(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMfaActivateResponse(rsp)
+}
+
+// MfaEnrollWithResponse request returning *MfaEnrollResponse
+func (c *ClientWithResponses) MfaEnrollWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*MfaEnrollResponse, error) {
+	rsp, err := c.MfaEnroll(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMfaEnrollResponse(rsp)
 }
 
 // MfaStepUpWithBodyWithResponse request with arbitrary body returning *MfaStepUpResponse
@@ -24897,6 +25233,23 @@ func (c *ClientWithResponses) AuthLogoutWithResponse(ctx context.Context, reqEdi
 	return ParseAuthLogoutResponse(rsp)
 }
 
+// MfaVerifyWithBodyWithResponse request with arbitrary body returning *MfaVerifyResponse
+func (c *ClientWithResponses) MfaVerifyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MfaVerifyResponse, error) {
+	rsp, err := c.MfaVerifyWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMfaVerifyResponse(rsp)
+}
+
+func (c *ClientWithResponses) MfaVerifyWithResponse(ctx context.Context, body MfaVerifyJSONRequestBody, reqEditors ...RequestEditorFn) (*MfaVerifyResponse, error) {
+	rsp, err := c.MfaVerify(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMfaVerifyResponse(rsp)
+}
+
 // HealthCheckWithResponse request returning *HealthCheckResponse
 func (c *ClientWithResponses) HealthCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*HealthCheckResponse, error) {
 	rsp, err := c.HealthCheck(ctx, reqEditors...)
@@ -25776,6 +26129,100 @@ func ParseChangePasswordResponse(rsp *http.Response) (*ChangePasswordResponse, e
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseMfaActivateResponse parses an HTTP response from a MfaActivateWithResponse call
+func ParseMfaActivateResponse(rsp *http.Response) (*MfaActivateResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MfaActivateResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				// RecoveryCodes Single-use recovery codes, shown once -- save them now
+				RecoveryCodes *[]string `json:"recovery_codes,omitempty"`
+			} `json:"data,omitempty"`
+			Message *string `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseMfaEnrollResponse parses an HTTP response from a MfaEnrollWithResponse call
+func ParseMfaEnrollResponse(rsp *http.Response) (*MfaEnrollResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MfaEnrollResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				OtpauthUri *string `json:"otpauth_uri,omitempty"`
+
+				// Secret Base32 TOTP secret
+				Secret *string `json:"secret,omitempty"`
+			} `json:"data,omitempty"`
+			Message *string `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	}
 
@@ -35216,20 +35663,32 @@ func ParseAuthLoginResponse(rsp *http.Response) (*AuthLoginResponse, error) {
 		var dest struct {
 			Data *struct {
 				// AbsoluteExpiresAt Hard ceiling past which refresh is refused
-				AbsoluteExpiresAt      *time.Time `json:"absolute_expires_at,omitempty"`
-				AccountState           *string    `json:"account_state,omitempty"`
-				DisplayName            *string    `json:"display_name,omitempty"`
-				Email                  *string    `json:"email,omitempty"`
-				ExpiresAt              *time.Time `json:"expires_at,omitempty"`
-				PasswordChangeRequired *bool      `json:"password_change_required,omitempty"`
-				Permissions            *[]string  `json:"permissions,omitempty"`
-				Role                   *string    `json:"role,omitempty"`
-				Roles                  *[]string  `json:"roles,omitempty"`
+				AbsoluteExpiresAt *time.Time `json:"absolute_expires_at,omitempty"`
+				AccountState      *string    `json:"account_state,omitempty"`
+				DisplayName       *string    `json:"display_name,omitempty"`
+				Email             *string    `json:"email,omitempty"`
+				ExpiresAt         *time.Time `json:"expires_at,omitempty"`
+
+				// MfaChallenge Short-lived challenge token for POST /auth/mfa/verify
+				MfaChallenge *string `json:"mfa_challenge,omitempty"`
+
+				// MfaRequired Password was correct; a second factor is required. token is absent when this is true -- complete POST /auth/mfa/verify with mfa_challenge instead.
+				MfaRequired            *bool     `json:"mfa_required,omitempty"`
+				PasswordChangeRequired *bool     `json:"password_change_required,omitempty"`
+				Permissions            *[]string `json:"permissions,omitempty"`
+				Role                   *string   `json:"role,omitempty"`
+				Roles                  *[]string `json:"roles,omitempty"`
 
 				// Token Session bearer token
-				Token    *string `json:"token,omitempty"`
-				UserId   *int    `json:"user_id,omitempty"`
-				Username *string `json:"username,omitempty"`
+				Token *string `json:"token,omitempty"`
+
+				// TotpAvailable This account has a TOTP factor enrolled
+				TotpAvailable *bool   `json:"totp_available,omitempty"`
+				UserId        *int    `json:"user_id,omitempty"`
+				Username      *string `json:"username,omitempty"`
+
+				// WebauthnAvailable This account has a WebAuthn/passkey factor enrolled
+				WebauthnAvailable *bool `json:"webauthn_available,omitempty"`
 			} `json:"data,omitempty"`
 			Message *string `json:"message,omitempty"`
 		}
@@ -35284,6 +35743,71 @@ func ParseAuthLogoutResponse(rsp *http.Response) (*AuthLogoutResponse, error) {
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseMfaVerifyResponse parses an HTTP response from a MfaVerifyWithResponse call
+func ParseMfaVerifyResponse(rsp *http.Response) (*MfaVerifyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MfaVerifyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				AbsoluteExpiresAt      *time.Time `json:"absolute_expires_at,omitempty"`
+				AccountState           *string    `json:"account_state,omitempty"`
+				DisplayName            *string    `json:"display_name,omitempty"`
+				Email                  *string    `json:"email,omitempty"`
+				ExpiresAt              *time.Time `json:"expires_at,omitempty"`
+				PasswordChangeRequired *bool      `json:"password_change_required,omitempty"`
+				Permissions            *[]string  `json:"permissions,omitempty"`
+				Role                   *string    `json:"role,omitempty"`
+				Roles                  *[]string  `json:"roles,omitempty"`
+
+				// Token Session bearer token
+				Token    *string `json:"token,omitempty"`
+				UserId   *int    `json:"user_id,omitempty"`
+				Username *string `json:"username,omitempty"`
+			} `json:"data,omitempty"`
+			Message *string `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
 
 	}
 

@@ -1391,6 +1391,13 @@ type ChangePasswordJSONBody struct {
 	NewPassword     string `json:"new_password"`
 }
 
+// MfaActivateJSONBody defines parameters for MfaActivate.
+type MfaActivateJSONBody struct {
+	// Code TOTP code from the authenticator app
+	Code     string `json:"code"`
+	Password string `json:"password"`
+}
+
 // MfaStepUpJSONBody defines parameters for MfaStepUp.
 type MfaStepUpJSONBody struct {
 	// Code TOTP code or a recovery code
@@ -2244,6 +2251,13 @@ type AuthLoginJSONBody struct {
 	Username string `json:"username"`
 }
 
+// MfaVerifyJSONBody defines parameters for MfaVerify.
+type MfaVerifyJSONBody struct {
+	// Code TOTP code or a recovery code
+	Code         string `json:"code"`
+	MfaChallenge string `json:"mfa_challenge"`
+}
+
 // SystemInitJSONBody defines parameters for SystemInit.
 type SystemInitJSONBody struct {
 	// BootstrapToken Prefer the X-Keyorix-Bootstrap-Token header; this field is the fallback for clients that cannot set headers.
@@ -2271,6 +2285,9 @@ type CreateAlertEscalationPolicyJSONRequestBody CreateAlertEscalationPolicyJSONB
 
 // ChangePasswordJSONRequestBody defines body for ChangePassword for application/json ContentType.
 type ChangePasswordJSONRequestBody ChangePasswordJSONBody
+
+// MfaActivateJSONRequestBody defines body for MfaActivate for application/json ContentType.
+type MfaActivateJSONRequestBody MfaActivateJSONBody
 
 // MfaStepUpJSONRequestBody defines body for MfaStepUp for application/json ContentType.
 type MfaStepUpJSONRequestBody MfaStepUpJSONBody
@@ -2493,6 +2510,9 @@ type UpdateUserRolesJSONRequestBody UpdateUserRolesJSONBody
 
 // AuthLoginJSONRequestBody defines body for AuthLogin for application/json ContentType.
 type AuthLoginJSONRequestBody AuthLoginJSONBody
+
+// MfaVerifyJSONRequestBody defines body for MfaVerify for application/json ContentType.
+type MfaVerifyJSONRequestBody MfaVerifyJSONBody
 
 // SystemInitJSONRequestBody defines body for SystemInit for application/json ContentType.
 type SystemInitJSONRequestBody SystemInitJSONBody

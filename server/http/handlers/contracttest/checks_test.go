@@ -86,11 +86,20 @@ func TestSpecLoadsAndValidates(t *testing.T) {
 // revokeShare (already schema-less-by-design, also 204) are deliberately NOT
 // in this batch -- both are 204 No Content, tracked in outOfScopeRegistry
 // instead, matching every other 204 route in this package.
+//
+// mfaEnroll/mfaActivate/mfaVerify were added by the ADR-112 item 1 follow-up
+// (security.require_mfa now defaults on, so the CLI needs a real enrolment +
+// MFA-login path, not just mfaStepUp's already-enrolled case): all three are
+// brand new to the spec (mfaStepUp's own schema-less description was not
+// extended to cover them), exercised via openapi_contract_adr112_mfa_test.go.
 func TestEnforcedSetMatchesADR074(t *testing.T) {
 	want := map[string]bool{
 		"authGetSetupToken":             true,
 		"authLogin":                     true,
 		"authRefresh":                   true,
+		"mfaEnroll":                     true,
+		"mfaActivate":                   true,
+		"mfaVerify":                     true,
 		"healthCheck":                   true,
 		"getVersion":                    true,
 		"listSecretACLs":                true,

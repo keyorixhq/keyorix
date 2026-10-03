@@ -5,6 +5,34 @@ All notable changes to Keyorix are documented here. This project follows
 
 ## Unreleased
 
+### Security
+- **`security.enable_file_permission_check` and `security.require_mfa` now
+  default to the secure state** (ADR-112, secure-by-default baseline, item 1).
+  A fresh install enforces file-permission/DEK-salt-size/database-reachability
+  startup checks and admin MFA from its very first start, with no config
+  changes needed. **Upgrade note:** an existing deployment that never set
+  either key explicitly keeps booting during a grace period: a real
+  file-permission or startup-validation problem now logs a loud `ADR-112`
+  warning naming the setting and how to comply, instead of refusing to start;
+  `require_mfa` confines a session-authenticated admin without MFA enrolled to
+  the enrolment endpoints (non-interactive PAT/machine credentials are
+  unaffected) and logs an equivalent warning. Set either key explicitly (to
+  `true` once compliant, or `false` to opt out visibly) to silence the
+  warning and get the key's exact pre-upgrade behavior back.
+- **The CLI now supports MFA enrolment and MFA-gated login end to end**:
+  `keyorix mfa enroll` (returns a TOTP secret/QR URI), `keyorix mfa activate
+  --code --password` (confirms enrolment, prints one-time recovery codes),
+  and `keyorix login --mfa-code` (completes the two-step login an
+  already-enrolled account now requires). Needed because `require_mfa`
+  defaulting on (above) otherwise leaves a fresh install's bootstrap admin
+  confined to the enrolment endpoints with no CLI-only way to enrol or to log
+  back in afterward — enabling MFA invalidates the pre-enrolment session, so
+  a second login is required, not optional. `scripts/smoke.sh` and the
+  release-qa scenarios now enrol MFA for their bootstrap admin the same way a
+  real operator would (`scripts/totpgen` stands in for an authenticator app
+  in non-interactive test harnesses only — never part of the shipped CLI or
+  server binaries).
+
 ## v0.95.3 — 2026-10-01
 
 ### Security
