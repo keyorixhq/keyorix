@@ -245,6 +245,20 @@ var opScopedBestEffortTables = []struct {
 }{
 	{op: "REST POST /api/v1/users/", method: "AssignRole", tables: []string{"UserRole"}},
 	{op: "REST POST /api/v1/users/", method: "GetRoleByName", tables: []string{"UserRole"}},
+	// REST POST /api/v1/auth/mfa/disable, DeleteSessionsForUserExcept:
+	// DisableMFA's own comment ("Best-effort: disable must not fail on a
+	// cleanup error.") explicitly discards deleteSessionsForUserAndEvict's
+	// error after MFA is already flipped off and the secret/recovery codes
+	// already deleted (internal/core/mfa.go, `_ =
+	// c.deleteSessionsForUserAndEvict(ctx, userID, 0, "")`) — the security
+	// downgrade purging sessions is the control; a purge failure here must
+	// not report an already-successful MFA disable as failed. Found live by
+	// FuzzStorageFaultOperations (this PR's own newly-wired op). Scoped to
+	// this op, not a blanket bestEffortTables entry keyed by method name,
+	// since DeleteSessionsForUserExcept IS load-bearing at other call sites
+	// (RevokeUserSessions propagates its error as "failed to revoke
+	// sessions").
+	{op: "REST POST /api/v1/auth/mfa/disable", method: "DeleteSessionsForUserExcept", tables: []string{"Session"}},
 	{
 		op: "REST POST /api/v1/projects", method: "WithTransaction", tables: []string{"Environment", "AuditEvent"},
 		minNthCall:          2,
@@ -648,6 +662,39 @@ type knownOpenTolerance struct {
 	issue      string
 	expires    string
 	findingDoc string
+	// tables, if non-empty, narrows this tolerance to ONLY match when the
+	// violation's diff is confined to this set (a subset check, not an exact
+	// set match) — a diff that includes even one table outside this list is a
+	// DIFFERENT, unexplained divergence and must still fail loudly, not be
+	// silently swallowed under this finding's name. Empty preserves the
+	// original, table-unaware behavior: tolerate the full diff for this exact
+	// (op, method, kind, nth, oracle).
+	tables []string
+	// method == "" matches ANY storage method -- for a finding whose root
+	// cause is structural to the OP itself (e.g. a write that happens
+	// unconditionally before the faulted call even runs), not tied to one
+	// specific storage call.
+}
+
+// diffSubsetOf reports whether every table in diff also appears in allowed —
+// mirrors acceptableByDesign's identical subset check (bestEffortTables),
+// kept separate since knownOpenTolerance's tables field is conceptually
+// distinct (a narrowing of an already-filed, not-yet-fixed finding, not a
+// documented best-effort design tradeoff).
+func diffSubsetOf(diff, allowed []string) bool {
+	if len(diff) == 0 {
+		return false
+	}
+	allowedSet := make(map[string]bool, len(allowed))
+	for _, t := range allowed {
+		allowedSet[t] = true
+	}
+	for _, d := range diff {
+		if !allowedSet[d] {
+			return false
+		}
+	}
+	return true
 }
 
 // F3a and F3b (docs/findings/2026-09-21-FINDING-role-update-permission-replace-swallows-storage-errors.md)
@@ -664,32 +711,283 @@ type knownOpenTolerance struct {
 // test (see the committed seed
 // testdata/fuzz/FuzzStorageFaultOperations/630357d238f9c51b); no entry needed
 // unless a new finding is filed.
+// gRPC CreateUser CountProjectMembershipsByUsers panic (KindPanic, NthCall=1,
+// oracle (a), filed as #2449): FIXED by #2408 (projectCounts now recovers a
+// panic the same way it already handled a returned error, with its own
+// regression test TestCreateUser_ProjectCountsPanicDoesNotMaskSuccess). The
+// tolerance main briefly carried for it (added by #2434, which had forked
+// before #2408 landed) is dropped here, not re-added -- #2408's fix is the
+// regression test now.
 //
-// GRPC keyorix.v1.UserService.CreateUser, CountProjectMembershipsByUsers,
-// KindPanic, NthCall=1, oracle (a): found live by CI fuzz shard 0 on an
-// unrelated PR (#2434), confirmed pre-existing on main by replaying input
-// 5900200031 directly against origin/main (not caused by that PR). A panic
-// inside CountProjectMembershipsByUsers (call #1, injected post-commit) --
-// server/grpc/services/user_service.go's userToProto -> projectCounts ->
-// internal/core.ProjectMembershipCounts -- propagates past the ALREADY
-// committed User/UserRole/PasswordHistory/AuditEvent rows from CreateUser's
-// own write, which happens earlier and is unaffected; RecoveryInterceptor
-// catches the panic and the RPC reports an error even though the user was
-// genuinely created. Filed as #2449; not fixed here.
+// docs/findings/2026-10-02-FINDING-sod-policy-create-getrole-error-misread-as-not-admin.md
+// was tolerated here and is now fixed (#2405, merged) -- isGlobalAdminRoleName
+// no longer misreads a GetRole error as "not admin". No entry needed unless a
+// new finding is filed.
+//
+// docs/findings/2026-10-02-FINDING-grpc-createrole-updaterole-rolebyid-post-commit-read.md
+// was tolerated here and is now fixed (#2381, merged, dropped by this PR's own
+// adcfe1a1) -- RoleGRPCService's post-commit roleByID read no longer masks a
+// successful CreateRole. No entry needed unless a new finding is filed.
+//
+// docs/findings/2026-10-02-FINDING-mfa-verify-enforcesessionlimit-panic-masks-successful-login.md
+// was tolerated here and is now fixed (#2416, merged, landed on main the same
+// day this PR was authored) -- mintSession's EnforceSessionLimit call now
+// recovers a panic the same way it already handled a returned error. The
+// fuzzer is now the regression test (see the committed seed
+// testdata/fuzz/FuzzStorageFaultOperations/mfa-verify-enforcesessionlimit-panic-2416,
+// re-encoded for this PR's opCatalog wiring since #2416's own merge commit
+// could not commit a working seed before that wiring existed); no entry
+// needed unless a new finding is filed.
 var knownOpenTolerances = []knownOpenTolerance{
+	// docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md
+	// (SESSION-FI, AT5): NOT a bug -- BulkRejectAccessRequests' unconditional
+	// summary audit event legitimately differs in content (X/Y counts) when
+	// the one requested item fails. Same shape onlyOutcomeLogTables already
+	// accepts unconditionally in the SUCCESS branch; the error-reporting
+	// `default:` branch has no equivalent exemption yet (filed as #2549,
+	// alongside the stepup NOTE below -- a harness-oracle gap, not a product
+	// bug, needs a decision on whether to build a general exemption).
+	// Reproduced directly against this PR's rebased opCatalog: op="REST POST
+	// /api/v1/access-requests/bulk-reject" fault=(method=GetAccessRequest,
+	// NthCall=1, kind=error) -- oracle (a) VIOLATION, differing tables:
+	// [AuditEvent].
 	{
-		op: "GRPC keyorix.v1.UserService.CreateUser", method: "CountProjectMembershipsByUsers",
-		kind: faultstorage.KindPanic, nth: 1, oracle: "a",
-		issue: "#2449", expires: "2026-10-16",
-		findingDoc: "#2449",
+		op: "REST POST /api/v1/access-requests/bulk-reject", method: "GetAccessRequest", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2549", expires: "2026-10-17",
+		findingDoc: "docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md",
+	},
+	// Third instance of the identical #2549 harness-oracle gap, this time on
+	// BulkApproveAccessRequests' own sibling unconditional summary audit event
+	// (internal/core/bulk_access_requests.go: "Written unconditionally... a
+	// batch where every item fails ... would otherwise leave no trail that
+	// this bulk operation was attempted") -- same shape as the bulk-reject
+	// entry directly above, just the approve-side counterpart. Found live by
+	// CI's own fuzz shard 1 on this PR's own run (not caused by this PR --
+	// bulk-approve's opCatalog wiring and result-detection fix are #2392's
+	// own, but the underlying audit-write shape is pre-existing and shared
+	// with bulk-reject). Reproduced directly: op="REST POST
+	// /api/v1/access-requests/bulk-approve" fault=(method=GetAccessRequest,
+	// NthCall=1, kind=error) -- oracle (a) VIOLATION, differing tables:
+	// [AuditEvent].
+	{
+		op: "REST POST /api/v1/access-requests/bulk-approve", method: "GetAccessRequest", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2549", expires: "2026-10-17",
+		tables:     []string{"AuditEvent"},
+		findingDoc: "docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md",
+	},
+	// A SECOND distinct (method, nth) trigger of the identical #2549 gap on
+	// the SAME op, found by the next CI run: BulkApproveAccessRequests' loop
+	// calls Authorize (which calls RoleSetBypassesPermissionChecks) per item,
+	// so a fault on ANY per-item storage call -- not just GetAccessRequest --
+	// reaches the same unconditional final audit write and produces the
+	// identical AuditEvent-only diff. Narrowly re-added per-(method, nth) as
+	// its own entry rather than widening to a method wildcard, since the
+	// existing knownOpenTolerance struct has no nth-wildcard mechanism (unlike
+	// method's blank-matches-any) and inventing one is a shared-mechanism
+	// change, not a data entry -- flagging for the coordinator to decide
+	// whether that's worth building, since CI's fuzz-changed will likely keep
+	// finding new (method, nth) pairs within this same loop otherwise.
+	// Reproduced directly: op="REST POST /api/v1/access-requests/bulk-approve"
+	// fault=(method=RoleSetBypassesPermissionChecks, NthCall=4, kind=error) --
+	// oracle (a) VIOLATION, differing tables: [AuditEvent].
+	{
+		op: "REST POST /api/v1/access-requests/bulk-approve", method: "RoleSetBypassesPermissionChecks", kind: faultstorage.KindError,
+		nth: 4, oracle: "a", issue: "#2549", expires: "2026-10-17",
+		tables:     []string{"AuditEvent"},
+		findingDoc: "docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md",
+	},
+	// THIRD distinct (method, nth) trigger of the identical bulk-approve gap,
+	// found by yet another CI shard: GetRolePermissions#1/error, same
+	// [AuditEvent]-only diff. See the coordinator-flag comment on this PR --
+	// three independent storage calls inside BulkApproveAccessRequests' own
+	// per-item loop (GetAccessRequest, RoleSetBypassesPermissionChecks,
+	// GetRolePermissions -- all reachable from ApproveAccessRequest's
+	// Authorize call for a single item) now confirm the root cause is
+	// structural to the WHOLE LOOP, not any specific call within it.
+	// Reproduced directly: op="REST POST /api/v1/access-requests/bulk-approve"
+	// fault=(method=GetRolePermissions, NthCall=1, kind=error) -- oracle (a)
+	// VIOLATION, differing tables: [AuditEvent].
+	{
+		op: "REST POST /api/v1/access-requests/bulk-approve", method: "GetRolePermissions", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2549", expires: "2026-10-17",
+		tables:     []string{"AuditEvent"},
+		findingDoc: "docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md",
+	},
+	// docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md
+	// (SESSION-FI, AT5, out of OWNS, not fixed there): loadTOTPSecret's
+	// GetMFASecret error is checked with `err == nil` as the gate to even
+	// attempt TOTP validation; on error the whole branch is skipped,
+	// collapsing into the SAME path a genuine wrong code takes --
+	// audited as mfa.failed AND counted toward the account lockout, for a
+	// correct code that was never actually checked. Filed as #2548. Fix is PR
+	// #2398, not yet merged -- keep tolerating until it lands. Reproduced
+	// directly against this PR's rebased opCatalog: op="REST POST
+	// /auth/mfa/verify" fault=(method=GetMFASecret, NthCall=1, kind=error) --
+	// oracle (a) VIOLATION, differing tables: [AuditEvent LoginAttempt].
+	{
+		op: "REST POST /auth/mfa/verify", method: "GetMFASecret", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2548", expires: "2026-10-17",
+		findingDoc: "docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md",
+	},
+	// Second trigger for the same finding (#2548), reached through a
+	// structurally different call site: VerifyMFACredentials' OWN GetUser
+	// call fails closed correctly -- it returns before ever reaching
+	// loadTOTPSecret/recordFailedLogin -- but the HANDLER
+	// (server/http/handlers/mfa.go's VerifyMFA) already called
+	// reserveLoginAttempt (RecordFailedLogin by IP) UNCONDITIONALLY, before
+	// VerifyMFALogin even runs, as its own rate-limiting bookkeeping (F2,
+	// 2026-09-20). That write is structural to this op's wiring, not tied to
+	// GetMFASecret specifically: ANY storage-error fault that makes this op
+	// report failure will show the identical LoginAttempt-only diff, since
+	// reserveLoginAttempt's write already landed before the fault-affected
+	// call runs. method is deliberately left blank (wildcard) for this
+	// reason, and tables is scoped to LoginAttempt alone -- unlike the
+	// GetMFASecret entry above (whose diff also legitimately includes
+	// AuditEvent from auditMFAFailed, a different code path entirely), a
+	// GetUser-stage failure never reaches auditMFAFailed at all, so AuditEvent
+	// never appears in ITS diff. A diff that included anything beyond
+	// LoginAttempt would be a different, unexplained issue and must still
+	// fail. Fix is PR #2398 (second commit), not yet merged -- keep
+	// tolerating until it lands; #2398's own body says to remove this entry
+	// once both it and #2392 have merged. Reproduced directly against this
+	// PR's rebased opCatalog (the originally-committed seed, 877139548d2805a6,
+	// now decodes to an unrelated op post-rebase -- see
+	// mfa-verify-getuser-loginattempt-2548 below): op="REST POST
+	// /auth/mfa/verify" fault=(method=GetUser, NthCall=1, kind=error) --
+	// oracle (a) VIOLATION, differing tables: [LoginAttempt].
+	{
+		op: "REST POST /auth/mfa/verify", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2548", expires: "2026-10-17",
+		tables:     []string{"LoginAttempt"},
+		findingDoc: "docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md",
+	},
+	// docs/findings/2026-10-02-NOTE-mfa-stepup-consume-first-grant-failure-reported-as-error.md
+	// (SESSION-FI2): NOT a bug -- VerifyMFAStepUp's own doc comment and
+	// TestVerifyMFAStepUp_GrantFailureAfterConsume_FailsClosed already prove
+	// this exact shape (TOTP step consumed, then CreateMFAStepUpGrant fails,
+	// reported as an error) is the intended fail-closed design. Same harness-
+	// oracle gap as the bulk-access-request NOTE above; filed together as
+	// #2549. Reproduced directly against this PR's rebased opCatalog:
+	// op="REST POST /api/v1/auth/mfa/stepup"
+	// fault=(method=CreateMFAStepUpGrant, NthCall=1, kind=error) -- oracle (a)
+	// VIOLATION, differing tables: [MFASecret].
+	{
+		op: "REST POST /api/v1/auth/mfa/stepup", method: "CreateMFAStepUpGrant", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2549", expires: "2026-10-17",
+		tables:     []string{"MFASecret"},
+		findingDoc: "docs/findings/2026-10-02-NOTE-mfa-stepup-consume-first-grant-failure-reported-as-error.md",
+	},
+	// Pre-existing, unrelated to this PR's own MFA-reauth changes -- found by
+	// a live 2-minute FuzzStorageFaultOperations run during this PR's rebase,
+	// confirmed to reproduce identically on unmodified origin/main. Filed as
+	// #2554; fix is PR #2560 (open) -- remove this entry once it merges.
+	// writeAccessLog (internal/core/audit.go) already discards a RETURNED
+	// error from CreateSecretAccessLog but has no recover() for a PANIC, so a
+	// panic there propagates past the classification update's already-
+	// committed SecretNode row and its own AuditEvent.
+	{
+		op: "REST PATCH /api/v1/secrets/{id}/classification", method: "CreateSecretAccessLog", kind: faultstorage.KindPanic,
+		nth: 1, oracle: "a", issue: "#2554", expires: "2026-10-17",
+		tables:     []string{"AuditEvent", "SecretNode"},
+		findingDoc: "#2554",
+	},
+	// Pre-existing, unrelated to this PR's own MFA-reauth changes -- found by
+	// a live 2-minute FuzzStorageFaultOperations run during this PR's rebase
+	// (ListWebAuthnCredentials#1/error), then CI's own fuzz-changed shard
+	// independently found a SECOND call site of the identical root cause
+	// (ConsumeMFAChallenge#1/error) during this PR's own CI run. Same
+	// root-cause family as #2548's second (wildcard) entry above: the
+	// WebAuthn login/finish handler (server/http/handlers/webauthn.go) calls
+	// reserveLoginAttempt UNCONDITIONALLY, before the real assertion
+	// verification runs, so a storage error on ANY call the verification path
+	// makes fails closed correctly but still leaves a LoginAttempt row
+	// behind -- structural to the op itself, not tied to one storage method,
+	// same reasoning as #2548's own wildcard entry. method is deliberately
+	// left blank for this reason (narrowed back to a single method would just
+	// mean the NEXT call site CI's randomized fuzz-changed finds becomes a
+	// fresh red build instead of this same already-tracked finding). Filed as
+	// #2565 (cross-links #2548 and #2398's own "CR3" note, since the root
+	// cause is shared across every reserveLoginAttempt call site, not
+	// MFA-specific). A THIRD trigger (ConsumeWebAuthnSession#1/error, cited
+	// by the coordinator as #2603) already matches this same wildcard entry
+	// -- same op, same kind, same LoginAttempt-only diff -- confirmed by
+	// direct replay; no separate tolerance entry needed for it. #2603 and
+	// #2565 look like the same tracked finding under two issue numbers.
+	{
+		op: "REST POST /auth/webauthn/login/finish", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2565", expires: "2026-10-17",
+		tables:     []string{"LoginAttempt"},
+		findingDoc: "#2565",
+	},
+	// Pre-existing, unrelated to this PR's own MFA-reauth changes (#2392 only
+	// newly wires /auth/mfa/verify into the fuzzer, it doesn't touch this code
+	// path) -- found by a live 2-minute FuzzStorageFaultOperations run during
+	// this PR's rebase. VerifyMFACredentials (internal/core/mfa.go) calls
+	// MarkTOTPStepUsed (consuming the TOTP step) BEFORE mintSession's own,
+	// independent CreateSession call; a CreateSession failure reports the
+	// whole verify as an error with the step already burned, so the caller
+	// cannot retry with the same correct code. Filed as #2567 (cross-links
+	// #2548 -- same "distinguish a storage hiccup from a confirmed negative
+	// result before a real-consequence side effect runs" shape, different
+	// specific mechanism).
+	{
+		op: "REST POST /auth/mfa/verify", method: "CreateSession", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2567", expires: "2026-10-17",
+		tables:     []string{"MFASecret", "LoginAttempt"},
+		findingDoc: "#2567",
+	},
+	// Coordinator priority (12:34Z): random pre-existing fuzz findings were
+	// blocking unrelated PRs (e.g. #2556). Added here, into this PR's own
+	// branch, so the hotspot file stays serialized through one PR rather than
+	// several concurrent ones touching the same lines.
+	//
+	// REST POST /api/v1/invitations, CountSetupTokensSince, error, nth 1,
+	// oracle a: checkResendThrottle's CountSetupTokensSince call is on the
+	// SUCCESS path (reported success, final state is [SetupToken AuditEvent]
+	// different from the fault-free reference) -- traces through
+	// provisionSetupLink/provisionSetupLinkThrottled -> InviteGlobalWithLink,
+	// the identical architectural tradeoff PR #2393's own body already
+	// documents as its deferred "#4" item (same shape as #2382's own bonus
+	// finding #1: two-separate-top-level-calls, "invitation created but setup
+	// link failed" still returns 201) -- not independently fixed here, same
+	// reasoning #2393 gives, pending that coordinator decision.
+	{
+		op: "REST POST /api/v1/invitations", method: "CountSetupTokensSince", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2599", expires: "2026-10-17",
+		tables:     []string{"SetupToken", "AuditEvent"},
+		findingDoc: "#2599",
+	},
+	// REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide,
+	// ListProjectRoleAssignments, error, nth 1, oracle a: a ListProjectRoleAssignments
+	// storage error reports failure but AccessReviewItem's decision state
+	// still committed. Entirely unrelated to MFA/auth -- same finding this
+	// session already surfaced and filed as #2570 during the #2392 rebase's
+	// own live fuzzing (deliberately not tolerated there, per this file's
+	// "don't expand scope indefinitely" precedent); coordinator independently
+	// filed #2606 for the same symptom. Citing #2606 per the coordinator's
+	// explicit instruction -- #2570 is a duplicate worth closing in favor of
+	// this one.
+	{
+		op:     "REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide",
+		method: "ListProjectRoleAssignments", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2606", expires: "2026-10-17",
+		tables:     []string{"AccessReviewItem"},
+		findingDoc: "#2606",
 	},
 }
 
-func matchingKnownOpen(in oracleInput, oracle string) *knownOpenTolerance {
+func matchingKnownOpen(in oracleInput, oracle string, diff []string) *knownOpenTolerance {
 	for i, k := range knownOpenTolerances {
-		if k.op == in.op && k.method == in.method && k.kind == in.kind && k.nth == in.nth && k.oracle == oracle {
-			return &knownOpenTolerances[i]
+		if k.op != in.op || k.kind != in.kind || k.nth != in.nth || k.oracle != oracle {
+			continue
 		}
+		if k.method != "" && k.method != in.method {
+			continue
+		}
+		if len(k.tables) > 0 && !diffSubsetOf(diff, k.tables) {
+			continue
+		}
+		return &knownOpenTolerances[i]
 	}
 	return nil
 }
@@ -771,6 +1069,21 @@ var bestEffortTables = map[string][]string{
 	// seeded successfully in its own HTTP response, rather than only via the
 	// audit trail. Left undecided, same as before.
 	"CreateEnvironment": {"Environment", "AuditEvent"},
+	// LastUserSecretActivity: OpenAccessReviewCampaign (internal/core/
+	// access_review_campaign.go) deliberately, by design (#483), persists a
+	// failure of this ONE sub-query onto the campaign row itself —
+	// Degraded/DegradedReasons — rather than aborting the campaign or
+	// silently leaving every item's LastUsedAt nil (indistinguishable from
+	// "genuinely never used"). annotateLastUsedAt (access_review.go) only
+	// sets report.degrade(...) and returns on this specific error; it does
+	// not alter entries, so AccessReviewItem rows are identical either way
+	// — the ENTIRE diff this failure can ever produce is confined to
+	// AccessReviewCampaign's own Degraded/DegradedReasons columns, found
+	// live by FuzzStorageFaultOperations (REST POST .../access-review/
+	// campaigns). This is the intended, documented behavior #483 built —
+	// not an undiscovered bug — so it belongs here, not in
+	// knownOpenTolerances.
+	"LastUserSecretActivity": {"AccessReviewCampaign"},
 }
 
 // acceptableByDesign reports whether every table in diff is accounted for by
@@ -804,9 +1117,9 @@ func checkOracles(t *testing.T, in oracleInput) {
 	t.Helper()
 	label := fmt.Sprintf("op=%s fault=%s#%d/%s", in.op, in.method, in.nth, in.kind)
 
-	report := func(oracle, format string, args ...any) {
+	report := func(oracle string, diff []string, format string, args ...any) {
 		msg := fmt.Sprintf(format, args...)
-		if known := matchingKnownOpen(in, oracle); known != nil {
+		if known := matchingKnownOpen(in, oracle, diff); known != nil {
 			t.Logf("KNOWN-OPEN (%s): %s", known.findingDoc, msg)
 			return
 		}
@@ -818,7 +1131,7 @@ func checkOracles(t *testing.T, in oracleInput) {
 	// reference run (the write happens anyway), which (a) alone would not flag.
 	if authzReadMethods[in.method] && in.kind != faultstorage.KindEffectThenError && in.result.Success &&
 		!nonLoadBearingAuthzRead(in.op, in.method, in.nth) {
-		report("c", "%s: ORACLE (c) VIOLATION — a fault on an authz-resolution read produced a SUCCESSFUL "+
+		report("c", nil, "%s: ORACLE (c) VIOLATION — a fault on an authz-resolution read produced a SUCCESSFUL "+
 			"result instead of an error/deny: %s", label, in.result.Detail)
 		return
 	}
@@ -827,7 +1140,7 @@ func checkOracles(t *testing.T, in oracleInput) {
 	if !in.result.Success {
 		for _, frag := range canaryFragments {
 			if strings.Contains(in.result.Detail, frag) {
-				report("e", "%s: ORACLE (e) VIOLATION — error response leaked secret plaintext %q: %s",
+				report("e", nil, "%s: ORACLE (e) VIOLATION — error response leaked secret plaintext %q: %s",
 					label, frag, in.result.Detail)
 				return
 			}
@@ -875,7 +1188,7 @@ func checkOracles(t *testing.T, in oracleInput) {
 					"benign audit-content degradation, not a business-state inconsistency", label, diff)
 				return
 			}
-			report("a", "%s: ORACLE (a) VIOLATION — reported SUCCESS but final state does not match the "+
+			report("a", diff, "%s: ORACLE (a) VIOLATION — reported SUCCESS but final state does not match the "+
 				"fault-free reference run's state (partial/incorrect commit). Differing tables: %v",
 				label, diff)
 		}
@@ -905,15 +1218,16 @@ func checkOracles(t *testing.T, in oracleInput) {
 					label)
 				return
 			}
-			report("d", "%s: ORACLE (d) VIOLATION — effect-then-error state matches NEITHER the pre-fault "+
+			report("d", nil, "%s: ORACLE (d) VIOLATION — effect-then-error state matches NEITHER the pre-fault "+
 				"state nor the fault-free reference state (a genuine partial/mixed commit, not just an "+
 				"ambiguous-but-consistent one). Differing tables vs before: %v; vs reference: %v",
 				label, diffTables(in.before, in.after), diffTables(in.refAfter, in.after))
 		}
 	default:
 		if in.after.Hash != in.before.Hash {
-			report("a", "%s: ORACLE (a) VIOLATION — reported an ERROR but logical state changed anyway "+
-				"(partial commit). Differing tables: %v", label, diffTables(in.before, in.after))
+			diff := diffTables(in.before, in.after)
+			report("a", diff, "%s: ORACLE (a) VIOLATION — reported an ERROR but logical state changed anyway "+
+				"(partial commit). Differing tables: %v", label, diff)
 		}
 	}
 }
