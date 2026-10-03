@@ -25,7 +25,8 @@ export function parseServerDate(value: string | Date): Date {
     if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
         // Trim sub-millisecond digits (not universally parseable).
         s = s.replace(/(\.\d{3})\d+/, '$1');
-        if (/[+-]\d{2}$/.test(s)) s += ':00'; // "+00" -> "+00:00"
+        if (/[+-]\d{2}$/.test(s))
+            s += ':00'; // "+00" -> "+00:00"
         else if (!/(Z|[+-]\d{2}:?\d{2})$/i.test(s)) s += 'Z'; // no zone -> UTC
     }
     return new Date(s);
