@@ -342,8 +342,21 @@ func sanitizeAuditText(s string) string {
 
 // writeAccessLog persists a secret_access_logs row. A failure here is a gap in the
 // secret-access trail, so it is surfaced loudly rather than silently discarded —
-// mirroring emitAudit's handling of a failed audit_events write.
+// mirroring emitAudit's handling of a failed audit_events write. A panic from the
+// storage call is recovered the same way (best-effort, not a reason to report the
+// CALLER's already-committed primary mutation as failed) — found by
+// FuzzStorageFaultOperations on REST PATCH /api/v1/secrets/{id}/classification:
+// a panic here propagated past the point where the classification change (and its
+// own audit event) had already committed, reporting an already-successful request
+// as an error. Same shape, same fix, as #2408 (projectCounts) and #2416
+// (EnforceSessionLimit).
 func (c *KeyorixCore) writeAccessLog(ctx context.Context, secretID uint, accessedBy, action, ip, ua string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: writeAccessLog panicked persisting secret access log (secret=%d action=%q accessedBy=%q, best-effort, primary operation already succeeded): %v",
+				secretID, action, accessedBy, r)
+		}
+	}()
 	entry := &models.SecretAccessLog{
 		SecretNodeID: secretID,
 		AccessedBy:   accessedBy,
