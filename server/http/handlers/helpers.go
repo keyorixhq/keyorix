@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -95,7 +96,10 @@ func clientSafe(err error) string {
 // process for every in-flight user — a low-privilege DoS lever (backlog
 // #243). goSafe closes that gap: any panic in fn is recovered and logged
 // instead of taking the server down. Use it in place of a bare `go` for any
-// detached side-effect goroutine spawned from a request handler.
+// detached side-effect goroutine spawned from a request handler. The actual
+// recover/log/metric logic lives in besteffort.RunRecover (package
+// besteffort), shared with internal/core's and server/grpc/services'
+// identical goSafe.
 // goSafeWG tracks every in-flight goSafe goroutine so tests can deterministically
 // wait for detached audit/side-effect writes to land instead of guessing with a
 // sleep (see DrainBackgroundGoroutines). Negligible overhead in production — one
@@ -115,11 +119,7 @@ func goSafe(fn func()) {
 	goSafeWG.Add(1)
 	go func() {
 		defer goSafeWG.Done()
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("recovered from panic in background goroutine: %v", r)
-			}
-		}()
+		defer besteffort.RunRecover("http.goSafe")()
 		fn()
 	}()
 }

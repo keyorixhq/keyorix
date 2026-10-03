@@ -8,11 +8,11 @@ package services
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/utils/safeconv"
@@ -52,7 +52,9 @@ func clientSafe(err error) string {
 // server/http/handlers). goSafe closes that gap: any panic in fn is recovered
 // and logged instead of taking the server down. Mirrors
 // server/http/handlers.goSafe / internal/core.goSafe, duplicated here because
-// this package cannot import the handlers package.
+// this package cannot import the handlers package -- all three delegate the
+// actual recover/log/metric logic to besteffort.RunRecover (package
+// besteffort).
 // goSafeWG tracks in-flight goSafe goroutines so tests can deterministically wait
 // for detached audit/side-effect writes instead of guessing with a sleep — see
 // DrainBackgroundGoroutines. Mirrors server/http/handlers' identical addition.
@@ -68,11 +70,7 @@ func goSafe(fn func()) {
 	goSafeWG.Add(1)
 	go func() {
 		defer goSafeWG.Done()
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("recovered from panic in background goroutine: %v", r)
-			}
-		}()
+		defer besteffort.RunRecover("grpc.goSafe")()
 		fn()
 	}()
 }
