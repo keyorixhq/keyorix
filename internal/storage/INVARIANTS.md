@@ -183,9 +183,11 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
 
 - **INV-STORAGE-34** CLI commands obtain storage only via the factory (`InitializeStorage`) or
   the sanctioned `storage.OpenGormDB` raw-DB helper — SQLite/Postgres driver imports live only
-  inside `internal/storage`. Why: ADR-049. UNGUARDED from this package's own test suite (#issue:
-  no structural import-boundary test found inside `internal/storage`/`store` itself; the
-  enforcement, if any, would live in `internal/cli` — check there before assuming covered).
+  inside `internal/storage`. Why: ADR-049. Resolved more strongly than this invariant originally
+  asked: since ADR-108's cli-server split, the `cli` module cannot import `internal/storage` (or
+  `internal/core`/`internal/config`/`server/`) AT ALL — enforced via `go list -deps`, not source
+  grep. Guard: `cli/internal/depguard/depguard_test.go:TestNoServerOrCloudSDKDependencies`. See
+  `cli/INVARIANTS.md` INV-CLI-01.
 - **INV-STORAGE-35** A process with `server.http.enabled`/`server.grpc.enabled` cannot boot on
   `storage.type: remote`. Why: ADR-083. Guard: `validateRemoteStorageNotServer`, which lives in
   `internal/config`, not `internal/storage` — noted here as an adjacent boundary this package's
