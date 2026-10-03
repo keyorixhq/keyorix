@@ -67,11 +67,18 @@ func (l Line) toItem() accessplan.Item {
 	}
 }
 
+// maxPlanFileBytes bounds how much of a plan-access report ReadJSON will read. The file is
+// operator-supplied (a CLI flag, see vaultapplyaccess.go's `#nosec G304` on the os.Open call),
+// but json.NewDecoder still fully buffers each decoded value into memory before any validation
+// runs -- generous enough for even a very large access plan, while ruling out an accidental or
+// corrupted multi-GB file taking down the migration run with an out-of-memory kill.
+const maxPlanFileBytes = 256 << 20 // 256MB
+
 // ReadJSON reads a plan-access JSON report (one Line object per line) back into Items, in file
 // order — apply-access's starting point before re-deriving and cross-checking against live
 // Vault/Keyorix state.
 func ReadJSON(r io.Reader) (accessplan.Plan, error) {
-	dec := json.NewDecoder(r)
+	dec := json.NewDecoder(io.LimitReader(r, maxPlanFileBytes))
 	var items []accessplan.Item
 	for dec.More() {
 		var l Line
