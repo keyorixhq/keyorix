@@ -52,12 +52,11 @@ func waitForAuditEventsToSettle(t *testing.T, s *harness.Server, adminToken stri
 // exactly this many of, against a completely fresh install (no other writes
 // happen before this journey runs). Derived empirically (a discovery pass
 // dumped the real histogram, then each count was hand-traced back to the
-// exact N1/N2 call that produces it -- e.g. secret.created=4 is N1's one
-// create + N2's secretA/secretB/editor's-in-A create) rather than guessed,
-// per this journey's own "assert the outcome" mandate. secret.read and
-// auth.login are deliberately excluded here -- both are high-frequency,
-// incidentally triggered by nearly every helper call in N1/N2 (including
-// admin verification readbacks that aren't part of either journey's own
+// exact N1/N2 call that produces it) rather than guessed, per this journey's
+// own "assert the outcome" mandate. secret.read and auth.login are
+// deliberately excluded here -- both are high-frequency, incidentally
+// triggered by nearly every helper call in N1/N2 (including admin
+// verification readbacks that aren't part of either journey's own
 // narrative), so pinning one aggregate magic number for them would be
 // fragile to unrelated changes elsewhere in N1/N2; both get their own
 // narrower, still-exact assertions below instead (viewer's own read count,
@@ -227,6 +226,17 @@ func TestJourney_AuditTrail(t *testing.T) {
 	s.Close()
 
 	dbPath := filepath.Join(s.Dir, "keyorix.db")
+	// s.Close() kills the server (no graceful shutdown), and SQLite runs in
+	// WAL mode (internal/storage/factory.go's sqliteDSN) -- a recently
+	// written row can still be sitting only in keyorix.db-wal, never
+	// checkpointed into keyorix.db itself. copyFile below copies only
+	// keyorix.db, so without this, a row that exists only in the WAL
+	// wouldn't exist in the tampered copy at all: the UPDATE/DELETE below
+	// would silently affect zero rows, and verify-audit would report VALID
+	// on a copy that's missing the exact row this test tampers with (#2459
+	// item 4). Force everything into keyorix.db first so a single-file copy
+	// is always complete.
+	checkpointWAL(t, dbPath)
 	verdict, verifyErr := runVerifyAudit(t, s, dbPath)
 	if verifyErr != nil {
 		t.Fatalf("verify-audit on the untampered chain: want exit 0, got error: %v", verifyErr)
@@ -348,8 +358,17 @@ func runVerifyAudit(t *testing.T, s *harness.Server, dbPath string) (verifyAudit
 	return v, runErr
 }
 
-// copyFile copies src to dst byte-for-byte (used to tamper a COPY, never the
-// live DB file).
+// checkpointWAL forces any content sitting in dbPath's -wal sidecar into
+// dbPath itself (PRAGMA wal_checkpoint(TRUNCATE) also empties the -wal file
+// afterward) -- see this function's call site for why that matters here.
+func checkpointWAL(t *testing.T, dbPath string) {
+	t.Helper()
+	cmd := exec.Command("sqlite3", dbPath, "PRAGMA wal_checkpoint(TRUNCATE);") // #nosec G204 -- dbPath is this test's own tempdir-derived path, never attacker input
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("sqlite3 wal_checkpoint failed: %v\n%s", err, out)
+	}
+}
+
 // copyFile copies a SQLite database file AND its -wal/-shm companions. The
 // server is stopped with Kill (no clean shutdown), so the most recent
 // committed rows can still live only in the -wal file; copying the main file

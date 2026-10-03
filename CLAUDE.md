@@ -104,6 +104,17 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
 
 Reasoning and incidents behind these: `docs/g80-remediation-notes.md`.
 
+### Read the package's INVARIANTS.md before changing its code
+
+Every core package (`internal/core`, `internal/storage`(`/store`), `internal/encryption`,
+`internal/auditverify`, `server/middleware`, `server/http`, `server/grpc`(`/services`), `cli`,
+`web/src`, …) has an `INVARIANTS.md` next to its code: the rules a change there must keep,
+each linked to the test/fuzzer/static guard that enforces it, or marked `UNGUARDED` with a
+follow-up issue. See `docs/INVARIANTS.md` for the index. **Read the relevant file(s) before
+editing code in one of these packages.** If your change would have to break a listed
+invariant, stop and ask rather than silently removing it; if you discover or add one while
+working, add it to that package's file in the same PR.
+
 ### Core principle: prefer the machine-checked over the asserted
 
 **Every claim this codebase makes should have a mechanism that fails when the claim stops

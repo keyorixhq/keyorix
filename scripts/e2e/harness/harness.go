@@ -26,7 +26,10 @@ package harness
 
 import (
 	"bytes"
+	crand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -140,6 +143,32 @@ type Server struct {
 	Env        []string
 	LogPath    string
 	Backend    DBBackend
+
+	// bootEnv is the full environment startProcess launches Binary with,
+	// EXCLUDING KEYORIX_E2E_INSTANCE_NONCE (regenerated fresh every
+	// attempt). Set by StartBackgroundProcess; read by WaitHealthy's
+	// port-collision retry (#2459) so it can restart Binary against a
+	// freshly chosen port without the caller re-supplying its environment.
+	bootEnv []string
+	// nonce is the current boot attempt's expected /health instance_nonce
+	// (see pollHealthOrBindFailure).
+	nonce string
+	// exited is closed when Cmd exits; exitErr is set before it's closed,
+	// so it's only safe to read exitErr after observing exited closed.
+	exited  chan struct{}
+	exitErr error
+}
+
+// newInstanceNonce returns a fresh random token for this boot attempt --
+// crypto/rand, not math/rand, so a timing-based PRNG seed can never produce
+// the same value two journeys pick close together in time.
+func newInstanceNonce(t *testing.T) string {
+	t.Helper()
+	buf := make([]byte, 16)
+	if _, err := crand.Read(buf); err != nil {
+		t.Fatalf("generate instance nonce: %v", err)
+	}
+	return hex.EncodeToString(buf)
 }
 
 // FreeTCPPort returns a port number no listener is bound to (same approach
@@ -285,46 +314,171 @@ func RewritePort(t *testing.T, dir, port string) {
 // KEYORIX_BOOTSTRAP_TOKEN if needed, unlike s.Env which does not), logging
 // to s.LogPath, and records the running *exec.Cmd on s for Close/
 // WaitHealthy to use. Does not wait for readiness -- call WaitHealthy next.
+//
+// serverEnv is retained on s as bootEnv (minus the per-attempt instance
+// nonce, added fresh each time) so WaitHealthy can restart Binary against a
+// new port, with the same environment otherwise, if this attempt loses the
+// FreeTCPPort race (#2459) -- without the caller having to re-supply it.
 func StartBackgroundProcess(t *testing.T, s *Server, serverEnv []string) {
 	t.Helper()
+	s.bootEnv = serverEnv
+	startProcess(t, s)
+}
+
+// startProcess generates a fresh per-boot nonce, starts s.Binary with
+// s.bootEnv plus that nonce, and arms s.exited to close (with s.exitErr set
+// first) when the process exits. Used both by StartBackgroundProcess's
+// first boot and by WaitHealthy's retries after losing a port race.
+func startProcess(t *testing.T, s *Server) {
+	t.Helper()
+	s.nonce = newInstanceNonce(t)
+	env := append(append([]string{}, s.bootEnv...), "KEYORIX_E2E_INSTANCE_NONCE="+s.nonce)
+
 	logFile, err := os.Create(s.LogPath) // #nosec G304 -- fixed test-tmpdir path
 	if err != nil {
 		t.Fatalf("create server log: %v", err)
 	}
 	cmd := exec.Command(s.Binary) // #nosec G204 -- s.Binary is this test's own built/downloaded fixed path nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- runs the keyorix binary this e2e harness itself built or downloaded, with the harness's own fixed arguments; no external input reaches it
 	cmd.Dir = s.Dir
-	cmd.Env = serverEnv
+	cmd.Env = env
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start keyorix-server (%s): %v", s.Backend.Name, err)
 	}
 	s.Cmd = cmd
+	s.exited = make(chan struct{})
+	go func() {
+		s.exitErr = cmd.Wait()
+		close(s.exited)
+	}()
 }
 
-// WaitHealthy polls s.BaseURL/health until it reports 200 or 30s elapses,
-// fatally killing the process and dumping its log on timeout.
-func WaitHealthy(t *testing.T, s *Server) {
-	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	healthy := false
+// errBindLostRace is pollHealthOrBindFailure's sentinel for "s's own child
+// process exited before ever answering healthy" -- WaitHealthy's cue to
+// retry on a new port, never to treat this boot as healthy.
+var errBindLostRace = errors.New("keyorix-server exited before answering healthy")
+
+// errHealthTimeout is pollHealthOrBindFailure's sentinel for "deadline
+// passed, child still running, nothing ever answered 200" -- a genuine
+// startup hang, not a port race.
+var errHealthTimeout = errors.New("timed out waiting for /health")
+
+// portConflictError records a /health response whose instance_nonce
+// doesn't match the nonce this boot's child was given -- live proof a
+// different process is bound to this exact port right now.
+type portConflictError struct {
+	got, want string
+}
+
+func (e *portConflictError) Error() string {
+	return fmt.Sprintf("health check answered with a different server's instance_nonce (got %q, want %q)", e.got, e.want)
+}
+
+// healthPollClient bounds a SINGLE /health request, separately from
+// pollHealthOrBindFailure's own overall deadline -- plain http.Get has no
+// timeout, so a port occupied by a listener that accepts connections but
+// never responds (a real possibility: that's exactly what a competing
+// process's half-started listener can look like for the brief window before
+// it closes) would otherwise hang the one request past the intended 30s
+// budget instead of letting the loop's own deadline or s.exited check fire.
+var healthPollClient = &http.Client{Timeout: 2 * time.Second}
+
+// pollHealthOrBindFailure polls s.BaseURL/health until deadline. Returns nil
+// the moment a 200 response's instance_nonce matches s's own nonce (proof
+// the answering process is the child THIS boot started, not another
+// process that won the FreeTCPPort race -- #2459). Returns errBindLostRace
+// if s's own child exits first -- the caller's cue to retry on a new port.
+// Returns a *portConflictError the first time a 200 answers with a
+// DIFFERENT nonce, regardless of whether s's own child is still alive: a
+// live, already-healthy foreign server on this exact port is never safe to
+// treat as ours, and is exactly the silent-wrong-server failure #2459
+// reported (doubled audit-event counts, a tamper check against the wrong
+// database) -- so this is never retried silently, only surfaced.
+func pollHealthOrBindFailure(s *Server, deadline time.Time) error {
 	for time.Now().Before(deadline) {
-		resp, herr := http.Get(s.BaseURL + "/health") // #nosec G107 -- fixed localhost test URL
+		select {
+		case <-s.exited:
+			return errBindLostRace
+		default:
+		}
+		resp, herr := healthPollClient.Get(s.BaseURL + "/health") // #nosec G107 -- fixed localhost test URL
 		if herr == nil {
+			body, _ := readAll(resp)
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
-				healthy = true
-				break
+				var health struct {
+					InstanceNonce string `json:"instance_nonce"`
+				}
+				if jsonErr := json.Unmarshal([]byte(body), &health); jsonErr != nil {
+					return fmt.Errorf("decode /health response: %w\nbody: %s", jsonErr, body)
+				}
+				if health.InstanceNonce != s.nonce {
+					return &portConflictError{got: health.InstanceNonce, want: s.nonce}
+				}
+				return nil
 			}
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if !healthy {
+	return errHealthTimeout
+}
+
+// maxPortRetries bounds how many times WaitHealthy restarts Binary against
+// a freshly chosen port after its own child exits before answering healthy
+// -- the bind-failure side of #2459's FreeTCPPort TOCTOU (FreeTCPPort closes
+// its own probe listener before Binary binds the same port number, leaving
+// a gap another process racing for an ephemeral port can win). Each retry
+// gets its own fresh FreeTCPPort() call, so a one-off collision clears
+// almost immediately; failing after this many retries is a structural
+// problem, not a race.
+const maxPortRetries = 5
+
+// WaitHealthy polls s.BaseURL/health until it answers 200 with s's own
+// instance_nonce, fatally killing the process and dumping its log on
+// timeout. Retries on a freshly chosen port (up to maxPortRetries times) if
+// s's own child exits before ever answering healthy -- the expected shape
+// of a lost FreeTCPPort race (#2459). Fatals immediately, without retrying,
+// if a 200 EVER answers with a different nonce: that means a different,
+// already-healthy process is bound to this exact port right now, and
+// silently treating it as "our" server is exactly the bug #2459 reported.
+func WaitHealthy(t *testing.T, s *Server) {
+	t.Helper()
+	for attempt := 1; ; attempt++ {
+		deadline := time.Now().Add(30 * time.Second)
+		err := pollHealthOrBindFailure(s, deadline)
+		if err == nil {
+			return
+		}
+
+		var conflict *portConflictError
+		if errors.As(err, &conflict) {
+			logBytes, _ := os.ReadFile(s.LogPath)
+			t.Fatalf("health check on %s answered with instance_nonce %q, want %q -- a different process is bound to this port (#2459); our own server's log:\n%s",
+				s.BaseURL, conflict.got, conflict.want, logBytes)
+		}
+
+		if errors.Is(err, errBindLostRace) {
+			if attempt >= maxPortRetries {
+				logBytes, _ := os.ReadFile(s.LogPath)
+				t.Fatalf("keyorix-server (%s) lost the free-port race %d times in a row; last log:\n%s", s.Backend.Name, maxPortRetries, logBytes)
+			}
+			newPort := FreeTCPPort(t)
+			RewritePort(t, s.Dir, newPort)
+			s.BaseURL = "http://127.0.0.1:" + newPort
+			t.Logf("keyorix-server (%s) lost the free-port race on attempt %d/%d; retrying on a new port", s.Backend.Name, attempt, maxPortRetries)
+			startProcess(t, s)
+			continue
+		}
+
+		// errHealthTimeout or a decode error: neither the child exited nor
+		// did a conflicting nonce ever answer -- it just never became
+		// healthy. Not a port race, so no retry.
 		logBytes, _ := os.ReadFile(s.LogPath)
 		if s.Cmd != nil && s.Cmd.Process != nil {
 			_ = s.Cmd.Process.Kill()
 		}
-		t.Fatalf("keyorix-server (%s) never became healthy; log:\n%s", s.Backend.Name, logBytes)
+		t.Fatalf("keyorix-server (%s) never became healthy: %v\nlog:\n%s", s.Backend.Name, err, logBytes)
 	}
 }
 
@@ -378,12 +532,38 @@ func (s *Server) DumpLogAndFatal(format string, args ...interface{}) {
 	s.T.Fatalf("%s\nserver log:\n%s", msg, logBytes)
 }
 
-// Close stops the server subprocess. Registered via t.Cleanup by the caller.
+// Close stops the server subprocess. Registered via t.Cleanup by the
+// caller. Reaping is left to startProcess's own background goroutine (via
+// s.exited) rather than calling Process.Wait() here too -- exec.Cmd.Wait
+// and os.Process.Wait are documented as unsafe to call concurrently for the
+// same process, and startProcess's goroutine is already blocked in Wait()
+// from the moment the process starts.
 func (s *Server) Close() {
-	if s.Cmd != nil && s.Cmd.Process != nil {
-		_ = s.Cmd.Process.Kill()
-		_, _ = s.Cmd.Process.Wait()
+	if s.Cmd == nil || s.Cmd.Process == nil {
+		return
 	}
+	_ = s.Cmd.Process.Kill()
+	if s.exited == nil {
+		// Only possible if a caller built *Server by hand and started the
+		// process some other way than startProcess -- fall back to the old
+		// direct wait.
+		_, _ = s.Cmd.Process.Wait()
+		return
+	}
+	select {
+	case <-s.exited:
+	case <-time.After(5 * time.Second):
+	}
+}
+
+// Exited returns a channel that is closed once this boot attempt's child
+// process exits. Callers that need to know whether/when Cmd exited should
+// select on this instead of calling Process.Wait() or Cmd.Wait()
+// themselves: both are documented as unsafe to call concurrently for the
+// same process, and startProcess's own background goroutine is already the
+// sole waiter from the moment the process starts.
+func (s *Server) Exited() <-chan struct{} {
+	return s.exited
 }
 
 // CLIEnv returns the environment a `keyorix` CLI invocation needs to talk to

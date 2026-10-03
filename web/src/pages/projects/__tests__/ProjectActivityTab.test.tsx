@@ -139,7 +139,11 @@ describe('ProjectActivityTab', () => {
         // Day-format branch: assert the shape (day + short month, either order, e.g. "Jul 27"
         // or "27 Jul") rather than an exact string — both the day-of-month and the ordering
         // depend on the test machine's locale/timezone, only the >=24h bucketing is under test.
-        expect(table.getByText(/^(\d{1,2} [A-Z][a-z]{2}|[A-Z][a-z]{2} \d{1,2})$/)).toBeInTheDocument();
+        // Month-abbreviation length also depends on locale/ICU data: most short-form months
+        // are 3 letters ("Jul", "Oct"), but some locales render September as 4 ("Sept") --
+        // confirmed failing for real on this exact date (5 days back lands in September) before
+        // widening {2} to {2,3}, not a hypothetical.
+        expect(table.getByText(/^(\d{1,2} [A-Z][a-z]{2,3}|[A-Z][a-z]{2,3} \d{1,2})$/)).toBeInTheDocument();
     });
 
     it('hides pagination controls when there is only one page', () => {
