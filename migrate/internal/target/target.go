@@ -66,18 +66,18 @@ func (c *Client) LookupByName(ctx context.Context, name string) (int, bool, erro
 	if resp.StatusCode() == http.StatusNotFound {
 		return 0, false, nil
 	}
-	if resp.JSON200 == nil || resp.JSON200.Data == nil || resp.JSON200.Data.ID == nil {
+	if resp.JSON200 == nil || resp.JSON200.Data == nil || resp.JSON200.Data.Id == nil {
 		return 0, false, apiErr("look up secret", resp.StatusCode(), resp.Body)
 	}
-	return *resp.JSON200.Data.ID, true, nil
+	return *resp.JSON200.Data.Id, true, nil
 }
 
-// secretNodeMetadata decodes just the "Metadata" field off a raw secret-node JSON body — the
+// secretNodeMetadata decodes just the "metadata" field off a raw secret-node JSON body — the
 // generated Secret/SecretGetResult response types don't expose it (a documented schema gap,
 // see docs/design-keyorix-migrate.md's "Generated API client" section), but the real handler
-// serializes the full models.SecretNode, which does carry it on the wire.
+// (secretNodeWire, server/http/handlers/secrets_wire.go) does carry it on the wire, snake_case.
 type secretNodeMetadata struct {
-	Metadata map[string]string `json:"Metadata"`
+	Metadata map[string]string `json:"metadata"`
 }
 
 func (c *Client) Metadata(ctx context.Context, id int) (map[string]string, error) {
@@ -124,10 +124,10 @@ func (c *Client) Create(ctx context.Context, name, value string, metadata map[st
 	if err != nil {
 		return 0, fmt.Errorf("create secret %q: %w", name, err)
 	}
-	if resp.JSON201 == nil || resp.JSON201.Data == nil || resp.JSON201.Data.ID == nil {
+	if resp.JSON201 == nil || resp.JSON201.Data == nil || resp.JSON201.Data.Id == nil {
 		return 0, apiErr("create secret", resp.StatusCode(), resp.Body)
 	}
-	return *resp.JSON201.Data.ID, nil
+	return *resp.JSON201.Data.Id, nil
 }
 
 func (c *Client) UpdateValue(ctx context.Context, id int, value string) error {

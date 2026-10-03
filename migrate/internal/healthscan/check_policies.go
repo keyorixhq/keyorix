@@ -73,7 +73,7 @@ func checkWildcardSudoPolicies(ctx context.Context, c *Client) Result {
 			continue
 		}
 		inspected++
-		for _, b := range parsePolicyHCL(pol.Data.Policy) {
+		for _, b := range ParsePolicyHCL(pol.Data.Policy) {
 			if isWildcardSudoGrant(b) {
 				offenders = append(offenders, fmt.Sprintf("%s (path %q)", name, b.Path))
 				break

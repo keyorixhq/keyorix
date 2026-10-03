@@ -510,15 +510,24 @@ func (h *CatalogHandler) changeMachineRole(w http.ResponseWriter, r *http.Reques
 	}
 
 	var roleID uint
+	var environmentID uint
 	if grant {
+		// EnvironmentID mirrors AssignRoleRequest's own field (server/http/handlers/rbac.go)
+		// -- 0 = global (every environment in this project), matching core.Scope's existing
+		// sentinel. Added so a machine identity can be granted a role scoped to ONE
+		// environment, not only project-wide -- previously this endpoint always passed
+		// EnvironmentID: 0 regardless of the body, the one gap keyorix-migrate's ADR-114
+		// access-model migration depends on closing (#2542).
 		var body struct {
-			RoleID uint `json:"role_id"`
+			RoleID        uint `json:"role_id"`
+			EnvironmentID uint `json:"environment_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.RoleID == 0 {
 			sendError(w, "ValidationError", "role_id is required", http.StatusBadRequest, nil)
 			return
 		}
 		roleID = body.RoleID
+		environmentID = body.EnvironmentID
 	} else {
 		rid, err := strconv.ParseUint(chi.URLParam(r, "roleId"), 10, 32)
 		if err != nil {
@@ -528,7 +537,7 @@ func (h *CatalogHandler) changeMachineRole(w http.ResponseWriter, r *http.Reques
 		roleID = uint(rid)
 	}
 
-	scope := core.Scope{ProjectID: uint(projectID)}
+	scope := core.Scope{ProjectID: uint(projectID), EnvironmentID: environmentID}
 	if grant {
 		ctx := r.Context()
 		if actor.ActorKind() == core.ActorTypeMachine {
@@ -550,6 +559,8 @@ func (h *CatalogHandler) changeMachineRole(w http.ResponseWriter, r *http.Reques
 			status = http.StatusNotFound
 		case strings.Contains(msg, "already") || strings.Contains(msg, "not assigned"):
 			status = http.StatusConflict
+		case strings.Contains(msg, "does not belong to project"):
+			status = http.StatusBadRequest
 		default:
 			log.Printf("Error changing machine role for machine %d in project %d: %v", machineID, projectID, err)
 			msg = clientSafe(err)
