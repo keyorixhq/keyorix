@@ -1,0 +1,54 @@
+package core
+
+import (
+	"context"
+	"fmt"
+	"sort"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+)
+
+// ListAdminsWithoutMFA returns every active, non-deleted global admin-tier
+// holder (super_admin/admin/system_admin, direct or via group membership —
+// see resolveGlobalAdminHolders) who has neither TOTP MFA nor WebAuthn
+// enrolled. Backs the ADR-112 posture report's "admins without MFA"
+// deviation (#2400 follow-up): admin-tier authority with no second factor is
+// a standing deviation regardless of whether security.require_mfa's
+// enforcement is itself in its grace period (ADR-112 item 1) — that flag
+// governs the require_mfa *setting*, not the posture report's visibility
+// into who has actually complied with it yet.
+//
+// Returned in ascending ID order for deterministic report output.
+func (c *KeyorixCore) ListAdminsWithoutMFA(ctx context.Context) ([]*models.User, error) {
+	adminIDs := c.installAdminRoleIDSet(ctx)
+	if len(adminIDs) == 0 {
+		return nil, nil
+	}
+	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve global role assignments: %w", err)
+	}
+	holders, err := c.resolveGlobalAdminHolders(ctx, adminIDs, assignments, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	ids := make([]uint, 0, len(holders))
+	for id := range holders {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	var withoutMFA []*models.User
+	for _, id := range ids {
+		user, err := c.storage.GetUser(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve admin holder %d: %w", id, err)
+		}
+		if user.MFAEnabled || user.WebAuthnEnabled {
+			continue
+		}
+		withoutMFA = append(withoutMFA, user)
+	}
+	return withoutMFA, nil
+}

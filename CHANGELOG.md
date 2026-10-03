@@ -88,6 +88,27 @@ All notable changes to Keyorix are documented here. This project follows
   a non-boolean field restructured into a real boolean — are recorded as known
   exceptions with an owning tracking issue, and are covered by the warning,
   the audit diff and the posture report under their current names meanwhile.
+- **New `keyorix-server admin validate --posture` command** (ADR-112,
+  secure-by-default baseline, item 4) reports every secure-baseline deviation
+  in one place and exits non-zero if any is found. **Every security-weakening
+  setting in effect counts**, whatever stage its `insecure_` naming is at:
+  encryption-at-rest disabled, database TLS disabled, unauthenticated
+  `/metrics`, log-delivered setup links and the rest are deviations because of
+  what they do, not because of what they are called. The report also covers
+  `security.enable_file_permission_check` disabled outright, a real
+  file-permission / encryption / database problem, an incomplete key-file set
+  (item 6), an enabled listener with no TLS while
+  `security.require_transport_tls` is set, and an admin-tier holder with
+  neither TOTP MFA nor a passkey enrolled. A grace-period setting (item 1)
+  still enforcing only via its new secure-by-default value, with the underlying
+  condition it covers still non-compliant, is reported as its own deviation
+  referencing the detail above it. Each deviation is labelled with whether it
+  comes from a **shipped default** or an **explicit** config choice, so an
+  operator can tell "this install has not been hardened yet" from "someone
+  turned this off" — but both count toward the exit code. Only genuinely
+  non-judgemental facts are informational: TLS mode, and the KEK salt file's
+  age (no rotation-age threshold is defined anywhere in this codebase, so a
+  number here would be a guess).
 
 ## v0.95.3 — 2026-10-01
 
