@@ -212,19 +212,43 @@ func (ls *LocalStorage) UpdateUser(ctx context.Context, user *models.User) (*mod
 	return user, nil
 }
 
-// UpdateUserIfActiveStateMatches persists user's full row via a conditional
-// UPDATE gated on the row's CURRENT is_active still being fromActive (closing
-// the IsActive TOCTOU race described in the storage.Storage interface doc —
-// see internal/core/storage/interface.go). Mirrors
-// TransitionMachineIdentityState's `WHERE id = ? AND state = ?` + `Select("*")`
-// shape exactly, so every field UpdateUser mutated on user in memory (Username,
-// Email, DisplayName, IsActive, UpdatedAt, ...) is persisted in the same
-// statement, not just a hardcoded column subset.
+// UpdateUserIfActiveStateMatches persists the profile columns of user via a
+// conditional UPDATE gated on the row's CURRENT is_active still being
+// fromActive (closing the IsActive TOCTOU race described in the storage.Storage
+// interface doc — see internal/core/storage/interface.go), and on the row not
+// being soft-deleted (GORM adds deleted_at IS NULL for the soft-delete model).
+//
+// It writes ONLY the seven profile columns below, the fields its callers
+// (core.UpdateUser, SCIM's scimUpdateUserTx / DeprovisionSCIMUser) actually
+// own. It used to write the full pre-read row (Select("*")), which reverted
+// every column a narrower concurrent writer changed after that read:
+// SetAccountState (a suspension), SetPasswordHash (a password change), the MFA
+// and lockout writers. Gating on is_active alone did not catch any of them,
+// since none of those writers touches is_active (#2653, #2654).
+//
+// Bug origin (#2653, #2654):
+//
+//	Introduced-by: the Select("*") full-row shape copied from
+//	               TransitionMachineIdentityState when this method was added
+//	Detected-by:   C-GUARD2-EXEMPT-REVIEW #2662
+//	Class:         cross-replica check-then-act (stale full-row lost update)
+//	Severity:      high (a reported-successful suspension or password change
+//	               is silently reverted by a concurrent profile edit)
+//	Guard:         TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres,
+//	               TestCTAReview_UpdateOwnProfile_vs_ChangePassword_CrossReplicaPostgres,
+//	               TestUserProfileWrites_AreColumnScoped
 func (ls *LocalStorage) UpdateUserIfActiveStateMatches(ctx context.Context, user *models.User, fromActive bool) (bool, error) {
 	res := ls.db.WithContext(ctx).Model(&models.User{}).
 		Where("id = ? AND is_active = ?", user.ID, fromActive).
-		Select("*").
-		Updates(user)
+		Updates(map[string]interface{}{
+			"username":        user.Username,
+			"username_folded": user.UsernameFolded,
+			"email":           user.Email,
+			"email_folded":    user.EmailFolded,
+			"display_name":    user.DisplayName,
+			"is_active":       user.IsActive,
+			"updated_at":      user.UpdatedAt,
+		})
 	if res.Error != nil {
 		if isDuplicateEmailViolation(res.Error) {
 			// Same translation UpdateUser applies (#117/#120/#218): a concurrent

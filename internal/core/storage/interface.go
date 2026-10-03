@@ -863,9 +863,11 @@ type Storage interface {
 	LockUserForUpdate(ctx context.Context, id uint) (*models.User, error)
 	GetUserByEmail(ctx context.Context, email string) (*models.User, error)
 	UpdateUser(ctx context.Context, user *models.User) (*models.User, error)
-	// UpdateUserIfActiveStateMatches persists user's full row — every field
-	// UpdateUser already applied to it in memory from the same request
-	// (username/email/display name, plus the new IsActive value) — via a single
+	// UpdateUserIfActiveStateMatches persists ONLY the profile columns UpdateUser
+	// applies in memory from a request (username/username_folded, email/
+	// email_folded, display name, the new IsActive value, updated_at) — never the
+	// full row, so it cannot revert a concurrent narrow write to any other column
+	// (SetAccountState, SetPasswordHash, MFA, lockout; #2653/#2654) — via a single
 	// conditional "UPDATE ... WHERE id = ? AND is_active = ?", succeeding only if
 	// the row's CURRENT persisted is_active still equals fromActive (the value
 	// UpdateUser observed via GetUser, i.e. wasActive, before applying any of the

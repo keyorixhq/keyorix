@@ -254,6 +254,7 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   detect stale rows, see the TSV's `STALE` class). Open: #2646 #2647 #2648 #2649 #2650 #2651
   #2652 #2653 #2654 #2656 #2657 #2659.
   #2652 #2653 #2654 #2655 #2656.
+  #2652 #2655 #2656 #2657 #2659.
 - **INV-CORE-42** A write that persists a pre-read snapshot must not overwrite columns the
   operation did not change, and must not resurrect a soft-deleted row. GORM `Save(struct)` on
   a soft-delete model is a resurrection primitive under concurrency: its `UPDATE ... WHERE
@@ -280,6 +281,11 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   Why: #2657, #2659. Guard:
   `TestCTAReview_TransitionMembership_ActivateVsRevoke_CrossReplicaPostgres`,
   `TestCTAReview_InviteMemberOpenMode_vs_Revoke_CrossReplicaPostgres` (pg-gated).
+  Why: C-GUARD2-EXEMPT-REVIEW. Guard: user profile writes (#2653/#2654, fixed):
+  `user_profile_column_scoped_guard_test.go:TestUserProfileWrites_AreColumnScoped` +
+  `TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres` /
+  `TestCTAReview_UpdateOwnProfile_vs_ChangePassword_CrossReplicaPostgres` (pg-gated).
+  UNGUARDED: #2648 share revoke, #2650 secret undelete, #2651 dynamic config re-enable.
 
 ## Account-state / exhaustiveness
 
