@@ -150,10 +150,15 @@ Format: `INV-ENCRYPTION-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#is
 ## Shamir / TPM key custody (ADR-038)
 
 - **INV-ENCRYPTION-26** `ShamirKeyProvider` reconstructs the KEK only from K-of-N shares — no
-  single custodian holds the key. Why: ADR-038. Guard: not independently confirmed in this
-  pass beyond the doc comment at `internal/crypto/shamir.go`/`shamir_provider.go` — UNGUARDED
-  pending a located test (#issue: confirm/cite the Shamir K-of-N threshold test, or add one if
-  genuinely absent).
+  single custodian holds the key: every K-subset reconstructs, every (K-1)-subset does not.
+  Why: ADR-038. Guard (all in `internal/crypto`):
+  `shamir_threshold_test.go:TestShamir_ThresholdExhaustive` (every K- and (K-1)-subset across
+  nine (K,N) shapes; red against a degree-(K-2) polynomial, zeroed coefficients, and a broken
+  Lagrange numerator), plus the pre-existing `shamir_test.go`
+  (`TestShamir_RoundTrip_AnyThresholdSubset`, `TestShamir_BelowThresholdDoesNotReveal`) and
+  `shamir_provider_test.go:TestShamirKeyProvider_SubThresholdRejected` (provider level). Not
+  covered: the information-theoretic secrecy of K-1 shares (that they are independent of the
+  secret), only that they do not reconstruct it (#2513).
 - **INV-ENCRYPTION-27** The TPM 2.0 KEK provider (tier 2) seals the KEK to the specific TPM —
   it must not unseal on different hardware. Why: ADR-038 tier-2,
   `internal/crypto/tpm_provider.go`. UNGUARDED pending a located test in this pass (#issue:
