@@ -33,9 +33,11 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   (`TestConcurrency_WithNamedLock_MultiInstancePostgres_SameKeySerializes`,
   `_DifferentKeysDontContend`, pg-gated).
 - **INV-STORE-07** `WithSchedulerLock` runs a scheduler tick on exactly one replica at a time
-  via Postgres advisory lock (SQLite: always runs, re-entrant). Why: ADR-039. UNGUARDED
-  (#issue: ADR-039's "Verification" section cites this but no specific test function was
-  confirmed in this pass — locate or add a dedicated `scheduler_lock` test and cite it here).
+  via Postgres advisory lock (SQLite: always runs, re-entrant). Why: ADR-039. Guard:
+  `concurrency_scheduler_lock_postgres_test.go:TestConcurrency_WithSchedulerLock_MultiInstancePostgres_ExactlyOneRunsAtOnce`
+  (pg-gated: 8 independent `LocalStorage` instances, own connection each, race one key —
+  red, 8 of 8 run, when the `!locked` early return is disabled; #2508) and
+  `local_scheduler_lock_test.go:TestWithSchedulerLock_SQLiteAlwaysRuns` (SQLite half).
 
 ## Break-glass
 
@@ -45,10 +47,10 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
 - **INV-STORE-09** `reconcileBreakGlassIDsToExpired`'s UPDATE re-checks `state = 'active'` at
   write time (never trusts a stale Pluck'd ID list) — a concurrent revoke landing between read
   and write must not be silently overwritten back to 'expired'. Why: Part 2 regression audit
-  doc comment in `local_purge.go`. Guard: referenced in that comment as
-  `TestDeleteExpiredBreakGlassBefore_ConcurrentRevokeBetweenPluckAndUpdate` — exact file path
-  not independently confirmed in this pass; verify before relying on the name, otherwise treat
-  as UNGUARDED (#issue: confirm or add).
+  doc comment in `local_purge.go`. Guard:
+  `local_retention_test.go:TestDeleteExpiredBreakGlassBefore_ConcurrentRevokeBetweenPluckAndUpdate`
+  (drives the real pluck → revoke → reconcile interleaving deterministically; red, state ends
+  'expired', when the `AND state = ?` predicate is dropped; #2509).
 - **INV-STORE-10** `DeleteExpiredBreakGlassBefore`'s reconcile-update-fails and final-delete-fails
   paths propagate errors correctly. Guard: `local_purge_cascade_sweep_test.go`
   (`TestDeleteExpiredBreakGlassBefore_ReconcileUpdateFails`, `_FinalDeleteFails`).

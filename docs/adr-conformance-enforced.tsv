@@ -23,10 +23,10 @@
 # (CLAUDE.md), extended to ADR conformance claims generally, not just
 # incident closures. See that file's own header for what `verification` and
 # `issue` mean — this ledger shares the exact same schema and checker logic,
-# reused unchanged via CLOSURE_LEDGER, not forked. Every row below is
-# default-ci (none of this ledger's current claims are Postgres-race-gated);
-# a future ADR conformance claim that IS would use pg-gated exactly like
-# security-closures.tsv's G04-HA-1646/G04-HA-1780 rows.
+# reused unchanged via CLOSURE_LEDGER, not forked. Most rows below are
+# default-ci; a claim that only real Postgres can demonstrate (a cross-replica
+# race) uses pg-gated exactly like security-closures.tsv's
+# G04-HA-1646/G04-HA-1780 rows (first here: ADR-039-SCHEDULER-LOCK-ONE-REPLICA).
 #
 # claim_id	package	proving_test	verification	landed_commit	issue	note
 ADR-034-MFA-VERIFY-RATELIMIT	./server/http/handlers	TestVerifyMFA_RateLimited_S13B	default-ci	pre-existing	-	/auth/mfa/verify shares the cluster-wide DB-backed login rate limiter (ADR-040), not unlimited
@@ -39,3 +39,4 @@ ADR-097-SCHEMA-EPOCH-REFUSES-DOWNGRADE	./internal/storage	TestSchemaEpoch_NewerR
 ADR-101-SCHEMA-EPOCH-STILL-ONE	./internal/storage	TestCurrentSchemaEpoch_StillOne_SeeADR101	default-ci	pre-existing	-	currentSchemaEpoch has not silently bumped without the accompanying compatibility-floor work landing
 ADR-091-MACHINE-NEVER-GLOBAL-SCOPE	./internal/core	TestAssignMachineRole_GlobalScopeRejected	default-ci	pre-existing	-	a machine identity can never be granted a role at global scope
 ADR-100-MLOCKALL-STAYS-REMOVED	./internal/hardening	TestMlockallRemovalGuard_NoMlockallSyscallReachableFromStartup	default-ci	pre-existing	-	no tracked source reintroduces the removed mlockall syscall from server startup
+ADR-039-SCHEDULER-LOCK-ONE-REPLICA	./internal/storage/store	TestConcurrency_WithSchedulerLock_MultiInstancePostgres_ExactlyOneRunsAtOnce	pg-gated	pre-existing	2508	WithSchedulerLock runs a scheduler tick on exactly one replica at a time across independent Postgres connections (pg_try_advisory_lock); losers skip the tick
