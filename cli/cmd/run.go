@@ -24,6 +24,7 @@ import (
 var (
 	runEnv         string
 	runProject     string
+	runProjectID   uint
 	runCleanEnv    bool
 	runVarMappings []string
 	runDeriveNames bool
@@ -48,7 +49,14 @@ variables, then execute the supplied command.
     including reserved ones like LD_PRELOAD -- not just its value. See
     https://github.com/keyorixhq/keyorix/issues/1816 for why this changed.
 
-Project is resolved via: --project flag -> KEYORIX_PROJECT env.`,
+Project is resolved via: --project-id flag -> --project flag -> KEYORIX_PROJECT env.
+
+--project-id bypasses the project-NAME lookup (GET /api/v1/projects, which needs a
+GLOBAL secrets.read grant -- a project-scoped machine token, the usual caller of
+'run' in a CI/service context, never holds one). Use it when the token invoking
+'run' is scoped to this one project only. See
+https://github.com/keyorixhq/keyorix/issues/2360 for the same shape on
+'keyorix request'.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runRun,
 }
@@ -56,6 +64,9 @@ Project is resolved via: --project flag -> KEYORIX_PROJECT env.`,
 func init() {
 	runCmd.Flags().StringVar(&runEnv, "env", "development", "Environment name (e.g. production)")
 	runCmd.Flags().StringVar(&runProject, "project", "", "Project name (overrides KEYORIX_PROJECT)")
+	runCmd.Flags().UintVar(&runProjectID, "project-id", 0,
+		"Project ID -- use this instead of --project when the caller's token is scoped to this one project only "+
+			"and GET /api/v1/projects (the --project name lookup) correctly denies it")
 	runCmd.Flags().BoolVar(&runCleanEnv, "clean-env", false, "Start the child process with ONLY the injected secrets (plus a minimal PATH/HOME baseline) instead of the full inherited parent environment")
 	runCmd.Flags().StringArrayVar(&runVarMappings, "var", nil, "Inject one secret under an explicit env var name: --var NAME=secret-ref (repeatable, recommended)")
 	runCmd.Flags().BoolVar(&runDeriveNames, "derive-names", false, "Deprecated: inject every secret in the project+environment, deriving the env var name from the secret's own name")
@@ -80,16 +91,21 @@ See https://github.com/keyorixhq/keyorix/issues/1816 for why`)
 	if projectName == "" {
 		projectName = os.Getenv("KEYORIX_PROJECT")
 	}
-	if projectName == "" {
+	if runProjectID == 0 && projectName == "" {
 		projectName = "default"
 	}
 
-	secretsByName, err := fetchRunSecrets(ctx, client, projectName, runEnv)
+	projectID, projectLabel, err := resolveRunProjectID(ctx, client, runProjectID, projectName)
 	if err != nil {
 		return err
 	}
 
-	derived, varMapped, err := resolveChildEnvVars(secretsByName, runVarMappings, runDeriveNames, projectName, runEnv)
+	secretsByName, err := fetchRunSecrets(ctx, client, projectID, projectLabel, runEnv)
+	if err != nil {
+		return err
+	}
+
+	derived, varMapped, err := resolveChildEnvVars(secretsByName, runVarMappings, runDeriveNames, projectLabel, runEnv)
 	if err != nil {
 		return err
 	}
@@ -97,29 +113,40 @@ See https://github.com/keyorixhq/keyorix/issues/1816 for why`)
 	return execChild(args, derived, varMapped, runCleanEnv)
 }
 
-// fetchRunSecrets resolves project+environment names to IDs, then pages through and fetches
-// every secret's value in that scope, keyed by the secret's own raw name (env-var-key
-// derivation happens later, in resolveChildEnvVars, only for the --derive-names path).
-func fetchRunSecrets(ctx context.Context, client *apiclient.ClientWithResponses, project, env string) (map[string]string, error) { // NOSONAR -- cognitive complexity, matches the old CLI's remote path this mirrors
+// resolveRunProjectID reads --project-id/--project/KEYORIX_PROJECT before any
+// network call. A nonzero projectID means --project-id was used (bypassing
+// GET /api/v1/projects entirely -- the only path open to a caller whose token
+// is scoped to one project and lacks the GLOBAL secrets.read that route needs,
+// same shape as request.go's accessProjectFromFlags for #2360); otherwise
+// projectName is resolved via that listing, for callers who can use it.
+// projectLabel is what error messages below name the project as: the real
+// name when known, otherwise "id=<N>" (the --project-id path never learns the
+// name).
+func resolveRunProjectID(ctx context.Context, client *apiclient.ClientWithResponses, projectID uint, projectName string) (id int, projectLabel string, err error) {
+	if projectID != 0 {
+		return int(projectID), fmt.Sprintf("id=%d", projectID), nil
+	}
 	projResp, err := client.ListProjectsWithResponse(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("list projects: %w", err)
+		return 0, "", fmt.Errorf("list projects: %w", err)
 	}
 	if projResp.JSON200 == nil || projResp.JSON200.Data == nil {
-		return nil, apiError("list projects", projResp.StatusCode(), projResp.Body)
+		return 0, "", apiError("list projects", projResp.StatusCode(), projResp.Body)
 	}
-	var projectID int
 	for _, p := range derefProjectSummarySlice(projResp.JSON200.Data.Projects) {
-		if p.Name != nil && strings.EqualFold(*p.Name, project) {
-			projectID = derefInt(p.Id)
-			break
+		if p.Name != nil && strings.EqualFold(*p.Name, projectName) {
+			return derefInt(p.Id), projectName, nil
 		}
 	}
-	if projectID == 0 {
-		return nil, fmt.Errorf("project %q not found", project)
-	}
+	return 0, "", fmt.Errorf("project %q not found", projectName)
+}
 
-	envResp, err := client.ListProjectEnvironmentsWithResponse(ctx, uint32(projectID), nil) // #nosec G115 -- projectID resolved from the server's own listing, always positive
+// fetchRunSecrets resolves the environment name to an ID within projectID, then pages
+// through and fetches every secret's value in that scope, keyed by the secret's own raw
+// name (env-var-key derivation happens later, in resolveChildEnvVars, only for the
+// --derive-names path).
+func fetchRunSecrets(ctx context.Context, client *apiclient.ClientWithResponses, projectID int, project, env string) (map[string]string, error) { // NOSONAR -- cognitive complexity, matches the old CLI's remote path this mirrors
+	envResp, err := client.ListProjectEnvironmentsWithResponse(ctx, uint32(projectID), nil) // #nosec G115 -- projectID resolved from the server's own listing or an operator-supplied --project-id, always positive
 	if err != nil {
 		return nil, fmt.Errorf("list environments: %w", err)
 	}
