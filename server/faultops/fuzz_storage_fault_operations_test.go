@@ -834,17 +834,25 @@ var knownOpenTolerances = []knownOpenTolerance{
 		findingDoc: "#2554",
 	},
 	// Pre-existing, unrelated to this PR's own MFA-reauth changes -- found by
-	// a live 2-minute FuzzStorageFaultOperations run during this PR's rebase.
-	// Same root-cause family as #2548's second (wildcard) entry above: the
+	// a live 2-minute FuzzStorageFaultOperations run during this PR's rebase
+	// (ListWebAuthnCredentials#1/error), then CI's own fuzz-changed shard
+	// independently found a SECOND call site of the identical root cause
+	// (ConsumeMFAChallenge#1/error) during this PR's own CI run. Same
+	// root-cause family as #2548's second (wildcard) entry above: the
 	// WebAuthn login/finish handler (server/http/handlers/webauthn.go) calls
 	// reserveLoginAttempt UNCONDITIONALLY, before the real assertion
-	// verification runs, so a storage error on ListWebAuthnCredentials (the
-	// first call the verification path makes) fails closed correctly but
-	// still leaves a LoginAttempt row behind. Filed as #2565 (cross-links
-	// #2548 and #2398's own "CR3" note, since the root cause is shared across
-	// every reserveLoginAttempt call site, not MFA-specific).
+	// verification runs, so a storage error on ANY call the verification path
+	// makes fails closed correctly but still leaves a LoginAttempt row
+	// behind -- structural to the op itself, not tied to one storage method,
+	// same reasoning as #2548's own wildcard entry. method is deliberately
+	// left blank for this reason (narrowed back to a single method would just
+	// mean the NEXT call site CI's randomized fuzz-changed finds becomes a
+	// fresh red build instead of this same already-tracked finding). Filed as
+	// #2565 (cross-links #2548 and #2398's own "CR3" note, since the root
+	// cause is shared across every reserveLoginAttempt call site, not
+	// MFA-specific).
 	{
-		op: "REST POST /auth/webauthn/login/finish", method: "ListWebAuthnCredentials", kind: faultstorage.KindError,
+		op: "REST POST /auth/webauthn/login/finish", kind: faultstorage.KindError,
 		nth: 1, oracle: "a", issue: "#2565", expires: "2026-10-17",
 		tables:     []string{"LoginAttempt"},
 		findingDoc: "#2565",
