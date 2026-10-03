@@ -12,11 +12,11 @@ export const useSecretReveal = () => {
         setCopyingSecretId(secret.id);
         setCopyErrorId(null);
         try {
-            const versions = await secretsApi.getVersions(secret.id);
-            if (!versions || versions.length === 0) throw new Error('No versions found');
-            const latest = versions[0]!;
-            const decoded = atob(latest.EncryptedValue as unknown as string);
-            await copyToClipboard(decoded);
+            // #2450: GET .../versions never carries a value field (it's version
+            // METADATA only) -- the actual plaintext comes from
+            // secretsApi.getValue (GET /secrets/{id}?include_value=true).
+            const value = await secretsApi.getValue(secret.id);
+            await copyToClipboard(value);
             setCopiedSecretId(secret.id);
             setTimeout(() => setCopiedSecretId(null), 2000);
         } catch {

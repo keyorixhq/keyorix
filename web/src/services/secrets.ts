@@ -109,6 +109,21 @@ export const secretsApi = {
         return response.data.data;
     },
 
+    // getValue fetches the secret's CURRENT plaintext value -- GET
+    // /secrets/{id}?include_value=true (server/http/handlers/secrets_crud.go).
+    // This is the only endpoint that actually returns a value: GET .../versions
+    // (getVersions, below) never does -- internal/storage/models.SecretVersion's
+    // EncryptedValue field is tagged `json:"-"` server-side, so it can never
+    // appear in that response. #2450 was exactly this: callers decoding
+    // `versions[0].EncryptedValue` as base64 were always decoding `undefined`.
+    async getValue(id: number): Promise<string> {
+        const response = await apiClient.get<ApiResponse<{ secret: Secret; value: string }>>(
+            API_ENDPOINTS.SECRETS.GET(id),
+            { params: { include_value: true } }
+        );
+        return response.data.data.value;
+    },
+
     async create(data: any): Promise<Secret> {
         const response = await apiClient.post<ApiResponse<Secret>>(API_ENDPOINTS.SECRETS.CREATE, data);
         return response.data.data;
@@ -123,7 +138,9 @@ export const secretsApi = {
         await apiClient.delete(API_ENDPOINTS.SECRETS.DELETE(id));
     },
 
-    async getVersions(id: number): Promise<{ EncryptedValue: string; VersionNumber: number; CreatedAt: string }[]> {
+    // getVersions returns version METADATA only (number, created-at, read count)
+    // -- never a value. See getValue (above) for the current plaintext.
+    async getVersions(id: number): Promise<{ VersionNumber: number; CreatedAt: string }[]> {
         const response = await apiClient.get(API_ENDPOINTS.SECRETS.VERSIONS(id));
         return response.data.data.versions ?? [];
     },
