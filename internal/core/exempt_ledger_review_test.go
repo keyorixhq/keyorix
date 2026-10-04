@@ -65,8 +65,8 @@ var exemptLedgers = map[string]exemptLedger{
 	// Added by the C-GUARD-3 guards; listed here so whichever of those PRs lands
 	// first is already under the rule. A registered ledger that does not exist
 	// yet is skipped (TestExemptLedgers_RegisteredLedgersExist lists them).
-	"full-row-write-exempt.tsv":         {keyCols: []int{0, 1, 2}, addedByCol: 5, reviewedByCol: 6, reasonCol: 3},
-	"child-parent-liveness-exempt.tsv":  {keyCols: []int{0, 1, 2}, addedByCol: 5, reviewedByCol: 6, reasonCol: 3},
+	"full-row-write-exempt.tsv":        {keyCols: []int{0, 1, 2}, addedByCol: 5, reviewedByCol: 6, reasonCol: 3},
+	"child-parent-liveness-exempt.tsv": {keyCols: []int{0, 1, 2}, addedByCol: 5, reviewedByCol: 6, reasonCol: 3},
 }
 
 // legacyUnreviewedLedgers predate the review rule. Each is named with the issue
