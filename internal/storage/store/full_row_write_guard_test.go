@@ -82,7 +82,7 @@ func securityStateModels() map[string][]string {
 	out := map[string][]string{}
 	for _, m := range models.AllTestModels() {
 		t := reflect.TypeOf(m)
-		for t.Kind() == reflect.Ptr {
+		for t.Kind() == reflect.Pointer {
 			t = t.Elem()
 		}
 		var why []string
