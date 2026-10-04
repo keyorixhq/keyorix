@@ -141,11 +141,16 @@ Format: `INV-ENCRYPTION-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#is
   — memory-scan-style tests proving no DEK bytes remain afterward).
 - **INV-ENCRYPTION-25** Every KEK/DEK/evidence-sign/audit-checkpoint/backup-manifest key
   variable passed through a `defer wipeBytes(...)` or explicit `wipeBytes(...)` call at the end
-  of its rotation/use site — confirmed call sites in `keymanager_rotation.go` and
-  `keymanager_kek_rotation.go`. UNGUARDED as a repo-wide completeness sweep (#issue: no AST scan
-  enumerates every key-shaped `[]byte` local in this package and asserts a `wipeBytes` call on
-  every exit path, analogous to `internal/core`'s `atomicity_guard_test.go`; today's coverage is
-  point-fixes per historical finding, same shape as `internal/core`'s best-effort-panic gap).
+  of its rotation/use site. Guard: `wipebytes_sweep_test.go:TestWipeBytesSweep_EveryKeyLocalIsWipedOnEveryReturn`
+  — an AST sweep over every non-test file in this package: every local bound from a
+  key-material call (`keyMaterialSources`) must be wiped, deferred-wiped, handed off
+  (`x.field = v`, a `retainingCallees` call, or returned) on every lexical path to a return;
+  every key-shaped callee and every key-shaped `[]byte`-returning function must be classified,
+  so a new source cannot go unrecognised. Known gaps on main (3, all error paths) are listed in
+  `knownWipeGaps` and reported by the skipped `TestWipeBytesSweep_KnownGaps`; the sweep fails
+  if one stops reproducing. Not covered (see the file header): control flow beyond lexical
+  nesting, wipe helpers other than `wipeBytes`, key bytes that reach a variable without a
+  call, and struct-field wipe-on-overwrite (#2512).
 
 ## Shamir / TPM key custody (ADR-038)
 
