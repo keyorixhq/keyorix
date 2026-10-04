@@ -393,6 +393,22 @@ follow-up). Don't transcribe a row from that matrix without re-running its
 test first — a property verified during that pass is not the same claim as
 "this test exists and passes right now."
 
+## Shared ledgers: new rows go in `<name>.d/`
+
+`docs/adr-conformance-enforced.tsv`, `docs/review-coverage.tsv` and
+`docs/check-then-act-lock-exempt.tsv` are dual-read: their readers
+(`scripts/check-adr-conformance.sh`, `scripts/check-review-coverage.sh`,
+`TestCheckThenActLockGuard_UnlockedSecurityCheck`) read the flat file PLUS
+every one-row `*.tsv` fragment in the sibling `<name>.d/` directory, and fail
+on a duplicate key involving a fragment. **Add a new row as a new fragment
+file (`docs/<name>.d/<key>.tsv`, naming in that directory's `README.md`), never
+by appending to the flat file** — appends to one shared file were the main
+reason approved PRs fell out of the merge queue on 2026-10-03/04. Existing
+rows stay in the flat files until the coordinator runs
+`scripts/ledgers/migrate-to-fragments.sh` in a quiet window; don't run it on a
+feature branch. `docs/security-closures.tsv` is different: it is generated
+from `docs/security-closures.d/` (see "Closing a security fix" above).
+
 ## Code-scanning alerts
 
 A confirmed false positive is **dismissed**, never silenced by editing the

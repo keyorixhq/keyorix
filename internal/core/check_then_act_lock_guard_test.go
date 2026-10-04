@@ -192,24 +192,23 @@ func scanCheckThenActHits(t *testing.T, root string) []checkThenActHit {
 
 // loadCheckThenActExemptions reads docs/check-then-act-lock-exempt.tsv
 // (function\tclass\treason, same 3-field format as docs/atomicity-exempt.tsv)
-// into a set of exempted function names.
-func loadCheckThenActExemptions(t *testing.T, path string) map[string]bool {
+// PLUS every docs/check-then-act-lock-exempt.d/*.tsv fragment (one row each —
+// new exemptions go there, see that directory's README.md) into a set of
+// exempted function names. A duplicate involving a fragment, a fragment that
+// is not exactly one row, or a short row fails the test (readLedgerRows); a
+// duplicate purely within the legacy file is logged, as it never failed before.
+func loadCheckThenActExemptions(t *testing.T, path, fragDir string) map[string]bool {
 	t.Helper()
-	data, err := os.ReadFile(path)
+	rows, legacyDups, err := readLedgerRows(path, fragDir, 3)
 	if err != nil {
-		t.Fatalf("check-then-act lock guard: cannot read %s: %v", path, err)
+		t.Fatalf("check-then-act lock guard: %v", err)
+	}
+	for _, d := range legacyDups {
+		t.Logf("check-then-act lock guard: LEGACY DUPLICATE (not failing until scripts/ledgers/migrate-to-fragments.sh, which refuses it): %s", d)
 	}
 	out := map[string]bool{}
-	for i, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Split(line, "\t")
-		if len(fields) < 3 {
-			t.Fatalf("check-then-act lock guard: %s:%d: expected 3 tab-separated fields (function, class, reason), got %d: %q", path, i+1, len(fields), line)
-		}
-		out[fields[0]] = true
+	for _, r := range rows {
+		out[r.fields[0]] = true
 	}
 	return out
 }
@@ -227,7 +226,7 @@ func loadCheckThenActExemptions(t *testing.T, path string) map[string]bool {
 // GUARD-2's brief) — never silently ignored.
 func TestCheckThenActLockGuard_UnlockedSecurityCheck(t *testing.T) {
 	hits := scanCheckThenActHits(t, ".")
-	exempt := loadCheckThenActExemptions(t, "../../docs/check-then-act-lock-exempt.tsv")
+	exempt := loadCheckThenActExemptions(t, "../../docs/check-then-act-lock-exempt.tsv", "../../docs/check-then-act-lock-exempt.d")
 
 	var unclassified []string
 	for _, h := range hits {
@@ -239,8 +238,9 @@ func TestCheckThenActLockGuard_UnlockedSecurityCheck(t *testing.T) {
 	if len(unclassified) > 0 {
 		t.Fatalf("check-then-act lock guard: %d function(s) have a require*/guard* security check preceding a "+
 			"later storage/core write with no shared storage.WithNamedLock between them, and no reviewed entry "+
-			"in docs/check-then-act-lock-exempt.tsv. Either wrap the check+write in storage.WithNamedLock keyed on "+
-			"the contended principal (see docs/specs/check-then-act-inventory.md), or add a reviewed line with a "+
+			"in docs/check-then-act-lock-exempt.tsv or docs/check-then-act-lock-exempt.d/. Either wrap the check+write in storage.WithNamedLock keyed on "+
+			"the contended principal (see docs/specs/check-then-act-inventory.md), or add a reviewed one-row fragment "+
+			"docs/check-then-act-lock-exempt.d/<function>.tsv with a "+
 			"class, a one-line reason, and a filed race-gap issue if it's a real gap left open. Unclassified:\n  %s",
 			len(unclassified), strings.Join(unclassified, "\n  "))
 	}

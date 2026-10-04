@@ -45,6 +45,11 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LEDGER="${REVIEW_LEDGER:-$REPO_ROOT/docs/review-coverage.tsv}"
+# Fragment directory (dual-read, C-MERGE-FRICTION): every <dir>/*.tsv is ONE
+# more row, same columns, read in addition to the flat ledger — a new package's
+# row is a new file, so two PRs adding two packages never touch the same line.
+# The duplicate-package check below runs over legacy + fragment rows together.
+LEDGER_D="${REVIEW_LEDGER_D:-$REPO_ROOT/docs/review-coverage.d}"
 MODULE_PREFIX="github.com/keyorixhq/keyorix"
 VALID_DEPTHS="full-adversarial targeted structural-only none"
 VALID_STATUS_NOTES="example test-helper main-wiring generated uninvoked-but-specified pending"
@@ -85,6 +90,18 @@ else
 fi
 
 rows="$(grep -vE '^[[:space:]]*(#|$)' "$LEDGER" || true)"
+if [ -d "$LEDGER_D" ]; then
+    for frag in "$LEDGER_D"/*.tsv; do
+        [ -e "$frag" ] || continue
+        frag_rows="$(grep -vE '^[[:space:]]*(#|$)' "$frag" || true)"
+        n="$(grep -c . <<<"$frag_rows" || true)"
+        if [ "$n" -ne 1 ]; then
+            die "fragment $frag holds $n rows — a ledger fragment must hold exactly one"
+            continue
+        fi
+        if [ -z "$rows" ]; then rows="$frag_rows"; else rows="$rows"$'\n'"$frag_rows"; fi
+    done
+fi
 if [ -z "$rows" ]; then
     echo "FAIL: coverage ledger is empty — a ledger with no rows cannot fail, and" >&2
     echo "      a check that cannot fail is not a check." >&2
@@ -141,15 +158,22 @@ if [ "${1:-}" = "--self-test" ]; then
 
     run_case() {
         # $1=description  $2=expected(reject|accept)  $3=pkglist  $4=ledger rows
+        # $5..=optional fragment files, each "name.tsv=<content>", written into a
+        #      fresh REVIEW_LEDGER_D (always fresh, so the real docs/review-coverage.d
+        #      never leaks into a calibration case).
         local desc="$1" expect="$2" pkglist_body="$3" ledger_body="$4" out rc
-        local tmp_pkgs tmp_ledger
-        tmp_pkgs=$(mktemp); tmp_ledger=$(mktemp)
+        shift 4
+        local tmp_pkgs tmp_ledger tmp_d frag
+        tmp_pkgs=$(mktemp); tmp_ledger=$(mktemp); tmp_d=$(mktemp -d)
         printf '%s\n' "$pkglist_body" > "$tmp_pkgs"
         printf '%s\n' "$ledger_body" > "$tmp_ledger"
+        for frag in "$@"; do
+            printf '%s\n' "${frag#*=}" > "$tmp_d/${frag%%=*}"
+        done
         set +e
-        out=$(REVIEW_PKGLIST="$tmp_pkgs" REVIEW_LEDGER="$tmp_ledger" "$0" 2>&1); rc=$?
+        out=$(REVIEW_PKGLIST="$tmp_pkgs" REVIEW_LEDGER="$tmp_ledger" REVIEW_LEDGER_D="$tmp_d" "$0" 2>&1); rc=$?
         set -e
-        rm -f "$tmp_pkgs" "$tmp_ledger"
+        rm -rf "$tmp_pkgs" "$tmp_ledger" "$tmp_d"
         if [ "$expect" = "reject" ] && [ "$rc" -eq 0 ]; then
             echo "FAIL: self-test case '$desc' PASSED when it must be REJECTED." >&2
             sed -n '1,40p' <<<"$out" | sed 's/^/      /' >&2
@@ -194,6 +218,37 @@ if [ "${1:-}" = "--self-test" ]; then
     run_case "well-formed matching pkglist and ledger" "accept" \
         $'pkg/a\npkg/b' \
         $'pkg/a\tfull-adversarial\tSOME-DOC.md (2026-09-09)\tSOME-DOC.md:L1, finding F1\t-\npkg/b\tnone\t-\t-\tpending'
+
+    run_case "fragment row duplicating a legacy package row" "reject" \
+        $'pkg/a' \
+        $'pkg/a\tnone\t-\t-\tpending' \
+        $'pkg__a.tsv=pkg/a\tnone\t-\t-\tpending'
+
+    run_case "two fragments for the same package" "reject" \
+        $'pkg/a\npkg/b' \
+        $'pkg/a\tnone\t-\t-\tpending' \
+        $'x.tsv=pkg/b\tnone\t-\t-\tpending' \
+        $'y.tsv=pkg/b\tnone\t-\t-\tpending'
+
+    run_case "fragment holding two rows" "reject" \
+        $'pkg/a\npkg/b\npkg/c' \
+        $'pkg/a\tnone\t-\t-\tpending' \
+        $'pkg__b.tsv=pkg/b\tnone\t-\t-\tpending\npkg/c\tnone\t-\t-\tpending'
+
+    run_case "malformed fragment row (depth=none, no status_note)" "reject" \
+        $'pkg/a\npkg/b' \
+        $'pkg/a\tnone\t-\t-\tpending' \
+        $'pkg__b.tsv=pkg/b\tnone\t-\t-\t'
+
+    run_case "fragment row for a package that no longer exists" "reject" \
+        $'pkg/a' \
+        $'pkg/a\tnone\t-\t-\tpending' \
+        $'pkg__gone.tsv=pkg/gone\tnone\t-\t-\tpending'
+
+    run_case "package covered only by a fragment" "accept" \
+        $'pkg/a\npkg/b' \
+        $'pkg/a\tnone\t-\t-\tpending' \
+        $'pkg__b.tsv=# comment allowed\npkg/b\tnone\t-\t-\tpending'
 
     if [ "$selffail" -ne 0 ]; then
         exit 1
