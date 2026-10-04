@@ -41,6 +41,7 @@ package core
 import (
 	"go/ast"
 	"go/parser"
+	"go/printer"
 	"go/token"
 	"io/fs"
 	"os"
@@ -73,23 +74,31 @@ var mfaStepUpGuardedFuncs = map[string]bool{
 // by both guarded functions' signatures.
 const mfaPurposeArgIndex = 2
 
-// mfaStepUpAllowEntry records, for one call site (keyed "relpath:line" in
-// mfaStepUpPurposeAllowlist), the purpose constant that call site is
-// expected to hardcode -- or "" when the site intentionally does not pass a
-// literal, with reason explaining why that's still safe.
+// mfaStepUpAllowEntry records, for one call site (keyed in
+// mfaStepUpPurposeAllowlist by mfaStepUpSite.key(): repo-relative path,
+// enclosing function, callee expression, and an ordinal for repeats -- never a
+// line number), the purpose constant that call site is expected to hardcode --
+// or "" when the site intentionally does not pass a literal, with reason
+// explaining why that's still safe.
 type mfaStepUpAllowEntry struct {
 	expectedPurpose string // e.g. "MFAStepUpPurposeReauth"; "" means intentionally non-literal
 	reason          string
 }
 
 // mfaStepUpPurposeAllowlist is the exhaustive, reasoned inventory of every
-// call to HasActiveMFAStepUp/GetActiveMFAStepUpGrant in the repository. A
-// call site missing from this list, or one whose purpose argument no longer
-// matches its recorded expectedPurpose, fails
+// call to HasActiveMFAStepUp/GetActiveMFAStepUpGrant/ConsumeMFAStepUpGrant in
+// the repository. A call site missing from this list, or one whose purpose
+// argument no longer matches its recorded expectedPurpose, fails
 // TestMFAStepUpConsumersUseExpectedPurpose -- exactly the shape a future
 // "accept any live grant" regression would take.
+//
+// Key format (see mfaStepUpSite.key): "<relpath>:<enclosing func>:<callee>",
+// with "#2", "#3", ... appended to the second, third, ... call to the same
+// callee expression inside the same function (source order). Keys used to be
+// "<relpath>:<line>", which broke on every unrelated edit above a listed site
+// and made every such PR conflict with every other one touching this map.
 var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
-	"internal/faultstorage/faulty_storage_generated.go:353": {
+	"internal/faultstorage/faulty_storage_generated.go:(*FaultyStorage).ConsumeMFAStepUpGrant:w.real.ConsumeMFAStepUpGrant": {
 		expectedPurpose: "",
 		reason: "generated, mechanical pass-through (w.real.ConsumeMFAStepUpGrant(...)) inside a " +
 			"test/fuzz-harness-only storage.Storage wrapper (server/faultops's FuzzStorageFaultOperations) " +
@@ -98,25 +107,23 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 			"function invoked it; this line is one hop further down, at the storage interface, and never " +
 			"itself chooses or inspects the purpose value.",
 	},
-	"internal/faultstorage/faulty_storage_generated.go:357": {
+	"internal/faultstorage/faulty_storage_generated.go:(*FaultyStorage).ConsumeMFAStepUpGrant:w.real.ConsumeMFAStepUpGrant#2": {
 		expectedPurpose: "",
-		reason:          "see internal/faultstorage/faulty_storage_generated.go:353 — the second (KindEffectThenError) call to the real ConsumeMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
+		reason:          "see the (*FaultyStorage).ConsumeMFAStepUpGrant entry above — the second (KindEffectThenError) call to the real ConsumeMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
 	},
-	"internal/faultstorage/faulty_storage_generated.go:2232": {
+	"internal/faultstorage/faulty_storage_generated.go:(*FaultyStorage).GetActiveMFAStepUpGrant:w.real.GetActiveMFAStepUpGrant": {
 		expectedPurpose: "",
 		reason: "generated, mechanical pass-through (w.real.GetActiveMFAStepUpGrant(...)) inside the same " +
-			"test/fuzz-harness-only wrapper — see internal/faultstorage/faulty_storage_generated.go:353's " +
-			"reasoning; this is the read-only sibling call, same forwarding shape. (Line shifted from :2231 " +
-			"by PR #2357's unrelated DeleteRole signature change, which added a net +1 line earlier in this " +
-			"generated file via `go run ./internal/faultstorage/gen` — same call site, not a new one.)",
+			"test/fuzz-harness-only wrapper — see the (*FaultyStorage).ConsumeMFAStepUpGrant entry's " +
+			"reasoning; this is the read-only sibling call, same forwarding shape.",
 	},
-	"internal/faultstorage/faulty_storage_generated.go:2236": {
+	"internal/faultstorage/faulty_storage_generated.go:(*FaultyStorage).GetActiveMFAStepUpGrant:w.real.GetActiveMFAStepUpGrant#2": {
 		expectedPurpose: "",
-		reason:          "see internal/faultstorage/faulty_storage_generated.go:2232 — the second (KindEffectThenError) call to the real GetActiveMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
+		reason:          "see the (*FaultyStorage).GetActiveMFAStepUpGrant entry above — the second (KindEffectThenError) call to the real GetActiveMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
 	},
-	"internal/core/mfa.go:580": {
+	"internal/core/mfa.go:(*KeyorixCore).requireReauth:c.storage.ConsumeMFAStepUpGrant": {
 		expectedPurpose: "MFAStepUpPurposeReauth",
-		reason: "(Line shifted to :580 by merging main's #2465 doc-comment additions on requireReauth together with this PR's own CR3 fix -- same ConsumeMFAStepUpGrant call, same purpose, not a new site.) requireReauth's account-security-factor-change gate (DisableMFA, " +
+		reason: "requireReauth's account-security-factor-change gate (DisableMFA, " +
 			"RegenerateMFARecoveryCodes, ActivateMFA, WebAuthn credential register/delete, email change). " +
 			"Must reject the ambient MFAStepUpPurposeRestrictedSecretRead grant a plain login mints -- " +
 			"accepting it here is the exact confused-deputy shape this fix closed (a leaked bearer token " +
@@ -126,30 +133,53 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 			"the grant here also invalidates it, so it cannot go on to authorize a second, different " +
 			"sensitive action within the same window.",
 	},
-	"internal/core/classification_gate.go:178": {
+	"internal/core/classification_gate.go:(*KeyorixCore).checkRestrictedMFAGate:c.storage.GetActiveMFAStepUpGrant": {
 		expectedPurpose: "MFAStepUpPurposeRestrictedSecretRead",
 		reason: "checkRestrictedMFAGate, the classification_restricted_requires_mfa_stepup gate for " +
 			"reading a ClassificationRestricted secret's value. Must reject a MFAStepUpPurposeReauth grant " +
 			"(minted only for account-security changes) -- the two purposes must never satisfy each other.",
 	},
-	"internal/core/mfa_stepup.go:89": {
+	"internal/core/mfa_stepup.go:(*KeyorixCore).HasActiveMFAStepUp:c.storage.GetActiveMFAStepUpGrant": {
 		expectedPurpose: "",
 		reason: "HasActiveMFAStepUp's own implementation: forwards the `purpose` PARAMETER it was called " +
 			"with straight through to storage.GetActiveMFAStepUpGrant. This is the shared primitive, not a " +
 			"consumer -- it has no fixed purpose of its own to hardcode. Enforcement responsibility sits " +
 			"with HasActiveMFAStepUp's own callers, which this same allowlist enumerates separately " +
-			"(currently just mfa.go:504).",
+			"(currently none outside this function).",
 	},
 }
 
 type mfaStepUpSite struct {
 	relPath string
-	line    int
-	fn      string
+	line    int    // for messages only -- never part of the key
+	encFunc string // enclosing top-level declaration, e.g. "(*KeyorixCore).requireReauth"
+	callee  string // printed call.Fun, e.g. "c.storage.ConsumeMFAStepUpGrant"
+	ordinal int    // 1-based position among calls with the same (encFunc, callee) in this file, source order
+	fn      string // guarded function name, e.g. "ConsumeMFAStepUpGrant"
 	purpose string // "" when the purpose argument isn't a literal models.MFAStepUpPurpose* constant
 }
 
-func (s mfaStepUpSite) key() string { return s.relPath + ":" + strconv.Itoa(s.line) }
+// key is the allowlist key: "<relpath>:<encFunc>:<callee>", plus "#<ordinal>"
+// for every repeat after the first. Deliberately line-free, so an edit above a
+// listed call site does not invalidate its entry.
+//
+// Strictness vs. the old "<relpath>:<line>" key: every distinct call site still
+// gets a distinct key (two identical callee expressions in one function are
+// told apart by the ordinal), so adding a call always produces one more key
+// than the allowlist has -- the highest ordinal, or a new (func, callee)
+// pair -- and removing one always leaves an allowlist key unmatched. What it
+// does NOT do: when a new call is inserted BEFORE an existing identical one in
+// the same function, the ordinals shift, so the "unlisted" report names the
+// last call (#N) rather than the newly inserted one; the guard still fails.
+// A call outside any function (a package-level var initializer) is keyed
+// under encFunc "<package-scope>".
+func (s mfaStepUpSite) key() string {
+	k := s.relPath + ":" + s.encFunc + ":" + s.callee
+	if s.ordinal > 1 {
+		k += "#" + strconv.Itoa(s.ordinal)
+	}
+	return k
+}
 
 // mfaStepUpGuardRepoRoot locates the repository root relative to this test
 // file's own location on disk (internal/core), not the test runner's cwd.
@@ -181,8 +211,40 @@ func mfaStepUpPurposeLiteral(expr ast.Expr) string {
 	return sel.Sel.Name
 }
 
+// mfaStepUpNodeText renders an AST node back to normalized Go source
+// (go/printer), so a key built from it is independent of the original file's
+// whitespace and line breaks.
+func mfaStepUpNodeText(fset *token.FileSet, n ast.Node) (string, error) {
+	var b strings.Builder
+	if err := printer.Fprint(&b, fset, n); err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}
+
+// mfaStepUpDeclName names a top-level declaration for use in a key:
+// "Func" for a plain function, "(<recv type>).Method" for a method (e.g.
+// "(*KeyorixCore).requireReauth"), "<package-scope>" for anything else.
+func mfaStepUpDeclName(fset *token.FileSet, d ast.Decl) (string, error) {
+	fd, ok := d.(*ast.FuncDecl)
+	if !ok {
+		return "<package-scope>", nil
+	}
+	if fd.Recv == nil || len(fd.Recv.List) == 0 {
+		return fd.Name.Name, nil
+	}
+	recv, err := mfaStepUpNodeText(fset, fd.Recv.List[0].Type)
+	if err != nil {
+		return "", err
+	}
+	return "(" + recv + ")." + fd.Name.Name, nil
+}
+
 // scanMFAStepUpFile parses a single .go file and returns every call site to
-// a guarded function found in it, by AST inspection.
+// a guarded function found in it, by AST inspection. Every top-level
+// declaration is walked (function bodies, including any function literals
+// nested inside them, and package-level var initializers), so no call
+// expression in the file is skipped.
 func scanMFAStepUpFile(fset *token.FileSet, path string) ([]mfaStepUpSite, error) {
 	src, err := os.ReadFile(path) // #nosec G304 -- fixed repo-internal path built from filepath.WalkDir below, not external input
 	if err != nil {
@@ -193,26 +255,50 @@ func scanMFAStepUpFile(fset *token.FileSet, path string) ([]mfaStepUpSite, error
 		return nil, err
 	}
 	var sites []mfaStepUpSite
-	ast.Inspect(f, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
+	ordinals := map[string]int{}
+	for _, decl := range f.Decls {
+		encFunc, derr := mfaStepUpDeclName(fset, decl)
+		if derr != nil {
+			return nil, derr
+		}
+		var ierr error
+		ast.Inspect(decl, func(n ast.Node) bool {
+			if ierr != nil {
+				return false
+			}
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if !mfaStepUpGuardedFuncs[sel.Sel.Name] {
+				return true
+			}
+			callee, perr := mfaStepUpNodeText(fset, call.Fun)
+			if perr != nil {
+				ierr = perr
+				return false
+			}
+			purpose := ""
+			if len(call.Args) > mfaPurposeArgIndex {
+				purpose = mfaStepUpPurposeLiteral(call.Args[mfaPurposeArgIndex])
+			}
+			ordKey := encFunc + "\x00" + callee
+			ordinals[ordKey]++
+			sites = append(sites, mfaStepUpSite{
+				relPath: path, line: fset.Position(call.Pos()).Line,
+				encFunc: encFunc, callee: callee, ordinal: ordinals[ordKey],
+				fn: sel.Sel.Name, purpose: purpose,
+			})
 			return true
+		})
+		if ierr != nil {
+			return nil, ierr
 		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		if !mfaStepUpGuardedFuncs[sel.Sel.Name] {
-			return true
-		}
-		purpose := ""
-		if len(call.Args) > mfaPurposeArgIndex {
-			purpose = mfaStepUpPurposeLiteral(call.Args[mfaPurposeArgIndex])
-		}
-		pos := fset.Position(call.Pos())
-		sites = append(sites, mfaStepUpSite{relPath: path, line: pos.Line, fn: sel.Sel.Name, purpose: purpose})
-		return true
-	})
+	}
 	return sites, nil
 }
 
@@ -231,8 +317,7 @@ var mfaStepUpGuardSkipDirs = map[string]bool{
 }
 
 // findAllMFAStepUpSites walks every non-test *.go file in the repository and
-// returns every guarded-function call site found, keyed by path relative to
-// the repo root plus line number.
+// returns every guarded-function call site found, keyed by mfaStepUpSite.key().
 func findAllMFAStepUpSites(t *testing.T, repo string) map[string]mfaStepUpSite {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -259,6 +344,12 @@ func findAllMFAStepUpSites(t *testing.T, repo string) map[string]mfaStepUpSite {
 			rel, rerr := filepath.Rel(repo, path)
 			require.NoError(t, rerr)
 			s.relPath = filepath.ToSlash(rel)
+			if prev, dup := found[s.key()]; dup {
+				// Cannot happen while the ordinal is per (file, func, callee);
+				// fail loudly rather than let one site shadow another.
+				t.Fatalf("mfa step-up guard: key %q produced by two call sites (%s:%d and %s:%d)",
+					s.key(), prev.relPath, prev.line, s.relPath, s.line)
+			}
 			found[s.key()] = s
 		}
 		return nil
@@ -284,7 +375,7 @@ func TestMFAStepUpConsumersUseExpectedPurpose(t *testing.T) {
 	for key, s := range found {
 		entry, ok := mfaStepUpPurposeAllowlist[key]
 		if !ok {
-			unlisted = append(unlisted, key+" ("+s.fn+")")
+			unlisted = append(unlisted, key+" ("+s.fn+", currently at line "+strconv.Itoa(s.line)+")")
 			continue
 		}
 		if entry.expectedPurpose == "" {
@@ -373,10 +464,6 @@ func other(c interface{ SomethingElse() }) {
 	require.NoError(t, err)
 	require.Len(t, sites, 2, "scanner must find exactly the two HasActiveMFAStepUp calls, not SomethingElse")
 
-	byLine := map[int]mfaStepUpSite{}
-	for _, s := range sites {
-		byLine[s.line] = s
-	}
 	var gotHardcoded, gotDynamic bool
 	for _, s := range sites {
 		if s.purpose == "MFAStepUpPurposeReauth" {
@@ -388,4 +475,53 @@ func other(c interface{ SomethingElse() }) {
 	}
 	assert.True(t, gotHardcoded, "scanner must extract the literal MFAStepUpPurposeReauth constant")
 	assert.True(t, gotDynamic, "scanner must report \"\" for a non-literal (variable) purpose argument")
+}
+
+// TestMFAStepUpPurposeScannerKeysAreLineFreeAndDistinct is a self-check on
+// mfaStepUpSite.key(): two identical call expressions in one function get
+// distinct keys (ordinal suffix), a method is named by its receiver type, a
+// function literal's call is attributed to its enclosing declaration, and
+// moving every call down by inserting lines above them changes no key.
+func TestMFAStepUpPurposeScannerKeysAreLineFreeAndDistinct(t *testing.T) {
+	t.Parallel()
+	const body = `package fixture
+
+import "github.com/keyorixhq/keyorix/internal/storage/models"
+
+type S struct{ real interface{ ConsumeMFAStepUpGrant(int, int, models.MFAStepUpPurpose) (bool, error) } }
+
+func (w *S) ConsumeMFAStepUpGrant(a, b int, p models.MFAStepUpPurpose) (bool, error) {
+	if a > 0 {
+		_, _ = w.real.ConsumeMFAStepUpGrant(a, b, p)
+	}
+	return w.real.ConsumeMFAStepUpGrant(a, b, p)
+}
+
+func plain(w *S) {
+	f := func() { _, _ = w.real.ConsumeMFAStepUpGrant(0, 0, models.MFAStepUpPurposeReauth) }
+	f()
+}
+`
+	keysOf := func(src string) []string {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "fixture.go")
+		require.NoError(t, os.WriteFile(path, []byte(src), 0o600))
+		sites, err := scanMFAStepUpFile(token.NewFileSet(), path)
+		require.NoError(t, err)
+		var keys []string
+		for _, s := range sites {
+			s.relPath = "fixture.go"
+			keys = append(keys, s.key())
+		}
+		sort.Strings(keys)
+		return keys
+	}
+	want := []string{
+		"fixture.go:(*S).ConsumeMFAStepUpGrant:w.real.ConsumeMFAStepUpGrant",
+		"fixture.go:(*S).ConsumeMFAStepUpGrant:w.real.ConsumeMFAStepUpGrant#2",
+		"fixture.go:plain:w.real.ConsumeMFAStepUpGrant",
+	}
+	assert.Equal(t, want, keysOf(body))
+	shifted := strings.Replace(body, "package fixture\n", "package fixture\n\n// a\n// b\n// c\n", 1)
+	assert.Equal(t, want, keysOf(shifted), "inserting lines above the call sites must not change any key")
 }
