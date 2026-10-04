@@ -2,8 +2,13 @@
 // through the real Profile → Security UI (no mocked routes, same real-backend
 // shape as pages.spec.ts) and a subsequent login.
 //
-// Both tests below are marked test.fail() for two separate, confirmed product
-// bugs (filed as GitHub issues #2441 and #2442) rather than skipped: skipping
+// #2441 (MFA enrollment always 400ing: EnrollModal never collected/sent the
+// account password ActivateMFA requires) is fixed by #2466: EnrollModal now has
+// a password field, and mfaApi.activate sends it alongside the code. The
+// enrollment test below asserts the real flow completes.
+//
+// The login test below is still marked test.fail() for a separate, confirmed
+// product bug (GitHub issue #2442) rather than skipped: skipping
 // would silently stop proving anything, while test.fail() stays RED on CI
 // until the real fix lands and flips to a loud "unexpectedly passing" the
 // moment someone fixes the underlying code without updating this file.
@@ -167,20 +172,7 @@ async function createDedicatedUser(usernamePrefix: string): Promise<{ username: 
     }
 }
 
-test('MFA enrollment via Profile → Security currently cannot complete (known bug #2441)', async ({ page }) => {
-    // https://github.com/keyorixhq/keyorix/issues/2441 -- server/http/handlers/mfa.go's
-    // ActivateMFA requires BOTH the TOTP code and the account password
-    // (internal/core/mfa.go's requireReauth falls through to the
-    // password-compare branch, since MFAEnabled is still false during
-    // enrollment). web/src/features/account/MfaSection.tsx's EnrollModal only
-    // ever collects the 6-digit code -- there is no password field -- so
-    // mfaApi.activate(code) always sends {code} alone and the backend always
-    // rejects it with "invalid code or password", regardless of whether the
-    // code itself is correct. Confirmed live both through this UI flow and
-    // directly against the API with the exact same request shape the UI
-    // sends (see issue #2441's repro).
-    test.fail(true, 'issue #2441 -- EnrollModal never collects/sends the password ActivateMFA requires');
-
+test('MFA enrollment via Profile → Security completes (fixes known bug #2441)', async ({ page }) => {
     const user = await createDedicatedUser('mfaenroll');
     await realLogin(page, user.username, user.password);
 
@@ -194,13 +186,11 @@ test('MFA enrollment via Profile → Security currently cannot complete (known b
     const secret = (await secretLocator.textContent())?.trim();
     expect(secret, 'enrollment must render a non-empty setup key').toBeTruthy();
 
-    // A genuinely correct code, straight from the real secret -- so the only
-    // thing this can be exercising is the missing-password bug, not a test
-    // bug in totpCode() itself.
     await page.getByPlaceholder('123456').fill(totpCode(secret as string));
+    await page.getByPlaceholder('Your current password').fill(user.password);
     await page.getByRole('button', { name: 'Verify & enable' }).click();
 
-    // What SHOULD happen: recovery codes render, confirming activation.
+    // Recovery codes render, confirming activation.
     await expect(page.getByText('Save your recovery codes')).toBeVisible({ timeout: 10_000 });
 });
 
