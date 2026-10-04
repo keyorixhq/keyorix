@@ -122,8 +122,20 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      # actions: read -- only for the push-event queue_verified lookup below
+      # (lists this workflow's own merge_group runs for github.sha).
+      actions: read
     outputs:
       docs_only: ${{ steps.filter.outputs.docs_only }}
+      # True only on a push to main whose EXACT commit (github.sha) already
+      # passed this workflow on the merge_group event. The merge queue
+      # fast-forwards main to the very commit it tested, so re-running the
+      # whole matrix on that push re-tests an identical tree (~155 runner
+      # minutes per merge on the Free plan's 20-runner cap). Every job that
+      # also runs on merge_group skips on such a push; a push that did NOT
+      # come through a green queue run (admin bypass, a failed lookup) gets
+      # the full suite exactly as before -- fail-safe toward running.
+      queue_verified: ${{ steps.filter.outputs.queue_verified }}
       # web/ (ADR-070) lives in this repo now, so a frontend-only PR is no
       # longer isolated in its own repo+CI -- it flows through this same
       # workflow. Used to skip every job that's backend-only busywork on a
@@ -217,6 +229,15 @@ jobs:
             echo "boot_smoke_relevant=true" >> "$GITHUB_OUTPUT"
             echo "web_e2e_relevant=true" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event_name }}" != "pull_request" ]; then
+            queue_verified=false
+            if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+              n=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?event=merge_group&head_sha=${{ github.sha }}&status=success&per_page=1" --jq '.total_count') || n=0
+              if [ "${n:-0}" -ge 1 ] 2>/dev/null; then
+                queue_verified=true
+              fi
+            fi
+            echo "queue_verified=$queue_verified"
+            echo "queue_verified=$queue_verified" >> "$GITHUB_OUTPUT"
             {
               echo "docs_only=false"
               echo "web_only=false"
@@ -262,6 +283,12 @@ jobs:
           # always run the full suite regardless of what else it matches
           # below, so it's checked first and short-circuits to false.
           if echo "$changed" | grep -qx '\.github/workflows/ci\.yml'; then
+            echo "go_unaffected=false" >> "$GITHUB_OUTPUT"
+          elif echo "$changed" | grep -q '^scripts/e2e/'; then
+            # scripts/e2e/ is NOT Go-free: it holds the e2e journey tests
+            # (Go, build tag e2e) that e2e-smoke runs. Classifying it as
+            # go_unaffected skipped e2e-smoke on the very PRs that change
+            # those tests (#2681 merged with its assertion never executed).
             echo "go_unaffected=false" >> "$GITHUB_OUTPUT"
           elif [ -z "$changed" ] || echo "$changed" | grep -vE '^(scripts/|\.semgrep/|demo/|integrations/|\.github/workflows/|\.gitignore$|\.gitattributes$|LICENSE$|COPYRIGHT$)' > /dev/null; then
             echo "go_unaffected=false" >> "$GITHUB_OUTPUT"
@@ -511,7 +538,7 @@ jobs:
   # instead of via the shared gate, but nothing waits an extra ~30s to start.
   preflight:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -680,7 +707,7 @@ jobs:
     # pull_request push instead gets test-quick-root/test-quick-cli below --
     # see build-and-test's own gate-logic step for the pass/fail truth table
     # this split creates.
-    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')))
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')))
     strategy:
       fail-fast: false
       matrix:
@@ -1018,7 +1045,7 @@ jobs:
   # temporarily pointing it at a deliberately stale entry.
   exclusion-freshness:
     needs: [preflight, changes]
-    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1044,7 +1071,7 @@ jobs:
   # fast and doesn't wait on the (up to 30-minute) test-suite matrix.
   assert-leg-completeness:
     needs: [preflight, changes]
-    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1071,7 +1098,7 @@ jobs:
   # (as it did when both lived inside one sequential build-and-test job).
   static-analysis:
     needs: [preflight, changes]
-    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1129,7 +1156,7 @@ jobs:
     # with test-suite/static-analysis's implicit skip-on-cancelled-dependency
     # behavior instead of being the one job immune to it. (root-caused on
     # #1368, whose docs-only CI run hit exactly this.)
-    if: always() && needs.changes.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     # download-artifact needs actions: read beyond the workflow-level
     # contents: read default, even for same-run artifacts.
@@ -1246,7 +1273,7 @@ jobs:
   # legs run nightly in e2e-nightly.yml.
   e2e-smoke:
     needs: [changes]
-    if: github.event_name != 'pull_request' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: github.event_name != 'pull_request' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -1347,7 +1374,7 @@ jobs:
 
   lint:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1624,7 +1651,7 @@ jobs:
     # Deliberately NOT gated on operator_only -- that flag means the diff is
     # CONFINED to operator/, which is exactly the case this job must still
     # run for.
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1683,7 +1710,7 @@ jobs:
     needs: [changes]
     # Deliberately NOT gated on any *_only flag -- same reasoning as operator above: a diff
     # confined elsewhere still needs this job's own build/test/depguard result reported.
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1750,7 +1777,7 @@ jobs:
   # setting both is harmless and is the only way one `services:` block covers both legs.
   migrate:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -1845,7 +1872,7 @@ jobs:
     # Deliberately NOT gated on operator_only -- this job checks FuzzXxx
     # functions in BOTH the root and operator modules, and an operator-only
     # diff could add/remove/rename one there.
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1949,7 +1976,7 @@ jobs:
   # CI-safe floor gate. Rationale: claude/2026-09-16-ai-fuzzing-best-practices-benchmark.md.
   fuzz-reach:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1989,7 +2016,7 @@ jobs:
     # Deliberately NOT gated on operator_only -- this job checks BOTH the
     # root and operator modules' dependency licenses, and an operator-only
     # diff could add a new operator/go.mod dependency.
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2099,7 +2126,7 @@ jobs:
 
   helm-chart:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2374,7 +2401,7 @@ jobs:
   # against the same rendered chart output.
   helm-chart-security:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2494,7 +2521,7 @@ jobs:
   # at this runtime there's no CI-minute budget reason to narrow it further.
   helm-chart-policy:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
