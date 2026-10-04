@@ -82,7 +82,7 @@ func securityStateModels() map[string]bool {
 	deletedAt := reflect.TypeOf(gorm.DeletedAt{})
 	for _, m := range models.AllTestModels() {
 		t := reflect.TypeOf(m)
-		for t.Kind() == reflect.Ptr {
+		for t.Kind() == reflect.Pointer {
 			t = t.Elem()
 		}
 		for i := 0; i < t.NumField(); i++ {
@@ -127,7 +127,7 @@ func fullRowWriteHits(t *testing.T, roots []string) (hits []fullRowHit, nonSecur
 	all := map[string]bool{}
 	for _, m := range models.AllTestModels() {
 		tt := reflect.TypeOf(m)
-		for tt.Kind() == reflect.Ptr {
+		for tt.Kind() == reflect.Pointer {
 			tt = tt.Elem()
 		}
 		all[tt.Name()] = true
