@@ -128,7 +128,7 @@ var childFKTargets = map[string]string{
 
 func childLiveModelName(m any) (reflect.Type, string) {
 	t := reflect.TypeOf(m)
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	return t, t.Name()
