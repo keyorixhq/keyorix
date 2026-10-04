@@ -2,16 +2,16 @@
 // through the real Profile → Security UI (no mocked routes, same real-backend
 // shape as pages.spec.ts) and a subsequent login.
 //
-// #2441 (MFA enrollment always 400ing: EnrollModal never collected/sent the
-// account password ActivateMFA requires) is fixed by #2466: EnrollModal now has
-// a password field, and mfaApi.activate sends it alongside the code. The
-// enrollment test below asserts the real flow completes.
-//
-// The login test below is still marked test.fail() for a separate, confirmed
-// product bug (GitHub issue #2442) rather than skipped: skipping
-// would silently stop proving anything, while test.fail() stays RED on CI
-// until the real fix lands and flips to a loud "unexpectedly passing" the
-// moment someone fixes the underlying code without updating this file.
+// Both known product bugs this file originally tracked are now fixed:
+// - #2441 (MFA enrollment always 400ing — EnrollModal never collected/sent the
+//   account password ActivateMFA requires): EnrollModal now has a password
+//   field, and mfaApi.activate sends it alongside the code.
+// - #2442 (logging in with MFA enabled never prompted for a code — authStore
+//   ignored mfa_required): login() now stores a pending mfaChallenge instead
+//   of landing a bogus "authenticated" session, LoginPage renders a code-entry
+//   step, and verifyMfa() completes it against the real VerifyMFA endpoint.
+// Both tests below assert the real flow completes end to end, instead of
+// test.fail()ing on either known bug.
 //
 // Note on "bootstrap admin via the UI" (SESSION-WEB-E2E item 1's own wording):
 // there is no such UI flow in this app. POST /system/init (internal/core's
@@ -39,7 +39,8 @@
 // only for its unrelated authority to create another account via
 // POST /api/v1/users, exactly like web-real-smoke.sh already uses it to
 // create a project -- the shared admin's own MFA/session/role/password state
-// is never touched.
+// is never touched. Because each test operates on a throwaway user nobody
+// else depends on, neither test needs a disable-MFA cleanup step.
 import { test, expect, Page, request as apiRequestFactory } from '@playwright/test';
 import { createHmac } from 'node:crypto';
 
@@ -88,6 +89,34 @@ function totpCode(base32Secret: string, atSeconds = Date.now() / 1000): string {
         ((hmac[offset + 2] & 0xff) << 8) |
         (hmac[offset + 3] & 0xff);
     return (binary % 1_000_000).toString().padStart(6, '0');
+}
+
+// waitForFreshTotpCode polls (real time, not the test's local clock arithmetic)
+// until the current 30s TOTP step is strictly past lastUsedStep, then returns
+// the CURRENT step's code (delta 0 -- the one validateTOTPStep is guaranteed
+// to accept no matter how fast or slow the check that follows runs). Needed
+// because this app's anti-replay (MarkTOTPStepUsed, internal/core's doc
+// comment: "a code already accepted at this or a later step is a replay") is
+// ONE shared counter per account across every TOTP check site -- enroll's
+// activate and login's verify both draw from it. This SPA's client-side
+// routing makes two of those checks only a few hundred milliseconds apart in
+// practice (confirmed live: two "next step" guesses a test run apart computed
+// to the identical step and code), so predicting a future step ahead of time
+// is not reliable; waiting for a real, fresh step to actually arrive is.
+async function waitForFreshTotpCode(
+    page: Page,
+    secret: string,
+    lastUsedStep: number
+): Promise<{ code: string; step: number }> {
+    const periodSeconds = 30;
+    for (;;) {
+        const now = Date.now() / 1000;
+        const step = Math.floor(now / periodSeconds);
+        if (step > lastUsedStep) {
+            return { code: totpCode(secret, now), step };
+        }
+        await page.waitForTimeout(1000);
+    }
 }
 
 async function submitLogin(page: Page, username: string, password: string) {
@@ -173,6 +202,16 @@ async function createDedicatedUser(usernamePrefix: string): Promise<{ username: 
 }
 
 test('MFA enrollment via Profile → Security completes (fixes known bug #2441)', async ({ page }) => {
+    // https://github.com/keyorixhq/keyorix/issues/2441 -- server/http/handlers/mfa.go's
+    // ActivateMFA requires BOTH the TOTP code and the account password
+    // (internal/core/mfa.go's requireReauth falls through to the
+    // password-compare branch, since MFAEnabled is still false during
+    // enrollment). web/src/features/account/MfaSection.tsx's EnrollModal now
+    // collects both -- mfaApi.activate(code, password) sends {code, password}
+    // -- so the backend's real contract (confirmed live in the issue's own
+    // repro: the exact same request shape with both fields succeeds) is now
+    // reachable through the UI.
+
     const user = await createDedicatedUser('mfaenroll');
     await realLogin(page, user.username, user.password);
 
@@ -186,24 +225,27 @@ test('MFA enrollment via Profile → Security completes (fixes known bug #2441)'
     const secret = (await secretLocator.textContent())?.trim();
     expect(secret, 'enrollment must render a non-empty setup key').toBeTruthy();
 
+    // A genuinely correct code, straight from the real secret.
     await page.getByPlaceholder('123456').fill(totpCode(secret as string));
     await page.getByPlaceholder('Your current password').fill(user.password);
     await page.getByRole('button', { name: 'Verify & enable' }).click();
 
-    // Recovery codes render, confirming activation.
+    // What SHOULD happen: recovery codes render, confirming activation.
     await expect(page.getByText('Save your recovery codes')).toBeVisible({ timeout: 10_000 });
 });
 
-// enableMfaViaApi is test SETUP ONLY, not a UI shortcut this test is avoiding
-// out of laziness: issue #2441 (above) means there is currently no way to
-// reach an MFA-enabled account through the UI at all, so the only way to get
-// into the precondition state the login test below needs is the same direct
-// API path issue #2441's own repro uses. Operates on the dedicated user
-// created below, NEVER on the shared admin -- enabling MFA is a one-way,
-// session-breaking mutation on whichever account it's applied to, so doing
-// this to ADMIN_USERNAME would make every later spec's admin login
-// order-dependent on this one running (or not) first.
-async function enableMfaViaApi(username: string, password: string): Promise<string> {
+// enableMfaViaApi is test SETUP ONLY, not a UI shortcut taken out of laziness:
+// this test exercises LOGIN's code-entry step, not enrollment's UI (that's
+// the test above), so it reaches its precondition (an MFA-enabled account)
+// via the same direct API path web-real-smoke.sh already uses for setup, not
+// through the UI. Operates on the dedicated user created below, NEVER on the
+// shared admin -- enabling MFA is a one-way, session-breaking mutation on
+// whichever account it's applied to, so doing this to ADMIN_USERNAME would
+// make every later spec's admin login order-dependent on this one running
+// (or not) first. Returns activatedStep alongside the secret so the caller
+// can wait for a TOTP step strictly after it before the login verify below --
+// see waitForFreshTotpCode's own comment for why.
+async function enableMfaViaApi(username: string, password: string): Promise<{ secret: string; activatedStep: number }> {
     const token = await apiLogin(username, password);
     const auth = { Authorization: `Bearer ${token}` };
     // A separate, cookie-free context for the actual mutations -- see
@@ -214,44 +256,43 @@ async function enableMfaViaApi(username: string, password: string): Promise<stri
         if (!enrollRes.ok()) throw new Error(`setup enroll failed: ${enrollRes.status()} ${await enrollRes.text()}`);
         const secret = (await enrollRes.json()).data.secret as string;
 
+        const activateAtSeconds = Date.now() / 1000;
         const activateRes = await api.post('/api/v1/auth/mfa/activate', {
             headers: auth,
-            data: { code: totpCode(secret), password },
+            data: { code: totpCode(secret, activateAtSeconds), password },
         });
         if (!activateRes.ok())
             throw new Error(`setup activate failed: ${activateRes.status()} ${await activateRes.text()}`);
 
-        return secret;
+        return { secret, activatedStep: Math.floor(activateAtSeconds / 30) };
     } finally {
         await api.dispose();
     }
 }
 
-test('logging in with MFA enabled currently cannot complete (known bug #2442)', async ({ page }) => {
+test('logging in with MFA enabled completes via the code-entry step (fixes known bug #2442)', async ({ page }) => {
     // https://github.com/keyorixhq/keyorix/issues/2442 -- server/http/handlers/auth.go's
     // Login returns HTTP 200 with {mfa_required: true, mfa_challenge, ...} on
     // a correct password for an MFA account (no session cookie set).
-    // web/src/services/auth.ts's login() treats any non-empty response.data
-    // as success, and web/src/store/authStore.ts's login() unconditionally
-    // builds a User from it (every field undefined here) and sets
-    // isAuthenticated: true. No component under web/src calls the real
-    // VerifyMFA endpoint -- grepped pages/auth, store, and features/auth for
-    // mfa_required/mfa_challenge/VerifyMFA and found zero references.
-    // Confirmed live: this is the one externally-observable, stable end state
-    // (never a code-entry field, eventually bounced back to /login once the
-    // first real API call 401s with no session cookie).
-    test.fail(true, 'issue #2442 -- authStore.login() ignores mfa_required; no UI path calls VerifyMFA');
+    // authStore.login() now stores this as a pending mfaChallenge instead of
+    // treating it as a completed session, LoginPage renders MfaChallengeForm
+    // once mfaChallenge is set, and verifyMfa() calls the real VerifyMFA
+    // endpoint with the challenge + code.
 
     const user = await createDedicatedUser('mfalogin');
-    const totpSecret = await enableMfaViaApi(user.username, user.password);
+    const { secret: totpSecret, activatedStep } = await enableMfaViaApi(user.username, user.password);
+
+    // See waitForFreshTotpCode's own comment: the activate call above and this
+    // verify both draw from the same per-account anti-replay counter, and this
+    // SPA's routing can make them only moments apart in wall-clock time.
+    const verifyCode = await waitForFreshTotpCode(page, totpSecret, activatedStep);
 
     await page.goto('/login');
     await submitLogin(page, user.username, user.password);
 
-    // What SHOULD happen: a visible code-entry control for the pending MFA
-    // challenge, which this test would then complete.
+    // The code-entry step for the pending MFA challenge.
     await expect(page.getByPlaceholder('123456')).toBeVisible({ timeout: 10_000 });
-    await page.getByPlaceholder('123456').fill(totpCode(totpSecret));
+    await page.getByPlaceholder('123456').fill(verifyCode.code);
     await page.getByRole('button', { name: /verify/i }).click();
     await page.waitForURL('/dashboard', { timeout: 15_000 });
 });
