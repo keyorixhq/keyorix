@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"hash/fnv"
 	"sync"
+
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 )
 
 // namedLockRegistry hands out one *sync.Mutex per lock key, creating it on
@@ -179,6 +181,14 @@ func (ls *LocalStorage) WithNamedLock(ctx context.Context, lockKey string, fn fu
 	held := heldNamedLockKeys(ctx)
 	if held[lockKey] {
 		return fn(ctx)
+	}
+	if storage.NamedLockOrderCheckEnabled() {
+		// Test builds only (see storage.EnableNamedLockOrderCheck): an
+		// acquisition out of storage.NamedLockOrder is a latent cross-replica
+		// deadlock, so fail loudly at the acquiring call site.
+		if err := storage.CheckNamedLockOrder(held, lockKey); err != nil {
+			panic(err.Error())
+		}
 	}
 	next := make(map[string]bool, len(held)+1)
 	for k := range held {
