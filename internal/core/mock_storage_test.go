@@ -371,6 +371,11 @@ func (m *MockStorage) UpdateAccessReviewItem(ctx context.Context, item *models.A
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockStorage) RevertAccessReviewItemClaim(ctx context.Context, itemID uint, fromDecision string, actorID uint) (bool, error) {
+	args := m.Called(ctx, itemID, fromDecision, actorID)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStorage) LastUserSecretActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
 	args := m.Called(ctx, projectID)
 	if args.Get(0) == nil {

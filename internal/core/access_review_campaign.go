@@ -394,6 +394,28 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 	// compliance evidence, and an item the reviewer could no longer retry. See
 	// access_review_decide_tx.go.
 	return c.decideReviewItemRevokeAtomically(ctx, actorID, projectID, item, itemID, reason, decision)
+	if err := c.applyAccessDecision(ctx, actorID, projectID, action, decision); err != nil {
+		// The claim already committed (item now shows targetDecision) but the real
+		// action failed. Every RevokeAccessReviewGrant branch (revokeRoleByPrincipal
+		// Type's RemoveUserRole/RemoveRoleFromGroup/RemoveMachineRole,
+		// revokeReviewShare's single DeleteShareRecord) returns its error directly
+		// from the same call that would have performed the removal -- never after a
+		// successful one -- so an error here always means nothing was actually
+		// removed. That makes revoke idempotent on retry: compensate by reverting
+		// the claim back to pending so a retry (by this reviewer or another) can
+		// re-attempt the decision from scratch, instead of leaving the item stuck
+		// claimed with nothing done underneath it. Fail closed on the compensation
+		// itself: if the conditional revert matches zero rows, someone else already
+		// changed this item since our own claim (a concurrent re-decide, or a race
+		// with another compensation) -- leave it alone rather than overwrite that
+		// other change, and fall back to the same loud log as before (#1646).
+		reverted, rerr := c.storage.RevertAccessReviewItemClaim(ctx, itemID, targetDecision, actorID)
+		if rerr != nil || !reverted {
+			log.Printf("SECURITY: access review item %d claimed as %q but the underlying %s action failed: %v -- manual reconciliation required (compensating revert reverted=%v err=%v)", itemID, targetDecision, action, err, reverted, rerr)
+		}
+		return err
+	}
+	return nil
 }
 
 // requireHumanReviewer rejects a recertification action by a non-human / unattributable

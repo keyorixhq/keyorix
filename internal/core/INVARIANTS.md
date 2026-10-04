@@ -321,6 +321,19 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
     `access_review_decide_atomicity_test.go:TestDecideAccessReviewItem_RevokeStillRefusedByLastProjectAdminGuard`
     — if the access-review path ever re-implemented the removal, that is the assertion that
     would go red.
+- **INV-CORE-41** `DecideAccessReviewItem`'s attest path does every fallible read
+  (reviewer controls, the live grant re-verification) BEFORE the conditional claim that commits
+  the item's decision, and nothing that can fail after it — so a reported error means the item
+  is still pending. The revoke path still must act AFTER its claim to keep the #1646 race closed;
+  if that real action then fails, a compensating conditional UPDATE reverts the claim back to
+  pending (fail-closed: a non-match, e.g. a concurrent re-decide, is left alone and still logged
+  as `SECURITY: ... manual reconciliation required`) — safe because every RevokeAccessReviewGrant
+  branch returns its error from the same call that would have performed the removal, never after
+  a successful one, so revoke is idempotent on retry. Why: #2570, found by
+  `FuzzStorageFaultOperations`. Guard:
+  `access_review_decide_read_before_write_test.go:TestDecideAccessReviewItem_AttestGrantLookupErrorLeavesItemPending`,
+  `access_review_revoke_compensate_test.go:TestDecideAccessReviewItem_RevokeActionFailureRevertsClaim`,
+  corpus seed `2570_decideaccessreviewitem_listprojectroleassignments_error`.
 
 ## Check-then-act across replicas (GUARD-2)
 
