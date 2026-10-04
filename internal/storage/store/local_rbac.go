@@ -571,18 +571,106 @@ func (ls *LocalStorage) RemoveGlobalAdminRoleGuarded(ctx context.Context, userID
 		survives := false
 		for _, a := range assignments {
 			// Ignore the exact assignment being removed; any OTHER global admin
-			// grant (held by another user, or by a group) means governance survives.
+			// grant that still resolves to a LIVE holder means governance survives.
 			if a.PrincipalType == "user" && a.PrincipalID == userID && a.RoleID == roleID {
 				continue
 			}
-			survives = true
-			break
+			live, err := txStorage.globalAdminAssignmentHasLiveHolder(ctx, a)
+			if err != nil {
+				return err
+			}
+			if live {
+				survives = true
+				break
+			}
 		}
 		if !survives {
 			return fmt.Errorf("%w: the install would be left with no super_admin/admin/system_admin at the global scope and no one able to manage users, roles, or settings", storage.ErrWouldStrandLastAdmin)
 		}
 		return txStorage.RemoveRole(ctx, userID, roleID, storage.Scope{})
 	})
+}
+
+// globalAdminLiveAccountStates are the account_state values that do NOT block
+// login: exactly the states core.AccountLoginBlocked returns false for
+// (internal/core/account_state.go). Suspended, deprovisioned and any
+// unrecognized value are excluded, so a suspended admin's surviving grant row
+// is never counted as a fallback admin (it cannot log in to manage anything).
+// TestGlobalAdminLiveAccountStates_MatchAccountLoginBlocked (internal/core)
+// fails if the two lists drift.
+var globalAdminLiveAccountStates = []string{"active", "pending_first_login", "password_reset_required"}
+
+// GlobalAdminLiveAccountStates returns a copy of globalAdminLiveAccountStates,
+// for the drift test in internal/core.
+func GlobalAdminLiveAccountStates() []string {
+	return append([]string(nil), globalAdminLiveAccountStates...)
+}
+
+// globalAdminAssignmentHasLiveHolder reports whether a global admin grant row
+// returned by ListGlobalAdminAssignmentsForUpdate still confers admin authority
+// on at least one usable account. A grant ROW is not a holder (#2658):
+// soft-deleting a user or a group, deactivating a user, or removing a group's
+// last member never deletes the user_roles/group_roles row, so counting rows
+// let RemoveUserRole strip the last real admin while a dead group's leftover
+// grant was counted as "another admin survives". This mirrors core's
+// resolveGlobalAdminHolders/filterActiveHolders (internal/core/authz.go), the
+// resolver the group-path guards already use:
+//
+//   - a user grant counts only if the user is not soft-deleted, IsActive, and
+//     in an account_state that can log in (globalAdminLiveAccountStates);
+//   - a group grant counts only if the group is not soft-deleted and has at
+//     least one GLOBAL (user_groups.project_id = 0) member who is live by the
+//     same test.
+//
+// On Postgres every row the verdict rests on (the user, the group, the
+// membership rows) is read FOR UPDATE inside the caller's transaction, like
+// ListGlobalAdminAssignmentsForUpdate's own grant rows. That is
+// belt-and-braces: core's RemoveUserRole also holds lastAdminGuardLockKey,
+// the named lock every other last-admin writer (DeleteGroup,
+// RemoveUserFromGroup, RemoveRoleFromGroup, SuspendUser, DeleteUser, SCIM)
+// already takes.
+func (ls *LocalStorage) globalAdminAssignmentHasLiveHolder(ctx context.Context, a storage.RoleAssignment) (bool, error) {
+	locked := ls.db.Dialector.Name() == "postgres"
+	q := func() *gorm.DB {
+		db := ls.db.WithContext(ctx)
+		if locked {
+			db = db.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		return db
+	}
+	liveUsers := func(ids []uint) (bool, error) {
+		if len(ids) == 0 {
+			return false, nil
+		}
+		var users []models.User
+		if err := q().Where("id IN ? AND is_active = ? AND account_state IN ?", ids, true, globalAdminLiveAccountStates).Find(&users).Error; err != nil {
+			return false, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		return len(users) > 0, nil
+	}
+	switch a.PrincipalType {
+	case "user":
+		return liveUsers([]uint{a.PrincipalID})
+	case "group":
+		var groups []models.Group
+		if err := q().Where("id = ?", a.PrincipalID).Find(&groups).Error; err != nil {
+			return false, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		if len(groups) == 0 {
+			return false, nil // soft-deleted (default scope) or gone
+		}
+		var memberships []models.UserGroup
+		if err := q().Where("group_id = ? AND project_id = 0", a.PrincipalID).Find(&memberships).Error; err != nil {
+			return false, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		ids := make([]uint, 0, len(memberships))
+		for _, m := range memberships {
+			ids = append(ids, m.UserID)
+		}
+		return liveUsers(ids)
+	default:
+		return false, nil
+	}
 }
 
 // GetUserRoleIDsExact returns the IDs of roles directly assigned to userID at

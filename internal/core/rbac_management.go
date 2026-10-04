@@ -747,9 +747,18 @@ func (c *KeyorixCore) removeUserRoleUnguarded(ctx context.Context, actorID, user
 // into RemoveUserRole, per #1646) would lock-order-invert: the former acquires
 // globalAdminGuardMu then waits on WithNamedLock, the latter holds WithNamedLock
 // and waits on globalAdminGuardMu.
+//
+// #2658: the storage-level check now counts only LIVE holders (see
+// LocalStorage.globalAdminAssignmentHasLiveHolder), so its verdict depends on
+// user, group and membership state that DeleteGroup, RemoveUserFromGroup,
+// RemoveRoleFromGroup, SuspendUser, DeleteUser and SCIM change. Every one of
+// those writers holds lastAdminGuardLockKey across its own last-admin check and
+// write, so this path takes the SAME key, making the two sides mutually
+// exclusive across replicas. The named lock is taken OUTSIDE
+// globalAdminGuardMu: a caller already holding lastAdminGuardLockKey re-enters
+// it (WithNamedLock is re-entrant per ctx) and then takes the mutex, the same
+// named-lock-then-mutex order as here, so the two can never invert.
 func (c *KeyorixCore) removeGlobalAdminRoleIfApplicable(ctx context.Context, userID, roleID uint) (handled bool, err error) {
-	c.globalAdminGuardMu.Lock()
-	defer c.globalAdminGuardMu.Unlock()
 	adminIDs := c.installAdminRoleIDSet(ctx)
 	if !adminIDs[roleID] {
 		return false, nil
@@ -758,10 +767,12 @@ func (c *KeyorixCore) removeGlobalAdminRoleIfApplicable(ctx context.Context, use
 	for id := range adminIDs {
 		ids = append(ids, id)
 	}
-	if err := c.storage.RemoveGlobalAdminRoleGuarded(ctx, userID, roleID, ids); err != nil {
-		return true, err
-	}
-	return true, nil
+	err = c.storage.WithNamedLock(ctx, lastAdminGuardLockKey, func(ctx context.Context) error {
+		c.globalAdminGuardMu.Lock()
+		defer c.globalAdminGuardMu.Unlock()
+		return c.storage.RemoveGlobalAdminRoleGuarded(ctx, userID, roleID, ids)
+	})
+	return true, err
 }
 
 // installAdminRoleNames are the roles that confer install-wide administration when

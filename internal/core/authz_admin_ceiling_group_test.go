@@ -249,6 +249,10 @@ func TestRemoveRoleFromGroup_LastGlobalAdminBlocked(t *testing.T) {
 	group, err := c.CreateGroup(ctx, 0, &CreateGroupRequest{Name: "sole-admins"})
 	require.NoError(t, err)
 	require.NoError(t, c.AssignRoleToGroup(ctx, bootstrapAdmin.ID, group.ID, adminRole.ID, Scope{}, false))
+	// #2658: the group must have a live member to be a real admin source;
+	// with no members, stripping the direct grant would already leave zero
+	// admins and is (correctly) refused.
+	require.NoError(t, c.AddUserToGroup(ctx, bootstrapAdmin.ID, false, bootstrapAdmin.ID, group.ID, 0))
 	require.NoError(t, c.RemoveUserRole(ctx, bootstrapAdmin.ID, bootstrapAdmin.ID, adminRole.ID, Scope{}))
 
 	err = c.RemoveRoleFromGroup(ctx, bootstrapAdmin.ID, group.ID, adminRole.ID, Scope{})
@@ -271,6 +275,10 @@ func TestDeleteGroup_LastGlobalAdminBlocked(t *testing.T) {
 	group, err := c.CreateGroup(ctx, 0, &CreateGroupRequest{Name: "sole-admins2"})
 	require.NoError(t, err)
 	require.NoError(t, c.AssignRoleToGroup(ctx, bootstrapAdmin.ID, group.ID, adminRole.ID, Scope{}, false))
+	// #2658: the group must have a live member to be a real admin source;
+	// with no members, stripping the direct grant would already leave zero
+	// admins and is (correctly) refused.
+	require.NoError(t, c.AddUserToGroup(ctx, bootstrapAdmin.ID, false, bootstrapAdmin.ID, group.ID, 0))
 	require.NoError(t, c.RemoveUserRole(ctx, bootstrapAdmin.ID, bootstrapAdmin.ID, adminRole.ID, Scope{}))
 
 	err = c.DeleteGroup(ctx, bootstrapAdmin.ID, group.ID)
