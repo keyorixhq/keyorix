@@ -8,6 +8,7 @@ package target
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -124,6 +125,9 @@ func (c *Client) Create(ctx context.Context, name, value string, metadata map[st
 	if err != nil {
 		return 0, fmt.Errorf("create secret %q: %w", name, err)
 	}
+	if resp.StatusCode() == http.StatusRequestEntityTooLarge {
+		return 0, valueTooLarge(len(value), resp.Body)
+	}
 	if resp.JSON201 == nil || resp.JSON201.Data == nil || resp.JSON201.Data.Id == nil {
 		return 0, apiErr("create secret", resp.StatusCode(), resp.Body)
 	}
@@ -134,6 +138,9 @@ func (c *Client) UpdateValue(ctx context.Context, id int, value string) error {
 	resp, err := c.api.UpdateSecretWithResponse(ctx, id, apiclient.UpdateSecretJSONRequestBody{Value: &value})
 	if err != nil {
 		return fmt.Errorf("update secret %d: %w", id, err)
+	}
+	if resp.StatusCode() == http.StatusRequestEntityTooLarge {
+		return valueTooLarge(len(value), resp.Body)
 	}
 	if resp.StatusCode() != http.StatusOK {
 		return apiErr("update secret", resp.StatusCode(), resp.Body)
@@ -220,6 +227,50 @@ func anyScopeAllowsSecretWrite(scopes []string) bool {
 		}
 	}
 	return false
+}
+
+// DefaultMaxSecretSize / MaxSecretSizeHardCeiling mirror internal/core.DefaultMaxSecretSize and
+// internal/config.MaxSecretSizeHardCeiling — the Keyorix server's default and absolute maximum
+// secret VALUE size in bytes (secrets.limits.max_secret_size). migrate cannot import either
+// package (module boundary, docs/design-keyorix-migrate.md), so they are duplicated here and
+// pinned to the server's source by TestSizeLimitsMatchServer. No API exposes the target's
+// configured limit, so the plan can only use these two bounds: above the ceiling no server
+// configuration can accept the value; above the default, only a server whose limit was raised.
+// The server stays authoritative either way — its 413 is classified by ValueTooLargeError.
+const (
+	DefaultMaxSecretSize     = 65536
+	MaxSecretSizeHardCeiling = 1 << 20
+)
+
+// ValueTooLargeError is returned by Create/UpdateValue when the Keyorix server rejects a value
+// as exceeding its configured secrets.limits.max_secret_size (HTTP 413) — a distinct failure
+// class from a transient or auth error, needing a different remediation (raise the target's
+// limit, or split the value), so callers can tell it apart via errors.As (#2544).
+type ValueTooLargeError struct {
+	Size          int    // bytes in the rejected value
+	ServerMessage string // the server's own structured message (names the configured limit); may be empty
+}
+
+func (e *ValueTooLargeError) Error() string {
+	msg := fmt.Sprintf("value is %d bytes, which exceeds the target Keyorix server's max_secret_size", e.Size)
+	if e.ServerMessage != "" {
+		msg += " (server: " + e.ServerMessage + ")"
+	}
+	return msg + fmt.Sprintf(" — raise secrets.limits.max_secret_size on the server (hard ceiling %d bytes) or split the value", MaxSecretSizeHardCeiling)
+}
+
+// IsValueTooLarge reports whether err is (or wraps) a ValueTooLargeError.
+func IsValueTooLarge(err error) bool {
+	var e *ValueTooLargeError
+	return errors.As(err, &e)
+}
+
+// valueTooLarge builds a ValueTooLargeError from a 413 body, keeping only the structured
+// "message" field (same rule as apiErr: never interpolate a raw body).
+func valueTooLarge(size int, body []byte) error {
+	var eb apiErrorBody
+	_ = json.Unmarshal(body, &eb)
+	return &ValueTooLargeError{Size: size, ServerMessage: eb.Message}
 }
 
 type apiErrorBody struct {
