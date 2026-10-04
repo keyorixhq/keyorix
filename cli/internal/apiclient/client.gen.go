@@ -532,7 +532,7 @@ type ClientInterface interface {
 	GrantMachineRole(ctx context.Context, id int, machineId int, body GrantMachineRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RemoveMachineRole request
-	RemoveMachineRole(ctx context.Context, id int, machineId int, roleId int, reqEditors ...RequestEditorFn) (*http.Response, error)
+	RemoveMachineRole(ctx context.Context, id int, machineId int, roleId int, params *RemoveMachineRoleParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListMachineTokens request
 	ListMachineTokens(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2904,8 +2904,8 @@ func (c *Client) GrantMachineRole(ctx context.Context, id int, machineId int, bo
 	return c.Client.Do(req)
 }
 
-func (c *Client) RemoveMachineRole(ctx context.Context, id int, machineId int, roleId int, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRemoveMachineRoleRequest(c.Server, id, machineId, roleId)
+func (c *Client) RemoveMachineRole(ctx context.Context, id int, machineId int, roleId int, params *RemoveMachineRoleParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveMachineRoleRequest(c.Server, id, machineId, roleId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -10140,7 +10140,7 @@ func NewGrantMachineRoleRequestWithBody(server string, id int, machineId int, co
 }
 
 // NewRemoveMachineRoleRequest generates requests for RemoveMachineRole
-func NewRemoveMachineRoleRequest(server string, id int, machineId int, roleId int) (*http.Request, error) {
+func NewRemoveMachineRoleRequest(server string, id int, machineId int, roleId int, params *RemoveMachineRoleParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -10177,6 +10177,28 @@ func NewRemoveMachineRoleRequest(server string, id int, machineId int, roleId in
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.EnvironmentId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "environment_id", runtime.ParamLocationQuery, *params.EnvironmentId); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
@@ -15671,7 +15693,7 @@ type ClientWithResponsesInterface interface {
 	GrantMachineRoleWithResponse(ctx context.Context, id int, machineId int, body GrantMachineRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*GrantMachineRoleResponse, error)
 
 	// RemoveMachineRoleWithResponse request
-	RemoveMachineRoleWithResponse(ctx context.Context, id int, machineId int, roleId int, reqEditors ...RequestEditorFn) (*RemoveMachineRoleResponse, error)
+	RemoveMachineRoleWithResponse(ctx context.Context, id int, machineId int, roleId int, params *RemoveMachineRoleParams, reqEditors ...RequestEditorFn) (*RemoveMachineRoleResponse, error)
 
 	// ListMachineTokensWithResponse request
 	ListMachineTokensWithResponse(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*ListMachineTokensResponse, error)
@@ -23845,8 +23867,8 @@ func (c *ClientWithResponses) GrantMachineRoleWithResponse(ctx context.Context, 
 }
 
 // RemoveMachineRoleWithResponse request returning *RemoveMachineRoleResponse
-func (c *ClientWithResponses) RemoveMachineRoleWithResponse(ctx context.Context, id int, machineId int, roleId int, reqEditors ...RequestEditorFn) (*RemoveMachineRoleResponse, error) {
-	rsp, err := c.RemoveMachineRole(ctx, id, machineId, roleId, reqEditors...)
+func (c *ClientWithResponses) RemoveMachineRoleWithResponse(ctx context.Context, id int, machineId int, roleId int, params *RemoveMachineRoleParams, reqEditors ...RequestEditorFn) (*RemoveMachineRoleResponse, error) {
+	rsp, err := c.RemoveMachineRole(ctx, id, machineId, roleId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
