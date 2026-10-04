@@ -18,5 +18,6 @@ import (
 // (reference + faulted) per single fuzz iteration.
 func TestMain(m *testing.M) {
 	core.SetBcryptCostForTesting(bcrypt.MinCost)
+	finalizeRegisteredOps() // registry_test.go: registered ops join opCatalog after every init()
 	os.Exit(m.Run())
 }
