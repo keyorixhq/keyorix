@@ -10,12 +10,24 @@
 // storage.Storage that this generator hasn't been rerun for makes the package
 // fail to COMPILE, not silently under-cover — the ratchet is go build itself.
 //
-// Run via `go generate ./internal/faultstorage/...` (see generate.go) whenever
-// storage.Storage changes.
+// Run via `go generate ./internal/faultstorage/` (see generate.go) whenever
+// storage.Storage changes. go generate runs the command with the working
+// directory set to the package directory, so paths are resolved against the
+// module root (the nearest ancestor directory holding go.mod), not the cwd;
+// -root overrides that. -o writes the output somewhere other than the committed
+// file — internal/faultstorage/generated_fresh_test.go uses it to compare the
+// committed file against a fresh run byte-for-byte.
+//
+// Output is deterministic for a given interface source and Go toolchain: files
+// are read in os.ReadDir's sorted order, methods and imports are sorted before
+// emission, and no map is iterated while writing output. (go/format's output can
+// in principle change across Go releases; go.mod pins the language version.)
 package main
 
 import (
 	"bytes"
+	"errors"
+	"flag"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -67,18 +79,74 @@ type methodInfo struct {
 }
 
 func main() {
-	if err := run(); err != nil {
+	root := flag.String("root", "", "module root directory (default: nearest ancestor of the cwd containing go.mod)")
+	out := flag.String("o", "", "output file (default: <root>/"+outFile+")")
+	flag.Parse()
+	if err := run(*root, *out); err != nil {
 		fmt.Fprintln(os.Stderr, "genfaultystorage:", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
-	fset := token.NewFileSet()
-
-	entries, err := os.ReadDir(storagePkgDir)
+// findModuleRoot walks up from dir to the first directory containing go.mod.
+func findModuleRoot(dir string) (string, error) {
+	dir, err := filepath.Abs(dir)
 	if err != nil {
-		return fmt.Errorf("reading %s: %w", storagePkgDir, err)
+		return "", err
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", errors.New("no go.mod found in the working directory or any parent; pass -root")
+		}
+		dir = parent
+	}
+}
+
+func run(root, out string) error {
+	if root == "" {
+		var err error
+		if root, err = findModuleRoot("."); err != nil {
+			return err
+		}
+	}
+	if out == "" {
+		out = filepath.Join(root, outFile)
+	}
+	formatted, raw, genCount, total, err := generate(root)
+	if err != nil {
+		if raw != nil {
+			if dumpErr := os.WriteFile(out+".broken", raw, 0o600); dumpErr != nil {
+				return fmt.Errorf("%w (dumping the raw source to %s.broken also failed: %w)", err, out, dumpErr)
+			}
+			return fmt.Errorf("%w (raw source dumped to %s.broken)", err, out)
+		}
+		return err
+	}
+	if werr := os.WriteFile(out, formatted, 0o600); werr != nil {
+		return fmt.Errorf("writing %s: %w", out, werr)
+	}
+	fmt.Printf("genfaultystorage: wrote %d generated methods (%d hand-written, %d total) to %s\n",
+		genCount, len(handWritten), total, out)
+	return nil
+}
+
+// generate is the pure part of the generator: it reads the storage package
+// under root and returns the gofmt'd wrapper source. It writes nothing. On a
+// gofmt failure it returns the unformatted source as raw so the caller can dump
+// it for debugging.
+func generate(root string) (formatted, raw []byte, genCount, total int, err error) {
+	fset := token.NewFileSet()
+	pkgDir := filepath.Join(root, storagePkgDir)
+
+	entries, err := os.ReadDir(pkgDir)
+	if err != nil {
+		return nil, nil, 0, 0, fmt.Errorf("reading %s: %w", pkgDir, err)
 	}
 
 	localTypes := map[string]bool{}
@@ -89,10 +157,10 @@ func run() error {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
 			continue
 		}
-		path := filepath.Join(storagePkgDir, e.Name())
+		path := filepath.Join(pkgDir, e.Name())
 		f, perr := parser.ParseFile(fset, path, nil, parser.ParseComments)
 		if perr != nil {
-			return fmt.Errorf("parsing %s: %w", path, perr)
+			return nil, nil, 0, 0, fmt.Errorf("parsing %s: %w", path, perr)
 		}
 		if e.Name() == "interface.go" {
 			ifaceFile = f
@@ -120,12 +188,12 @@ func run() error {
 		}
 	}
 	if ifaceFile == nil {
-		return fmt.Errorf("interface.go not found under %s", storagePkgDir)
+		return nil, nil, 0, 0, fmt.Errorf("interface.go not found under %s", storagePkgDir)
 	}
 
 	iface, err := findInterface(ifaceFile, interfaceName)
 	if err != nil {
-		return err
+		return nil, nil, 0, 0, err
 	}
 
 	used := map[string]bool{} // package qualifiers actually emitted, e.g. "context", "storage", "models"
@@ -133,20 +201,20 @@ func run() error {
 	var methods []methodInfo
 	for _, m := range iface.Methods.List {
 		if len(m.Names) != 1 {
-			return fmt.Errorf("interface method with %d names (expected 1): %v", len(m.Names), m.Names)
+			return nil, nil, 0, 0, fmt.Errorf("interface method with %d names (expected 1): %v", len(m.Names), m.Names)
 		}
 		name := m.Names[0].Name
 		ft, ok := m.Type.(*ast.FuncType)
 		if !ok {
-			return fmt.Errorf("method %s: expected *ast.FuncType, got %T", name, m.Type)
+			return nil, nil, 0, 0, fmt.Errorf("method %s: expected *ast.FuncType, got %T", name, m.Type)
 		}
 		params, perr := extractFields(ft.Params, localTypes, used, "p")
 		if perr != nil {
-			return fmt.Errorf("method %s params: %w", name, perr)
+			return nil, nil, 0, 0, fmt.Errorf("method %s params: %w", name, perr)
 		}
 		results, rerr := extractFields(ft.Results, localTypes, used, "r")
 		if rerr != nil {
-			return fmt.Errorf("method %s results: %w", name, rerr)
+			return nil, nil, 0, 0, fmt.Errorf("method %s results: %w", name, rerr)
 		}
 		methods = append(methods, methodInfo{name: name, params: params, results: results})
 	}
@@ -159,13 +227,13 @@ func run() error {
 	buf.WriteString(imports)
 	buf.WriteString("\n")
 
-	genCount := 0
+	genCount = 0
 	for _, m := range methods {
 		if handWritten[m.name] {
 			continue
 		}
 		if len(m.results) == 0 || m.results[len(m.results)-1].typ != "error" {
-			return fmt.Errorf("method %s: expected last result to be error, got %v", m.name, m.results)
+			return nil, nil, 0, 0, fmt.Errorf("method %s: expected last result to be error, got %v", m.name, m.results)
 		}
 		writeMethod(&buf, m)
 		genCount++
@@ -173,17 +241,9 @@ func run() error {
 
 	formatted, ferr := format.Source(buf.Bytes())
 	if ferr != nil {
-		if dumpErr := os.WriteFile(outFile+".broken", buf.Bytes(), 0o600); dumpErr != nil {
-			return fmt.Errorf("gofmt generated source failed (%w), and dumping the raw source to %s.broken also failed: %w", ferr, outFile, dumpErr)
-		}
-		return fmt.Errorf("gofmt generated source (raw dumped to %s.broken): %w", outFile, ferr)
+		return nil, buf.Bytes(), 0, 0, fmt.Errorf("gofmt generated source: %w", ferr)
 	}
-	if werr := os.WriteFile(outFile, formatted, 0o600); werr != nil {
-		return fmt.Errorf("writing %s: %w", outFile, werr)
-	}
-	fmt.Printf("genfaultystorage: wrote %d generated methods (%d hand-written, %d total) to %s\n",
-		genCount, len(handWritten), len(methods), outFile)
-	return nil
+	return formatted, nil, genCount, len(methods), nil
 }
 
 func findInterface(f *ast.File, name string) (*ast.InterfaceType, error) {
