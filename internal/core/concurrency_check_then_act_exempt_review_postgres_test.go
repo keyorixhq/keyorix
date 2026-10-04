@@ -223,8 +223,17 @@ func TestCTAReview_ShareSecretWithGroup_vs_DeleteSecret_CrossReplicaPostgres(t *
 // UpdateShareRecord's Save(struct) matches 0 rows on the soft-deleted share
 // and GORM falls back to INSERT ... ON CONFLICT (id) DO UPDATE SET <all
 // columns>, deleted_at included — resurrecting the revoked grant.
+//
+// Bug origin (#2648):
+//
+//	Introduced-by: LocalStorage.UpdateShareRecord's GORM Save(existing)
+//	Detected-by:   C-GUARD2-EXEMPT-REVIEW #2662
+//	Class:         cross-replica check-then-act
+//	Severity:      high (a revoked share is live again)
+//	Guard:         this test (pg-gated) + TestUpdateSharePermission_IsColumnScoped
+//	Fix:           UpdateShareRecord is a column-scoped UPDATE scoped to
+//	               deleted_at IS NULL; matching no row fails closed
 func TestCTAReview_UpdateSharePermission_vs_RevokeShare_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2648: UpdateSharePermission's stale Save resurrects a concurrently revoked share; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	owner := f.user("cta-uowner", "project_admin")

@@ -111,7 +111,26 @@ func (ls *LocalStorage) GetShareRecord(ctx context.Context, shareID uint) (*mode
 	return &share, nil
 }
 
-// UpdateShareRecord updates the permission on an existing share record.
+// UpdateShareRecord updates the permission (and caller-resolved expiry) on an
+// existing, live share record. It writes only those columns plus updated_at,
+// through a conditional UPDATE that GORM scopes to deleted_at IS NULL, and
+// fails closed (ErrorShareNotFound) when that matches no row — i.e. the share
+// was revoked after the caller read it.
+//
+// Bug origin (#2648):
+//
+//	Introduced-by: the original GORM Save(existing) full-row write
+//	Detected-by:   C-GUARD2-EXEMPT-REVIEW #2662
+//	Class:         cross-replica check-then-act (stale Save upsert)
+//	Severity:      high (a share whose revocation reported success is live
+//	               again, with the permission the update asked for)
+//	Guard:         TestCTAReview_UpdateSharePermission_vs_RevokeShare_CrossReplicaPostgres,
+//	               TestUpdateSharePermission_IsColumnScoped
+//
+// Save is an upsert: against a concurrently revoked (soft-deleted) row its
+// UPDATE ... WHERE deleted_at IS NULL matches nothing and GORM falls back to
+// INSERT ... ON CONFLICT (id) DO UPDATE SET <every column>, deleted_at = NULL
+// included, resurrecting the revoked share. Never persist this row with Save.
 func (ls *LocalStorage) UpdateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error) {
 	if err := models.ValidateShareUpdate(share); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
@@ -123,11 +142,26 @@ func (ls *LocalStorage) UpdateShareRecord(ctx context.Context, share *models.Sha
 	existing.Permission = share.Permission
 	// ExpiresAt is caller-resolved (the core layer preserves the current value unless a
 	// change was requested), so copy it through — including nil to clear a time-bound
-	// share back to permanent. Save writes the nil as NULL.
-	existing.ExpiresAt = share.ExpiresAt
+	// share back to permanent. A map update writes the nil as NULL; it bypasses the
+	// model's BeforeSave hook, so normalize to UTC here (G81, see ShareRecord.BeforeSave).
+	existing.ExpiresAt = nil
+	if share.ExpiresAt != nil {
+		u := share.ExpiresAt.UTC()
+		existing.ExpiresAt = &u
+	}
 	existing.UpdatedAt = time.Now()
-	if err := ls.db.Save(existing).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
+	res := ls.db.WithContext(ctx).Model(&models.ShareRecord{}).
+		Where(sqlWhereID, existing.ID).
+		Updates(map[string]interface{}{
+			"permission": existing.Permission,
+			"expires_at": existing.ExpiresAt,
+			"updated_at": existing.UpdatedAt,
+		})
+	if res.Error != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), res.Error)
+	}
+	if res.RowsAffected != 1 {
+		return nil, fmt.Errorf("%s", i18n.T("ErrorShareNotFound", nil))
 	}
 	return existing, nil
 }
