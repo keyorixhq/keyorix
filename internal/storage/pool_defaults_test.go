@@ -176,7 +176,7 @@ func runPoolBenchmark(b *testing.B, db *gorm.DB) {
 				id := ids[(n*7919+i)%len(ids)]
 				var sec *models.SecretNode
 				if sec, err = c.GetSecret(ctx, id); err == nil {
-					c.LogSecretReadWithProject(ctx, 1, sec.ID, p.ID, "bench", sec.Name, "127.0.0.1", "bench")
+					err = c.LogSecretReadWithProject(ctx, 1, sec.ID, p.ID, "bench", sec.Name, "127.0.0.1", "bench")
 				}
 			} else {
 				name := fmt.Sprintf("w-%d-%d", n, i)
