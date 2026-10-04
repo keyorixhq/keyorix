@@ -113,7 +113,7 @@ func parentModels() map[string][]string {
 // it is not an FK field, or "!" if it looks like one but is unclassified.
 func fkParentModel(modelNames map[string]bool, model string, f reflect.StructField) string {
 	k := f.Type.Kind()
-	if k == reflect.Ptr {
+	if k == reflect.Pointer {
 		k = f.Type.Elem().Kind()
 	}
 	if f.Name == "ID" || !strings.HasSuffix(f.Name, "ID") || k != reflect.Uint {
