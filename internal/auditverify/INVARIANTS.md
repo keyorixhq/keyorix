@@ -48,11 +48,13 @@ Format: `INV-AUDITVERIFY-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#i
 - **INV-AUDITVERIFY-09** `ExternalAnchorStatus` (a caller-supplied `--anchor` bundle held
   outside this host's blast radius) must never be conflated with `AnchorStatus` (the in-DB
   checkpoint's own RFC 3161 receipt) — a host admin who controls the DB can forge the latter.
-  Why: verify.go `ExternalAnchorStatus` doc comment. Guard: `TestParseExternalAnchorBundle`
-  only covers parsing, not non-conflation of the two statuses or that the final verdict reflects
-  the worse of the two — UNGUARDED (#issue: assert the two fields can disagree, e.g. in-DB
-  anchor VALID while an external bundle says MISMATCH, and that `Result`'s verdict surfaces
-  the mismatch).
+  Why: verify.go `ExternalAnchorStatus` doc comment. Guard: `anchor_status_independence_test.go`
+  — `TestAnchorStatus_InDBAnchorDoesNotMaskExternalMismatch` (a re-seeded chain with a re-signed
+  in-DB checkpoint and anchor token passes every in-DB check, yet an earlier external bundle
+  drives the verdict to BROKEN, and `Anchor` is identical with or without the bundle) and
+  `TestAnchorStatus_ExternalAuthenticationDoesNotMarkInDBAnchor` (an authenticated bundle never
+  makes the in-DB anchor present or verified). Not covered: an in-DB anchor that verifies
+  against TSA roots, which needs a real RFC 3161 token the fixtures cannot mint (#2516).
 - **INV-AUDITVERIFY-10** `WriteWitnessIfHigher` must never lower the witness file's recorded
   high-water mark — only monotonically advance it. Why: witness.go — the rollback protection in
   `docs/design-b3-backup-v2.md` §6.3 compares an archive's recorded high-water mark against this
