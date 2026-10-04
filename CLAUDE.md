@@ -115,6 +115,15 @@ editing code in one of these packages.** If your change would have to break a li
 invariant, stop and ask rather than silently removing it; if you discover or add one while
 working, add it to that package's file in the same PR.
 
+**New invariants go in `<pkg>/INVARIANTS.d/INV-<PKG>-<kebab-slug>.md`** (one per file,
+same bullet format, a slug ID named for what it protects — never "the next number", which
+is how `INV-CORE-41` came to be defined twice), not appended to `INVARIANTS.md`.
+`internal/statemap/invariants_fragments_guard_test.go` fails on any duplicate ID involving a
+fragment, on malformed or misnamed fragments and on orphan `INVARIANTS.d/` directories, and
+logs legacy-only duplicates, which become fatal when a package is migrated by
+`scripts/ledgers/migrate-invariants-to-fragments.sh` (coordinator only, quiet window). See
+`docs/invariants-fragments.md`.
+
 ### Core principle: prefer the machine-checked over the asserted
 
 **Every claim this codebase makes should have a mechanism that fails when the claim stops
