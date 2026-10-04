@@ -641,7 +641,7 @@ only what you're authorized to read.`,
 }
 
 func init() {
-	secretListCmd.Flags().StringVar(&secretListProject, "project", "", "Project name")
+	secretListCmd.Flags().StringVar(&secretListProject, "project", "", "Project name or numeric ID")
 	secretListCmd.Flags().IntVar(&secretListEnv, "environment", 0, "Filter by environment ID (0 = all)")
 	secretListCmd.Flags().IntVar(&secretListLimit, "limit", 50, "Maximum number of results")
 	secretListCmd.Flags().IntVar(&secretListOffset, "offset", 0, "Number of results to skip")

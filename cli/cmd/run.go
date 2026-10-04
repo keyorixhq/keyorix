@@ -126,19 +126,11 @@ func resolveRunProjectID(ctx context.Context, client *apiclient.ClientWithRespon
 	if projectID != 0 {
 		return int(projectID), fmt.Sprintf("id=%d", projectID), nil
 	}
-	projResp, err := client.ListProjectsWithResponse(ctx, nil)
+	_, id, err = resolveProjectRef(ctx, client, projectName, true)
 	if err != nil {
-		return 0, "", fmt.Errorf("list projects: %w", err)
+		return 0, "", err
 	}
-	if projResp.JSON200 == nil || projResp.JSON200.Data == nil {
-		return 0, "", apiError("list projects", projResp.StatusCode(), projResp.Body)
-	}
-	for _, p := range derefProjectSummarySlice(projResp.JSON200.Data.Projects) {
-		if p.Name != nil && strings.EqualFold(*p.Name, projectName) {
-			return derefInt(p.Id), projectName, nil
-		}
-	}
-	return 0, "", fmt.Errorf("project %q not found", projectName)
+	return id, projectName, nil
 }
 
 // fetchRunSecrets resolves the environment name to an ID within projectID, then pages
@@ -202,13 +194,6 @@ func fetchRunSecrets(ctx context.Context, client *apiclient.ClientWithResponses,
 		}
 	}
 	return result, nil
-}
-
-func derefProjectSummarySlice[T any](s *[]T) []T {
-	if s == nil {
-		return nil
-	}
-	return *s
 }
 
 func derefEnvironmentSlice(s *[]apiclient.Environment) []apiclient.Environment {

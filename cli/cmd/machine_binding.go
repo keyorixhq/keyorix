@@ -48,7 +48,7 @@ var machineBindingRmCmd = &cobra.Command{
 
 func init() {
 	for _, c := range []*cobra.Command{machineBindingAddCmd, machineBindingListCmd, machineBindingRmCmd} {
-		c.Flags().StringVar(&machineBindingProjectName, "project", "", "Project name")
+		c.Flags().StringVar(&machineBindingProjectName, "project", "", "Project name or numeric ID")
 	}
 	machineBindingAddCmd.Flags().StringVar(&machineBindingIssuer, "issuer", "", "OIDC issuer (the token's iss claim) (required)")
 	machineBindingAddCmd.Flags().StringVar(&machineBindingSubject, "subject", "", "OIDC subject (the token's sub claim) (required)")

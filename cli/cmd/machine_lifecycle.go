@@ -38,7 +38,7 @@ var machineRevokeCmd = &cobra.Command{
 
 func init() {
 	for _, c := range []*cobra.Command{machineSuspendCmd, machineReactivateCmd, machineRevokeCmd} {
-		c.Flags().StringVar(&machineLifecycleProjectName, "project", "", "Project name")
+		c.Flags().StringVar(&machineLifecycleProjectName, "project", "", "Project name or numeric ID")
 	}
 	machineRevokeCmd.Flags().BoolVar(&machineRevokeForce, "force", false, "Skip the confirmation prompt")
 	machineCmd.AddCommand(machineSuspendCmd, machineReactivateCmd, machineRevokeCmd)
