@@ -350,7 +350,7 @@ var operationOverrides = map[string]overrideEntry{
 	"REST POST /auth/webauthn/login/finish":           {StatusFuzzed, "opCatalog[\"REST POST /auth/webauthn/login/finish\"] — Session FI2"},
 
 	// Session FI2: the SAML Assertion Consumer Service, driven with a real,
-	// cryptographically-signed Response (saml_acs_op_test.go via
+	// cryptographically-signed Response (zz_saml_acs_op_test.go via
 	// internal/saml/samltest) — ParseResponse's actual signature/audience/
 	// destination verification, not a stub.
 	"REST POST /auth/saml/{provider}/acs": {StatusFuzzed, "opCatalog[\"REST POST /auth/saml/{provider}/acs\"] — Session FI2"},

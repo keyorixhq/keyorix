@@ -1,4 +1,4 @@
-// saml_acs_op_test.go wires the SAML Assertion Consumer Service into opCatalog:
+// zz_saml_acs_op_test.go wires the SAML Assertion Consumer Service into opCatalog:
 // REST POST /auth/saml/{provider}/acs — the unauthenticated endpoint that consumes
 // an IdP's signed SAMLResponse and mints a session (CompleteSAML). Left StatusPending
 // because driving ParseResponse's real signature/audience/destination verification
@@ -149,6 +149,10 @@ type samlFuzzState struct {
 	samlResponseB64 string
 }
 
+// The zz_ file-name prefix is load-bearing: Go runs a package's init()s in
+// file-name order, and fuzz seeds address ops by opCatalog INDEX. Appending this
+// op after webauthn_finish_ops_test.go's init keeps every existing committed
+// seed pointing at the same op it was recorded against.
 func init() {
 	opCatalog = append(opCatalog, operation{
 		Key: "REST POST /auth/saml/{provider}/acs",
