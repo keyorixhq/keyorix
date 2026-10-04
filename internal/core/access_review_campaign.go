@@ -343,9 +343,6 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 	if err != nil {
 		return err
 	}
-	if err := c.claimItemDecision(ctx, item, itemID, actorID, targetDecision, reason); err != nil {
-		return err
-	}
 	decision := AccessReviewDecision{
 		Source:        item.Source,
 		PrincipalType: item.PrincipalType,
@@ -353,6 +350,26 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 		RoleID:        item.RoleID,
 		EnvironmentID: item.EnvironmentID,
 		SecretID:      item.SecretID,
+	}
+	// #2570: an attestation changes no grant — its only fallible work is reads
+	// (checkAccessReviewAttestation). Run them BEFORE the claim, and after the
+	// claim do nothing that can fail, so a reported error always means the item
+	// is still pending. Running them after the claim (the old order) let a
+	// ListProjectRoleAssignments storage error report failure while the item
+	// stayed committed as attested. A revoke still has to act after its claim
+	// (claim-before-act is what closes the #1646 attest/revoke race), so its
+	// post-claim failure window is unchanged and handled below.
+	if action == "attest" {
+		if err := c.checkAccessReviewAttestation(ctx, actorID, projectID, decision); err != nil {
+			return err
+		}
+	}
+	if err := c.claimItemDecision(ctx, item, itemID, actorID, targetDecision, reason); err != nil {
+		return err
+	}
+	if action == "attest" {
+		c.logAccessReviewDecision(ctx, EventAccessReviewAttested, "attested", actorID, projectID, decision)
+		return nil
 	}
 	if err := c.applyAccessDecision(ctx, actorID, projectID, action, decision); err != nil {
 		// The claim already committed (item now shows targetDecision) but the real

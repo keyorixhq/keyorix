@@ -198,6 +198,21 @@ func (c *KeyorixCore) revokeReviewShare(ctx context.Context, projectID uint, d A
 // access is still needed and correct"; recording it for a grant that no longer exists
 // would certify a false state in the compliance evidence trail (#209).
 func (c *KeyorixCore) AttestAccessReviewGrant(ctx context.Context, actorID, projectID uint, d AccessReviewDecision) error {
+	if err := c.checkAccessReviewAttestation(ctx, actorID, projectID, d); err != nil {
+		return err
+	}
+	c.logAccessReviewDecision(ctx, EventAccessReviewAttested, "attested", actorID, projectID, d)
+	return nil
+}
+
+// checkAccessReviewAttestation runs every check an attestation must pass —
+// validation, reviewer controls, and the live re-verification of the grant —
+// without recording anything. It is all reads: DecideAccessReviewItem runs it
+// BEFORE claiming the campaign item, so a storage error here (e.g.
+// ListProjectRoleAssignments failing) is reported with nothing persisted
+// (#2570), instead of after the claim had already committed the item as
+// attested.
+func (c *KeyorixCore) checkAccessReviewAttestation(ctx context.Context, actorID, projectID uint, d AccessReviewDecision) error {
 	if projectID == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
 	}
@@ -207,11 +222,7 @@ func (c *KeyorixCore) AttestAccessReviewGrant(ctx context.Context, actorID, proj
 	if err := c.enforceAccessReviewReviewerControls(ctx, actorID, d); err != nil {
 		return err
 	}
-	if err := c.verifyAccessReviewGrantExists(ctx, projectID, d); err != nil {
-		return err
-	}
-	c.logAccessReviewDecision(ctx, EventAccessReviewAttested, "attested", actorID, projectID, d)
-	return nil
+	return c.verifyAccessReviewGrantExists(ctx, projectID, d)
 }
 
 // verifyAccessReviewGrantExists re-queries the actual grant a decision references —

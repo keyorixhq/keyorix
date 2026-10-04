@@ -221,6 +221,14 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
 - **INV-CORE-37** A SUCCESS audit event never textually precedes the storage write it reports
   on, in the same function; denial/failure events are exempt by construction, anything else
   needs a reviewed `AUDIT:<fn>` exemption. Guard: `atomicity_guard_test.go:TestAtomicityGuard_AuditBeforeWrite`.
+- **INV-CORE-41** `DecideAccessReviewItem`'s attest path does every fallible read
+  (reviewer controls, the live grant re-verification) BEFORE the conditional claim that commits
+  the item's decision, and nothing that can fail after it — so a reported error means the item
+  is still pending. (The revoke path must act after its claim to keep the #1646 race closed; its
+  post-claim failure window is logged as `SECURITY: ... manual reconciliation required`.) Why:
+  #2570, found by `FuzzStorageFaultOperations`. Guard:
+  `access_review_decide_read_before_write_test.go:TestDecideAccessReviewItem_AttestGrantLookupErrorLeavesItemPending`,
+  corpus seed `2570_decideaccessreviewitem_listprojectroleassignments_error`.
 
 ## Check-then-act across replicas (GUARD-2)
 
