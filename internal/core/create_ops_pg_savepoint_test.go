@@ -132,7 +132,7 @@ func TestCreateUser_PostgresSavepoint_RoleAssignFailureIsNonFatal(t *testing.T) 
 		require.NoError(t, err, "CreateUser must succeed even though the system_viewer AssignRole insert fails")
 	})
 	require.NotZero(t, user.ID)
-	require.Contains(t, logOutput, "Warning: user", "the swallowed AssignRole failure must be logged, not silent")
+	require.Contains(t, logOutput, "users.CreateUser.AssignBaselineRole", "the swallowed AssignRole failure must be logged (via besteffort.Run), not silent")
 
 	var userCount int64
 	require.NoError(t, db.Model(&models.User{}).Where("id = ?", user.ID).Count(&userCount).Error)
