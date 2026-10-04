@@ -53,6 +53,33 @@ systemd unit's `ExecStart` points at `fuzz-runner.sh`.
 
 Fuzzing catches ledger (finds, lessons, disclosure history): `keyorixhq/fuzz-corpus` `docs/fuzzing-catches-ledger.md`.
 
+## Adding a FuzzStorageFaultOperations operation (server/faultops)
+
+**New operations go in their own file, `server/faultops/ops_<area>_test.go`,
+registered from an `init()`** — never appended to `opcatalog_test.go`'s
+`opCatalog` literal or `inventory_overrides_test.go`'s `operationOverrides`
+literal. Those are single shared tables: every two op-adding PRs conflicted on
+them and had to be serialised through the merge queue.
+
+```go
+func init() {
+	registerOps("saml", operation{Key: "REST POST /auth/saml/acs", Setup: ..., Execute: ...})
+	registerOverrides("saml", map[string]overrideEntry{
+		"REST POST /auth/saml/acs": {StatusFuzzed, "opCatalog — ops_saml_test.go"},
+	})
+}
+```
+
+`server/faultops/registry_test.go` documents the merge rules: registered ops
+are appended after every legacy op (so legacy seed indices never shift), in
+(area, registration order); a registered override never overwrites an
+existing entry. `TestRegisteredCatalog_NoDuplicateKeys` fails on a duplicate
+op key across legacy + registered ops and on any override collision, and the
+existing `TestOperationCatalogKeysAreRegistered` applies to registered ops
+exactly as to legacy ones (a registered op still needs a `StatusFuzzed`
+override, and vice versa). Do not edit `fuzz_storage_fault_operations_test.go`
+or `inventory_overrides_test.go` to add an op.
+
 ## Harness quality gates (beyond never-panic)
 
 A never-panic harness proves nothing about a security boundary, and an *in-wall*
