@@ -22,7 +22,11 @@
 #   - Refuses (exit 1, NOTHING written in any package) if any target package
 #     has a duplicate ID — within INVARIANTS.md, or against an existing
 #     fragment — or an invariant definition in a shape it does not move
-#     (indented, or a `*` bullet). It prints what to renumber.
+#     (indented, or a `*` bullet). It prints what to renumber. This is where
+#     a legacy-only duplicate becomes fatal: the doc guard merely logs those
+#     (so open PRs appending numbered bullets are not blocked), but a migrated
+#     package has every ID in a fragment, where the guard fails on any
+#     duplicate — so a package with one must not be migrated as-is.
 #   - Idempotent: a package with no remaining bullets is a no-op, so a second
 #     run changes nothing. Deterministic: output depends only on file content.
 #   - Never touches docs/INVARIANTS.md (the index).
@@ -87,8 +91,8 @@ for p in "${PKGS[@]}"; do
       grep -nF -- "- **$id**" "$f" | sed "s|^|    $f:|" >&2 || true
       [ -f "$p/INVARIANTS.d/$id.md" ] && echo "    $p/INVARIANTS.d/$id.md" >&2
       echo "  renumber all but one of them (give the newer rule a slug ID, e.g. ${id%-*}-<what-it-protects>)," >&2
-      echo "  update any references to it, drop it from knownDuplicateInvariantIDs in" >&2
-      echo "  internal/statemap/invariants_fragments_guard_test.go, then rerun." >&2
+      echo "  update any references to it, then rerun. (The doc guard only logs legacy-only" >&2
+      echo "  duplicates; this refusal is where they become fatal.)" >&2
     done
   fi
 done

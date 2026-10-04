@@ -70,7 +70,8 @@ index, plus every `INVARIANTS.d/`:
 
 | Rule | Applies to |
 |---|---|
-| No ID defined twice (within the file, within `INVARIANTS.d/`, or across them) | all |
+| No ID defined twice where at least one definition is a fragment (fragment vs fragment, fragment vs legacy) | fragments |
+| Duplicates purely among legacy bullets are **logged** (`LEGACY DUPLICATE …`), not fatal | legacy |
 | Every ID carries the prefix from the package's `Format:` line | all |
 | Legacy `INVARIANTS.md` bullets use numeric IDs (slugs belong in fragments) | legacy |
 | Exactly one bold `**INV-...**`, as a first-line `- **ID**` bullet | fragments |
@@ -89,10 +90,16 @@ says "Guard (regression, …)"), `INV-ENCRYPTION-26`, `INV-STORAGE-33`, `INV-GRP
 "not a gap, by design" entries. Enforcing it repo-wide needs those reworded first, in files
 that many open PRs touch. Migrated numeric fragments inherit the same exemption.
 
-**Known duplicates:** `knownDuplicateInvariantIDs` in the guard grandfathers `INV-CORE-41`
-only. The guard also fails if a grandfathered ID is no longer duplicated, so the list can
-only shrink: renumbering one of the two `INV-CORE-41`s makes the test red until the entry is
-deleted. No other duplicate exists on `main` (the real-tree run is green with that one entry).
+**Why legacy-only duplicates are logged, not fatal:** about 50 open PRs append numbered
+bullets to the legacy files, and several already reuse an ID (`INV-CORE-41`/`42`,
+`INV-STORE-21`). A fatal check would turn those PRs red, or turn the second of each pair red
+inside the merge queue once the first lands. That is exactly the friction this layout exists
+to remove. So `TestInvariantDocs_RealRepo` `t.Log`s each legacy-only duplicate as
+`LEGACY DUPLICATE (not failing until migration; renumber as a slug fragment): …`. On `main`
+today that is only `INV-CORE-41` (`internal/core/INVARIANTS.md:218` and `:253`). **The check
+becomes fatal at migration time.** The migration script refuses to migrate a package that has
+a duplicate. A migrated package has every ID in a fragment, where any duplicate fails the
+guard. Nobody in the queue uses fragments yet, so the fragment rule blocks no existing PR.
 
 What the guard does **not** check: that a named guard test exists or passes (that is
 `scripts/check-closures.sh`'s / `check-adr-conformance.sh`'s job for ledgered claims), that an
@@ -115,13 +122,13 @@ run is a no-op), validates every target package before writing anything, and ref
 changes — printing what to renumber — if any target has a duplicate ID.
 
 ```sh
-# every package except internal/core (blocked by the duplicate INV-CORE-41 until renumbered):
+# every package except internal/core (the migration script refuses it until the duplicate INV-CORE-41 is renumbered):
 scripts/ledgers/migrate-invariants-to-fragments.sh \
   internal/storage internal/storage/store internal/encryption internal/auditverify \
   server/middleware server/http server/grpc server/grpc/services cli web/src
 go test ./internal/statemap/ -run InvariantDocs -count=1
 
-# after INV-CORE-41 is renumbered and its knownDuplicateInvariantIDs entry deleted:
+# after INV-CORE-41 (and any duplicate IDs merged from the queue since) are renumbered:
 scripts/ledgers/migrate-invariants-to-fragments.sh --all
 ```
 

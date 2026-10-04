@@ -19,10 +19,17 @@
 // What it checks, for every directory holding an INVARIANTS.md (except the
 // docs/INVARIANTS.md index) plus every INVARIANTS.d/ directory:
 //
-//	(a) no invariant ID is defined twice — within INVARIANTS.md, within
-//	    INVARIANTS.d/, or across the two — except IDs in
-//	    knownDuplicateInvariantIDs, which must STILL be duplicated (a stale
-//	    grandfather entry fails, so the list can only shrink);
+//	(a) no invariant ID is defined twice where at least one definition is an
+//	    INVARIANTS.d/ fragment (fragment vs fragment, or fragment vs legacy
+//	    bullet). A duplicate purely among legacy INVARIANTS.md bullets is NOT
+//	    a failure: it is reported via t.Log as "LEGACY DUPLICATE". This is
+//	    deliberate — ~50 open PRs append numbered bullets to the legacy files,
+//	    several already reuse IDs (INV-CORE-41/42, INV-STORE-21), and failing
+//	    on those would block the merge queue this layout exists to unblock.
+//	    Legacy duplicates become fatal at migration time instead:
+//	    scripts/ledgers/migrate-invariants-to-fragments.sh refuses to migrate
+//	    a package holding one, and a migrated package has every ID in a
+//	    fragment, where this rule applies in full;
 //	(b) a fragment defines exactly one bold `**INV-...**` ID, as its first
 //	    line, in the package bullet shape `- **<ID>** ...`;
 //	(c) a fragment's ID equals its file name minus `.md`, and every ID (legacy
@@ -64,17 +71,6 @@ import (
 	"testing/fstest"
 )
 
-// knownDuplicateInvariantIDs: IDs that are duplicated on main today and are
-// tolerated ONLY until renumbered. Every entry must still be a real duplicate
-// (checkInvariantDocs fails on a stale entry), so this can only shrink.
-var knownDuplicateInvariantIDs = map[string]string{
-	"INV-CORE-41": "internal/core/INVARIANTS.md defines INV-CORE-41 twice (GUARD-2 " +
-		"exempt-TSV rule, and the cross-replica WithNamedLock serialization rule) " +
-		"— two PRs each appended \"the next number\". Fix: renumber one (or migrate " +
-		"both to slug-ID fragments) in a quiet window when no open PR touches " +
-		"internal/core/INVARIANTS.md, then delete this entry.",
-}
-
 const invariantsIndexPath = "docs/INVARIANTS.md"
 
 var (
@@ -93,9 +89,10 @@ var (
 )
 
 type invDef struct {
-	id   string
-	file string // fsys-relative path
-	line int
+	id       string
+	fragment bool
+	file     string // fsys-relative path
+	line     int
 }
 
 // skipDirForInvariants prunes trees that are not this repo's source.
@@ -108,14 +105,14 @@ func skipDirForInvariants(name string) bool {
 }
 
 // checkInvariantDocs returns one human-readable violation per problem found
-// in fsys (rooted at the repo root). An empty result means green.
-func checkInvariantDocs(fsys fs.FS, knownDups map[string]string) ([]string, error) {
-	var violations []string
+// in fsys (rooted at the repo root) — an empty result means green — plus the
+// non-fatal legacy-only duplicates (see rule (a)), both sorted.
+func checkInvariantDocs(fsys fs.FS) (violations, legacyDups []string, err error) {
 	add := func(format string, args ...any) { violations = append(violations, fmt.Sprintf(format, args...)) }
 
 	pkgFiles := map[string]bool{} // dir -> has INVARIANTS.md
 	fragDirs := map[string]bool{} // dir (parent of INVARIANTS.d) -> true
-	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
+	err = fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -134,7 +131,7 @@ func checkInvariantDocs(fsys fs.FS, knownDups map[string]string) ([]string, erro
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	defsByID := map[string][]invDef{}
@@ -169,7 +166,7 @@ func checkInvariantDocs(fsys fs.FS, knownDups map[string]string) ([]string, erro
 		file := path.Join(dir, "INVARIANTS.md")
 		raw, err := fs.ReadFile(fsys, file)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		content := string(raw)
 		lines := strings.Split(content, "\n")
@@ -215,7 +212,7 @@ func checkInvariantDocs(fsys fs.FS, knownDups map[string]string) ([]string, erro
 		fdir := path.Join(dir, "INVARIANTS.d")
 		entries, err := fs.ReadDir(fsys, fdir)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, e := range entries {
 			fp := path.Join(fdir, e.Name())
@@ -225,7 +222,7 @@ func checkInvariantDocs(fsys fs.FS, knownDups map[string]string) ([]string, erro
 			}
 			fraw, err := fs.ReadFile(fsys, fp)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			fcontent := string(fraw)
 			ids := invBoldIDRE.FindAllStringSubmatch(fcontent, -1)
@@ -246,7 +243,7 @@ func checkInvariantDocs(fsys fs.FS, knownDups map[string]string) ([]string, erro
 				add("%s: fragment defines %s but its file name says %s — the file name must equal the ID", fp, id, want)
 			}
 			checkIDShape(id, prefix, fp, true)
-			record(invDef{id: id, file: fp, line: 1})
+			record(invDef{id: id, file: fp, line: 1, fragment: true})
 			isSlug := invSlugSuffixRE.MatchString(strings.TrimPrefix(id, prefix+"-"))
 			if isSlug && !strings.Contains(fcontent, "Guard:") && !strings.Contains(fcontent, "UNGUARDED") {
 				add("%s: %s states neither `Guard:` nor `UNGUARDED`", fp, id)
@@ -275,28 +272,21 @@ func checkInvariantDocs(fsys fs.FS, knownDups map[string]string) ([]string, erro
 		if len(defs) < 2 {
 			continue
 		}
-		if _, ok := knownDups[id]; ok {
-			continue
-		}
 		locs := make([]string, 0, len(defs))
+		anyFragment := false
 		for _, d := range defs {
 			locs = append(locs, fmt.Sprintf("%s:%d", d.file, d.line))
+			anyFragment = anyFragment || d.fragment
+		}
+		if !anyFragment {
+			legacyDups = append(legacyDups, fmt.Sprintf("LEGACY DUPLICATE (not failing until migration; renumber as a slug fragment): %s defined %d times: %s", id, len(defs), strings.Join(locs, ", ")))
+			continue
 		}
 		add("duplicate invariant ID %s defined %d times: %s — give the newer one a collision-free slug ID (see docs/invariants-fragments.md)", id, len(defs), strings.Join(locs, ", "))
 	}
-	known := make([]string, 0, len(knownDups))
-	for id := range knownDups {
-		known = append(known, id)
-	}
-	sort.Strings(known)
-	for _, id := range known {
-		if len(defsByID[id]) < 2 {
-			add("knownDuplicateInvariantIDs[%q] is stale: %s is defined %d time(s) now — delete the grandfather entry", id, id, len(defsByID[id]))
-		}
-	}
-
 	sort.Strings(violations)
-	return violations, nil
+	sort.Strings(legacyDups)
+	return violations, legacyDups, nil
 }
 
 // invariantsRepoRoot walks up from the test's working directory to the
@@ -325,9 +315,12 @@ func invariantsRepoRoot(t *testing.T) string {
 // TestInvariantDocs_RealRepo is the green half: the real tree must pass.
 func TestInvariantDocs_RealRepo(t *testing.T) {
 	root := invariantsRepoRoot(t)
-	v, err := checkInvariantDocs(os.DirFS(root), knownDuplicateInvariantIDs)
+	v, legacy, err := checkInvariantDocs(os.DirFS(root))
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, s := range legacy {
+		t.Log(s)
 	}
 	for _, s := range v {
 		t.Error(s)
@@ -373,10 +366,10 @@ func fixtureFS(extra map[string]string) fstest.MapFS {
 
 func TestInvariantDocs_Fixtures(t *testing.T) {
 	cases := []struct {
-		name  string
-		extra map[string]string
-		known map[string]string
-		want  string // substring of the single expected violation; "" = green
+		name    string
+		extra   map[string]string
+		want    string // substring of the single expected violation; "" = green
+		wantLog string // substring of the single expected legacy-duplicate log line
 	}{
 		{name: "green baseline"},
 		{name: "green: migrated numeric fragment", extra: map[string]string{
@@ -384,9 +377,17 @@ func TestInvariantDocs_Fixtures(t *testing.T) {
 		{name: "duplicate fragment vs legacy", extra: map[string]string{
 			"pkg/INVARIANTS.d/INV-PKG-01.md": "- **INV-PKG-01** Again. Guard: `T`.\n"},
 			want: "duplicate invariant ID INV-PKG-01 defined 2 times"},
-		{name: "duplicate within legacy file", extra: map[string]string{
+		{name: "green: duplicate purely among legacy bullets is logged, not fatal", extra: map[string]string{
 			"pkg/INVARIANTS.md": fixturePkg + "- **INV-PKG-02** Dup. Guard: `T`.\n"},
-			want: "duplicate invariant ID INV-PKG-02 defined 2 times"},
+			wantLog: "LEGACY DUPLICATE (not failing until migration; renumber as a slug fragment): INV-PKG-02 defined 2 times: pkg/INVARIANTS.md:9, pkg/INVARIANTS.md:10"},
+		{name: "two fragments defining the same ID", extra: map[string]string{
+			"pkg/INVARIANTS.d/INV-PKG-twin.md":  "- **INV-PKG-twin** R. Guard: `T`.\n",
+			"pkg/INVARIANTS.d/INV-PKG-twin2.md": "- **INV-PKG-twin** S. Guard: `T`.\n"},
+			want: "duplicate invariant ID INV-PKG-twin defined 2 times"},
+		{name: "fragment duplicating a legacy-duplicated ID still fails", extra: map[string]string{
+			"pkg/INVARIANTS.md":              fixturePkg + "- **INV-PKG-02** Dup. Guard: `T`.\n",
+			"pkg/INVARIANTS.d/INV-PKG-02.md": "- **INV-PKG-02** Third. Guard: `T`.\n"},
+			want: "duplicate invariant ID INV-PKG-02 defined 3 times"},
 		{name: "fragment name mismatch", extra: map[string]string{
 			"pkg/INVARIANTS.d/INV-PKG-other.md": "- **INV-PKG-something** R. Guard: `T`.\n"},
 			want: "file name must equal the ID"},
@@ -430,18 +431,18 @@ func TestInvariantDocs_Fixtures(t *testing.T) {
 		{name: "index defines an invariant", extra: map[string]string{
 			"docs/INVARIANTS.md": "# index\n- **INV-PKG-09** R. Guard: `T`.\n"},
 			want: "the index must not define invariants"},
-		{name: "grandfathered duplicate is tolerated",
-			extra: map[string]string{"pkg/INVARIANTS.md": fixturePkg + "- **INV-PKG-02** Dup. Guard: `T`.\n"},
-			known: map[string]string{"INV-PKG-02": "fixture"}},
-		{name: "stale grandfather entry (duplicate removed)",
-			known: map[string]string{"INV-PKG-02": "fixture"},
-			want:  `knownDuplicateInvariantIDs["INV-PKG-02"] is stale`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			v, err := checkInvariantDocs(fixtureFS(tc.extra), tc.known)
+			v, legacy, err := checkInvariantDocs(fixtureFS(tc.extra))
 			if err != nil {
 				t.Fatal(err)
+			}
+			if tc.wantLog == "" && len(legacy) != 0 {
+				t.Fatalf("want no legacy-duplicate log lines, got:\n%s", strings.Join(legacy, "\n"))
+			}
+			if tc.wantLog != "" && (len(legacy) != 1 || !strings.Contains(legacy[0], tc.wantLog)) {
+				t.Fatalf("want exactly one legacy-duplicate log line containing %q, got %d:\n%s", tc.wantLog, len(legacy), strings.Join(legacy, "\n"))
 			}
 			if tc.want == "" {
 				if len(v) != 0 {
@@ -449,18 +450,20 @@ func TestInvariantDocs_Fixtures(t *testing.T) {
 				}
 				return
 			}
-			if len(v) != 1 || !strings.Contains(v[0], tc.want) {
-				t.Fatalf("want exactly one violation containing %q, got %d:\n%s", tc.want, len(v), strings.Join(v, "\n"))
+			// The two-fragments-same-ID case necessarily also trips "file name
+			// must equal the ID" for one of the two files; require the expected
+			// violation to be present and every other one to be that.
+			found := false
+			for _, s := range v {
+				if strings.Contains(s, tc.want) {
+					found = true
+				} else if !strings.Contains(s, "file name must equal the ID") || !strings.Contains(tc.want, "duplicate") {
+					t.Errorf("unexpected extra violation: %s", s)
+				}
+			}
+			if !found {
+				t.Fatalf("want a violation containing %q, got %d:\n%s", tc.want, len(v), strings.Join(v, "\n"))
 			}
 		})
-	}
-}
-
-// TestKnownDuplicateInvariantIDs_HaveReasons keeps the grandfather list honest.
-func TestKnownDuplicateInvariantIDs_HaveReasons(t *testing.T) {
-	for id, why := range knownDuplicateInvariantIDs {
-		if len(strings.TrimSpace(why)) < 40 {
-			t.Errorf("knownDuplicateInvariantIDs[%q]: the reason must say why it is duplicated and how it gets fixed", id)
-		}
 	}
 }
