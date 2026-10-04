@@ -220,7 +220,9 @@ func (ls *LocalStorage) UpdateUser(ctx context.Context, user *models.User) (*mod
 //
 // It writes ONLY the seven profile columns below, the fields its callers
 // (core.UpdateUser, SCIM's scimUpdateUserTx / DeprovisionSCIMUser) actually
-// own. It used to write the full pre-read row (Select("*")), which reverted
+// own (the SCIM paths also change account_state; they persist it separately,
+// through the conditional SetAccountStateIfMatches, C-RACE-FIX-B2). It used to
+// write the full pre-read row (Select("*")), which reverted
 // every column a narrower concurrent writer changed after that read:
 // SetAccountState (a suspension), SetPasswordHash (a password change), the MFA
 // and lockout writers. Gating on is_active alone did not catch any of them,
@@ -285,6 +287,21 @@ func (ls *LocalStorage) SetAccountState(ctx context.Context, id uint, state stri
 		return fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil))
 	}
 	return nil
+}
+
+// SetAccountStateIfMatches persists ONLY account_state (plus updated_at), and
+// only if the row's current account_state is still fromState — see the
+// storage.Storage interface doc. GORM adds deleted_at IS NULL for the
+// soft-delete model. COALESCE so a NULL column (pre-backfill, INV-STORAGE-15)
+// is matched by fromState "", the value GORM reads it back as.
+func (ls *LocalStorage) SetAccountStateIfMatches(ctx context.Context, id uint, fromState, toState string, updatedAt time.Time) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.User{}).
+		Where("id = ? AND COALESCE(account_state, '') = ?", id, fromState).
+		Updates(map[string]interface{}{"account_state": toState, "updated_at": updatedAt})
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
 }
 
 // SetPasswordHash persists ONLY password_hash and password_changed_at (plus

@@ -6192,6 +6192,23 @@ func (w *FaultyStorage) SetAccountState(ctx context.Context, id uint, state stri
 	return w.real.SetAccountState(ctx, id, state, updatedAt)
 }
 
+func (w *FaultyStorage) SetAccountStateIfMatches(ctx context.Context, id uint, fromState string, toState string, updatedAt time.Time) (bool, error) {
+	fire, kind, injected := w.check("SetAccountStateIfMatches")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.SetAccountStateIfMatches(ctx, id, fromState, toState, updatedAt)
+			return rv1, injected
+		}
+	}
+	return w.real.SetAccountStateIfMatches(ctx, id, fromState, toState, updatedAt)
+}
+
 func (w *FaultyStorage) SetPasswordHash(ctx context.Context, id uint, hash string, changedAt time.Time) error {
 	fire, kind, injected := w.check("SetPasswordHash")
 	if fire {

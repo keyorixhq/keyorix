@@ -37,6 +37,16 @@ var (
 	// dropped or silently clobber the winner.
 	ErrUserActiveStateConflict = errors.New("user's active state changed concurrently")
 
+	// ErrUserAccountStateConflict is returned by the SCIM lifecycle writes
+	// (UpdateSCIMUser's deactivate/reactivate, DeprovisionSCIMUser) when the
+	// row's persisted account_state moved away from the value they read before
+	// computing the new one — e.g. a concurrent SuspendUser on another replica
+	// committed in between (storage.Storage.SetAccountStateIfMatches matched no
+	// row). The SCIM write is refused rather than reverting that state; the IdP
+	// retries against the current state (C-RACE-FIX-B2, follow-up to
+	// #2653/#2654).
+	ErrUserAccountStateConflict = errors.New("user's account state changed concurrently")
+
 	// ErrNotProjectMember is returned by RemoveProjectMember when the target
 	// user holds no role grant in the project — a benign no-op distinguishable
 	// (via errors.Is) from a real refusal such as guardLastProjectAdmin's,

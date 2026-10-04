@@ -285,6 +285,13 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `user_profile_column_scoped_guard_test.go:TestUserProfileWrites_AreColumnScoped` +
   `TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres` /
   `TestCTAReview_UpdateOwnProfile_vs_ChangePassword_CrossReplicaPostgres` (pg-gated).
+  An operation whose NEW `account_state` is derived from the one it read (the SCIM lifecycle
+  paths: `scimUpdateUserTx`, `DeprovisionSCIMUser`) writes it only through
+  `SetAccountStateIfMatches` conditioned on that read value, never the blind
+  `SetAccountState`, and fails closed with `ErrUserAccountStateConflict` on a miss
+  (C-RACE-FIX-B2): `scim_account_state_conditional_guard_test.go:TestSCIMAccountStateWrites_AreConditional`,
+  `scim_account_state_persisted_test.go`, and
+  `TestCTAReview_SCIM_vs_SuspendUser_WithoutRowLock_CrossReplicaPostgres` (pg-gated).
   UNGUARDED: #2648 share revoke, #2650 secret undelete, #2651 dynamic config re-enable.
 
 ## Account-state / exhaustiveness
