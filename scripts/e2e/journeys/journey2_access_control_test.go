@@ -202,17 +202,19 @@ func accessControl(t *testing.T, s *harness.Server, cliBin, adminUser, adminPass
 			"--project", strconv.Itoa(projA), "--environment", strconv.Itoa(envA), "--value", "nope")
 		assertNoSecretNamed(t, s, adminToken, projA, envA, "editor-post-revoke")
 
-		// REST, exact status -- removeUserRoleUnguarded's session-cache
-		// tombstone (evictUserSessionCache) invalidates the editor's WHOLE
-		// session, so the very next call on that same token hits the 401
-		// (invalid/unknown session) path, not a fresh-but-permission-denied
-		// 403 -- confirmed live, not assumed (see this journey's PR/commit
-		// for the observed status before this assertion was pinned).
+		// REST, exact status -- since #2423, removeUserRoleUnguarded's
+		// evictUserSessionCache CLEARS the editor's cached auth entry instead of
+		// writing a negative tombstone (a role removal does not invalidate the
+		// session itself; a tombstone answered 401 "unauthenticated" for a
+		// session that was still valid). The very next call is therefore
+		// re-authorized live against user_roles and denied with 403
+		// (authenticated, but no longer permitted) -- still immediate, with no
+		// stale grant. Before #2423 this asserted 401.
 		postRevokeEnv := restCall(t, s, editorToken, http.MethodPost, "/api/v1/secrets", map[string]interface{}{
 			"name": "editor-post-revoke-rest", "project_id": projA, "environment_id": envA, "value": "nope", "type": "generic",
 		})
-		if postRevokeEnv.StatusCode != http.StatusUnauthorized {
-			t.Errorf("editor REST create after role removal: want HTTP %d, got %d: %s", http.StatusUnauthorized, postRevokeEnv.StatusCode, string(postRevokeEnv.Raw))
+		if postRevokeEnv.StatusCode != http.StatusForbidden {
+			t.Errorf("editor REST create after role removal: want HTTP %d, got %d: %s", http.StatusForbidden, postRevokeEnv.StatusCode, string(postRevokeEnv.Raw))
 		}
 		assertDenialLeaksNothing(t, postRevokeEnv, n2ValueA, n2ValueB, n2ProjectB)
 		assertNoSecretNamed(t, s, adminToken, projA, envA, "editor-post-revoke-rest")
