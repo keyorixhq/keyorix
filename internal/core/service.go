@@ -698,6 +698,7 @@ func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) (
 		return false
 	}
 	c.afterAuditEventPersisted(event)
+	return true
 }
 
 // prepareAuditEventForEmit applies the mutations emitAudit/emitAuditWithAccessLog
@@ -732,7 +733,6 @@ func (c *KeyorixCore) afterAuditEventPersisted(event *models.AuditEvent) {
 	if c.auditStream != nil {
 		c.auditStream.signal()
 	}
-	return true
 }
 
 // emitAuditWithAccessLog is emitAudit's error-returning sibling for a caller
