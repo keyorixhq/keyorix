@@ -1,0 +1,105 @@
+name: Cross-replica race tests (Postgres)
+
+# GUARD-2 (QA-1 pattern #3): every KEYORIX_TEST_PG_DSN-gated cross-replica
+# check-then-act race test in internal/core and internal/storage/store needs
+# a real multi-connection Postgres to run at all -- without it, every one
+# silently t.Skip()s, proving nothing. ci.yml's own "core"/"storage-store-1/2"
+# legs DO set KEYORIX_TEST_PG_DSN, but only run on push-to-main, merge_group,
+# workflow_dispatch, or a PR carrying the ci:full label (see test-suite's own
+# `if:` comment) -- an ordinary PR touching internal/core or
+# internal/storage gets test-quick-root instead, which has no Postgres
+# service and never sets the DSN, so a NEW pg-gated race test added in such a
+# PR never actually proves anything until days later, whenever that PR
+# happens to pick up the ci:full label or lands on main. This workflow closes
+# that gap directly: path-filtered to the two packages this bug class lives
+# in, with its own Postgres service, on every relevant PR push, plus a
+# nightly run against main so a regression introduced by a NON-internal/core
+# change (a shared helper, a migration) that only manifests through these
+# packages' tests still gets caught within a day.
+#
+# Deliberately a SEPARATE workflow file, not a new leg folded into ci.yml's
+# test-suite matrix or a new `paths:` filter on ci.yml's own top-level
+# `on:` block -- ci.yml's `on:` trigger is deliberately NOT path-filtered
+# (see the `changes` job's own comment: path-filtering an entire workflow's
+# trigger leaves a REQUIRED check stuck pending forever for an unaffected PR,
+# unlike a job-level `if:`), and ci.yml is a high-conflict file under active
+# edit by another session in this same campaign (CI-1, merge_group trimming)
+# -- an additive new file costs nothing there. Not marked as a required
+# status check by this PR (that's a branch-protection setting, out of this
+# session's authority to change) -- if a future change makes it required,
+# convert the `paths:` filter below to a job-level `if:` first, matching
+# ci.yml's own reasoning, or an unaffected PR will show this check stuck
+# pending.
+#
+# Deliberately NOT run with -race: ci.yml's ci:full-labeled/merge_group path
+# already covers these same packages under -race separately. This workflow's
+# job is DSN coverage (does the test run at all), not race-detector coverage.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    # See ci.yml's own comment: also covers stacked-PR review chains.
+    branches: [main, 'adr082/**', 'feat/**', 'fix/**']
+    paths: ['internal/core/**.go', 'internal/storage/**.go']
+  schedule:
+    # 04:47 UTC nightly, off the round minute and distinct from this repo's
+    # other scheduled slots (e2e-nightly 03:23, govulncheck-scheduled/
+    # osv-scanner Friday 17:19).
+    - cron: '47 4 * * *'
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: pg-race-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pg-gated-race-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: keyorix
+          POSTGRES_PASSWORD: keyorix123
+          POSTGRES_DB: keyorix
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      KEYORIX_TEST_PG_DSN: "host=localhost port=5432 dbname=keyorix user=keyorix sslmode=disable password=keyorix123"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+
+      - name: internal/core and internal/storage/store, Postgres DSN set
+        run: go test -timeout 1800s ./internal/core/... ./internal/storage/...
+
+  alert:
+    needs: [pg-gated-race-tests]
+    # Only the nightly/push-to-main run alerts (matches e2e-nightly.yml's and
+    # govulncheck-scheduled.yml's identical guard) -- a PR run's own failing
+    # check is already visible on the PR, no separate issue needed.
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Open, update or close the alert issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
+        run: ./scripts/ci/failure-issue.sh "$OUTCOME" "Nightly cross-replica race tests (Postgres) are failing"
