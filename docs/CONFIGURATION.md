@@ -136,8 +136,8 @@ storage:
     # PostgreSQL (recommended for production) — set type: postgres above:
     # dsn: "host=db user=keyorix dbname=keyorix port=5432 sslmode=require"
     # password: ""                # prefer KEYORIX_DB_PASSWORD
-    max_open_conns: 25
-    max_idle_conns: 25  # match max_open_conns, or a connection gets closed instead of reused
+    # max_open_conns: 8          # default: 8 for SQLite, 25 for Postgres (see below)
+    # max_idle_conns: 8          # default: the effective max_open_conns
     conn_max_lifetime_minutes: 30
     # audit_flusher_linger_window: ""  # e.g. "1ms"; default "" (0, no deliberate
     #   wait — the audit-chain batching flusher commits whatever is already
@@ -151,6 +151,45 @@ storage:
     #   keyorix_audit_flusher_batch_size/_flushes_total metrics (exposed on
     #   the server's /metrics endpoint) justify it for your own load shape.
 ```
+
+### Connection pool
+
+| Key | Default | What it does |
+|---|---|---|
+| `max_open_conns` | **8** on SQLite, **25** on Postgres | Upper bound on open database connections. A request that needs one while all are busy waits in Go's pool. |
+| `max_idle_conns` | the effective `max_open_conns` | How many connections stay open and warm when idle. A lower value closes connections after each burst and re-opens them (on Postgres, a full TCP + SCRAM handshake each time). |
+| `conn_max_lifetime_minutes` | 0 (never recycle) when unset; the generated config sets 30 | Recycles connections after this age. Useful behind a load balancer or connection proxy, or across a Postgres failover; it has no effect on throughput. |
+
+The defaults were picked from measurements (#2631, PERF-2 follow-up, 4 vCPU host, Postgres 16 on
+the same host). Two harnesses were used: the real server over HTTP (30s runs, 10s client
+timeout), and `BenchmarkPoolSize` in `internal/storage`, which drives the same workload through
+`core`.
+
+**SQLite: 8.** SQLite has one writer at a time, and the embedded driver is pure Go, so every
+connection's queries compete for the same CPUs. Past about twice the core count, more
+connections only add contention.
+
+| `max_open_conns` | `BenchmarkPoolSize` ms/op | read p99 | HTTP, 5 writers + 50 readers: writes/s, reads/s (with #2420 + #2637) |
+|---|---|---|---|
+| 4 | 1.23–1.26 | 356–411 ms | 57, 630 |
+| **8** | 1.25–1.40 | 469–654 ms | 51–52, 701–721 |
+| 25 (old default) | 1.46–1.49 | 912–948 ms | 30–31, 724–725 |
+
+On current `main` (before #2420 and #2637) the HTTP runs point the same way: 8 vs 25 gave
++38% writes / −10% reads with 5 writers + 50 readers, and +63% writes / −27% reads with
+50 writers + 20 readers, plus a third fewer audit appends lost to the pre-#2420 backlog.
+
+**Postgres: 25.** Between 10 and 50 connections, reads were flat within run-to-run noise, and 25
+was best for writes (`BenchmarkPoolSize`: 0.67 ms/op at 25 vs 0.74 at 10 and 0.68 at 50). At
+**100**, 150 concurrent readers made **1.6% of reads and 0.3% of writes fail** with
+`SQLSTATE 53300 "sorry, too many clients already"`: Postgres's own `max_connections` defaults
+to 100, and every replica brings its own pool. Keep `replicas × max_open_conns` below
+`max_connections − superuser_reserved_connections`. At startup, the server logs a warning when
+a single pool already exceeds that.
+
+Raising `max_open_conns` does not make a database-bound workload faster: the wait moves from
+Go's pool into the database. If profiles show goroutines waiting for a pool connection, check
+the database's own latency first.
 
 `type: remote` points the CLI at a Keyorix server over the API; see the remote
 section of the client config. **It is work in progress:** 202 of 428
