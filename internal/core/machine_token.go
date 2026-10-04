@@ -489,19 +489,26 @@ func (c *KeyorixCore) AssignMachineRole(ctx context.Context, machineID, roleID u
 // scope.EnvironmentID, when non-zero, must name an environment of scope.ProjectID
 // (fail closed, same as AssignMachineRole); storage matches the scope exactly, so
 // a project-wide (EnvironmentID 0) removal never touches an environment-scoped grant.
+//
+// Uses the SAME lock key as AssignMachineRole (sodGrantLockKey("machine", machineID)),
+// not a separate one: a grant and a removal racing on the same machine identity must
+// serialize against each other too, not just against other grants/removals of their
+// own kind (GUARD-2, check-then-act lock guard).
 func (c *KeyorixCore) RemoveMachineRole(ctx context.Context, machineID, roleID uint, scope Scope, actorID uint) error {
 	m, err := c.machineInProject(ctx, scope.ProjectID, machineID)
 	if err != nil {
 		return err
 	}
-	if err := c.requireEnvironmentInProject(ctx, scope); err != nil {
-		return err
-	}
-	if err := c.storage.RemoveMachineRole(ctx, machineID, roleID, scope); err != nil {
-		return err
-	}
-	c.logMachineEvent(ctx, "machine_identity.role_removed", m, actorID)
-	return nil
+	return c.storage.WithNamedLock(ctx, sodGrantLockKey("machine", machineID), func(ctx context.Context) error {
+		if err := c.requireEnvironmentInProject(ctx, scope); err != nil {
+			return err
+		}
+		if err := c.storage.RemoveMachineRole(ctx, machineID, roleID, scope); err != nil {
+			return err
+		}
+		c.logMachineEvent(ctx, "machine_identity.role_removed", m, actorID)
+		return nil
+	})
 }
 
 // ListMachineRoles returns every role granted to a machine identity in the
