@@ -14,24 +14,24 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-// sqlCapture is a gorm logger that records every executed statement (vars inlined),
+// anomalySQLCapture is a gorm logger that records every executed statement (vars inlined),
 // so a test can EXPLAIN the exact SQL production code issued instead of a hand-copied
 // predicate that could drift from it.
-type sqlCapture struct {
+type anomalySQLCapture struct {
 	logger.Interface
 	mu   sync.Mutex
 	stmt []string
 }
 
-func (c *sqlCapture) LogMode(logger.LogLevel) logger.Interface { return c }
-func (c *sqlCapture) Trace(_ context.Context, _ time.Time, fc func() (string, int64), _ error) {
+func (c *anomalySQLCapture) LogMode(logger.LogLevel) logger.Interface { return c }
+func (c *anomalySQLCapture) Trace(_ context.Context, _ time.Time, fc func() (string, int64), _ error) {
 	sql, _ := fc()
 	c.mu.Lock()
 	c.stmt = append(c.stmt, sql)
 	c.mu.Unlock()
 }
 
-func (c *sqlCapture) find(t *testing.T, substrs ...string) string {
+func (c *anomalySQLCapture) find(t *testing.T, substrs ...string) string {
 	t.Helper()
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -75,7 +75,7 @@ func explainSQLite(t *testing.T, db *gorm.DB, sql string) string {
 // indexes themselves are created on both dialects by the same migration
 // (TestCompanionIndexes_CreatedOnUpgrade).
 func TestAnomalyQueries_UseTheirIndexes(t *testing.T) {
-	cap := &sqlCapture{Interface: logger.Discard}
+	cap := &anomalySQLCapture{Interface: logger.Discard}
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: cap})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
