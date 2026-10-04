@@ -223,7 +223,7 @@ func TestCommittedV2Seeds_Resolve(t *testing.T) {
 				"storage.Storage method — the op or method was renamed or removed; re-target the seed", f, data[1:5], data[5:9])
 		}
 	}
-	t.Logf("%d committed v2 seed(s) resolve", n)
+	t.Logf("%d committed seed(s) carry the v2 magic byte; any that failed to resolve are reported above", n)
 }
 
 // TestCommittedV2Seeds_RequireV2Decoder guards the condition v2 seeds depend
