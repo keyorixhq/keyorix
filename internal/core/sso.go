@@ -530,6 +530,14 @@ func (c *KeyorixCore) resolveSSOUser(ctx context.Context, provider, sub, email s
 		if gerr != nil {
 			return nil, fmt.Errorf("the account for this SSO identity is no longer available")
 		}
+		// The claim is conditional on external_id still being unset. If another
+		// provider claimed this account between our read and our write, the
+		// re-read shows ITS id: refuse instead of logging this provider's user in
+		// to an account bound elsewhere (the cross-provider vector the claim exists
+		// to close).
+		if fresh.ExternalID != ssoExternalID(provider, sub) {
+			return nil, fmt.Errorf("this account is already linked to a different sign-in provider")
+		}
 		u = fresh
 	}
 	return u, nil

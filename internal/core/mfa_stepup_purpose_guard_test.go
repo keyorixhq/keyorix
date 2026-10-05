@@ -89,7 +89,7 @@ type mfaStepUpAllowEntry struct {
 // TestMFAStepUpConsumersUseExpectedPurpose -- exactly the shape a future
 // "accept any live grant" regression would take.
 var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
-	"internal/faultstorage/faulty_storage_generated.go:354": {
+	"internal/faultstorage/faulty_storage_generated.go:371": {
 		expectedPurpose: "",
 		reason: "generated, mechanical pass-through (w.real.ConsumeMFAStepUpGrant(...)) inside a " +
 			"test/fuzz-harness-only storage.Storage wrapper (server/faultops's FuzzStorageFaultOperations) " +
@@ -98,21 +98,24 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 			"function invoked it; this line is one hop further down, at the storage interface, and never " +
 			"itself chooses or inspects the purpose value.",
 	},
-	"internal/faultstorage/faulty_storage_generated.go:358": {
+	"internal/faultstorage/faulty_storage_generated.go:375": {
 		expectedPurpose: "",
-		reason:          "see internal/faultstorage/faulty_storage_generated.go:354 — the second (KindEffectThenError) call to the real ConsumeMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
+		reason:          "see internal/faultstorage/faulty_storage_generated.go:371 — the second (KindEffectThenError) call to the real ConsumeMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
 	},
-	"internal/faultstorage/faulty_storage_generated.go:2233": {
+	"internal/faultstorage/faulty_storage_generated.go:2250": {
 		expectedPurpose: "",
 		reason: "generated, mechanical pass-through (w.real.GetActiveMFAStepUpGrant(...)) inside the same " +
-			"test/fuzz-harness-only wrapper — see internal/faultstorage/faulty_storage_generated.go:354's " +
+			"test/fuzz-harness-only wrapper — see internal/faultstorage/faulty_storage_generated.go:371's " +
 			"reasoning; this is the read-only sibling call, same forwarding shape. (Line shifted from :2231 " +
-			"by PR #2357's unrelated DeleteRole signature change, which added a net +1 line earlier in this " +
-			"generated file via `go run ./internal/faultstorage/gen` — same call site, not a new one.)",
+			"by PR #2357's unrelated DeleteRole signature change, then again by #2699 adding " +
+			"ClaimUserExternalIDIfUnset to storage.Storage — it sorts before both MFA step-up wrappers, " +
+			"so regeneration pushed them down. Same call sites, not new ones. Keying this allowlist by " +
+			"line number into a GENERATED file makes every interface addition anywhere in the repo break " +
+			"this guard; #2716 re-keys it by function+callee and removes the class.)",
 	},
-	"internal/faultstorage/faulty_storage_generated.go:2237": {
+	"internal/faultstorage/faulty_storage_generated.go:2254": {
 		expectedPurpose: "",
-		reason:          "see internal/faultstorage/faulty_storage_generated.go:2233 — the second (KindEffectThenError) call to the real GetActiveMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
+		reason:          "see internal/faultstorage/faulty_storage_generated.go:2250 — the second (KindEffectThenError) call to the real GetActiveMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
 	},
 	"internal/core/mfa.go:600": {
 		expectedPurpose: "MFAStepUpPurposeReauth",

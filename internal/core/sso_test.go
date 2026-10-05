@@ -888,3 +888,18 @@ func TestSanitizeReturnTo(t *testing.T) {
 	// A same-origin path with a subpath still passes.
 	assert.Equal(t, "/secrets/view", sanitizeReturnTo("/secrets/view"))
 }
+
+// #2778 review: a concurrent first login through ANOTHER provider claims the
+// account between this login's read and its conditional claim. The claim
+// returns false and the re-read shows the other provider's id: this login must
+// be refused, not completed onto an account bound elsewhere.
+func TestResolveSSOUser_LostClaimToOtherProviderIsRefused(t *testing.T) {
+	c, store, _, _ := ssoTestCore(t)
+	store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound))
+	store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, ExternalID: ""}, nil)
+	store.On("ClaimUserExternalIDIfUnset", mock.Anything, uint(9), "sso:okta:okta|123", mock.Anything).Return(false, nil)
+	store.On("GetUser", mock.Anything, uint(9)).Return(&models.User{ID: 9, ExternalID: "sso:azure:azure|999", IsActive: true, AccountState: AccountActive}, nil)
+	u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io", true)
+	require.Error(t, err)
+	assert.Nil(t, u)
+}
