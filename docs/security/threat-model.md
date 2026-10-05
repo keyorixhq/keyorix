@@ -310,8 +310,13 @@ migration author's individual discipline (`security-review-2026-09.md`
 
 ### 5.5 Supply chain
 
-Eleven required CI status checks gate every merge to `main`, with no bypass —
-`govulncheck` (known-vulnerability gate, checked on every PR), `gosec` +
+A GitHub ruleset gates every merge to `main` behind 18 required CI
+status-check contexts routed through a squash-only merge queue. **Correction
+(2026-10-05):** earlier revisions of this section said "no bypass" — the
+live ruleset carries a standing `OrganizationAdmin`/`always` bypass actor
+(verified via `gh api`); see [`testing.md`](testing.md) and
+[`SDLC.md`](SDLC.md#branch-protection) for the evidence. The checks
+themselves: `govulncheck` (known-vulnerability gate, checked on every PR), `gosec` +
 `golangci-lint` (static analysis), `go test -race` (the full suite including
 security regressions), `go vet`, `gitleaks` (PR-scoped secret history scan),
 `CodeQL` (cross-function taint tracking, both Go modules), `checkov` (Helm

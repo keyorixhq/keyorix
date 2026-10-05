@@ -33,9 +33,14 @@ Claude-Code-driven parallel sessions, git worktrees under `.claude/worktrees/` �
 an operational convention layered on top of this model, not itself part of the
 branching decision) merged back to `main` via PR.
 
-**Branch protection is real, not aspirational.** `CONTRIBUTING.md` states it
+**Branch protection is real, not aspirational.** `CONTRIBUTING.md` stated it
 directly: "Open a PR against `main`. CI must pass in full before it can merge
 (branch protection enforces this — there's no bypass, including for maintainers)."
+**Correction (2026-10-05):** that line in `CONTRIBUTING.md` has been corrected —
+the live ruleset carries a standing `OrganizationAdmin`/`always` bypass actor.
+This ADR's quote is left as the historical record of what was stated at the
+time rather than rewritten; see [`docs/security/SDLC.md`](security/SDLC.md#branch-protection)
+for the current, verified state.
 Eleven required checks gate every merge (go vet/build/test, gosec, golangci-lint,
 govulncheck, gitleaks, CodeQL, Helm lint/kubeconform, checkov, go-licenses, per
 `CONTRIBUTING.md`'s own enumeration). `.github/CODEOWNERS` scopes mandatory review

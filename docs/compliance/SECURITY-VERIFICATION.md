@@ -116,8 +116,14 @@ each strengthens:
 
 ## Standing CI security gates
 
-11 required status checks gate every pull request and merge to `main` — branch
-protection enforces this with no bypass, including for maintainers:
+11 required status checks gate every pull request and merge to `main` —
+branch protection enforces this via a GitHub ruleset routing merges through
+a squash-only merge queue. **Correction (2026-10-05):** this used to say
+"no bypass, including for maintainers" — the live ruleset carries a
+standing `OrganizationAdmin`/`bypass_mode: always` bypass actor (checked
+via `gh api repos/keyorixhq/keyorix/rulesets`), so that wasn't accurate.
+See [`SDLC.md`](../security/SDLC.md#branch-protection) for the ruleset
+evidence:
 
 - **`govulncheck`** — fails the build on a known vulnerability in any dependency
   reachable from the code.

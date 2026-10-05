@@ -87,8 +87,13 @@ Keyorix server runs **entirely within your perimeter**:
 What Keyorix never does: open outbound connections to us, embed third-party
 analytics, or require internet access for any cryptographic operation.
 
-A full STRIDE threat model is maintained internally and shared with customers and
-prospects under evaluation — ask via hello@keyorix.com.
+The full STRIDE threat model — assets, trust boundaries, per-boundary
+threats with mitigation citations, and residual risks stated honestly,
+including open ones — is public in this repository:
+[`docs/security/threat-model.md`](docs/security/threat-model.md), with
+per-component breakdowns under
+[`docs/security/threat-models/`](docs/security/threat-models/). It is not
+gated behind a sales conversation.
 
 ## Verifying a Release
 
@@ -189,8 +194,46 @@ Download releases only from `github.com/keyorixhq/keyorix/releases` over HTTPS.
   Record before implementation
 - External contributions require DCO sign-off (`git commit -s` — see
   [CONTRIBUTING.md](CONTRIBUTING.md)) and maintainer review. Branch protection
-  on `main` requires every required CI check to pass (enforced for maintainers
-  too, no bypass) before a PR can merge.
+  on `main` is a GitHub ruleset requiring every required CI check to pass
+  before a PR can merge, via a merge queue (squash-only). **Correction
+  (2026-10-05):** this page previously stated that enforcement has "no
+  bypass, including for maintainers." Reading the live ruleset directly
+  (`gh api repos/keyorixhq/keyorix/rulesets/<id>`) shows a standing
+  `bypass_actors` entry for `OrganizationAdmin` with `bypass_mode: always` —
+  an org admin can bypass this ruleset's required checks. That is a real,
+  configured capability, not a hypothetical, so it is stated here rather
+  than repeated as "no bypass." See
+  [`docs/security/SDLC.md`](docs/security/SDLC.md) § Branch protection for
+  the full ruleset detail and whether this is an intended break-glass
+  capability or should be tightened.
+
+## Safe Harbor
+
+Keyorix will not pursue or support legal action against anyone who makes a
+good-faith effort to find and report a vulnerability under this policy,
+provided that you:
+
+- Only test against your own Keyorix instance (self-hosted, or a disposable
+  environment you control) — never a deployment you don't own or operate.
+- Avoid privacy violations, data destruction, and service disruption to
+  anyone other than yourself.
+- Give us the chance to resolve the issue before any public disclosure,
+  consistent with the coordinated-disclosure timeline above.
+- Don't exploit a finding beyond what's needed to demonstrate and report it.
+
+Testing conducted consistent with this policy is authorized under the
+Computer Fraud and Abuse Act and equivalent anti-hacking laws, and we will
+not initiate legal action for research that stays within these bounds. If
+a third party (not Keyorix) initiates legal action related to research that
+followed this policy, we will make clear — to the extent we're able — that
+your actions were authorized.
+
+## Hall of Fame
+
+Keyorix credits reporters by name in the published advisory, unless they
+prefer otherwise (see Reporting above). No third-party vulnerability
+reports have been validated and published as advisories yet — this
+section will list credited researchers as advisories publish.
 
 ## Security-Relevant Configuration
 
