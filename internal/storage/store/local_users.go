@@ -304,6 +304,25 @@ func (ls *LocalStorage) SetAccountStateIfMatches(ctx context.Context, id uint, f
 	return res.RowsAffected == 1, nil
 }
 
+// ClaimUserExternalIDIfUnset persists ONLY external_id (plus updated_at), and
+// only onto a live row whose external_id is still unset — see the
+// storage.Storage interface doc for why resolveSSOUser's first-federation write
+// cannot be the generic full-row UpdateUser (#2699).
+//
+// GORM adds `deleted_at IS NULL` for this soft-delete model, which is the
+// clause that actually stops the resurrection; `COALESCE(external_id,”) = ”`
+// is the CAS on the value the caller read. COALESCE because the column is NULL
+// on rows written before it existed, which GORM reads back as "".
+func (ls *LocalStorage) ClaimUserExternalIDIfUnset(ctx context.Context, id uint, externalID string, updatedAt time.Time) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.User{}).
+		Where("id = ? AND COALESCE(external_id, '') = ''", id).
+		Updates(map[string]interface{}{"external_id": externalID, "updated_at": updatedAt})
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}
+
 // SetPasswordHash persists ONLY password_hash and password_changed_at (plus
 // updated_at) via a direct column update — see the storage.Storage interface doc
 // comment (#484/#454) for why this narrower primitive exists alongside the generic

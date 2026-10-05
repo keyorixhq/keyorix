@@ -942,6 +942,11 @@ func (m *MockStorage) SetAccountStateIfMatches(ctx context.Context, id uint, fro
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockStorage) ClaimUserExternalIDIfUnset(ctx context.Context, id uint, externalID string, updatedAt time.Time) (bool, error) {
+	args := m.Called(ctx, id, externalID, updatedAt)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStorage) SetPasswordHash(ctx context.Context, id uint, hash string, changedAt time.Time) error {
 	args := m.Called(ctx, id, hash, changedAt)
 	return args.Error(0)
