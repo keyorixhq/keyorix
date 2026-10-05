@@ -126,6 +126,43 @@ var consumeFirstExemptions = []consumeFirstExemption{
 		maxRowsRemoved:     map[string]int{"SSOLoginState": 1},
 		why:                "ConsumeSSOLoginState deleted the single-use RelayState row before assertion validation and user resolution; it must stay consumed so a captured response cannot be replayed",
 	},
+	// ActivateMFA and RegenerateMFARecoveryCodes are DisableMFA's siblings:
+	// all three call requireReauth (class B) before their own
+	// WithTransaction, so all three leave MFASecret.LastUsedStep burned when
+	// that transaction fails. Found by this session's derived sweep of the
+	// auth/MFA/SSO ops (ORACLE-A-1 item 4), not by a CI failure -- these are
+	// the next (method, nth) pairs CI's randomized fuzz-changed would have
+	// surfaced one at a time, on 7 distinct storage methods between them:
+	//   /api/v1/auth/mfa/activate            ActivateMFASecret#1, CreateMFARecoveryCodes#1,
+	//                                        SetUserMFAEnabled#1, WithTransaction#1
+	//   /api/v1/auth/mfa/recovery-codes/...  CreateMFARecoveryCodes#1,
+	//                                        DeleteMFARecoveryCodes#1, WithTransaction#1
+	// all with the identical [MFASecret AuditEvent] diff. Adding them op-scoped
+	// here, rather than waiting for seven separate red builds, is the whole
+	// point of the op-scoped form over a per-(method, nth) tolerance row.
+	//
+	// LEDGER GAP, flagged rather than papered over: ActivateMFA makes a SECOND
+	// consume of this same column on its own (internal/core/mfa.go's own
+	// MarkTOTPStepUsed on the just-validated enrolment code, outside
+	// requireReauth), for the identical anti-replay reason. ActivateMFA itself
+	// has no row in docs/atomicity-exempt.tsv, so fn below names requireReauth
+	// -- the consume that IS classified -- and the unclassified sibling consume
+	// is noted here. It writes the same column for the same reason, and the
+	// "everything outside the declared consumption is byte-identical" check is
+	// what actually bounds this entry either way; but the ledger should
+	// probably carry a row for ActivateMFA, and this comment is the ask.
+	{
+		op:              "REST POST /api/v1/auth/mfa/activate",
+		fn:              "(*KeyorixCore).requireReauth",
+		consumedColumns: map[string][]string{"MFASecret": {"LastUsedStep"}},
+		why:             "requireReauth (and ActivateMFA's own MarkTOTPStepUsed) burned the matched TOTP time-step before the activation transaction; it must stay burned so the same code cannot be replayed",
+	},
+	{
+		op:              "REST POST /api/v1/auth/mfa/recovery-codes/regenerate",
+		fn:              "(*KeyorixCore).requireReauth",
+		consumedColumns: map[string][]string{"MFASecret": {"LastUsedStep"}},
+		why:             "requireReauth burned the matched TOTP time-step before the recovery-code replacement transaction; it must stay burned so the same code cannot be replayed",
+	},
 }
 
 // consumeFirstExemptionFor returns the entry for op, or nil.
