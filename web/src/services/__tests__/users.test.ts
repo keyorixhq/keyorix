@@ -250,32 +250,73 @@ describe('usersApi ADR-025 lifecycle + views', () => {
         expect(res).toEqual({ email: 'e@x.io', channel: 'smtp', delivered: true });
     });
 
+    // #2781 added `roles[]` and `via_group` to this row: a user can hold more than
+    // one role at a project's scope (a direct grant plus a group-inherited one), and
+    // an admin needs to know when a membership comes from a group, because the
+    // project's own Members tab has no row to remove for it.
     it('getMemberships normalizes snake/Pascal keys', async () => {
         mocked.get.mockResolvedValue({
             data: {
                 data: {
                     memberships: [
-                        { project_id: 3, project_name: 'payments', role: 'project_developer', state: 'active' },
+                        {
+                            project_id: 3,
+                            project_name: 'payments',
+                            role: 'project_developer',
+                            roles: ['project_developer'],
+                            state: 'active',
+                            via_group: false,
+                        },
                     ],
                 },
             },
         });
         const rows = await usersApi.getMemberships(42);
         expect(mocked.get).toHaveBeenCalledWith('/api/v1/users/42/memberships');
-        expect(rows).toEqual([{ project_id: 3, project_name: 'payments', role: 'project_developer', state: 'active' }]);
+        expect(rows).toEqual([
+            {
+                project_id: 3,
+                project_name: 'payments',
+                role: 'project_developer',
+                roles: ['project_developer'],
+                state: 'active',
+                via_group: false,
+            },
+        ]);
     });
 
     it('getMemberships normalizes PascalCase keys and defaults a sparse row', async () => {
         mocked.get.mockResolvedValue({
             data: {
                 data: {
-                    memberships: [{ ProjectID: 4, ProjectName: 'infra', Role: 'project_viewer', State: 'active' }, {}],
+                    memberships: [
+                        { ProjectID: 4, ProjectName: 'infra', Role: 'project_viewer', State: 'active', ViaGroup: true },
+                        {},
+                    ],
                 },
             },
         });
         const rows = await usersApi.getMemberships(42);
-        expect(rows[0]).toEqual({ project_id: 4, project_name: 'infra', role: 'project_viewer', state: 'active' });
-        expect(rows[1]).toEqual({ project_id: 0, project_name: '', role: '', state: '' });
+        // roles[] absent on the wire falls back to [role], not [] — a row must name
+        // at least the role it reports, or the UI reads it as "no role".
+        expect(rows[0]).toEqual({
+            project_id: 4,
+            project_name: 'infra',
+            role: 'project_viewer',
+            roles: ['project_viewer'],
+            state: 'active',
+            via_group: true,
+        });
+        // A fully sparse row has no role to fall back to, so roles is empty rather
+        // than ['']: an empty list is honest, a list containing "" is not.
+        expect(rows[1]).toEqual({
+            project_id: 0,
+            project_name: '',
+            role: '',
+            roles: [],
+            state: '',
+            via_group: false,
+        });
     });
 
     it('getMemberships falls back to bare data.memberships, and to [] when neither wrapper is present', async () => {

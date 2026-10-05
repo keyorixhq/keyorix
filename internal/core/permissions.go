@@ -74,7 +74,7 @@ func (c *KeyorixCore) requireLiveOwnerAuthority(ctx context.Context, secret *mod
 	if !secretOwnedBy(secret.OwnerID, actorID) {
 		return false, nil
 	}
-	member, err := c.storage.IsProjectMember(ctx, actorID, secret.ProjectID)
+	member, err := c.IsProjectMember(ctx, actorID, secret.ProjectID)
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}

@@ -261,6 +261,11 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		"regenerateMFARecoveryCodes": true,
 		"verifyMFALogin":             true,
 		"authConsumeSetup":           true,
+
+		// #2781 (one definition of project membership): the per-user membership
+		// view gained a response schema when it stopped answering from the ADR-022
+		// onboarding journal -- users_memberships_2781_test.go.
+		"getUserMembershipsForUser": true,
 	}
 
 	loadSpec()
