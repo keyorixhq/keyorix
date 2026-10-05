@@ -75,10 +75,13 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   conditional `WHERE id = ? AND state/status = ?` + `Select("*")` + `Updates(m)` — the full
   mutated row is written in one statement, only when the row's current state still matches
   `fromState`. Why: #388; mirrors `UpdateProjectInvitation`'s shape; "atomic security counters"
-  review-finding pattern applied to state machines. Guard: inferred live from
-  `local_machine_identities.go:57` and `local_secrets.go:548` — dedicated test names not
-  independently confirmed in this pass. UNGUARDED pending confirmation (#issue: locate and
-  cite the exact test, or add one asserting a stale-fromState UPDATE affects 0 rows).
+  review-finding pattern applied to state machines. Guard:
+  `local_state_transition_cas_test.go:TestTransitionMachineIdentityState_StaleFromStateIsRejectedAndNoOp`
+  and `local_secrets_transition_status_test.go:TestTransitionSecretStatus_ClosesRace` (stale
+  `fromState` → matched=false, row untouched; full row persisted), plus
+  `concurrency_state_transition_cas_postgres_test.go:TestConcurrency_StateTransitionCAS_MultiInstancePostgres_ExactlyOneWinner`
+  (8 independent connections, bare conditional write, exactly one winner; pg-gated). Verified red by
+  dropping the `AND state/status = ?` predicate (8 winners; loser clobbers).
 - **INV-STORE-15** `LockMachineIdentityForUpdate` takes `SELECT ... FOR UPDATE` on Postgres
   only (SQLite has no row lock, relies on single-process + transaction) — the two dialects'
   serialization strategy stays matched to `TransitionMachineIdentityState`'s usage, and the
