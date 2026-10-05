@@ -53,6 +53,18 @@ keyorix.docker.yaml
 push-all.sh
 install.sh
 
+# web/ IS needed now (#2752): server/Dockerfile's webui stage builds the dashboard from
+# it so the server binary embeds the real SPA. Its build INPUTS are needed; its local
+# build OUTPUTS and installed dependencies are not, and must not be sent -- node_modules
+# is large, host-arch-specific, and would be copied straight over the webui stage's own
+# `pnpm install --frozen-lockfile` result; a stale local web/dist would be rebuilt by
+# `pnpm build` anyway.
+**/node_modules
+web/dist
+web/test-results
+web/playwright-report
+web/coverage
+
 # Never send local secrets/keys into a build context.
 *.key
 *.pem

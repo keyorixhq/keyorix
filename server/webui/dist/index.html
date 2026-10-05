@@ -16,9 +16,11 @@
       <h1>Keyorix API server</h1>
       <p>
         This build does not bundle the web dashboard. The API is running and
-        healthy at <code>/health</code>. To get the dashboard, use the Docker
-        stack (web container) or a release binary built with
-        <code>make build-ui</code>.
+        healthy at <code>/health</code>. To get the dashboard: build with
+        <code>make build-ui</code>, use a release tarball, or build the server
+        image (<code>docker build -f server/Dockerfile .</code>) &mdash; all
+        three embed it. The <code>docker compose</code> stack serves it from its
+        separate <code>web</code> container instead.
       </p>
     </main>
   </body>

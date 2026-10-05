@@ -1,3 +1,37 @@
+# Web UI stage (#2752). Builds the dashboard so the Go stage below can embed it into
+# the server binary -- `docker build -f server/Dockerfile .` alone now produces an image
+# that serves the real dashboard at /, for BOTH build-tag variants.
+#
+# Before this stage existed, every image this Dockerfile produced -- including the
+# published ghcr.io/keyorixhq/keyorix-server and its -airgap variant -- served the
+# committed placeholder page ("Web UI not bundled in this build"), because the only
+# thing git tracks under server/webui/dist/ is that placeholder and nothing in the
+# build ran `pnpm build` first. The release TARBALLS never had this gap: `make release`
+# depends on populate-webui-dist. This stage is the Docker equivalent of that
+# dependency, and deliberately reproduces `make build-ui`/populate-webui-dist's own
+# steps (pnpm install --frozen-lockfile, pnpm build, replace server/webui/dist with
+# web/dist) rather than inventing a second way to do it.
+#
+# --platform=$BUILDPLATFORM: the output is static JS/CSS, identical for every target
+# arch, so this never needs to run under QEMU emulation -- same reasoning as the Go
+# stage below.
+#
+# Pinned by digest (a multi-arch manifest-list digest, so it resolves on any builder
+# arch), matching every other base image in this file. pnpm comes from corepack, which
+# honours web/package.json's own `packageManager` field including its integrity hash --
+# so the pnpm version and its checksum are pinned by the repo, not by this file.
+FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS webui
+WORKDIR /web
+# Manifests first, so a source-only change does not re-resolve dependencies.
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
+# --frozen-lockfile: fail rather than silently resolve something the lockfile doesn't
+# pin. --ignore-scripts: same supply-chain rationale as .github/workflows/web-ci.yml's
+# own install step -- a transitive package's postinstall must not run arbitrary code in
+# the image build.
+RUN corepack enable && pnpm install --frozen-lockfile --ignore-scripts
+COPY web/ ./
+RUN pnpm build && test -d dist/assets
+
 # Build stage. Pinned to $BUILDPLATFORM (the runner's own arch, never emulated)
 # even when cross-building for a different $TARGETPLATFORM: the Go toolchain
 # cross-compiles natively via GOOS/GOARCH below, which is far faster than
@@ -26,6 +60,15 @@ ARG TARGETARCH
 # tag is a separate, smaller exclusion (rotation/awsiam + evidencesink/
 # objectstore only) this image has never built with.
 ARG BUILD_TAGS=
+# Replace the committed placeholder dist/ with the real build before compiling, exactly
+# as populate-webui-dist does (rm -rf, then copy web/dist over it) -- server/webui/
+# embed.go's `//go:embed all:dist` picks up whatever is there at compile time, so this
+# must happen before `go build` and after `COPY . .` (which brings the placeholder in).
+# Both BUILD_TAGS variants go through this line: the air-gapped image gets the same real
+# dashboard, which is what ADR-109's "one file" air-gap profile claims and what the
+# published -airgap image did not deliver.
+RUN rm -rf server/webui/dist
+COPY --from=webui /web/dist/ ./server/webui/dist/
 RUN set -- \
     "-s -w" \
     "-X github.com/keyorixhq/keyorix/internal/cli.version=${VERSION}" \
