@@ -138,3 +138,35 @@ func mustFoldedName(t testing.TB, name string) identity.FoldedName {
 	require.NoError(t, err)
 	return fn
 }
+
+// Coordinator review of #2767: a revoke that commits BETWEEN RoleSetHasPermission's
+// live join and its cache write must not leave the pre-revoke "allowed" cached
+// under the post-revoke generation. The in-flight call may still answer true
+// (it read before the revoke), but the very next call must see the revoke.
+// The callback fires the revoke right after the permissions join, i.e. exactly
+// in that window.
+func TestRoleSetHasPermission_RevokeDuringResolveIsNotCachedStale(t *testing.T) {
+	ls := newRolePermCacheTestStorage(t)
+	ctx := context.Background()
+	role, err := ls.CreateRole(ctx, mustFoldedName(t, "r1"), "")
+	require.NoError(t, err)
+	perm, err := ls.CreatePermission(ctx, &models.Permission{Name: "secrets.read"})
+	require.NoError(t, err)
+	require.NoError(t, ls.AssignPermissionToRole(ctx, role.ID, perm.ID))
+
+	armed := true
+	require.NoError(t, ls.db.Callback().Query().After("gorm:query").Register("test:revoke-after-join", func(tx *gorm.DB) {
+		if armed && tx.Statement.Table == "permissions" {
+			armed = false
+			require.NoError(t, ls.RemovePermissionFromRole(ctx, role.ID, perm.ID))
+		}
+	}))
+
+	_, err = ls.RoleSetHasPermission(ctx, []uint{role.ID}, "secrets.read")
+	require.NoError(t, err)
+	require.False(t, armed, "the revoke never fired inside the resolve window")
+
+	after, err := ls.RoleSetHasPermission(ctx, []uint{role.ID}, "secrets.read")
+	require.NoError(t, err)
+	require.False(t, after, "a revoked permission is still authorizing: the pre-revoke decision was cached under the post-revoke generation")
+}
