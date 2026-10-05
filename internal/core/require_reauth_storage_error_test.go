@@ -1,0 +1,73 @@
+// require_reauth_storage_error_test.go — FIX-1 sibling of #2548 found during
+// the session's sibling sweep: requireReauth (internal/core/mfa.go) is the
+// gate behind DisableMFA/ActivateMFA/RegenerateMFARecoveryCodes/account email
+// change/WebAuthn register+delete. Like VerifyMFACredentials before PR #2398
+// and VerifyMFAStepUp before this session's own fix, it collapsed a storage
+// read failure (GetMFASecret/MarkTOTPStepUsed/ConsumeMFAStepUpGrant) into the
+// exact same "invalid code or password" result a genuinely wrong credential
+// produces -- audited as mfa.failed and counted toward the account lockout,
+// for a credential that was never actually checked.
+package core
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/pquerna/otp/totp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestRequireReauth_GetMFASecretErrorDoesNotFeedLockout: N GetMFASecret
+// failures (N > the lockout's MaxAttempts) with the CORRECT TOTP code, via
+// DisableMFA (a direct requireReauth caller), must leave the account
+// unlocked and must not report "invalid code or password" -- a storage read
+// failure is not a confirmed wrong credential. Once the fault clears, the
+// SAME correct code must still succeed.
+func TestRequireReauth_GetMFASecretErrorDoesNotFeedLockout(t *testing.T) {
+	t.Parallel()
+	c, db, fixed := newMFATestCore(t)
+	c.loginLockout = LoginLockoutPolicy{Enabled: true, MaxAttempts: 3, Window: time.Hour, BaseCooldown: 15 * time.Minute, MaxCooldown: time.Hour}
+	ctx := context.Background()
+
+	secret, _ := activateMFAForTest(t, c, fixed)
+	good, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+
+	realStorage := c.storage
+	faultErr := errors.New("fault-fuzz injected failure")
+	c.storage = &mfaSecretReadErrStub{Storage: realStorage, err: faultErr}
+
+	// 5 attempts with the CORRECT code, each failing to even check it because
+	// GetMFASecret errors every time -- more than MaxAttempts (3), so if this
+	// were (wrongly) counted toward the lockout, the account would now be locked.
+	for i := 0; i < 5; i++ {
+		derr := c.DisableMFA(ctx, 1, good, "")
+		require.Error(t, derr, "attempt %d: a storage error must still refuse the reauth", i)
+		assert.NotContains(t, derr.Error(), "invalid code or password",
+			"attempt %d: a storage error must not be reported as a wrong credential", i)
+	}
+
+	var afterFaults models.User
+	require.NoError(t, db.First(&afterFaults, 1).Error)
+	assert.Nil(t, afterFaults.LoginLockedUntil,
+		"account must NOT be locked -- none of the 5 storage-error attempts was a confirmed wrong credential")
+	assert.True(t, afterFaults.MFAEnabled, "MFA must still be enabled -- the disable never actually succeeded")
+
+	var failedCount, errorCount int64
+	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ? AND user_id = ?", "mfa.failed", uint(1)).Count(&failedCount).Error)
+	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ? AND user_id = ?", "mfa.error", uint(1)).Count(&errorCount).Error)
+	assert.Zero(t, failedCount, "a storage-error attempt must not be audited as a failed (wrong-credential) reauth")
+	assert.EqualValues(t, 5, errorCount, "each storage-error attempt must be audited distinctly as an error")
+
+	// Fault clears: the SAME correct code (never consumed -- MarkTOTPStepUsed
+	// was never reached while GetMFASecret kept failing) now succeeds.
+	c.storage = realStorage
+	require.NoError(t, c.DisableMFA(ctx, 1, good, ""))
+	var afterSuccess models.User
+	require.NoError(t, db.First(&afterSuccess, 1).Error)
+	assert.False(t, afterSuccess.MFAEnabled, "the never-actually-wrong code must still disable MFA once the fault clears")
+}
