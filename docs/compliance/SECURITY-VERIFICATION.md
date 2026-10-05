@@ -210,9 +210,21 @@ design and setup.
 
 ## Process controls
 
-- **[CODEOWNERS](../../.github/CODEOWNERS)** requires review on
-  cryptography/encryption, auth/authz/RBAC core, HTTP/gRPC middleware,
-  database migrations, the CI/CD pipeline itself, and this policy.
+- **[CODEOWNERS](../../.github/CODEOWNERS)** designates @aibeshkov as the
+  required reviewer for cryptography/encryption, auth/authz/RBAC core,
+  HTTP/gRPC middleware, database migrations, the CI/CD pipeline itself, and
+  this policy. **Correction (2026-10-05):** this previously said CODEOWNERS
+  "requires review," implying GitHub blocks a merge without it. Checked
+  directly (`gh api repos/keyorixhq/keyorix/rulesets/<id>` and
+  `.../branches/main/protection` → 404, not protected) — the live ruleset
+  has exactly two rules (required status checks, merge queue) and no
+  required-reviewer rule of any kind. CODEOWNERS today designates ownership
+  for human attention; it is not a GitHub-enforced gate. In practice every
+  commit to date is authored by the one listed owner (`git log` shows 939
+  of the last 1000 non-bot commits as Andrei Beshkov), so the gap has not
+  yet mattered in effect — but it is a gap, not an enforced control, and is
+  stated as such here and in
+  [`../security/SDLC.md`](../security/SDLC.md#branch-protection).
 - **GitHub-native repository security**: secret scanning, push protection
   (blocks a `git push` containing a detected secret before it lands, not just
   scanning after the fact), Dependabot security updates (auto-PRs a
@@ -240,8 +252,12 @@ hardened.
 
 A subsequent SSDLC hardening pass added the process/pipeline controls
 documented above: CodeQL, Helm chart security-policy scanning (`checkov`), Go
-dependency license compliance, DCO enforcement, CODEOWNERS, branch protection
-with no maintainer bypass, GitHub-native secret scanning/push protection/
-Dependabot security updates/private vulnerability reporting, and the
-continuous-fuzzing rig (6 targets, clean so far). This document is updated as
-further reviews or pipeline changes complete.
+dependency license compliance, DCO enforcement, CODEOWNERS ownership
+designation (not yet a GitHub-enforced review gate — see Process controls
+above), required-status-check branch protection (which does carry a standing
+org-admin bypass — see Process controls above and
+[`../security/SDLC.md`](../security/SDLC.md#branch-protection)),
+GitHub-native secret scanning/push protection/Dependabot security
+updates/private vulnerability reporting, and the continuous-fuzzing rig (6
+targets, clean so far). This document is updated as further reviews or
+pipeline changes complete.

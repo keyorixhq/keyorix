@@ -45,7 +45,10 @@ Eleven required checks gate every merge (go vet/build/test, gosec, golangci-lint
 govulncheck, gitleaks, CodeQL, Helm lint/kubeconform, checkov, go-licenses, per
 `CONTRIBUTING.md`'s own enumeration). `.github/CODEOWNERS` scopes mandatory review
 to security-sensitive paths (crypto, auth, middleware, storage migrations, CI
-workflow files themselves).
+workflow files themselves). **Correction (2026-10-05):** "mandatory" overstated
+this at the time and still does — no branch-protection rule has ever required
+code-owner review; CODEOWNERS designates who should review, not a GitHub-enforced
+gate. See [`docs/security/SDLC.md`](security/SDLC.md#branch-protection).
 
 **Squash-merge is the merge strategy** — `CLAUDE.md`'s git conventions section
 notes this explicitly in the context of PR trailers ("squash-merge folds commit

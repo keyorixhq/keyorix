@@ -185,8 +185,12 @@ Download releases only from `github.com/keyorixhq/keyorix/releases` over HTTPS.
   for the current rule set. Every `fix(security)` PR is required to carry a
   regression test proving the specific bug is closed, not just that the
   static pattern is gone from the diff.
-- [CODEOWNERS](.github/CODEOWNERS) requires review on cryptography, auth/RBAC,
-  middleware, database migrations, the CI/CD pipeline itself, and this policy
+- [CODEOWNERS](.github/CODEOWNERS) designates the required reviewer for
+  cryptography, auth/RBAC, middleware, database migrations, the CI/CD
+  pipeline itself, and this policy. **Not currently a GitHub-enforced gate**
+  — the live branch-protection ruleset has no required-reviewer rule (see
+  `docs/security/SDLC.md`); today this is ownership designation enforced by
+  the fact that every commit to date has one human author, not by CI.
 - GitHub-native repository security: secret scanning, push protection (blocks
   a commit containing a detected secret before it lands), Dependabot security
   updates, and private vulnerability reporting are all enabled
