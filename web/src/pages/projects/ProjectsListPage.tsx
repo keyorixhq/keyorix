@@ -23,6 +23,27 @@ import { formatRelativeTime, formatDate } from '../../utils';
 type SortKey = 'recent' | 'name';
 type SortDir = 'asc' | 'desc';
 
+// projectsListErrorMessage turns the list query's failure into something the
+// reader can act on. This used to be one hardcoded string -- "Failed to load
+// projects. Check that the backend is running." -- shown for every failure
+// mode, which is actively wrong for the commonest one: a project-scoped user
+// (system_viewer + project_viewer) is refused by a perfectly healthy server
+// with 403, and was then sent off to diagnose infrastructure that is fine
+// (#2819). Follows the pattern CompliancePage's postureErrorMessage and
+// KeyorixConnectPage already use.
+//
+// 403 only, deliberately: a 404-specific branch here would be the start of an
+// existence oracle (ADR-096 / #1645's 403-for-both convention), and there is
+// no 404 to branch on anyway -- this is a collection listing, so a refusal
+// discloses nothing about whether any particular project exists.
+const projectsListErrorMessage = (error: unknown): string => {
+    const status = (error as { response?: { status?: number } })?.response?.status;
+    if (status === 403) {
+        return 'You do not have permission to list projects. Ask an administrator to give you access to a project.';
+    }
+    return 'Failed to load projects. Check that the backend is running.';
+};
+
 // ── Create Project Modal ─────────────────────────────────────────────────────
 
 interface CreateProjectModalProps {
@@ -271,7 +292,7 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onEditRequest, onDelet
 
 export const ProjectsListPage: React.FC = () => {
     const [showDeleted, setShowDeleted] = useState(false);
-    const { data: projects = [], isLoading, isError } = useProjects(showDeleted);
+    const { data: projects = [], isLoading, isError, error } = useProjects(showDeleted);
     const [sortKey, setSortKey] = useState<SortKey>('recent');
     const [sortDir, setSortDir] = useState<SortDir>('desc');
     const deleteProject = useDeleteProject();
@@ -399,7 +420,7 @@ export const ProjectsListPage: React.FC = () => {
                     className="rounded-lg px-4 py-3 text-sm"
                     style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}
                 >
-                    Failed to load projects. Check that the backend is running.
+                    {projectsListErrorMessage(error)}
                 </div>
             )}
 
