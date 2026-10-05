@@ -810,15 +810,47 @@ func diffSubsetOf(diff, allowed []string) bool {
 // re-encoded for this PR's opCatalog wiring since #2416's own merge commit
 // could not commit a working seed before that wiring existed); no entry
 // needed unless a new finding is filed.
+// #2407 (REST PUT /api/v1/projects/{id}/access-requests/{requestId},
+// CreateAccessRequestApproval#1/error, oracle (a)) was tolerated here and is
+// now fixed (#2415, merged) -- finalizeAccessRequestApproval runs the grant,
+// the approval record and the request-state update inside ONE
+// storage.WithTransaction, so a reported failure leaves nothing behind,
+// including the former compensating revert's own "approval_race_reverted"
+// audit row that produced the oracle (a) diff. Entry removed by FIX-2; #2415
+// should have dropped it itself (COMMON-RULES: "the PR that fixes #NNNN
+// removes its tolerance in the same PR").
+//
+// NO regression SEED is committed for #2407, deliberately -- it would be a
+// vacuous guard. Verified by replaying the issue's own input (REPLAY_HEX=
+// 4f002c3230303030, and its re-encoded equivalent 4f002c0000) against
+// internal/core/invitations.go checked out at 7d9d31d6^, i.e. the genuine
+// pre-fix code: the run PASSES, logging "ACCEPTABLE-BY-DESIGN: ... state
+// diverges only in outcome-log tables [AuditEvent]". onlyOutcomeLogTables
+// short-circuits before matchingKnownOpen is ever consulted, so this tuple
+// could not fail for either the fixed or the unfixed subject, and the
+// tolerance above had been dead code since that exemption landed. #2407's
+// real, non-vacuous guard is
+// internal/core.TestFinalizeAccessRequestApproval_ApprovalRecordFailureRevertsGrant,
+// which asserts the EFFECT ("a reported failure must leave ZERO new audit
+// rows") and does go red against that same pre-fix file.
 var knownOpenTolerances = []knownOpenTolerance{
-	// #2407 (filed 2026-10-02 from PR #2396's fuzz-changed run, seed
-	// 4f002c3230303030): CreateAccessRequestApproval reports KindError but its
-	// effect partially commits anyway. Unrelated to #2396's own change (SAML
-	// ACS wiring) -- pre-existing on main. Remove this entry when #2407 is fixed.
+	// #2807 (filed 2026-10-05 from THIS PR's own fuzz-changed run, shard 0,
+	// minimized input committed by the fuzzer as
+	// testdata/fuzz/FuzzStorageFaultOperations/cc44f6cd6ac24cd8; pre-minimization
+	// REPLAY_HEX=d820633230): a GetUserRoles error AFTER the passkey assertion
+	// already verified leaves the reserved LoginAttempt consumed and an
+	// MFAStepUpGrant committed, while completeLogin reports a 500 and revokes
+	// only the Session (#2412). Confirmed PRE-EXISTING on origin/main @ cbb9863e
+	// by replaying the same input directly against it -- this PR touches no
+	// production code (it removes a dead tolerance and adds two seedIntent
+	// entries), so the finding is not ours. Scoped to this one tuple and this one
+	// table set, per COMMON-RULES: not table-wide, not method-wide.
+	// Remove this entry in the PR that fixes #2807.
 	{
-		op: "REST PUT /api/v1/projects/{id}/access-requests/{requestId}", method: "CreateAccessRequestApproval", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2407", expires: "2026-10-17",
-		findingDoc: "#2407",
+		op: "REST POST /auth/webauthn/login/finish", method: "GetUserRoles", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2807", expires: "2026-10-19",
+		tables:     []string{"MFAStepUpGrant", "LoginAttempt", "AuditEvent"},
+		findingDoc: "#2807",
 	},
 	// docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md
 	// (SESSION-FI, AT5): NOT a bug -- BulkRejectAccessRequests' unconditional

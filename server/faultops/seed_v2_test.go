@@ -130,13 +130,15 @@ var seedIntent = map[string]struct{ op, method string }{
 	"2565_finishwebauthnlogin_consumemfachallenge_error":     {"REST POST /auth/webauthn/login/finish", "ConsumeMFAChallenge"},
 	"2565_finishwebauthnlogin_consumewebauthnsession_error":  {"REST POST /auth/webauthn/login/finish", "ConsumeWebAuthnSession"},
 	"2565_finishwebauthnlogin_listwebauthncredentials_error": {"REST POST /auth/webauthn/login/finish", "ListWebAuthnCredentials"},
-	"bulk_delete_getsecret_partial_success_reported":         {"REST POST /api/v1/projects/{id}/secrets/bulk-delete", "GetSecret"},
-	"bulk-approve-rolesetbypass-audit-2549":                  {"REST POST /api/v1/access-requests/bulk-approve", "RoleSetBypassesPermissionChecks"},
-	"classification-createsecretaccesslog-panic-2554":        {"REST PATCH /api/v1/secrets/{id}/classification", "CreateSecretAccessLog"},
-	"invitations-countsetuptokenssince-audit-2599":           {"REST POST /api/v1/invitations", "CountSetupTokensSince"},
-	"mfa-disable-deletesessionsforuserexcept-accepted":       {"REST POST /api/v1/auth/mfa/disable", "DeleteSessionsForUserExcept"},
-	"mfa-verify-createsession-steplost-2567":                 {"REST POST /auth/mfa/verify", "CreateSession"},
-	"webauthn-loginfinish-listcredentials-2565":              {"REST POST /auth/webauthn/login/finish", "ListWebAuthnCredentials"},
+	"5900200031": {"GRPC keyorix.v1.UserService.CreateUser", "CountProjectMembershipsByUsers"},
+	"mfa-verify-enforcesessionlimit-panic-2416":        {"REST POST /auth/mfa/verify", "EnforceSessionLimit"},
+	"bulk_delete_getsecret_partial_success_reported":   {"REST POST /api/v1/projects/{id}/secrets/bulk-delete", "GetSecret"},
+	"bulk-approve-rolesetbypass-audit-2549":            {"REST POST /api/v1/access-requests/bulk-approve", "RoleSetBypassesPermissionChecks"},
+	"classification-createsecretaccesslog-panic-2554":  {"REST PATCH /api/v1/secrets/{id}/classification", "CreateSecretAccessLog"},
+	"invitations-countsetuptokenssince-audit-2599":     {"REST POST /api/v1/invitations", "CountSetupTokensSince"},
+	"mfa-disable-deletesessionsforuserexcept-accepted": {"REST POST /api/v1/auth/mfa/disable", "DeleteSessionsForUserExcept"},
+	"mfa-verify-createsession-steplost-2567":           {"REST POST /auth/mfa/verify", "CreateSession"},
+	"webauthn-loginfinish-listcredentials-2565":        {"REST POST /auth/webauthn/login/finish", "ListWebAuthnCredentials"},
 }
 
 const fuzzCorpusDir = "testdata/fuzz/FuzzStorageFaultOperations"
