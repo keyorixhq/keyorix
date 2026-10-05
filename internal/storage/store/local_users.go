@@ -298,6 +298,12 @@ func (ls *LocalStorage) SetAccountStateIfMatches(ctx context.Context, id uint, f
 	res := ls.db.WithContext(ctx).Model(&models.User{}).
 		Where("id = ? AND COALESCE(account_state, '') = ?", id, fromState).
 		Updates(map[string]interface{}{"account_state": toState, "updated_at": updatedAt})
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}
+
 // ClaimUserExternalIDIfUnset persists ONLY external_id (plus updated_at), and
 // only onto a live row whose external_id is still unset — see the
 // storage.Storage interface doc for why resolveSSOUser's first-federation write
