@@ -57,6 +57,16 @@ var ErrMFAVerificationStorageFailure = errors.New("mfa verification storage fail
 // user must begin enrolment again.
 var ErrMFAEnrollmentChanged = errors.New("MFA enrolment changed during activation; begin enrolment again")
 
+// ErrMFAVerificationUnavailable is wrapped IN ADDITION to
+// ErrMFAVerificationStorageFailure only when the storage failure happened
+// before any submitted code was evaluated (loading the user or the TOTP
+// secret, or the recovery-code lookup itself). Only this case may be
+// reported to clients as a retryable 503. A storage failure AFTER a code was
+// found correct (marking the TOTP step used) must stay indistinguishable
+// from a wrong code (401): a distinct response there would confirm a correct
+// guess (#2740 review, option C).
+var ErrMFAVerificationUnavailable = errors.New("mfa verification unavailable: no code was evaluated")
+
 const (
 	mfaIssuer            = "Keyorix"
 	mfaRecoveryCodeCount = 10
@@ -368,7 +378,7 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 	if err != nil {
 		// Same ambiguity as above: GetUser failing on a storage hiccup must not read
 		// the same as "this challenge really does belong to no user."
-		return nil, false, fmt.Errorf("%w: user not found", ErrMFAVerificationStorageFailure)
+		return nil, false, fmt.Errorf("%w: %w: user not found", ErrMFAVerificationStorageFailure, ErrMFAVerificationUnavailable)
 	}
 	// Completing a second factor still mints a login session, so a suspended or
 	// deactivated account must be refused here too — the challenge may have been
@@ -398,9 +408,14 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 	// audit trail (docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md).
 	verified, usedRecovery := false, false
 	var storageErr error
+	// codeMatched records that the submitted code was found CORRECT before a
+	// later storage step failed: such a failure must not be reported as
+	// "unavailable" (see ErrMFAVerificationUnavailable).
+	codeMatched := false
 	if secret, err := c.loadTOTPSecret(ctx, ch.UserID); err != nil {
 		storageErr = err
 	} else if step, ok := c.validateTOTPStep(secret, code); ok {
+		codeMatched = true
 		// Single-use within the validity window: atomically advance the last-used
 		// step. A code already accepted at this (or a later) step is a replay and
 		// MarkTOTPStepUsed returns false, so it is rejected — closing the ~90s
@@ -428,6 +443,9 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 			// attempt and do NOT count it toward the lockout: this request never
 			// actually got a verdict on whether its code was right.
 			c.auditMFAError(ctx, ch.UserID, "login", storageErr)
+			if !codeMatched {
+				return nil, false, fmt.Errorf("%w: %w: %s: %w", ErrMFAVerificationStorageFailure, ErrMFAVerificationUnavailable, i18n.T("ErrorRetrievalFailed", nil), storageErr)
+			}
 			return nil, false, fmt.Errorf("%w: %s: %w", ErrMFAVerificationStorageFailure, i18n.T("ErrorRetrievalFailed", nil), storageErr)
 		}
 		c.auditMFAFailed(ctx, ch.UserID, "login")

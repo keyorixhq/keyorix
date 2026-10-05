@@ -175,8 +175,19 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	// rule applied to VerifyMFA's own reservation.
 	session, user, err := h.verifyMFALoginReleasingOnPanic(r.Context(), body.Challenge, body.Code, r.Header.Get("User-Agent"), ip, reserved, attemptID)
 	if err != nil {
-		if reserved && errors.Is(err, core.ErrMFAVerificationStorageFailure) {
-			h.coreService.ReleaseLoginAttempt(r.Context(), attemptID)
+		if errors.Is(err, core.ErrMFAVerificationStorageFailure) {
+			if reserved {
+				h.coreService.ReleaseLoginAttempt(r.Context(), attemptID)
+			}
+			// FIX-1 (#2548) + #2740 review (option C): 503 "retry" ONLY when the
+			// failure happened before any code was evaluated. A failure after the
+			// code was found correct stays a plain 401, identical to a wrong code,
+			// so the response can never confirm a correct guess. err itself is
+			// never passed through (it wraps the raw storage error).
+			if errors.Is(err, core.ErrMFAVerificationUnavailable) {
+				sendError(w, "ServiceUnavailable", errMFAVerificationUnavailable, http.StatusServiceUnavailable, nil)
+				return
+			}
 		}
 		sendError(w, "Unauthorized", "Invalid or expired code", http.StatusUnauthorized, nil)
 		return
@@ -207,6 +218,13 @@ func (h *AuthHandler) verifyMFALoginReleasingOnPanic(ctx context.Context, challe
 	}()
 	return h.coreService.VerifyMFALogin(ctx, challenge, code, userAgent, ip)
 }
+// errMFAVerificationUnavailable is returned (with http.StatusServiceUnavailable)
+// when a storage error kept an MFA verification from reaching a verdict on the
+// code at all (core.ErrMFAVerificationStorageFailure) — deliberately distinct
+// from "Invalid or expired code" (#2548, FIX-1): the caller's credential was
+// never actually checked, so telling them it was wrong would be misleading, and
+// retrying immediately is the correct client behavior for a transient failure.
+const errMFAVerificationUnavailable = "A temporary error occurred while verifying your code. Please try again."
 
 // mfaSafeMessages are the fixed, deliberately client-safe error strings core's
 // MFA functions return for expected failure modes (missing user, already/not

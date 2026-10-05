@@ -19,6 +19,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -116,6 +117,44 @@ func TestMFAStepUpHandler_WrongCode_Unauthorized(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.MFAStepUp(rr, r)
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+}
+
+// TestMFAStepUpHandler_StorageError_ServiceUnavailable is the HTTP-layer
+// sibling of core's TestVerifyMFAStepUp_GetMFASecretErrorDoesNotFeedLockout
+// (FIX-1, #2548 sibling): a storage error during step-up verification must
+// surface as a distinct 5xx, not the same 401 a genuinely wrong code gets.
+func TestMFAStepUpHandler_StorageError_ServiceUnavailable(t *testing.T) {
+	require.NoError(t, i18n.Initialize(&config.Config{Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"}}))
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.User{}, &models.MFASecret{}, &models.MFARecoveryCode{},
+		&models.MFAChallenge{}, &models.Session{}, &models.AuditEvent{},
+		&models.MFAStepupToken{}, &models.MFAStepUpGrant{},
+	))
+	hash, err := bcrypt.GenerateFromPassword([]byte(stepUpTestPassword), bcrypt.MinCost)
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "a@b.com",
+		PasswordHash: string(hash), AccountState: "active"}).Error)
+	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())
+	require.NoError(t, enc.Initialize("test-passphrase"))
+
+	fs := faultstorage.NewFaultyStorage(store.NewLocalStorage(db), nil)
+	coreService := core.NewKeyorixCore(fs)
+	coreService.SetAuthEncryptor(enc)
+	h := NewAuthHandler(coreService, false)
+	secret, _ := activateMFAForStepUpTest(t, coreService)
+
+	code, err := totp.GenerateCode(secret, time.Now())
+	require.NoError(t, err)
+
+	fs.Arm(&faultstorage.FaultSpec{Method: "GetMFASecret", NthCall: 1, Kind: faultstorage.KindError, Err: assert.AnError})
+	r := postJSON("/api/v1/auth/mfa/stepup", map[string]string{"code": code}, 1)
+	rr := httptest.NewRecorder()
+	h.MFAStepUp(rr, r)
+	require.True(t, fs.Fired())
+	assert.Equal(t, http.StatusServiceUnavailable, rr.Code, rr.Body.String())
+	assert.NotContains(t, rr.Body.String(), "invalid code", "a storage error must not be reported as a wrong code")
 }
 
 // TestMFAStepUpHandler_CorrectCode_Success verifies that a correct TOTP code returns 200
