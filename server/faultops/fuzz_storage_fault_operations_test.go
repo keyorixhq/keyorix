@@ -834,6 +834,24 @@ func diffSubsetOf(diff, allowed []string) bool {
 // which asserts the EFFECT ("a reported failure must leave ZERO new audit
 // rows") and does go red against that same pre-fix file.
 var knownOpenTolerances = []knownOpenTolerance{
+	// #2807 (filed 2026-10-05 from THIS PR's own fuzz-changed run, shard 0,
+	// minimized input committed by the fuzzer as
+	// testdata/fuzz/FuzzStorageFaultOperations/cc44f6cd6ac24cd8; pre-minimization
+	// REPLAY_HEX=d820633230): a GetUserRoles error AFTER the passkey assertion
+	// already verified leaves the reserved LoginAttempt consumed and an
+	// MFAStepUpGrant committed, while completeLogin reports a 500 and revokes
+	// only the Session (#2412). Confirmed PRE-EXISTING on origin/main @ cbb9863e
+	// by replaying the same input directly against it -- this PR touches no
+	// production code (it removes a dead tolerance and adds two seedIntent
+	// entries), so the finding is not ours. Scoped to this one tuple and this one
+	// table set, per COMMON-RULES: not table-wide, not method-wide.
+	// Remove this entry in the PR that fixes #2807.
+	{
+		op: "REST POST /auth/webauthn/login/finish", method: "GetUserRoles", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2807", expires: "2026-10-19",
+		tables:     []string{"MFAStepUpGrant", "LoginAttempt", "AuditEvent"},
+		findingDoc: "#2807",
+	},
 	// docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md
 	// (SESSION-FI, AT5): NOT a bug -- BulkRejectAccessRequests' unconditional
 	// summary audit event legitimately differs in content (X/Y counts) when
