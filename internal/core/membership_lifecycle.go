@@ -453,17 +453,14 @@ func (c *KeyorixCore) StaleInvites(ctx context.Context, olderThan time.Duration)
 	return c.storage.ListStaleInvitedMemberships(ctx, before)
 }
 
-// ListUserProjectMemberships returns all membership rows for a single user
-// (ADR-025 per-user assignments view).
-func (c *KeyorixCore) ListUserProjectMemberships(ctx context.Context, userID uint) ([]*models.ProjectMembership, error) {
-	return c.storage.ListUserProjectMemberships(ctx, userID)
-}
-
-// ProjectMembershipCounts returns per-user project-membership tallies (active and
-// non-revoked total) for the given user IDs in one query (ADR-025 user list).
-func (c *KeyorixCore) ProjectMembershipCounts(ctx context.Context, userIDs []uint) (map[uint]storage.MembershipCounts, error) {
-	return c.storage.CountProjectMembershipsByUsers(ctx, userIDs)
-}
+// (#2781) ListUserProjectMemberships — the per-user "which projects is this user in"
+// read off this journal — is deliberately gone. It was the second, non-equivalent
+// definition of project membership, and it answered "none" for every user on an
+// install whose members were added through POST /projects/{id}/members. Ask
+// ListProjectMembershipsForUser (project_membership_definition.go) instead; it reads
+// this journal only for the lifecycle STATE annotation.
+// project_membership_definition_guard_test.go fails the build if a second definition
+// reappears.
 
 // logMembershipEvent writes an audit event for a membership transition.
 func (c *KeyorixCore) logMembershipEvent(ctx context.Context, eventType string, m *models.ProjectMembership, actorID uint) {

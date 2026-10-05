@@ -80,7 +80,7 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 	// (system_viewer, granted globally to every SSO/JIT user) counted as membership and
 	// let any authenticated user self-grant the emergency role on ANY project. IsProjectMember
 	// excludes global roles, so a user scoped only globally (or to a different project) is refused.
-	affiliated, merr := c.storage.IsProjectMember(ctx, userID, projectID)
+	affiliated, merr := c.IsProjectMember(ctx, userID, projectID)
 	if merr != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), merr)
 	}

@@ -312,6 +312,24 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   Why: #2657, #2659. Guard:
   `TestCTAReview_TransitionMembership_ActivateVsRevoke_CrossReplicaPostgres`,
   `TestCTAReview_InviteMemberOpenMode_vs_Revoke_CrossReplicaPostgres` (pg-gated).
+- **INV-CORE-45** There is exactly ONE definition of "is a member of project P", and it is a
+  live role grant scoped to P (direct or via a non-deleted group; a global `project_id = 0`
+  grant and an expired grant both excluded) — ADR-021, stated in
+  `project_membership_definition.go`'s header. `storage.IsProjectMember` has one caller,
+  `core.IsProjectMember`; the ADR-022 `project_memberships` table is an ONBOARDING JOURNAL
+  that supplies lifecycle state for a membership the grant already established, and never
+  answers whether the membership exists. Why: #2781 — two non-equivalent definitions had
+  `GET /projects/{id}/members` and `GET /users/{id}/memberships` + the admin Users list's
+  project-count column contradicting each other, because nothing the web UI does writes the
+  journal. Note it is a DIFFERENT question from "which projects may this caller READ"
+  (`GetReadableScopes`, a strict superset — a global `secrets.read` holder reads every project
+  while being a member of none); #2780's project listing uses that one, deliberately.
+  Guard: `project_membership_definition_guard_test.go`
+  (`TestProjectMembership_OneDefinition_StorageIsProjectMemberHasOneCaller`,
+  `..._JournalReadsAreAllowlisted`, `..._NoCoreWrapperForJournalPerUserRead` — all default-ci,
+  all red/green-proved against a planted second definition);
+  behaviour: `project_membership_definition_test.go`,
+  `server/http/handlers/users_memberships_2781_test.go`.
   Why: C-GUARD2-EXEMPT-REVIEW. Guard: user profile writes (#2653/#2654, fixed):
   `user_profile_column_scoped_guard_test.go:TestUserProfileWrites_AreColumnScoped` +
   `TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres` /

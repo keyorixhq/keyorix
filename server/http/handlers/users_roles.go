@@ -141,17 +141,43 @@ func (h *UsersRolesHandler) GetUserPermissionsForUser(w http.ResponseWriter, r *
 	sendSuccess(w, map[string]interface{}{"permissions": apiPerms}, "")
 }
 
-// apiUserMembership is one row of a user's project-assignments view (ADR-025).
+// apiUserMembership is one row of a user's project-assignments view.
+//
+// `roles` and `via_group` were added with #2781's fix: a user can hold more than
+// one role at a project's scope (a direct grant plus a group-inherited one), and an
+// admin reviewing access needs to know when a membership comes from a group — the
+// project's Members tab cannot remove that one.
 type apiUserMembership struct {
-	ProjectID   uint   `json:"project_id"`
-	ProjectName string `json:"project_name"`
-	Role        string `json:"role"`
-	State       string `json:"state"`
+	ProjectID   uint     `json:"project_id"`
+	ProjectName string   `json:"project_name"`
+	Role        string   `json:"role"`
+	Roles       []string `json:"roles"`
+	State       string   `json:"state"`
+	ViaGroup    bool     `json:"via_group"`
 }
 
-// GetUserMembershipsForUser handles GET /api/v1/users/{id}/memberships (ADR-025) —
-// the user's project memberships with project name, role, and lifecycle state,
+// GetUserMembershipsForUser handles GET /api/v1/users/{id}/memberships — the
+// user's project memberships with project name, role(s), and lifecycle state,
 // powering the per-user assignments table on the detail page.
+//
+// #2781: this used to answer from the ADR-022 onboarding journal
+// (`storage.ListUserProjectMemberships`), which nothing the web UI writes — so it
+// reported "Not a member of any project" for EVERY user on an install whose project
+// members were all added through `POST /projects/{id}/members`, while that same
+// project's Members tab listed them. It now answers from
+// `core.ListProjectMembershipsForUser`, the repo's single definition of project
+// membership (internal/core/project_membership_definition.go), which is built from
+// the same query `GET /projects/{id}/members` uses — so the two screens agree by
+// construction. The journal still supplies the lifecycle STATE where a row exists,
+// and keeps its own endpoint (`GET /projects/{id}/memberships`).
+//
+// Disclosure: no new data reaches any caller this route did not already serve it
+// to. The gate is unchanged (self OR global roles.read), and that same gate already
+// serves the sibling `GET /users/{id}/roles` the identical role grants; what is new
+// here is the project each grant is scoped to, which is this route's own documented
+// contract and which every shipped role able to pass the gate can already read via
+// `GET /projects/{id}/members` (system_admin bypasses all checks; system_auditor
+// holds global users.read).
 //
 // Same disclosure class as GetUserPermissionsForUser above (G84): the group-wide
 // users.read gate lets any project member enumerate an arbitrary other user's full
@@ -173,30 +199,26 @@ func (h *UsersRolesHandler) GetUserMembershipsForUser(w http.ResponseWriter, r *
 		return
 	}
 
-	memberships, err := h.coreService.ListUserProjectMemberships(r.Context(), userID)
+	memberships, err := h.coreService.ListProjectMembershipsForUser(r.Context(), userID)
 	if err != nil {
 		log.Printf("Error getting memberships for user %d: %v", userID, err)
 		sendError(w, "InternalError", "Failed to get user memberships", http.StatusInternalServerError, nil)
 		return
 	}
 
-	// Resolve project names once for the rows.
-	nameByID := map[uint]string{}
-	if projects, perr := h.coreService.ListProjects(r.Context()); perr == nil {
-		for _, p := range projects {
-			nameByID[p.ID] = p.Name
-		}
-	} else {
-		log.Printf("Error listing projects for membership names: %v", perr)
-	}
-
 	out := make([]apiUserMembership, 0, len(memberships))
 	for _, m := range memberships {
+		roles := m.Roles
+		if roles == nil {
+			roles = []string{}
+		}
 		out = append(out, apiUserMembership{
 			ProjectID:   m.ProjectID,
-			ProjectName: nameByID[m.ProjectID],
+			ProjectName: m.ProjectName,
 			Role:        m.Role,
+			Roles:       roles,
 			State:       m.State,
+			ViaGroup:    m.ViaGroup,
 		})
 	}
 	sendSuccess(w, map[string]interface{}{"memberships": out}, "")
