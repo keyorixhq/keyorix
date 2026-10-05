@@ -25,11 +25,17 @@ var errScheduleAbsent = errors.New("secret access schedule: no row")
 // GetSecretAccessSchedule returns the schedule for secretNodeID, or nil, nil
 // if none exists.
 //
-// SAME-ROW case (read_path_cache.go's cachedReadSameRow): the generation is
-// the schedule row's OWN updated_at, returned by the same query as the row, so
-// there is no window between reading the data and reading the stamp. It is
-// independent of GetSecret/GetLatestSecretVersion's signals because a schedule
-// write touches a different table. See secret_metadata_cache.go.
+// SAME-ROW case (read_path_cache.go's cachedReadSameRow): the generation is the
+// schedule row's own (updated_at, allowed_days, start_hour, end_hour,
+// timezone), returned by the SAME query as the row, so there is no window
+// between reading the data and reading the stamp. The policy columns are in the
+// stamp, not just updated_at, so two schedule writes landing in one stored
+// timestamp tick cannot tie unless they are the same policy — an access
+// schedule is a read GATE, so a stale one keeps a closed window open. See
+// scheduleGeneration in secret_metadata_cache.go.
+//
+// There is no `cache_generation` column on this table; an earlier version of
+// this comment said there was, which was wrong.
 func (ls *LocalStorage) GetSecretAccessSchedule(ctx context.Context, secretNodeID uint) (*models.SecretAccessSchedule, error) {
 	schedule, err := cachedReadSameRow(ctx, ls, ls.secretMetaCache.schedules, secretNodeID,
 		ls.scheduleGenerationFor(secretNodeID),
@@ -42,7 +48,7 @@ func (ls *LocalStorage) GetSecretAccessSchedule(ctx context.Context, secretNodeI
 				return nil, scheduleGeneration{}, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 			}
 			cached := row
-			return &cached, scheduleGeneration{updatedAtUnixNano: row.UpdatedAt.UnixNano()}, nil
+			return &cached, scheduleGenerationOf(&row), nil
 		})
 	if errors.Is(err, errScheduleAbsent) {
 		return nil, nil
@@ -63,9 +69,10 @@ func (ls *LocalStorage) scheduleGenerationFor(secretNodeID uint) genGeneration[s
 }
 
 // getCachedSchedule returns (schedule, true) on a confirmed-current hit, or
-// (nil, false) on any miss — including a generation-check error (fail closed)
-// or the row having been deleted since the entry was cached. Read-only probe,
-// through the helper's own hit check so it cannot diverge.
+// (nil, false) on any miss — a generation-check error (fail closed), the row
+// having been deleted since the entry was cached, or a transaction-scoped
+// store (cacheEnabled, checked inside the helper). Read-only probe, through
+// the helper's own hit check so it cannot diverge.
 func (ls *LocalStorage) getCachedSchedule(ctx context.Context, secretNodeID uint) (*models.SecretAccessSchedule, bool) {
 	return cachedHit(ctx, ls, ls.secretMetaCache.schedules, secretNodeID, ls.scheduleGenerationFor(secretNodeID))
 }

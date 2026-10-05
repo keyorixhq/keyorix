@@ -185,9 +185,7 @@ func checkReadPathCacheGuard(fsys fs.FS) (cacheGuardFindings, error) {
 	// genCacheRawMethods are genCache's own methods. Confined to the helper file
 	// by rule B above, reads included, because probe() is where cacheEnabled is
 	// checked and a raw read elsewhere would bypass it.
-	for _, m := range []string{"entryFor", "putEntry", "dropEntry", "entryCount"} {
-		out.rawMethods = append(out.rawMethods, m)
-	}
+	out.rawMethods = append(out.rawMethods, "entryFor", "putEntry", "dropEntry", "entryCount")
 
 	// Rule 1b — derive the entry-writing methods: a method on a cache type
 	// whose body assigns to a map element of a receiver field.

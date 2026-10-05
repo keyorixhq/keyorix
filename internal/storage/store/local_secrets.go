@@ -493,7 +493,7 @@ func (ls *LocalStorage) GetSecret(ctx context.Context, id uint) (*models.SecretN
 			// A copy the caller never sees, so nothing can mutate the cached value
 			// behind the cache's back.
 			cached := row
-			return &cached, nodeGeneration{updatedAtUnixNano: row.UpdatedAt.UnixNano(), readCount: row.ReadCount}, nil
+			return &cached, nodeGenerationOf(&row), nil
 		})
 	if err != nil {
 		return nil, err

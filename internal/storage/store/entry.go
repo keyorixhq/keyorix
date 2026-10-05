@@ -184,20 +184,23 @@ type LocalStorage struct {
 	// exactly ONE place — NewLocalStorage — and is deliberately never copied
 	// anywhere else, so any LocalStorage derived from another (WithTransaction's
 	// tx-scoped clone, and the several ad-hoc `&LocalStorage{db: tx}` literals
-	// in this package) has it false by construction and bypasses the cache
-	// entirely.
+	// in this package and its tests) has it false by construction and bypasses
+	// the cache entirely.
 	//
 	// This is a correctness requirement, not an optimisation. A tx-scoped store
 	// reads through the TRANSACTION handle, so both the generation and the data
 	// it sees are UNCOMMITTED, and it shares the parent's cache pointer. Caching
 	// from inside a transaction therefore publishes an uncommitted answer into a
 	// cache that outlives the transaction: if the transaction then rolls back
-	// and a later COMMITTED write happens to reproduce the same generation
-	// value, that rolled-back answer validates and is served. For
-	// RoleSetHasPermission that is an authorization bypass — and it is not a
-	// remote possibility: with the generation now a monotonic integer (see
-	// bumpRolePermissionsGenerationTx), a rolled-back bump N→N+1 is reproduced
-	// EXACTLY by the very next committed role_permissions write.
+	// and a later COMMITTED write reproduces the same generation value, that
+	// rolled-back answer validates and is served. Both caches have a concrete
+	// form of this: for RoleSetHasPermission it is an authorization bypass, and
+	// not a remote possibility — with the generation a monotonic integer (see
+	// bumpRolePermissionsGenerationTx) a rolled-back bump N→N+1 is reproduced
+	// EXACTLY by the very next committed role_permissions write. For the
+	// latest-version cache it means serving a version row that never committed
+	// — wrong ID, wrong ciphertext — and on SQLite even the row id can repeat
+	// after a rollback, because sqlite_sequence is rolled back too.
 	//
 	// Phrased as a flag that must be SET to enable the cache, never one that
 	// must be set to disable it, so a future constructor that forgets about it
