@@ -158,6 +158,37 @@ func (f *ctaReview) beforeA(kind, table string, concurrent func()) (fired func()
 	return func() bool { return hit }
 }
 
+// afterA is beforeA's mirror: `concurrent` runs immediately AFTER A's first `kind`
+// statement against `table` has executed, while A's enclosing transaction (if any) is
+// still open and uncommitted. That is the interleaving a check-BEFORE-write fix would
+// miss: B's cascade runs with A's child row already written but invisible to it.
+// B must not block on anything A holds at that point, or this deadlocks by design
+// (B runs synchronously on A's goroutine) — use it only where A holds no lock B needs.
+func (f *ctaReview) afterA(kind, table string, concurrent func()) (fired func() bool) {
+	f.t.Helper()
+	var once sync.Once
+	hit := false
+	fn := func(tx *gorm.DB) {
+		if tx.Statement.Table != table || tx.Error != nil {
+			return
+		}
+		once.Do(func() {
+			hit = true
+			concurrent()
+		})
+	}
+	name := "cta-review:after-" + kind + "-" + table
+	switch kind {
+	case "create":
+		require.NoError(f.t, f.dbA.Callback().Create().After("gorm:create").Register(name, fn))
+	case "update":
+		require.NoError(f.t, f.dbA.Callback().Update().After("gorm:update").Register(name, fn))
+	default:
+		f.t.Fatalf("afterA: unknown kind %q", kind)
+	}
+	return func() bool { return hit }
+}
+
 func (f *ctaReview) countLive(model interface{}, where string, args ...interface{}) int64 {
 	f.t.Helper()
 	var n int64
@@ -170,7 +201,6 @@ func (f *ctaReview) countLive(model interface{}, where string, args ...interface
 // grant on the deleted secret (#370: "delete means gone for sharing too" —
 // a surviving share silently reactivates on RestoreSecret).
 func TestCTAReview_ShareSecret_vs_DeleteSecret_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2646: ShareSecret vs DeleteSecret leaves a live share on a deleted secret; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	owner := f.user("cta-owner", "project_admin")
@@ -194,7 +224,6 @@ func TestCTAReview_ShareSecret_vs_DeleteSecret_CrossReplicaPostgres(t *testing.T
 // TestCTAReview_ShareSecretWithGroup_vs_DeleteSecret_CrossReplicaPostgres: the
 // group-recipient sibling of the test above, through the same CreateShareRecord.
 func TestCTAReview_ShareSecretWithGroup_vs_DeleteSecret_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2647: ShareSecretWithGroup vs DeleteSecret leaves a live group share on a deleted secret; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	owner := f.user("cta-gowner", "project_admin")
@@ -216,6 +245,44 @@ func TestCTAReview_ShareSecretWithGroup_vs_DeleteSecret_CrossReplicaPostgres(t *
 
 	assert.Zero(t, f.countLive(&models.ShareRecord{}, "secret_id = ? AND deleted_at IS NULL", s.ID),
 		"#370 violated: a live group share exists on a soft-deleted secret")
+}
+
+// TestCTAReview_ShareSecret_DeleteSecretAfterInsert_CrossReplicaPostgres: the
+// interleaving the two tests above cannot reach. B's DeleteSecret commits AFTER A's
+// share INSERT has run but BEFORE A's transaction commits. B's #370 cascade cannot
+// see A's uncommitted row, so a fix that only checked liveness BEFORE the insert
+// would still commit a live share on a deleted secret here.
+//
+// Bug origin (#2646, #2647):
+//
+//	Introduced-by: #370's DeleteSecret share cascade, which revokes only the shares
+//	  visible to its own transaction; CreateShareRecord's read-then-INSERT never
+//	  serialized against it.
+//	Detected-by: C-GUARD2-EXEMPT-REVIEW #2662
+//	Class: cross-replica check-then-act
+//	Severity: MEDIUM (a share revoked by deleting the secret reactivates on restore)
+//	Guard: this test, the two above, and lockLiveParent's write-then-FOR-SHARE
+//	  re-check in LocalStorage.CreateShareRecord (INV-STORE-21).
+func TestCTAReview_ShareSecret_DeleteSecretAfterInsert_CrossReplicaPostgres(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	owner := f.user("cta-aowner", "project_admin")
+	recipient := f.user("cta-arecipient", "project_viewer")
+	s := f.secret("cta-ashare-secret", owner.ID)
+
+	var errB error
+	fired := f.afterA("create", "share_records", func() { errB = f.coreB.DeleteSecret(f.ctx, s.ID) })
+	_, errA := f.coreA.ShareSecret(f.ctx, &ShareSecretRequest{
+		SecretID: s.ID, RecipientID: recipient.ID, Permission: "read", SharedBy: owner.ID,
+	})
+	t.Logf("ShareSecret (A) err=%v, DeleteSecret (B) err=%v", errA, errB)
+	require.True(t, fired(), "the hook must have run B's DeleteSecret after A's share INSERT")
+	require.NoError(t, errB)
+
+	assert.EqualValues(t, 1, f.countLive(&models.SecretNode{}, "id = ? AND deleted_at IS NOT NULL", s.ID), "secret must be deleted")
+	assert.Error(t, errA, "A must fail closed: its secret was deleted before it committed")
+	assert.Zero(t, f.countLive(&models.ShareRecord{}, "secret_id = ? AND deleted_at IS NULL", s.ID),
+		"#370 violated: a live share exists on a soft-deleted secret (it reactivates on RestoreSecret)")
 }
 
 // TestCTAReview_UpdateSharePermission_vs_RevokeShare_CrossReplicaPostgres: a
