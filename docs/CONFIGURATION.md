@@ -133,6 +133,10 @@ storage:
   database:
     # SQLite:
     path: /app/data/keyorix.db
+    # require_existing_path: false  # default false. When true, the server
+    #   REFUSES to start if the SQLite file above does not already exist,
+    #   instead of creating a new, empty one in its place — see
+    #   "Refusing to vivify a missing database" below.
     # PostgreSQL (recommended for production) — set type: postgres above:
     # dsn: "host=db user=keyorix dbname=keyorix port=5432 sslmode=require"
     # password: ""                # prefer KEYORIX_DB_PASSWORD
@@ -151,6 +155,37 @@ storage:
     #   keyorix_audit_flusher_batch_size/_flushes_total metrics (exposed on
     #   the server's /metrics endpoint) justify it for your own load shape.
 ```
+
+### Refusing to vivify a missing database
+
+`require_existing_path` (SQLite only, default `false`).
+
+A mistyped `path`, or a volume mount that silently failed to attach, does not produce an error
+today — SQLite happily creates the file, the migration runs, and you get a healthy-looking
+server with zero secrets in it, while your real data sits untouched at the path you meant. An
+absolute `path` does not help: it stops two processes diverging onto two different files, but a
+single wrong absolute path still vivifies cleanly.
+
+Set `require_existing_path: true` and the server refuses to start instead:
+
+```
+no database found at /app/data/keyorix.db (configured database.path: "/app/data/keyorix.db")
+and database.require_existing_path is set: run 'keyorix system init --database' to create one
+deliberately, or verify database.path and the working directory -- refusing to create a new,
+empty database in its place
+```
+
+Create the database deliberately with `keyorix system init --database` (which creates the file
+with `O_CREATE|O_EXCL`), then start the server.
+
+In-memory DSNs (`:memory:`, `...?mode=memory`) are unaffected — there is no file that could
+pre-exist. The Postgres backend is unaffected too.
+
+**Why this is off by default:** the shipped first-boot paths (`server/entrypoint.sh`,
+`docker-compose.yml`) start the server directly and let it create the database, so turning this
+on by default would break every first boot that does not run `keyorix system init --database`
+first. Turn it on once your deployment creates the file explicitly — which is exactly the point:
+after that, a missing file can only mean something went wrong.
 
 ### Connection pool
 

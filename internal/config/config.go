@@ -520,6 +520,28 @@ type DatabaseConfig struct {
 	// SQLite
 	Path string `yaml:"path"`
 
+	// RequireExistingPath (INV-STORAGE-22, ADR-095 "Task 3", #2504) makes the
+	// server REFUSE to boot when the SQLite file at Path does not already
+	// exist, instead of letting gorm.Open silently vivify a fresh, empty,
+	// healthy-looking store. A mistyped path or a volume mount that failed to
+	// attach otherwise produces a working server with zero secrets in it and
+	// no error anywhere — the operator's own data is still on disk, untouched,
+	// at the path they meant.
+	//
+	// Default false, i.e. today's create-if-missing behaviour, DELIBERATELY:
+	// nothing in the supported first-boot paths creates the database file
+	// before the server starts (server/entrypoint.sh and docker-compose.yml
+	// both boot the server directly; `keyorix system init --database`, the
+	// explicit "yes, a fresh install belongs here" marker ADR-095 names, is
+	// optional), so defaulting this to true would break every containerized
+	// first boot. ADR-095 Task 3 says the flip "deserves a deliberate
+	// sign-off rather than landing inside a same-day investigation" — this
+	// field is that sign-off's prerequisite, not the flip itself.
+	//
+	// Does not apply to an in-memory DSN (":memory:", "mode=memory"), which
+	// has no file to pre-exist, nor to the Postgres backend.
+	RequireExistingPath bool `yaml:"require_existing_path"`
+
 	// PostgreSQL — use DSN directly or set individual fields
 	DSN      string `yaml:"dsn"` // e.g. "host=localhost user=keyorix dbname=keyorix port=5432 sslmode=require"
 	Host     string `yaml:"host"`
