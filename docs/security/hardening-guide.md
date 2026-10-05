@@ -106,6 +106,32 @@ for *every* table. A power loss can lose the last fraction of a second of
 secret writes as well as audit entries. The startup warning says this too; it
 is not a footnote.
 
+**What it buys, measured.** pve01, W1 hot secret read, median of 3 reps, the two
+arms interleaved on the same host from the same binary (FASTAUDIT-1,
+`~/proj/bench-footprint/results/2026-10-05-fastaudit-1/`):
+
+| backend | clients | default p50 | fast p50 | default p99 | fast p99 |
+|---|---|---|---|---|---|
+| Postgres | 1 | 16.6 ms | **3.7 ms** | 64.6 ms | **9.3 ms** |
+| Postgres | 10 | 83.3 ms | **24.9 ms** | 157.9 ms | **51.5 ms** |
+| Postgres | 50 | 150.8 ms | **65.8 ms** | 227.5 ms | **115.9 ms** |
+| SQLite | 1 | 42.7 ms | **2.1 ms** | 125.5 ms | **53.3 ms** |
+| SQLite | 10 | 67.3 ms | **9.8 ms** | 328.8 ms | *518.0 ms* |
+| SQLite | 50 | 110.3 ms | **52.1 ms** | 703.7 ms | *919.0 ms* |
+
+**Read the two italicised cells before enabling this on SQLite with concurrent
+writers.** On Postgres, fast mode improves both p50 and p99 at every
+concurrency. On SQLite it improves p50 everywhere — dramatically at one client —
+but makes **p99 worse** at 10 and 50 clients. The likely mechanism (a
+hypothesis, not a measured attribution): at `synchronous=FULL` every commit
+fsyncs, which paces the writer and keeps the WAL short; at `NORMAL` commits are
+cheap, so the WAL grows much faster between checkpoints, and when a checkpoint
+does fire it has far more to sync — a rarer but much bigger stall, which
+SQLite's single-writer lock then imposes on every waiting writer. If your SLO is
+a tail percentile rather than a median, and your backend is SQLite with
+concurrent writers, this setting may be a regression for you even though the
+median looks much better.
+
 **When this is reasonable.** Only where loss of the host's volatile write cache
 is not a realistic event:
 
@@ -119,7 +145,9 @@ is not a realistic event:
   is involved.
 
 It is not reasonable on a laptop, a bare consumer SSD, a desktop VM, or any
-host whose power you do not control.
+host whose power you do not control — nor, per the measurement above, on SQLite
+with concurrent writers if what you care about is the tail rather than the
+median.
 
 **Why the option exists.** PERF-2 measured Keyorix at roughly 10× HashiCorp
 Vault's single-client read latency — and that was with Vault's *own* file audit
