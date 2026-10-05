@@ -196,6 +196,13 @@ type LocalStorage struct {
 	// transaction, whose durability is the caller's business, not the audit
 	// chain's.
 	auditSkipDurableSync bool
+	// secretMetaCache backs GetSecret/GetLatestSecretVersion/GetSecretAccessSchedule's
+	// read-path cache (PERF-3, docs/specs/read-path-caching.md). A pointer so a
+	// transaction-scoped LocalStorage (see WithTransaction) shares the SAME cache as
+	// its parent, same sharing reason as auditChainMu etc. above — see
+	// secret_metadata_cache.go's own header for why this must NOT be a package-level
+	// global instead.
+	secretMetaCache *secretMetadataCache
 }
 
 // clockWatermark pairs a mutex with the time.Time it guards, so a single
@@ -222,6 +229,7 @@ func NewLocalStorage(db *gorm.DB) *LocalStorage {
 		rbacClockWatermark:    &clockWatermark{},
 		auditFlusher:          &auditFlusherState{},
 		rawStmts:              &rawStatements{},
+		secretMetaCache:       newSecretMetadataCache(),
 	}
 }
 
