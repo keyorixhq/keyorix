@@ -68,6 +68,13 @@ type consumeFirstExemption struct {
 	// consumedByDeletion: tables whose consumption is a row DELETE. Accepted
 	// only under pureRowSubtraction.
 	consumedByDeletion []string
+	// maxRowsRemoved caps how many rows a consumedByDeletion table may lose.
+	// Without it, "pure subtraction" would accept an op that deleted EVERY row
+	// of the table as readily as the one row it was supposed to consume. A
+	// table listed in consumedByDeletion with no cap here is unbounded, and
+	// TestConsumeFirstExemptions_Documented refuses that, so the cap cannot be
+	// forgotten rather than deliberately omitted.
+	maxRowsRemoved map[string]int
 	// why is the one-line reason, printed in the ACCEPTABLE-BY-DESIGN log line
 	// so a passing run still says what it accepted and on what grounds.
 	why string
@@ -93,6 +100,31 @@ var consumeFirstExemptions = []consumeFirstExemption{
 		fn:              "(*KeyorixCore).requireReauth",
 		consumedColumns: map[string][]string{"MFASecret": {"LastUsedStep"}},
 		why:             "requireReauth burned the matched TOTP time-step (MFASecret.LastUsedStep) before the disable transaction; it must stay burned so the same code cannot be replayed",
+	},
+	// #2814. CompleteSAML (internal/core/sso.go) is itself a class-B row
+	// (docs/atomicity-exempt.tsv). ConsumeSSOLoginState burns the single-use
+	// RelayState row FIRST -- a hard row DELETE -- before the assertion
+	// validation and user resolution/provisioning that follow. That ordering is
+	// the replay protection: the stored row is also what the InResponseTo check
+	// is validated against, so leaving it live until after provisioning would
+	// let a captured (RelayState, response) pair re-drive user resolution and
+	// auto-provisioning rather than being refused on its second use. A
+	// GetUserByUsername error inside resolveSSOUser therefore fails closed with
+	// the state correctly consumed.
+	//
+	// consumedByDeletion rather than consumedColumns because the consume is a
+	// row delete, not a column flip. The pure-subtraction requirement is what
+	// makes a whole-table entry safe here without an AST check that CompleteSAML
+	// never writes this table: a CreateSSOLoginState (row added) or an in-place
+	// update (row edited, so its canonical JSON changes) both make the
+	// exemption refuse, per-run, from the snapshot alone. maxRowsRemoved pins it
+	// to the ONE row this op may consume.
+	{
+		op:                 "REST POST /auth/saml/{provider}/acs",
+		fn:                 "(*KeyorixCore).CompleteSAML",
+		consumedByDeletion: []string{"SSOLoginState"},
+		maxRowsRemoved:     map[string]int{"SSOLoginState": 1},
+		why:                "ConsumeSSOLoginState deleted the single-use RelayState row before assertion validation and user resolution; it must stay consumed so a captured response cannot be replayed",
 	},
 }
 
@@ -137,7 +169,11 @@ func consumeFirstAccountsForDiff(in oracleInput) (*consumeFirstExemption, bool) 
 		return nil, false
 	}
 	for _, tbl := range e.consumedByDeletion {
-		if !pureRowSubtraction(in.before.Tables[tbl], in.after.Tables[tbl]) {
+		before, after := in.before.Tables[tbl], in.after.Tables[tbl]
+		if !pureRowSubtraction(before, after) {
+			return nil, false
+		}
+		if removed := len(before.Rows) - len(after.Rows); removed > e.maxRowsRemoved[tbl] {
 			return nil, false
 		}
 	}
@@ -235,6 +271,15 @@ func TestConsumeFirstExemptions_Documented(t *testing.T) {
 			t.Errorf("consumeFirstExemption for op %q declares no consumption at all -- it would "+
 				"accept ANY unchanged-elsewhere diff, which is not what this mechanism is for", e.op)
 		}
+		// An uncapped consumedByDeletion table would accept "the op deleted
+		// every row" as readily as "the op consumed its one token".
+		for _, tbl := range e.consumedByDeletion {
+			if e.maxRowsRemoved[tbl] <= 0 {
+				t.Errorf("consumeFirstExemption for op %q lists %q in consumedByDeletion with no "+
+					"positive maxRowsRemoved cap -- pure subtraction alone would also accept an op "+
+					"that deleted the whole table", e.op, tbl)
+			}
+		}
 	}
 }
 
@@ -316,9 +361,82 @@ func TestConsumeFirstPredicate_Calibration(t *testing.T) {
 	})
 }
 
+// TestConsumeFirstPredicate_DeletionCalibration covers the deletion-shaped
+// entry (#2814, SSOLoginState). Same discipline as the column-shaped half: the
+// green case must be accepted, and every nearby shape that is NOT the declared
+// consumption must be refused.
+func TestConsumeFirstPredicate_DeletionCalibration(t *testing.T) {
+	const op = "REST POST /auth/saml/{provider}/acs"
+	stepUnset := `{"ID":1,"UserID":1,"LastUsedStep":null}`
+	userBefore := `{"ID":1,"MFAEnabled":true}`
+	userAfter := `{"ID":1,"MFAEnabled":false}`
+	stateA := `{"ID":1,"State":"relay-a"}`
+	stateB := `{"ID":2,"State":"relay-b"}`
+
+	t.Run("green: the one consumed state row was deleted", func(t *testing.T) {
+		in := oracleInput{
+			op:     op,
+			before: calibSnapshot(t, []string{stepUnset}, []string{userBefore}, []string{stateA, stateB}),
+			after:  calibSnapshot(t, []string{stepUnset}, []string{userBefore}, []string{stateB}),
+		}
+		if _, ok := consumeFirstAccountsForDiff(in); !ok {
+			t.Fatal("predicate refused a diff confined to one deleted SSOLoginState row -- that is the " +
+				"consume-first shape CompleteSAML's class-B classification describes")
+		}
+	})
+
+	t.Run("red: a state row was ADDED, not consumed", func(t *testing.T) {
+		in := oracleInput{
+			op:     op,
+			before: calibSnapshot(t, []string{stepUnset}, []string{userBefore}, []string{stateA}),
+			after:  calibSnapshot(t, []string{stepUnset}, []string{userBefore}, []string{stateA, stateB}),
+		}
+		if _, ok := consumeFirstAccountsForDiff(in); ok {
+			t.Fatal("predicate ACCEPTED an ADDED SSOLoginState row -- a write to this table on the error " +
+				"path is not a consumption and must still fail")
+		}
+	})
+
+	t.Run("red: more rows deleted than this op may consume", func(t *testing.T) {
+		in := oracleInput{
+			op:     op,
+			before: calibSnapshot(t, []string{stepUnset}, []string{userBefore}, []string{stateA, stateB}),
+			after:  calibSnapshot(t, []string{stepUnset}, []string{userBefore}, nil),
+		}
+		if _, ok := consumeFirstAccountsForDiff(in); ok {
+			t.Fatal("predicate ACCEPTED two deleted SSOLoginState rows where maxRowsRemoved is 1 -- " +
+				"wiping other users' in-flight logins is not this op's declared consumption")
+		}
+	})
+
+	t.Run("red: the consumption happened AND another table moved", func(t *testing.T) {
+		in := oracleInput{
+			op:     op,
+			before: calibSnapshot(t, []string{stepUnset}, []string{userBefore}, []string{stateA}),
+			after:  calibSnapshot(t, []string{stepUnset}, []string{userAfter}, nil),
+		}
+		if _, ok := consumeFirstAccountsForDiff(in); ok {
+			t.Fatal("predicate ACCEPTED a diff that also changed User -- a genuine partial commit " +
+				"alongside the consumption must still fail")
+		}
+	})
+
+	t.Run("red: nothing was consumed but the table still differs", func(t *testing.T) {
+		in := oracleInput{
+			op:     op,
+			before: calibSnapshot(t, []string{stepUnset}, []string{userBefore}, []string{stateA}),
+			after:  calibSnapshot(t, []string{stepUnset}, []string{userBefore}, []string{stateB}),
+		}
+		if _, ok := consumeFirstAccountsForDiff(in); ok {
+			t.Fatal("predicate ACCEPTED a swapped SSOLoginState row (one deleted, one added) -- the row " +
+				"count is unchanged, so this is not a pure consumption")
+		}
+	})
+}
+
 // TestPureRowSubtraction_Calibration pins the deletion-shaped half of the
-// predicate independently of any exemption entry, so the SAML-side entry
-// (stacked PR, #2814) lands on a primitive that is already red/green-proved.
+// predicate independently of any exemption entry, so #2814's entry rests on a
+// primitive that is red/green-proved on its own.
 func TestPureRowSubtraction_Calibration(t *testing.T) {
 	row := func(rows ...string) tableSnapshot { return tableSnapshot{Rows: rows} }
 	cases := []struct {

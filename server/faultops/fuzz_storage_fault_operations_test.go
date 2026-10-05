@@ -1148,19 +1148,12 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// as an open finding, and it covers EVERY storage method on the op rather
 	// than the one method a tolerance row could name.
 	//
-	// #2814: CompleteSAML (internal/core/sso.go) is itself a class-B row
-	// (atomicity-exempt.tsv:76) -- ConsumeSSOLoginState burns the single-use
-	// RelayState row first, by design, because st.Nonce is what the
-	// InResponseTo check validates against and a replayable state row would
-	// let a captured (RelayState, SAMLResponse) pair re-drive user
-	// resolution/provisioning. A GetUserByUsername error inside
-	// resolveSSOUser therefore fails closed with the state correctly consumed.
-	{
-		op: "REST POST /auth/saml/{provider}/acs", method: "GetUserByUsername", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2814", expires: "2026-10-17",
-		tables:     []string{"SSOLoginState"},
-		findingDoc: "#2814",
-	},
+	// #2814's tolerance was here and is REMOVED by this PR, for the same
+	// reason as #2817's directly above: CompleteSAML is itself a class-B
+	// consume-first row, so oracle (a) now derives the exemption from
+	// docs/atomicity-exempt.tsv (consumeFirstAccountsForDiff,
+	// consume_first_oracle_test.go) instead of carrying it as an open finding
+	// against one named storage method.
 }
 
 func matchingKnownOpen(in oracleInput, oracle string, diff []string) *knownOpenTolerance {
