@@ -21,6 +21,7 @@
 | [`SDLC.md`](SDLC.md) | Secure development policy: branch protection (read live via `gh api`), DCO, review flow, CI gates, fuzzing, dependency policy, release signing/SBOM/SLSA, remediation SLA, merge queue — each item marked in place (with evidence) or planned. |
 | [`SECURE-CODING.md`](SECURE-CODING.md) | Ten coding rules this codebase actually enforces, each with the real finding that motivated it and the guard/test that keeps it true. |
 | [`testing.md`](testing.md) | CI gates in depth, the fuzzing programme, differential/property testing, and the machine-checked coverage ledgers. |
+| [`BSI-APP.bd.6-mapping.md`](BSI-APP.bd.6-mapping.md) | One row per requirement of Germany's BSI IT-Grundschutz module APP.bd.6 ("Secrets Management with Hashicorp Vault") — status (met/partly/not met/not applicable), evidence link, gap issue if any. |
 
 ## Related, one level up
 
@@ -28,7 +29,7 @@
 |---|---|
 | [`../../SECURITY.md`](../../SECURITY.md) | Vulnerability disclosure: how to report, response targets, safe harbor, remediation SLA, release-verification commands. |
 | [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md) | What CI checks and what's required to contribute (overlaps `SDLC.md`'s branch-protection section; `SDLC.md` is the more detailed, evidence-linked version). |
-| [`../compliance/README.md`](../compliance/README.md) | NIS2/DORA/ISO 27001/ENS/SOC 2/BSI APP.bd.6 control mappings built on the controls documented here. |
+| [`../compliance/README.md`](../compliance/README.md) | NIS2/DORA/ISO 27001/ENS/SOC 2 control mappings built on the controls documented here. |
 
 ## For buyers: control → evidence
 
@@ -63,7 +64,8 @@ table — file an issue; don't take the row on faith.
 | Web UI: session-cookie-only auth (no token in `localStorage`), CSRF, CSP | [`threat-models/web-ui.md`](threat-models/web-ui.md) |
 | HA / cross-replica consistency — a threat class not published by any competitor surveyed | [`threat-models/ha-consistency.md`](threat-models/ha-consistency.md), `docs/specs/check-then-act-inventory.md` |
 | AI-agent (MCP server) access: least-privilege, read-only, audited, prompt-injection modeled explicitly | [`threat-models/mcp-server.md`](threat-models/mcp-server.md), [`../mcp.md`](../mcp.md) |
-| Regulatory control mappings (NIS2, DORA, ISO 27001, ENS, SOC 2, BSI APP.bd.6) | [`../compliance/README.md`](../compliance/README.md), [`../compliance/BSI-APP-BD-6-CONTROLS.md`](../compliance/BSI-APP-BD-6-CONTROLS.md) |
+| Regulatory control mappings (NIS2, DORA, ISO 27001, ENS, SOC 2) | [`../compliance/README.md`](../compliance/README.md) |
+| BSI IT-Grundschutz APP.bd.6 mapping (Vault-specific module, walked against Keyorix) | [`BSI-APP.bd.6-mapping.md`](BSI-APP.bd.6-mapping.md) |
 
 Two rows above are deliberately phrased as "honestly scoped" rather than
 "in place" — a prior version of several documents in this repository
