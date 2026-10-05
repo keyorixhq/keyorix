@@ -140,6 +140,11 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   `_IssueLease_DeleteProjectAfterInsert_`, and `local_dynamic_test.go:
   TestCreateDynamicSecretLease_ActiveRefusedOnDisabledConfig` (default-ci). A `revoke_failed`
   tracking row is always recorded: it is the only record of a credential still live.
+  Environments (#2656, `RestoreEnvironment` vs `DeleteProject`): `deleteProjectCascade` takes
+  `SELECT ... FOR UPDATE` on the project before any child sweep (it used to touch the project
+  row last). `_RestoreEnvironment_vs_DeleteProject_`, `_RestoreEnvironment_DeleteProjectAfterUpdate_`,
+  and `_RestoreEnvironment_InsideDeleteProjectCascade_`, which runs A's whole restore between
+  the cascade's environment sweep and its project UPDATE and fails without that up-front lock.
 
 ## GORM hook / timezone correctness (`internal/storage/models`, `store`)
 
