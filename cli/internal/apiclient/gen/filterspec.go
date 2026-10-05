@@ -29,6 +29,13 @@ var keptPaths = []string{
 	"/health",
 	"/api/v1/version",
 	"/auth/login",
+	// #2737: the second step of a two-step login. /auth/login answers an
+	// MFA-enabled account with a challenge instead of a token (200 +
+	// MFAChallengeData, see openapi.yaml's authLogin description), and the
+	// challenge is completed here. Without this path the generated client had
+	// no way to finish a login at all, which is why `keyorix login` dead-ended
+	// on the challenge response.
+	"/auth/mfa/verify",
 	"/auth/logout",
 	"/api/v1/auth/profile",
 	// Item 3b (RELEASE-BLOCKERS): `keyorix change-password`, so the J5

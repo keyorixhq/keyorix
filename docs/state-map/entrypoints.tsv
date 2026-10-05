@@ -122,7 +122,7 @@ cli	keyorix legal-hold status	cli/cmd/legalhold.go	36	<expr>	D	legalhold.go:36-6
 cli	keyorix license	cli/cmd/license.go	23		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
 cli	keyorix license install	cli/cmd/license.go	49	runLicenseInstall	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix license status	cli/cmd/license.go	57	runLicenseStatus	none	single/no write-shaped call found by a 1-hop scan of the handler body
-cli	keyorix login	cli/cmd/login.go	25	runLogin	none	single/no write-shaped call found by a 1-hop scan of the handler body
+cli	keyorix login	cli/cmd/login.go	29	runLogin	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix logout	cli/cmd/logout.go	11	runLogout	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix machine	cli/cmd/machine.go	24		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
 cli	keyorix machine audit	cli/cmd/machine_hygiene_audit.go	32	runMachineAudit	none	single/no write-shaped call found by a 1-hop scan of the handler body
