@@ -266,12 +266,22 @@ func TestMachineIdentityCredential_CRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, active, 1)
 
-	// Update.
-	cred.Name = "updated-name"
-	require.NoError(t, ls.UpdateMachineIdentityCredential(ctx, cred))
+	// Classify (#2696: the only mutation this model has besides touch/revoke —
+	// column-scoped and conditional on the classification the caller read).
+	matched, err := ls.SetMachineIdentityCredentialClassification(ctx, cred.ID, cred.Classification, "internal")
+	require.NoError(t, err)
+	require.True(t, matched)
 	got2, err := ls.GetMachineIdentityCredentialByID(ctx, cred.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "updated-name", got2.Name)
+	assert.Equal(t, "internal", got2.Classification)
+	// A stale `from` value must not match, so a concurrent classifier's value is
+	// never clobbered.
+	matched, err = ls.SetMachineIdentityCredentialClassification(ctx, cred.ID, "public", "restricted")
+	require.NoError(t, err)
+	require.False(t, matched)
+	got2b, err := ls.GetMachineIdentityCredentialByID(ctx, cred.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "internal", got2b.Classification)
 
 	// Touch.
 	usedAt := time.Now().UTC().Truncate(time.Second)

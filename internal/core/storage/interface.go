@@ -571,7 +571,23 @@ type Storage interface {
 	// credential across all identities — the deployment-wide view for token-hygiene
 	// auditing (stale / expired-but-active).
 	ListActiveMachineIdentityCredentials(ctx context.Context) ([]*models.MachineIdentityCredential, error)
-	UpdateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) error
+	// SetMachineIdentityCredentialClassification persists ONLY the
+	// classification column of credentialID, and only if the row's CURRENT
+	// classification is still fromClassification (the value the caller read
+	// before deciding to change it): "UPDATE ... SET classification WHERE
+	// id = ? AND classification = ?". matched=false (no error) means the row
+	// moved since that read; the caller must fail closed.
+	//
+	// This REPLACES the former UpdateMachineIdentityCredential, a bare GORM
+	// Save of the whole row (#2696). Classification is the only field any
+	// caller of that method ever changed, but Save wrote back every column
+	// the caller's earlier, unlocked read had put in the struct — `revoked`
+	// included. A RevokeMachineToken that committed on another replica in
+	// between was therefore silently undone, and the revoked token
+	// authenticated again with no audit record of the un-revoke. The narrow
+	// method is deliberately the ONLY one left: a full-row writer for this
+	// model would reintroduce that for whatever the next caller forgets.
+	SetMachineIdentityCredentialClassification(ctx context.Context, credentialID uint, fromClassification, toClassification string) (matched bool, err error)
 	// RevokeMachineIdentityCredential revokes credentialID, but only if it
 	// belongs to a machine identity owned by projectID (#1551) — the same
 	// ownership check core.machineInProject already applies for every other

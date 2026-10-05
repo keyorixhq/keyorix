@@ -92,20 +92,26 @@ var fullRowOverwriteMethods = map[string]bool{
 	"TransitionSecretStatus":           true,
 	"UpdateUserIfActiveStateMatches":   true,
 	// Plain, unconditional .Save(...).
-	"UpdateMachineIdentityCredential": true,
-	"UpdateRole":                      true,
-	"UpdateBreakGlassActivation":      true,
-	"UpdateProject":                   true,
-	"UpdateWebAuthnCredential":        true,
-	"UpdateSecretTemplate":            true,
-	"UpdateRotationPolicy":            true,
-	"UpdateLegalHold":                 true,
-	"UpdateDynamicSecretConfig":       true,
-	"UpdateDynamicSecretLease":        true,
-	"UpdateSecret":                    true,
-	"UpdateUser":                      true,
-	"UpdateGroup":                     true,
-	"SaveAnomalyConfig":               true,
+	// UpdateMachineIdentityCredential was here until #2696 replaced it with
+	// SetMachineIdentityCredentialClassification, a conditional column-scoped
+	// UPDATE — the method no longer exists, so a name left here would read as
+	// "still a full-row writer" and could never match anything. Same treatment
+	// the deleted TransitionMachineIdentityStateProxy got in the allowlist
+	// below. The replacement is deliberately NOT added: it takes scalars, not
+	// a struct, so there is no unfetched-struct shape for this guard to catch.
+	"UpdateRole":                 true,
+	"UpdateBreakGlassActivation": true,
+	"UpdateProject":              true,
+	"UpdateWebAuthnCredential":   true,
+	"UpdateSecretTemplate":       true,
+	"UpdateRotationPolicy":       true,
+	"UpdateLegalHold":            true,
+	"UpdateDynamicSecretConfig":  true,
+	"UpdateDynamicSecretLease":   true,
+	"UpdateSecret":               true,
+	"UpdateUser":                 true,
+	"UpdateGroup":                true,
+	"SaveAnomalyConfig":          true,
 }
 
 // fullRowOverwriteAllowlist is the exhaustive, reasoned inventory of every

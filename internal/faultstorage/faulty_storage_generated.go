@@ -6192,6 +6192,23 @@ func (w *FaultyStorage) SetAccountState(ctx context.Context, id uint, state stri
 	return w.real.SetAccountState(ctx, id, state, updatedAt)
 }
 
+func (w *FaultyStorage) SetMachineIdentityCredentialClassification(ctx context.Context, credentialID uint, fromClassification string, toClassification string) (bool, error) {
+	fire, kind, injected := w.check("SetMachineIdentityCredentialClassification")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.SetMachineIdentityCredentialClassification(ctx, credentialID, fromClassification, toClassification)
+			return rv1, injected
+		}
+	}
+	return w.real.SetMachineIdentityCredentialClassification(ctx, credentialID, fromClassification, toClassification)
+}
+
 func (w *FaultyStorage) SetPasswordHash(ctx context.Context, id uint, hash string, changedAt time.Time) error {
 	fire, kind, injected := w.check("SetPasswordHash")
 	if fire {
@@ -6746,22 +6763,6 @@ func (w *FaultyStorage) UpdateLoginLockoutState(ctx context.Context, id uint, at
 		}
 	}
 	return w.real.UpdateLoginLockoutState(ctx, id, attempts, lastFailedAt, lockedUntil, lockoutCount)
-}
-
-func (w *FaultyStorage) UpdateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) error {
-	fire, kind, injected := w.check("UpdateMachineIdentityCredential")
-	if fire {
-		switch kind {
-		case KindPanic:
-			panic(injected)
-		case KindError:
-			return injected
-		case KindEffectThenError:
-			_ = w.real.UpdateMachineIdentityCredential(ctx, c)
-			return injected
-		}
-	}
-	return w.real.UpdateMachineIdentityCredential(ctx, c)
 }
 
 func (w *FaultyStorage) UpdateNotification(ctx context.Context, n *models.Notification) error {
