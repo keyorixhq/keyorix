@@ -68,7 +68,7 @@ func TestContractQA2_DisableMFA(t *testing.T) {
 	require.NoError(t, err)
 	actCode, err := totp.GenerateCode(secret, fixed.Add(-30*time.Second))
 	require.NoError(t, err)
-	_, err = coreService.ActivateMFA(context.Background(), 1, actCode, reauthTestPassword)
+	_, err = coreService.ActivateMFA(context.Background(), 1, actCode, reauthTestPassword, "")
 	require.NoError(t, err)
 
 	// A step away from the activation code (above) so this isn't a replay of
@@ -94,7 +94,7 @@ func TestContractQA2_RegenerateRecoveryCodes(t *testing.T) {
 	require.NoError(t, err)
 	actCode, err := totp.GenerateCode(secret, fixed.Add(-30*time.Second))
 	require.NoError(t, err)
-	_, err = coreService.ActivateMFA(context.Background(), 1, actCode, reauthTestPassword)
+	_, err = coreService.ActivateMFA(context.Background(), 1, actCode, reauthTestPassword, "")
 	require.NoError(t, err)
 
 	regenCode, err := totp.GenerateCode(secret, fixed)
@@ -144,7 +144,7 @@ func TestContractQA2_Login_MFARequiredBranch(t *testing.T) {
 	require.NoError(t, err)
 	actCode, err := totp.GenerateCode(secret, fixed)
 	require.NoError(t, err)
-	_, err = coreService.ActivateMFA(context.Background(), 1, actCode, reauthTestPassword)
+	_, err = coreService.ActivateMFA(context.Background(), 1, actCode, reauthTestPassword, "")
 	require.NoError(t, err)
 
 	body, _ := json.Marshal(map[string]string{"username": "alice", "password": reauthTestPassword})
@@ -171,6 +171,9 @@ func TestContractQA2_Login_MFARequiredBranch(t *testing.T) {
 // then /auth/mfa/verify with a fresh TOTP code, minting a real session.
 func TestContractQA2_VerifyMFALogin(t *testing.T) {
 	h, coreService, db := setupMFAReauthTest(t)
+	// completeLogin resolves the user's roles and fails closed when it cannot (main, post-#2442),
+	// so the login path needs the RBAC + login-throttle tables setupMFAReauthTest omits.
+	require.NoError(t, db.AutoMigrate(&models.Role{}, &models.UserRole{}, &models.Permission{}, &models.RolePermission{}, &models.LoginAttempt{}))
 	fixed := time.Now()
 	require.NoError(t, db.Model(&models.User{}).Where("id = ?", 1).Update("username_folded", "alice").Error)
 
@@ -178,7 +181,7 @@ func TestContractQA2_VerifyMFALogin(t *testing.T) {
 	require.NoError(t, err)
 	actCode, err := totp.GenerateCode(secret, fixed.Add(-30*time.Second))
 	require.NoError(t, err)
-	_, err = coreService.ActivateMFA(context.Background(), 1, actCode, reauthTestPassword)
+	_, err = coreService.ActivateMFA(context.Background(), 1, actCode, reauthTestPassword, "")
 	require.NoError(t, err)
 
 	loginBody, _ := json.Marshal(map[string]string{"username": "alice", "password": reauthTestPassword})
