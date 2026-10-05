@@ -1,0 +1,405 @@
+# Read-path cache ordering: making stale-cache bugs structurally impossible (GUARD-6)
+
+Spec for GUARD-6. Companion to [`read-path-caching.md`](read-path-caching.md), which specified
+*which* rows PERF-3 caches and *why* that is safe. This spec is about the one mistake every
+such cache can make, and about replacing "remember not to make it" with a mechanism that
+fails when someone does.
+
+## 1. The bug class
+
+A generation-validated read cache has three moving parts:
+
+- **G** — a cheap, indexed *generation* (stamp) read: `secret_nodes.updated_at`,
+  `system_metadata['role_permissions_generation']`.
+- **V** — the expensive *data* load: the row, the latest version, the `role_permissions` join.
+- the cache itself, mapping a key to `(G, V)`.
+
+A **miss** must read both and store them together; a **hit** must re-read G live and serve the
+cached V only when the fresh G equals the stored one. That shape is correct — but only under one
+ordering constraint, and nothing in the shape itself enforces it.
+
+```
+            BUGGY: data first, stamp second          CORRECT: stamp first, data second
+  t0        v := load()                              g := readGen()        -> G_before
+  t1        <a write commits>                        <a write commits>
+  t2        g := readGen()  -> G_after               v := load()           -> V_after
+  t3        cache[k] = (G_after, v)   <- V_before!   cache[k] = (G_before, V_after)
+```
+
+In the buggy ordering the entry is **born self-consistent and wrong**: the next hit reads
+`G_after` live, it equals the stored stamp, so the pre-change `V_before` is served — and keeps
+being served, not for a bounded TTL but *until some unrelated write bumps that generation
+again*. There is no TTL here to put a ceiling on it.
+
+In the correct ordering the worst case is an entry stamped `G_before` holding `V_after`:
+pessimistically stale, so the next hit's live `G_after` does not match, the entry never hits,
+and the only cost is a wasted map slot. **The failure is asymmetric** — one ordering fails
+open and silently, the other fails to a cache miss.
+
+Found twice, in the same review pass, in the two PERF-3 caches:
+
+| Site | Effect | Proving test |
+|---|---|---|
+| `RoleSetHasPermission` (#2767) | a revoked permission kept authorizing | `TestRoleSetHasPermission_RevokeDuringResolveIsNotCachedStale` |
+| `GetLatestSecretVersion` (#2764) | a rotated secret kept returning its pre-rotation version | `TestGetLatestSecretVersion_RotationDuringResolveIsNotCachedStale` |
+
+Both were written independently, by the same author, days apart, each with a full test file
+including cross-replica Postgres cases — and both got the ordering wrong. That is the signal
+this spec responds to: the ordering is not hard to state, it is hard to *notice*, because
+nothing about the buggy code looks wrong and every test that does not race a write through the
+window passes. PERF-7 plans a third cache (secret values). Catching this a third time by review
+is not a plan.
+
+### 1.1 The sibling bug class, found while fixing these two: a stamp that does not move
+
+Ordering is necessary but not sufficient. A correctly-ordered cache is still wrong if the
+stamp **does not change when a cached column changes** — and both PERF-3 caches had that
+defect too, found in #2764/#2767's own CI and fixed there (`4b31a9d6`, `34495c0d`):
+
+- `secret_nodes.updated_at` alone misses `TryIncrementSecretNodeReadCount`, whose
+  `UpdateColumn` write bypasses GORM's auto-timestamp callback. A warm entry served
+  `read_count=0` forever, and `RotateSecret`'s `GetSecret` → mutate → `Save()` wrote that
+  stale zero back — a fresh budget for a burn-after-N-reads secret. Fixed by making the
+  node stamp `(updated_at, read_count)`.
+- the latest-version cache borrowed `secret_nodes.updated_at`, so **no** version writer moved
+  it; the mitigation (bump it from `CreateSecretVersion`) made invalidation depend on the
+  stored timestamp's *resolution*, and `storeNextSecretVersion`'s retry loop re-entered fast
+  enough to tie — it re-read its own stale cached answer and burned all 20 attempts against
+  the unique index. Fixed by deriving the stamp from the version rows themselves:
+  `(count, max(version_number), sum(read_count))`, no clock in it.
+- `role_permissions`' stamp was `time.Now().UnixNano()` plus a random suffix: correct for
+  invalidation, but *nondeterministic*, which broke `FuzzStorageFaultOperations`' state
+  oracles (they compare `system_metadata` between a fault-free reference run and a faulted
+  run; `Value` is a string and is compared byte-for-byte). Fixed by making it a monotonic
+  integer the database increments inside one `UPDATE`.
+
+Three rules fall out, and §2 builds them into the helper's contract rather than restating
+them:
+
+1. **Derive the stamp from the cached columns.** A timestamp is a stamp only for writers that
+   advance it; enumerate the ones that do not (`UpdateColumn`/`UpdateColumns` and raw SQL) and
+   either include their columns in the stamp or make them unreachable.
+2. **No clock in a stamp for a table written in a tight loop.** Resolution ties are
+   indistinguishable from "nothing changed".
+3. **A stamp must be deterministic.** A clock- or randomness-derived stamp is invisible to
+   every state-comparison oracle in this repo, which means it silently disables them.
+
+### 1.2 The one legitimate exception
+
+When G is a **column of the very row V consists of** — `secret_access_schedules.updated_at` and
+the schedule row itself — a single query returns both, atomically, as of one snapshot. There is
+no window between them to commit a write into, so the ordering constraint does not apply. This
+is not a loophole to be argued for case by case: it gets its own, separately named helper, so
+that "this site is the same-row case" is a thing the code *says*, not a thing a reviewer has to
+re-derive.
+
+## 2. Item 1 — correct by construction: one helper
+
+New file `internal/storage/store/read_path_cache.go`. Every read-path cache in the package goes
+through it; there is exactly one place where a cache entry can be written.
+
+### 2.1 The cache container
+
+```go
+// genCache is the only cache type in internal/storage/store. Entries can be
+// written ONLY by cachedRead/cachedReadSameRow in this file — enforced by
+// read_path_cache_guard_test.go, not by convention.
+type genCache[K comparable, G cacheGeneration, V any] struct { ... }
+
+func (c *genCache[K, G, V]) get(k K) (genCacheEntry[G, V], bool) // read-only
+func (c *genCache[K, G, V]) store(k K, stamp G, v V)             // helper-only
+func (c *genCache[K, G, V]) drop(k K)                            // helper-only
+```
+
+Generic over key, value and generation type, per the brief. Per-`*LocalStorage`-instance,
+never a package-level global — PERF-3's own reason stands and is unchanged: a package-global
+cache would make the two-pool cross-replica Postgres tests pass whether or not DB-generation
+invalidation works at all.
+
+### 2.2 The generation type is constrained, not just `comparable`
+
+```go
+type cacheGeneration interface {
+	comparable
+	generationMarker()
+}
+```
+
+`comparable` alone would admit `time.Time`, which is a trap: `time.Time` **is** comparable, so
+`G == G` compiles, but `==` on it also compares the monotonic reading and the `*time.Location`
+pointer — so two reads of the same column can compare unequal (`time.Time.Equal` is the only
+correct comparison, and `Equal` cannot be expressed through `==`). A cache whose stamps never
+compare equal never hits: a pure performance failure, invisible to every correctness test,
+which is exactly the kind of thing that survives for a year. The marker method makes
+`time.Time` *not satisfy the constraint*, so that mistake does not compile. Verified: a
+constraint interface embedding `comparable` plus a marker method compiles, and a struct with a
+value-receiver marker satisfies it.
+
+Each site declares its own generation type, carrying the stamp §1.1 says it needs. Timestamps
+are canonicalised to `int64` nanoseconds on the way in (Postgres stores `timestamptz` at
+microsecond precision, so the read-back value is stable, and this loses nothing the column did
+not already lose) — which is also what makes these types `comparable` at all:
+
+```go
+type nodeGeneration    struct{ updatedAtUnixNano int64; readCount int }   // secret_nodes
+type versionsGeneration struct{ count, maxVersionNumber, sumReadCount int64 } // secret_versions
+type scheduleGeneration struct{ updatedAtUnixNano int64 }                 // secret_access_schedules
+type rolePermGeneration struct{ counter string }                          // system_metadata
+```
+
+`nodeGeneration` landing as `int64` rather than `time.Time` is a small behaviour-preserving
+change to what #2764 shipped (`4b31a9d6` compares with a hand-written `equal` method because
+it holds a `time.Time`); folding it into the constraint removes the method and the chance of
+someone writing `==` against it by hand.
+
+### 2.3 `cachedRead` — the cross-row case
+
+```go
+func cachedRead[K comparable, G cacheGeneration, V any](
+	ctx context.Context,
+	cache *genCache[K, G, V],
+	key K,
+	gen func(context.Context) (G, bool, error),
+	load func(context.Context) (V, error),
+) (V, error)
+```
+
+Contract, in order, with no path that can reorder it:
+
+1. **The generation is read first, always** — before the cache is even consulted, and therefore
+   unconditionally before `load`. One read serves both the hit check and the store stamp.
+2. **A hit is served only on a fresh, successful, equal generation read.** `gen` returning an
+   error, or `found == false` (the row is gone / soft-deleted), is a **miss** — never "assume
+   unchanged". Fail closed: the cache is strictly an optimisation over a path that must behave
+   identically with the cache deleted.
+3. On a miss, `load` runs and its result is returned.
+4. **The entry is stored only when the generation read succeeded and found a row**, under the
+   stamp read in step 1. Never under a stamp read after `load`; there is no code path that
+   reads a stamp after `load`.
+5. **`load` returning an error drops the key** and propagates the error. Dropping is always
+   safe (it costs a future miss, nothing else) and it is what makes "the row was deleted"
+   stop being served.
+
+`load` returning a *nil pointer with no error* is how a call site caches a confirmed negative
+("this generation has no latest version"), preserving PERF-3's existing `hasVersion` behaviour
+without a second mechanism.
+
+### 2.4 `cachedReadSameRow` — the exception, made explicit
+
+```go
+func cachedReadSameRow[K comparable, G cacheGeneration, V any](
+	ctx context.Context,
+	cache *genCache[K, G, V],
+	key K,
+	gen func(context.Context) (G, bool, error),       // cheap stamp-only read, validates a HIT
+	load func(context.Context) (V, G, error),          // one query: the row AND its own stamp
+) (V, error)
+```
+
+Identical except that the stored stamp comes from `load`'s own return value, because it is a
+column of the row `load` returned. A caller cannot accidentally use this variant for a
+cross-row generation: it would have to produce a stamp from the loaded row, and for
+`GetLatestSecretVersion` (stamp on `secret_nodes`, data in `secret_versions`) there is none to
+produce.
+
+### 2.5 Call sites moved onto the helper
+
+| Method | Variant | Key | Generation | Data |
+|---|---|---|---|---|
+| `GetSecret` | `cachedReadSameRow` | secret id | `(secret_nodes.updated_at, read_count)` | the `secret_nodes` row |
+| `GetLatestSecretVersion` | `cachedRead` | secret id | `(count, max(version_number), sum(read_count))` over `secret_versions` | newest `secret_versions` row |
+| `GetSecretAccessSchedule` | `cachedReadSameRow` | secret node id | `secret_access_schedules.updated_at` | the schedule row |
+| `RoleSetHasPermission` | `cachedRead` | `(sorted(roleIDs), permission)` | `system_metadata['role_permissions_generation']` counter | the `role_permissions` join |
+
+**Acceptance criterion: behaviour is identical.** PERF-3's existing cache test files
+(`secret_metadata_cache_test.go`, `role_permission_cache_test.go`, both `*_cross_replica_postgres_test.go`,
+both `*_bench_test.go`) run **unchanged**, including the accessors they reach into
+(`ls.secretMetaCache.getNode`, `ls.getCachedSecret`, `ls.rolePermCache.get`,
+`ls.getCachedRolePermission`, `rolePermKey`). Those stay as thin, read-only wrappers over
+`genCache`. A refactor that needed its own tests edited to pass would not be a refactor.
+
+Two incidental simplifications fall out and are called out because they are behaviour-adjacent:
+
+- `secretMetadataCache`'s `mergeNode`/`mergeVersion` pair — which existed to stop `GetSecret`
+  and `GetLatestSecretVersion` from clobbering each other's half of one shared map entry —
+  disappears: node and latest-version become two independently stamped `genCache`s keyed on the
+  same id. Each half was already independently generation-validated, so no validation is lost;
+  what is lost is the merge logic, which was the only reason two writers shared one entry.
+- "No schedule exists" stays uncached, as PERF-3 specified (there is no row to read a stamp
+  from, so a negative cannot be validated). With `cachedReadSameRow` this is not a special case
+  any more: a not-found `load` has no stamp to store, so nothing is stored.
+
+### 2.6 Non-goals
+
+- No TTL, no push invalidation (LISTEN/NOTIFY), no shared/cross-process cache. Unchanged from
+  `read-path-caching.md` §PR-1, for the same reasons.
+- No change to any authorization decision, to what any method returns, or to which callers are
+  allowed. This is a refactor plus a guard.
+- `V` is not deep-copied by the helper. Defensive copies stay at the call sites, exactly as
+  today; the helper documents the contract ("store a value the caller will not mutate, return a
+  copy").
+
+## 3. Item 2 — the no-bypass guard
+
+`internal/storage/store/read_path_cache_guard_test.go`, in the style of the existing structural
+guards (`internal/core/atomicity_guard_test.go`, `check_then_act_lock_guard_test.go`,
+`internal/storage/store/g81_guard_test.go`): parse the package's AST, derive the thing being
+checked from the code, fail on a violation.
+
+**It must not be a hardcoded list of today's method names.** Per this repo's own standing
+lesson — an enumeration is only as complete as the idioms it knows about, five instances and
+counting — the guard *derives* its target set and *states* which shapes it recognises:
+
+1. **Cache types** = types declared in package `store` whose name ends in `Cache`
+   (case-insensitive) and whose struct has at least one map-typed or `*genCache` field.
+2. **Mutating methods** = methods on those types whose body writes a receiver field: an
+   assignment to `r.f` or `r.f[k]`, or `delete(r.f, k)`. Derived from the AST, so
+   `set`/`merge*`/`store`/`evict*`/anything-else-named is covered without naming it.
+3. **Violation** = a call to any such method from any file other than `read_path_cache.go`,
+   `_test.go` files included.
+4. **The naming loophole is closed by a second check**: any type in the package carrying both a
+   mutex field and a map field, but *not* named `*Cache`, fails with "name it `…Cache` or
+   explain it here" plus a reasoned allowlist. On `main` today that allowlist has exactly one
+   entry — `namedLockRegistry` (`map[string]*namedLockEntry`, a lock registry, not a read
+   cache); the other three mutex-bearing types in the package (`clockWatermark`,
+   `auditFlusherState`, `namedLockEntry`) hold no map and so are not candidates at all. Without
+   this check, renaming a cache type is enough to escape rule 1 — and a guard you can escape by
+   renaming is not a guard.
+
+The guard's doc comment states explicitly what it does **not** catch: a cache built on a bare
+map field of `LocalStorage` with no wrapper type at all, and any cache outside package `store`.
+Naming a check for what it verifies, and writing down what it doesn't, is the standing rule
+here.
+
+**Red/green.** Two layers, because the brief asks for the second and the first is what keeps
+working after today:
+
+- `TestReadPathCacheGuard_Fixtures`: the checker runs over `fstest.MapFS` fixtures — a clean
+  package (green), a package with a direct `set()` call outside the helper (red), a renamed
+  cache type (red), a mutex+map type not named `*Cache` (red). This is the permanent
+  calibration: it proves the guard fires *and* that it passes a known-good case, both
+  directions, every CI run.
+- A one-off scratch-copy demonstration pasted into the PR body: reintroduce the literal
+  `ls.secretMetaCache.store(...)` call that this refactor removed, run the guard, show it red.
+
+## 4. Item 3 — one shared race test for every cached read
+
+`internal/storage/store/read_path_cache_race_test.go`. Table-driven, one row per cached read
+method, plus one row per *writer* (item 4). Each row names:
+
+| Field | Meaning |
+|---|---|
+| `site` | the package function that calls `cachedRead`/`cachedReadSameRow` (e.g. `GetLatestSecretVersion`) |
+| `window` | the GORM table whose query opens the data/stamp window (e.g. `secret_versions`) |
+| `setup` | fixtures |
+| `mutate` | the write committed *inside* the window |
+| `read` | the cached read under test |
+| `wantFresh` | the assertion that the next read observes `mutate` |
+
+The harness registers a one-shot GORM `After("gorm:query")` callback that fires when
+`tx.Statement.Table == window`, commits `mutate` there, asserts the callback actually fired
+(`require.False(t, armed, ...)` — a window that never opened is a vacuous test, not a pass),
+and then asserts `wantFresh` on the **next** read. The in-flight read may legitimately still
+answer with the pre-write value — it read before the write; what must never happen is that
+answer being *cached under the post-write stamp*.
+
+**Completeness.** An AST check in the same file enumerates every function in the package that
+calls `cachedRead` or `cachedReadSameRow` and fails if any of them has no row in the table.
+A new cache that forgets its race row does not compile-and-pass; it fails. (Registry pattern,
+as in the GUARD-3 guards and `remote_reachability_registry_test.go`.)
+
+**Red proof.** Not "it fails on a fixture I invented" — it has to fail on the two defects that
+actually happened. Each PR's pre-fix parent (`86dea122^` for #2764, `8cd09937^` for #2767) is
+checked out in a scratch worktree, the harness is dropped in, and the run is pasted:
+`GetLatestSecretVersion` and `GetSecretAccessSchedule` red at the first, `RoleSetHasPermission`
+red at the second. `GetSecret`'s row is expected **green** at both — it was the same-row case
+from the start — and that is deliberately recorded as the known-good calibration case, not
+quietly omitted.
+
+## 5. Item 4 — invalidation coverage: every writer, enumerated
+
+A generation-validated cache is correct only if *every* writer of a cached row advances that
+row's generation in the same transaction — §1.1's first rule. **The secret half of this is
+already done and landed in #2764** (`4b31a9d6`): the full enumeration of every
+`UpdateColumn`/raw write to `secret_nodes` and `secret_versions`, each shown covered or named
+as the one stopped-server exception (`internal/encryption/sweep.go`'s DEK rewrap, exclusive
+key lock, ADR-010), plus the machine-check that keeps it complete —
+`TestSecretCacheGeneration_CoversEveryUpdateColumnWriter`, an AST scan that fails on a
+hook-bypassing write to either table touching a column no generation observes, and that
+refuses to pass vacuously. What remains for this item:
+
+1. The same treatment for `role_permissions`, where the generation is an explicit bump rather
+   than a derived stamp, so the check is different in kind: every writer of that table must
+   call `bumpRolePermissionsGenerationTx` **in its own transaction**. Derive the writer set
+   from the AST (every `Create`/`Delete` whose model is `models.RolePermission`) and fail on
+   one that does not.
+2. Generalise the #2764 scanner from "the two secret tables" to "every table any `genCache`
+   caches", so a new cache gets writer coverage without a new scanner.
+3. The table rows in item 3, one per writer type.
+
+The method, for the record and for the `role_permissions` half:
+
+1. Enumerate every write to `secret_nodes`, `secret_versions`, `secret_access_schedules`,
+   `role_permissions` — from the models and from the package, including the idioms that do
+   **not** look like a write to a naive grep: `Unscoped().Model(...).Update(...)`,
+   `Select("*").Updates(...)`, `Save(...)`, `FirstOrCreate(...).Assign(...)`, cascade deletes,
+   and raw SQL.
+2. For each, show the generation advances in the same transaction. For the `updated_at` signal
+   that mostly means GORM's own auto-timestamp callback, which fires for `Update`/`Updates`/
+   `Save` but **not** for `UpdateColumn`/`UpdateColumns` — so every `UpdateColumn` on a cached
+   table is a finding until shown otherwise. For `role_permissions` it means an explicit
+   `bumpRolePermissionsGenerationTx` in the writer's own transaction.
+3. Add a table row (item 3) per writer *type*: version create, schedule set, schedule delete,
+   role-permission grant, revoke, role delete, soft-delete, restore, status transition.
+4. Writers that only run with the server stopped, under the exclusive key lock (the DEK
+   rotation sweep and friends), are acceptable without a bump — **but they get named in the
+   doc**, with the reason, so "we checked and decided" is distinguishable from "we missed it".
+
+Two specific things this enumeration is expected to have an answer for, flagged here so the
+answer is on the record either way:
+
+- `IncrementSecretReadCount` / `TryIncrementSecretReadCount` mutate `read_count` on a
+  `secret_versions` row that the latest-version cache holds. `read-path-caching.md` says
+  max-reads enforcement stays a live conditional `UPDATE` and is never read from cache. That is
+  a claim about callers, and it needs checking: if anything gates on `ReadCount`/`MaxReads`
+  read back through `GetLatestSecretVersion`, a cached version object is a stale counter, and a
+  stale counter at a limit check is a bypass.
+- `local_purge.go` deletes `secret_versions` rows for soft-deleted secrets. If the node row
+  goes in the same transaction the stamp read returns not-found and the cache misses correctly;
+  if it does not, a cached latest version can outlive its row. Confirm which.
+
+Anything found here is a real bug and becomes its own `fix(security)` PR with a regression
+test, not a footnote in this one.
+
+## 6. Item 5 — docs
+
+- `internal/storage/store/INVARIANTS.d/INV-STORE-read-path-cache-stamp-before-data.md`
+  (fragment layout, per `docs/invariants-fragments.md`): *every read-path cache in this package
+  is written only by `cachedRead`/`cachedReadSameRow`; the generation is read before the data;
+  any generation-read error is a miss.* With its `Guard:` line naming the item-2 guard and the
+  item-3 registry.
+- `docs/security-closures.d/GUARD-6-CACHE-ORDERING.tsv` + regenerated
+  `docs/security-closures.tsv`, recording the bug class and the test that proves it closed.
+- A short section in `internal/storage/store/INVARIANTS.md` pointing at the fragment and at
+  this spec.
+
+## 7. Coordination
+
+PERF-7's secret-value cache uses `cachedRead`/`cachedReadSameRow` from the moment item 1's PR
+is up — it does not hand-roll a fourth stamp-and-store, and the item-2 guard will fail it if it
+tries. A secret-value cache is the highest-stakes member of this family: its stale read is a
+rotated-or-revoked plaintext still being served, so it is also the one where the item-3 race row
+is least optional.
+
+## 8. Acceptance criteria
+
+- Every one of the four cached reads goes through the helper; no file other than
+  `read_path_cache.go` writes a cache entry, and the guard fails if one does.
+- PERF-3's cache tests pass unedited.
+- The item-3 table has a row for every helper call site (enforced) and for every writer type,
+  and each row is shown red against the corresponding pre-fix commit — or explicitly recorded
+  as a known-good green case.
+- Every writer of a cached row is enumerated with its generation bump identified, or named as a
+  documented stopped-server exception.
+- `timeGeneration`/`stringGeneration` are the only generation types; raw `time.Time` does not
+  satisfy the constraint.
