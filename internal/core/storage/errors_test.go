@@ -59,6 +59,7 @@ func TestSentinelErrors_distinct(t *testing.T) {
 		storage.ErrDuplicateSecretVersion,
 		storage.ErrBreakGlassAlreadyActive,
 		storage.ErrDuplicateDynamicSecretConfig,
+		storage.ErrDynamicSecretConfigDisabled,
 		storage.ErrDuplicateReminderNotification,
 		storage.ErrDuplicateSecretDependency,
 		storage.ErrSecretDependencyCycle,

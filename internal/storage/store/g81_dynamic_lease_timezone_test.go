@@ -27,7 +27,10 @@ func newG81LeaseStore(t *testing.T) *LocalStorage {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&models.DynamicSecretLease{}))
+	require.NoError(t, db.AutoMigrate(&models.DynamicSecretConfig{}, &models.DynamicSecretLease{}))
+	// The leases below reference ConfigID 1: an ACTIVE lease only inserts against an
+	// existing, enabled config (#2652, INV-STORE-21), so seed that config.
+	require.NoError(t, db.Create(&models.DynamicSecretConfig{ID: 1, Name: "g81", ProjectID: 1, BackendType: "postgres"}).Error)
 	return NewLocalStorage(db)
 }
 

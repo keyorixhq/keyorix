@@ -55,6 +55,7 @@ type ctaReview struct {
 	setupDB   *gorm.DB
 	setup     *KeyorixCore
 	dbA       *gorm.DB
+	dbB       *gorm.DB
 	coreA     *KeyorixCore
 	coreB     *KeyorixCore
 	enc       ports.EncryptionProvider
@@ -95,10 +96,10 @@ func newCTAReview(t *testing.T) *ctaReview {
 	env, err := setup.CreateEnvironment(ctx, proj.ID, "cta-review-env")
 	require.NoError(t, err)
 
-	dbA := pgOpen(t, dsn)
+	dbA, dbB := pgOpen(t, dsn), pgOpen(t, dsn)
 	return &ctaReview{
 		t: t, ctx: ctx, setupDB: setupDB, setup: setup,
-		dbA: dbA, coreA: newCore(dbA), coreB: newCore(pgOpen(t, dsn)),
+		dbA: dbA, dbB: dbB, coreA: newCore(dbA), coreB: newCore(dbB),
 		enc: enc, adminID: boot.User.ID, projectID: proj.ID, envID: env.ID,
 	}
 }
@@ -158,6 +159,37 @@ func (f *ctaReview) beforeA(kind, table string, concurrent func()) (fired func()
 	return func() bool { return hit }
 }
 
+// afterA is beforeA's mirror: `concurrent` runs immediately AFTER A's first `kind`
+// statement against `table` has executed, while A's enclosing transaction (if any) is
+// still open and uncommitted. That is the interleaving a check-BEFORE-write fix would
+// miss: B's cascade runs with A's child row already written but invisible to it.
+// B must not block on anything A holds at that point, or this deadlocks by design
+// (B runs synchronously on A's goroutine) — use it only where A holds no lock B needs.
+func (f *ctaReview) afterA(kind, table string, concurrent func()) (fired func() bool) {
+	f.t.Helper()
+	var once sync.Once
+	hit := false
+	fn := func(tx *gorm.DB) {
+		if tx.Statement.Table != table || tx.Error != nil {
+			return
+		}
+		once.Do(func() {
+			hit = true
+			concurrent()
+		})
+	}
+	name := "cta-review:after-" + kind + "-" + table
+	switch kind {
+	case "create":
+		require.NoError(f.t, f.dbA.Callback().Create().After("gorm:create").Register(name, fn))
+	case "update":
+		require.NoError(f.t, f.dbA.Callback().Update().After("gorm:update").Register(name, fn))
+	default:
+		f.t.Fatalf("afterA: unknown kind %q", kind)
+	}
+	return func() bool { return hit }
+}
+
 func (f *ctaReview) countLive(model interface{}, where string, args ...interface{}) int64 {
 	f.t.Helper()
 	var n int64
@@ -170,7 +202,6 @@ func (f *ctaReview) countLive(model interface{}, where string, args ...interface
 // grant on the deleted secret (#370: "delete means gone for sharing too" —
 // a surviving share silently reactivates on RestoreSecret).
 func TestCTAReview_ShareSecret_vs_DeleteSecret_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2646: ShareSecret vs DeleteSecret leaves a live share on a deleted secret; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	owner := f.user("cta-owner", "project_admin")
@@ -194,7 +225,6 @@ func TestCTAReview_ShareSecret_vs_DeleteSecret_CrossReplicaPostgres(t *testing.T
 // TestCTAReview_ShareSecretWithGroup_vs_DeleteSecret_CrossReplicaPostgres: the
 // group-recipient sibling of the test above, through the same CreateShareRecord.
 func TestCTAReview_ShareSecretWithGroup_vs_DeleteSecret_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2647: ShareSecretWithGroup vs DeleteSecret leaves a live group share on a deleted secret; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	owner := f.user("cta-gowner", "project_admin")
@@ -216,6 +246,44 @@ func TestCTAReview_ShareSecretWithGroup_vs_DeleteSecret_CrossReplicaPostgres(t *
 
 	assert.Zero(t, f.countLive(&models.ShareRecord{}, "secret_id = ? AND deleted_at IS NULL", s.ID),
 		"#370 violated: a live group share exists on a soft-deleted secret")
+}
+
+// TestCTAReview_ShareSecret_DeleteSecretAfterInsert_CrossReplicaPostgres: the
+// interleaving the two tests above cannot reach. B's DeleteSecret commits AFTER A's
+// share INSERT has run but BEFORE A's transaction commits. B's #370 cascade cannot
+// see A's uncommitted row, so a fix that only checked liveness BEFORE the insert
+// would still commit a live share on a deleted secret here.
+//
+// Bug origin (#2646, #2647):
+//
+//	Introduced-by: #370's DeleteSecret share cascade, which revokes only the shares
+//	  visible to its own transaction; CreateShareRecord's read-then-INSERT never
+//	  serialized against it.
+//	Detected-by: C-GUARD2-EXEMPT-REVIEW #2662
+//	Class: cross-replica check-then-act
+//	Severity: MEDIUM (a share revoked by deleting the secret reactivates on restore)
+//	Guard: this test, the two above, and lockLiveParent's write-then-FOR-SHARE
+//	  re-check in LocalStorage.CreateShareRecord (INV-STORE-21).
+func TestCTAReview_ShareSecret_DeleteSecretAfterInsert_CrossReplicaPostgres(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	owner := f.user("cta-aowner", "project_admin")
+	recipient := f.user("cta-arecipient", "project_viewer")
+	s := f.secret("cta-ashare-secret", owner.ID)
+
+	var errB error
+	fired := f.afterA("create", "share_records", func() { errB = f.coreB.DeleteSecret(f.ctx, s.ID) })
+	_, errA := f.coreA.ShareSecret(f.ctx, &ShareSecretRequest{
+		SecretID: s.ID, RecipientID: recipient.ID, Permission: "read", SharedBy: owner.ID,
+	})
+	t.Logf("ShareSecret (A) err=%v, DeleteSecret (B) err=%v", errA, errB)
+	require.True(t, fired(), "the hook must have run B's DeleteSecret after A's share INSERT")
+	require.NoError(t, errB)
+
+	assert.EqualValues(t, 1, f.countLive(&models.SecretNode{}, "id = ? AND deleted_at IS NOT NULL", s.ID), "secret must be deleted")
+	assert.Error(t, errA, "A must fail closed: its secret was deleted before it committed")
+	assert.Zero(t, f.countLive(&models.ShareRecord{}, "secret_id = ? AND deleted_at IS NULL", s.ID),
+		"#370 violated: a live share exists on a soft-deleted secret (it reactivates on RestoreSecret)")
 }
 
 // TestCTAReview_UpdateSharePermission_vs_RevokeShare_CrossReplicaPostgres: a
@@ -262,7 +330,6 @@ func TestCTAReview_UpdateSharePermission_vs_RevokeShare_CrossReplicaPostgres(t *
 // (DeleteSecret's own CWE-284 cascade exists so ACLs cannot reactivate on
 // restore).
 func TestCTAReview_GrantSecretACL_vs_DeleteSecret_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2649: GrantSecretACL vs DeleteSecret leaves an ACL grant on a deleted secret; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	grantee := f.user("cta-aclgrantee", "project_viewer")
@@ -275,6 +342,38 @@ func TestCTAReview_GrantSecretACL_vs_DeleteSecret_CrossReplicaPostgres(t *testin
 	require.True(t, fired(), "the hook must have interleaved B's DeleteSecret before A's ACL upsert")
 	require.NoError(t, errB)
 
+	assert.Zero(t, f.countLive(&models.SecretACL{}, "secret_id = ?", s.ID),
+		"CWE-284 cascade violated: an ACL grant exists on a soft-deleted secret (it reactivates on RestoreSecret)")
+}
+
+// TestCTAReview_GrantSecretACL_DeleteSecretAfterUpsert_CrossReplicaPostgres: B's
+// DeleteSecret commits after A's ACL upsert ran but before A commits, so B's CWE-284
+// ACL cascade cannot see A's row. A liveness check before the upsert would pass here.
+//
+// Bug origin (#2649):
+//
+//	Introduced-by: DeleteSecret's CWE-284 ACL cascade (local_secrets.go), which deletes
+//	  only the grants visible to its own transaction; GrantSecretACL's
+//	  requireSecretOrFolderNode-then-upsert never serialized against it.
+//	Detected-by: C-GUARD2-EXEMPT-REVIEW #2662
+//	Class: cross-replica check-then-act
+//	Severity: MEDIUM (an ACL grant severed by deleting the secret reactivates on restore)
+//	Guard: this test, the one above, and lockLiveParent's write-then-FOR-SHARE re-check
+//	  in LocalStorage.CreateOrUpdateSecretACL (INV-STORE-21).
+func TestCTAReview_GrantSecretACL_DeleteSecretAfterUpsert_CrossReplicaPostgres(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	grantee := f.user("cta-aclagrantee", "project_viewer")
+	s := f.secret("cta-acla-secret", f.adminID)
+
+	var errB error
+	fired := f.afterA("create", "secret_acls", func() { errB = f.coreB.DeleteSecret(f.ctx, s.ID) })
+	errA := f.coreA.GrantSecretACL(f.ctx, f.adminID, s.ID, grantee.ID, []string{"secrets.read"})
+	t.Logf("GrantSecretACL (A) err=%v, DeleteSecret (B) err=%v", errA, errB)
+	require.True(t, fired(), "the hook must have run B's DeleteSecret after A's ACL upsert")
+	require.NoError(t, errB)
+
+	assert.Error(t, errA, "A must fail closed: its secret was deleted before it committed")
 	assert.Zero(t, f.countLive(&models.SecretACL{}, "secret_id = ?", s.ID),
 		"CWE-284 cascade violated: an ACL grant exists on a soft-deleted secret (it reactivates on RestoreSecret)")
 }
@@ -342,7 +441,6 @@ func TestCTAReview_CreateDynamicSecretConfig_vs_DeleteProject_CrossReplicaPostgr
 // active, never-revoked credential. DeleteProject's lease revocation lists
 // leases BEFORE A's lease row exists, and nothing re-checks afterwards.
 func TestCTAReview_IssueLease_vs_DeleteProject_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2652: IssueLease vs DeleteProject leaves an active, unrevoked credential under a deleted project; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	fake := &dynamictest.FakeEngine{NativeExpiry: true}
@@ -372,13 +470,65 @@ func TestCTAReview_IssueLease_vs_DeleteProject_CrossReplicaPostgres(t *testing.T
 		"#369 violated: an active, never-revoked dynamic-secret lease exists under a deleted project and a disabled config")
 }
 
+// TestCTAReview_IssueLease_DeleteProjectAfterInsert_CrossReplicaPostgres: B's
+// DeleteProject commits after A's lease INSERT ran but before A commits. B's
+// post-commit lease revocation lists leases before A's row is visible, so a check
+// before the insert would pass and leave the credential live and never revoked.
+//
+// Bug origin (#2652):
+//
+//	Introduced-by: #369's DeleteProject cascade, which disables configs in its
+//	  transaction and revokes only the leases it can list after committing;
+//	  IssueLease's liveness check, mint, then insert never serialized against it.
+//	Detected-by: C-GUARD2-EXEMPT-REVIEW #2662
+//	Class: cross-replica check-then-act
+//	Severity: HIGH (a live database credential under a deleted project, never revoked
+//	  until its TTL)
+//	Guard: this test, the one above, and lockLiveParent's write-then-FOR-SHARE re-check
+//	  of the config in LocalStorage.CreateDynamicSecretLease (INV-STORE-21).
+func TestCTAReview_IssueLease_DeleteProjectAfterInsert_CrossReplicaPostgres(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	fake := &dynamictest.FakeEngine{NativeExpiry: true}
+	for _, c := range []*KeyorixCore{f.setup, f.coreA, f.coreB} {
+		c.SetDynamicEngineFactory(func(string) (dynamic.CredentialEngine, error) { return fake, nil })
+	}
+	cfg, err := f.setup.CreateDynamicSecretConfig(f.ctx, &CreateDynamicSecretConfigRequest{
+		Name: "cta-lease-after", ProjectID: f.projectID, EnvironmentID: f.envID, BackendType: "postgres",
+		AdminDSN:          "postgres://admin:s3cr3t@db.internal:5432/app",
+		CreationTemplate:  "GRANT SELECT ON ALL TABLES IN SCHEMA public TO {{name}};",
+		DefaultTTLSeconds: 3600, CreatedBy: "admin", ActorID: f.adminID,
+	})
+	require.NoError(t, err)
+
+	var errB error
+	fired := f.afterA("create", "dynamic_secret_leases", func() { errB = f.coreB.DeleteProject(f.ctx, f.projectID, true) })
+	_, errA := f.coreA.IssueLease(f.ctx, cfg.ID, 0, f.adminID)
+	t.Logf("IssueLease (A) err=%v, DeleteProject (B) err=%v, backend revocations: %v", errA, errB, fake.Revoked)
+	require.True(t, fired(), "the hook must have run B's DeleteProject after A's lease INSERT")
+	require.NoError(t, errB)
+
+	assert.Error(t, errA, "A must fail closed: its config was disabled before it committed")
+	assert.Zero(t, f.countLive(&models.DynamicSecretLease{}, "config_id = ? AND status = ?", cfg.ID, "active"),
+		"#369 violated: an active, never-revoked dynamic-secret lease exists under a deleted project and a disabled config")
+	assert.Len(t, fake.Revoked, 1, "the credential minted for the refused lease must have been revoked on the target")
+}
+
 // TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres: an admin's
 // display-name edit in flight must not undo another admin's concurrent
 // suspension. UpdateUser's default branch writes the full pre-read row
 // (Select("*")) gated only on is_active, and SuspendUser changes
 // account_state, not is_active — so the stale account_state='active' wins.
+//
+// Bug origin (#2653):
+//
+//	Introduced-by: UpdateUserIfActiveStateMatches's Select("*") full-row write
+//	Detected-by:   C-GUARD2-EXEMPT-REVIEW #2662
+//	Class:         cross-replica check-then-act
+//	Severity:      high (a reported-successful suspension is reverted)
+//	Guard:         this test (pg-gated) + TestUserProfileWrites_AreColumnScoped
+//	Fix:           the write is column-scoped to the profile columns UpdateUser owns
 func TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2653: UpdateUser's full-row conditional write reverts a concurrent SuspendUser; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	target := f.user("cta-suspendee", "project_viewer")
@@ -399,8 +549,18 @@ func TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres(t *testing.T) 
 // self-service sibling of the test above, reachable with only a session. A
 // display-name-only profile update (no re-auth) in flight while the account
 // holder changes their password writes the OLD password hash back.
+//
+// Bug origin (#2654):
+//
+//	Introduced-by: UpdateUserIfActiveStateMatches's Select("*") full-row write
+//	               (UpdateOwnProfile reaches it through UpdateUser's default branch)
+//	Detected-by:   C-GUARD2-EXEMPT-REVIEW #2662
+//	Class:         cross-replica check-then-act
+//	Severity:      high (only a session needed to revert a password change,
+//	               suspension or MFA enable)
+//	Guard:         this test (pg-gated) + TestUserProfileWrites_AreColumnScoped
+//	Fix:           same as #2653 — the write is column-scoped
 func TestCTAReview_UpdateOwnProfile_vs_ChangePassword_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2654: UpdateOwnProfile's full-row write reverts a concurrent password change; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	victim := f.user("cta-victim", "project_viewer")
@@ -484,7 +644,6 @@ func assertActivationNeverBindsUnvalidatedSecret(t *testing.T, c *KeyorixCore, u
 // environment under a deleted project — the exact state RestoreEnvironment's
 // own doc comment says it refuses to create.
 func TestCTAReview_RestoreEnvironment_vs_DeleteProject_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2656: RestoreEnvironment vs DeleteProject leaves a live environment under a deleted project; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	require.NoError(t, f.setup.DeleteEnvironment(f.ctx, f.envID))
@@ -497,6 +656,92 @@ func TestCTAReview_RestoreEnvironment_vs_DeleteProject_CrossReplicaPostgres(t *t
 	require.NoError(t, errB)
 
 	assert.EqualValues(t, 1, f.countLive(&models.Project{}, "id = ? AND deleted_at IS NOT NULL", f.projectID), "project must be deleted")
+	assert.Zero(t, f.countLive(&models.Environment{}, "project_id = ? AND deleted_at IS NULL", f.projectID),
+		"a live environment exists under a soft-deleted project")
+}
+
+// TestCTAReview_RestoreEnvironment_DeleteProjectAfterUpdate_CrossReplicaPostgres: B's
+// DeleteProject commits after A's environment UPDATE ran but before A commits. B's
+// environment sweep cannot see A's uncommitted un-delete, so a liveness check before
+// the UPDATE (or a FOR SHARE that DeleteProject only meets at its final project
+// UPDATE) would still leave E live under the deleted P.
+//
+// Bug origin (#2656):
+//
+//	Introduced-by: LocalStorage.RestoreEnvironment's parent-liveness guard, a separate
+//	  autocommit SELECT before an unconditional UPDATE; deleteProjectCascade swept
+//	  environments before it touched (locked) the project row.
+//	Detected-by: C-GUARD2-EXEMPT-REVIEW #2662
+//	Class: cross-replica check-then-act
+//	Severity: LOW (millisecond window, timed by the deleting admin)
+//	Guard: this test, the one above, deleteProjectCascade's up-front project row lock,
+//	  and lockLiveParent's write-then-FOR-SHARE re-check in RestoreEnvironment
+//	  (INV-STORE-21).
+//
+// TestCTAReview_RestoreEnvironment_InsideDeleteProjectCascade_CrossReplicaPostgres:
+// A's whole RestoreEnvironment runs between B's environment sweep and B's final
+// project UPDATE, the window the two tests above cannot reach because B always runs
+// to completion inside A's hook. Here a hook on B's own connection starts A in a
+// goroutine and waits for it (bounded). Without deleteProjectCascade's up-front
+// project row lock, A's FOR SHARE re-check passes (the project is not yet updated),
+// A commits, and B then deletes the project over the live environment. With the lock,
+// A blocks on it, the wait times out, B commits, and A's re-check then sees the
+// project deleted and rolls back.
+func TestCTAReview_RestoreEnvironment_InsideDeleteProjectCascade_CrossReplicaPostgres(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	require.NoError(t, f.setup.DeleteEnvironment(f.ctx, f.envID))
+
+	var errA error
+	doneA := make(chan struct{})
+	var once sync.Once
+	hit := false
+	require.NoError(t, f.dbB.Callback().Update().Before("gorm:update").Register("cta-review:b-before-update-projects", func(tx *gorm.DB) {
+		if tx.Statement.Table != "projects" {
+			return
+		}
+		once.Do(func() {
+			hit = true
+			go func() {
+				errA = f.coreA.RestoreEnvironment(f.ctx, f.adminID, f.projectID, f.envID)
+				close(doneA)
+			}()
+			select {
+			case <-doneA: // A finished inside the window: nothing held it back
+			case <-time.After(2 * time.Second): // A is blocked (on B's project row lock); let B commit
+			}
+		})
+	}))
+
+	errB := f.coreB.DeleteProject(f.ctx, f.projectID, true)
+	require.True(t, hit, "the hook must have fired before B's project UPDATE")
+	require.NoError(t, errB)
+	select {
+	case <-doneA:
+	case <-time.After(30 * time.Second):
+		t.Fatal("A's RestoreEnvironment never returned after B committed")
+	}
+	t.Logf("RestoreEnvironment (A) err=%v, DeleteProject (B) err=%v", errA, errB)
+
+	assert.EqualValues(t, 1, f.countLive(&models.Project{}, "id = ? AND deleted_at IS NOT NULL", f.projectID), "project must be deleted")
+	assert.Zero(t, f.countLive(&models.Environment{}, "project_id = ? AND deleted_at IS NULL", f.projectID),
+		"a live environment exists under a soft-deleted project")
+}
+
+func TestCTAReview_RestoreEnvironment_DeleteProjectAfterUpdate_CrossReplicaPostgres(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	require.NoError(t, f.setup.DeleteEnvironment(f.ctx, f.envID))
+
+	var errB error
+	fired := f.afterA("update", "environments", func() { errB = f.coreB.DeleteProject(f.ctx, f.projectID, true) })
+	errA := f.coreA.RestoreEnvironment(f.ctx, f.adminID, f.projectID, f.envID)
+	t.Logf("RestoreEnvironment (A) err=%v, DeleteProject (B) err=%v", errA, errB)
+	require.True(t, fired(), "the hook must have run B's DeleteProject after A's environment UPDATE")
+	require.NoError(t, errB)
+
+	assert.EqualValues(t, 1, f.countLive(&models.Project{}, "id = ? AND deleted_at IS NOT NULL", f.projectID), "project must be deleted")
+	assert.Error(t, errA, "A must fail closed: its project was deleted before it committed")
 	assert.Zero(t, f.countLive(&models.Environment{}, "project_id = ? AND deleted_at IS NULL", f.projectID),
 		"a live environment exists under a soft-deleted project")
 }

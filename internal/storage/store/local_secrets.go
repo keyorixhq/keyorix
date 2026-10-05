@@ -22,6 +22,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // --- Project / Environment ---
@@ -192,6 +193,22 @@ func deleteProjectCascade(tx *gorm.DB, id uint) error {
 	// model to deleted_at IS NULL, so already-deleted children are left untouched and
 	// keep their original timestamp.
 	deletedAt := time.Now()
+	// Row-lock the project FIRST (#2656, INV-STORE-21). Every child writer that must not
+	// commit under a deleted project (RestoreEnvironment) writes its child row, then
+	// re-reads the project FOR SHARE in the same transaction. Taking this lock before
+	// the child sweeps below is what makes that sound: either the child writer's
+	// FOR SHARE came first and this cascade waits for it to commit, so the sweeps see
+	// its row, or this lock came first and its FOR SHARE waits, then sees the project
+	// deleted and rolls back. Locking only at the project's own UPDATE at the end
+	// leaves a window where a child lands after its sweep but before the project lock.
+	// SQLite has no row lock; its single writer serializes the transaction instead.
+	if tx.Dialector.Name() == "postgres" {
+		var locked []uint
+		if err := tx.Model(&models.Project{}).Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where(sqlWhereID, id).Pluck("id", &locked).Error; err != nil {
+			return fmt.Errorf("failed to lock project: %w", err)
+		}
+	}
 	// Soft-delete all currently-live secrets in the project.
 	if err := tx.Model(&models.SecretNode{}).
 		Where(sqlWhereProjectID, id).Update("deleted_at", deletedAt).Error; err != nil {
@@ -419,19 +436,35 @@ func (ls *LocalStorage) DeleteEnvironment(ctx context.Context, id uint) error {
 // still-extant project-scoped grant (a soft-deleted project does NOT revoke its role
 // grants) could resurrect a usable, readable scope under a project an admin deleted to
 // revoke access. Mirrors the parent-liveness guard on CreateProjectEnvironment.
+//
+// #2656: the up-front requireLiveProject is only the friendly fast path. The restore
+// itself runs in one transaction that un-deletes the environment and then re-reads the
+// project with lockLiveParent (FOR SHARE on Postgres), rolling back if the project is
+// gone. deleteProjectCascade row-locks the project before it sweeps environments, so a
+// racing DeleteProject either sweeps this restored environment or makes this restore
+// fail (INV-STORE-21).
 func (ls *LocalStorage) RestoreEnvironment(ctx context.Context, projectID, id uint) error {
 	if err := ls.requireLiveProject(ctx, projectID); err != nil {
 		return err
 	}
-	result := ls.db.WithContext(ctx).Unscoped().Model(&models.Environment{}).
-		Where("id = ? AND project_id = ? AND deleted_at IS NOT NULL", id, projectID).Update("deleted_at", nil)
-	if result.Error != nil {
-		return fmt.Errorf("failed to restore environment: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("environment not found or not deleted")
-	}
-	return nil
+	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Unscoped().Model(&models.Environment{}).
+			Where("id = ? AND project_id = ? AND deleted_at IS NOT NULL", id, projectID).Update("deleted_at", nil)
+		if result.Error != nil {
+			return fmt.Errorf("failed to restore environment: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("environment not found or not deleted")
+		}
+		live, err := lockLiveParent(tx, &models.Project{}, sqlWhereID, projectID)
+		if err != nil {
+			return err
+		}
+		if !live {
+			return fmt.Errorf("cannot restore: the parent project is deleted — restore the project first")
+		}
+		return nil
+	})
 }
 
 // --- Secrets ---

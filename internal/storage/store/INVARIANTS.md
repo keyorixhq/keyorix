@@ -103,6 +103,15 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   under concurrent reads — atomic conditional UPDATE, fail closed. Why: "atomic security
   counters" review-finding pattern. Guard: `concurrency_max_reads_test.go`
   (`TestConcurrency_MaxReads_NeverExceedsCap`, `TestConcurrency_MaxReadsSecretLevel_NeverExceedsCap`).
+- **INV-STORE-21** `UpdateUserIfActiveStateMatches` writes only the seven profile columns
+  (`username`, `username_folded`, `email`, `email_folded`, `display_name`, `is_active`,
+  `updated_at`), never the full row; `account_state` is written only by `SetAccountState`
+  (a state that does not depend on the pre-read one) or `SetAccountStateIfMatches`
+  (`WHERE id = ? AND account_state = <pre-read> AND deleted_at IS NULL`, matched=false on a
+  moved, missing or soft-deleted row). Why: #2653/#2654, C-RACE-FIX-B2. Guard:
+  `local_users_set_account_state_if_matches_test.go`
+  (`TestSetAccountStateIfMatches_RefusesWhenStateMoved` et al.);
+  `internal/core` `TestUserProfileWrites_AreColumnScoped`.
 
 ## Soft-delete / purge races
 
@@ -111,6 +120,31 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   `concurrency_purge_restore_race_test.go`
   (`TestConcurrency_PurgeDeletedSecretsBefore_RestoreWinsRace`,
   `_PurgeDeletedUsersBefore_RestoreWinsRace`, `_PurgeDeletedProjectsBefore_RestoreWinsRace`).
+
+- **INV-STORE-21** A child row (share, ACL grant, lease, environment, config) never commits
+  live under a parent that a concurrent delete cascade soft-deleted or disabled. The child
+  write and a `lockLiveParent` re-read of the parent (`SELECT ... FOR SHARE` on Postgres) run
+  in ONE transaction, in that order (write first, then check), and the transaction rolls back
+  when the parent is gone. The delete side must UPDATE (row-lock) the parent row BEFORE it
+  sweeps the children. Checking before the write is not enough under READ COMMITTED: a
+  cascade that runs between the check and the write never sees the child. Why: #2646/#2647
+  (`CreateShareRecord` vs `DeleteSecret`), C-GUARD2-EXEMPT-REVIEW #2662. Guard (pg-gated,
+  two replicas): `internal/core/concurrency_check_then_act_exempt_review_postgres_test.go`
+  (`TestCTAReview_ShareSecret_vs_DeleteSecret_CrossReplicaPostgres`,
+  `_ShareSecretWithGroup_vs_DeleteSecret_`, `_ShareSecret_DeleteSecretAfterInsert_`).
+  ACL grants (#2649, `CreateOrUpdateSecretACL` vs `DeleteSecret`'s CWE-284 cascade):
+  `_GrantSecretACL_vs_DeleteSecret_`, `_GrantSecretACL_DeleteSecretAfterUpsert_`, and
+  `local_secret_acl_test.go:TestLocalACL_RefusesSoftDeletedSecret` (default-ci).
+  Active leases (#2652, `CreateDynamicSecretLease` vs `DeleteProject`'s #369 config disable;
+  the parent is the config, `disabled = false`): `_IssueLease_vs_DeleteProject_`,
+  `_IssueLease_DeleteProjectAfterInsert_`, and `local_dynamic_test.go:
+  TestCreateDynamicSecretLease_ActiveRefusedOnDisabledConfig` (default-ci). A `revoke_failed`
+  tracking row is always recorded: it is the only record of a credential still live.
+  Environments (#2656, `RestoreEnvironment` vs `DeleteProject`): `deleteProjectCascade` takes
+  `SELECT ... FOR UPDATE` on the project before any child sweep (it used to touch the project
+  row last). `_RestoreEnvironment_vs_DeleteProject_`, `_RestoreEnvironment_DeleteProjectAfterUpdate_`,
+  and `_RestoreEnvironment_InsideDeleteProjectCascade_`, which runs A's whole restore between
+  the cascade's environment sweep and its project UPDATE and fails without that up-front lock.
 
 ## GORM hook / timezone correctness (`internal/storage/models`, `store`)
 
