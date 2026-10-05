@@ -18,9 +18,12 @@ type fakeWriter struct {
 
 	failIssue      bool
 	failCreateRole bool
+
+	lastCreateRoleCtx context.Context // captured for TestApply_TagsSourceOriginOnEveryWriterCall
 }
 
-func (f *fakeWriter) CreateRole(_ context.Context, name, _ string, _ []string) (int, error) {
+func (f *fakeWriter) CreateRole(ctx context.Context, name, _ string, _ []string) (int, error) {
+	f.lastCreateRoleCtx = ctx
 	if f.failCreateRole {
 		return 0, errors.New("create role failed")
 	}
@@ -150,5 +153,28 @@ func TestApply_NonCreateOutcomesNeverCallTheWriter(t *testing.T) {
 	}
 	if len(w.createdRoles) != 0 {
 		t.Fatal("CreateRole must never be called for Conflict/Unmappable items")
+	}
+}
+
+// TestApply_TagsSourceOriginOnEveryWriterCall is #2545's fix extended to the access-model
+// migration: every KeyorixWriter call must be able to tell the server which exact Vault
+// construct it came from, via WithSourceOrigin/SourceOrigin — accesstarget's real
+// implementation turns this into the X-Keyorix-Client-Origin header (see its own
+// TestWrites_SendClientOriginHeader). Without applyOne tagging ctx, SourceOrigin(ctx) would
+// always read "", and a migrated role's audit entry would be indistinguishable from a
+// hand-created one — exactly the #2545 gap, but for roles/machine identities/grants/bindings
+// instead of secret values.
+func TestApply_TagsSourceOriginOnEveryWriterCall(t *testing.T) {
+	const ref = "policy:team-a-ro path:secret/data/team-a/*"
+	items := []Item{
+		{Kind: KindRole, Outcome: Create, SourceRef: ref, ProposedName: "vault-migrated-read", ProposedPermissions: []string{"secrets.read"}},
+	}
+	w := &fakeWriter{}
+	Apply(context.Background(), items, w)
+	if w.lastCreateRoleCtx == nil {
+		t.Fatal("CreateRole was never called")
+	}
+	if got := SourceOrigin(w.lastCreateRoleCtx); got != ref {
+		t.Fatalf("SourceOrigin(ctx) = %q, want %q — applyOne must tag ctx with the item's own SourceRef", got, ref)
 	}
 }

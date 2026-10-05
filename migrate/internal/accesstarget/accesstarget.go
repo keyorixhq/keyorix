@@ -10,10 +10,40 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strings"
+	"unicode"
 
 	"github.com/keyorixhq/keyorix/migrate/internal/accessplan"
 	"github.com/keyorixhq/keyorix/migrate/internal/apiclient"
+	"github.com/keyorixhq/keyorix/migrate/internal/migrateversion"
 )
+
+// clientOriginHeader mirrors internal/core.ClientOriginHeader and internal/target's identically-
+// named constant (module boundary — migrate's internal packages don't import each other's
+// unexported helpers). The server records its value on the write's audit event as a labelled,
+// client-asserted note, so a role/machine identity/grant/OIDC binding apply-access creates is
+// distinguishable from a hand-created one in the audit trail — the same #2545 fix internal/
+// target already applies to secret values, extended here to every access-model write.
+const clientOriginHeader = "X-Keyorix-Client-Origin"
+
+// originEditor sets clientOriginHeader for a write, naming this tool and (via
+// accessplan.SourceOrigin) the exact Vault policy/role this object came from. Mirrors internal/
+// target's originEditor exactly.
+func originEditor(ctx context.Context) apiclient.RequestEditorFn {
+	return func(_ context.Context, req *http.Request) error {
+		v := "keyorix-migrate/" + migrateversion.Version
+		if src := accessplan.SourceOrigin(ctx); src != "" {
+			v += " source=" + src
+		}
+		req.Header.Set(clientOriginHeader, strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) {
+				return -1
+			}
+			return r
+		}, v))
+		return nil
+	}
+}
 
 // Client implements accessplan.KeyorixReader over the generated apiclient.
 type Client struct {
@@ -177,7 +207,7 @@ func (c *Client) MachineHasOIDCBinding(ctx context.Context, projectID int, machi
 func (c *Client) CreateRole(ctx context.Context, name, description string, permissions []string) (int, error) {
 	resp, err := c.api.CreateRoleWithResponse(ctx, apiclient.CreateRoleJSONRequestBody{
 		Name: name, Description: description, Permissions: permissions,
-	})
+	}, originEditor(ctx))
 	if err != nil {
 		return 0, fmt.Errorf("create role %q: %w", name, err)
 	}
@@ -193,7 +223,7 @@ func (c *Client) CreateRole(ctx context.Context, name, description string, permi
 func (c *Client) CreateMachineIdentity(ctx context.Context, projectID int, name, identityType, description string) (int, error) {
 	resp, err := c.api.CreateMachineIdentityWithResponse(ctx, projectID, apiclient.CreateMachineIdentityJSONRequestBody{
 		Name: name, IdentityType: &identityType, Description: &description,
-	})
+	}, originEditor(ctx))
 	if err != nil {
 		return 0, fmt.Errorf("create machine identity %q: %w", name, err)
 	}
@@ -207,7 +237,7 @@ func (c *Client) CreateMachineIdentity(ctx context.Context, projectID int, name,
 // shown exactly once by the real API, and never logged, printed, or included in any report by
 // this tool (the caller writes it straight to a 0600 credentials file).
 func (c *Client) IssueMachineCredential(ctx context.Context, projectID, machineID int, name string) (string, error) {
-	resp, err := c.api.IssueMachineTokenWithResponse(ctx, projectID, machineID, apiclient.IssueMachineTokenJSONRequestBody{Name: name})
+	resp, err := c.api.IssueMachineTokenWithResponse(ctx, projectID, machineID, apiclient.IssueMachineTokenJSONRequestBody{Name: name}, originEditor(ctx))
 	if err != nil {
 		return "", fmt.Errorf("issue credential for machine identity %d: %w", machineID, err)
 	}
@@ -221,7 +251,7 @@ func (c *Client) IssueMachineCredential(ctx context.Context, projectID, machineI
 func (c *Client) GrantMachineRole(ctx context.Context, projectID, environmentID, machineID, roleID int) error {
 	resp, err := c.api.GrantMachineRoleWithResponse(ctx, projectID, machineID, apiclient.GrantMachineRoleJSONRequestBody{
 		RoleId: roleID, EnvironmentId: &environmentID,
-	})
+	}, originEditor(ctx))
 	if err != nil {
 		return fmt.Errorf("grant role %d to machine identity %d: %w", roleID, machineID, err)
 	}
@@ -235,7 +265,7 @@ func (c *Client) GrantMachineRole(ctx context.Context, projectID, environmentID,
 func (c *Client) CreateOIDCBinding(ctx context.Context, projectID, machineID int, issuer, subject string) error {
 	resp, err := c.api.CreateOIDCBindingWithResponse(ctx, projectID, machineID, apiclient.CreateOIDCBindingJSONRequestBody{
 		Issuer: issuer, Subject: subject,
-	})
+	}, originEditor(ctx))
 	if err != nil {
 		return fmt.Errorf("create oidc binding for machine identity %d: %w", machineID, err)
 	}

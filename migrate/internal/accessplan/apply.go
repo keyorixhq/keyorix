@@ -5,6 +5,26 @@ import (
 	"fmt"
 )
 
+// sourceOriginKey is apply.go's own context key, mirroring internal/target's identically-shaped
+// WithSourceOrigin/SourceOrigin (module-boundary rule: migrate/internal packages don't import
+// each other's unexported helpers). accesstarget reads this back via SourceOrigin to build the
+// client-origin header on every write (#2545's fix, applied here too — see
+// accesstarget.go's originEditor).
+type sourceOriginKey struct{}
+
+// WithSourceOrigin tags ctx with the human-readable source locator (an Item's own SourceRef,
+// e.g. "policy:team-a-ro path:secret/data/team-a/*") of the item a KeyorixWriter call is
+// writing.
+func WithSourceOrigin(ctx context.Context, ref string) context.Context {
+	return context.WithValue(ctx, sourceOriginKey{}, ref)
+}
+
+// SourceOrigin returns the locator WithSourceOrigin attached, or "".
+func SourceOrigin(ctx context.Context) string {
+	s, _ := ctx.Value(sourceOriginKey{}).(string)
+	return s
+}
+
 // Key returns a canonical identity string for it — the same object always produces the same
 // key, and two DIFFERENT objects (even sharing a Kind and SourceRef — e.g. two distinct role
 // grants a single AppRole role needs, which share the role's own SourceRef) never collide.
@@ -97,7 +117,13 @@ func Apply(ctx context.Context, items []Item, writer KeyorixWriter) []ApplyResul
 	return results
 }
 
+// applyOne tags ctx with it's own SourceRef (WithSourceOrigin) before every writer call, so
+// accesstarget's client-origin header — and so the audit event the server records for the
+// write — names the exact Vault policy/role/path this object came from, not just "keyorix-
+// migrate" generically (mirrors internal/plan's identical use of target.WithSourceOrigin for
+// the value-migration path; #2545 applied here too, see accesstarget.go's originEditor).
 func applyOne(ctx context.Context, it Item, writer KeyorixWriter, roleIDs, machineIDs map[string]int) ApplyResult {
+	ctx = WithSourceOrigin(ctx, it.SourceRef)
 	switch it.Kind {
 	case KindRole:
 		if _, ok := roleIDs[it.ProposedName]; ok {
