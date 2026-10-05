@@ -99,6 +99,7 @@ var notKeyMaterialCallees = map[string]string{
 	"buildKeyProvider":         "provider object, not key bytes",
 	"acquireExclusiveKeyLock":  "lock handle",
 	"acquireSharedKeyLock":     "lock handle",
+	"tryAcquireSharedKeyLock":  "lock handle (non-blocking shared lock; returns *keyFileLock, never key bytes)",
 	"NewKeyProviderFromConfig": "provider object, not key bytes",
 	"newKeyProviderFromConfig": "provider object, not key bytes",
 	"NewKeyManager":            "KeyManager object",
