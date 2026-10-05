@@ -139,7 +139,23 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 		c.auditMFAFailed(ctx, userID, "activate")
 		return nil, fmt.Errorf("invalid code")
 	}
-	if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, userID, step); ferr != nil || !fresh {
+	// #2744: a MarkTOTPStepUsed STORAGE error is not a wrong code. Before this,
+	// both outcomes audited mfa.failed and returned "invalid code", so a user
+	// finishing enrolment with the CORRECT code during a DB hiccup read, on
+	// review, exactly like a replay or a guess. Same distinction
+	// VerifyMFACredentials (#2398), VerifyMFAStepUp (#2740) and requireReauth
+	// (#2743) already make; this was the last site in the family. Unlike those
+	// three there is no recordFailedLogin here, so the consequence is audit
+	// accuracy only — which is why it is audited distinctly rather than also
+	// being given a releasable attempt slot it never consumed.
+	fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, userID, step)
+	if ferr != nil {
+		c.auditMFAError(ctx, userID, "activate", ferr)
+		return nil, fmt.Errorf("%w: marking the TOTP step used", ErrMFAVerificationStorageFailure)
+	}
+	if !fresh {
+		// ferr == nil and !fresh: the step really was already consumed. A
+		// confirmed replay, so this one IS a failed attempt.
 		c.auditMFAFailed(ctx, userID, "activate")
 		return nil, fmt.Errorf("invalid code")
 	}

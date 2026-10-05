@@ -509,6 +509,18 @@ func (c *KeyorixCore) LogAuthFailure(ctx context.Context, username, ip string) {
 		fmt.Sprintf("Failed login attempt for username: %s", username))
 }
 
+// LogAuthError writes an auth.login_error audit event: a login attempt that could
+// NOT be conclusively evaluated because the username lookup hit a storage failure,
+// as distinct from auth.login_failed's "a credential was checked and found wrong"
+// (#2745). Without the distinction a DB hiccup during a legitimate sign-in was
+// indistinguishable, on review, from a bad-credential guess against that username.
+// The sibling distinctions are mfa.error vs mfa.failed and webauthn.error vs
+// webauthn.failed.
+func (c *KeyorixCore) LogAuthError(ctx context.Context, username, ip string, err error) {
+	c.writeAuditEventFailed(ctx, "auth.login_error", nil, nil, ip,
+		fmt.Sprintf("Login attempt for username %s could not be evaluated (storage error): %v", username, err))
+}
+
 // LogAuthLogout writes an auth.logout audit event.
 func (c *KeyorixCore) LogAuthLogout(ctx context.Context, userID uint, username, ip, ua string) {
 	uid := userID

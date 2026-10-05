@@ -52,7 +52,20 @@ func (c *KeyorixCore) VerifyPasswordCredentials(ctx context.Context, username, p
 	if err != nil {
 		// Spend an equivalent bcrypt comparison so a missing username doesn't return
 		// faster than a wrong password (account-enumeration timing side-channel).
+		//
+		// #2745: spent BEFORE the branch below, deliberately — both outcomes pay
+		// exactly the same cost, so distinguishing them in the RETURNED ERROR
+		// cannot be read back out by response latency. That timing requirement is
+		// why this site was left out of #2398/#2740/#2743's sweep.
 		_ = bcrypt.CompareHashAndPassword(*dummyBcryptHash.Load(), []byte(password))
+		if !storage.IsUserNotFound(err) {
+			// A real storage failure: the credential was never checked, so this
+			// must not be audited as a failed login attempt nor consume the
+			// caller's attempt budget. A storage error is independent of the
+			// username supplied, so surfacing it as a distinct class leaks
+			// nothing about whether the account exists.
+			return nil, fmt.Errorf("%w: looking up the username", ErrLoginNotEvaluated)
+		}
 		return nil, fmt.Errorf("invalid credentials")
 	}
 	// Per-account lockout gate: while locked, refuse regardless of the password, so
@@ -489,6 +502,23 @@ func (c *KeyorixCore) authEffectiveNow() time.Time {
 	c.authTokenClockWatermark = now
 	return now
 }
+
+// ErrLoginNotEvaluated is returned by VerifyPasswordCredentials when the
+// username lookup failed for a reason that is NOT "no such user" — a storage
+// error, i.e. the supplied password was never checked against anything (#2745).
+//
+// It is deliberately distinct from the generic "invalid credentials": the HTTP
+// handler must not audit it as auth.login_failed (indistinguishable, on review,
+// from a genuine bad-credential guess) and must not let it consume the per-IP
+// login-attempt budget a real failed attempt does. Same contract
+// ErrWebAuthnLoginNotEvaluated (#2565) established for the WebAuthn login path,
+// and the naming follows it on purpose.
+//
+// Safe to distinguish: VerifyPasswordCredentials spends its anti-enumeration
+// dummy bcrypt BEFORE deciding which error to return, so the two branches cost
+// the same, and a storage failure does not depend on the username supplied — so
+// this class says nothing about whether the account exists.
+var ErrLoginNotEvaluated = errors.New("login not evaluated: username lookup failed")
 
 // ErrRoleResolutionUnavailable is returned by ValidateSessionToken,
 // ValidatePATToken, ValidateMachineToken and ValidateOIDCToken when the

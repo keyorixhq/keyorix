@@ -35,6 +35,14 @@ var ErrWebAuthnDisabled = errors.New("webauthn is not enabled on this server")
 // same class as ErrMFAVerificationStorageFailure on /auth/mfa/verify).
 var ErrWebAuthnLoginNotEvaluated = errors.New("webauthn login not evaluated: storage lookup failed")
 
+// EventWebAuthnError records a WebAuthn login that could not be conclusively
+// evaluated because of a storage failure — distinct from webauthn.failed's "an
+// assertion was verified and rejected" (#2746). The sibling distinction on the
+// TOTP paths is mfa.error vs mfa.failed; this is the same idea for the same
+// reason: an attempt that never got a verdict must not read, on review, as a
+// failed authentication.
+const EventWebAuthnError = "webauthn.error"
+
 const webauthnSessionTTL = 5 * time.Minute
 
 // EventWebAuthnCloneDetected is the loud, authentication-rejecting audit event
@@ -71,7 +79,18 @@ func (u *webauthnUser) WebAuthnCredentials() []webauthn.Credential { return u.cr
 func (c *KeyorixCore) loadWebAuthnUser(ctx context.Context, userID uint) (*webauthnUser, error) {
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
-		return nil, fmt.Errorf("user not found")
+		// #2746: preserve WHICH failure this was. Flattening it to a bare
+		// "user not found" string made a storage error indistinguishable from a
+		// genuinely absent account, which the PASSWORDLESS caller needs to tell
+		// apart: its user handle is attacker-supplied, so a handle naming no
+		// user IS a credential guess, while a DB failure is not. (The
+		// non-passwordless FinishWebAuthnLogin treats both as not-evaluated and
+		// is right to — its user id comes from a challenge whose first factor
+		// already passed. Its behaviour is unchanged by this.)
+		if storage.IsUserNotFound(err) {
+			return nil, fmt.Errorf("user not found: %w", err)
+		}
+		return nil, err
 	}
 	rows, err := c.storage.ListWebAuthnCredentials(ctx, userID)
 	if err != nil {
@@ -616,13 +635,27 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessi
 	// the authenticator returns (our WebAuthnID encoding). ValidatePasskeyLogin then
 	// verifies the assertion against that user's stored credentials.
 	var resolved *models.User
+	// #2746: storageErr captures a loadWebAuthnUser failure that is NOT
+	// "no such user", so the branch below can tell "this assertion was never
+	// evaluated" from "this assertion was evaluated and rejected". A closure
+	// variable is the only way to carry it out: ValidatePasskeyLogin folds
+	// whatever the handler returns into its own error.
+	var storageErr error
 	handler := func(_, userHandle []byte) (webauthn.User, error) {
 		if len(userHandle) != 8 {
+			// Malformed input, not a storage problem — a genuine negative
+			// result, and it stays audited as a failed attempt.
 			return nil, fmt.Errorf("unexpected user handle")
 		}
 		uid := uint(binary.BigEndian.Uint64(userHandle))
 		wu, err := c.loadWebAuthnUser(ctx, uid)
 		if err != nil {
+			// A handle naming no user is a credential guess (the handle is
+			// attacker-supplied on this path — there is no first factor), so
+			// only a real storage failure is recorded as not-evaluated.
+			if !storage.IsUserNotFound(err) {
+				storageErr = err
+			}
 			return nil, err
 		}
 		resolved = wu.user
@@ -630,6 +663,11 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessi
 	}
 	_, cred, err := c.webauthnRP.ValidatePasskeyLogin(handler, sd, parsed)
 	if err != nil || resolved == nil {
+		if storageErr != nil {
+			c.writeAuditEventFull(ctx, EventWebAuthnError, nil, nil, nil, ip,
+				fmt.Sprintf("passwordless WebAuthn login could not be evaluated (storage error): %v", storageErr))
+			return nil, nil, fmt.Errorf("%w: resolving the passkey's user: %w", ErrWebAuthnLoginNotEvaluated, storageErr)
+		}
 		c.writeAuditEventFull(ctx, "webauthn.failed", nil, nil, nil, ip, "failed passwordless WebAuthn login")
 		return nil, nil, fmt.Errorf("assertion verification failed: %w", err)
 	}
