@@ -82,7 +82,14 @@ see "Supported versions" above for that distinct, separate axis.
 
 GitHub-native secret scanning and push protection, Dependabot security
 updates, and private vulnerability reporting are all enabled on this
-repository. Branch protection requires 11 status checks (static analysis,
-`govulncheck`, fuzz coverage, license compliance, DCO, and more — see
-[`security/testing.md`](security/testing.md)) with no bypass, including for
-maintainers.
+repository. Branch protection is a GitHub ruleset requiring 18 status-check
+contexts (static analysis, `govulncheck`, fuzz coverage, license compliance,
+DCO, and more — see [`security/testing.md`](security/testing.md) and
+[`security/SDLC.md`](security/SDLC.md) for the full ruleset detail), merged
+only through a squash-only merge queue; force-pushing or deleting `main` is
+blocked outright. **Correction (2026-10-05):** this previously said "no
+bypass, including for maintainers" — the live ruleset carried a standing
+`OrganizationAdmin`/`always` bypass actor, which was real, not a
+hypothetical. Resolved the same day: kept as a deliberate, narrowed
+break-glass path (`bypass_mode: pull_request`, visible on the PR) rather
+than removed — see `security/SDLC.md` for the full detail.

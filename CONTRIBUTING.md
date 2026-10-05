@@ -91,13 +91,22 @@ CI round-trip into an immediate local one.
    hard requirement for anything security-relevant (see
    [docs/compliance/SECURITY-VERIFICATION.md](docs/compliance/SECURITY-VERIFICATION.md)
    for what that verification standard looks like in practice).
-4. Open a PR against `main`. CI must pass in full before it can merge
-   (branch protection enforces this — there's no bypass, including for
-   maintainers).
+4. Open a PR against `main`. CI must pass in full before it can merge via a
+   squash-only merge queue (branch protection enforces this through a
+   GitHub ruleset). **Correction (2026-10-05):** this used to say "no
+   bypass, including for maintainers" — the live ruleset
+   (`gh api repos/keyorixhq/keyorix/rulesets`) carries a standing
+   `OrganizationAdmin`/`bypass_mode: always` bypass actor, so that wasn't
+   accurate. See [docs/security/SDLC.md](docs/security/SDLC.md#branch-protection)
+   for the ruleset evidence.
 
 ## What CI checks
 
-11 required checks gate every merge to `main` (branch protection, no bypass):
+11 required checks gate every merge to `main` via branch protection. (The
+underlying GitHub ruleset names 18 status-check contexts — CI job names, not
+a 1:1 match to this tool-level list; see
+[docs/security/SDLC.md](docs/security/SDLC.md#branch-protection) for the
+literal context list.)
 
 - `go vet`, `go build`, `go test -race` (full suite)
 - `gosec` (medium+ severity) and `golangci-lint`
