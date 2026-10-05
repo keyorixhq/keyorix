@@ -353,13 +353,26 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   detect stale rows, see the TSV's `STALE` class). Open: #2648 #2650
   #2653 #2654 #2655 #2657 #2659. Closed rows move to class `PARENT-LOCKED`
   (INV-STORE-21) or are removed when a `WithNamedLock` now covers them.
+  detect stale rows, see the TSV's `STALE` class). Closed rows move to class
+  `PARENT-LOCKED` (INV-STORE-21), or to `STALE` once a `WithNamedLock` covers them so the
+  guard stops flagging the function at all (#2657/#2659, closed by #2669 — see INV-CORE-44).
+  The set of still-open races is NOT transcribed here. It is whatever the TSV's
+  `UNSAFE-OPEN` rows say, read straight out of the file:
+  `awk 'BEGIN{FS="\t"} !/^#/ && $2=="UNSAFE-OPEN" {print $1"\t"$3}' docs/check-then-act-lock-exempt.tsv | sort -u`
+  (11 rows as of 2026-10-05). An earlier version of this entry did transcribe the issue
+  list, and repeated appends left ten divergent, partly-truncated copies of it in place —
+  a list nobody could use and that contradicted the TSV. Keep the pointer, not the copy.
+  Note the TSV's own labels lag too: the guard cannot detect a stale row, so some
+  `UNSAFE-OPEN` rows name issues that have since been fixed. The TSV is the source of
+  truth for which ROWS exist; the issue is the source of truth for whether it is open.
 - **INV-CORE-42** A write that persists a pre-read snapshot must not overwrite columns the
   operation did not change, and must not resurrect a soft-deleted row. GORM `Save(struct)` on
   a soft-delete model is a resurrection primitive under concurrency: its `UPDATE ... WHERE
   deleted_at IS NULL` matches 0 rows and it falls back to `INSERT ... ON CONFLICT (id) DO
   UPDATE SET <all columns>` including `deleted_at = NULL`; `Select("*").Updates(...)` reverts
   every column a narrower concurrent writer (`SetAccountState`, `SetPasswordHash`, …) changed.
-  Why: C-GUARD2-EXEMPT-REVIEW. Guard: share permission update (#2648, fixed):
+  Why: C-GUARD2-EXEMPT-REVIEW. Guards:
+  share permission update (#2648, fixed):
   `share_permission_column_scoped_guard_test.go:TestUpdateSharePermission_IsColumnScoped` +
   `TestCTAReview_UpdateSharePermission_vs_RevokeShare_CrossReplicaPostgres` (pg-gated).
   UNGUARDED: #2650 secret undelete, #2651 dynamic config re-enable, #2653/#2654 user
@@ -370,6 +383,19 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   suspension/password revert.
   Why: C-GUARD2-EXEMPT-REVIEW. Guard: UNGUARDED (#2648 share revoke, #2650 secret undelete,
   #2651 dynamic config re-enable, #2653/#2654 user suspension/password revert).
+  `TestCTAReview_UpdateSharePermission_vs_RevokeShare_CrossReplicaPostgres` (pg-gated);
+  user profile writes (#2653/#2654, fixed):
+  `user_profile_column_scoped_guard_test.go:TestUserProfileWrites_AreColumnScoped` +
+  `TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres` /
+  `TestCTAReview_UpdateOwnProfile_vs_ChangePassword_CrossReplicaPostgres` (pg-gated).
+  An operation whose NEW `account_state` is derived from the one it read (the SCIM lifecycle
+  paths: `scimUpdateUserTx`, `DeprovisionSCIMUser`) writes it only through
+  `SetAccountStateIfMatches` conditioned on that read value, never the blind
+  `SetAccountState`, and fails closed with `ErrUserAccountStateConflict` on a miss
+  (C-RACE-FIX-B2): `scim_account_state_conditional_guard_test.go:TestSCIMAccountStateWrites_AreConditional`,
+  `scim_account_state_persisted_test.go`, and
+  `TestCTAReview_SCIM_vs_SuspendUser_WithoutRowLock_CrossReplicaPostgres` (pg-gated).
+  UNGUARDED: #2650 secret undelete, #2651 dynamic config re-enable.
 - **INV-CORE-43** `ActivateMFA` only ever activates the TOTP secret the submitted code was
   validated against: `ActivateMFASecret` is a conditional write pinned to that row's
   ciphertext, and a mismatch (a concurrent `BeginMFAEnrollment` swapped the secret) fails the
@@ -425,15 +451,26 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `TestNoUngatedRoutes` and `scripts/e2e/routes.json`. All default-ci.
   `TestCTAReview_InviteMemberOpenMode_vs_Revoke_CrossReplicaPostgres` (pg-gated),
   plus `FuzzCrossReplicaInvariants`' invariant 6 (`g4OrphanedMembershipGrants`,
-  pg-gated). That oracle fires on a (project, user) pair whose every membership row
-  is `revoked` while a project-scope grant is still live; it deliberately does NOT
-  treat a revoked row coexisting with a LIVE membership as a violation, because
+  pg-gated). That oracle fires on a (project, user) pair that has a `revoked`
+  membership row and NO `active` one, while a project-scope grant is still live.
+  Both conditions are load-bearing. It deliberately does NOT treat a revoked row
+  coexisting with an `active` row as a violation, because
   `invite(open) → revoke → re-invite` reaches exactly that state serially — the
   earlier cross-row-join form of the check did, and reported a violation on a
-  correct state. Both directions of that oracle are calibrated in
+  correct state. It DOES fire when the surviving row is merely PENDING
+  (`invited`/`identity_verified`/`provisioned`, e.g. a non-open-mode re-invite),
+  because a pending membership confers no grant and so cannot be the live grant's
+  owner. `active` is the only grant-conferring state: both `AddProjectMember` call
+  sites in the lifecycle are gated on it, and that premise is derived
+  behaviourally — over every validation mode and every state in
+  `membershipTransitions`, with a completeness check against that map's key set —
+  by `TestOnlyActiveMembershipStateConfersProjectGrant`, so adding a
+  grant-conferring state fails a test instead of silently blinding the oracle.
+  Both directions of the oracle are calibrated in
   `cross_replica_invariant6_calibration_postgres_test.go`
   (`TestInvariant6_SoundOnSerialReinvite` for soundness;
-  `TestInvariant6_FiresOnOrphanedGrantEndState` and the two
+  `TestInvariant6_FiresOnOrphanedGrantEndState`,
+  `TestInvariant6_FiresOnOrphanedGrantUnderPendingReinvite` and the two
   `TestInvariant6_MembershipLockIsLoadBearing_*` mutation tests, which strip the
   named lock from one replica, for sensitivity).
   The three write sites that move a membership's state — `inviteMemberWithMode`'s

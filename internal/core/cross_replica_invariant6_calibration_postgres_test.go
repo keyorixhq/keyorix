@@ -183,6 +183,136 @@ func TestInvariant6_FiresOnOrphanedGrantEndState(t *testing.T) {
 	assert.Contains(t, orphaned, g4OrphanedGrant{UserID: u.ID, ProjectID: f.projectID})
 }
 
+// TestInvariant6_FiresOnOrphanedGrantUnderPendingReinvite: the gap an earlier
+// form of the predicate had. It scoped the "nothing legitimately owns this
+// grant" condition to "no NON-REVOKED membership remains", which a PENDING row
+// also satisfies — so `revoke → invite(allowlist)` left a `revoked` row beside
+// an `invited` row and the oracle went quiet, even though an `invited`
+// membership confers no grant and therefore cannot be the grant's owner. A
+// grant that outlived the revoke would have been missed.
+//
+// The predicate now requires that no `active` membership remains, which is the
+// state that actually confers a grant (derived, not assumed:
+// TestOnlyActiveMembershipStateConfersProjectGrant). This test plants the
+// surviving grant explicitly rather than racing for it — the end state is what
+// the oracle has to recognise, and building it directly keeps the test
+// deterministic.
+//
+// Red/green: with the NOT EXISTS clause relaxed from `m2.state = 'active'` back
+// to `m2.state <> 'revoked'`, this test fails (orphaned is empty).
+func TestInvariant6_FiresOnOrphanedGrantUnderPendingReinvite(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	u := f.user("inv6-pending", "")
+
+	// A real revoked membership, via the real paths.
+	f.setup.SetMembershipValidationMode(ValidationModeOpen)
+	m1, err := f.setup.InviteMember(f.ctx, f.projectID, u.ID, "project_viewer", f.adminID, 0, false)
+	require.NoError(t, err)
+	_, err = f.setup.TransitionMembership(f.ctx, f.projectID, m1.ID, MembershipRevoked, f.adminID, false)
+	require.NoError(t, err)
+	member, err := f.setup.Storage().IsProjectMember(f.ctx, u.ID, f.projectID)
+	require.NoError(t, err)
+	require.False(t, member, "the revoke must have removed the grant")
+
+	// The #2657/#2659 defect: the grant outlives the revoke.
+	viewer, err := f.setup.Storage().GetRoleByName(f.ctx, "project_viewer")
+	require.NoError(t, err)
+	require.NoError(t, f.setup.Storage().AssignRole(f.ctx, u.ID, viewer.ID, Scope{ProjectID: f.projectID}))
+
+	// A re-invite in a NON-open mode lands pending, conferring nothing.
+	f.setup.SetMembershipValidationMode(ValidationModeAllowlist)
+	m2, err := f.setup.InviteMember(f.ctx, f.projectID, u.ID, "project_viewer", f.adminID, 0, false)
+	require.NoError(t, err)
+	require.Equal(t, MembershipInvited, m2.State, "allowlist mode must land the re-invite pending")
+	require.NotEqual(t, m1.ID, m2.ID)
+
+	orphaned, err := g4OrphanedMembershipGrants(f.setupDB)
+	require.NoError(t, err)
+	assert.Contains(t, orphaned, g4OrphanedGrant{UserID: u.ID, ProjectID: f.projectID},
+		"a pending membership confers no grant, so it must not shield a grant that outlived the revoke")
+}
+
+// TestOnlyActiveMembershipStateConfersProjectGrant derives the premise
+// g4OrphanedMembershipGrants rests on — that `active` is the ONLY membership
+// state conferring a project-scope role grant — behaviourally, from the real
+// paths, rather than restating it.
+//
+// It covers both ways a membership reaches a state: every validation mode's
+// initial state (inviteMemberWithMode) and every state reachable by stepping
+// the machine (TransitionMembership). The subtest set is checked against
+// membershipTransitions' own key set, so a newly added state cannot slip
+// through uncovered — if someone adds a sixth state, or makes `provisioned`
+// confer a grant, this fails instead of quietly blinding invariant 6.
+func TestOnlyActiveMembershipStateConfersProjectGrant(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	viewer, err := f.setup.Storage().GetRoleByName(f.ctx, "project_viewer")
+	require.NoError(t, err)
+
+	grantHeld := func(userID uint) bool {
+		t.Helper()
+		var n int64
+		require.NoError(t, f.setupDB.Raw(
+			"SELECT count(*) FROM user_roles WHERE user_id = ? AND role_id = ? AND project_id = ?",
+			userID, viewer.ID, f.projectID).Scan(&n).Error)
+		return n > 0
+	}
+
+	seen := map[string]bool{}
+
+	// (a) initial states, one per validation mode.
+	for _, tc := range []struct {
+		name        string
+		mode        string
+		idpResolved bool
+		wantState   string
+	}{
+		{"open", ValidationModeOpen, false, MembershipActive},
+		{"allowlist", ValidationModeAllowlist, false, MembershipInvited},
+		{"idp-resolved", ValidationModeIDP, true, MembershipProvisioned},
+		{"idp-unresolved", ValidationModeIDP, false, MembershipInvited},
+	} {
+		u := f.user("inv6-mode-"+tc.name, "")
+		f.setup.SetMembershipValidationMode(tc.mode)
+		m, err := f.setup.InviteMember(f.ctx, f.projectID, u.ID, "project_viewer", f.adminID, 0, tc.idpResolved)
+		require.NoError(t, err, "mode %s", tc.name)
+		require.Equal(t, tc.wantState, m.State, "mode %s initial state", tc.name)
+		seen[m.State] = true
+		assert.Equal(t, m.State == MembershipActive, grantHeld(u.ID),
+			"mode %s landed in %s: a project grant must exist iff that state is %s", tc.name, m.State, MembershipActive)
+	}
+
+	// (b) every state reachable by stepping the machine, walked end to end.
+	walker := f.user("inv6-walk", "")
+	m, err := f.setup.Storage().CreateProjectMembership(f.ctx, &models.ProjectMembership{
+		ProjectID: f.projectID, UserID: walker.ID, Role: "project_viewer", State: MembershipInvited,
+	})
+	require.NoError(t, err)
+	seen[MembershipInvited] = true
+	require.False(t, grantHeld(walker.ID), "a freshly invited membership confers nothing")
+
+	for _, to := range []string{MembershipIdentityVerified, MembershipProvisioned, MembershipActive, MembershipRevoked} {
+		require.True(t, canTransition(m.State, to), "walk assumes %s → %s is legal", m.State, to)
+		got, err := f.setup.TransitionMembership(f.ctx, f.projectID, m.ID, to, f.adminID, false)
+		require.NoError(t, err, "transition to %s", to)
+		require.Equal(t, to, got.State)
+		m = got
+		seen[to] = true
+		assert.Equal(t, to == MembershipActive, grantHeld(walker.ID),
+			"membership in %s: a project grant must exist iff that state is %s", to, MembershipActive)
+	}
+
+	// Completeness: the walk above must have visited every declared state, so
+	// a new one cannot be added without this test noticing.
+	for state := range membershipTransitions {
+		assert.True(t, seen[state],
+			"membership state %q is declared in membershipTransitions but never exercised here — "+
+				"extend this test, and re-check g4OrphanedMembershipGrants' NOT EXISTS clause if %q confers a grant", state, state)
+	}
+	assert.Len(t, seen, len(membershipTransitions), "states exercised: %v", seen)
+}
+
 // TestInvariant6_MembershipLockIsLoadBearing_OpenModeInvite: the end-to-end
 // mutation. Replica A runs the open-mode invite with membershipLockKey
 // removed (the pre-#2669 shape); replica B's revoke is forced to run, in

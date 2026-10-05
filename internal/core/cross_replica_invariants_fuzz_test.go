@@ -61,10 +61,11 @@
 //  3. no live ACL grant on a soft-deleted secret (#2649 class);
 //  4. no active dynamic-secret lease under a soft-deleted project (#2652 class);
 //  5. no live environment under a soft-deleted project (#2656 class);
-//  6. INV-CORE-44: no (user, project) pair whose every membership row is
-//     `revoked` still carries a live project-scope role grant (#2657/#2659
-//     class) — see g4OrphanedMembershipGrants for why this is NOT a plain
-//     project_memberships-to-user_roles join;
+//  6. INV-CORE-44: no (user, project) pair that has a `revoked` membership row
+//     and no `active` one still carries a live project-scope role grant
+//     (#2657/#2659 class) — see g4OrphanedMembershipGrants for why this is NOT
+//     a plain project_memberships-to-user_roles join, and why the second
+//     condition is `active` rather than merely "non-revoked";
 //  7. the victim user's account_state is `suspended` whenever the last
 //     successful suspend/reactivate op on it was a suspend, regardless of
 //     what UpdateUser/UpdateOwnProfile/ChangePassword did meanwhile
@@ -663,11 +664,27 @@ type g4OrphanedGrant struct {
 // project membership never ends `revoked` while its user still holds the role
 // grant that membership conferred".
 //
-// What it checks: a (user, project) pair for which NO non-revoked membership
-// row remains, yet user_roles still carries a grant at that project's scope.
-// With every membership revoked there is no membership left that could
-// legitimately own a membership-derived grant, so a surviving one is orphaned
-// — the #2657/#2659 end state.
+// What it checks: a (user, project) pair for which a `revoked` membership row
+// exists and NO membership row is in a grant-conferring state, yet user_roles
+// still carries a grant at that project's scope. With no membership left that
+// could legitimately own a membership-derived grant, a surviving one is
+// orphaned — the #2657/#2659 end state.
+//
+// "grant-conferring state" is `active` and only `active`: both AddProjectMember
+// call sites in the membership lifecycle are gated on it
+// (membership_lifecycle.go:234, under `created.State == MembershipActive`, and
+// :377, under `case MembershipActive`), and `revoked` is the only state that
+// removes a grant (:388). That premise is not taken on trust — it is the thing
+// TestOnlyActiveMembershipStateConfersProjectGrant derives behaviourally, for
+// every validation mode and every state in membershipTransitions, so adding a
+// state that grants (or making `provisioned` grant) fails that test rather than
+// silently blinding this oracle.
+//
+// Checking `active` rather than merely "non-revoked" matters: a pair can hold a
+// `revoked` row beside a PENDING row (`invited`/`identity_verified`/
+// `provisioned`) from a non-open-mode re-invite, and a pending row confers no
+// grant, so it must not shield a grant that outlived the revoke. Guarded by
+// TestInvariant6_FiresOnOrphanedGrantUnderPendingReinvite.
 //
 // Why NOT the obvious `project_memberships JOIN user_roles ON user+project
 // WHERE m.state = 'revoked'`: that join is not INV-CORE-44 but a strictly
@@ -680,6 +697,12 @@ type g4OrphanedGrant struct {
 // concurrency involved at all. That is what made #2659's seed fail after its
 // fix had already landed; TestInvariant6_SoundOnSerialReinvite pins it with
 // zero goroutines.
+//
+// The two conditions are not interchangeable and both are load-bearing: the
+// EXISTS(revoked) clause is what makes this a membership-lifecycle claim at
+// all (a pair that never had a membership is not this invariant's business),
+// and the NOT EXISTS(active) clause is what keeps it true of serial
+// executions.
 //
 // What it does NOT check: a project-scope grant reached by any path other
 // than membership activation — a direct /user-roles grant, a group grant, an
@@ -694,6 +717,9 @@ type g4OrphanedGrant struct {
 // and its activate-path sibling remove membershipLockKey and confirm this
 // predicate still reports the real #2659/#2657 violation.
 func g4OrphanedMembershipGrants(db *gorm.DB) ([]g4OrphanedGrant, error) {
+	// The two states are bound from the package's own constants, not spelled
+	// as SQL literals, so renaming either one is a compile-time break here
+	// rather than a silently-never-matching query.
 	var out []g4OrphanedGrant
 	err := db.Raw(`
 SELECT DISTINCT ur.user_id, ur.project_id
@@ -701,12 +727,12 @@ FROM user_roles ur
 WHERE EXISTS (
         SELECT 1 FROM project_memberships m
         WHERE m.user_id = ur.user_id AND m.project_id = ur.project_id
-          AND m.state = 'revoked')
+          AND m.state = ?)
   AND NOT EXISTS (
         SELECT 1 FROM project_memberships m2
         WHERE m2.user_id = ur.user_id AND m2.project_id = ur.project_id
-          AND m2.state <> 'revoked')
-ORDER BY ur.user_id, ur.project_id`).Scan(&out).Error
+          AND m2.state = ?)
+ORDER BY ur.user_id, ur.project_id`, MembershipRevoked, MembershipActive).Scan(&out).Error
 	return out, err
 }
 
