@@ -53,6 +53,46 @@ func requestProjectName(flagValue string) (string, error) {
 	return "", fmt.Errorf("no project specified — use --project or set KEYORIX_PROJECT")
 }
 
+// projectIDFlagUsage is the shared --project-id help text. Every `keyorix request`
+// subcommand carries it (#2360): project-NAME resolution goes through
+// resolveRequestProjectID -> GET /api/v1/projects, which is gated on a
+// deployment-wide role. A caller with no project grants -- exactly the persona
+// self-service access requests exist for -- is correctly denied that listing, and
+// so has no way to turn a name into the ID every one of these project-scoped routes
+// needs in its URL. The routes themselves impose no such restriction.
+const projectIDFlagUsage = "Project ID -- use this instead of --project when GET /api/v1/projects is denied to the caller " +
+	"(it requires a deployment-wide role); the project-scoped access-request routes themselves do not require it"
+
+// requestProjectTarget resolves which project a `keyorix request` subcommand targets
+// from its own --project-id / --project flags (and KEYORIX_PROJECT), before any network
+// call, so a missing flag fails fast without contacting the server.
+//
+// A nonzero projectID means --project-id was given: resolveRequestProjectID (and the
+// GET /api/v1/projects listing behind it) is bypassed entirely, which is the only path
+// open to a caller holding no project grants. Otherwise projectName still needs
+// resolving through that listing, for callers who can use it.
+//
+// Exactly one of the two return values is ever meaningful: (id, "") or (0, name).
+func requestProjectTarget(projectIDFlag uint, projectNameFlag string) (projectID uint, projectName string, err error) {
+	if projectIDFlag != 0 {
+		return projectIDFlag, "", nil
+	}
+	projectName, err = requestProjectName(projectNameFlag)
+	if err != nil {
+		return 0, "", fmt.Errorf("no project specified — use --project, --project-id, or set KEYORIX_PROJECT")
+	}
+	return 0, projectName, nil
+}
+
+// requestResolveProject completes requestProjectTarget once a client exists: it turns a
+// name into an ID via the listing, and is a no-op when --project-id already supplied one.
+func requestResolveProject(ctx context.Context, client *apiclient.ClientWithResponses, projectID uint, projectName string) (uint, error) {
+	if projectID != 0 {
+		return projectID, nil
+	}
+	return resolveRequestProjectID(ctx, client, projectName)
+}
+
 // resolveRequestProjectID finds a project's ID by exact name match via GET /api/v1/projects.
 func resolveRequestProjectID(ctx context.Context, client *apiclient.ClientWithResponses, name string) (uint, error) {
 	_, id, err := resolveProjectRef(ctx, client, name, false)
@@ -150,27 +190,10 @@ var requestAccessCmd = &cobra.Command{
 
 func init() {
 	requestAccessCmd.Flags().StringVar(&requestAccessProject, "project", "", "Project name (or use KEYORIX_PROJECT)")
-	requestAccessCmd.Flags().UintVar(&requestAccessProjectID, "project-id", 0,
-		"Project ID -- use this instead of --project when the caller has no grants yet and GET /api/v1/projects "+
-			"correctly denies them (the create-access-request route itself accepts any authenticated caller)")
+	requestAccessCmd.Flags().UintVar(&requestAccessProjectID, "project-id", 0, projectIDFlagUsage)
 	requestAccessCmd.Flags().StringVar(&requestAccessRole, "role", "", "Suggested project role (optional)")
 	requestAccessCmd.Flags().StringVar(&requestAccessReason, "reason", "", "Reason for the request (optional)")
-}
-
-// accessProjectFromFlags reads --project-id / --project / KEYORIX_PROJECT before any network
-// call, so a missing/invalid flag fails fast without contacting the server. A nonzero projectID
-// means --project-id was used (bypassing GET /api/v1/projects entirely -- the only path available
-// to a zero-grant caller, who is correctly denied that list endpoint); otherwise projectName still
-// needs resolving via that listing, for callers who can use it.
-func accessProjectFromFlags() (projectID uint, projectName string, err error) {
-	if requestAccessProjectID != 0 {
-		return requestAccessProjectID, "", nil
-	}
-	projectName, err = requestProjectName(requestAccessProject)
-	if err != nil {
-		return 0, "", fmt.Errorf("no project specified — use --project, --project-id, or set KEYORIX_PROJECT")
-	}
-	return 0, projectName, nil
+	requestAccessCmd.MarkFlagsMutuallyExclusive("project", "project-id")
 }
 
 // accessProjectDisplay renders the project for status output: the quoted name with its ID when
@@ -182,8 +205,18 @@ func accessProjectDisplay(projectID uint, projectName string) string {
 	return fmt.Sprintf("%q (id=%d)", projectName, projectID)
 }
 
+// requestProjectLabel is accessProjectDisplay for the messages that historically printed
+// the quoted NAME alone (golden-output parity with the old CLI's request/review.go): the
+// quoted name when one was given, the bare ID on the --project-id path.
+func requestProjectLabel(projectID uint, projectName string) string {
+	if projectName == "" {
+		return fmt.Sprintf("id=%d", projectID)
+	}
+	return fmt.Sprintf("%q", projectName)
+}
+
 func runRequestAccess(_ *cobra.Command, _ []string) error {
-	projectID, projectName, err := accessProjectFromFlags()
+	projectID, projectName, err := requestProjectTarget(requestAccessProjectID, requestAccessProject)
 	if err != nil {
 		return err
 	}
@@ -192,11 +225,8 @@ func runRequestAccess(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if projectID == 0 {
-		projectID, err = resolveRequestProjectID(ctx, client, projectName)
-		if err != nil {
-			return err
-		}
+	if projectID, err = requestResolveProject(ctx, client, projectID, projectName); err != nil {
+		return err
 	}
 
 	fmt.Printf("Requesting access to project %s...\n", accessProjectDisplay(projectID, projectName))
@@ -236,7 +266,10 @@ func runRequestAccess(_ *cobra.Command, _ []string) error {
 
 // ── request list ─────────────────────────────────────────────────────────────
 
-var requestListProject string
+var (
+	requestListProject   string
+	requestListProjectID uint
+)
 
 var requestListCmd = &cobra.Command{
 	Use:   "list",
@@ -246,10 +279,12 @@ var requestListCmd = &cobra.Command{
 
 func init() {
 	requestListCmd.Flags().StringVar(&requestListProject, "project", "", "Project name (or use KEYORIX_PROJECT)")
+	requestListCmd.Flags().UintVar(&requestListProjectID, "project-id", 0, projectIDFlagUsage)
+	requestListCmd.MarkFlagsMutuallyExclusive("project", "project-id")
 }
 
 func runRequestList(_ *cobra.Command, _ []string) error {
-	projectName, err := requestProjectName(requestListProject)
+	projectID, projectName, err := requestProjectTarget(requestListProjectID, requestListProject)
 	if err != nil {
 		return err
 	}
@@ -258,8 +293,7 @@ func runRequestList(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	projectID, err := resolveRequestProjectID(ctx, client, projectName)
-	if err != nil {
+	if projectID, err = requestResolveProject(ctx, client, projectID, projectName); err != nil {
 		return err
 	}
 	requests, err := fetchAccessRequests(ctx, client, projectID)
@@ -286,8 +320,9 @@ func runRequestList(_ *cobra.Command, _ []string) error {
 // ── request withdraw ─────────────────────────────────────────────────────────
 
 var (
-	requestWithdrawID      uint
-	requestWithdrawProject string
+	requestWithdrawID        uint
+	requestWithdrawProject   string
+	requestWithdrawProjectID uint
 )
 
 var requestWithdrawCmd = &cobra.Command{
@@ -299,28 +334,33 @@ var requestWithdrawCmd = &cobra.Command{
 
 func init() {
 	requestWithdrawCmd.Flags().UintVar(&requestWithdrawID, "id", 0, "Access request ID (required)")
-	requestWithdrawCmd.Flags().StringVar(&requestWithdrawProject, "project", "", "Project name (required)")
+	requestWithdrawCmd.Flags().StringVar(&requestWithdrawProject, "project", "", "Project name (or use --project-id / KEYORIX_PROJECT)")
+	requestWithdrawCmd.Flags().UintVar(&requestWithdrawProjectID, "project-id", 0, projectIDFlagUsage)
 	_ = requestWithdrawCmd.MarkFlagRequired("id")
-	_ = requestWithdrawCmd.MarkFlagRequired("project")
+	// --project is NOT MarkFlagRequired: #2360 -- the requester withdrawing their own
+	// request is typically the zero-grant caller who cannot resolve a project NAME at
+	// all. One of --project / --project-id / KEYORIX_PROJECT is required instead,
+	// enforced in runRequestWithdraw.
+	requestWithdrawCmd.MarkFlagsMutuallyExclusive("project", "project-id")
 }
 
 func runRequestWithdraw(_ *cobra.Command, _ []string) error {
 	if requestWithdrawID == 0 {
 		return fmt.Errorf("--id is required")
 	}
-	if requestWithdrawProject == "" {
-		return fmt.Errorf("--project is required (POST .../projects/{id}/access-requests/{requestId}/withdraw is project-scoped in its URL)")
+	projectID, projectName, err := requestProjectTarget(requestWithdrawProjectID, requestWithdrawProject)
+	if err != nil {
+		return fmt.Errorf("%w (POST .../projects/{id}/access-requests/{requestId}/withdraw is project-scoped in its URL)", err)
 	}
 	ctx := context.Background()
 	client, err := apiClientWithSkewCheck(ctx)
 	if err != nil {
 		return err
 	}
-	projectID, err := resolveRequestProjectID(ctx, client, requestWithdrawProject)
-	if err != nil {
+	if projectID, err = requestResolveProject(ctx, client, projectID, projectName); err != nil {
 		return err
 	}
-	fmt.Printf("Withdrawing access request %d from project %q (id=%d)...\n", requestWithdrawID, requestWithdrawProject, projectID)
+	fmt.Printf("Withdrawing access request %d from project %s...\n", requestWithdrawID, accessProjectDisplay(projectID, projectName))
 
 	resp, err := client.WithdrawAccessRequestWithResponse(ctx, int(projectID), int(requestWithdrawID))
 	if err != nil {
@@ -336,12 +376,13 @@ func runRequestWithdraw(_ *cobra.Command, _ []string) error {
 // ── request review ───────────────────────────────────────────────────────────
 
 var (
-	requestReviewID      uint
-	requestReviewAction  string
-	requestReviewRole    string
-	requestReviewReason  string
-	requestReviewTTL     string
-	requestReviewProject string
+	requestReviewID        uint
+	requestReviewAction    string
+	requestReviewRole      string
+	requestReviewReason    string
+	requestReviewTTL       string
+	requestReviewProject   string
+	requestReviewProjectID uint
 )
 
 var requestReviewCmd = &cobra.Command{
@@ -359,10 +400,15 @@ func init() {
 	requestReviewCmd.Flags().StringVar(&requestReviewRole, "role", "", "Role to grant on approve (defaults to the suggested role)")
 	requestReviewCmd.Flags().StringVar(&requestReviewReason, "reason", "", "Reason on reject")
 	requestReviewCmd.Flags().StringVar(&requestReviewTTL, "ttl", "", "Time-bound the granted role on approve (Go duration, e.g. 4h); empty = permanent")
-	requestReviewCmd.Flags().StringVar(&requestReviewProject, "project", "", "Project name (required)")
+	requestReviewCmd.Flags().StringVar(&requestReviewProject, "project", "", "Project name (or use --project-id / KEYORIX_PROJECT)")
+	requestReviewCmd.Flags().UintVar(&requestReviewProjectID, "project-id", 0, projectIDFlagUsage)
 	_ = requestReviewCmd.MarkFlagRequired("id")
 	_ = requestReviewCmd.MarkFlagRequired("action")
-	_ = requestReviewCmd.MarkFlagRequired("project")
+	// --project is NOT MarkFlagRequired: #2360 -- a reviewer whose roles.assign comes
+	// from a PROJECT-scoped grant (not a deployment-wide role) is denied
+	// GET /api/v1/projects too, so a name is unresolvable for them. One of
+	// --project / --project-id / KEYORIX_PROJECT is required, enforced in runRequestReview.
+	requestReviewCmd.MarkFlagsMutuallyExclusive("project", "project-id")
 }
 
 func runRequestReview(_ *cobra.Command, _ []string) error { // NOSONAR -- cognitive complexity, mirrors old CLI's runReviewRemote
@@ -372,16 +418,16 @@ func runRequestReview(_ *cobra.Command, _ []string) error { // NOSONAR -- cognit
 	if requestReviewAction != "approve" && requestReviewAction != "reject" {
 		return fmt.Errorf("--action must be approve or reject")
 	}
-	if requestReviewProject == "" {
-		return fmt.Errorf("--project is required (PUT .../projects/{id}/access-requests/{requestId} is project-scoped in its URL)")
+	projectID, projectName, err := requestProjectTarget(requestReviewProjectID, requestReviewProject)
+	if err != nil {
+		return fmt.Errorf("%w (PUT .../projects/{id}/access-requests/{requestId} is project-scoped in its URL)", err)
 	}
 	ctx := context.Background()
 	client, err := apiClientWithSkewCheck(ctx)
 	if err != nil {
 		return err
 	}
-	projectID, err := resolveRequestProjectID(ctx, client, requestReviewProject)
-	if err != nil {
+	if projectID, err = requestResolveProject(ctx, client, projectID, projectName); err != nil {
 		return err
 	}
 
@@ -390,8 +436,8 @@ func runRequestReview(_ *cobra.Command, _ []string) error { // NOSONAR -- cognit
 		return err
 	}
 	requesterLabel := requestUserLabel(ctx, client, existing.UserID)
-	fmt.Printf("Resolved access request %d in project %q: requester %s, state=%s.\n",
-		requestReviewID, requestReviewProject, requesterLabel, existing.State)
+	fmt.Printf("Resolved access request %d in project %s: requester %s, state=%s.\n",
+		requestReviewID, requestProjectLabel(projectID, projectName), requesterLabel, existing.State)
 
 	if existing.SecretID != nil {
 		if requestReviewRole != "" || requestReviewTTL != "" {
