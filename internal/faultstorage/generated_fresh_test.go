@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -38,7 +37,7 @@ const staleMsg = "faulty_storage_generated.go is stale — run `go generate ./in
 func TestFaultyStorageGenerated_IsFresh(t *testing.T) {
 	goBin, err := exec.LookPath("go")
 	if err != nil {
-		goBin = filepath.Join(runtime.GOROOT(), "bin", "go")
+		t.Fatalf("the go toolchain must be on PATH to check the generated file is fresh: %v", err)
 	}
 
 	committed, err := os.ReadFile("faulty_storage_generated.go")
