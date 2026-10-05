@@ -166,6 +166,13 @@ type LocalStorage struct {
 	// construction and meaningless on a clone anyway (auditFlusher is nil
 	// there, so runAuditFlusher never runs for it).
 	auditFlusherLingerWindow time.Duration
+	// rawStmts backs the H3 hand-written prepared-statement fast path
+	// (PERF-3, docs/specs/read-path-caching.md; credential_lookup_raw.go) —
+	// nil on a transaction-scoped LocalStorage (see WithTransaction, which
+	// deliberately does NOT copy this field), same "nil on a clone, falls
+	// back to the always-correct GORM path" pattern as auditFlusher above.
+	// Only the root LocalStorage returned by NewLocalStorage gets a real one.
+	rawStmts *rawStatements
 }
 
 // clockWatermark pairs a mutex with the time.Time it guards, so a single
@@ -191,6 +198,7 @@ func NewLocalStorage(db *gorm.DB) *LocalStorage {
 		consumeClockWatermark: &clockWatermark{},
 		rbacClockWatermark:    &clockWatermark{},
 		auditFlusher:          &auditFlusherState{},
+		rawStmts:              &rawStatements{},
 	}
 }
 
