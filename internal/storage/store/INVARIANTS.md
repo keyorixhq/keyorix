@@ -176,3 +176,22 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   Postgres plans are deliberately NOT asserted (seq scans on tiny test tables regardless of
   indexes). Why: PERF-2 performance study. Guard:
   `anomaly_query_plan_test.go:TestAnomalyQueries_UseTheirIndexes`.
+
+## Read-path caches
+
+The three rules below are what makes a generation-validated read cache correct, and all three
+were broken in both of PERF-3's caches before GUARD-6: **stamp before data**, **a stamp that
+actually moves when the cached data does**, and **never cache what a transaction has not
+committed**. They live in `INVARIANTS.d/` as fragments (see
+[`docs/invariants-fragments.md`](../../../docs/invariants-fragments.md)), one file each:
+
+- `INV-STORE-read-path-cache-stamp-before-data`
+- `INV-STORE-read-path-cache-generation-covers-writers`
+- `INV-STORE-read-path-cache-never-caches-uncommitted`
+
+Design and the two live defects they come from:
+[`docs/specs/read-path-cache-ordering.md`](../../../docs/specs/read-path-cache-ordering.md) and
+`read_path_cache.go`'s own header. Practical consequence for anyone adding a cache here: put
+it behind `cachedRead`/`cachedReadSameRow`, declare its generation type next to the columns it
+covers, and add its row to `read_path_cache_race_test.go` — the guards fail otherwise, rather
+than letting it ship and be reviewed.
