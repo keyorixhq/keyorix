@@ -202,10 +202,27 @@ var consumeFirstExemptions = []consumeFirstExemption{
 	// probably carry a row for ActivateMFA, and this comment is the ask.
 	{
 		op:              "REST POST /api/v1/auth/mfa/activate",
-		fn:              "(*KeyorixCore).requireReauth",
+		fn:              "(*KeyorixCore).ActivateMFA",
 		consumedColumns: map[string][]string{"MFASecret": {"LastUsedStep"}},
-		why:             "requireReauth (and ActivateMFA's own MarkTOTPStepUsed) burned the matched TOTP time-step before the activation transaction; it must stay burned so the same code cannot be replayed",
+		why:             "ActivateMFA's own MarkTOTPStepUsed burned the matched enrolment-code time-step before the activation transaction; it must stay burned so a stolen enrolment code cannot be replayed",
 	},
+	// fn is requireReauth here (and for mfa/disable above), unlike the activate
+	// entry: these two ops run with MFA already ENABLED and send a real TOTP
+	// code, so requireReauth DOES take its TOTP branch and its own
+	// MarkTOTPStepUsed is the consume. Verified per-op rather than assumed after
+	// the activate mis-attribution -- both ops' Execute sends {"code": <TOTP>}
+	// and their Setup (enrolMFADirect) sets MFAEnabled=true, matching the
+	// production shape where DisableMFA/RegenerateMFARecoveryCodes
+	// re-authenticate against an already-active factor.
+	//
+	// SCOPE OF THIS ENTRY'S GREEN, per coordinator review: with the fixture as it
+	// stands on this PR's base, a green here does NOT cover the
+	// zero-recovery-codes hazard (#2838) -- enrolMFADirect seeds no
+	// MFARecoveryCode rows, so a partial commit that wipes the old codes without
+	// writing new ones is structurally unobservable on this op, exemption or no
+	// exemption. A planted class-A bug of exactly that shape SURVIVED. The
+	// stacked follow-up seeds those rows and kills it; until that lands, read
+	// this entry as covering the TOTP-step consumption only.
 	{
 		op:              "REST POST /api/v1/auth/mfa/recovery-codes/regenerate",
 		fn:              "(*KeyorixCore).requireReauth",
