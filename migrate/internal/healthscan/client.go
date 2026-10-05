@@ -126,7 +126,7 @@ func buildTLSConfig(cfg Config, warnOut io.Writer) (*tls.Config, error) {
 			"Anyone able to intercept the connection to Vault can read your Vault token and every value "+
 			"this tool reads (metadata only — see Client's doc comment — but the token itself is still a credential). "+
 			"Use --vault-cacert/--vault-capath for a private CA instead whenever possible.")
-		return &tls.Config{InsecureSkipVerify: true}, nil // #nosec G402 -- explicit, loud, operator opt-in only (--tls-skip-verify, no env var), never the default; see doc comment above.
+		return &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}, nil // #nosec G402 -- explicit, loud, operator opt-in only (--tls-skip-verify, no env var), never the default; MinVersion still resists protocol downgrade even with verification skipped; see doc comment above. // nosemgrep: problem-based-packs.insecure-transport.go-stdlib.bypass-tls-verification.bypass-tls-verification
 	}
 	if cfg.CACertPath == "" && cfg.CACertDir == "" {
 		return nil, nil

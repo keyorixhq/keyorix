@@ -211,11 +211,11 @@ func resyncPostgresSequences(db *sql.DB) error {
 		}
 		// #nosec G201 -- s.Table/idCol come from parseSchema resolving storage.AllModels()'s
 		// compiled-in Go structs via GORM's own naming strategy, never from archive or request content.
-		q := fmt.Sprintf(
+		q := fmt.Sprintf( // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query
 			`SELECT setval(pg_get_serial_sequence('%s', 'id'), COALESCE((SELECT MAX(id) FROM %s), 1), `+
 				`(SELECT MAX(id) FROM %s) IS NOT NULL)`,
 			s.Table, quoteIdentPG(s.Table), quoteIdentPG(s.Table))
-		if _, err := db.Exec(q); err != nil {
+		if _, err := db.Exec(q); err != nil { // nosemgrep: go.lang.security.audit.sqli.gosql-sqli.gosql-sqli -- q is built entirely from s.Table above, never from archive/request content; see the #nosec G201 note
 			return fmt.Errorf("resync sequence for table %q: %w", s.Table, err)
 		}
 	}

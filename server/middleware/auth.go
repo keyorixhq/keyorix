@@ -248,6 +248,9 @@ func isMachineEntry(u *UserContext) bool {
 
 // tokenKey returns a safe cache key (SHA-256 hex of the raw token).
 func tokenKey(token string) string {
+	// codeql[go/weak-sensitive-data-hashing] -- token is a high-entropy random
+	// bearer token (session/PAT/machine), not a password; this is a cache-key
+	// derivation, not credential storage, so a slow KDF is not warranted.
 	h := sha256.Sum256([]byte(token))
 	return fmt.Sprintf("%x", h)
 }

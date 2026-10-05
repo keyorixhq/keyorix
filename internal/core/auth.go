@@ -616,6 +616,9 @@ func (c *KeyorixCore) SessionStillLive(ctx context.Context, sessionID uint) (boo
 // drift here would make every legitimate cache hit spuriously fail closed as a
 // hash mismatch.
 func hashSessionTokenForLookup(token string) string {
+	// codeql[go/weak-sensitive-data-hashing] -- mirrors internal/storage/store's
+	// hashSessionToken: token is a high-entropy random session token, not a
+	// password, so a fast deterministic lookup hash is correct, not a slow KDF.
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
 }
