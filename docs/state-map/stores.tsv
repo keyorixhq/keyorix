@@ -118,6 +118,7 @@ internal/storage/factory.go (os.OpenFile)	file_write	internal/storage	1
 internal/storage/factory_sqlite_migration_lock.go (os.OpenFile)	file_write	internal/storage	1
 migrate/cmd/cloud_common.go (os.Create)	file_write	migrate/cmd	1
 migrate/cmd/vault.go (os.Create)	file_write	migrate/cmd	1
+migrate/cmd/vaultapplyaccess.go (os.OpenFile)	file_write	migrate/cmd	1
 migrate/cmd/vaultscan.go (os.Create)	file_write	migrate/cmd	1
 migrate/internal/apiclient/gen/filterspec.go (os.WriteFile)	file_write	migrate/internal/apiclient/gen	1
 pkg/bundleverify/bundleverify.go (os.OpenFile)	file_write	pkg/bundleverify	2
