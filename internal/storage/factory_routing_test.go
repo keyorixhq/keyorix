@@ -13,7 +13,7 @@ import (
 // TestSQLiteDSN_NoPriorParams validates that the DSN has the required pragmas
 // when no query params are present.
 func TestSQLiteDSN_NoPriorParams(t *testing.T) {
-	dsn := sqliteDSN("/data/secrets.db")
+	dsn := sqliteDSN("/data/secrets.db", false)
 	assert.Contains(t, dsn, "_foreign_keys=1")
 	assert.Contains(t, dsn, "_busy_timeout=")
 	assert.Contains(t, dsn, "_journal_mode=WAL")
@@ -23,7 +23,7 @@ func TestSQLiteDSN_NoPriorParams(t *testing.T) {
 // TestSQLiteDSN_WithExistingParams validates that the DSN appends (not clobbers)
 // pragmas when the operator already includes query parameters.
 func TestSQLiteDSN_WithExistingParams(t *testing.T) {
-	dsn := sqliteDSN("/data/secrets.db?cache=shared")
+	dsn := sqliteDSN("/data/secrets.db?cache=shared", false)
 	// Must use "&" as separator, not "?" (which would duplicate the query start).
 	assert.Contains(t, dsn, "cache=shared")
 	assert.Contains(t, dsn, "_foreign_keys=1")

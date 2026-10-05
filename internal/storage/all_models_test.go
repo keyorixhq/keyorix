@@ -20,7 +20,7 @@ import (
 // read a table that no longer exists).
 func TestAllModels_MatchesLiveMigratedTables(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "all_models_roundtrip.db")
-	db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath)), gormConfig())
+	db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath, false)), gormConfig())
 	require.NoError(t, err)
 
 	f := &DefaultStorageFactory{}

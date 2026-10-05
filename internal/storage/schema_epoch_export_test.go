@@ -22,7 +22,7 @@ func TestInspectMigrationState_FreshDatabase_NoTables(t *testing.T) {
 	defer i18n.ResetForTesting()
 
 	dbPath := filepath.Join(t.TempDir(), "fresh.db")
-	db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath)), gormConfig())
+	db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath, false)), gormConfig())
 	require.NoError(t, err)
 
 	upToDate, detail, err := InspectMigrationState(db)
@@ -40,7 +40,7 @@ func TestInspectMigrationState_FullyMigrated_ReportsUpToDate(t *testing.T) {
 	defer i18n.ResetForTesting()
 
 	dbPath := filepath.Join(t.TempDir(), "migrated.db")
-	db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath)), gormConfig())
+	db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath, false)), gormConfig())
 	require.NoError(t, err)
 
 	f := &DefaultStorageFactory{}
@@ -65,7 +65,7 @@ func TestInspectMigrationState_OlderRecordedEpoch_ReportsBehind(t *testing.T) {
 	defer i18n.ResetForTesting()
 
 	dbPath := filepath.Join(t.TempDir(), "stale-epoch.db")
-	db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath)), gormConfig())
+	db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath, false)), gormConfig())
 	require.NoError(t, err)
 
 	f := &DefaultStorageFactory{}

@@ -253,10 +253,13 @@ const sqliteBusyTimeoutMillis = 10000
 //     own cascade logic could orphan dependent rows with zero DB-level backstop and
 //     no visible error. See factory_sqlite_pragma_test.go for the scope note on
 //     what this codebase's GORM-generated schema currently declares.
+//
 //   - _busy_timeout=<ms> (#465): see sqliteBusyTimeoutMillis above.
+//
 //   - _journal_mode=WAL (#465): the default rollback-journal mode blocks readers
 //     during a write and vice versa, increasing SQLITE_BUSY frequency under
 //     concurrent access; WAL lets readers proceed concurrently with a writer.
+//
 //   - _txlock=immediate: SQLite's default BEGIN is DEFERRED — a transaction that
 //     reads first and writes second (e.g. AssignRole's existing-grant check
 //     before its Create) only requests the write lock at that first write
@@ -274,6 +277,7 @@ const sqliteBusyTimeoutMillis = 10000
 //     35871480798, 35840030029: "grant victim ...: database is locked (5)
 //     (SQLITE_BUSY)" from AssignUserRole) despite _busy_timeout already
 //     being set.
+//
 //   - _synchronous=FULL (SESSION-PERF, 2026-10-02): without this, `synchronous`
 //     is never touched by this DSN and falls through to the driver/library
 //     default — which modernc.org/sqlite v1.59.0 leaves unset when the DSN
@@ -297,17 +301,44 @@ const sqliteBusyTimeoutMillis = 10000
 //     before/after (no throughput delta, as expected, since the pragma value
 //     is unchanged — this closes an unasserted-guarantee gap, not a bug).
 //
+//     skipDurableSync (ADR-112 Amendment 1, FASTAUDIT-1,
+//     docs/specs/fast-audit-mode.md) is the one thing that weakens this to
+//     NORMAL, and ONLY when the operator wrote
+//     storage.database.insecure_audit_skip_durable_sync: true into the config
+//     FILE — it is a required parameter rather than an optional/defaulted one
+//     precisely so no call site can reach the weak value by forgetting to
+//     pass something. NORMAL's exact cost is the paragraph above, which is
+//     also this mode's specification: a commit can report success while its
+//     WAL frame is still only in the OS page cache, surviving an application
+//     crash but not an OS crash or power loss before the next checkpoint. The
+//     chain cannot gap or fork either way — SQLite's own PRAGMA synchronous
+//     documentation states both halves ("WAL mode is safe from corruption
+//     with synchronous=NORMAL" / "A transaction committed in WAL mode with
+//     synchronous=NORMAL might roll back following a power loss or system
+//     crash"). WHAT THIS DOES NOT SAY, and must not be read as saying: the
+//     relaxation is confined to audit writes. `synchronous` is a
+//     PER-CONNECTION property set here once per DSN, and the pool is shared
+//     by every query, so on SQLite this weakens commit durability for the
+//     WHOLE database. Postgres's own path confines the equivalent change to
+//     the audit transaction (SET LOCAL synchronous_commit, see
+//     internal/storage/store/local_audit_chain.go); SQLite cannot, and the
+//     per-transaction alternative was rejected for failing open.
+//
 // Postgres has no equivalent opt-out (FK enforcement is always on) and no analogous
 // pragmas, so this is intentionally SQLite-only — never applied to the Postgres
 // connection path.
-func sqliteDSN(dbPath string) string {
+func sqliteDSN(dbPath string, skipDurableSync bool) string {
 	sep := "?"
 	if strings.Contains(dbPath, "?") {
 		// The operator already supplied their own DSN query parameters (e.g. a
 		// custom path with embedded pragmas) — append rather than clobber them.
 		sep = "&"
 	}
-	return fmt.Sprintf("%s%s_foreign_keys=1&_busy_timeout=%d&_journal_mode=WAL&_txlock=immediate&_synchronous=FULL", dbPath, sep, sqliteBusyTimeoutMillis)
+	synchronous := "FULL"
+	if skipDurableSync {
+		synchronous = "NORMAL"
+	}
+	return fmt.Sprintf("%s%s_foreign_keys=1&_busy_timeout=%d&_journal_mode=WAL&_txlock=immediate&_synchronous=%s", dbPath, sep, sqliteBusyTimeoutMillis, synchronous)
 }
 
 // gormConfig returns the *gorm.Config shared by every gorm.Open call in this
@@ -565,7 +596,7 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 	// switch; every later Open against an already-WAL file is a same-mode pragma
 	// no-op that always succeeds immediately, regardless of other open connections.
 	migrationMu.Lock()
-	db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath)), gormConfig())
+	db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath, cfg.Storage.Database.InsecureAuditSkipDurableSync)), gormConfig())
 	migrationMu.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
@@ -585,6 +616,7 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 
 	ls := store.NewLocalStorage(db)
 	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
+	ls.SetAuditSkipDurableSync(cfg.Storage.Database.InsecureAuditSkipDurableSync)
 	return ls, nil
 }
 
@@ -611,6 +643,7 @@ func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (stora
 
 	ls := store.NewLocalStorage(db)
 	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
+	ls.SetAuditSkipDurableSync(cfg.Storage.Database.InsecureAuditSkipDurableSync)
 	return ls, nil
 }
 

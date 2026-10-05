@@ -83,8 +83,41 @@ func ValidateStartup(configPath string, forceAutoFix bool) (*ValidationResult, e
 	}
 	result.DatabaseOK = true
 
+	// ADR-112 Amendment 1 (docs/specs/fast-audit-mode.md) requires the fast
+	// audit mode to appear in the posture surface. Until the dedicated
+	// `admin validate --posture` report lands (#2478), this -- the Warnings
+	// list that `keyorix-server admin validate` prints -- IS the posture
+	// surface, so the deviation goes here.
+	//
+	// Reported whenever the setting is PRESENT, including on a `remote`
+	// backend where it has no local database to act on and is therefore
+	// inert. That is deliberate: a setting an operator wrote into their
+	// config file that reports "not in effect" is exactly the silent
+	// weakening ADR-112 §1 exists to prevent. (Flagged as the spec's first
+	// NEEDS ANDREI; this is the recommended behaviour, not a settled one.)
+	if cfg.Storage.Database.InsecureAuditSkipDurableSync {
+		result.Warnings = append(result.Warnings, AuditDurableSyncSkippedWarning)
+	}
+
 	return result, nil
 }
+
+// AuditDurableSyncSkippedWarning is the posture-deviation line for
+// storage.database.insecure_audit_skip_durable_sync (ADR-112 Amendment 1).
+// Exported so a test can assert on the exact string rather than a substring
+// that a later reword could silently stop matching, the same way
+// validation_test.go already pins "File permission checks are disabled" and
+// "Encryption is disabled" literally (admin/validate.go matches those by
+// equality to pick a recommendation line).
+//
+// Deliberately does NOT restate the per-backend SQLite scope caveat that
+// server/main.go's startup warning carries: this string is produced by
+// ValidateStartup, which runs for every backend, and a line that named SQLite
+// unconditionally would be wrong on Postgres. The authority on the full
+// trade-off is docs/security/hardening-guide.md, which this points at.
+const AuditDurableSyncSkippedWarning = "Durable audit sync is DISABLED " +
+	"(storage.database.insecure_audit_skip_durable_sync): audit commits no longer wait for a disk sync, so an OS " +
+	"crash or power loss can lose the most recent audit entries -- see docs/security/hardening-guide.md"
 
 // SafeFilePermPath cleans path and rejects it if the cleaned form still
 // contains a ".." segment. Unlike validateEncryption/validateDatabase (whose

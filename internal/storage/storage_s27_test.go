@@ -505,7 +505,7 @@ func TestOpenGormDB_S27_LocalTypeSucceeds(t *testing.T) {
 // TestSQLiteDSN_S27_PathWithQueryStringAppendsAmpersand verifies that a path
 // already containing "?" results in "&" appended (not a second "?").
 func TestSQLiteDSN_S27_PathWithQueryStringAppendsAmpersand(t *testing.T) {
-	dsn := sqliteDSN("file:mydb?mode=memory")
+	dsn := sqliteDSN("file:mydb?mode=memory", false)
 	// Must not contain more than one "?".
 	count := 0
 	for _, c := range dsn {

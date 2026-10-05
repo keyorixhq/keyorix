@@ -59,6 +59,16 @@ type SecurityInfo struct {
 	// escape hatch -- one of the three places design §5 requires this to be
 	// flagged (alongside the startup warning and the startup audit event).
 	KeylessRecoveryMode bool `json:"keyless_recovery_mode"`
+	// AuditDurableSyncSkipped surfaces
+	// storage.database.insecure_audit_skip_durable_sync (ADR-112 Amendment 1,
+	// docs/specs/fast-audit-mode.md) -- one of the four places that amendment
+	// requires the setting to be flagged, and specifically the one a buyer's
+	// auditor can reach WITHOUT host access, so "is this install still
+	// committing audit durably before disclosing a secret?" is answerable over
+	// the API. true means it is NOT: the audit record is still written and
+	// committed before the secret is returned, and a failed audit write still
+	// fails the request, but the commit no longer waits for a disk sync.
+	AuditDurableSyncSkipped bool `json:"audit_durable_sync_skipped"`
 	// RecoveryKey is a read-only recovery-key configuration status (F6,
 	// recovery-key visibility) -- nil for any caller who does not hold
 	// system.write (global-admin tier). Never carries the key or its hash,
@@ -198,7 +208,13 @@ func MakeSystemInfoHandler(cfg *config.Config, coreService *core.KeyorixCore) ht
 				EncryptionMethod:    "AES-256-GCM",
 				AuditEnabled:        true,
 				KeylessRecoveryMode: cfg.Security.RecoverAdmin.KeylessMode,
-				RecoveryKey:         recoveryKeyStatus,
+				// Read from the already-loaded *config.Config, exactly like
+				// KeylessRecoveryMode above -- no request body ever reaches
+				// this value, which is what keeps the setting
+				// config-file-only (ADR-112 Amendment 1; the guard is
+				// TestInsecureAuditSkipDurableSync_NotReachableFromAnyTransport).
+				AuditDurableSyncSkipped: cfg.Storage.Database.InsecureAuditSkipDurableSync,
+				RecoveryKey:             recoveryKeyStatus,
 			},
 		}
 

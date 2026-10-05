@@ -571,6 +571,54 @@ type DatabaseConfig struct {
 	// keyorix_audit_flusher_flushes_total) justifying a nonzero value can set
 	// one without a code change.
 	AuditFlusherLingerWindow string `yaml:"audit_flusher_linger_window"`
+
+	// InsecureAuditSkipDurableSync (ADR-112 Amendment 1, FASTAUDIT-1,
+	// docs/specs/fast-audit-mode.md) drops the audit commit's wait for a disk
+	// sync. DEFAULT false, and false is the secure baseline: a secret value is
+	// never returned before its audit record is DURABLY committed
+	// (audit-before-disclosure, ADR-112 §3). Settable from the config file
+	// ONLY — no HTTP handler, no gRPC RPC, no env var and no CLI flag may set
+	// it, the same containment security.recover_admin.keyless_mode has and for
+	// the same reason: a compromised admin API must not be able to silently
+	// weaken an install's durability posture remotely.
+	// TestInsecureAuditSkipDurableSync_NotReachableFromAnyTransport is the
+	// guard.
+	//
+	// What it changes, per backend:
+	//   - Postgres: the audit-commit transaction, and ONLY that transaction,
+	//     issues `SET LOCAL synchronous_commit = off`. SET LOCAL is
+	//     transaction-scoped, so it never leaks to the next transaction that
+	//     borrows the same pooled connection, and a secret WRITE still commits
+	//     durably.
+	//   - SQLite: the DSN uses `_synchronous=NORMAL` instead of FULL, in the
+	//     WAL mode that is already the default. `PRAGMA synchronous` is a
+	//     PER-CONNECTION property and the pool is shared by every query, so on
+	//     SQLite the relaxation is DATABASE-WIDE, not audit-only: a power loss
+	//     can lose the last fraction of a second of secret writes too. Stated
+	//     here rather than buried, because it is the one place this setting is
+	//     broader than its own name. The narrower alternative (flip the pragma
+	//     per transaction, restore afterwards) was rejected for failing OPEN:
+	//     a skipped restore leaves a pooled connection permanently weakened
+	//     with nothing reporting it.
+	//
+	// What it does NOT change: the audit row is still INSERTed and COMMITted,
+	// in the same transaction/batch as today, BEFORE the secret value is
+	// returned; if the audit row cannot be WRITTEN the request still fails.
+	// Only the wait for the disk sync is skipped. The hash chain may lose a
+	// TAIL of entries to an OS crash or power loss; it can never gap or fork,
+	// because WAL (Postgres) and -wal frames (SQLite) are totally ordered and
+	// recovery accepts only a valid prefix — see
+	// docs/specs/fast-audit-mode.md §5 for the argument and
+	// TestFastAuditMode_KillNineLosesNothing and TestFastAuditMode_WalTailLossLeavesAPrefixNotAGap for the proof.
+	//
+	// Loss window: Postgres ≤ ~3 × wal_writer_delay (~600ms at the default);
+	// SQLite, whatever is not yet checkpointed. This is HashiCorp Vault's and
+	// OpenBao's guarantee verbatim — both do one write() to an O_APPEND audit
+	// file with no fsync anywhere — which is why this exists, not because it
+	// is safe. Only enable it where power is genuinely guaranteed: a UPS, a
+	// battery-backed RAID write cache, or replicated cloud block storage. See
+	// docs/security/hardening-guide.md.
+	InsecureAuditSkipDurableSync bool `yaml:"insecure_audit_skip_durable_sync"`
 }
 
 // GetPassword returns the resolved DB password, preferring the environment variable.

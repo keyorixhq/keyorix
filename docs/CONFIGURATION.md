@@ -154,6 +154,14 @@ storage:
     #   safe default; only set this if production
     #   keyorix_audit_flusher_batch_size/_flushes_total metrics (exposed on
     #   the server's /metrics endpoint) justify it for your own load shape.
+    # insecure_audit_skip_durable_sync: false   # default: false. DO NOT ENABLE
+    #   without reading docs/security/hardening-guide.md §5a. Drops the audit
+    #   commit's WAIT for a disk sync (the row is still written and committed
+    #   before the secret is returned, and a failed audit write still fails the
+    #   request). Buys Vault-equivalent read latency; costs the durability of
+    #   the most recent audit entries on an OS crash or power loss. On SQLite
+    #   the relaxation is DATABASE-WIDE, not audit-only. Config file only --
+    #   no API, CLI flag or env var can set it.
 ```
 
 ### Refusing to vivify a missing database
@@ -186,6 +194,21 @@ pre-exist. The Postgres backend is unaffected too.
 on by default would break every first boot that does not run `keyorix system init --database`
 first. Turn it on once your deployment creates the file explicitly — which is exactly the point:
 after that, a missing file can only mean something went wrong.
+### Audit commit durability (`insecure_audit_skip_durable_sync`)
+
+By default Keyorix will not return a secret value until that read's audit
+record is **durably** committed (ADR-112 §3). That is stricter than Vault,
+OpenBao, Conjur and Infisical, none of which wait for a disk sync before
+answering — and it is most of why a single-client read costs ~8ms on a
+spinning disk rather than ~1ms.
+
+`insecure_audit_skip_durable_sync: true` (ADR-112 Amendment 1) removes only
+that wait. It is appropriate **only** where power is genuinely guaranteed — a
+UPS, a healthy battery-backed RAID write cache, or replicated cloud block
+storage. [`security/hardening-guide.md` §5a](security/hardening-guide.md)
+states exactly what you give up, per backend, and the four places the setting
+is surfaced once it is on (startup warning, an audit event in the hash chain
+at every boot, `admin validate`, and `GET /api/v1/system/info`).
 
 ### Connection pool
 

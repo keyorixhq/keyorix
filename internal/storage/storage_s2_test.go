@@ -505,5 +505,5 @@ func TestMigrateDatabase_LegacySchema_PAT(t *testing.T) {
 // openSQLiteGormDB opens a raw SQLite *gorm.DB without running any migrations
 // (used by TestMigrateDatabase_LegacySchema to set up a partial schema).
 func openSQLiteGormDB(path string) (*gorm.DB, error) {
-	return gorm.Open(sqlite.Open(sqliteDSN(path)), gormConfig())
+	return gorm.Open(sqlite.Open(sqliteDSN(path, false)), gormConfig())
 }

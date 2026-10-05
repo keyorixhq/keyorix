@@ -516,6 +516,20 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		warnIfRecoveryKeyMissing(store)
 	}
 
+	// Fast audit mode (ADR-112 Amendment 1, docs/specs/fast-audit-mode.md):
+	// flagged in the same four places keyless_mode is, for the same reason --
+	// a startup warning EVERY boot, an audit event EVERY boot (so the
+	// tamper-evident chain itself records the window this install ran
+	// weakened, rather than an auditor having to trust a point-in-time config
+	// dump), a line in the posture surface (internal/startup.ValidateStartup,
+	// printed by `keyorix-server admin validate`), and a boolean in
+	// /system/info (server/http/handlers/system.go) so a buyer's auditor can
+	// see it over the API without host access.
+	if cfg.Storage.Database.InsecureAuditSkipDurableSync {
+		log.Printf("WARNING: %s", auditDurableSyncSkippedWarning(cfg.Storage.Type))
+		auditDurableSyncSkippedStartup(store)
+	}
+
 	// Top up the canonical RBAC permission catalog (ADR-044): adds any permission
 	// introduced in a later release to an already-initialised install, granting it to
 	// its baseline roles. No-op pre-bootstrap and best-effort (never blocks startup).
@@ -2859,5 +2873,59 @@ func auditKeylessModeStartup(store corestorage.Storage) {
 		EventTime:   time.Now(),
 	}); err != nil {
 		log.Printf("note: could not record the keyless-mode startup event to the audit chain (%v)", err)
+	}
+}
+
+// auditDurableSyncSkippedWarning is the operator-facing text for
+// storage.database.insecure_audit_skip_durable_sync being in effect (ADR-112
+// Amendment 1, docs/specs/fast-audit-mode.md). Shared, rather than written out
+// twice, because the same wording has to appear in the startup WARNING and in
+// `admin validate`'s posture output -- a divergence between the two would mean
+// one of them is understating the setting.
+//
+// storageType drives the one sentence that genuinely differs per backend: on
+// SQLite `PRAGMA synchronous` is a PER-CONNECTION property and the pool is
+// shared by every query, so the relaxation is DATABASE-WIDE, not audit-only.
+// That is the one way this setting is broader than its own name, so it is said
+// out loud here rather than left to the docs.
+func auditDurableSyncSkippedWarning(storageType string) string {
+	base := "storage.database.insecure_audit_skip_durable_sync is ENABLED -- the audit record is still written " +
+		"and committed before a secret value is returned, and a failed audit write still fails the request, but " +
+		"the commit NO LONGER WAITS for a disk sync. An OS crash or power loss can lose the last fraction of a " +
+		"second of audit entries (Postgres: up to ~3x wal_writer_delay). This is HashiCorp Vault's guarantee, " +
+		"not a safe one. Only appropriate where power is guaranteed (UPS, battery-backed write cache, replicated " +
+		"cloud block storage); disable it otherwise."
+	switch storageType {
+	case "local", "sqlite":
+		return base + " ON THIS SQLITE BACKEND THE RELAXATION IS DATABASE-WIDE, NOT AUDIT-ONLY: PRAGMA synchronous " +
+			"is per-connection and the pool is shared, so a power loss can also lose the last fraction of a second " +
+			"of SECRET WRITES."
+	default:
+		return base
+	}
+}
+
+// auditDurableSyncSkippedStartup records, at every boot while
+// storage.database.insecure_audit_skip_durable_sync is enabled, a system-actor
+// audit event (no UserID, never machine-identity-typed) -- the same shape and
+// the same reasoning as auditKeylessModeStartup above, so the tamper-evident
+// chain carries its own repeated record of the weaker mode.
+//
+// Note the self-reference this deliberately accepts: this event is itself
+// written through the very audit path whose durability the setting relaxes, so
+// an OS crash moments after startup could lose it. That is not a defect to
+// engineer around -- the event's purpose is to mark a WINDOW (every subsequent
+// boot re-marks it, and the setting is also reported live by /system/info and
+// `admin validate`), not to be the single unforgeable record of one instant.
+func auditDurableSyncSkippedStartup(store corestorage.Storage) {
+	ok := true
+	if err := store.LogAuditEvent(context.Background(), &models.AuditEvent{
+		EventType:   "admin.audit_durable_sync_skipped_at_startup",
+		Description: "server started with storage.database.insecure_audit_skip_durable_sync enabled -- audit commits no longer wait for a disk sync, so an OS crash or power loss can lose the most recent audit entries",
+		Success:     &ok,
+		ActorType:   core.ActorTypeSystem,
+		EventTime:   time.Now(),
+	}); err != nil {
+		log.Printf("note: could not record the audit-durable-sync-skipped startup event to the audit chain (%v)", err)
 	}
 }

@@ -98,7 +98,7 @@ func TestSQLiteDeferredTransaction_UpgradeFailsBusyDespiteBusyTimeout(t *testing
 // identical connB write must succeed.
 func TestSQLiteImmediateTxlock_ClosesTheDeferredUpgradeBusyWindow(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "immediate-fix.db")
-	fixedDSN := sqliteDSN("file:" + dbPath) // the actual production DSN builder
+	fixedDSN := sqliteDSN("file:"+dbPath, false) // the actual production DSN builder
 
 	setup, err := sql.Open("sqlite", fixedDSN)
 	require.NoError(t, err)

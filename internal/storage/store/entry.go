@@ -173,6 +173,28 @@ type LocalStorage struct {
 	// back to the always-correct GORM path" pattern as auditFlusher above.
 	// Only the root LocalStorage returned by NewLocalStorage gets a real one.
 	rawStmts *rawStatements
+	// auditSkipDurableSync, when true, makes the audit-commit transaction skip
+	// the WAIT for a disk sync — nothing else (ADR-112 Amendment 1,
+	// FASTAUDIT-1, docs/specs/fast-audit-mode.md). Set once at construction
+	// from config.DatabaseConfig.InsecureAuditSkipDurableSync; zero value
+	// (false, Go's own default) is the secure baseline, so a construction site
+	// that forgets to call SetAuditSkipDurableSync gets DURABLE commits, never
+	// the weak mode.
+	//
+	// Read by commitBatchAttempt and logAuditEventDirect, and acted on ONLY on
+	// Postgres (`SET LOCAL synchronous_commit = off`, transaction-scoped).
+	// SQLite's equivalent is a connection-level DSN pragma applied in
+	// internal/storage/factory.go's sqliteDSN, not here — so on SQLite this
+	// field is read and correctly does nothing, because the relaxation has
+	// already happened at Open time (and, unavoidably, for the whole
+	// database; see that function's doc comment).
+	//
+	// Deliberately NOT shared with transaction-scoped clones, same as
+	// auditFlusherLingerWindow: read-only after construction, and a clone's
+	// own audit writes go through logAuditEventDirect inside the CALLER's
+	// transaction, whose durability is the caller's business, not the audit
+	// chain's.
+	auditSkipDurableSync bool
 }
 
 // clockWatermark pairs a mutex with the time.Time it guards, so a single
@@ -213,6 +235,23 @@ func NewLocalStorage(db *gorm.DB) *LocalStorage {
 // construction-time-only field on this type (db, the mutex pointers).
 func (ls *LocalStorage) SetAuditFlusherLingerWindow(d time.Duration) {
 	ls.auditFlusherLingerWindow = d
+}
+
+// SetAuditSkipDurableSync configures whether the audit-commit transaction
+// skips the WAIT for a disk sync (ADR-112 Amendment 1, FASTAUDIT-1 —
+// docs/specs/fast-audit-mode.md). false, the zero value and this type's
+// default if this is never called, is the secure baseline: the audit record is
+// durably committed before a secret value is returned. Only
+// internal/storage's factory calls this, and only with
+// config.DatabaseConfig.InsecureAuditSkipDurableSync, which no transport can
+// set.
+//
+// Same constraint as SetAuditFlusherLingerWindow: safe to call only before
+// this LocalStorage starts serving traffic — the field is read once per
+// commit attempt with no synchronization, like every other
+// construction-time-only field on this type.
+func (ls *LocalStorage) SetAuditSkipDurableSync(skip bool) {
+	ls.auditSkipDurableSync = skip
 }
 
 // DB returns the underlying *gorm.DB. Exposed for test helpers that need direct
