@@ -54,9 +54,10 @@ func BenchmarkRoleSetHasPermission_CacheMiss(b *testing.B) {
 	key := rolePermKey([]uint{role.ID}, "bench.permission")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ls.rolePermCache.mu.Lock()
-		delete(ls.rolePermCache.entries, key)
-		ls.rolePermCache.mu.Unlock()
+		// GUARD-6: the cache is a genCache now (read_path_cache.go), so evicting
+		// goes through invalidateCachedRead instead of reaching into the map
+		// under its own mutex. Same effect — force a miss every iteration.
+		invalidateCachedRead(ls.rolePermCache.entries, key)
 		if _, err := ls.RoleSetHasPermission(ctx, []uint{role.ID}, "bench.permission"); err != nil {
 			b.Fatal(err)
 		}

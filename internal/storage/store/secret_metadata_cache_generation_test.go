@@ -135,7 +135,7 @@ func TestGetLatestSecretVersion_NoVersionIsCachedUnderTheZeroGeneration(t *testi
 	require.Error(t, err, "no versions yet")
 	cached, ok := ls.secretMetaCache.getVersion(created.ID)
 	require.True(t, ok, "the no-version answer is cacheable: the zero aggregate is a real generation")
-	require.Nil(t, cached.latestVersion)
+	require.Nil(t, cached.value)
 
 	_, err = ls.CreateSecretVersion(ctx, &models.SecretVersion{SecretNodeID: created.ID, VersionNumber: 1, CreatedAt: time.Now()})
 	require.NoError(t, err)
@@ -143,6 +143,83 @@ func TestGetLatestSecretVersion_NoVersionIsCachedUnderTheZeroGeneration(t *testi
 	got, err := ls.GetLatestSecretVersion(ctx, created.ID)
 	require.NoError(t, err, "the cached negative must not outlive the first version")
 	require.Equal(t, 1, got.VersionNumber)
+}
+
+// ── fail-closed, per cache ─────────────────────────────────────────────────
+//
+// PERF-3 shipped this test for the node cache only
+// (TestGetCachedSecret_GenerationCheckError_FailsClosed). The version and
+// schedule caches have their own, independent generation reads, so "the node
+// cache fails closed" says nothing about either of them — a check named for
+// more than it verifies is worse than no check.
+
+// TestGetCachedLatestVersion_GenerationCheckError_FailsClosed: once the
+// version aggregate can no longer be computed (table gone), a WARM entry must
+// be reported as a MISS, not served.
+func TestGetCachedLatestVersion_GenerationCheckError_FailsClosed(t *testing.T) {
+	t.Parallel()
+	ls := newCacheTestStorage(t)
+	ctx := context.Background()
+	created, err := ls.CreateSecret(ctx, &models.SecretNode{Name: "x", ProjectID: 1, EnvironmentID: 1, CreatedAt: time.Now(), UpdatedAt: time.Now()})
+	require.NoError(t, err)
+	_, err = ls.CreateSecretVersion(ctx, &models.SecretVersion{SecretNodeID: created.ID, VersionNumber: 1, CreatedAt: time.Now()})
+	require.NoError(t, err)
+	_, err = ls.GetLatestSecretVersion(ctx, created.ID) // warm
+	require.NoError(t, err)
+	_, warm := ls.secretMetaCache.getVersion(created.ID)
+	require.True(t, warm, "expected the version cache to be warm before the DB is broken")
+
+	require.NoError(t, ls.db.Migrator().DropTable(&models.SecretVersion{}))
+
+	got, hit := ls.getCachedLatestVersion(ctx, created.ID)
+	require.False(t, hit, "a generation-check error must never be reported as a cache hit")
+	require.Nil(t, got)
+}
+
+// TestGetCachedSchedule_GenerationCheckError_FailsClosed is the same for the
+// schedule cache's own generation read.
+func TestGetCachedSchedule_GenerationCheckError_FailsClosed(t *testing.T) {
+	t.Parallel()
+	ls := newCacheTestStorage(t)
+	ctx := context.Background()
+	created, err := ls.CreateSecret(ctx, &models.SecretNode{Name: "x", ProjectID: 1, EnvironmentID: 1, CreatedAt: time.Now(), UpdatedAt: time.Now()})
+	require.NoError(t, err)
+	require.NoError(t, ls.SetSecretAccessSchedule(ctx, &models.SecretAccessSchedule{
+		SecretNodeID: created.ID, AllowedDays: "1,2,3", StartHour: 9, EndHour: 17, Timezone: "UTC",
+	}))
+	_, err = ls.GetSecretAccessSchedule(ctx, created.ID) // warm
+	require.NoError(t, err)
+	_, warm := ls.secretMetaCache.getSchedule(created.ID)
+	require.True(t, warm, "expected the schedule cache to be warm before the DB is broken")
+
+	require.NoError(t, ls.db.Migrator().DropTable(&models.SecretAccessSchedule{}))
+
+	got, hit := ls.getCachedSchedule(ctx, created.ID)
+	require.False(t, hit, "a generation-check error must never be reported as a cache hit")
+	require.Nil(t, got)
+}
+
+// TestCachedRead_LoadErrorDropsTheEntry pins read_path_cache.go's contract
+// step 5: a load error removes the key rather than leaving a stale entry
+// behind for a later generation read to match. Asserting the EFFECT (the entry
+// is gone) rather than a return value, because the drop is invisible in what
+// any caller sees.
+func TestCachedRead_LoadErrorDropsTheEntry(t *testing.T) {
+	t.Parallel()
+	ls := newCacheTestStorage(t)
+	ctx := context.Background()
+	created, err := ls.CreateSecret(ctx, &models.SecretNode{Name: "x", ProjectID: 1, EnvironmentID: 1, CreatedAt: time.Now(), UpdatedAt: time.Now()})
+	require.NoError(t, err)
+	_, err = ls.GetSecret(ctx, created.ID) // warm
+	require.NoError(t, err)
+	require.Equal(t, 1, ls.secretMetaCache.nodes.size())
+
+	require.NoError(t, ls.db.Migrator().DropTable(&models.SecretNode{}))
+
+	_, err = ls.GetSecret(ctx, created.ID)
+	require.Error(t, err)
+	require.Zero(t, ls.secretMetaCache.nodes.size(),
+		"a load error must drop the entry: leaving it behind means a later matching generation read would serve it")
 }
 
 // ── the completeness machine-check ─────────────────────────────────────────

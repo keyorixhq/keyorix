@@ -820,7 +820,7 @@ func (ls *LocalStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, 
 
 // RoleSetHasPermission reports whether any role in roleIDs grants the named
 // permission (e.g. "secrets.read") via the role_permissions join.
-// RoleSetHasPermission reports whether any role in roleIDs grants permission.
+//
 // Served from the read-path "principal permissions" cache (PERF-3,
 // docs/specs/read-path-caching.md PR-2) when a live global generation check
 // confirms no role_permissions edit has happened since this exact
@@ -828,51 +828,48 @@ func (ls *LocalStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, 
 // generation, or a generation-check error) falls through to the exact live
 // join this method always ran. See role_permission_cache.go's header for why
 // only the role→permission MAPPING is cached here, never role membership.
+//
+// CROSS-ROW case (read_path_cache.go's cachedRead): the generation lives in
+// system_metadata, not in the rows the join reads, so the helper reads it
+// strictly BEFORE the join — otherwise a grant or revoke committing in between
+// would leave the pre-change answer cached under the post-change generation
+// and a revoked permission would keep authorizing until some unrelated
+// role_permissions edit.
 func (ls *LocalStorage) RoleSetHasPermission(ctx context.Context, roleIDs []uint, permission string) (bool, error) {
 	if len(roleIDs) == 0 {
 		return false, nil
 	}
-	key := rolePermKey(roleIDs, permission)
-	if allowed, hit := ls.getCachedRolePermission(ctx, key); hit {
-		return allowed, nil
-	}
-	// Read the generation BEFORE the live join (coordinator review of #2767):
-	// a grant/revoke committing between the join and a later generation read
-	// would otherwise cache this pre-change answer under the POST-change
-	// generation, and a revoked permission would keep authorizing until some
-	// unrelated role_permissions edit. Read first, the worst case is a cache
-	// entry under an already-stale generation, which simply never hits.
-	gen, genErr := liveRolePermissionsGeneration(ctx, ls)
-	var count int64
-	err := ls.db.WithContext(ctx).Table("permissions").
-		Joins(sqlJoinRolePerms).
-		Where("role_permissions.role_id IN ?", roleIDs).
-		Where("permissions.name = ?", permission).
-		Count(&count).Error
-	if err != nil {
-		return false, fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
-	}
-	allowed := count > 0
-	if genErr == nil {
-		ls.rolePermCache.set(key, rolePermCacheEntry{generation: gen, allowed: allowed})
-	}
-	return allowed, nil
+	return cachedRead(ctx, ls.rolePermCache.entries, rolePermKey(roleIDs, permission),
+		ls.rolePermissionsGeneration(),
+		func(ctx context.Context) (bool, error) {
+			var count int64
+			err := ls.db.WithContext(ctx).Table("permissions").
+				Joins(sqlJoinRolePerms).
+				Where("role_permissions.role_id IN ?", roleIDs).
+				Where("permissions.name = ?", permission).
+				Count(&count).Error
+			if err != nil {
+				return false, fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
+			}
+			return count > 0, nil
+		})
 }
 
-// getCachedRolePermission returns (allowed, true) on a confirmed-current
-// cache hit, or (false, false) on any miss — including a generation-check
-// error (fail closed: never trust the cache over a check that itself
-// failed).
+// rolePermissionsGeneration binds the global role_permissions generation read
+// into the shape read_path_cache.go expects.
+func (ls *LocalStorage) rolePermissionsGeneration() genGeneration[rolePermGeneration] {
+	return func(ctx context.Context) (rolePermGeneration, bool, error) {
+		return liveRolePermissionsGeneration(ctx, ls)
+	}
+}
+
+// getCachedRolePermission returns (allowed, true) on a confirmed-current cache
+// hit, or (false, false) on any miss — including a generation-check error
+// (fail closed: never trust the cache over a check that itself failed).
+// Read-only probe, through the helper's own hit check so it cannot diverge
+// from what RoleSetHasPermission does.
 func (ls *LocalStorage) getCachedRolePermission(ctx context.Context, key string) (bool, bool) {
-	cached, ok := ls.rolePermCache.get(key)
-	if !ok {
-		return false, false
-	}
-	liveGen, err := liveRolePermissionsGeneration(ctx, ls)
-	if err != nil || liveGen != cached.generation {
-		return false, false
-	}
-	return cached.allowed, true
+	return cachedHit(ctx, ls.rolePermCache.entries, key, ls.rolePermissionsGeneration())
 }
 
 // RoleSetBypassesPermissionChecks reports whether any role in roleIDs has

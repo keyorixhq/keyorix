@@ -83,7 +83,6 @@ package store
 import (
 	"context"
 	"errors"
-	"sync"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -96,125 +95,90 @@ import (
 // Update, Updates); read_count covers the one UpdateColumn writer, which
 // bypasses that callback. See this file's header for the live defect that
 // made the second field necessary.
+//
+// The timestamp is stored as int64 nanoseconds, not a time.Time: that is what
+// makes this type `comparable` and therefore usable as a cacheGeneration at
+// all, and it removes the chance of someone comparing two time.Time stamps
+// with `==` by hand (which also compares the monotonic reading and the
+// *time.Location pointer, so two reads of the same column can compare
+// unequal). See read_path_cache.go's cacheGeneration doc comment.
 type nodeGeneration struct {
-	updatedAt time.Time
-	readCount int
+	updatedAtUnixNano int64
+	readCount         int
 }
 
-// equal compares with time.Time.Equal, never ==: == on a time.Time also
-// compares the monotonic reading and the *time.Location pointer, so two reads
-// of the same column can compare unequal and a correct cache would silently
-// never hit.
-func (g nodeGeneration) equal(other nodeGeneration) bool {
-	return g.readCount == other.readCount && g.updatedAt.Equal(other.updatedAt)
-}
+func (nodeGeneration) isCacheGeneration() {}
 
 // versionsGeneration is the generation signal for a cached "latest version of
 // secret N": derived from the version rows themselves, with no timestamp in
 // it, because secret_versions has no updated_at column and because a
 // timestamp's resolution is not a safe invalidation boundary for a table
-// written in a tight retry loop (see this file's header). Plain `==`
-// comparable by construction.
+// written in a tight retry loop (see this file's header).
 type versionsGeneration struct {
 	count            int64
 	maxVersionNumber int64
 	sumReadCount     int64
 }
 
-type secretNodeCacheEntry struct {
-	generation nodeGeneration
-	node       *models.SecretNode
+func (versionsGeneration) isCacheGeneration() {}
+
+// scheduleGeneration is the schedule row's own updated_at — the same-row case
+// (cachedReadSameRow), read in the same query as the row it stamps.
+type scheduleGeneration struct {
+	updatedAtUnixNano int64
 }
 
-// secretVersionCacheEntry is its own entry, in its own map, rather than two
-// more fields on secretNodeCacheEntry: the two halves are validated against
-// DIFFERENT generation signals now (secret_nodes columns vs the
-// secret_versions aggregate), so they cannot share one stamp. That also
-// retires the mergeNode/mergeVersion pair, which existed only to stop
-// GetSecret and GetLatestSecretVersion from clobbering each other's half of
-// one shared entry.
+func (scheduleGeneration) isCacheGeneration() {}
+
+// secretMetadataCache is three independently generation-checked genCaches, one
+// per generation signal. Node and latest-version are separate maps rather than
+// two halves of one entry precisely because they are validated against
+// DIFFERENT signals (secret_nodes columns vs the secret_versions aggregate) and
+// so cannot share a stamp — which is also what retired the mergeNode/
+// mergeVersion pair that existed only to stop GetSecret and
+// GetLatestSecretVersion clobbering each other's half.
 //
-// hasVersion distinguishes "this generation has no version row" (a cached
-// negative, latestVersion nil) from "nothing cached yet".
-type secretVersionCacheEntry struct {
-	generation    versionsGeneration
-	hasVersion    bool
-	latestVersion *models.SecretVersion
-}
-
-type secretScheduleCacheEntry struct {
-	generation  time.Time
-	hasSchedule bool
-	schedule    *models.SecretAccessSchedule
-}
-
-// secretMetadataCache is the whole cache: three independently
-// generation-checked maps, one per generation signal.
+// A nil value in the versions cache is a cached NEGATIVE ("this generation has
+// no version row"), distinguishable from "nothing cached" by the entry's
+// presence. The schedules cache never caches a negative: a secret with no
+// schedule row has no updated_at to stamp one with, so that case always falls
+// through to a live read (a documented perf-only limitation, not a correctness
+// gap).
 type secretMetadataCache struct {
-	mu        sync.Mutex
-	nodes     map[uint]secretNodeCacheEntry
-	versions  map[uint]secretVersionCacheEntry
-	schedules map[uint]secretScheduleCacheEntry
+	nodes     *genCache[uint, nodeGeneration, *models.SecretNode]
+	versions  *genCache[uint, versionsGeneration, *models.SecretVersion]
+	schedules *genCache[uint, scheduleGeneration, *models.SecretAccessSchedule]
 }
 
 func newSecretMetadataCache() *secretMetadataCache {
 	return &secretMetadataCache{
-		nodes:     make(map[uint]secretNodeCacheEntry),
-		versions:  make(map[uint]secretVersionCacheEntry),
-		schedules: make(map[uint]secretScheduleCacheEntry),
+		nodes:     newGenCache[uint, nodeGeneration, *models.SecretNode](),
+		versions:  newGenCache[uint, versionsGeneration, *models.SecretVersion](),
+		schedules: newGenCache[uint, scheduleGeneration, *models.SecretAccessSchedule](),
 	}
 }
 
-func (c *secretMetadataCache) getNode(id uint) (secretNodeCacheEntry, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	e, ok := c.nodes[id]
-	return e, ok
+// getNode/getVersion/getSchedule are read-only probes into the raw entries,
+// used by tests that assert on cache state. They cannot create staleness, so
+// read_path_cache_guard_test.go does not restrict them.
+func (c *secretMetadataCache) getNode(id uint) (genCacheEntry[nodeGeneration, *models.SecretNode], bool) {
+	return c.nodes.get(id)
 }
 
-func (c *secretMetadataCache) setNode(id uint, generation nodeGeneration, node *models.SecretNode) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.nodes[id] = secretNodeCacheEntry{generation: generation, node: node}
+func (c *secretMetadataCache) getVersion(secretNodeID uint) (genCacheEntry[versionsGeneration, *models.SecretVersion], bool) {
+	return c.versions.get(secretNodeID)
 }
 
+func (c *secretMetadataCache) getSchedule(secretNodeID uint) (genCacheEntry[scheduleGeneration, *models.SecretAccessSchedule], bool) {
+	return c.schedules.get(secretNodeID)
+}
+
+// evictNode drops both halves for one secret. Eviction is always safe (it can
+// only cost a future miss) — see genCache.drop's own comment for why the
+// guard's scope deliberately excludes it.
 func (c *secretMetadataCache) evictNode(id uint) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.nodes, id)
-	delete(c.versions, id)
-}
-
-func (c *secretMetadataCache) getVersion(secretNodeID uint) (secretVersionCacheEntry, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	e, ok := c.versions[secretNodeID]
-	return e, ok
-}
-
-func (c *secretMetadataCache) setVersion(secretNodeID uint, generation versionsGeneration, version *models.SecretVersion) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.versions[secretNodeID] = secretVersionCacheEntry{generation: generation, hasVersion: true, latestVersion: version}
-}
-
-func (c *secretMetadataCache) getSchedule(secretNodeID uint) (secretScheduleCacheEntry, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	e, ok := c.schedules[secretNodeID]
-	return e, ok
-}
-
-func (c *secretMetadataCache) setSchedule(secretNodeID uint, e secretScheduleCacheEntry) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.schedules[secretNodeID] = e
-}
-
-func (c *secretMetadataCache) evictSchedule(secretNodeID uint) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.schedules, secretNodeID)
+	invalidateCachedRead(c.nodes, id)
+	invalidateCachedRead(c.versions, id)
 }
 
 // liveNodeGeneration reads ONLY the generation columns of secret_nodes for id
@@ -239,7 +203,7 @@ func liveNodeGeneration(ctx context.Context, db *gorm.DB, id uint) (nodeGenerati
 		}
 		return nodeGeneration{}, false, err
 	}
-	return nodeGeneration{updatedAt: row.UpdatedAt, readCount: row.ReadCount}, true, nil
+	return nodeGeneration{updatedAtUnixNano: row.UpdatedAt.UnixNano(), readCount: row.ReadCount}, true, nil
 }
 
 // liveVersionsGeneration reads the aggregate generation of secretNodeID's
@@ -271,15 +235,15 @@ func liveVersionsGeneration(ctx context.Context, db *gorm.DB, secretNodeID uint)
 // there is no read-data-then-read-stamp window. SecretAccessSchedule has no
 // soft-delete column, so "not found" here always means
 // DeleteSecretAccessSchedule actually removed the row.
-func liveScheduleGeneration(ctx context.Context, db *gorm.DB, secretNodeID uint) (time.Time, bool, error) {
+func liveScheduleGeneration(ctx context.Context, db *gorm.DB, secretNodeID uint) (scheduleGeneration, bool, error) {
 	var row struct{ UpdatedAt time.Time }
 	err := db.WithContext(ctx).Model(&models.SecretAccessSchedule{}).
 		Select("updated_at").Where(sqlWhereSecretNodeID, secretNodeID).Take(&row).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return time.Time{}, false, nil
+			return scheduleGeneration{}, false, nil
 		}
-		return time.Time{}, false, err
+		return scheduleGeneration{}, false, err
 	}
-	return row.UpdatedAt, true, nil
+	return scheduleGeneration{updatedAtUnixNano: row.UpdatedAt.UnixNano()}, true, nil
 }

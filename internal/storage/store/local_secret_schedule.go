@@ -5,6 +5,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -12,59 +13,61 @@ import (
 	"gorm.io/gorm"
 )
 
+// errScheduleAbsent is GetSecretAccessSchedule's internal "no schedule row"
+// signal. It is an error rather than a nil value so the read-path helper DROPS
+// the cache entry instead of caching a negative: "no schedule exists" has no
+// updated_at to stamp a negative with, so there is nothing to validate it
+// against. That case therefore always falls through to a live read — a
+// documented perf-only limitation, not a correctness gap. Never returned to a
+// caller; GetSecretAccessSchedule maps it back to (nil, nil).
+var errScheduleAbsent = errors.New("secret access schedule: no row")
+
 // GetSecretAccessSchedule returns the schedule for secretNodeID, or nil, nil
-// if none exists. Served from the read-path metadata cache (PERF-3,
-// docs/specs/read-path-caching.md) under its own generation signal
-// (secret_access_schedules.cache_generation) — independent of
-// GetSecret/GetLatestSecretVersion's secret_nodes-based one, since a
-// schedule write touches a different table. See secret_metadata_cache.go.
+// if none exists.
+//
+// SAME-ROW case (read_path_cache.go's cachedReadSameRow): the generation is
+// the schedule row's OWN updated_at, returned by the same query as the row, so
+// there is no window between reading the data and reading the stamp. It is
+// independent of GetSecret/GetLatestSecretVersion's signals because a schedule
+// write touches a different table. See secret_metadata_cache.go.
 func (ls *LocalStorage) GetSecretAccessSchedule(ctx context.Context, secretNodeID uint) (*models.SecretAccessSchedule, error) {
-	if schedule, hit := ls.getCachedSchedule(ctx, secretNodeID); hit {
-		if schedule == nil {
-			return nil, nil
-		}
-		cp := *schedule
-		return &cp, nil
+	schedule, err := cachedReadSameRow(ctx, ls.secretMetaCache.schedules, secretNodeID,
+		ls.scheduleGenerationFor(secretNodeID),
+		func(ctx context.Context) (*models.SecretAccessSchedule, scheduleGeneration, error) {
+			var row models.SecretAccessSchedule
+			if err := ls.db.WithContext(ctx).Where("secret_node_id = ?", secretNodeID).First(&row).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil, scheduleGeneration{}, errScheduleAbsent
+				}
+				return nil, scheduleGeneration{}, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+			}
+			cached := row
+			return &cached, scheduleGeneration{updatedAtUnixNano: row.UpdatedAt.UnixNano()}, nil
+		})
+	if errors.Is(err, errScheduleAbsent) {
+		return nil, nil
 	}
-	var row models.SecretAccessSchedule
-	err := ls.db.WithContext(ctx).Where("secret_node_id = ?", secretNodeID).First(&row).Error
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			ls.secretMetaCache.evictSchedule(secretNodeID)
-			return nil, nil
-		}
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		return nil, err
 	}
-	// The generation is this row's own updated_at, read in the same query as the
-	// row (coordinator review of #2764): a separate later generation read could
-	// see a newer schedule and cache this older row under it.
-	cp := row
-	ls.secretMetaCache.setSchedule(secretNodeID, secretScheduleCacheEntry{generation: row.UpdatedAt, hasSchedule: true, schedule: &cp})
-	return &row, nil
+	cp := *schedule
+	return &cp, nil
 }
 
-// getCachedSchedule returns (schedule, true) on a confirmed-current hit.
-// Only a secret that HAS a schedule row is ever cached — "no schedule
-// exists" has no generation column to validate a cached negative against
-// (there's no row to read one from), so that case is deliberately never
-// cached and always falls through to a live read; this is a documented
-// perf-only limitation, not a correctness gap. Returns (nil, false) on any
-// miss, including a generation-check error (fail closed: never trust the
-// cache over a check that itself failed) or the row having been deleted
-// since this entry was cached.
+// scheduleGenerationFor binds the schedule generation read to one secret, in
+// the shape read_path_cache.go expects.
+func (ls *LocalStorage) scheduleGenerationFor(secretNodeID uint) genGeneration[scheduleGeneration] {
+	return func(ctx context.Context) (scheduleGeneration, bool, error) {
+		return liveScheduleGeneration(ctx, ls.db, secretNodeID)
+	}
+}
+
+// getCachedSchedule returns (schedule, true) on a confirmed-current hit, or
+// (nil, false) on any miss — including a generation-check error (fail closed)
+// or the row having been deleted since the entry was cached. Read-only probe,
+// through the helper's own hit check so it cannot diverge.
 func (ls *LocalStorage) getCachedSchedule(ctx context.Context, secretNodeID uint) (*models.SecretAccessSchedule, bool) {
-	cached, ok := ls.secretMetaCache.getSchedule(secretNodeID)
-	if !ok || !cached.hasSchedule {
-		return nil, false
-	}
-	liveGen, found, err := liveScheduleGeneration(ctx, ls.db, secretNodeID)
-	if err != nil || !found {
-		return nil, false
-	}
-	if !liveGen.Equal(cached.generation) {
-		return nil, false
-	}
-	return cached.schedule, true
+	return cachedHit(ctx, ls.secretMetaCache.schedules, secretNodeID, ls.scheduleGenerationFor(secretNodeID))
 }
 
 // SetSecretAccessSchedule upserts the schedule for schedule.SecretNodeID.

@@ -38,7 +38,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -48,18 +47,22 @@ import (
 
 const rolePermissionsGenerationKey = "role_permissions_generation"
 
-type rolePermCacheEntry struct {
-	generation string
-	allowed    bool
+// rolePermGeneration is the global role_permissions generation: the
+// monotonic integer counter stored in system_metadata, carried as the opaque
+// string it is read back as. A reader only ever needs "did this change since I
+// last looked," never "by how much" — see bumpRolePermissionsGenerationTx.
+type rolePermGeneration struct {
+	counter string
 }
 
+func (rolePermGeneration) isCacheGeneration() {}
+
 type rolePermissionCache struct {
-	mu      sync.Mutex
-	entries map[string]rolePermCacheEntry
+	entries *genCache[string, rolePermGeneration, bool]
 }
 
 func newRolePermissionCache() *rolePermissionCache {
-	return &rolePermissionCache{entries: make(map[string]rolePermCacheEntry)}
+	return &rolePermissionCache{entries: newGenCache[string, rolePermGeneration, bool]()}
 }
 
 // rolePermKey builds the cache key for a (roleIDs, permission) pair,
@@ -79,29 +82,24 @@ func rolePermKey(roleIDs []uint, permission string) string {
 	return b.String()
 }
 
-func (c *rolePermissionCache) get(key string) (rolePermCacheEntry, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	e, ok := c.entries[key]
-	return e, ok
-}
-
-func (c *rolePermissionCache) set(key string, e rolePermCacheEntry) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries[key] = e
+// get is a read-only probe into the raw entry, used by tests that assert on
+// cache state. It cannot create staleness, so read_path_cache_guard_test.go
+// does not restrict it.
+func (c *rolePermissionCache) get(key string) (genCacheEntry[rolePermGeneration, bool], bool) {
+	return c.entries.get(key)
 }
 
 // liveRolePermissionsGeneration reads the current global generation value.
-// A never-bumped install reads as ("", nil) — "" is a perfectly valid
-// generation value (every cache entry recorded before the first-ever bump
-// shares it), not a sentinel error.
-func liveRolePermissionsGeneration(ctx context.Context, ls *LocalStorage) (string, error) {
+// A never-bumped install reads as the zero generation ("" counter) with
+// found==true — "" is a perfectly valid generation value (every cache entry
+// recorded before the first-ever bump shares it), not a sentinel error. Only a
+// real DB error is a failure, and the helper treats that as a miss.
+func liveRolePermissionsGeneration(ctx context.Context, ls *LocalStorage) (rolePermGeneration, bool, error) {
 	val, _, err := ls.GetSystemMetadata(ctx, rolePermissionsGenerationKey)
 	if err != nil {
-		return "", err
+		return rolePermGeneration{}, false, err
 	}
-	return val, nil
+	return rolePermGeneration{counter: val}, true, nil
 }
 
 // bumpRolePermissionsGenerationTx advances the global generation using tx, so
