@@ -125,10 +125,23 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `adr_open_decisions_tripwire_test.go:TestADRDecisionRoleSetContainsAdminIsStructural`.
 - **INV-CORE-19** `roleSetContainsAdmin` fails closed on a genuine storage error, never
   swallows it. Why: ADR-084 "Verification". Guard: `role_set_contains_admin_error_test.go`.
-- **INV-CORE-20** `installAdminRoleIDSet` (`rbac_management.go`) is STILL a second,
-  separately-maintained name-based admin-role list — ADR-084's own documented "not yet done".
-  Why: ADR-084. UNGUARDED (#issue: fold into the structural `bypasses_permission_checks`
-  resolution or justify why a second list must remain).
+- **INV-CORE-20** There is exactly ONE authority on "which roles confer administrative
+  authority": `models.Role.BypassesPermissionChecks`, enumerated by
+  `adminBypassRoleIDSet` (`admin_roles.go`) and tested for membership by
+  `storage.RoleSetBypassesPermissionChecks`. The second, name-based list
+  (`installAdminRoleIDSet` over `super_admin`/`admin`/`system_admin`) that backed every
+  last-install-admin guard is gone (#2496). It disagreed with the flag in both directions:
+  a flag-carrying role named outside the list (`project_admin`, or anything the ADR-084
+  backfill flagged) was not treated as admin-conferring at all, so removing the install's
+  LAST such global grant was completely unguarded; and a surviving flag-carrying holder
+  named outside the list was not counted as a backup administrator, so legitimate removals
+  were refused. `adminBypassRoleIDSet` returns an error rather than an empty set, and every
+  caller fails closed (INV-CORE-19's stance). Why: ADR-084, #2496. Guard:
+  `admin_role_structural_source_test.go` (behavioural: a flag-carrying, non-canonically-named
+  role IS admin-conferring, with both calibration directions) and
+  `admin_role_name_list_singleton_test.go` (structural: every admin-role-name string literal
+  in this package's non-test source needs a reviewed row, so a second list cannot land
+  silently — the mechanism that was missing when `installAdminRoleIDSet` survived ADR-084).
 - **INV-CORE-21** On every startup, newly-added canonical permissions reconcile additively
   into existing installs' baseline roles — non-clobbering of existing grants, no-op on a
   pre-bootstrap install, idempotent, and the grant itself audited. Why: ADR-044. Guard:

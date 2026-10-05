@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"sort"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -735,9 +736,10 @@ func (c *KeyorixCore) removeUserRoleUnguarded(ctx context.Context, actorID, user
 }
 
 // removeGlobalAdminRoleIfApplicable performs RemoveUserRole's global-scope
-// admin-conferring-role removal (the #340/#525 atomic path) when roleID is one
-// of installAdminRoleNames, returning handled=true (removal performed or
-// refused) in that case. handled=false means roleID is not a global-admin role
+// admin-conferring-role removal (the #340/#525 atomic path) when roleID carries
+// the structural admin-bypass flag (adminBypassRoleIDSlice, #2496), returning
+// handled=true (removal performed or refused) in that case. handled=false means
+// roleID is not a global-admin role
 // and the caller should fall through to the ordinary removal path. Split out of
 // RemoveUserRole so globalAdminGuardMu's critical section stays scoped to
 // exactly this branch — it must never be held while the function's OTHER branch
@@ -759,13 +761,17 @@ func (c *KeyorixCore) removeUserRoleUnguarded(ctx context.Context, actorID, user
 // it (WithNamedLock is re-entrant per ctx) and then takes the mutex, the same
 // named-lock-then-mutex order as here, so the two can never invert.
 func (c *KeyorixCore) removeGlobalAdminRoleIfApplicable(ctx context.Context, userID, roleID uint) (handled bool, err error) {
-	adminIDs := c.installAdminRoleIDSet(ctx)
-	if !adminIDs[roleID] {
-		return false, nil
+	ids, err := c.adminBypassRoleIDSlice(ctx)
+	if err != nil {
+		// #2496: fail closed. Treating a resolution failure as "roleID is not an
+		// admin role" would hand the caller the unguarded removal path on exactly
+		// the failure mode this guard exists to survive. handled=true so
+		// RemoveUserRole stops here and surfaces the error rather than falling
+		// through.
+		return true, err
 	}
-	ids := make([]uint, 0, len(adminIDs))
-	for id := range adminIDs {
-		ids = append(ids, id)
+	if !slices.Contains(ids, roleID) {
+		return false, nil
 	}
 	err = c.storage.WithNamedLock(ctx, lastAdminGuardLockKey, func(ctx context.Context) error {
 		c.globalAdminGuardMu.Lock()
@@ -775,21 +781,9 @@ func (c *KeyorixCore) removeGlobalAdminRoleIfApplicable(ctx context.Context, use
 	return true, err
 }
 
-// installAdminRoleNames are the roles that confer install-wide administration when
-// held at the global scope (project 0). Removing the last such assignment leaves the
-// install with no one able to manage users, roles, or settings.
-var installAdminRoleNames = []string{"super_admin", "admin", "system_admin"}
-
-// installAdminRoleIDSet resolves installAdminRoleNames to their role IDs (skipping
-// any that a given install did not seed). Used by RemoveUserRole's global-admin
-// guard (RemoveGlobalAdminRoleGuarded, #340/#525) and by the group-level admin
-// guards in authz.go (guardLastGlobalAdminGroupRole/GroupDelete/Membership).
-func (c *KeyorixCore) installAdminRoleIDSet(ctx context.Context) map[uint]bool {
-	set := make(map[uint]bool, len(installAdminRoleNames))
-	for _, name := range installAdminRoleNames {
-		if role, err := c.storage.GetRoleByName(ctx, name); err == nil && role != nil {
-			set[role.ID] = true
-		}
-	}
-	return set
-}
+// The roles that confer install-wide administration when held at the global
+// scope (project 0) are resolved structurally, from
+// models.Role.BypassesPermissionChecks — see adminBypassRoleIDSet
+// (admin_roles.go), the single source of truth (#2496). Removing the last such
+// assignment leaves the install with no one able to manage users, roles, or
+// settings, which is what the guards above refuse.

@@ -16,13 +16,50 @@ premature claim. The 2026-09-07 tripwire this staleness triggered
 (`TestADR084_AdminBypassStructuralMarkerStillDeferred`) is removed below,
 since the decision it existed to force is no longer open.
 
-**Not yet done**: `installAdminRoleIDSet` (`internal/core/rbac_management.go:608`)
-is still the second, separately-maintained name list this ADR's Consequences
-section proposed simplifying into a scope-aware flag query — verified still
-name-based as of this correction, `GetRoleByName` calls unchanged. This is a
-real residual item, not a blocker to calling the ADR's core decision
-implemented; tracked here so it isn't silently assumed done by a future
-reader of "Implemented" above.
+**Residual item closed 2026-10-05 (#2496).** `installAdminRoleIDSet` — the
+second, separately-maintained name list this ADR's Consequences section
+proposed simplifying into a flag query, and which this section tracked as
+"Not yet done" for a month — is gone. Its replacement is
+`adminBypassRoleIDSet` (`internal/core/admin_roles.go`), backed by a new
+`storage.ListAdminBypassRoleIDs` enumeration over the same
+`bypasses_permission_checks` column this ADR introduced. All six call sites
+(`removeGlobalAdminRoleIfApplicable`, the three group-path last-admin guards
+in `authz.go`, SCIM's `guardLastAdminDeactivation`, and break-glass's
+emergency-role refusal) now resolve admin-ness structurally and FAIL CLOSED on
+a resolution error; the predecessor returned a bare map and silently degraded
+a storage failure to "this install has no admin roles", which disabled every
+guard built on it on exactly the failure mode they exist to survive.
+
+The divergence was load-bearing in both directions, and the dangerous one was
+real: a flag-carrying role named outside the fixed list — the seeded
+`project_admin`, or anything the one-time backfill in
+`internal/storage/factory.go` flagged — confers full install-wide authority
+when held at the global scope (this ADR's own bypass is name-blind and applies
+at whatever scope the role is held), yet the name list could not see it, so
+removing the install's LAST such grant was not treated as an admin-role
+removal at all and fell through to the unguarded primitive. Red-proven by
+`TestRemoveUserRole_RefusesLastGlobalAdmin_StructuralFlagNotName`
+(`internal/core/admin_role_structural_source_test.go`), which before the fix
+saw `RemoveUserRole` return nil and strand the install with zero
+administrators.
+
+This also fixed two test fixtures in `group_admin_guard_test.go` that had been
+relying on the name list to make their role admin-conferring — once the list
+was gone they would have passed vacuously, with nothing for the guard to
+check (CLAUDE.md: "a test named for a condition it does not create proves
+nothing").
+
+Why it survived a month: nothing failed when it did. The guard against a
+third list is now `internal/core/admin_role_name_list_singleton_test.go` — a
+reviewed inventory of every canonical admin-role-name string literal in
+`internal/core`'s non-test source, which fails on a new unreviewed one. Its
+own doc comment states what it does NOT cover (it is scoped to
+`internal/core`; it matches literals, not runtime-assembled names; the
+per-row reasons are prose). `adminRoleNames`/`isAdminRoleName` deliberately
+remains as the ONE permitted name predicate, for guards that already hold a
+role name and must not do a storage lookup (role seeding, where the flag is
+not written yet; the IdP auto-grant escalation check, which belt-and-braces
+the flag with the name).
 
 Two verifications (immutability of the proposed column; fail-closed behavior
 at all call sites) were run before acceptance — see "Verification" below.

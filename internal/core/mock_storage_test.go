@@ -189,11 +189,27 @@ func (m *MockStorage) ListGlobalAdminAssignmentsForUpdate(_ context.Context, _ [
 	return nil, nil
 }
 
+// ListAdminBypassRoleIDs (#2496) is the structural replacement for
+// installAdminRoleIDSet's name lookups. MockStorage-driven tests never seed a
+// bypass-flagged role, so the honest answer here is "this install has none" —
+// returned directly rather than via m.Called so no existing test needs a stub,
+// which is exactly the position those tests were already in when every
+// install-admin name resolved as absent via GetRoleByName. Real last-admin
+// coverage lives against store.LocalStorage (last_admin_guard_external_test.go,
+// concurrency_last_admin_removal_test.go, admin_role_structural_source_test.go).
+//
+// The empty answer makes the last-admin guards no-op, never fail-open on a
+// masked error: an error return here would be indistinguishable from a real
+// storage failure and would turn every MockStorage test that touches a role
+// removal into a refusal.
+func (m *MockStorage) ListAdminBypassRoleIDs(_ context.Context) ([]uint, error) {
+	return nil, nil
+}
+
 // RemoveGlobalAdminRoleGuarded (#525) is likewise unused by MockStorage-driven
-// tests — every one of them mocks the three install-admin role names
-// (super_admin/admin/system_admin) as absent via GetRoleByName, so
-// RemoveUserRole's installAdminRoleIDSet is always empty and this is never
-// reached (real-storage RemoveUserRole/last-admin coverage lives in
+// tests — none of them seeds a bypass-flagged role, so RemoveUserRole's
+// adminBypassRoleIDSlice is always empty and this is never reached
+// (real-storage RemoveUserRole/last-admin coverage lives in
 // last_admin_guard_external_test.go and concurrency_last_admin_removal_test.go,
 // both against a real store.LocalStorage). If a future test DOES reach this
 // unmocked, m.Called panics loudly rather than silently allowing the removal.

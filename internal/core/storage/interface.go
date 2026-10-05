@@ -1158,6 +1158,23 @@ type Storage interface {
 	// resolve-by-ID replacement for roleSetContainsAdmin's old fixed-name-list
 	// lookup (internal/core/authz.go). Mirrors RoleSetHasPermission's shape.
 	RoleSetBypassesPermissionChecks(ctx context.Context, roleIDs []uint) (bool, error)
+	// ListAdminBypassRoleIDs enumerates every role ID carrying
+	// BypassesPermissionChecks = true (ADR-084) -- the ENUMERATION counterpart to
+	// RoleSetBypassesPermissionChecks' membership test, and the single source of
+	// truth for "which roles confer administrative authority" (#2496,
+	// INV-CORE-20). The last-install-admin guards need the set, not a yes/no on a
+	// candidate set: they ask "which assignment rows count as an admin grant" and
+	// "who else holds one", neither of which a membership predicate can answer.
+	// Before this existed, those guards resolved the set by NAME
+	// (installAdminRoleIDSet over a fixed super_admin/admin/system_admin list),
+	// a second definition of "admin" that disagreed with the flag in both
+	// directions -- see internal/core/admin_roles.go.
+	//
+	// Returns an error on any genuine resolution failure; callers must fail
+	// closed (refuse the mutation) rather than treat it as an empty set, for
+	// roleSetContainsAdmin's documented reason: an inability to verify must not
+	// be indistinguishable from "there is no admin role here".
+	ListAdminBypassRoleIDs(ctx context.Context) ([]uint, error)
 	GetUserPermissions(ctx context.Context, userID uint) ([]*Permission, error)
 	// GetUserGroupPermissions returns the permissions a user holds via GROUP
 	// membership (group → group_roles → role_permissions), scope-agnostically and
