@@ -31,11 +31,38 @@
 //     releasing A. Pre-fix this window is always enough (nothing blocks B);
 //     post-fix B is genuinely blocked on the lock and the window always
 //     elapses.
+//
+// WHERE THE PAUSE POINT HAD TO MOVE (FIX-2, 2026-10-05). As originally
+// written this test paused inside storage.RestoreGroup — i.e. inside the
+// WithTransaction the restore write runs in (#2428). On SQLite that means A
+// pauses holding an OPEN WRITE TRANSACTION, and SQLite's own single-writer
+// serialization then blocks B all by itself, named lock or no named lock.
+// Measured: with core.RestoreGroup's entire WithNamedLock wrapper deleted,
+// this test still passed 3/3. It was a guard nobody had watched fail, and it
+// did not fail. The pause now fires on ENTRY to WithTransaction, before the
+// real transaction opens, so at the moment B runs, the only thing A can
+// possibly be holding is the named lock — which is the property under test.
+// Fire-once is enforced by an atomic CAS rather than the group ID, so B's own
+// later WithTransaction call cannot pause itself and manufacture a pass.
+//
+// WHAT THIS TEST STILL CANNOT PROVE. On SQLite, WithNamedLock serializes
+// through ONE LocalStorage's in-process namedLockRegistry mutex
+// (local_named_lock.go), and A and B necessarily share that one instance here
+// — two LocalStorage instances over one SQLite file would share no registry at
+// all. So this is a single-process regression only; it says nothing about the
+// HA topology ADR-039 ships, where two replicas hold two pools and
+// pg_advisory_lock is the only thing left that can serialize them. Confirmed
+// the hard way: disabling WithNamedLock's Postgres branch (so every dialect
+// takes the in-process mutex) leaves this test green. The cross-replica half
+// is TestConcurrency_RestoreGroup_AdminGrantRace_CrossReplicaPostgres
+// (concurrency_restoregroup_admin_grant_toctou_postgres_test.go), which goes
+// red under exactly that mutation.
 package core_test
 
 import (
 	"context"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -49,30 +76,32 @@ import (
 	"gorm.io/gorm"
 )
 
-// delayedRestoreGroupStorage wraps a real storage.Storage, pausing exactly
-// one targeted RestoreGroup(id) call until released, signaling blocked once
-// it starts waiting.
+// delayedRestoreGroupStorage wraps a real storage.Storage, pausing the FIRST
+// WithTransaction call until released and signaling blocked once it starts
+// waiting.
+//
+// The pause is on entry, BEFORE the real transaction opens: pausing inside the
+// transaction (where the restore write lives, #2428) made A hold an open
+// SQLite write transaction, whose own single-writer serialization blocked B
+// regardless of the named lock — see this file's header for the measurement.
+//
+// arm is a one-shot CAS rather than a group-ID match on purpose. B's own
+// AssignGroupRoleWithExpiry also reaches WithTransaction; if the pause could
+// fire a second time, B would park itself and the test would report "B did not
+// complete" — a pass manufactured by the fixture, for a reason unrelated to
+// the lock.
 type delayedRestoreGroupStorage struct {
 	storage.Storage
-	targetGroupID    uint
+	arm              atomic.Bool
 	blocked, release chan struct{}
 }
 
-func (d *delayedRestoreGroupStorage) RestoreGroup(ctx context.Context, id uint) error {
-	if id == d.targetGroupID {
+func (d *delayedRestoreGroupStorage) WithTransaction(ctx context.Context, fn func(tx storage.Storage) error) error {
+	if d.arm.CompareAndSwap(true, false) {
 		close(d.blocked)
 		<-d.release
 	}
-	return d.Storage.RestoreGroup(ctx, id)
-}
-
-// WithTransaction hands fn a tx handle wrapped the same way, so the delay
-// still fires now that core.RestoreGroup performs its restore write through
-// the transaction handle (#2428) rather than the outer storage.
-func (d *delayedRestoreGroupStorage) WithTransaction(ctx context.Context, fn func(tx storage.Storage) error) error {
-	return d.Storage.WithTransaction(ctx, func(tx storage.Storage) error {
-		return fn(&delayedRestoreGroupStorage{Storage: tx, targetGroupID: d.targetGroupID, blocked: d.blocked, release: d.release})
-	})
+	return d.Storage.WithTransaction(ctx, fn)
 }
 
 func TestConcurrency_RestoreGroup_AdminGrantRace_TOCTOU_Deterministic(t *testing.T) {
@@ -93,10 +122,10 @@ func TestConcurrency_RestoreGroup_AdminGrantRace_TOCTOU_Deterministic(t *testing
 
 	realStorage := store.NewLocalStorage(db)
 	wrapped := &delayedRestoreGroupStorage{
-		Storage:       realStorage,
-		targetGroupID: 1,
-		blocked:       make(chan struct{}), release: make(chan struct{}),
+		Storage: realStorage,
+		blocked: make(chan struct{}), release: make(chan struct{}),
 	}
+	wrapped.arm.Store(true)
 	c := core.NewKeyorixCore(wrapped)
 	ctx := context.Background()
 
