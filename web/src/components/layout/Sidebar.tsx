@@ -336,14 +336,25 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
     const { sidebarExpanded, toggleSidebarGroup } = useUIStore();
     const { isAdmin } = useAuth();
 
-    // Hide admin-only groups (e.g. Access Control) from non-admins, and
-    // admin-only leaves within otherwise-visible groups (e.g. Notification
-    // Channels inside Integrations). The backend still enforces every API;
-    // this just keeps the nav honest per role.
-    const navItems = NAV.filter((item) => !(item.kind === 'group' && item.adminOnly && !isAdmin)).map((item) =>
-        item.kind === 'group'
-            ? { ...item, children: item.children.filter((child) => !(child.adminOnly && !isAdmin)) }
-            : item
+    // Hide every adminOnly entry from a non-admin, in all three shapes a nav
+    // entry can take: an adminOnly GROUP (Access Control), an adminOnly LEAF
+    // INSIDE a group (Notification Channels, under Integrations), and an
+    // adminOnly TOP-LEVEL LEAF (Billing).
+    //
+    // That third case used to be missed (#2774): the filter predicate was
+    // `item.kind === 'group' && item.adminOnly && !isAdmin`, which is false for
+    // a leaf no matter what `adminOnly` says, so a top-level adminOnly leaf was
+    // always kept. Billing is the only one today, so the effect was one nav
+    // item every non-admin could see and none of them could reach -- clicking
+    // it hit <AdminRoute> and bounced silently back to /dashboard.
+    //
+    // `hidden` is written once and applied to both shapes deliberately: the
+    // previous version expressed the same rule twice, in two different places,
+    // and the two disagreed. The backend still enforces every API; this only
+    // keeps the nav from offering a destination the user cannot reach.
+    const hidden = (item: { adminOnly?: boolean }) => !!item.adminOnly && !isAdmin;
+    const navItems = NAV.filter((item) => !hidden(item)).map((item) =>
+        item.kind === 'group' ? { ...item, children: item.children.filter((child) => !hidden(child)) } : item
     );
 
     const isActive = (href: string) => location.pathname === href || location.pathname.startsWith(href + '/');

@@ -247,4 +247,41 @@ test('every route is survivable for a least-privilege user: a refusal, never a b
     expect(rotation?.mainText, '/secrets/rotation must explain the refusal').toMatch(
         /failed to load|error|permission|access/i
     );
+
+    // The nav must not offer this persona a destination it will be bounced off
+    // (#2774: Billing was rendered for everyone and silently redirected to
+    // /dashboard on click). Derived from what is actually RENDERED rather than
+    // from a list of links to check, so a newly added admin-only nav entry is
+    // covered the moment it appears -- and cross-referenced against the walk's
+    // own settledAt for each href, so it costs no extra navigation.
+    //
+    // Every collapsed group is expanded first. Without that, a child leaf is
+    // simply absent from the DOM and would pass by not being there, which is
+    // the vacuous-guard shape: the check would be green precisely because it
+    // found nothing to check.
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => undefined);
+    const groupHeaders = page.locator('nav > div > button');
+    for (let i = 0; i < (await groupHeaders.count()); i++) {
+        const chevron = groupHeaders.nth(i).locator('svg.transition-transform');
+        const expanded = ((await chevron.getAttribute('class')) || '').includes('rotate-180');
+        if (!expanded) await groupHeaders.nth(i).click();
+    }
+    const navHrefs = await page.locator('nav a[href^="/"]').evaluateAll((els) =>
+        Array.from(new Set(els.map((el) => (el as HTMLAnchorElement).getAttribute('href') || '')))
+    );
+    expect(navHrefs.length, 'the sidebar rendered some links to check').toBeGreaterThan(5);
+
+    const unreachable: string[] = [];
+    for (const href of navHrefs) {
+        const outcome = outcomes.find((o) => o.route === href);
+        // A nav href with no entry in ROUTES means this spec's ROUTES list has
+        // drifted from NAV; say so rather than skipping it silently.
+        if (!outcome) {
+            unreachable.push(`${href}: in the sidebar but not in this spec's ROUTES list`);
+        } else if (outcome.settledAt !== href) {
+            unreachable.push(`${href}: the sidebar offers it, but it redirects to ${outcome.settledAt}`);
+        }
+    }
+    expect(unreachable, 'every nav link the sidebar shows this persona must actually lead there').toEqual([]);
 });

@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '../../../test/test-utils';
-import { Sidebar, Leaf, type SidebarProps } from '../Sidebar';
+import { Sidebar, Leaf, NAV, type SidebarProps, type NavGroup, type NavLeaf } from '../Sidebar';
 import { useAuth } from '../../../features/auth';
 
 vi.mock('../../../features/auth', () => ({
@@ -345,5 +345,80 @@ describe('Sidebar', () => {
 
         expect(screen.getAllByRole('link', { name: 'Dashboard' })).toHaveLength(1);
         expect(document.querySelector('button.ml-1')).not.toBeInTheDocument();
+    });
+
+    // ── adminOnly, derived from NAV rather than enumerated ───────────────────
+    //
+    // The three cases above this block (System Health / Authentication /
+    // Encryption & Keys) are a hardcoded list, and all three happen to be
+    // CHILDREN OF A GROUP. A top-level adminOnly LEAF -- the third shape a nav
+    // entry can take, and the shape Billing has -- had no case at all, and was
+    // never filtered: every non-admin saw Billing in the sidebar and was
+    // bounced back to /dashboard on clicking it (#2774).
+    //
+    // So these two tests derive their expectations from NAV itself. The point
+    // is not to add Billing to a list; it is that a newly added adminOnly entry
+    // of ANY shape is covered the moment it is added, instead of being covered
+    // only if whoever added it also remembered to extend a table here.
+    //
+    // Group names are matched as buttons (the group header is a disclosure
+    // button), leaf names as links. Every group is expanded first, so an
+    // adminOnly child cannot pass by virtue of its parent being collapsed --
+    // which would make the whole check vacuous.
+    describe('adminOnly entries, enumerated from NAV', () => {
+        const expandAllGroups = () => {
+            uiState.sidebarExpanded = Object.fromEntries(
+                NAV.filter((i): i is NavGroup => i.kind === 'group').map((g) => [g.id, true])
+            );
+        };
+
+        const adminOnlyGroups = NAV.filter((i): i is NavGroup => i.kind === 'group' && !!i.adminOnly);
+        const adminOnlyTopLevelLeaves = NAV.filter((i): i is NavLeaf => i.kind === 'leaf' && !!i.adminOnly);
+        const adminOnlyChildLeaves = NAV.filter((i): i is NavGroup => i.kind === 'group').flatMap((g) =>
+            g.children.filter((c) => !!c.adminOnly)
+        );
+
+        it('covers all three shapes an adminOnly entry can take', () => {
+            // A calibration assertion, not a coverage metric: if NAV ever has
+            // no top-level adminOnly leaf, the test below it silently checks
+            // nothing, and this is what says so out loud. Billing is the only
+            // one today -- that is exactly why the bug went unnoticed.
+            expect(adminOnlyGroups.length, 'at least one adminOnly group in NAV').toBeGreaterThan(0);
+            expect(adminOnlyTopLevelLeaves.length, 'at least one adminOnly top-level leaf in NAV').toBeGreaterThan(0);
+            expect(adminOnlyChildLeaves.length, 'at least one adminOnly leaf inside a group in NAV').toBeGreaterThan(0);
+        });
+
+        it('renders every adminOnly entry for an admin', () => {
+            expandAllGroups();
+            mockUseAuth.mockReturnValue({ isAdmin: true } as unknown as ReturnType<typeof useAuth>);
+            renderSidebar();
+
+            for (const g of adminOnlyGroups) {
+                expect(screen.getByRole('button', { name: g.name }), `group ${g.name}`).toBeInTheDocument();
+            }
+            for (const l of [...adminOnlyTopLevelLeaves, ...adminOnlyChildLeaves]) {
+                expect(screen.getByRole('link', { name: l.name }), `leaf ${l.name}`).toHaveAttribute('href', l.href);
+            }
+        });
+
+        it('hides every adminOnly entry from a non-admin, whatever shape it has', () => {
+            expandAllGroups();
+            mockUseAuth.mockReturnValue({ isAdmin: false } as unknown as ReturnType<typeof useAuth>);
+            renderSidebar();
+
+            for (const g of adminOnlyGroups) {
+                expect(screen.queryByRole('button', { name: g.name }), `group ${g.name}`).not.toBeInTheDocument();
+            }
+            for (const l of [...adminOnlyTopLevelLeaves, ...adminOnlyChildLeaves]) {
+                expect(screen.queryByRole('link', { name: l.name }), `leaf ${l.name}`).not.toBeInTheDocument();
+            }
+
+            // Green on a known-good case too, not just red on the bad one: the
+            // non-adminOnly entries must still all be there, so a filter that
+            // simply dropped everything would fail this.
+            for (const l of NAV.filter((i): i is NavLeaf => i.kind === 'leaf' && !i.adminOnly)) {
+                expect(screen.getByRole('link', { name: l.name }), `non-admin leaf ${l.name}`).toBeInTheDocument();
+            }
+        });
     });
 });
