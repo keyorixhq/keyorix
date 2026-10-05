@@ -120,35 +120,40 @@ func newGenCache[K comparable, G cacheGeneration, V any]() *genCache[K, G, V] {
 	return &genCache[K, G, V]{entries: make(map[K]genCacheEntry[G, V])}
 }
 
-// get is read-only and therefore unrestricted — it cannot create staleness.
-func (c *genCache[K, G, V]) get(key K) (genCacheEntry[G, V], bool) {
+// entryFor is the raw read. Named unmistakably (not `get`) so
+// read_path_cache_guard_test.go can forbid it by NAME outside this file with no
+// risk of matching an unrelated method: every cache access, read or write, must
+// go through the sanctioned API below, because that is where
+// LocalStorage.cacheEnabled is consulted and a transaction-scoped store is kept
+// away from the shared cache.
+func (c *genCache[K, G, V]) entryFor(key K) (genCacheEntry[G, V], bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.entries[key]
 	return e, ok
 }
 
-// store writes an entry. The guard test fails the build on any call to this
+// putEntry writes an entry. The guard test fails the build on any call to this
 // from outside this file: a stamp-and-value pair written anywhere else is the
 // bug class this file exists to make impossible.
-func (c *genCache[K, G, V]) store(key K, stamp G, value V) {
+func (c *genCache[K, G, V]) putEntry(key K, stamp G, value V) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.entries[key] = genCacheEntry[G, V]{stamp: stamp, value: value}
 }
 
-// drop removes an entry. Deliberately NOT restricted by the guard: dropping an
+// dropEntry removes an entry. Deliberately NOT restricted by the guard: dropping an
 // entry can only ever cost a future cache miss, never serve a stale value, so
 // it is not part of the bug class. (Stated here so the guard's narrower scope
 // reads as considered rather than overlooked.)
-func (c *genCache[K, G, V]) drop(key K) {
+func (c *genCache[K, G, V]) dropEntry(key K) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.entries, key)
 }
 
-// size reports the number of live entries; read-only, for tests and metrics.
-func (c *genCache[K, G, V]) size() int {
+// entryCount reports the number of live entries; read-only, for tests and metrics.
+func (c *genCache[K, G, V]) entryCount() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.entries)
@@ -183,7 +188,7 @@ func probe[K comparable, G cacheGeneration, V any](
 	if err != nil || !found {
 		return zeroV, false, zeroG, false
 	}
-	if e, ok := cache.get(key); ok && e.stamp == stamp {
+	if e, ok := cache.entryFor(key); ok && e.stamp == stamp {
 		return e.value, true, stamp, true
 	}
 	return zeroV, false, stamp, true
@@ -231,7 +236,7 @@ func cachedRead[K comparable, G cacheGeneration, V any](
 		return zero, err
 	}
 	if stampUsable {
-		cache.store(key, stamp, value)
+		cache.putEntry(key, stamp, value)
 	}
 	return value, nil
 }
@@ -266,7 +271,7 @@ func cachedReadSameRow[K comparable, G cacheGeneration, V any](
 ) (V, error) {
 	caching := ls != nil && ls.cacheEnabled && cache != nil
 	if caching {
-		if _, present := cache.get(key); present {
+		if _, present := cache.entryFor(key); present {
 			if cached, hit, _, _ := probe(ctx, ls, cache, key, gen); hit {
 				return cached, nil
 			}
@@ -279,7 +284,7 @@ func cachedReadSameRow[K comparable, G cacheGeneration, V any](
 		return zero, err
 	}
 	if caching {
-		cache.store(key, loadedStamp, value)
+		cache.putEntry(key, loadedStamp, value)
 	}
 	return value, nil
 }
@@ -293,7 +298,7 @@ func dropIfCaching[K comparable, G cacheGeneration, V any](ls *LocalStorage, cac
 	if ls == nil || !ls.cacheEnabled || cache == nil {
 		return
 	}
-	cache.drop(key)
+	cache.dropEntry(key)
 }
 
 // cachedHit is probe's hit check with nothing else — the read-only "is this
@@ -312,5 +317,30 @@ func cachedHit[K comparable, G cacheGeneration, V any](
 // opposed to store, which the guard restricts to this file) because, per
 // drop's own comment, eviction cannot produce a stale read.
 func invalidateCachedRead[K comparable, G cacheGeneration, V any](cache *genCache[K, G, V], key K) {
-	cache.drop(key)
+	cache.dropEntry(key)
+}
+
+// peekCachedEntry is the sanctioned read-only probe into a raw entry, for tests
+// that assert on cache STATE rather than on what a read returns. It is here,
+// not on each cache type, so that genCache.entryFor stays confined to this file
+// and the guard can police it by name.
+//
+// Unlike cachedHit it does NOT consult LocalStorage.cacheEnabled and does NOT
+// validate the stamp — it answers "what, if anything, is in the map", which is
+// only ever a test question. Never serve its result to a caller.
+func peekCachedEntry[K comparable, G cacheGeneration, V any](cache *genCache[K, G, V], key K) (genCacheEntry[G, V], bool) {
+	if cache == nil {
+		var zero genCacheEntry[G, V]
+		return zero, false
+	}
+	return cache.entryFor(key)
+}
+
+// cachedEntryCount reports how many entries a cache holds — for tests and
+// metrics. Same reason as peekCachedEntry for living here.
+func cachedEntryCount[K comparable, G cacheGeneration, V any](cache *genCache[K, G, V]) int {
+	if cache == nil {
+		return 0
+	}
+	return cache.entryCount()
 }

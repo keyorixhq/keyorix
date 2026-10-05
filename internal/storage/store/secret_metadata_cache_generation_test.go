@@ -212,13 +212,13 @@ func TestCachedRead_LoadErrorDropsTheEntry(t *testing.T) {
 	require.NoError(t, err)
 	_, err = ls.GetSecret(ctx, created.ID) // warm
 	require.NoError(t, err)
-	require.Equal(t, 1, ls.secretMetaCache.nodes.size())
+	require.Equal(t, 1, cachedEntryCount(ls.secretMetaCache.nodes))
 
 	require.NoError(t, ls.db.Migrator().DropTable(&models.SecretNode{}))
 
 	_, err = ls.GetSecret(ctx, created.ID)
 	require.Error(t, err)
-	require.Zero(t, ls.secretMetaCache.nodes.size(),
+	require.Zero(t, cachedEntryCount(ls.secretMetaCache.nodes),
 		"a load error must drop the entry: leaving it behind means a later matching generation read would serve it")
 }
 

@@ -86,7 +86,7 @@ func rolePermKey(roleIDs []uint, permission string) string {
 // cache state. It cannot create staleness, so read_path_cache_guard_test.go
 // does not restrict it.
 func (c *rolePermissionCache) get(key string) (genCacheEntry[rolePermGeneration, bool], bool) {
-	return c.entries.get(key)
+	return peekCachedEntry(c.entries, key)
 }
 
 // liveRolePermissionsGeneration reads the current global generation value.

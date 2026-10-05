@@ -475,7 +475,7 @@ func (ls *LocalStorage) CreateSecret(ctx context.Context, secret *models.SecretN
 // (updated_at, read_count) of the very row the load returns, so one query
 // yields both and there is no window between them for a write to commit into.
 func (ls *LocalStorage) GetSecret(ctx context.Context, id uint) (*models.SecretNode, error) {
-	secret, err := cachedReadSameRow(ctx, ls.secretMetaCache.nodes, id,
+	secret, err := cachedReadSameRow(ctx, ls, ls.secretMetaCache.nodes, id,
 		ls.nodeGenerationFor(id),
 		func(ctx context.Context) (*models.SecretNode, nodeGeneration, error) {
 			var row models.SecretNode
@@ -516,7 +516,7 @@ func (ls *LocalStorage) nodeGenerationFor(id uint) genGeneration[nodeGeneration]
 // through the helper's own hit check (cachedHit → probe) so it cannot diverge
 // from what GetSecret does.
 func (ls *LocalStorage) getCachedSecret(ctx context.Context, id uint) (*models.SecretNode, bool) {
-	cached, hit := cachedHit(ctx, ls.secretMetaCache.nodes, id, ls.nodeGenerationFor(id))
+	cached, hit := cachedHit(ctx, ls, ls.secretMetaCache.nodes, id, ls.nodeGenerationFor(id))
 	if !hit || cached == nil {
 		return nil, false
 	}
@@ -1046,7 +1046,7 @@ func (ls *LocalStorage) GetSecretVersions(ctx context.Context, secretID uint) ([
 // behaviour the old hasVersion flag encoded, now expressed through the one
 // contract instead of a second mechanism.
 func (ls *LocalStorage) GetLatestSecretVersion(ctx context.Context, secretID uint) (*models.SecretVersion, error) {
-	version, err := cachedRead(ctx, ls.secretMetaCache.versions, secretID,
+	version, err := cachedRead(ctx, ls, ls.secretMetaCache.versions, secretID,
 		ls.versionsGenerationFor(secretID),
 		func(ctx context.Context) (*models.SecretVersion, error) {
 			var row models.SecretVersion
@@ -1091,7 +1091,7 @@ func (ls *LocalStorage) versionsGenerationFor(secretID uint) genGeneration[versi
 // the current generation. Returns (nil, false) on any miss. Read-only probe,
 // through the helper's own hit check so it cannot diverge.
 func (ls *LocalStorage) getCachedLatestVersion(ctx context.Context, secretID uint) (*models.SecretVersion, bool) {
-	return cachedHit(ctx, ls.secretMetaCache.versions, secretID, ls.versionsGenerationFor(secretID))
+	return cachedHit(ctx, ls, ls.secretMetaCache.versions, secretID, ls.versionsGenerationFor(secretID))
 }
 
 // IncrementSecretReadCount atomically increments the read counter for a secret version.

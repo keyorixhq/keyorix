@@ -31,7 +31,7 @@ var errScheduleAbsent = errors.New("secret access schedule: no row")
 // independent of GetSecret/GetLatestSecretVersion's signals because a schedule
 // write touches a different table. See secret_metadata_cache.go.
 func (ls *LocalStorage) GetSecretAccessSchedule(ctx context.Context, secretNodeID uint) (*models.SecretAccessSchedule, error) {
-	schedule, err := cachedReadSameRow(ctx, ls.secretMetaCache.schedules, secretNodeID,
+	schedule, err := cachedReadSameRow(ctx, ls, ls.secretMetaCache.schedules, secretNodeID,
 		ls.scheduleGenerationFor(secretNodeID),
 		func(ctx context.Context) (*models.SecretAccessSchedule, scheduleGeneration, error) {
 			var row models.SecretAccessSchedule
@@ -67,7 +67,7 @@ func (ls *LocalStorage) scheduleGenerationFor(secretNodeID uint) genGeneration[s
 // or the row having been deleted since the entry was cached. Read-only probe,
 // through the helper's own hit check so it cannot diverge.
 func (ls *LocalStorage) getCachedSchedule(ctx context.Context, secretNodeID uint) (*models.SecretAccessSchedule, bool) {
-	return cachedHit(ctx, ls.secretMetaCache.schedules, secretNodeID, ls.scheduleGenerationFor(secretNodeID))
+	return cachedHit(ctx, ls, ls.secretMetaCache.schedules, secretNodeID, ls.scheduleGenerationFor(secretNodeID))
 }
 
 // SetSecretAccessSchedule upserts the schedule for schedule.SecretNodeID.

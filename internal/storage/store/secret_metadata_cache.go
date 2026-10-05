@@ -162,15 +162,15 @@ func newSecretMetadataCache() *secretMetadataCache {
 // used by tests that assert on cache state. They cannot create staleness, so
 // read_path_cache_guard_test.go does not restrict them.
 func (c *secretMetadataCache) getNode(id uint) (genCacheEntry[nodeGeneration, *models.SecretNode], bool) {
-	return c.nodes.get(id)
+	return peekCachedEntry(c.nodes, id)
 }
 
 func (c *secretMetadataCache) getVersion(secretNodeID uint) (genCacheEntry[versionsGeneration, *models.SecretVersion], bool) {
-	return c.versions.get(secretNodeID)
+	return peekCachedEntry(c.versions, secretNodeID)
 }
 
 func (c *secretMetadataCache) getSchedule(secretNodeID uint) (genCacheEntry[scheduleGeneration, *models.SecretAccessSchedule], bool) {
-	return c.schedules.get(secretNodeID)
+	return peekCachedEntry(c.schedules, secretNodeID)
 }
 
 // evictNode drops both halves for one secret. Eviction is always safe (it can

@@ -6,14 +6,28 @@
 // internal/storage/store/g81_guard_test.go): parse the package's AST, DERIVE
 // the thing being checked from the code, fail on a violation.
 //
-// # Why only entry WRITES
+// # Two rules, and why reads are restricted too
 //
-// The bug class is "a value cached under a stamp that does not correspond to
-// it". Only a write of (stamp, value) can create that. Dropping an entry
-// (genCache.drop, invalidateCachedRead) can at worst cost a future cache
-// miss, never serve a stale value, so eviction is deliberately NOT restricted
-// — stated here so the narrower scope reads as considered rather than
-// overlooked. Reads (get/size) are likewise unrestricted.
+// Rule A — nothing outside this file may WRITE an entry. The bug class is "a
+// value cached under a stamp that does not correspond to it", and only a write
+// of (stamp, value) can create that.
+//
+// Rule B — nothing outside read_path_cache.go may touch a genCache AT ALL,
+// read included. That is wider than rule A on purpose, because of the
+// rolled-back-transaction defect the coordinator found on #2764/#2767: a
+// transaction-scoped LocalStorage shares the parent's cache pointer and reads
+// through the transaction handle, so everything it sees is UNCOMMITTED.
+// read_path_cache.go's probe() is the single place LocalStorage.cacheEnabled is
+// consulted, and therefore the single place a tx-scoped store is kept away
+// from the shared cache. A direct `cache.entryFor(k)` somewhere else would walk
+// straight around that check — so the raw methods are confined here and the
+// sanctioned API (cachedRead, cachedReadSameRow, cachedHit, peekCachedEntry,
+// cachedEntryCount, invalidateCachedRead) is what the rest of the package uses.
+//
+// genCache's methods are NAMED for this: entryFor/putEntry/dropEntry/
+// entryCount rather than get/put/drop/size, so a by-name AST check cannot
+// collide with an unrelated method on some other type. Verified at the time of
+// writing that no other type in this package declares any of those four names.
 //
 // # What this guard recognises, and what it does not
 //
@@ -27,9 +41,10 @@
 //     map element of a receiver field (`c.entries[k] = …`). Derived from the
 //     AST, so a method called set/merge/store/put/upsert/anything is covered
 //     without naming any of them.
-//   - A VIOLATION: a call to any such method, or a direct map-element
-//     assignment to a field of a cache-typed selector, from any file other
-//     than read_path_cache.go — `_test.go` files included.
+//   - A VIOLATION: a call to any such method, a call to any of genCache's own
+//     raw methods (entryFor/putEntry/dropEntry/entryCount), or a direct
+//     map-element assignment to a field of a cache-typed selector, from any
+//     file other than read_path_cache.go — `_test.go` files included.
 //
 // NOT recognised, and therefore explicitly not claimed:
 //   - A cache built on a bare map field of LocalStorage with no wrapper type
@@ -78,6 +93,7 @@ var mutexMapTypeExemptions = map[string]string{
 type cacheGuardFindings struct {
 	cacheTypes   []string
 	entryWriters []string
+	rawMethods   []string
 	violations   []string
 	helperWrites int
 }
@@ -166,6 +182,13 @@ func checkReadPathCacheGuard(fsys fs.FS) (cacheGuardFindings, error) {
 				"Rename it to end in Cache (so the guard covers its writes), or add it to mutexMapTypeExemptions with the reason it is not a read cache.", t))
 	}
 
+	// genCacheRawMethods are genCache's own methods. Confined to the helper file
+	// by rule B above, reads included, because probe() is where cacheEnabled is
+	// checked and a raw read elsewhere would bypass it.
+	for _, m := range []string{"entryFor", "putEntry", "dropEntry", "entryCount"} {
+		out.rawMethods = append(out.rawMethods, m)
+	}
+
 	// Rule 1b — derive the entry-writing methods: a method on a cache type
 	// whose body assigns to a map element of a receiver field.
 	writers := map[string]bool{}
@@ -201,11 +224,27 @@ func checkReadPathCacheGuard(fsys fs.FS) (cacheGuardFindings, error) {
 			switch node := n.(type) {
 			case *ast.CallExpr:
 				sel, ok := node.Fun.(*ast.SelectorExpr)
-				if !ok || !writers[sel.Sel.Name] {
+				if !ok {
+					return true
+				}
+				raw := false
+				for _, m := range out.rawMethods {
+					if sel.Sel.Name == m {
+						raw = true
+						break
+					}
+				}
+				if !writers[sel.Sel.Name] && !raw {
 					return true
 				}
 				if isHelper {
 					out.helperWrites++
+					return true
+				}
+				if raw {
+					out.violations = append(out.violations, fmt.Sprintf(
+						"%s:%d: calls genCache.%s() directly. Only %s may touch a genCache — reads included, because probe() there is the single place LocalStorage.cacheEnabled is checked, and a transaction-scoped store must never read or write the shared cache (its view is uncommitted). Use cachedRead/cachedReadSameRow/cachedHit, or peekCachedEntry/cachedEntryCount for a test-only state probe.",
+						name, fset.Position(node.Pos()).Line, sel.Sel.Name, readPathCacheHelperFile))
 					return true
 				}
 				out.violations = append(out.violations, fmt.Sprintf(
@@ -351,7 +390,7 @@ func TestReadPathCacheGuard_RealRepo(t *testing.T) {
 	require.Contains(t, got.cacheTypes, "secretMetadataCache")
 	require.Contains(t, got.cacheTypes, "rolePermissionCache")
 	require.NotEmpty(t, got.entryWriters, "derived no entry-writing methods")
-	require.Contains(t, got.entryWriters, "store")
+	require.Contains(t, got.entryWriters, "putEntry")
 	require.Positive(t, got.helperWrites,
 		"the helper file itself makes no entry write the guard can see — the call-shape matcher has stopped matching")
 }
@@ -364,15 +403,15 @@ type genCache[K comparable, V any] struct {
 	entries map[K]V
 }
 
-func (c *genCache[K, V]) store(k K, v V) { c.entries[k] = v }
-func (c *genCache[K, V]) get(k K) (V, bool) { v, ok := c.entries[k]; return v, ok }
+func (c *genCache[K, V]) putEntry(k K, v V) { c.entries[k] = v }
+func (c *genCache[K, V]) entryFor(k K) (V, bool) { v, ok := c.entries[k]; return v, ok }
 
 func cachedRead[K comparable, V any](c *genCache[K, V], k K, load func() V) V {
-	if v, ok := c.get(k); ok {
+	if v, ok := c.entryFor(k); ok {
 		return v
 	}
 	v := load()
-	c.store(k, v)
+	c.putEntry(k, v)
 	return v
 }
 `
@@ -393,7 +432,7 @@ func TestReadPathCacheGuard_Fixtures(t *testing.T) {
 type thing struct{}
 
 func read(c *genCache[uint, *thing]) *thing {
-	v, _ := c.get(1)
+	v, _ := peekCachedEntry(c, 1)
 	return v
 }
 `)},
@@ -409,12 +448,12 @@ type thing struct{}
 
 func read(c *genCache[uint, *thing]) *thing {
 	v := &thing{}
-	c.store(1, v)
+	c.putEntry(1, v)
 	return v
 }
 `)},
 			},
-			wantMatch: "calls store(), a read-path cache entry writer",
+			wantMatch: "calls genCache.putEntry() directly",
 		},
 		{
 			name: "entry write from a _test.go file is a violation too",
@@ -422,7 +461,7 @@ func read(c *genCache[uint, *thing]) *thing {
 				readPathCacheHelperFile: &fstest.MapFile{Data: []byte(guardCleanHelper)},
 				"sneaky_test.go": &fstest.MapFile{Data: []byte(`package store
 
-func plant(c *genCache[uint, int]) { c.store(1, 2) }
+func plant(c *genCache[uint, int]) { c.putEntry(1, 2) }
 `)},
 			},
 			wantMatch: "sneaky_test.go",
