@@ -47,43 +47,15 @@ flowchart TB
 | Host root (file-KEK install) | Everything a DB-level actor can, plus derive the checkpoint key itself (it comes from the KEK, which host root already has) | Nothing beyond what root already implies system-wide — see `../threat-model.md` §5.1 |
 | External auditor with exported checkpoint data | Independently verify the chain was not truncated after the export point, without trusting the running server | Verify anything about events *after* their last anchor point without a fresher anchor |
 
-## 3. STRIDE
+## 3. Threat table
 
-- **Tampering (modify/delete/insert/reorder a present row).**
-  Detected by re-walking the hash chain — each entry's `entry_hash`
-  covers a fixed-order, length-prefixed encoding of the row's fields plus
-  the previous entry's hash (ADR-029). *Residual*: none — this is
-  exactly what the mechanism is built to catch.
-- **Tampering (tail-truncation / genesis re-seed) — the one case a bare
-  re-walk cannot catch, closed by three composable mechanisms.** (1)
-  Signed in-DB checkpoints, HMAC-keyed from the KEK (deliberately
-  KEK-derived, not DEK-derived, after a real incident — #502 — where
-  DEK-derivation caused every routine key rotation to falsely invalidate
-  every prior checkpoint); a new checkpoint is refused over a chain
-  shorter than an authenticated prior one. (2) An off-box anchor
-  (`--anchor`), ground truth captured outside this host beforehand. (3)
-  A third-party RFC 3161 timestamp authority (`--tsa-roots`) — the one
-  check needing no shared secret and no trust in this host at all.
-- **Repudiation.** Every security-relevant action is audited with actor
-  identity, `actor_type`, and outcome, including impersonation
-  attribution. *Residual*: retention is bounded only by the operator's
-  own PostgreSQL retention policy — Keyorix imposes no cap. This is a
-  documented operator responsibility, not a gap.
-- **Information disclosure.** Secret-update audit diffs carry only a
-  `{"value":{"changed":true}}` marker, never the before/after value
-  (`../../compliance/AUDIT-LOG-PROVISIONS.md` §3). Audit-before-disclosure
-  (see [`../SECURE-CODING.md`](../SECURE-CODING.md) §4) ensures a
-  secret-value read's audit write is confirmed durable *before* the
-  value is released to the caller — so an attacker can't read a value
-  and have the audit write silently fail in the background.
-- **Denial of service — checkpoint-write race (closed, #300).**
-  `WriteAuditCheckpoint` is reachable from three unsynchronized triggers
-  (scheduler tick, HTTP endpoint, gRPC RPC) that can land on different
-  HA replicas — without serialization, two overlapping calls could
-  commit a checkpoint out of chain-length order, silently missing
-  coverage of events in the interleaving window even with a fully
-  intact, validly-signed chain. Fixed: the whole sequence now runs under
-  `storage.WithAuditCheckpointLock`.
+| ID | STRIDE | Description | Mitigation | Evidence link | Residual risk / GAP |
+|---|---|---|---|---|---|
+| AUDIT-1 | Tampering | A present audit row is modified, deleted, inserted, or reordered. | Detected by re-walking the hash chain — each entry's `entry_hash` covers a fixed-order, length-prefixed encoding of the row's fields plus the previous entry's hash. | ADR-029 | None — this is exactly what the mechanism is built to catch. |
+| AUDIT-2 | Tampering | Tail-truncation or a genesis re-seed produces a *shorter, self-consistent* chain that a bare re-walk cannot distinguish from a genuinely short, untampered chain. | Three composable mechanisms: (1) signed in-DB checkpoints, HMAC-keyed from the KEK, refusing a checkpoint over a shorter chain than an authenticated prior one; (2) an off-box anchor (`--anchor`); (3) a third-party RFC 3161 timestamp authority (`--tsa-roots`), needing no shared secret and no trust in this host at all. | ADR-029 §Consequences; `#502` (KEK-vs-DEK derivation fix) | None for the closed case. See §4 for the DB-level-actor residual that remains. |
+| AUDIT-3 | Repudiation | An actor denies performing a security-relevant action. | Every such action is audited with actor identity, `actor_type`, and outcome, including impersonation attribution. | [`../../compliance/AUDIT-LOG-PROVISIONS.md`](../../compliance/AUDIT-LOG-PROVISIONS.md) | Retention is bounded only by the operator's own PostgreSQL retention policy — Keyorix imposes no cap. Documented operator responsibility, not a gap. |
+| AUDIT-4 | Information disclosure | The audit trail itself becomes a secondary leak channel for secret values. | Secret-update audit diffs carry only a `{"value":{"changed":true}}` marker, never the before/after value. Audit-before-disclosure ensures a secret-value read's audit write is confirmed durable *before* the value is released, so a failed audit write can't silently decouple from a successful disclosure. | `../../compliance/AUDIT-LOG-PROVISIONS.md` §3; [`../SECURE-CODING.md`](../SECURE-CODING.md) §4 | None identified. |
+| AUDIT-5 | Denial of service / tampering (via race) | `WriteAuditCheckpoint` reachable from three unsynchronized triggers (scheduler, HTTP, gRPC) landing on different HA replicas could commit a checkpoint out of chain-length order, silently missing coverage of events in the interleaving window — even with a fully intact, validly-signed chain. | The whole sequence now runs under `storage.WithAuditCheckpointLock`. | `#300` | **Closed.** |
 
 ## 4. Residual risks, stated honestly
 

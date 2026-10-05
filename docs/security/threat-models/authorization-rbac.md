@@ -49,37 +49,15 @@ boundaries call into) rather than defining a boundary of its own —
 see [server-api.md](server-api.md) for the surrounding transport
 boundaries.
 
-## 3. STRIDE
+## 3. Threat table
 
-- **Elevation of privilege — role-rename self-escalation (closed).**
-  `models.Role.BypassesPermissionChecks` replaced an earlier fixed-name
-  lookup (`roleSetContainsAdmin`) at all 8 call sites. It is written only
-  by role seeding and a one-time migration snapshot; `CreateRole`/
-  `UpdateRole` never accept it from a request DTO on any transport
-  (ADR-084) — closing a class of self-escalation-via-role-naming a
-  name-matched check would remain exposed to.
-- **Elevation of privilege — ceiling checked against the wrong party
-  (closed, real historical gap).** A privilege-ceiling check that
-  inspects only the *target*'s current privileges (not the *actor*
-  requesting the change) lets an attacker with zero standing self-mint
-  into an empty or attacker-controlled target and pass trivially. This
-  was real: `RequireMachinePrivilegeCeiling` checked only the target
-  machine identity's roles until 2026-08-25. Fixed by deriving the
-  ceiling from the actor's own effective privileges, checked at creation
-  time, not only at credential-mint time.
-- **Elevation of privilege — cross-tenant leakage (closed).** Every
-  nested-resource route reconciles the child object's project against
-  the caller's authorized project before acting — closing a class of
-  cross-project privilege-escalation findings the 2026-09 review found
-  and fixed across five lifecycle routes.
-- **Information disclosure — enumeration via differential error
-  shape.** A check that can't distinguish "exists, no access" from
-  "doesn't exist" would otherwise leak existence through a differently-
-  shaped error. [ADR-096](../../adr-096-anti-enumeration-403-for-both.md):
-  the same 403 for both, verified by a call-site guard.
-- **Tampering — write-path bypass.** Every write path funnels through
-  the same chokepoint as reads — there is no separate, less-guarded
-  write path to find.
+| ID | STRIDE | Description | Mitigation | Evidence link | Residual risk / GAP |
+|---|---|---|---|---|---|
+| AUTHZ-1 | Elevation of privilege | Renaming a role to match an admin-role name string grants it admin-bypass privilege. | `models.Role.BypassesPermissionChecks` is a structural field, written only by role seeding and a one-time migration snapshot — not derived from the role's name. `CreateRole`/`UpdateRole` never accept it from a request DTO on any transport. | ADR-084 | **Closed.** Replaced an earlier fixed-name lookup (`roleSetContainsAdmin`) at all 8 call sites. |
+| AUTHZ-2 | Elevation of privilege | A privilege-ceiling check inspects only the *target*'s current privileges, letting a zero-standing attacker self-mint into an empty/attacker-controlled target and pass trivially. | Ceiling is derived from the **actor's own effective privileges**, checked at creation time, not only at credential-mint time. | `RequireMachinePrivilegeCeiling` | **Closed — was a real historical gap.** Checked only the target machine identity's roles until 2026-08-25. |
+| AUTHZ-3 | Elevation of privilege | A nested-resource route (e.g. a child object under a project) is reachable by a caller authorized for a *different* project. | Every nested-resource route reconciles the child object's project against the caller's authorized project before acting. | 2026-09 security review, five lifecycle routes fixed | **Closed.** |
+| AUTHZ-4 | Information disclosure | A 403-vs-404 (or similarly differentiated) error on an authorization check leaks whether a resource exists to a caller with no access to it. | The same 403 for "exists, no access" and "doesn't exist," verified by a call-site guard. | [ADR-096](../../adr-096-anti-enumeration-403-for-both.md) | None identified. |
+| AUTHZ-5 | Tampering | A write path exists that bypasses the authorization chokepoint reads go through. | Every write path funnels through the same `core.Authorize` chokepoint as every read — there is no separate, less-guarded write path. | `internal/core/authz.go` | None identified. |
 
 ## 4. Residual risks specific to this component
 

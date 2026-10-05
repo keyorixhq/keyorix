@@ -40,30 +40,14 @@ flowchart LR
 |---|---|
 | B7 — Server ↔ external connectors/KMS/rotation targets | Outbound calls carrying operator-configured credentials |
 
-## 3. STRIDE
+## 3. Threat table
 
-- **Server-side request forgery (SSRF).** Link-local/NAT64 address
-  guards on outbound connector/dynamic-secret calls
-  (`internal/netutil`, `internal/core/dynamic_secrets_ssrf_test.go`,
-  `internal/core/admin_dsn_ssrf_fuzz_test.go`) — an actively-fuzzed
-  boundary (`FuzzAzureGenerateUpstreamRef`, `FuzzPostgresQuoting`,
-  `FuzzMySQLQuoteString`). This is the exact class that already
-  produced one real, shipped, fixed path-traversal vulnerability in
-  `rotation_ref` handling, now additionally denylist-validated at
-  configuration time.
-- **Cross-tenant leakage via Connect.** Connectors are scoped to
-  `(scope, project, environment)`, with ownership enforcement and
-  `ListConnectors` filtering by the caller's authorized scope, plus a
-  dedicated `connect.platform.use` permission gated as a **terminal
-  deny** with no delegation fallback (ADR-082, all four implementation
-  branches shipped). *Residual*: none identified after ADR-082's three
-  rounds of revision — the ADR's own "Out of scope" section names what's
-  deliberately deferred.
-- **Signing-key MITM (OIDC/federation used by connectors).** Covered in
-  [authentication.md](authentication.md) — the same `jwks_uri`/issuer
-  guards apply regardless of which component is doing the federation.
-- **Elevation of privilege / tampering via a compromised third-party
-  SDK — open, not mitigated.** See §4.
+| ID | STRIDE | Description | Mitigation | Evidence link | Residual risk / GAP |
+|---|---|---|---|---|---|
+| CONN-1 | Server-side request forgery | A connector/rotation-target/dynamic-secret config is pointed at an internal/link-local address to reach an otherwise-unreachable internal service. | Link-local/NAT64 address guards on outbound calls, actively fuzzed. | `internal/netutil`; `internal/core/dynamic_secrets_ssrf_test.go`, `internal/core/admin_dsn_ssrf_fuzz_test.go`; `FuzzAzureGenerateUpstreamRef`, `FuzzPostgresQuoting`, `FuzzMySQLQuoteString` | None identified in the reviewed surfaces today. This is the exact class that already produced one real, shipped, fixed path-traversal vulnerability in `rotation_ref` handling, now additionally denylist-validated at configuration time. |
+| CONN-2 | Elevation of privilege / information disclosure | A caller reaches a connector outside their authorized `(scope, project, environment)`. | Connectors are scoped to `(scope, project, environment)`, with ownership enforcement and `ListConnectors` filtering by the caller's authorized scope, plus a dedicated `connect.platform.use` permission gated as a **terminal deny** with no delegation fallback. | ADR-082 (all four implementation branches shipped) | None identified after ADR-082's three rounds of revision — the ADR's own "Out of scope" section names what's deliberately deferred. |
+| CONN-3 | Spoofing | A connector's OIDC/federation trust is compromised via a signing-key MITM. | Same `jwks_uri`/issuer guards as [authentication.md](authentication.md) AUTH-4, regardless of which component performs the federation. | [authentication.md](authentication.md) | None identified. |
+| CONN-4 | Elevation of privilege / tampering | A vulnerability in a third-party connector SDK (not an attacker-controlled input — a compromised/buggy dependency) runs with the same process privileges as secret-handling code. | None today — see §4. | — | **Open.** Filed as [#2734](https://github.com/keyorixhq/keyorix/issues/2734) (`threat-model-gap`). |
 
 ## 4. Residual risks, stated honestly
 

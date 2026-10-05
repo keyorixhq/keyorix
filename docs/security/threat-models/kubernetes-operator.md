@@ -38,50 +38,15 @@ flowchart TB
 |---|---|---|
 | B6 — k8s-sync / operator / ESO ↔ server | Machine-identity token, by-reference secret reads | Same `core.Authorize` chokepoint as any client; least-privilege namespace-scoped RBAC on the Kubernetes side |
 
-## 3. STRIDE
+## 3. Threat table
 
-- **Spoofing — confused deputy (a CR pointing at an untrusted
-  server).** `allowedServers` is required for the operator to sync
-  anything: a `KeyorixSecret`'s `spec.server` must match one of the
-  configured trusted base URLs, or the reconciler rejects the CR
-  outright (fail closed). Without it, the controller starts fine and
-  the pod goes `Ready`, but every `KeyorixSecret` fails with
-  `Ready=False`/`SyncError` — a deliberately loud failure mode, not a
-  silent one, though the help text notes it's easy to miss since
-  nothing about the install itself looks broken.
-- **Elevation of privilege via over-broad RBAC.** The operator defaults
-  to a single-namespace `Role`/`RoleBinding`, least-privilege by
-  default — an unmodified `helm install` never grants access to Secrets
-  outside the install namespace (ADR-076). Two opt-in modes (bounded
-  multi-namespace, cluster-wide) are both resolved from the same shared
-  helper so they can never disagree with each other, and are mutually
-  exclusive by construction — setting both makes the chart refuse to
-  render rather than silently picking one. *Residual*: an operator who
-  opts into cluster-wide watch accepts a correspondingly larger RBAC
-  surface — a documented, deliberate tradeoff stated at install time,
-  not a silent default.
-- **Tampering / partial writes on sync failure.** A **transient**
-  failure (network error, timeout, 5xx) leaves the target Secret
-  completely untouched — no partial write, no wipe; `Ready` goes
-  `False`/`SyncError` and the controller backs off and retries. An
-  **affirmatively-gone-or-revoked** signal (404/403, or 401 which in
-  practice means the token was revoked/rotated) **wipes** the target
-  Secret rather than leaving it stale — a deliberate choice: leaving a
-  previously-synced plaintext value sitting in the cluster indefinitely
-  after access was deliberately cut would be a worse outcome than a
-  workload losing the Secret it depends on.
-- **Information disclosure.** All three delivery mechanisms (operator,
-  sync agent, ESO) read over the same authorized API, honoring
-  `max_reads`, suspension, and audit, and never log values.
-- **Denial of service — upgrade-time RBAC regression.** A chart upgrade
-  across the cluster-wide-default → namespace-scoped-default boundary
-  (ADR-076) could silently narrow an existing install's effective
-  reach if the operator relied on the old default. Mitigated by a hard
-  render-time block: the chart refuses to render at all if the
-  now-rejected `rbac.clusterScoped=true` + `watchNamespaces` combination
-  is detected (carried forward from a prior release's recorded values),
-  rather than silently applying a narrower RBAC scope than the operator
-  expects.
+| ID | STRIDE | Description | Mitigation | Evidence link | Residual risk / GAP |
+|---|---|---|---|---|---|
+| K8S-1 | Spoofing (confused deputy) | A `KeyorixSecret` CR points `spec.server` at an untrusted/attacker-controlled server, and the operator syncs from it. | `allowedServers` is required for the operator to sync anything: `spec.server` must match a configured trusted base URL, or the reconciler rejects the CR outright (fail closed). | `../../k8s-operator.md` § Install | None identified. A misconfigured install (forgot to set `allowedServers`) fails loudly (`Ready=False`/`SyncError` on every CR) rather than silently syncing from an untrusted source. |
+| K8S-2 | Elevation of privilege | The operator's RBAC grants access to Secrets beyond what it actually needs to reconcile. | Single-namespace `Role`/`RoleBinding` by default — least-privilege; two opt-in modes (bounded multi-namespace, cluster-wide) resolved from one shared helper so they can never disagree, and mutually exclusive by construction (the chart refuses to render if both are set). | ADR-076 | An operator who opts into cluster-wide watch accepts a correspondingly larger RBAC surface — a documented, deliberate tradeoff stated at install time, not a silent default. |
+| K8S-3 | Tampering / availability | A sync failure leaves a partially-written or stale-but-undetectable Secret in the cluster. | A **transient** failure (network error, timeout, 5xx) leaves the target Secret completely untouched — no partial write; `Ready` goes `False`/`SyncError`. An **affirmatively-gone-or-revoked** signal (404/403/401) **wipes** the target Secret instead of leaving it stale. | `../../k8s-operator.md` § How it works | None identified — the wipe-on-revoke choice is deliberate: leaving a previously-synced plaintext value in the cluster after access was cut is judged worse than a workload losing the Secret it depends on. |
+| K8S-4 | Information disclosure | A secret value is logged or exposed outside the authorized read path during delivery. | All three delivery mechanisms (operator, sync agent, ESO) read over the same authorized API, honoring `max_reads`, suspension, and audit, and never log values. | `../../k8s-operator.md` | None identified. |
+| K8S-5 | Denial of service / elevation of privilege | A chart upgrade across the cluster-wide-default → namespace-scoped-default boundary silently narrows (or an inconsistent combination silently widens) an existing install's RBAC reach. | The chart refuses to render at all if the now-rejected `rbac.clusterScoped=true` + `watchNamespaces` combination is detected (carried forward from a prior release's recorded values) — a hard block, not a silent apply. | ADR-076 | None identified. |
 
 ## 4. Residual risks specific to this component
 

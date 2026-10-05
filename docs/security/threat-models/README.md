@@ -1,5 +1,12 @@
 # Per-Component Threat Models
 
+> See [`../SECURITY-MODEL.md`](../SECURITY-MODEL.md) first for the
+> one-page public summary (goals, in scope, out of scope, trust
+> assumptions) — these documents are the detailed evidence underneath
+> it, in the VSO-style format (DFD, trust boundaries, a threat table
+> with an ID/STRIDE/Description/Mitigation/Evidence-link/
+> Residual-or-GAP column per row) rather than that page's prose.
+
 Each document here narrows [`../threat-model.md`](../threat-model.md) (the
 system-wide threat model — trust boundaries, STRIDE, residual risks) to
 one component, with a dedicated data-flow diagram and more operational
@@ -21,6 +28,8 @@ should be filed as an issue.
 | [`connectors.md`](connectors.md) | AWS/Azure/GCP/Vault/rotation-target connectors, tenant scoping, SSRF guards |
 | [`kubernetes-operator.md`](kubernetes-operator.md) | The `KeyorixSecret` CRD controller, namespace-scoped RBAC, confused-deputy guard |
 | [`web-ui.md`](web-ui.md) | Session-cookie delivery, CSRF, CSP, client-side state — with the same narrower-scope caveat the system-wide document states |
+| [`ha-consistency.md`](ha-consistency.md) | Cross-replica check-then-act races — a threat class no competitor-published security model surveyed names at all |
+| [`mcp-server.md`](mcp-server.md) | `keyorix-mcp`: prompt injection and exfiltration modeled as first-class threats, not a one-line disclaimer |
 
 ## What's not here
 

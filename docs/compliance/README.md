@@ -27,6 +27,7 @@ ships so you can map them onto your own compliance programme.
 | [`SECURITY-VERIFICATION.md`](./SECURITY-VERIFICATION.md) | Verification & hardening evidence — the security audits performed, issues found and fixed, surfaces verified clean, and the standing CI gates. The evidence behind the controls statement. |
 | [`ENS-CONTROLS.md`](./ENS-CONTROLS.md) | Controls mapping for Spain's Esquema Nacional de Seguridad (ENS, RD 311/2022) — the same shipped capabilities mapped to ENS measure families and security dimensions. |
 | [`SOC2-CONTROLS.md`](./SOC2-CONTROLS.md) | Controls mapping for the AICPA Trust Services Criteria (SOC 2) — the same shipped capabilities mapped to CC1–CC9, with an explicit statement of which criteria are product-supportable versus operator-owned. |
+| [`BSI-APP-BD-6-CONTROLS.md`](./BSI-APP-BD-6-CONTROLS.md) | Controls mapping for Germany's BSI IT-Grundschutz module APP.bd.6 ("Secrets Management with Hashicorp Vault") — all 18 requirements (A1–A18) walked against Keyorix's actual architecture, including where Keyorix's design differs from Vault's (e.g. no root-token concept). |
 
 ## Why on-premise matters for compliance
 

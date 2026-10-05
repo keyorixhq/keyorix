@@ -72,53 +72,16 @@ delivery specifically) are covered in their own component documents —
 this one covers what's common to every caller once a request lands at
 the HTTP or gRPC edge.
 
-## 3. STRIDE
+## 3. Threat table
 
-- **Spoofing.** Tokens (session/PAT/machine) are 256-bit `crypto/rand`
-  values, reusable ones SHA-256-hashed and looked up by hash, never
-  compared in plaintext. See the [authentication](authentication.md)
-  component doc for the full mechanism. *Residual*: a leaked raw token is
-  valid until revoked/expired — mitigated by short session TTLs and an
-  absolute lifetime ceiling refresh cannot extend.
-- **Tampering.** Every write path funnels through
-  `core.Authorize`/`core.AuthorizePrincipal` before mutation —
-  `internal/core/authz.go`. PAT restrictions apply *before* role
-  resolution and the admin bypass (ADR-042). *Residual*: none identified
-  beyond ordinary authenticated-actor-does-authorized-thing (CLI local
-  mode is the one structural exception — see
-  [backup-restore.md](backup-restore.md)'s sibling note and
-  `../threat-model.md` §4 B1/B2, §5.2).
-- **Repudiation.** Every security-relevant action is audited with actor
-  identity, `actor_type`, and outcome, including impersonation
-  attribution — see [audit-chain.md](audit-chain.md).
-- **Information disclosure.** Scoped RBAC limits read access at the same
-  chokepoint as writes. **Open gap, tracked**: ~26 REST routes across 9
-  handler files serialize raw, untagged `internal/storage/models` structs
-  to JSON (`docs/findings/2026-09-25-FINDING-api-raw-model-exposure.md`)
-  — mostly a PascalCase-vs-snake_case contract-hygiene defect, but two
-  routes (`SearchAuditLogs`, `AccessHistory`) leak `IPAddress` (real PII)
-  where a sibling route (`GetAuditLogs`, `AuditTrail`) already redacts
-  it, proving the redaction was a deliberate design decision these two
-  never received. Filed as
-  [#2733](https://github.com/keyorixhq/keyorix/issues/2733)
-  (`threat-model-gap`) — no tracking issue existed for this finding
-  before this threat-model pass.
-- **Denial of service.** Rate limiting, request-body size caps
-  (`server/middleware.MaxBodyBytes` — see
-  [`SECURE-CODING.md`](../SECURE-CODING.md) §9), pagination, bulk-op
-  batch caps, and a bounded-BFS fix for `transitiveDependents` (matching
-  its sibling `blastBFS`'s node/depth cap). *Residual*: none identified
-  beyond ordinary capacity planning (`security-review-2026-09.md`
-  "Availability and denial-of-service resistance").
-- **Elevation of privilege.** Scoped RBAC (system/project/environment),
-  least-privilege defaults (`system_viewer`), cross-project isolation
-  enforced at every nested-resource route, gRPC authorized identically to
-  HTTP — no flat-vs-scoped gap (`SECURITY-VERIFICATION.md` "Access
-  control & authorisation" hardening log). The admin-bypass marker is a
-  structural field (`models.Role.BypassesPermissionChecks`, ADR-084), not
-  a name-matched role, closing a prior self-escalation-via-role-rename
-  risk class. *Residual*: none identified after the cross-transport
-  parity fix.
+| ID | STRIDE | Description | Mitigation | Evidence link | Residual risk / GAP |
+|---|---|---|---|---|---|
+| API-1 | Spoofing | A forged or guessed session/PAT/machine token lets an attacker act as the token's owner. | Tokens are 256-bit `crypto/rand` values; reusable ones are SHA-256-hashed and looked up by hash, never compared in plaintext. | [`authentication.md`](authentication.md) (full mechanism) | A leaked raw token is valid until revoked/expired — mitigated by short session TTLs and an absolute lifetime ceiling refresh cannot extend. |
+| API-2 | Tampering | A write request bypasses authorization and mutates data the caller shouldn't be able to touch. | Every write path funnels through `core.Authorize`/`core.AuthorizePrincipal` before mutation; PAT restrictions apply *before* role resolution and the admin bypass. | `internal/core/authz.go`; ADR-042 | None identified beyond ordinary authenticated-actor-does-authorized-thing. **Named exception**: CLI local mode never calls this chokepoint at all — see [authorization-rbac.md](authorization-rbac.md) §4 and `../threat-model.md` §4 B1/B2, §5.2. |
+| API-3 | Repudiation | An actor denies having performed a security-relevant action. | Every such action is audited with actor identity, `actor_type`, and outcome, including impersonation attribution. | [`audit-chain.md`](audit-chain.md) | None identified for the server-API layer specifically — see `audit-chain.md` for its own residuals. |
+| API-4 | Information disclosure | A route serializes a raw internal model to the wire, leaking more (or differently-shaped) data than its contract intends. | Most routes use a dedicated wire type; two specific routes did not propagate an existing redaction decision from their sibling. | `docs/findings/2026-09-25-FINDING-api-raw-model-exposure.md` | **Open, filed.** [#2733](https://github.com/keyorixhq/keyorix/issues/2733) (`threat-model-gap`) — `SearchAuditLogs`/`AccessHistory` leak `IPAddress` (PII) where `GetAuditLogs`/`AuditTrail` already redact it. No tracking issue existed before this threat-model pass. ~24 other routes in the same finding are a lower-severity casing/contract-hygiene defect, not a PII leak. |
+| API-5 | Denial of service | An attacker forces excessive server-side work (unbounded request bodies, unbounded graph traversal, request flooding) to degrade availability for other callers. | Rate limiting, request-body size caps (`server/middleware.MaxBodyBytes`), pagination, bulk-op batch caps, and a bounded-BFS fix for `transitiveDependents` (matching its sibling `blastBFS`'s node/depth cap). | [`SECURE-CODING.md`](../SECURE-CODING.md) §9; `security-review-2026-09.md` "Availability and denial-of-service resistance" | None identified beyond ordinary capacity planning. |
+| API-6 | Elevation of privilege | A caller reaches a permission or scope beyond their granted role — via role-naming tricks, cross-project leakage, or a gRPC/HTTP parity gap. | Scoped RBAC (system/project/environment), least-privilege defaults, cross-project isolation at every nested-resource route, gRPC authorized identically to HTTP. The admin-bypass marker is a structural field, not a name-matched role. | `SECURITY-VERIFICATION.md` "Access control & authorisation"; [ADR-084](../../adr-084-admin-bypass-structural-marker.md) | None identified after the cross-transport parity fix. |
 
 ## 4. Residual risks specific to this component
 

@@ -44,36 +44,14 @@ flowchart TB
 | `admin restore`'s automatic `verify-audit` | Restoring a tampered or truncated audit chain — fails closed (non-zero exit) if the chain reports BROKEN | A chain tampered *and* re-signed with a valid checkpoint (requires the checkpoint key, which requires KEK access — see [secret-storage-key-hierarchy.md](secret-storage-key-hierarchy.md)) |
 | Off-box checkpoint export (`--anchor`) | The one check that constrains even a host admin who holds both the database and its checkpoint signing key | Nothing if the export itself is never taken or is also compromised |
 
-## 3. STRIDE
+## 3. Threat table
 
-- **Information disclosure — stolen backup.** A stolen database (dump or
-  `admin backup` archive) alone is encrypted ciphertext under a DEK
-  itself wrapped by the KEK — unreadable without the key material. A
-  stolen key-material volume alone is useless without the database it
-  wraps keys for. **Both together, plus the master passphrase** (for a
-  file-KEK install) is a complete offline compromise, equivalent to host
-  root — see [secret-storage-key-hierarchy.md](secret-storage-key-hierarchy.md).
-  For a KMS/HSM-backed install, the attacker still needs the external
-  KMS boundary, so a stolen backup pair alone is *not* sufficient.
-- **Tampering — archive integrity vs. authenticity (distinct, and
-  distinguished honestly).** The checksum proves the archive wasn't
-  **corrupted**; it does not prove it wasn't **tampered with**. That's a
-  job for the audit hash chain instead: `admin restore` runs
-  `admin verify-audit` automatically and fails closed if the chain
-  reports BROKEN.
-- **Tampering — no artifact-level encryption beyond the wrapped DEK.**
-  `admin backup` adds checksum integrity and an audit-chain-verified
-  restore path, but a stolen archive's confidentiality still reduces to
-  the same KEK-custody analysis as before the command existed — there is
-  no additional Keyorix-native encryption layer wrapping the archive
-  itself.
-- **Availability — PostgreSQL has no Keyorix-native backup command at
-  all.** `admin backup` refuses outright for a Postgres-backed
-  deployment rather than attempt an unsupported backend — this is a
-  deliberate fail-closed refusal, not a silent gap, but it does mean a
-  Postgres operator's backup posture depends entirely on their own
-  `pg_dump` + key-volume-copy discipline, with no Keyorix tooling
-  checking that both halves were actually taken together.
+| ID | STRIDE | Description | Mitigation | Evidence link | Residual risk / GAP |
+|---|---|---|---|---|---|
+| BAK-1 | Information disclosure | A stolen backup (dump or `admin backup` archive), or a stolen key-material volume, exposes secret values. | Each alone is insufficient: the database is encrypted ciphertext under a DEK wrapped by the KEK; the key-material volume is useless without the database it wraps keys for. | [secret-storage-key-hierarchy.md](secret-storage-key-hierarchy.md) | **Both together, plus the master passphrase** (file-KEK install) is a complete offline compromise, equivalent to host root. A KMS/HSM-backed install additionally requires the external KMS boundary, so a stolen pair alone is *not* sufficient there. |
+| BAK-2 | Tampering | A restored archive was modified after backup, not merely corrupted. | The SHA-256 checksum only proves the archive wasn't **corrupted** — it does not prove it wasn't **tampered with** (anyone who can edit the archive can recompute a matching checksum). `admin restore` runs `admin verify-audit` automatically and fails closed (non-zero exit) if the chain reports BROKEN. | ADR-108 §B3 | A chain tampered *and* re-signed with a valid checkpoint would pass — requires the checkpoint key, which requires KEK access (see [secret-storage-key-hierarchy.md](secret-storage-key-hierarchy.md)). The off-box checkpoint export (`--anchor`) is the check that constrains even that actor. |
+| BAK-3 | Information disclosure | The backup archive itself carries no encryption layer beyond what the wrapped DEK already provides. | None beyond the DEK/KEK analysis in BAK-1 — stated as a real limitation, not papered over. | `../threat-model.md` §5.3 | **Open.** No Keyorix-native artifact-level encryption exists beyond the wrapped DEK; a stolen archive's confidentiality reduces entirely to BAK-1's analysis. |
+| BAK-4 | Availability | A PostgreSQL-backed deployment has no Keyorix-native backup/restore command, leaving backup posture entirely to operator discipline. | `admin backup` refuses outright for Postgres rather than attempt an unsupported backend — a deliberate fail-closed refusal. | ADR-108 §B3 | **Open, by design, not tracked as a bug.** A Postgres operator's `pg_dump` + key-volume-copy discipline has no Keyorix tooling checking both halves were taken together. |
 
 ## 4. Residual risks, stated honestly
 

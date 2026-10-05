@@ -51,31 +51,14 @@ flowchart LR
 | Component integrity within a bundle | `manifest.json` pins every component (images, binaries, charts, CRDs, migrations) by SHA-256 |
 | OIDC federation with no live JWKS reachability | ADR-075 — machine-identity OIDC verification works for Kubernetes/CI environments that themselves have no egress |
 
-## 3. STRIDE
+## 3. Threat table
 
-- **Tampering — bundle substitution/modification in transit.** The
-  signature is asymmetric specifically because an air-gapped customer
-  must be able to verify without ever holding the signing secret —
-  unlike the audit chain's symmetric HMAC checkpoints (see
-  [audit-chain.md](audit-chain.md)), which assume the verifier *does*
-  hold the key. `keyorix bundle verify`/`import` reject anything not
-  matching the pinned public key.
-- **Spoofing — forged license.** A compact
-  `base64url(payload).base64url(sig)` token evaluated entirely locally
-  against the second, independent embedded public key; no phone-home,
-  ever, by design (ADR-065) — a licensing call-home would itself be an
-  exfiltration channel a regulated buyer would reject.
-- **Information disclosure — license/update call-home as a covert
-  channel.** Explicitly not possible by construction: neither mechanism
-  makes any outbound network call at verification time. This is the one
-  property this threat model can state with full confidence rather than
-  "no instance found" — there is no code path that attempts a network
-  call in either verifier.
-- **Elevation of privilege — a commercial-tier-gated feature bypassed.**
-  `airgap_updates` (gating `keyorix bundle import`) is the first
-  commercial-tier-gated feature. A gate that fails open on a licensing
-  error would let an unlicensed install import bundles anyway.
-  **Not independently re-verified for this document** — see §4.
+| ID | STRIDE | Description | Mitigation | Evidence link | Residual risk / GAP |
+|---|---|---|---|---|---|
+| UPD-1 | Tampering | An update bundle is substituted or modified in transit (relevant specifically for offline/air-gapped transfer, where no TLS channel protects it). | `ed25519` signature verified against an **embedded, pinned** public key — asymmetric specifically because an air-gapped customer must verify without ever holding the signing secret, unlike the audit chain's symmetric HMAC checkpoints (see [audit-chain.md](audit-chain.md)), which assume the verifier *does* hold the key. `keyorix bundle verify`/`import` reject anything not matching the pinned key. | ADR-062 | None identified. |
+| UPD-2 | Spoofing | A forged license token grants access to a commercial-tier-gated feature. | A compact `base64url(payload).base64url(sig)` token evaluated entirely locally against a **second, independent** embedded public key (separate keypair from update signing). | ADR-065 | None identified. |
+| UPD-3 | Information disclosure | Update or license verification makes an outbound network call, creating a covert exfiltration channel from an otherwise air-gapped deployment. | Neither mechanism makes any outbound network call at verification time — no phone-home, ever, by design. | ADR-062, ADR-065 | None — this is the one property this document states with full confidence rather than "no instance found," since there is no code path that attempts a network call in either verifier. |
+| UPD-4 | Elevation of privilege | The `airgap_updates` commercial-tier gate fails open on a licensing error, letting an unlicensed install import bundles anyway. | Gate exists on `keyorix bundle import`. | `internal/license` | **Not independently re-verified for this document.** See §4 — this document asserts the gate exists but did not trace its fail-closed behavior end-to-end under a corrupted/expired token. |
 
 ## 4. Residual risks, stated honestly
 

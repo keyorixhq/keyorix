@@ -67,69 +67,20 @@ flowchart TB
 | B7 (identity-provider federation) — OIDC/SAML signing-key trust | Issuer/cert pinning checked before key retrieval |
 | B8 — emergency admin recovery | Local-only subcommand, never a network endpoint (ADR-108 decision B) |
 
-## 3. STRIDE per mechanism
+## 3. Threat table
 
-- **Sessions — Spoofing/tampering.** Short-TTL access token plus a hard
-  absolute lifetime ceiling refresh cannot extend; individually
-  listable/revocable; delivered only via an `HttpOnly`/`Secure`/
-  `SameSite=Lax` cookie. *Residual*: ~30s authentication cache window
-  (revoked token/suspended account can remain valid up to the cache TTL;
-  logout and password-change evict immediately).
-- **PAT — Elevation of privilege.** SHA-256-hashed at rest; optionally
-  restricted at creation to a permission allowlist and/or a single
-  project scope — a filter that only ever narrows below the owner,
-  enforced at the same chokepoint as every other authorization decision,
-  before role resolution and before the admin bypass (ADR-027, ADR-042).
-  Metamorphic-fuzz-tested that a restriction only ever narrows across
-  fuzzed permission/scope combinations
-  (`internal/core/pat_authz_metamorphic_fuzz_test.go`). *Residual*: none
-  identified.
-- **Machine identities — Spoofing.** Modelled separately from human
-  users with their own lifecycle (`pending → active → suspended ⇄
-  active`, `revoked` terminal, ADR-030); receive **no** admin-role
-  bypass. *Residual*: none identified.
-- **OIDC federation — Signing-key MITM / token forgery.** Asymmetric-only
-  algorithm allowlist (`HS*`/`none` rejected, defeats key-confusion
-  attacks), required `exp`, bounded `nbf` skew, issuer allowlist checked
-  *before* key retrieval, audience intersection, `jwks_uri` must be
-  `https` (loopback exempted for local development only) — ADR-031.
-  *Residual*: none identified (`SECURITY-VERIFICATION.md` "ICT
-  third-party risk / federation trust boundary").
-- **SAML 2.0 SSO — Signature forgery / assertion replay.** Service
-  Provider built on `crewjam/saml` + `goxmldsig` (never hand-rolled
-  XML-DSig — hand-rolled signature verification is one of the
-  highest-risk patterns in this entire threat surface); mandatory
-  signature validation against a **pinned** IdP certificate,
-  `AudienceRestriction`/`Recipient`/`NotBefore`/`NotOnOrAfter` checks,
-  replay protection; IdP-initiated flow off by default (ADR-063).
-  *Note on embargo*: per this repo's standing policy
-  (`../testing.md`'s header note), a specific finding against
-  `crewjam/saml` itself is embargoed pending upstream disclosure and is
-  not detailed in any public document, including this one — only the
-  mechanism (pinned-cert SP, no hand-rolled DSig) is described here.
-- **TOTP MFA — Brute force / secret exposure.** RFC 6238, two-step login,
-  single-use recovery codes, secret encrypted at rest (ADR-034).
-- **WebAuthn/passkeys — Phishing / credential theft.** Origin-bound
-  public-key assertions, no exportable shared secret, FIDO clone
-  detection (ADR-036) — phishing-resistant by construction, unlike TOTP.
-- **MFA mandate scoping — Elevation of privilege via policy gap.**
-  `security.require_mfa` (deployment-wide) or a per-project override — a
-  sensitive project can require MFA even when the global policy is off
-  (ADR-037).
-- **Emergency admin recovery — Elevation of privilege via host access.**
-  `keyorix-server admin recover-admin` requires both host access and a
-  separately-held, SHA-256-verified 256-bit recovery key; every use is
-  audited and triggers an admin notification (ADR-108 decision B.2,
-  `internal/recoverykey`). This is the one authentication mechanism
-  where "host access + the recovery key = can authenticate as admin" is
-  the accepted design ceiling, not a gap — see
-  `../threat-model.md` §5.1 for the full insider-threat analysis of why
-  two independent factors is the strongest practical bar for a local
-  break-glass tool.
-- **Impersonation — Repudiation.** Issues a separate short-lived session
-  (the admin's own session is untouched); every action under it is
-  tagged `impersonated_by`/`acting_as`, plus discrete
-  `impersonation.start`/`.end` audit events.
+| ID | STRIDE | Description | Mitigation | Evidence link | Residual risk / GAP |
+|---|---|---|---|---|---|
+| AUTH-1 | Spoofing / tampering | A forged, guessed, or stolen session cookie lets an attacker act as its owner. | Short-TTL access token plus a hard absolute lifetime ceiling refresh cannot extend; individually listable/revocable; delivered only via an `HttpOnly`/`Secure`/`SameSite=Lax` cookie. | `../architecture.md` §4 | ~30s authentication cache window — a revoked token/suspended account can remain valid up to the cache TTL; logout and password-change evict immediately. |
+| AUTH-2 | Elevation of privilege | A PAT reaches more scope/permission than its owner intended at creation. | SHA-256-hashed at rest; optionally restricted at creation to a permission allowlist and/or a single project scope — a filter that only ever narrows below the owner, enforced before role resolution and the admin bypass. Metamorphic-fuzzed to confirm a restriction only ever narrows. | ADR-027, ADR-042; `internal/core/pat_authz_metamorphic_fuzz_test.go` | None identified. |
+| AUTH-3 | Spoofing | A machine (service/CI/K8s) identity is impersonated or inherits human-admin privilege it shouldn't have. | Modelled separately from human users with its own lifecycle (`pending → active → suspended ⇄ active`, `revoked` terminal); receives **no** admin-role bypass. | ADR-030 | None identified. |
+| AUTH-4 | Spoofing / tampering | A malicious or compromised OIDC-adjacent party forges a token, or performs key-confusion to pass verification. | Asymmetric-only algorithm allowlist (`HS*`/`none` rejected), required `exp`, bounded `nbf` skew, issuer allowlist checked *before* key retrieval, audience intersection, `jwks_uri` must be `https` (loopback exempted for local dev only). | ADR-031; `SECURITY-VERIFICATION.md` "ICT third-party risk / federation trust boundary" | None identified. |
+| AUTH-5 | Spoofing / tampering | A forged SAML assertion, or a replayed valid one, authenticates as another identity. | Service Provider built on `crewjam/saml` + `goxmldsig` (never hand-rolled XML-DSig); mandatory signature validation against a **pinned** IdP certificate, `AudienceRestriction`/`Recipient`/`NotBefore`/`NotOnOrAfter` checks, replay protection; IdP-initiated flow off by default. | ADR-063 | Per this repo's standing embargo policy (`../testing.md` header note), a specific finding against `crewjam/saml` itself is embargoed pending upstream disclosure — not detailed here; only the mechanism is described. |
+| AUTH-6 | Spoofing | Brute-forcing or stealing a TOTP secret authenticates as the victim. | RFC 6238, two-step login, single-use recovery codes, secret encrypted at rest. | ADR-034 | None identified. |
+| AUTH-7 | Spoofing | Credential/session-token theft (phishing) compromises a WebAuthn-protected account. | Origin-bound public-key assertions, no exportable shared secret, FIDO clone detection — phishing-resistant by construction, unlike TOTP. | ADR-036 | None identified. |
+| AUTH-8 | Elevation of privilege | A deployment-wide MFA-optional policy leaves one sensitive project without an MFA requirement it actually needs. | `security.require_mfa` (deployment-wide) or a per-project override — a sensitive project can require MFA even when the global policy is off. | ADR-037 | None identified. |
+| AUTH-9 | Elevation of privilege | Host access alone (without the separately-held recovery key) grants admin authentication. | `keyorix-server admin recover-admin` requires **both** host access and a separately-held, SHA-256-verified 256-bit recovery key; every use is audited and triggers an admin notification. | ADR-108 decision B.2, `internal/recoverykey` | **Accepted design ceiling, not a gap.** "Host access + the recovery key = can authenticate as admin" is the strongest practical bar for a local break-glass tool — see `../threat-model.md` §5.1 for the full insider-threat analysis. |
+| AUTH-10 | Repudiation | An admin acting under impersonation denies having performed an action, or the impersonation itself goes unrecorded. | A separate short-lived session is issued (the admin's own session is untouched); every action under it is tagged `impersonated_by`/`acting_as`, plus discrete `impersonation.start`/`.end` audit events. | — | None identified. |
 
 ## 4. Residual risks specific to this component
 

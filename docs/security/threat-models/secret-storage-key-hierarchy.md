@@ -56,62 +56,18 @@ This is stated plainly rather than implied, per
 protect your secrets from root — it protects your admin account from
 anyone who is not you."*
 
-## 3. STRIDE
+## 3. Threat table
 
-- **Information disclosure — ciphertext substitution between
-  secrets.** AAD binds each ciphertext to `secretID:projectID:version`
-  — a ciphertext cannot be transplanted between secrets or projects.
-  *Residual*: none identified.
-- **Information disclosure — fallback-chain downgrade.** A `Fallbacks`
-  chain from a hardware/HSM/cloud-KMS-backed provider to a weaker
-  software-derivable one requires explicit `AllowWeakerFallback: true`
-  — without it, `crypto.DetectFallbackDowngrade` makes such a chain a
-  hard startup error, so a transient KMS/TPM outage cannot silently
-  downgrade the deployment's actual security floor with only a log line
-  marking the moment.
-- **Information disclosure — Shamir threshold-forgery.** A naive
-  magic-byte check on Shamir shares is vulnerable to a threshold-1
-  attacker forging one more share to reach the reconstruction threshold.
-  Closed via an HMAC-SHA256 commitment (`shamir_commitment`) verified
-  against the reconstructed secret (`internal/crypto`, `#429`).
-- **Information disclosure — Azure KMS wrap context gap.** AWS
-  EncryptionContext and GCP AAD let an operator bind a wrapped-DEK blob
-  to one specific install; Azure's RSA wrap does not support an
-  equivalent. Attempting `kms_encryption_context` against Azure is a
-  hard startup error, not a silent downgrade — the gap in Azure's own
-  primitive is surfaced loudly rather than papered over.
-- **Information disclosure — key material in logs.** Audited across
-  every sink — no secret values, key bytes, passphrases, or raw tokens
-  are ever logged (see [`../SECURE-CODING.md`](../SECURE-CODING.md) §5).
-- **Information disclosure — incomplete key rotation.** `keyorix
-  encryption rotate`'s re-encryption sweep is ordered by primary key,
-  closing a prior gap where unordered pagination could skip rows and
-  report a rotation complete while some secrets remained under the old
-  key. Sweep *completeness* (every DEK-encrypted model field has a
-  corresponding sweep) is enforced by a structural AST-parsing guard
-  (`internal/encryption/sweep_completeness_test.go`), not a
-  hand-maintained list — closing the class of gap where a new encrypted
-  field is added without updating the rotation sweep.
-- **Information disclosure — key material surviving in process memory
-  after use.** Three KEK-derived siblings besides the DEK (the master
-  KEK itself, the evidence-signing key, the audit-checkpoint key) are
-  wiped on graceful shutdown and DEK rotation via a real byte-by-byte
-  overwrite, confirmed at the compiler level
-  (`runtime.memclrNoHeapPointers`, not eliminated as dead code).
-  *Residual, stated honestly, not fixed*: `KEYORIX_MASTER_PASSWORD`
-  cannot be wiped (string-shaped from `os.Getenv` onward, and Go strings
-  cannot be zeroed once created) — the *sourcing* half is fixed (ADR-099:
-  `--passphrase-fd`/`--passphrase-file`/`--passphrase-stdin` all yield a
-  wipeable `[]byte`; the env var is the documented weakest, last-resort
-  fallback).
-- **Information disclosure — transient in-process plaintext exposure.**
-  Every secret-VALUE plaintext accumulates at least three unwiped heap
-  copies between decryption and the wire (the `gcm.Open` output, a
-  `string()` conversion, and a JSON/protobuf serialization buffer) —
-  structural to Go strings' immutability and `encoding/json`'s API, not
-  a missed call site. **Not fixed; recorded as an open design gap**, not
-  a code defect — closing it would mean threading `[]byte`-only
-  plaintext through the entire read path.
+| ID | STRIDE | Description | Mitigation | Evidence link | Residual risk / GAP |
+|---|---|---|---|---|---|
+| KEY-1 | Tampering | A ciphertext from one secret/project/version is transplanted onto another, passing decryption as if it were the original. | AAD binds each ciphertext to `secretID:projectID:version` — a ciphertext cannot be transplanted. | `../architecture.md` §1 | None identified. |
+| KEY-2 | Information disclosure | A transient KMS/TPM outage silently falls back to a weaker, software-derivable key source, downgrading the deployment's real security floor. | A `Fallbacks` chain to a weaker provider requires explicit `AllowWeakerFallback: true`; without it, `crypto.DetectFallbackDowngrade` makes such a chain a hard startup error. | `../architecture.md` §1 | None identified. |
+| KEY-3 | Tampering | A threshold-1 attacker forges one additional Shamir share to reach the reconstruction threshold. | HMAC-SHA256 commitment (`shamir_commitment`) verified against the reconstructed secret. | `internal/crypto`, `#429` | None identified. |
+| KEY-4 | Information disclosure | A wrapped-DEK blob is not bound to a specific install under a KMS mode that doesn't support a binding context (Azure's RSA wrap), allowing cross-install blob reuse. | Attempting `kms_encryption_context` against Azure is a hard startup error, not a silent downgrade — the primitive's own limitation is surfaced loudly. | `../architecture.md` §1 | None identified for Keyorix's handling; the underlying Azure primitive limitation itself is out of Keyorix's control. |
+| KEY-5 | Information disclosure | Key material (secret values, key bytes, passphrases, raw tokens) is written to a log sink. | Audited across every sink — none of the above is ever logged. | [`../SECURE-CODING.md`](../SECURE-CODING.md) §5 | None identified. |
+| KEY-6 | Information disclosure | A key-rotation sweep silently skips rows (unordered pagination) or omits a newly-added encrypted field, leaving some secrets under the old key while reporting rotation complete. | Sweep ordered by primary key; sweep *completeness* enforced by a structural AST-parsing guard, not a hand-maintained list. | `internal/encryption/sweep_completeness_test.go`; ADR-010 | None identified. |
+| KEY-7 | Information disclosure | Key-derived material (KEK, evidence-signing key, audit-checkpoint key) survives in process memory after it's no longer needed, recoverable by a later memory capture. | Wiped on graceful shutdown and DEK rotation via a real byte-by-byte overwrite, confirmed at the compiler level (`runtime.memclrNoHeapPointers`, not eliminated as dead code). | `security-review-2026-09.md` "Memory zeroization" | **Open, stated honestly.** `KEYORIX_MASTER_PASSWORD` itself cannot be wiped (string-shaped from `os.Getenv`, and Go strings can't be zeroed once created). The *sourcing* half is fixed (ADR-099 gives a wipeable `[]byte` alternative); the env var remains the documented weakest, last-resort fallback. |
+| KEY-8 | Information disclosure | Secret-value plaintext accumulates unwiped heap copies between decryption and the wire. | None — structural to Go strings' immutability and `encoding/json`'s API, not a missed call site. | `../threat-model.md` §6 | **Open design gap, not a code defect.** At least three unwiped copies per read (the `gcm.Open` output, a `string()` conversion, a JSON/protobuf buffer). Closing it would mean threading `[]byte`-only plaintext through the entire read path — not attempted. |
 
 ## 4. Residual risks, stated honestly
 
