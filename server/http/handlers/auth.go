@@ -154,7 +154,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// decode, rather than right after the rate-limit check: decode is not the
 	// slow step an attacker exploits, so a structurally-malformed request
 	// (never a real credential guess) need not consume a slot.
-	h.reserveLoginAttempt(r.Context(), ip)
+	// #2745: the RELEASABLE form, matching FinishWebAuthnLogin's (#2565). When
+	// Login fails with core.ErrLoginNotEvaluated the password was never checked
+	// against anything, so the slot a genuine failed attempt consumes is given
+	// back below.
+	attemptID, reserved := h.coreService.ReserveLoginAttempt(r.Context(), ip)
 
 	session, user, err := h.coreService.Login(r.Context(), &core.LoginRequest{
 		Username:  body.Username,
@@ -179,6 +183,23 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 				"totp_available":     user.MFAEnabled,
 				"webauthn_available": user.WebAuthnEnabled,
 			}, "MFA required")
+			return
+		}
+		// #2745: a storage failure on the username lookup never checked the
+		// credential, so it must not be audited as a failed login attempt
+		// (indistinguishable, on review, from a genuine bad-credential guess)
+		// and must not consume the per-IP attempt budget. The client-facing
+		// response stays an identical 401 with an identical body: a storage
+		// error is independent of the username supplied, so there is nothing to
+		// leak either way, and matching FinishWebAuthnLogin's handling keeps one
+		// shape for the whole family.
+		if errors.Is(err, core.ErrLoginNotEvaluated) {
+			log.Printf("Login: %v", err)
+			if reserved {
+				h.coreService.ReleaseLoginAttempt(r.Context(), attemptID)
+			}
+			goSafe(func() { h.coreService.LogAuthError(context.Background(), body.Username, ip, err) }) // #nosec G118
+			sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
 			return
 		}
 		goSafe(func() { h.coreService.LogAuthFailure(context.Background(), body.Username, ip) }) // #nosec G118

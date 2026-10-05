@@ -231,6 +231,24 @@ var mfaSafeMessages = map[string]bool{
 // secret: %w") or a bare storage-layer error — is logged server-side and
 // replaced with clientSafe()'s generic message before it reaches the client.
 func (h *AuthHandler) writeMFAErr(w http.ResponseWriter, err error) {
+	// #2846 review (#2740 option C): a verification error that CARRIES its
+	// client-facing message is rendered with that message verbatim, never with
+	// clientSafe()'s generic one. core attaches it when a storage failure is
+	// reached AFTER the submitted credential was already validated
+	// (ActivateMFA's MarkTOTPStepUsed): the generic internal-error body would
+	// then differ from the wrong-code body, which tells the caller their code
+	// was CORRECT — a right-vs-wrong oracle available during any DB fault. The
+	// real cause is still logged here and audited as mfa.error by core.
+	if carried, ok := core.MFAClientSafeMessage(err); ok {
+		log.Printf("MFA error: %v", err)
+		if !mfaSafeMessages[carried] {
+			// Fail safe rather than emit an unvetted string: a carried message
+			// must be one of the fixed, reviewed bodies above.
+			carried = clientSafe(err)
+		}
+		sendError(w, "Error", carried, http.StatusBadRequest, nil)
+		return
+	}
 	msg := err.Error()
 	if !mfaSafeMessages[msg] {
 		log.Printf("MFA error: %v", err)

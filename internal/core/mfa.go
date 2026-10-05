@@ -51,6 +51,49 @@ var ErrMFARequired = errors.New("mfa required")
 // when that branch was tagged too.
 var ErrMFAVerificationStorageFailure = errors.New("mfa verification storage failure")
 
+// mfaStorageFailure is an ErrMFAVerificationStorageFailure that ALSO carries the
+// client-facing message the failure must be rendered as (#2740 option C).
+//
+// Why the message travels with the error instead of being chosen at the
+// handler: a storage failure reached AFTER the submitted credential was
+// validated (ActivateMFA's MarkTOTPStepUsed) must be byte-identical to that
+// endpoint's wrong-credential response, or the difference is a right-vs-wrong
+// oracle available during any DB fault. Which message that is depends on the
+// endpoint — "invalid code" for ActivateMFA, "invalid code or password" for the
+// re-auth-gated ones — so the only place that can state it correctly is the site
+// that knows which check it just failed. writeMFAErr's shared fallback would
+// otherwise render it as the generic internal-error message, which is exactly
+// the leak #2846's review caught.
+type mfaStorageFailure struct {
+	clientMessage string
+	detail        string
+}
+
+func (e *mfaStorageFailure) Error() string {
+	return ErrMFAVerificationStorageFailure.Error() + ": " + e.detail
+}
+
+// Is makes errors.Is(err, ErrMFAVerificationStorageFailure) hold, so every
+// existing consumer of the sentinel (the /auth/mfa/verify handler's
+// release-the-reservation branch) keeps working unchanged.
+func (e *mfaStorageFailure) Is(target error) bool {
+	return target == ErrMFAVerificationStorageFailure
+}
+
+func (e *mfaStorageFailure) ClientSafeMessage() string { return e.clientMessage }
+
+// MFAClientSafeMessage returns the client-facing message an MFA error must be
+// rendered as, when the error carries one. A transport must use it verbatim
+// rather than deriving a message from the error text: that is what keeps a
+// post-validation storage failure indistinguishable from a wrong credential.
+func MFAClientSafeMessage(err error) (string, bool) {
+	var carrier interface{ ClientSafeMessage() string }
+	if errors.As(err, &carrier) {
+		return carrier.ClientSafeMessage(), true
+	}
+	return "", false
+}
+
 // ErrMFAEnrollmentChanged is returned (wrapped) by ActivateMFA when the pending
 // TOTP secret was replaced, e.g. by a concurrent BeginMFAEnrollment, after the
 // submitted code was validated against it (#2655). Nothing was activated; the
@@ -139,7 +182,28 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 		c.auditMFAFailed(ctx, userID, "activate")
 		return nil, fmt.Errorf("invalid code")
 	}
-	if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, userID, step); ferr != nil || !fresh {
+	// #2744: a MarkTOTPStepUsed STORAGE error is not a wrong code. Before this,
+	// both outcomes audited mfa.failed and returned "invalid code", so a user
+	// finishing enrolment with the CORRECT code during a DB hiccup read, on
+	// review, exactly like a replay or a guess. Same distinction
+	// VerifyMFACredentials (#2398), VerifyMFAStepUp (#2740) and requireReauth
+	// (#2743) already make; this was the last site in the family. Unlike those
+	// three there is no recordFailedLogin here, so the consequence is audit
+	// accuracy only — which is why it is audited distinctly rather than also
+	// being given a releasable attempt slot it never consumed.
+	fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, userID, step)
+	if ferr != nil {
+		c.auditMFAError(ctx, userID, "activate", ferr)
+		// #2846 review (#2740 option C): the client body must be IDENTICAL to the
+		// wrong-code body below. Reaching this line means validateTOTPStep already
+		// SUCCEEDED, so any distinguishable response here tells the caller their
+		// code was correct — a right-vs-wrong oracle available throughout a DB
+		// fault. The mfa.error audit still records the real cause server-side.
+		return nil, &mfaStorageFailure{clientMessage: "invalid code", detail: "marking the TOTP step used"}
+	}
+	if !fresh {
+		// ferr == nil and !fresh: the step really was already consumed. A
+		// confirmed replay, so this one IS a failed attempt.
 		c.auditMFAFailed(ctx, userID, "activate")
 		return nil, fmt.Errorf("invalid code")
 	}

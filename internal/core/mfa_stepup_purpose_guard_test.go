@@ -114,9 +114,9 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 		expectedPurpose: "",
 		reason:          "see internal/faultstorage/faulty_storage_generated.go:2233 — the second (KindEffectThenError) call to the real GetActiveMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
 	},
-	"internal/core/mfa.go:600": {
+	"internal/core/mfa.go:664": {
 		expectedPurpose: "MFAStepUpPurposeReauth",
-		reason: "(Line shifted to :600 by #2667 (ErrMFAEnrollmentChanged + pinned activation) after merging main's #2465 doc-comment additions on requireReauth together with this PR's own CR3 fix -- same ConsumeMFAStepUpGrant call, same purpose, not a new site.) requireReauth's account-security-factor-change gate (DisableMFA, " +
+		reason: "(Line shifted to :616; to :600 by #2667 (ErrMFAEnrollmentChanged + pinned activation) after merging main's #2465 doc-comment additions on requireReauth together with this PR's own CR3 fix -- same ConsumeMFAStepUpGrant call, same purpose, not a new site. Shifted AGAIN by #2744 adding the storage-error/replay split to ActivateMFA earlier in this same file. Note this allowlist is keyed by line number into mfa.go as well as into the generated faultstorage file, so even a PR that touches no interface at all breaks it by editing mfa.go above a keyed line; #2716 re-keys by function+callee and removes the whole class.) requireReauth's account-security-factor-change gate (DisableMFA, " +
 			"RegenerateMFARecoveryCodes, ActivateMFA, WebAuthn credential register/delete, email change). " +
 			"Must reject the ambient MFAStepUpPurposeRestrictedSecretRead grant a plain login mints -- " +
 			"accepting it here is the exact confused-deputy shape this fix closed (a leaked bearer token " +

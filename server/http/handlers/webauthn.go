@@ -363,9 +363,19 @@ func (h *AuthHandler) FinishWebAuthnPasswordlessLogin(w http.ResponseWriter, r *
 	}
 	// F2 (2026-09-20): reserve before the (slow) assertion verification — see
 	// reserveLoginAttempt's doc (reserved after decode+parse, matching Login).
-	h.reserveLoginAttempt(r.Context(), ip)
+	// #2746: the RELEASABLE form, bringing this endpoint to parity with
+	// FinishWebAuthnLogin (#2565). A storage error resolving the passkey's user
+	// never evaluated the assertion, so it must not consume the budget slot a
+	// genuine failed assertion does.
+	attemptID, reserved := h.coreService.ReserveLoginAttempt(r.Context(), ip)
 	session, user, err := h.coreService.FinishWebAuthnPasswordlessLogin(r.Context(), body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed)
 	if err != nil {
+		if errors.Is(err, core.ErrWebAuthnLoginNotEvaluated) {
+			log.Printf("FinishWebAuthnPasswordlessLogin: %v", err)
+			if reserved {
+				h.coreService.ReleaseLoginAttempt(r.Context(), attemptID)
+			}
+		}
 		sendError(w, "Unauthorized", "Passwordless login failed", http.StatusUnauthorized, nil)
 		return
 	}
