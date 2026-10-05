@@ -1,95 +1,327 @@
-// migrate_user_to_machine_partial_test.go — the verifying test for
-// MigrateUserToMachine's class-P row in docs/atomicity-exempt.tsv
-// ("partial success REPORTED to the caller").
+// migrate_user_to_machine_partial_test.go — #2867: MigrateUserToMachine's
+// identity insert and its source-user suspension commit together, and every
+// check that can refuse the operation runs BEFORE either write.
 //
-// Added by ORACLE-A-1 (2026-10-05) answering a coordinator question: why was
-// MigrateUserToMachine absent from the ledger despite making two writes outside
-// a transaction with a documented partial-success branch? Answer: the static
-// guard could not see the second write. atomicityWriteVerbRe had no `Suspend`,
-// so `c.SuspendUser(...)` was not counted, the function showed only ONE write
-// (CreateMachineIdentity) and sat below the guard's 2-write threshold. The
-// seeding sweep did not miss it; the detector was blind to it. That verb is now
-// in the regex (see its own comment there for how the full missing-verb set was
-// derived, and which write-shaped prefixes are confirmed read-only), which
-// makes this function flagged, which is why it now needs a classified row.
+// Why this exists. The function used to create the machine identity in its own
+// transaction and then suspend the user in a second one, reporting the partial
+// state in its error when the suspension failed. That left a brand-new machine
+// identity beside a still-ACTIVE human account with live sessions and PATs —
+// and crucially, the two refusals that reach that path are reachable on
+// ORDINARY input, not just under injected faults:
+//   - an actor who does not outrank the target (setAccountState's admin-rank
+//     ceiling), and
+//   - a target who is the install's last global admin (guardLastAdminDeactivation).
 //
-// Class P requires a test proving BOTH halves of its contract, because a
-// function that drops either is a class-A bug wearing a P label:
-//  1. the error names the partial state (which identity, which user), and
-//  2. the committed effect is still RETURNED, so the caller can see what landed.
+// Both are now hoisted ahead of any write, and the two writes share one
+// transaction, so each of the tests below asserts the same invariant from a
+// different angle: NOTHING is committed unless EVERYTHING is.
 //
-// A function that returned a bare error with a nil identity would leave the
-// operator knowing something failed but not what to clean up.
+// All of them run against a REAL SQLite store rather than MockStorage, for two
+// reasons. A mock's WithTransaction runs its closure inline and commits nothing,
+// so it cannot demonstrate a rollback at all — asserting rollback against one
+// would be a test whose fixture structurally cannot exercise what its name
+// claims. And both refusal paths fan out across roles, permissions, groups and
+// group-role grants; stubbing each lookup is brittle and proves less than
+// seeding two real admin grants.
+//
+// Each refusal test asserts its FIXTURE PRECONDITION first — that the guard
+// under test really does refuse this target, and that the OTHER guard really
+// does pass. Without that, "the migration was refused" says nothing about WHICH
+// check refused it, and both tests would have passed for the wrong reason: while
+// writing them, the preconditions caught a seeded role that was not actually an
+// admin role (admin-ness is Role.BypassesPermissionChecks, ADR-084, not the
+// name) and an AutoMigrate list short enough that the guards were failing closed
+// on a missing table instead of refusing.
+//
+// A happy-path test sits alongside them on the same fixture: without it, three
+// "nothing was committed" assertions would be satisfied by a function that never
+// works.
 package core
 
 import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
-// TestMigrateUserToMachine_SuspendFailureReportsPartialState injects a
-// SetAccountState failure, which makes SuspendUser fail AFTER
-// CreateMachineIdentity has already committed — the exact interleaving the
-// class-P row describes.
-func TestMigrateUserToMachine_SuspendFailureReportsPartialState(t *testing.T) {
+// TestMigrateUserToMachine_UnderRankedActorCreatesNoIdentity: the admin-rank
+// ceiling must be checked before the insert, not inside the suspension that
+// follows it.
+// Real store, same reasoning as the last-admin test below: the ceiling check
+// fans out over role scopes and role-ID sets, and seeding two real admin grants
+// is both simpler and a truer exercise than stubbing each lookup.
+//
+// A SECOND global admin (user 8) is seeded deliberately so the last-admin guard
+// — which now runs first — passes, and the refusal under test is unambiguously
+// the rank ceiling rather than the lockout guard.
+func TestMigrateUserToMachine_UnderRankedActorCreatesNoIdentity(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
-	c := newMachineCore(store)
+	c, db := newMigrateRealDBCore(t)
 	ctx := context.Background()
 
-	store.On("GetUserByUsername", ctx, "ci-bot").
-		Return(&models.User{ID: 7, Username: "ci-bot", Email: "ci-bot@example.com", AccountState: "active"}, nil)
-	store.On("CreateMachineIdentity", ctx, mock.Anything).
-		Return(&models.MachineIdentity{ID: 20, ProjectID: 3, Name: "ci-bot", IdentityType: MachineTypeService, State: MachineActive}, nil)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "system_admin", NameFolded: "system_admin", BypassesPermissionChecks: true}).Error)
+	require.NoError(t, db.Create(&models.User{
+		ID: 8, Username: "other-admin", UsernameFolded: "other-admin",
+		Email: "oa@example.com", EmailFolded: "oa@example.com",
+		AccountState: AccountActive, IsActive: true,
+	}).Error)
+	require.NoError(t, db.Create(&models.User{
+		ID: 9, Username: "weak-actor", UsernameFolded: "weak-actor",
+		Email: "wa@example.com", EmailFolded: "wa@example.com",
+		AccountState: AccountActive, IsActive: true,
+	}).Error)
+	// Target (7) and a second admin (8) both hold system_admin; the actor (9)
+	// holds nothing, so it does not outrank the target.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 7, RoleID: 1, ProjectID: 0}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 8, RoleID: 1, ProjectID: 0}).Error)
 
-	// SuspendUser's own preamble: the admin-rank ceiling and the last-admin
-	// guard both pass trivially (the migrated user holds no role scopes).
-	store.On("GetUserRoleScopes", ctx, uint(7)).Return([]Scope{}, nil)
-	store.On("GetUserRoleIDsAt", ctx, uint(7), Scope{}).Return([]uint{}, nil)
-	store.On("GetUserGroupRoleIDsAt", ctx, uint(7), Scope{}).Return([]uint{}, nil)
-	store.On("GetUser", ctx, uint(7)).
-		Return(&models.User{ID: 7, Username: "ci-bot", AccountState: "active"}, nil)
+	// Fixture preconditions, so a refusal below cannot be the wrong refusal.
+	require.NoError(t, c.guardLastAdminDeactivation(ctx, 7),
+		"fixture precondition: with a second admin seeded, the last-admin guard must PASS")
+	require.Error(t, c.requireAdminRankCeilingForTarget(ctx, 9, 7, "change the account state of"),
+		"fixture precondition: the actor must fail the rank ceiling against this target")
 
-	// setAccountState collects the token hashes it will evict BEFORE writing the
-	// state, so these are reached even on the failing path. .Maybe() because
-	// which of them run depends on where setAccountState gives up, and this test
-	// is about the partial-state REPORT, not about eviction bookkeeping.
-	store.On("ListSessionTokenHashesForUser", ctx, uint(7)).Return([]string{}, nil).Maybe()
-	store.On("ListPersonalAccessTokensByUser", ctx, uint(7)).Return([]*models.PersonalAccessToken{}, nil).Maybe()
-	store.On("RevokeAllPersonalAccessTokensForUser", ctx, uint(7)).Return([]string{}, nil).Maybe()
-	store.On("DeleteSessionsForUserExcept", ctx, uint(7), uint(0)).Return(nil).Maybe()
+	m, err := c.MigrateUserToMachine(ctx, "ci-bot", 3, "", "", 9, 0, true)
 
-	// THE INJECTED FAULT: the suspension's own state write fails, after the
-	// machine identity has already been created and committed.
-	store.On("SetAccountState", ctx, uint(7), AccountSuspended, mock.Anything).
-		Return(errors.New("injected fault: SetAccountState"))
+	require.Error(t, err, "an actor who does not outrank the target must be refused")
+	assert.Nil(t, m)
 
-	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil).Maybe()
+	// THE INVARIANT: no identity was inserted at all.
+	var identities int64
+	require.NoError(t, db.Model(&models.MachineIdentity{}).Count(&identities).Error)
+	assert.Zero(t, identities, "a refused migration must create no machine identity")
 
-	m, err := c.MigrateUserToMachine(ctx, "ci-bot", 3, "", "", 9, true)
+	var user models.User
+	require.NoError(t, db.First(&user, uint(7)).Error)
+	assert.Equal(t, AccountActive, user.AccountState, "the refused target must stay active")
+}
 
-	// Contract half 1: the error is reported, and it NAMES the partial state.
-	require.Error(t, err, "a suspend failure after the identity committed must be reported, not swallowed")
-	assert.Contains(t, err.Error(), "machine identity 20",
-		"the error must name the identity that WAS created, or the operator cannot find it")
-	assert.Contains(t, err.Error(), "source user 7",
-		"the error must name the user that was NOT suspended, or the operator cannot finish the job")
+// TestMigrateUserToMachine_LastAdminTargetCreatesNoIdentity: the last-admin
+// guard must likewise refuse before the insert. Under the old ordering this
+// returned "machine identity N created but failed to suspend source user M" —
+// an identity the operator never asked to exist on its own.
+// Uses the REAL store rather than mock choreography: guardLastAdminDeactivation
+// fans out across targetHasGlobalAdminRole, installAdminRoleIDSet,
+// ListProjectRoleAssignments and resolveGlobalAdminHolders, and stubbing each of
+// those is both brittle and a worse test — seeding one real system_admin grant
+// makes the guard fire for the real reason.
+func TestMigrateUserToMachine_LastAdminTargetCreatesNoIdentity(t *testing.T) {
+	t.Parallel()
+	c, db := newMigrateRealDBCore(t)
+	ctx := context.Background()
 
-	// Contract half 2: the committed effect is still returned. This is the half
-	// a plain `return nil, err` would silently drop — the caller would know
-	// something failed but not that a machine identity now exists.
-	require.NotNil(t, m, "the created identity must still be returned so the caller can see what committed")
-	assert.Equal(t, uint(20), m.ID)
+	// The target is the install's ONLY global administrator.
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "system_admin", NameFolded: "system_admin", BypassesPermissionChecks: true}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 7, RoleID: 1, ProjectID: 0}).Error)
 
-	// And the identity really was created, not merely reported: the write
-	// happened before the fault, which is what makes this a partial commit
-	// rather than a clean failure.
-	store.AssertCalled(t, "CreateMachineIdentity", ctx, mock.Anything)
-	store.AssertCalled(t, "SetAccountState", ctx, uint(7), AccountSuspended, mock.Anything)
+	// Sanity: the guard really does refuse this target on its own, so a refusal
+	// below cannot be coming from somewhere else.
+	require.Error(t, c.guardLastAdminDeactivation(ctx, 7),
+		"fixture precondition: the seeded user must be the last global admin")
+
+	m, err := c.MigrateUserToMachine(ctx, "ci-bot", 3, "", "", 9, 0, true)
+
+	require.Error(t, err, "migrating the install's last global admin must be refused")
+	assert.Nil(t, m)
+
+	// THE INVARIANT: refused before any write. Under the old ordering this
+	// returned "machine identity N created but failed to suspend source user M".
+	var identities int64
+	require.NoError(t, db.Model(&models.MachineIdentity{}).Count(&identities).Error)
+	assert.Zero(t, identities, "a refused migration must create no machine identity")
+
+	var user models.User
+	require.NoError(t, db.First(&user, uint(7)).Error)
+	assert.Equal(t, AccountActive, user.AccountState, "the refused target must stay active")
+}
+
+// newMigrateRealDBCore builds a core over a REAL SQLite store, so
+// WithTransaction is a real transaction whose rollback can be observed. The
+// mock's WithTransaction runs its closure inline and commits nothing, so it
+// cannot be used for this.
+func newMigrateRealDBCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	// models.AllTestModels(), not a hand-picked list. guardLastAdminDeactivation
+	// and requireAdminRankCeilingForTarget fan out across roles, permissions,
+	// groups and group-role grants, and both FAIL CLOSED on a lookup error — so a
+	// missing table silently turns "the guard passed" into "the guard errored",
+	// and the fixture would be asserting the wrong refusal. Found exactly that
+	// way: a 7-model list made the happy path and the ceiling precondition both
+	// fail with a lookup error, not with the refusal under test. (CLAUDE.md:
+	// hand-picked AutoMigrate lists hide schema divergence.)
+	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
+	require.NoError(t, db.Create(&models.User{
+		ID: 7, Username: "ci-bot", UsernameFolded: "ci-bot",
+		Email: "ci-bot@example.com", EmailFolded: "ci-bot@example.com",
+		AccountState: AccountActive, IsActive: true,
+	}).Error)
+	fixed := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
+	return &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return fixed }}, db
+}
+
+// failSetAccountStateStorage fails SetAccountState — the suspension's own state
+// write, which runs AFTER the identity insert inside the shared transaction.
+//
+// WithTransaction is overridden to re-wrap the tx handle: without that the
+// decorator is inert for the faulted call, because the embedded storage hands
+// the closure its OWN tx with no override on it (the same tx-handle blind spot
+// CLAUDE.md records for raw_storage_bypass_guard_test.go).
+type failSetAccountStateStorage struct {
+	storage.Storage
+}
+
+func (s *failSetAccountStateStorage) SetAccountState(ctx context.Context, userID uint, state string, at time.Time) error {
+	return errors.New("injected fault: SetAccountState")
+}
+
+func (s *failSetAccountStateStorage) WithTransaction(ctx context.Context, fn func(storage.Storage) error) error {
+	return s.Storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		return fn(&failSetAccountStateStorage{Storage: tx})
+	})
+}
+
+// TestMigrateUserToMachine_FaultedSuspendRollsBackTheIdentity is the atomicity
+// half, against a real transaction: the identity insert succeeds, the
+// suspension's state write then fails, and the rollback must take the identity
+// with it.
+//
+// This is the case the function used to report as a partial state and leave for
+// an operator to clean up by hand.
+func TestMigrateUserToMachine_FaultedSuspendRollsBackTheIdentity(t *testing.T) {
+	t.Parallel()
+	c, db := newMigrateRealDBCore(t)
+	ctx := context.Background()
+
+	// Sanity: the fixture can actually express the thing being asserted. Without
+	// this, a migration that never inserted anything would "pass" the
+	// zero-identities assertion below for the wrong reason.
+	var before int64
+	require.NoError(t, db.Model(&models.MachineIdentity{}).Count(&before).Error)
+	require.Zero(t, before)
+
+	c.storage = &failSetAccountStateStorage{Storage: c.storage}
+
+	m, err := c.MigrateUserToMachine(ctx, "ci-bot", 3, "", "", 9, 0, true)
+	require.Error(t, err, "a failed suspension must be reported")
+	assert.Nil(t, m, "no identity may be returned when nothing committed")
+
+	// THE INVARIANT: the identity insert rolled back with the suspension.
+	var identities int64
+	require.NoError(t, db.Model(&models.MachineIdentity{}).Count(&identities).Error)
+	assert.Zero(t, identities,
+		"ATOMICITY VIOLATED: the machine identity survived a failed suspension — the insert and the "+
+			"suspension must commit or roll back together, or a migration leaves a new machine identity "+
+			"beside a still-active human account with live sessions and PATs (#2867)")
+
+	// And the source user is untouched: still active, not half-suspended.
+	var user models.User
+	require.NoError(t, db.First(&user, uint(7)).Error)
+	assert.Equal(t, AccountActive, user.AccountState,
+		"the source user must be left exactly as it was when nothing committed")
+
+	// No audit event may claim either half happened.
+	var events []models.AuditEvent
+	require.NoError(t, db.Find(&events).Error)
+	for _, e := range events {
+		assert.NotEqual(t, "machine_identity.created", e.EventType,
+			"no create event may be written for an identity that rolled back")
+		assert.NotEqual(t, "account.suspended", e.EventType,
+			"no suspend event may be written for a suspension that rolled back")
+		assert.NotEqual(t, "machine_identity.migrated_from_user", e.EventType,
+			"no migration event may be written when nothing committed")
+	}
+}
+
+// TestMigrateUserToMachine_MachineActorAttributionSurvivesTheAtomicRewrite pins
+// the one thing this PR's restructuring could plausibly have dropped on the
+// floor: #2495/#2784 made this path record CreatedByMachineIdentityID so a
+// migration performed BY a machine identity is attributed to it rather than to
+// nobody (the route is actor-aware, so a machine identity holding the required
+// permissions can drive it).
+//
+// Inlining CreateMachineIdentity's insert into the shared transaction meant
+// re-plumbing actorMachineID through newMachineIdentityForCreate by hand, and
+// passing 0 there would have compiled, passed every other test in this file, and
+// silently re-opened that attribution gap behind an atomicity fix. Nothing else
+// here looks at the field.
+//
+// Both branches are covered, because they assemble the row by different routes:
+// suspendSource=true goes through newMachineIdentityForCreate + tx insert,
+// suspendSource=false still goes through CreateMachineIdentity.
+func TestMigrateUserToMachine_MachineActorAttributionSurvivesTheAtomicRewrite(t *testing.T) {
+	t.Parallel()
+	const actingMachineID uint = 44
+
+	for _, tc := range []struct {
+		name          string
+		suspendSource bool
+	}{
+		{"suspending branch (shared transaction)", true},
+		{"keep-user branch (CreateMachineIdentity)", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c, db := newMigrateRealDBCore(t)
+			ctx := context.Background()
+
+			// actorID 0 + a non-zero actorMachineID is the machine-actor shape:
+			// there is no human admin behind this call.
+			m, err := c.MigrateUserToMachine(ctx, "ci-bot", 3, "", "", 0, actingMachineID, tc.suspendSource)
+			require.NoError(t, err)
+			require.NotNil(t, m)
+
+			// Read the row back rather than trusting the returned struct — the
+			// attribution has to be PERSISTED, which is the half a dropped
+			// parameter would break.
+			var stored models.MachineIdentity
+			require.NoError(t, db.First(&stored, m.ID).Error)
+			assert.Equal(t, actingMachineID, stored.CreatedByMachineIdentityID,
+				"ATTRIBUTION LOST: a migration performed by a machine identity must record it in "+
+					"CreatedByMachineIdentityID (#2495/#2784) — passing 0 through "+
+					"newMachineIdentityForCreate compiles and breaks nothing else")
+		})
+	}
+}
+
+// TestMigrateUserToMachine_HappyPathCommitsBothAndAudits is the green half of
+// the same fixture: the real-DB path really does commit both writes and emit
+// all three audit events. Without it, the three failure tests above would be
+// satisfied by a function that simply never works.
+func TestMigrateUserToMachine_HappyPathCommitsBothAndAudits(t *testing.T) {
+	t.Parallel()
+	c, db := newMigrateRealDBCore(t)
+	ctx := context.Background()
+
+	m, err := c.MigrateUserToMachine(ctx, "ci-bot", 3, "", "", 9, 0, true)
+	require.NoError(t, err)
+	require.NotNil(t, m)
+
+	var identities int64
+	require.NoError(t, db.Model(&models.MachineIdentity{}).Count(&identities).Error)
+	assert.Equal(t, int64(1), identities, "the identity must be committed on the happy path")
+
+	var user models.User
+	require.NoError(t, db.First(&user, uint(7)).Error)
+	assert.Equal(t, AccountSuspended, user.AccountState, "the source user must end up suspended")
+
+	var events []models.AuditEvent
+	require.NoError(t, db.Find(&events).Error)
+	seen := map[string]bool{}
+	for _, e := range events {
+		seen[e.EventType] = true
+	}
+	assert.True(t, seen["machine_identity.created"], "create event (written after commit)")
+	assert.True(t, seen["account.suspended"], "suspend event (written after commit)")
+	assert.True(t, seen["machine_identity.migrated_from_user"], "migration event")
 }

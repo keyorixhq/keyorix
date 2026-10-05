@@ -65,8 +65,12 @@ import (
 //	              state and writes an audit event". This was the live gap: it
 //	              made (*KeyorixCore).MigrateUserToMachine show only ONE write
 //	              (CreateMachineIdentity) instead of two, so it sat below the
-//	              threshold and never needed a ledger row despite having a
-//	              documented partial-success branch. It now has one.
+//	              threshold and was never flagged despite committing an identity
+//	              and then suspending a user in two separate transactions. That
+//	              function is now atomic (#2867), so it needs no ledger row and
+//	              this guard correctly does not flag it -- the verb is kept
+//	              because the next function to pair a Suspend with another write
+//	              should be caught, not invisible.
 //	Transition -- TransitionMachineIdentityState / TransitionSecretStatus /
 //	              TransitionProjectMembershipState / TransitionDynamicSecretConfigDisabled,
 //	              the conditional-UPDATE state-write primitives CLAUDE.md calls
