@@ -59,6 +59,13 @@ func TestAcquireDatabaseLock_ActuallyHeldLockSurfacesPresenceMessage(t *testing.
 	if !strings.Contains(err.Error(), "appears to be using this database") {
 		t.Fatalf("expected the held-lock message, got: %v", err)
 	}
+	// #2540: the refusal must name the documented stopped-server sequence, not
+	// leave a Docker operator who ran `docker compose exec` guessing.
+	for _, want := range []string{"docker compose stop backend", "docker compose run --rm backend ./keyorix-server admin", "docker compose start backend"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("held-lock message must include %q, got: %v", want, err)
+		}
+	}
 	if strings.Contains(err.Error(), "cannot connect to the database to check for a running server") {
 		t.Fatalf("a genuine held lock must not be reported as a connect failure, got: %v", err)
 	}
