@@ -988,7 +988,7 @@ func TestDynamicSecrets_RevokeLeasesForConfigReportsPersistentFailure(t *testing
 
 	// Target is STILL down when the kill switch is pulled.
 	revoked, failed, err := c.RevokeLeasesForConfig(ctx, cfg.ID, 7, "incident: still down")
-	require.NoError(t, err, "RevokeLeasesForConfig itself never errors — failures are counted")
+	require.Error(t, err, "#2406: a partial bulk-revoke must not report a clean success — the counts alone are not enough, since callers that only check err would otherwise see nil/OK")
 	assert.Equal(t, 0, revoked)
 	assert.Equal(t, 1, failed)
 

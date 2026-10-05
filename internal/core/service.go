@@ -651,7 +651,17 @@ func truncateAuditField(s string, maxLen int) string {
 // machine-actor field to carry this; MachineIdentityID above is already the
 // mechanism. This is guard-the-invariant-not-the-conclusion's fifth instance in
 // this campaign -- see docs/adr-092-audit-event-userid-machine-principal.md.
-func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) {
+// emitAudit's bool return is "did this event durably persist" -- false on a
+// LogAuditEvent error OR a recovered panic, true otherwise. Every PRE-#2406
+// caller already ignores it (Go permits discarding a return value freely,
+// so this is source-compatible with all of them -- their best-effort
+// fire-and-forget semantics are completely unchanged). It exists so a
+// caller for whom this specific audit record IS the thing being verified --
+// a security action like RevokeLease, not an incidental side-effect of one
+// -- can tell "best-effort, logged-and-moved-on" apart from "confirmed
+// written" and refuse to report unconditional success when it isn't. See
+// RevokeLease's own doc comment (dynamic_secrets.go) for the first such use.
+func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) (persisted bool) {
 	// A panic anywhere inside this function (most likely from the
 	// c.storage.LogAuditEvent call below, or the auditForwarder/auditStream
 	// hooks that follow it) must never propagate to emitAudit's callers: every
@@ -668,6 +678,7 @@ func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("SECURITY: emitAudit panicked persisting audit event %q (success=%v, best-effort, primary operation already succeeded): %v", event.EventType, event.Success, r)
+			persisted = false
 		}
 	}()
 	prepareAuditEventForEmit(ctx, event)
@@ -684,9 +695,10 @@ func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) {
 		// and do NOT forward a phantom event (ID 0, no chain position) to the SIEM: the
 		// off-box mirror must reflect the durable chain, not events that never landed.
 		log.Printf("SECURITY: failed to persist audit event %q (success=%v): %v", event.EventType, event.Success, err)
-		return
+		return false
 	}
 	c.afterAuditEventPersisted(event)
+	return true
 }
 
 // prepareAuditEventForEmit applies the mutations emitAudit/emitAuditWithAccessLog
