@@ -606,6 +606,16 @@ func (ls *LocalStorage) UpdateSecret(ctx context.Context, secret *models.SecretN
 	// Save() wrote every other column but left read_count alone, so the struct we
 	// hand back still carries the caller's stale value. Re-read it rather than
 	// returning a row that disagrees with the database about a security counter.
+	//
+	// The error is deliberately swallowed, and that is safe rather than merely
+	// convenient: the write above has already COMMITTED, so returning an error
+	// here would tell the caller its update failed when it did not. What a failed
+	// re-read costs is a stale ReadCount on the returned struct and nothing more
+	// — enforcement never consults this field (TryIncrementSecretNodeReadCount
+	// evaluates `read_count < max_reads` inside the UPDATE itself, against the
+	// stored value), and the Omit above means the stale number can never be
+	// written back. So the failure mode is a cosmetically stale number in one
+	// response, not a refunded read.
 	var fresh models.SecretNode
 	if err := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
 		Select("read_count").Where(sqlWhereID, secret.ID).Take(&fresh).Error; err == nil {
