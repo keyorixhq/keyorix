@@ -1498,6 +1498,18 @@ type Storage interface {
 	// userID, returning true only if it was newly consumed (step strictly greater than
 	// the stored last-used step). A false return means the code is a replay.
 	MarkTOTPStepUsed(ctx context.Context, userID uint, step int64) (bool, error)
+	// ReleaseTOTPStepIfUnchanged reverts a step MarkTOTPStepUsed just marked as
+	// used back to step-1 (re-permitting exactly that step), but ONLY if the
+	// stored last-used step still equals step unchanged since the mark — a CAS
+	// guard so this never regresses the anti-replay counter past a step some
+	// OTHER, later-arriving request has since legitimately advanced it to.
+	// Returns false (no error) when the CAS didn't match (nothing released).
+	// Exists for #2567: a caller that marked a step used and then failed to
+	// complete the side effect that depended on it (minting a session) can
+	// give the user back their one attempt at that same code, instead of
+	// forcing a wait for the next 30s time-step over a storage hiccup that had
+	// nothing to do with the code itself.
+	ReleaseTOTPStepIfUnchanged(ctx context.Context, userID uint, step int64) (bool, error)
 	DeleteMFAForUser(ctx context.Context, userID uint) error // clears secret + recovery codes
 	SetUserMFAEnabled(ctx context.Context, userID uint, enabled bool) error
 	CreateMFARecoveryCodes(ctx context.Context, userID uint, codeHashes []string) error

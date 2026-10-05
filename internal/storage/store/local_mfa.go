@@ -55,6 +55,22 @@ func (ls *LocalStorage) MarkTOTPStepUsed(ctx context.Context, userID uint, step 
 	return res.RowsAffected == 1, nil
 }
 
+// ReleaseTOTPStepIfUnchanged reverts last_used_step from step back to step-1,
+// but only when it still equals step exactly (the CAS guard: nothing else has
+// advanced it since the MarkTOTPStepUsed call this is undoing). See the
+// interface doc (internal/core/storage/interface.go) for why step-1 — not the
+// row's actual pre-mark value — is the correct revert target: it re-permits
+// exactly this one step without needing to have captured the prior value.
+func (ls *LocalStorage) ReleaseTOTPStepIfUnchanged(ctx context.Context, userID uint, step int64) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.MFASecret{}).
+		Where("user_id = ? AND last_used_step = ?", userID, step).
+		Update("last_used_step", step-1)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
+}
+
 // DeleteMFAForUser removes the secret and all recovery codes for a user.
 func (ls *LocalStorage) DeleteMFAForUser(ctx context.Context, userID uint) error {
 	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

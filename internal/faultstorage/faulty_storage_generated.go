@@ -5751,6 +5751,23 @@ func (w *FaultyStorage) ReleaseSchedulerLock(ctx context.Context, key int64, hol
 	return w.real.ReleaseSchedulerLock(ctx, key, holder)
 }
 
+func (w *FaultyStorage) ReleaseTOTPStepIfUnchanged(ctx context.Context, userID uint, step int64) (bool, error) {
+	fire, kind, injected := w.check("ReleaseTOTPStepIfUnchanged")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ReleaseTOTPStepIfUnchanged(ctx, userID, step)
+			return rv1, injected
+		}
+	}
+	return w.real.ReleaseTOTPStepIfUnchanged(ctx, userID, step)
+}
+
 func (w *FaultyStorage) RemoveAllProjectRoleGrants(ctx context.Context, userID uint, projectID uint) error {
 	fire, kind, injected := w.check("RemoveAllProjectRoleGrants")
 	if fire {

@@ -2229,6 +2229,9 @@ func (m *MockStorage) ActivateMFASecret(_ context.Context, _ uint, _ []byte) (bo
 func (m *MockStorage) MarkTOTPStepUsed(_ context.Context, _ uint, _ int64) (bool, error) {
 	return true, nil
 }
+func (m *MockStorage) ReleaseTOTPStepIfUnchanged(_ context.Context, _ uint, _ int64) (bool, error) {
+	return true, nil
+}
 func (m *MockStorage) DeleteMFAForUser(_ context.Context, _ uint) error          { return nil }
 func (m *MockStorage) SetUserMFAEnabled(_ context.Context, _ uint, _ bool) error { return nil }
 func (m *MockStorage) CreateMFARecoveryCodes(_ context.Context, _ uint, _ []string) error {
