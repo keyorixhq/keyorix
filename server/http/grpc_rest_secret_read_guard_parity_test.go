@@ -212,7 +212,9 @@ func TestSecretReadGuards_DenyIdenticallyOverGRPCAndREST(t *testing.T) {
 		apply func(t *testing.T, sec *models.SecretNode)
 	}{
 		{"expired", func(t *testing.T, sec *models.SecretNode) {
-			past := time.Now().Add(-time.Hour)
+			// Raw write on purpose (simulate a not-yet-swept expiry); `past` is UTC so
+			// BeforeSave's normalization would be a no-op. Allowlisted in g1619.
+			past := time.Now().UTC().Add(-time.Hour)
 			require.NoError(t, w.db.Model(&models.SecretNode{}).Where("id = ?", sec.ID).Update("expiration", past).Error)
 		}},
 		{"suspended", func(t *testing.T, sec *models.SecretNode) {
