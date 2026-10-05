@@ -50,13 +50,6 @@ import (
 // (global admin, ID adminID), one project with one environment, and two
 // independent replicas A and B on their own connections into the same schema.
 type ctaReview struct {
-	t         *testing.T
-	ctx       context.Context
-	setupDB   *gorm.DB
-	setup     *KeyorixCore
-	dbA       *gorm.DB
-	dbB       *gorm.DB
-	coreA     *KeyorixCore
 	t       *testing.T
 	ctx     context.Context
 	setupDB *gorm.DB
