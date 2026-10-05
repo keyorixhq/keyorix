@@ -13,8 +13,9 @@
 
 | Document | Covers |
 |---|---|
+| [`SECURITY-MODEL.md`](SECURITY-MODEL.md) | One-page public summary in the Vault/OpenBao/Infisical format: goals, in scope, explicit out-of-scope list, trust assumptions. Start here. |
 | [`threat-model.md`](threat-model.md) | System-wide threat model: assets, trust boundaries, STRIDE per boundary, residual risks — the longest-standing, most-reviewed source; per-component documents below narrow this, never override it. |
-| [`threat-models/`](threat-models/README.md) | Ten per-component threat models (server API, authentication, authorization/RBAC, audit chain, secret storage + key hierarchy, backup/restore, update bundles, connectors, Kubernetes operator, web UI), each with a data-flow diagram. |
+| [`threat-models/`](threat-models/README.md) | Twelve per-component threat models (server API, authentication, authorization/RBAC, audit chain, secret storage + key hierarchy, backup/restore, update bundles, connectors, Kubernetes operator, web UI, HA consistency, MCP server), each with a data-flow diagram and a VSO-style threat table (ID/STRIDE/Description/Mitigation/Evidence link/Residual-or-GAP). |
 | [`architecture.md`](architecture.md) | How encryption, authentication, authorization, transport, process hardening, and air-gap operation actually work, with code/ADR citations for each mechanism. |
 | [`hardening-guide.md`](hardening-guide.md) | A production configuration checklist with the exact config keys, verified against `internal/config`. |
 | [`SDLC.md`](SDLC.md) | Secure development policy: branch protection (read live via `gh api`), DCO, review flow, CI gates, fuzzing, dependency policy, release signing/SBOM/SLSA, remediation SLA, merge queue — each item marked in place (with evidence) or planned. |
@@ -27,7 +28,7 @@
 |---|---|
 | [`../../SECURITY.md`](../../SECURITY.md) | Vulnerability disclosure: how to report, response targets, safe harbor, remediation SLA, release-verification commands. |
 | [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md) | What CI checks and what's required to contribute (overlaps `SDLC.md`'s branch-protection section; `SDLC.md` is the more detailed, evidence-linked version). |
-| [`../compliance/README.md`](../compliance/README.md) | NIS2/DORA/ISO 27001/ENS/SOC 2 control mappings built on the controls documented here. |
+| [`../compliance/README.md`](../compliance/README.md) | NIS2/DORA/ISO 27001/ENS/SOC 2/BSI APP.bd.6 control mappings built on the controls documented here. |
 
 ## For buyers: control → evidence
 
@@ -60,7 +61,9 @@ table — file an issue; don't take the row on faith.
 | Required code-owner review on security-sensitive paths — **currently a designation, not a GitHub-enforced gate** | [`../compliance/SECURITY-VERIFICATION.md`](../compliance/SECURITY-VERIFICATION.md#process-controls) |
 | K8s delivery (operator/sync-agent/ESO): least-privilege RBAC, confused-deputy guard | [`threat-models/kubernetes-operator.md`](threat-models/kubernetes-operator.md) |
 | Web UI: session-cookie-only auth (no token in `localStorage`), CSRF, CSP | [`threat-models/web-ui.md`](threat-models/web-ui.md) |
-| Regulatory control mappings (NIS2, DORA, ISO 27001, ENS, SOC 2) | [`../compliance/README.md`](../compliance/README.md) |
+| HA / cross-replica consistency — a threat class not published by any competitor surveyed | [`threat-models/ha-consistency.md`](threat-models/ha-consistency.md), `docs/specs/check-then-act-inventory.md` |
+| AI-agent (MCP server) access: least-privilege, read-only, audited, prompt-injection modeled explicitly | [`threat-models/mcp-server.md`](threat-models/mcp-server.md), [`../mcp.md`](../mcp.md) |
+| Regulatory control mappings (NIS2, DORA, ISO 27001, ENS, SOC 2, BSI APP.bd.6) | [`../compliance/README.md`](../compliance/README.md), [`../compliance/BSI-APP-BD-6-CONTROLS.md`](../compliance/BSI-APP-BD-6-CONTROLS.md) |
 
 Two rows above are deliberately phrased as "honestly scoped" rather than
 "in place" — a prior version of several documents in this repository
