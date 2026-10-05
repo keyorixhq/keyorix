@@ -204,3 +204,86 @@ func TestFinishWebAuthnReauth_GrantFailureAfterConsume_FailsClosed(t *testing.T)
 	err = c.FinishWebAuthnReauth(ctx, 1, token, parsed)
 	require.Error(t, err, "the reauth session must stay consumed even though the earlier grant-creation failed")
 }
+
+// failCreateMFARecoveryCodesStorage fails CreateMFARecoveryCodes, the LAST
+// write inside ActivateMFA's activation transaction — so the whole transaction
+// rolls back AFTER ActivateMFA's own MarkTOTPStepUsed has already burned the
+// submitted enrolment code's time-step outside it.
+type failCreateMFARecoveryCodesStorage struct {
+	storage.Storage
+}
+
+func (s *failCreateMFARecoveryCodesStorage) CreateMFARecoveryCodes(ctx context.Context, userID uint, hashes []string) error {
+	return errors.New("injected fault: CreateMFARecoveryCodes")
+}
+
+// WithTransaction re-wraps the tx handle. Without this the decorator is INERT
+// for the call it exists to fault: ActivateMFA writes the recovery codes as
+// tx.CreateMFARecoveryCodes inside the closure, and the embedded
+// storage.Storage's own WithTransaction hands the closure the BASE storage's tx
+// handle, which has no override on it. Confirmed empirically — the first draft
+// of this test saw ActivateMFA return nil. Same blind spot CLAUDE.md records
+// for raw_storage_bypass_guard_test.go's exportedCoreStorageWrappers ("not a
+// call through a tx handle inside WithTransaction"); the two
+// fail-on-c.storage-directly decorators above (CreateSession,
+// CreateMFAStepUpGrant) never needed it because their faulted calls are made
+// on c.storage, not on a tx.
+func (s *failCreateMFARecoveryCodesStorage) WithTransaction(ctx context.Context, fn func(storage.Storage) error) error {
+	return s.Storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		return fn(&failCreateMFARecoveryCodesStorage{Storage: tx})
+	})
+}
+
+// TestActivateMFA_ActivationFailureAfterConsume_FailsClosed verifies
+// ActivateMFA's class-B (consume-first) row in docs/atomicity-exempt.tsv: the
+// enrolment code's TOTP step is burned BEFORE the activation transaction, and a
+// failure inside that transaction must fail closed — nothing activated, and the
+// code stays burned so it cannot be replayed within its window.
+//
+// Added by ORACLE-A-1 after coordinator review on PR #2840 found that
+// requireReauth — the row the oracle exemption originally cited — performs NO
+// consumption on this path: activation runs with user.MFAEnabled still false, so
+// secondFactorEnrolled is false and requireReauth takes its bare-password
+// branch. ActivateMFA's own MarkTOTPStepUsed is the only consume here, and this
+// test is what makes the ledger row it now cites a checked claim rather than an
+// asserted one.
+func TestActivateMFA_ActivationFailureAfterConsume_FailsClosed(t *testing.T) {
+	t.Parallel()
+	c, db, fixed := newMFATestCore(t)
+	ctx := context.Background()
+
+	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
+	require.NoError(t, err)
+	code, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+
+	base := c.storage
+	c.storage = &failCreateMFARecoveryCodesStorage{Storage: base}
+
+	codes, err := c.ActivateMFA(ctx, 1, code, mfaTestPassword, "")
+	require.Error(t, err, "a failure inside the activation transaction must be reported, not swallowed")
+	assert.Nil(t, codes, "no recovery codes may be returned when the activation failed")
+
+	// The transaction rolled back: nothing was activated.
+	c.storage = base
+	var user models.User
+	require.NoError(t, db.First(&user, uint(1)).Error)
+	assert.False(t, user.MFAEnabled, "MFAEnabled must stay false when the activation transaction rolled back")
+	var secretRow models.MFASecret
+	require.NoError(t, db.Where("user_id = ?", uint(1)).First(&secretRow).Error)
+	assert.False(t, secretRow.Activated, "the MFA secret must stay un-activated")
+	var codeCount int64
+	require.NoError(t, db.Model(&models.MFARecoveryCode{}).Count(&codeCount).Error)
+	assert.Zero(t, codeCount, "no recovery codes may be stored when the activation failed")
+
+	// THE CLASS-B PROPERTY. The submitted code's step stays burned even though
+	// the activation failed: retrying with the SAME code, fault now removed, is
+	// refused. If MarkTOTPStepUsed were folded into the transaction (the "fix"
+	// the oracle's complaint invites), this retry would SUCCEED and a stolen
+	// enrolment code would be replayable inside its window.
+	codes2, err := c.ActivateMFA(ctx, 1, code, mfaTestPassword, "")
+	require.Error(t, err, "the enrolment code's TOTP step must stay consumed even though the activation failed")
+	assert.Nil(t, codes2)
+	require.NoError(t, db.First(&user, uint(1)).Error)
+	assert.False(t, user.MFAEnabled, "the replayed code must not activate MFA either")
+}
