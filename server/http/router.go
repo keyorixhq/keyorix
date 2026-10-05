@@ -1055,8 +1055,17 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Use(customMiddleware.RequirePermission(permAuditRead))
 			r.Get("/logs", auditHandler.GetAuditLogs)
 			r.Get("/search", auditHandler.SearchAuditLogs)
-			r.Get("/export", auditHandler.ExportAuditLogs)
-			r.Get("/export.csv", auditHandler.ExportAuditLogsCSV)
+			// FIX-1 sibling of ANOMALY-04 (#2733's bug class): both export routes
+			// return AuditExportEntry's full-fidelity shape, including IPAddress and
+			// the tamper-evidence hash chain -- deliberately never included in
+			// /logs or /search's AuditLogEntry shape. A handler-file doc comment
+			// (audit.go's toAuditLogEntries) already asserted these routes have
+			// "their own gate" above bare audit.read, but no such elevation was
+			// ever registered here -- raise the gate above the group's audit.read
+			// with system.read, same bar as /anomalies, so the base viewer/
+			// project_auditor tier cannot read other users' IP addresses via export.
+			r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/export", auditHandler.ExportAuditLogs)
+			r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/export.csv", auditHandler.ExportAuditLogsCSV)
 			r.Get("/rbac-logs", auditHandler.GetRBACAuditLogs)
 			r.Get("/retention", auditHandler.GetAuditRetention)
 			r.Get("/verify", auditHandler.VerifyAuditChain)

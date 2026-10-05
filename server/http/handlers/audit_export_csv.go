@@ -17,8 +17,11 @@ import (
 const csvExportMaxRows = 10000
 
 // ExportAuditLogsCSV handles GET /api/v1/audit/export.csv — newest-first audit events
-// as a CSV attachment. Gated by audit.read (the /audit group). Filters: ?project_id,
-// ?user_id, ?since / ?until (RFC3339), ?limit (default 1000, cap csvExportMaxRows).
+// as a CSV attachment. Gated by audit.read AND system.read (router.go) — see
+// ExportAuditLogs's doc for why (FIX-1, #2733's sibling class: this export
+// includes IPAddress, which /logs and /search deliberately never return).
+// Filters: ?project_id, ?user_id, ?since / ?until (RFC3339), ?limit (default
+// 1000, cap csvExportMaxRows).
 func (h *AuditHandler) ExportAuditLogsCSV(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)

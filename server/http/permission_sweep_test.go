@@ -121,6 +121,16 @@ var permissionSweepAllowlist = map[string]string{
 		"above. Actual alert data (which does disclose SecretName/AccessedBy/IPAddress " +
 		"deployment-wide) is the separate /audit/anomalies route (line 1074 above), already " +
 		"gated at effective audit.read.",
+	"GET /api/v1/audit/export": "GET /audit/export sits inside r.Route(\"/audit\", ...) " +
+		"(router.go:1054), same group as /audit/anomalies above -- same chi With()-adds-to-" +
+		"group's-Use() reasoning applies verbatim: this route actually requires BOTH " +
+		"audit.read AND system.read (AND, not OR). Added FIX-1 (#2733's sibling class): " +
+		"AuditExportEntry's full-fidelity shape includes IPAddress and the tamper-evidence " +
+		"hash chain, deliberately excluded from /audit/logs and /audit/search -- same " +
+		"disclosure shape /audit/anomalies' own elevation exists for.",
+	"GET /api/v1/audit/export.csv": "GET /audit/export.csv -- see GET /api/v1/audit/export " +
+		"immediately above, same route group, same elevation, same reasoning (CSV vs JSON " +
+		"encoding of the identical AuditExportEntry-shaped data).",
 }
 
 // repoRoot resolves the repository root relative to THIS test file's own location (not

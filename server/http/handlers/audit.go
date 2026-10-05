@@ -194,9 +194,13 @@ type AuditExportEntry struct {
 
 // ExportAuditLogs handles GET /api/v1/audit/export — a cursor-paginated,
 // full-fidelity audit feed for SIEM pull. Authenticated as a normal API caller
-// (a SIEM uses a personal access token) and gated by audit.read. Advance the
-// cursor by passing the last returned id as ?after_id= on the next request;
-// next_cursor in the response is the id to use, or null when caught up.
+// (a SIEM uses a personal access token) and gated by audit.read AND system.read
+// (router.go) — a stronger bar than /logs or /search, matching /anomalies'
+// gate (FIX-1, #2733's sibling class): this route's AuditExportEntry shape
+// includes IPAddress and the tamper-evidence hash chain, which the base
+// viewer/project_auditor tier must not be able to read via any route. Advance
+// the cursor by passing the last returned id as ?after_id= on the next
+// request; next_cursor in the response is the id to use, or null when caught up.
 func (h *AuditHandler) ExportAuditLogs(w http.ResponseWriter, r *http.Request) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	if middleware.GetUserFromContext(r.Context()) == nil {
 		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
