@@ -40,6 +40,9 @@ func newAccountTestStore(t *testing.T) *LocalStorage {
 func TestSessionListAndRevoke(t *testing.T) {
 	ctx := context.Background()
 	ls := newAccountTestStore(t)
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 	future := time.Now().Add(time.Hour)
 	past := time.Now().Add(-time.Hour)
 
@@ -78,6 +81,9 @@ func TestSessionListAndRevoke(t *testing.T) {
 func TestDeleteSessionsForUserExcept_AlsoDropsImpersonationStarted(t *testing.T) {
 	ctx := context.Background()
 	ls := newAccountTestStore(t)
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 	future := time.Now().Add(time.Hour)
 	admin := uint(1)
 
@@ -107,6 +113,9 @@ func TestDeleteSessionsForUserExcept_AlsoDropsImpersonationStarted(t *testing.T)
 func TestTouchSessionThrottle(t *testing.T) {
 	ctx := context.Background()
 	ls := newAccountTestStore(t)
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 	future := time.Now().Add(time.Hour)
 	s, err := ls.CreateSession(ctx, &models.Session{UserID: 1, SessionToken: "tok", ExpiresAt: &future})
 	require.NoError(t, err)
@@ -134,6 +143,9 @@ func TestTouchSessionThrottle(t *testing.T) {
 func TestPATLifecycle(t *testing.T) {
 	ctx := context.Background()
 	ls := newAccountTestStore(t)
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 
 	created, err := ls.CreatePersonalAccessToken(ctx, &models.PersonalAccessToken{
 		UserID: 1, Name: "ci", TokenHash: "hash-1", TokenPrefix: "kx_pat_abc",

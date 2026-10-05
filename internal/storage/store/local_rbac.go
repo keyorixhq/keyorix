@@ -600,6 +600,15 @@ func (ls *LocalStorage) RemoveGlobalAdminRoleGuarded(ctx context.Context, userID
 // fails if the two lists drift.
 var globalAdminLiveAccountStates = []string{"active", "pending_first_login", "password_reset_required"}
 
+// loginCapableAccountStates is globalAdminLiveAccountStates under the name that
+// describes what the set actually IS, for the #2701 credential-owner re-check
+// (requireLiveCredentialOwner, local_auth.go). Deliberately the SAME slice, not
+// a copy of the values: both uses need exactly "the account_state values that do
+// not block login", and TestGlobalAdminLiveAccountStates_MatchAccountLoginBlocked
+// already pins that set against core.AccountLoginBlocked. A second literal would
+// be a second thing to keep in step.
+var loginCapableAccountStates = globalAdminLiveAccountStates
+
 // GlobalAdminLiveAccountStates returns a copy of globalAdminLiveAccountStates,
 // for the drift test in internal/core.
 func GlobalAdminLiveAccountStates() []string {

@@ -259,6 +259,9 @@ func TestSetupToken_CountSince(t *testing.T) {
 func TestDeleteSession(t *testing.T) {
 	ctx := context.Background()
 	ls := newStoreS3(t, "delete_session", &models.Session{})
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 	future := time.Now().Add(time.Hour)
 
 	s, err := ls.CreateSession(ctx, &models.Session{UserID: 1, SessionToken: "tok-delete", ExpiresAt: &future})
@@ -273,6 +276,9 @@ func TestDeleteSession(t *testing.T) {
 func TestCleanupExpiredSessions(t *testing.T) {
 	ctx := context.Background()
 	ls := newStoreS3(t, "cleanup_sessions", &models.Session{})
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 
 	past := time.Now().Add(-time.Hour)
 	future := time.Now().Add(time.Hour)
@@ -297,6 +303,9 @@ func TestCleanupExpiredSessions(t *testing.T) {
 func TestListSessionTokenHashesForUser(t *testing.T) {
 	ctx := context.Background()
 	ls := newStoreS3(t, "session_hashes_user", &models.Session{})
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 	future := time.Now().Add(time.Hour)
 	admin := uint(5)
 
@@ -318,6 +327,9 @@ func TestListSessionTokenHashesForUser(t *testing.T) {
 func TestListActivePersonalAccessTokens(t *testing.T) {
 	ctx := context.Background()
 	ls := newStoreS3(t, "active_pats", &models.PersonalAccessToken{})
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 
 	_, err := ls.CreatePersonalAccessToken(ctx, &models.PersonalAccessToken{
 		UserID: 1, Name: "active", TokenHash: "h-active", TokenPrefix: "kx_pat_a",
@@ -338,6 +350,9 @@ func TestListActivePersonalAccessTokens(t *testing.T) {
 func TestRevokeAllPersonalAccessTokensForUser(t *testing.T) {
 	ctx := context.Background()
 	ls := newStoreS3(t, "revoke_all_pats", &models.PersonalAccessToken{})
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 
 	for i, hash := range []string{"h1", "h2", "h3"} {
 		_, err := ls.CreatePersonalAccessToken(ctx, &models.PersonalAccessToken{
@@ -365,6 +380,9 @@ func TestRevokeAllPersonalAccessTokensForUser(t *testing.T) {
 func TestTouchPersonalAccessToken(t *testing.T) {
 	ctx := context.Background()
 	ls := newStoreS3(t, "touch_pat", &models.PersonalAccessToken{})
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 
 	tok, err := ls.CreatePersonalAccessToken(ctx, &models.PersonalAccessToken{
 		UserID: 1, Name: "ci", TokenHash: "h-touch", TokenPrefix: "kx_pat_touch",
