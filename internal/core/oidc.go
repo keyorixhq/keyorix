@@ -260,6 +260,8 @@ func (c *KeyorixCore) OIDCEnabled() bool {
 // machine identity + roles (ADR-031), mirroring ValidateMachineToken so the
 // middleware builds the same machine principal. Rejects when OIDC is disabled,
 // the token fails verification, no binding exists, or the machine is not active.
+// A storage failure while reading the machine's roles returns
+// ErrRoleResolutionUnavailable (#2748) — never an empty role list.
 func (c *KeyorixCore) ValidateOIDCToken(ctx context.Context, raw string) (*models.MachineIdentity, []string, error) {
 	if c.oidcVerifier == nil {
 		return nil, nil, fmt.Errorf("oidc authentication is not enabled")
@@ -277,7 +279,11 @@ func (c *KeyorixCore) ValidateOIDCToken(ctx context.Context, raw string) (*model
 	}
 	roles, err := c.storage.GetMachineRoles(ctx, m.ID)
 	if err != nil {
-		return m, []string{}, nil
+		// #2748: same fix as ValidateMachineToken's own GetMachineRoles branch
+		// (and #1944's for the two user-credential validators) — a storage
+		// failure resolving roles is retryable, not a successful validation
+		// with no grants. See ErrRoleResolutionUnavailable.
+		return nil, nil, ErrRoleResolutionUnavailable
 	}
 	roleNames := make([]string, len(roles))
 	for i, r := range roles {

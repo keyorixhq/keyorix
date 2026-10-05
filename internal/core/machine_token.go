@@ -306,6 +306,9 @@ func (c *KeyorixCore) ClassifyMachineTokenByID(ctx context.Context, credentialID
 // reject outright for arriving from a disallowed network. The returned
 // credential id lets the caller invoke TouchMachineTokenLastUsed itself, once
 // its own restriction check has actually passed.
+//
+// A storage failure while reading the machine's roles returns
+// ErrRoleResolutionUnavailable (#2748) — never an empty role list.
 func (c *KeyorixCore) ValidateMachineToken(ctx context.Context, raw string) (*models.MachineIdentity, []string, *MachineTokenRestriction, uint, error) {
 	if !strings.HasPrefix(raw, machineTokenPrefix) {
 		return nil, nil, nil, 0, fmt.Errorf("not a machine token")
@@ -330,7 +333,12 @@ func (c *KeyorixCore) ValidateMachineToken(ctx context.Context, raw string) (*mo
 
 	roles, err := c.storage.GetMachineRoles(ctx, m.ID)
 	if err != nil {
-		return m, []string{}, machineRestrictionFrom(cred), cred.ID, nil
+		// #2748: fail the validation with the same distinguishable, retryable
+		// error ValidatePATToken/ValidateSessionToken use (#1944) instead of
+		// returning a valid-looking machine principal with an empty role list.
+		// Both user-credential paths were fixed by #1944; these two machine
+		// paths were missed by it. See ErrRoleResolutionUnavailable.
+		return nil, nil, nil, 0, ErrRoleResolutionUnavailable
 	}
 	roleNames := make([]string, len(roles))
 	for i, r := range roles {
