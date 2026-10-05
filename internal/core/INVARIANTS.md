@@ -423,6 +423,26 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `server/grpc/services/project_service_list_scoped_2780_test.go`; structurally,
   `server/http/permission_sweep_test.go`'s `noPermissionGateAllowlist` +
   `TestNoUngatedRoutes` and `scripts/e2e/routes.json`. All default-ci.
+  `TestCTAReview_InviteMemberOpenMode_vs_Revoke_CrossReplicaPostgres` (pg-gated),
+  plus `FuzzCrossReplicaInvariants`' invariant 6 (`g4OrphanedMembershipGrants`,
+  pg-gated). That oracle fires on a (project, user) pair whose every membership row
+  is `revoked` while a project-scope grant is still live; it deliberately does NOT
+  treat a revoked row coexisting with a LIVE membership as a violation, because
+  `invite(open) → revoke → re-invite` reaches exactly that state serially — the
+  earlier cross-row-join form of the check did, and reported a violation on a
+  correct state. Both directions of that oracle are calibrated in
+  `cross_replica_invariant6_calibration_postgres_test.go`
+  (`TestInvariant6_SoundOnSerialReinvite` for soundness;
+  `TestInvariant6_FiresOnOrphanedGrantEndState` and the two
+  `TestInvariant6_MembershipLockIsLoadBearing_*` mutation tests, which strip the
+  named lock from one replica, for sensitivity).
+  The three write sites that move a membership's state — `inviteMemberWithMode`'s
+  `CreateProjectMembership`, `TransitionMembership`'s
+  `TransitionProjectMembershipState`, and `revertFailedActivation`'s — are the
+  complete set (enumerated by caller, 2026-10-05) and all three are inside a
+  `membershipLockKey` closure; `revoked` has no outgoing transition, so a new
+  invite is the only way back, which is why the serial re-invite shape above is
+  reachable at all.
   Why: C-GUARD2-EXEMPT-REVIEW. Guard: user profile writes (#2653/#2654, fixed):
   `user_profile_column_scoped_guard_test.go:TestUserProfileWrites_AreColumnScoped` +
   `TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres` /

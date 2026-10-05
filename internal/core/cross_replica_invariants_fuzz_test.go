@@ -37,6 +37,12 @@
 //   - two global-admin holders, so a concurrent double-removal race has
 //     somewhere to land other than "refused because it's the only one",
 //   - one project member (membership lifecycle: invite/activate/revoke),
+//   - one SEPARATE user for the direct project-scope role assign/remove
+//     family, deliberately NOT the project member above: a direct
+//     /user-roles grant is independent of the membership lifecycle by design
+//     (ADR-021), and pointing both families at one user made invariant 6
+//     unable to tell a membership-derived grant from an admin-issued one —
+//     see g4OrphanedMembershipGrants,
 //   - one group with a project-scoped role grant and one machine identity,
 //     for the user/group/machine role assign-remove families,
 //   - one mutable "victim" user for suspend/reactivate/profile-update/
@@ -55,8 +61,10 @@
 //  3. no live ACL grant on a soft-deleted secret (#2649 class);
 //  4. no active dynamic-secret lease under a soft-deleted project (#2652 class);
 //  5. no live environment under a soft-deleted project (#2656 class);
-//  6. no project membership in state=revoked with a live role grant for that
-//     (user, project) (#2657/#2659 class);
+//  6. INV-CORE-44: no (user, project) pair whose every membership row is
+//     `revoked` still carries a live project-scope role grant (#2657/#2659
+//     class) — see g4OrphanedMembershipGrants for why this is NOT a plain
+//     project_memberships-to-user_roles join;
 //  7. the victim user's account_state is `suspended` whenever the last
 //     successful suspend/reactivate op on it was a suspend, regardless of
 //     what UpdateUser/UpdateOwnProfile/ChangePassword did meanwhile
@@ -124,7 +132,12 @@ type g4World struct {
 	groupProjRoleID uint
 
 	memberUserID uint
-	viewerRoleID uint
+	// directRoleUserID carries ops 15/16 (AssignUserRole/RemoveUserRole at
+	// project scope). It is deliberately a DIFFERENT user from memberUserID so
+	// that memberUserID's only source of a project-scope grant is membership
+	// activation — the precondition invariant 6 rests on.
+	directRoleUserID uint
+	viewerRoleID     uint
 
 	machineID       uint
 	machineProjRole uint
@@ -219,6 +232,7 @@ func buildG4World(f *testing.F) *g4World {
 	w.shareOwnerID = mkUser("g4-share-owner", "SharePass123!xyz-long-enough")
 	w.shareRecipientID = mkUser("g4-share-recipient", "SharePass123!xyz-long-enough")
 	w.memberUserID = mkUser("g4-member", "MemberPass123!xyz-long-enough")
+	w.directRoleUserID = mkUser("g4-direct-role", "DirectPass123!xyz-long-enough")
 	w.groupMemberID = mkUser("g4-group-member", "GroupPass123!xyz-long-enough")
 	w.victimID = mkUser("g4-victim", g4VictimPassword)
 	w.mfaUserID = mkUser("g4-mfa-user", g4MFAPassword)
@@ -450,11 +464,17 @@ func g4RunOp(t *testing.T, w *g4World, c *KeyorixCore, op g4Op) {
 			_, _ = c.TransitionMembership(ctx, w.projID, id, MembershipRevoked, w.adminID, false)
 		}
 
+	// Ops 15/16 act on directRoleUserID, NOT memberUserID: a direct
+	// /user-roles grant is independent of the membership lifecycle (ADR-021),
+	// so pointing it at the membership user would leave invariant 6 unable to
+	// distinguish an orphaned membership grant from a legitimate admin-issued
+	// one. They still race each other (assign vs remove on one principal),
+	// which is the grant/removal race these two ops exist for.
 	case 15: // assign user role (project scope)
-		_ = c.AssignUserRole(ctx, w.adminID, w.memberUserID, w.viewerRoleID, Scope{ProjectID: w.projID}, false)
+		_ = c.AssignUserRole(ctx, w.adminID, w.directRoleUserID, w.viewerRoleID, Scope{ProjectID: w.projID}, false)
 
 	case 16: // remove user role (project scope)
-		_ = c.RemoveUserRole(ctx, w.adminID, w.memberUserID, w.viewerRoleID, Scope{ProjectID: w.projID})
+		_ = c.RemoveUserRole(ctx, w.adminID, w.directRoleUserID, w.viewerRoleID, Scope{ProjectID: w.projID})
 
 	case 17: // assign role to group (project scope)
 		_ = c.AssignRoleToGroup(ctx, w.adminID, w.groupID, w.groupProjRoleID, Scope{ProjectID: w.projID}, false)
@@ -632,6 +652,64 @@ func g4HasCycle(edges map[uint][]uint) bool {
 	return false
 }
 
+// g4OrphanedGrant is one (user, project) pair holding a live project-scope
+// role grant while every ProjectMembership row for that pair is `revoked`.
+type g4OrphanedGrant struct {
+	UserID    uint
+	ProjectID uint
+}
+
+// g4OrphanedMembershipGrants implements invariant 6, i.e. INV-CORE-44: "a
+// project membership never ends `revoked` while its user still holds the role
+// grant that membership conferred".
+//
+// What it checks: a (user, project) pair for which NO non-revoked membership
+// row remains, yet user_roles still carries a grant at that project's scope.
+// With every membership revoked there is no membership left that could
+// legitimately own a membership-derived grant, so a surviving one is orphaned
+// — the #2657/#2659 end state.
+//
+// Why NOT the obvious `project_memberships JOIN user_roles ON user+project
+// WHERE m.state = 'revoked'`: that join is not INV-CORE-44 but a strictly
+// stronger claim, and the stronger claim is FALSE under legal serial
+// execution. A (project, user) pair accumulates membership rows over time —
+// at most one non-revoked (uniq_project_memberships_active), any number of
+// revoked ones — so `invite(open) → revoke → re-invite` ends with a revoked
+// row beside a fresh `active` row whose own grant is live and correct. The
+// join pairs the revoked row with the ACTIVE row's grant and fires, with no
+// concurrency involved at all. That is what made #2659's seed fail after its
+// fix had already landed; TestInvariant6_SoundOnSerialReinvite pins it with
+// zero goroutines.
+//
+// What it does NOT check: a project-scope grant reached by any path other
+// than membership activation — a direct /user-roles grant, a group grant, an
+// access-review leftover. Those are independent of the membership lifecycle
+// by design (ADR-021) and the schema records no provenance that would let
+// this query tell them apart after the fact, so the fuzz world keeps them on
+// their own principals instead (g4World.directRoleUserID). A future op that
+// grants memberUserID a project role directly would make this oracle fire on
+// a legitimate state again; put it on another principal.
+//
+// Sensitivity is not assumed: TestInvariant6_FiresOnOpenModeInviteVsRevoke_WithoutMembershipLock
+// and its activate-path sibling remove membershipLockKey and confirm this
+// predicate still reports the real #2659/#2657 violation.
+func g4OrphanedMembershipGrants(db *gorm.DB) ([]g4OrphanedGrant, error) {
+	var out []g4OrphanedGrant
+	err := db.Raw(`
+SELECT DISTINCT ur.user_id, ur.project_id
+FROM user_roles ur
+WHERE EXISTS (
+        SELECT 1 FROM project_memberships m
+        WHERE m.user_id = ur.user_id AND m.project_id = ur.project_id
+          AND m.state = 'revoked')
+  AND NOT EXISTS (
+        SELECT 1 FROM project_memberships m2
+        WHERE m2.user_id = ur.user_id AND m2.project_id = ur.project_id
+          AND m2.state <> 'revoked')
+ORDER BY ur.user_id, ur.project_id`).Scan(&out).Error
+	return out, err
+}
+
 func g4CheckInvariants(t *testing.T, w *g4World) {
 	t.Helper()
 	ctx := context.Background()
@@ -679,13 +757,13 @@ func g4CheckInvariants(t *testing.T, w *g4World) {
 		t.Fatalf("GLOBAL INVARIANT VIOLATED (#2656 class): %d live environment(s) exist under a soft-deleted project", liveEnvUnderDeletedProject)
 	}
 
-	// 6. no revoked membership with a live role grant for that (user, project) (#2657/#2659 class).
-	var revokedWithGrant int64
-	require.NoError(t, w.setupDB.Raw(
-		"SELECT count(*) FROM project_memberships m JOIN user_roles ur ON ur.user_id = m.user_id AND ur.project_id = m.project_id WHERE m.state = 'revoked'",
-	).Scan(&revokedWithGrant).Error)
-	if revokedWithGrant > 0 {
-		t.Fatalf("GLOBAL INVARIANT VIOLATED (#2657/#2659 class): %d revoked membership(s) still carry a live role grant", revokedWithGrant)
+	// 6. INV-CORE-44: no (user, project) pair whose memberships are all
+	// `revoked` still carries a live project-scope grant (#2657/#2659 class).
+	orphaned, err := g4OrphanedMembershipGrants(w.setupDB)
+	require.NoError(t, err)
+	if len(orphaned) > 0 {
+		t.Fatalf("GLOBAL INVARIANT VIOLATED (INV-CORE-44, #2657/#2659 class): %d (user, project) pair(s) hold a live project-scope role grant while every membership row for the pair is `revoked`: %+v",
+			len(orphaned), orphaned)
 	}
 
 	// 7. victim stays suspended unless an explicit reactivate op ran since.
