@@ -14,6 +14,17 @@ import (
 // transaction-scoped store shares the parent's audit-chain, audit-checkpoint, and
 // bootstrap mutexes so an audit append, checkpoint write, or bootstrap seed inside
 // the transaction still serializes correctly (ADR-029/#339).
+//
+// It also shares the parent's read-path cache POINTER but deliberately does NOT
+// copy cacheEnabled, so every read inside the transaction goes live. That is
+// required, not a tuning choice: a tx-scoped store reads through the
+// transaction handle, so it sees uncommitted generations and uncommitted data,
+// and publishing those into a cache that outlives the transaction lets a
+// rolled-back answer be served once a later committed write reproduces the same
+// generation value. See cacheEnabled's doc comment on LocalStorage. Going live
+// inside the transaction is also strictly more correct for read-your-own-writes
+// — the transaction handle sees its own uncommitted writes, a cache hit would
+// not.
 func (ls *LocalStorage) WithTransaction(ctx context.Context, fn func(storage.Storage) error) error {
 	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return fn(&LocalStorage{
