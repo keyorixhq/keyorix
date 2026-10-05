@@ -44,7 +44,53 @@ import (
 	"testing"
 )
 
-var atomicityWriteVerbRe = regexp.MustCompile(`^(Create|Update|Delete|Assign|Unassign|Set|Remove|Add|Revoke|Insert|Upsert|Save|Mark|Record|Increment|Rotate|Restore|Purge|Archive|Grant|Link|Unlink|Replace|Put|Store|Clear|Reset|Enable|Disable|Lock|Unlock|Consume|Approve|Reject|Expire|Touch|Bump|Append|Move|Rename|Transfer|Finalize|Complete|Cancel|Provision|Deprovision|Patch|Activate|Deactivate|Issue|Open|Close|Withdraw)`)
+// atomicityWriteVerbRe decides which called method names count as writes. It is
+// an ENUMERATION, with an enumeration's failure mode: a write verb missing from
+// it makes the call invisible, and a function whose SECOND write uses such a
+// verb silently drops below this guard's 2-write threshold and is never flagged.
+//
+// HOW THE LIST WAS ESTABLISHED COMPLETE (ORACLE-A-1, 2026-10-05), rather than
+// extended one verb at a time: every distinct method name called as
+// `c.storage.X(...)` or `c.X(...)` anywhere in internal/core's non-test,
+// non-generated files was extracted (454 names), the names this regex already
+// matches were subtracted, read-shaped prefixes (Get/List/Count/Is/Has/Load/
+// Resolve/Require/Check/Verify/...) were subtracted, and the 23-name remainder
+// was read individually. Re-run that derivation rather than guessing if a new
+// write family appears.
+//
+// ADDED by that pass, each verified against a real mutator before being added
+// (not from the prefix reading like a write):
+//
+//	Suspend    -- SuspendUser -> setAccountState, which "persists a new account
+//	              state and writes an audit event". This was the live gap: it
+//	              made (*KeyorixCore).MigrateUserToMachine show only ONE write
+//	              (CreateMachineIdentity) instead of two, so it sat below the
+//	              threshold and never needed a ledger row despite having a
+//	              documented partial-success branch. It now has one.
+//	Transition -- TransitionMachineIdentityState / TransitionSecretStatus /
+//	              TransitionProjectMembershipState / TransitionDynamicSecretConfigDisabled,
+//	              the conditional-UPDATE state-write primitives CLAUDE.md calls
+//	              load-bearing. No function trips it today; added so the first
+//	              one that pairs two of them outside a transaction is caught.
+//	Prune      -- PruneLoginAttempts / PruneMFAStepUpGrants / PrunePasswordHistory,
+//	              deletes on storage.Storage. Also trips nothing today.
+//
+// DELIBERATELY NOT ADDED, both confirmed read-only despite a write-shaped
+// prefix -- adding either would make this guard flag functions that write
+// nothing, which is a weakening by noise:
+//
+//	Reauthorize -- ReauthorizeImpersonation only calls GetUser and GetSession.
+//	Attest      -- AttestAccessReviewGrant's own doc: "It changes no state --
+//	               the access_review.attested event is the evidence". An
+//	               audit-only write is not business state, and audit ordering
+//	               has its own `AUDIT:` namespace in the ledger.
+//
+// STILL UNVERIFIED, left out on purpose so nothing here is unconfirmed: Reserve,
+// Release, Reconcile, Resume, Acknowledge, Copy, Migrate, BulkRevoke (and the
+// Generate* family, which may or may not persist). Each is plausibly a write,
+// none currently makes a function reach two, and the Reauthorize/Attest pair
+// above is why they are not added on the strength of the prefix alone.
+var atomicityWriteVerbRe = regexp.MustCompile(`^(Create|Update|Delete|Assign|Unassign|Set|Remove|Add|Revoke|Insert|Upsert|Save|Mark|Record|Increment|Rotate|Restore|Purge|Archive|Grant|Link|Unlink|Replace|Put|Store|Clear|Reset|Enable|Disable|Lock|Unlock|Consume|Approve|Reject|Expire|Touch|Bump|Append|Move|Rename|Transfer|Finalize|Complete|Cancel|Provision|Deprovision|Patch|Activate|Deactivate|Issue|Open|Close|Withdraw|Suspend|Transition|Prune)`)
 
 type atomicityHit struct {
 	fn     string // "(*KeyorixCore).Foo"
