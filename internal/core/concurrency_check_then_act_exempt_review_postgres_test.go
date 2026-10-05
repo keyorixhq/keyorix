@@ -107,10 +107,6 @@ func newCTAReview(t *testing.T) *ctaReview {
 	env, err := setup.CreateEnvironment(ctx, proj.ID, "cta-review-env")
 	require.NoError(t, err)
 
-	dbA, dbB := pgOpen(t, dsn), pgOpen(t, dsn)
-	return &ctaReview{
-		t: t, ctx: ctx, setupDB: setupDB, setup: setup,
-		dbA: dbA, dbB: dbB, coreA: newCore(dbA), coreB: newCore(dbB),
 	dbA := pgOpen(t, dsn)
 	dbB := pgOpen(t, dsn)
 	return &ctaReview{
