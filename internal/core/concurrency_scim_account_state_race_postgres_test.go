@@ -24,6 +24,7 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -38,8 +39,21 @@ import (
 // #G42 SQLite deferred-transaction shape. Every other method is the real one.
 type noRowLockStorage struct{ storage.Storage }
 
+// bInterleaveWait is how long the hook waits for replica B before concluding
+// that a named lock is serializing B behind A.
+const bInterleaveWait = 3 * time.Second
+
 func (s *noRowLockStorage) LockUserForUpdate(ctx context.Context, id uint) (*models.User, error) {
 	return s.Storage.GetUser(ctx, id)
+}
+
+// WithNamedLock is also bypassed on replica A: main now serializes the SCIM
+// and suspension paths with the same named lock as well as the row lock, and
+// this test exists to prove the conditional account_state write holds even
+// when BOTH are missing (a future caller that skips them, or SQLite's #G42
+// window). Replica B keeps the real lock.
+func (s *noRowLockStorage) WithNamedLock(ctx context.Context, _ string, fn func(ctx context.Context) error) error {
+	return fn(ctx)
 }
 
 func (s *noRowLockStorage) WithTransaction(ctx context.Context, fn func(tx storage.Storage) error) error {
@@ -87,17 +101,47 @@ func TestCTAReview_SCIM_vs_SuspendUser_WithoutRowLock_CrossReplicaPostgres(t *te
 			coreA := NewKeyorixCore(&noRowLockStorage{localstore.NewLocalStorage(f.dbA)})
 			coreA.SetAuthEncryptor(f.enc)
 
+			// B runs in its own goroutine. On current main both paths also hold the
+			// same storage.WithNamedLock, so B may be unable to start until A
+			// commits: running it synchronously inside A's hook would deadlock
+			// (A waits for B, B waits for A's lock). If B has not finished after
+			// bInterleaveWait, the named lock has serialized the two operations and
+			// the stale-write interleaving cannot happen; A proceeds, then B runs.
+			// Either way the invariant is the same: the suspension survives.
 			var errB error
-			fired := f.beforeA("update", "users", func() { errB = f.coreB.SuspendUser(f.ctx, f.adminID, target.ID) })
+			bDone := make(chan struct{})
+			interleaved := false
+			fired := f.beforeA("update", "users", func() {
+				go func() { errB = f.coreB.SuspendUser(f.ctx, f.adminID, target.ID); close(bDone) }()
+				select {
+				case <-bDone:
+					interleaved = true
+				case <-time.After(bInterleaveWait):
+				}
+			})
 			errA := tc.scim(coreA, f.ctx, f.adminID, target.ID)
-			t.Logf("SCIM %s (A) err=%v, SuspendUser (B) err=%v", tc.name, errA, errB)
-			require.True(t, fired(), "the hook must have interleaved B's SuspendUser before A's user UPDATE")
-			require.NoError(t, errB, "the suspension itself reported success")
+			require.True(t, fired(), "the hook must have fired before A's user UPDATE")
+			select {
+			case <-bDone:
+			case <-time.After(30 * time.Second):
+				t.Fatal("replica B's SuspendUser never completed after replica A finished")
+			}
+			t.Logf("SCIM %s (A) err=%v, SuspendUser (B) err=%v, interleaved=%v", tc.name, errA, errB, interleaved)
+			if interleaved {
+				require.NoError(t, errB, "the suspension itself reported success")
+			}
+			if errB != nil {
+				// Serialized after A: B may legitimately fail (e.g. A deprovisioned
+				// and removed the user). Nothing reported success, so nothing was lost.
+				return
+			}
 
 			var got models.User
 			require.NoError(t, f.setupDB.Unscoped().First(&got, target.ID).Error)
 			assert.Equal(t, AccountSuspended, got.AccountState, "a suspension that reported success was silently overwritten by a stale SCIM write")
-			assert.ErrorIs(t, errA, ErrUserAccountStateConflict, "the stale SCIM write must fail closed, not report success")
+			if interleaved {
+				assert.ErrorIs(t, errA, ErrUserAccountStateConflict, "the stale SCIM write must fail closed, not report success")
+			}
 		})
 	}
 }
