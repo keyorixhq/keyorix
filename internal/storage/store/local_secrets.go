@@ -481,6 +481,11 @@ func (ls *LocalStorage) GetSecret(ctx context.Context, id uint) (*models.SecretN
 			var row models.SecretNode
 			if err := ls.db.WithContext(ctx).First(&row, id).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
+					// The helper drops this key on any load error; drop the
+					// latest-version half too, so a soft-delete clears both halves
+					// exactly as it did before the two were split into separate
+					// caches. Eviction, so the no-bypass guard does not restrict it.
+					invalidateCachedRead(ls.secretMetaCache.versions, id)
 					return nil, nodeGeneration{}, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
 				}
 				return nil, nodeGeneration{}, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
