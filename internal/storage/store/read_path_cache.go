@@ -240,6 +240,12 @@ func cachedRead[K comparable, G cacheGeneration, V any](
 //
 // gen is still required, and still read before anything else, because a HIT
 // must be validated against a live stamp without paying for the full load.
+//
+// It is skipped entirely when there is no entry to validate. That is a pure
+// saving available ONLY here: cachedRead must read the stamp before its load
+// whether or not anything is cached (that IS the ordering rule), but this
+// variant takes its stamp from the load, so a cold key costs exactly the one
+// query it cost before the cache existed rather than two.
 func cachedReadSameRow[K comparable, G cacheGeneration, V any](
 	ctx context.Context,
 	cache *genCache[K, G, V],
@@ -247,9 +253,10 @@ func cachedReadSameRow[K comparable, G cacheGeneration, V any](
 	gen genGeneration[G],
 	load func(context.Context) (V, G, error),
 ) (V, error) {
-	cached, hit, _, _ := probe(ctx, cache, key, gen)
-	if hit {
-		return cached, nil
+	if _, present := cache.get(key); present {
+		if cached, hit, _, _ := probe(ctx, cache, key, gen); hit {
+			return cached, nil
+		}
 	}
 	value, loadedStamp, err := load(ctx)
 	if err != nil {
