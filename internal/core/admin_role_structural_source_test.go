@@ -37,6 +37,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -161,4 +162,115 @@ func TestRemoveUserRole_AllowsNonAdminRoleRemovalAtGlobalScope(t *testing.T) {
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	require.NoError(t, c.RemoveUserRole(context.Background(), 0, 100, 1, core.Scope{}),
 		"system_viewer carries no admin-bypass flag — its removal is not a last-admin event")
+}
+
+// TestRemoveUserRole_ProjectScopedBypassIsNotAGlobalAdminBackup guards the
+// OVER-counting direction the widened role set creates, which is the one that
+// could brick an install.
+//
+// Resolving admin-ness from the flag adds `project_admin` to the admin-role ID
+// set (bootstrap flags all four canonical names, project_admin included). Every
+// global-admin holder count is therefore now asked about a role that is
+// ordinarily held at PROJECT scope — and a project-scoped grant confers nothing
+// install-wide, because ADR-084's bypass applies only at the scope the role is
+// held. If any of those counts failed to filter to project_id = 0, a
+// project_admin somewhere would be miscounted as the install's backup
+// administrator and the last REAL global admin's grant would become removable.
+//
+// Audited by hand across every path that feeds the set into a holder count, and
+// all of them do filter (ListGlobalAdminAssignmentsForUpdate: `project_id = 0
+// AND environment_id = 0`; ListProjectRoleAssignments(ctx, 0): `project_id = 0`).
+// This test is that audit made machine-checked, because the audit is the kind of
+// claim that silently stops being true.
+func TestRemoveUserRole_ProjectScopedBypassIsNotAGlobalAdminBackup(t *testing.T) {
+	t.Parallel()
+	require.NoError(t, i18n.InitializeForTesting())
+	dsn := "file:" + filepath.Join(t.TempDir(), "admin.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{}, &models.User{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{}, &models.AuditEvent{},
+	))
+	// Both roles carry the flag, exactly as bootstrap seeds them.
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", NameFolded: "admin", BypassesPermissionChecks: true}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "project_admin", NameFolded: "project_admin", BypassesPermissionChecks: true}).Error)
+	require.NoError(t, db.Create(&models.Project{ID: 2, Name: "p2"}).Error)
+	for _, u := range []struct {
+		id   uint
+		name string
+	}{{100, "globaladmin"}, {101, "projectadmin"}} {
+		require.NoError(t, db.Create(&models.User{
+			ID: u.id, Username: u.name, UsernameFolded: u.name,
+			Email: u.name + "@example.com", EmailFolded: u.name + "@example.com",
+			IsActive: true, AccountState: "active",
+		}).Error)
+	}
+	// The install's ONLY global administrator.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 100, RoleID: 1}).Error)
+	// A project_admin at PROJECT scope — flag-carrying, but it confers nothing
+	// install-wide, so it is NOT a backup for the global admin above.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 101, RoleID: 2, ProjectID: 2}).Error)
+
+	c := core.NewKeyorixCore(store.NewLocalStorage(db))
+	ctx := context.Background()
+
+	// Precondition, so a fixture that failed to create the project-scoped grant
+	// cannot make this test pass vacuously.
+	projectScoped, err := c.Storage().GetUserRoleIDsAt(ctx, 101, storage.Scope{ProjectID: 2})
+	require.NoError(t, err)
+	require.Contains(t, projectScoped, uint(2), "fixture precondition: user 101 must hold project_admin at project 2")
+	globalForProjectAdmin, err := c.Storage().GetUserRoleIDsAt(ctx, 101, storage.Scope{})
+	require.NoError(t, err)
+	assert.NotContains(t, globalForProjectAdmin, uint(2),
+		"fixture precondition: that grant must NOT also resolve at global scope")
+
+	err = c.RemoveUserRole(ctx, 0, 100, 1, core.Scope{})
+
+	require.Error(t, err, "removing the install's only GLOBAL admin must be refused: user 101's project_admin "+
+		"is scoped to project 2 and confers no install-wide authority, so it is not a backup administrator")
+	assert.Contains(t, err.Error(), "administrator")
+
+	var remaining int64
+	require.NoError(t, db.Model(&models.UserRole{}).
+		Where("user_id = ? AND role_id = ? AND project_id = ?", 100, 1, 0).Count(&remaining).Error)
+	assert.Equal(t, int64(1), remaining, "the global admin's grant must survive the refused removal")
+}
+
+// The companion: the SAME project_admin role held at GLOBAL scope IS a backup,
+// because there the bypass does apply install-wide. Without this, the test above
+// would also pass if project_admin were simply excluded from the admin set
+// altogether — which would reopen the under-detection gap #2496 closed.
+func TestRemoveUserRole_GloballyScopedProjectAdminIsAGlobalAdminBackup(t *testing.T) {
+	t.Parallel()
+	require.NoError(t, i18n.InitializeForTesting())
+	dsn := "file:" + filepath.Join(t.TempDir(), "admin.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{}, &models.User{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{}, &models.AuditEvent{},
+	))
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", NameFolded: "admin", BypassesPermissionChecks: true}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "project_admin", NameFolded: "project_admin", BypassesPermissionChecks: true}).Error)
+	for _, u := range []struct {
+		id   uint
+		name string
+	}{{100, "globaladmin"}, {101, "globalprojectadmin"}} {
+		require.NoError(t, db.Create(&models.User{
+			ID: u.id, Username: u.name, UsernameFolded: u.name,
+			Email: u.name + "@example.com", EmailFolded: u.name + "@example.com",
+			IsActive: true, AccountState: "active",
+		}).Error)
+	}
+	require.NoError(t, db.Create(&models.UserRole{UserID: 100, RoleID: 1}).Error)
+	// project_admin at GLOBAL scope (project 0): the bypass applies install-wide.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 101, RoleID: 2}).Error)
+
+	c := core.NewKeyorixCore(store.NewLocalStorage(db))
+	require.NoError(t, c.RemoveUserRole(context.Background(), 0, 100, 1, core.Scope{}),
+		"user 101 holds a flag-carrying role at GLOBAL scope, so they are a real install administrator and "+
+			"the removal is safe — the under-detection direction #2496 closed")
 }

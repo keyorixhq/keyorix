@@ -100,6 +100,22 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   security-closures `FIX-2-primitive`/`FIX-2-sso`. Guard: `last_admin_guard_wiring_test.go`,
   `last_admin_guard_external_test.go`, `group_admin_guard_test.go`,
   `project_scoped_group_admin_guard_test.go`, `scim_guards_test.go`.
+  Every path counts holders at **GLOBAL scope only** (`project_id = 0`), which became
+  load-bearing in a new way with #2496: resolving admin-ness from the structural flag puts
+  `project_admin` in the admin-role set, and that role is ordinarily held at PROJECT scope
+  where ADR-084's bypass confers nothing install-wide. Miscounting one as a global backup
+  would make the last REAL global admin's grant removable — the brick direction. Every
+  feeding query filters (`ListGlobalAdminAssignmentsForUpdate`: `project_id = 0 AND
+  environment_id = 0`; `ListProjectRoleAssignments(ctx, 0)`: `project_id = 0`). Guard:
+  `admin_role_structural_source_test.go:TestRemoveUserRole_ProjectScopedBypassIsNotAGlobalAdminBackup`
+  plus its companion `..._GloballyScopedProjectAdminIsAGlobalAdminBackup`, which keeps the
+  first from passing by simply excluding `project_admin` and reopening #2496's gap.
+  Known inconsistency, pre-existing and NOT introduced by #2496:
+  `ListProjectRoleAssignments(ctx, 0)` filters `project_id` only, so a grant at
+  `{ProjectID: 0, EnvironmentID: X}` is counted as a global holder by the core-side guards
+  while `ListGlobalAdminAssignmentsForUpdate` (the storage-side role-removal guard) also
+  requires `environment_id = 0`. The two disagree on that one shape for every admin role,
+  flagged rather than changed here.
   Every path counts **live holders, not grant rows** (#2658): a user grant counts only for
   a non-deleted, `IsActive`, non-login-blocked user (not suspended/deprovisioned); a group
   grant only for a non-deleted group with at least one such global member. Core's
@@ -142,6 +158,17 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `admin_role_name_list_singleton_test.go` (structural: every admin-role-name string literal
   in this package's non-test source needs a reviewed row, so a second list cannot land
   silently — the mechanism that was missing when `installAdminRoleIDSet` survived ADR-084).
+  CONSEQUENCE, found while landing #2496: because `requireAdminRankCeilingForTarget` and the
+  global-admin holder count now resolve from the SAME authority, the last-admin refusal is
+  unreachable on `UpdateUser`/`DeleteUser` — the ceiling refuses any non-self actor that
+  does not bypass at the target's scopes, and an actor that bypasses at global scope IS a
+  surviving holder. The refusal remains reachable on `SuspendUser` and the SCIM paths, which
+  apply no ceiling; that is where its end-to-end coverage lives
+  (`server/http/handlers/users_update_lastadmin_test.go:TestSuspendUser_RefusesLastAdminDeactivation_RealServer`).
+  The precondition is itself checked, so the unreachability cannot go stale unnoticed:
+  `..._test.go:TestUpdateUser_CeilingAlreadyGuaranteesASurvivingAdminHolder` fails if an
+  actor can ever pass the ceiling without being a holder, at which point `UpdateUser` needs
+  its end-to-end case back.
 - **INV-CORE-21** On every startup, newly-added canonical permissions reconcile additively
   into existing installs' baseline roles — non-clobbering of existing grants, no-op on a
   pre-bootstrap install, idempotent, and the grant itself audited. Why: ADR-044. Guard:
