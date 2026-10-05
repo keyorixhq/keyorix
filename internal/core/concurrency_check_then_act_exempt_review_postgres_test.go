@@ -61,6 +61,18 @@ type ctaReview struct {
 	// sync point on BOTH replicas to force the orderings where A's write
 	// lands before B's. beforeA below only ever needed A's.
 	dbB       *gorm.DB
+	coreA     *KeyorixCore
+	t       *testing.T
+	ctx     context.Context
+	setupDB *gorm.DB
+	setup   *KeyorixCore
+	dbA     *gorm.DB
+	coreA   *KeyorixCore
+	// dbB is replica B's own connection pool, exposed for GUARD-5's
+	// interleaving driver (interleave_sync_points_test.go), which needs a
+	// sync point on BOTH replicas to force the orderings where A's write
+	// lands before B's. beforeA below only ever needed A's.
+	dbB       *gorm.DB
 	coreB     *KeyorixCore
 	enc       ports.EncryptionProvider
 	adminID   uint
@@ -100,6 +112,11 @@ func newCTAReview(t *testing.T) *ctaReview {
 	env, err := setup.CreateEnvironment(ctx, proj.ID, "cta-review-env")
 	require.NoError(t, err)
 
+	dbA := pgOpen(t, dsn)
+	dbB := pgOpen(t, dsn)
+	return &ctaReview{
+		t: t, ctx: ctx, setupDB: setupDB, setup: setup,
+		dbA: dbA, dbB: dbB, coreA: newCore(dbA), coreB: newCore(dbB),
 	dbA := pgOpen(t, dsn)
 	dbB := pgOpen(t, dsn)
 	return &ctaReview{
