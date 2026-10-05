@@ -223,12 +223,24 @@ func fastAuditSchemaName(testName string) string {
 // pg-gated convention: a skip is expected in a DSN-less run and is NOT a
 // failure, but these are the only tests that can prove the Postgres
 // mechanism, so the `core` CI leg is what actually runs them.
-func newPostgresAuditStore(t *testing.T) (*LocalStorage, *capturingLogger) {
+// requirePostgresDSN skips the CALLING test unless a real cluster is
+// configured, and returns the DSN. Call it from a PARENT test, not only from a
+// subtest helper: a parent whose subtests all skip still emits `--- PASS`, and
+// scripts/check-adr-conformance.sh treats that line as proof the claim was
+// verified — so a DSN-less run would silently certify a Postgres-only property.
+// See TestFastAuditMode_PostgresIssuesSetLocalOnlyWhenEnabled's own comment.
+func requirePostgresDSN(t *testing.T) string {
 	t.Helper()
 	dsn := os.Getenv("KEYORIX_TEST_PG_DSN")
 	if dsn == "" {
 		t.Skip("KEYORIX_TEST_PG_DSN not set -- this test can only prove the Postgres mechanism on a real cluster")
 	}
+	return dsn
+}
+
+func newPostgresAuditStore(t *testing.T) (*LocalStorage, *capturingLogger) {
+	t.Helper()
+	dsn := requirePostgresDSN(t)
 	cap := &capturingLogger{Interface: gormlogger.Default.LogMode(gormlogger.Silent)}
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: cap})
 	require.NoError(t, err)
@@ -259,6 +271,17 @@ func newPostgresAuditStore(t *testing.T) (*LocalStorage, *capturingLogger) {
 // and with it on the transaction sends exactly `SET LOCAL
 // synchronous_commit = off`.
 func TestFastAuditMode_PostgresIssuesSetLocalOnlyWhenEnabled(t *testing.T) {
+	// The gate is checked HERE, in the parent, not only inside
+	// newPostgresAuditStore. If only the subtests skipped, this parent would
+	// still emit `--- PASS` with no DSN present, and
+	// scripts/check-adr-conformance.sh — which looks for exactly that line —
+	// would record the claim as VERIFIED in a run that never touched a
+	// Postgres cluster. Caught by running that checker: it reported this row
+	// `ok (pg-gated)` without a DSN while its sibling correctly reported
+	// `gated-skip`. A green check that does not cover what its name implies
+	// is worse than no check.
+	requirePostgresDSN(t)
+
 	t.Run("off: no durability statement is sent", func(t *testing.T) {
 		ls, cap := newPostgresAuditStore(t)
 
