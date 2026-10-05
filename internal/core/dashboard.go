@@ -122,11 +122,22 @@ type ActivityFeed struct {
 func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, username string, principalID uint) (*DashboardStats, error) {
 	stats := &DashboardStats{}
 
-	_, total, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
-		CreatedBy: &username,
-		Page:      1,
-		PageSize:  1,
-	})
+	// TOTAL SECRETS is the number of secrets this caller CAN READ — the count of
+	// what GET /api/v1/secrets returns them, computed by the same function
+	// (CountReadableSecrets -> ListReadableSecrets, secret_readable_listing.go), so
+	// the tile and the list cannot disagree.
+	//
+	// #2780: this used to count secrets the caller had AUTHORED
+	// (SecretFilter{CreatedBy: &username}). A project member who had created nothing
+	// — the ordinary case for someone handed read access to one service — was shown
+	// "TOTAL SECRETS 0 … Create your first secret to get started" while reading five
+	// of them. That is worse than an error: it is confidently wrong, and it invites
+	// an action that will fail. Authorship is not readability and was never what this
+	// tile claimed to show.
+	//
+	// A caller with audit.read still gets the DEPLOYMENT-wide total instead, further
+	// down (fetchAdminDashboardStats) — unchanged.
+	total, err := c.CountReadableSecrets(ctx, userID, principalID)
 	if err != nil {
 		total = 0
 		stats.degrade("total_secrets", err)

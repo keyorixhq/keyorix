@@ -230,101 +230,21 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 		return
 	}
 
-	// No scope filter — try global first.
-	globalOK, aerr := h.coreService.AuthorizePrincipal(
-		r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permSecretsRead, core.Scope{},
-	)
-	if aerr == nil && globalOK {
-		// Global reader — original behaviour.
-		response, err = h.coreService.ListSecretsWithSharingInfo(r.Context(), userCtx.UserID, filter)
-		if err != nil {
-			log.Printf("Error listing secrets: %v", err)
-			h.sendError(w, "InternalError", errFailedToListSecrets, http.StatusInternalServerError, nil)
-			return
-		}
-		h.resolveSecretNames(r.Context(), response.Secrets)
-		h.sendSuccess(w, newSecretListResponseWire(response), "")
-		return
-	}
-
-	// Not a global reader — enumerate scopes and return the union.
-	scopes, serr := h.coreService.GetReadableScopes(r.Context(), userCtx.PrincipalID(), permSecretsRead)
-	if serr != nil {
-		log.Printf("Error enumerating readable scopes for user %d: %v", userCtx.UserID, serr)
+	// No scope filter — steps 2 and 3 of the tree above. That logic now lives in
+	// core.ListReadableSecrets (internal/core/secret_readable_listing.go), unchanged
+	// in behaviour except for two defects it fixes on the way (see that function).
+	//
+	// #2780 is why it moved: the dashboard's TOTAL SECRETS tile is supposed to be
+	// the count OF this list, and it was computing a different thing entirely
+	// (secrets the caller had authored), so a project member who had created nothing
+	// was told they had zero while reading five. Two places deriving "what can this
+	// caller read" independently is exactly how #2781's two-definitions bug
+	// happened; there is now one function, and the dashboard's number is its Total.
+	response, err = h.coreService.ListReadableSecrets(r.Context(), userCtx.UserID, userCtx.PrincipalID(), filter)
+	if err != nil {
+		log.Printf("Error listing readable secrets for user %d: %v", userCtx.UserID, err)
 		h.sendError(w, "InternalError", errFailedToListSecrets, http.StatusInternalServerError, nil)
 		return
-	}
-
-	if len(scopes) == 0 {
-		// No project-role scopes, but the user may still hold per-secret ACL
-		// grants or own secrets directly.  Call ListSecretsWithSharingInfo with
-		// no scope filter so owned + ACL-granted secrets are surfaced.
-		response, err = h.coreService.ListSecretsWithSharingInfo(r.Context(), userCtx.UserID, filter)
-		if err != nil {
-			log.Printf("Error listing secrets for ACL-only user %d: %v", userCtx.UserID, err)
-			h.sendError(w, "InternalError", errFailedToListSecrets, http.StatusInternalServerError, nil)
-			return
-		}
-		h.resolveSecretNames(r.Context(), response.Secrets)
-		h.sendSuccess(w, newSecretListResponseWire(response), "")
-		return
-	}
-
-	log.Printf("ListSecrets: user %d has no global secrets.read; returning union across %d scope(s)", userCtx.UserID, len(scopes))
-
-	seen := make(map[uint]bool)
-	var allSecrets []*models.SecretWithSharingInfo
-	for _, scope := range scopes {
-		scopeFilter := *filter // shallow copy — safe: slice fields (Tags) are read-only here
-		pID := scope.ProjectID
-		scopeFilter.ProjectID = &pID
-		if scope.EnvironmentID != 0 {
-			eID := scope.EnvironmentID
-			scopeFilter.EnvironmentID = &eID
-		} else {
-			scopeFilter.EnvironmentID = nil
-		}
-		// scopes are already known role-granted scopes (from GetReadableScopes
-		// above), so this surfaces every secret each scope's role grants
-		// visibility to -- not just what the user personally owns or holds an
-		// ACL/share grant for -- same reasoning as the scopeRequested branch
-		// above.
-		resp, rerr := h.coreService.ListSecretsInScopeWithSharingInfo(r.Context(), userCtx.UserID, &scopeFilter)
-		if rerr != nil {
-			log.Printf("Error listing secrets for scope {project:%d env:%d}: %v", scope.ProjectID, scope.EnvironmentID, rerr)
-			continue
-		}
-		for _, s := range resp.Secrets {
-			if s.SecretNode != nil && !seen[s.ID] {
-				seen[s.ID] = true
-				allSecrets = append(allSecrets, s)
-			}
-		}
-	}
-
-	// Re-apply sorting and paginate the merged result.
-	total := int64(len(allSecrets))
-	start := (filter.Page - 1) * filter.PageSize
-	end := start + filter.PageSize
-	totalInt := int(total)
-	if start > totalInt {
-		start = totalInt
-	}
-	if end > totalInt {
-		end = totalInt
-	}
-	totalPages := (totalInt + filter.PageSize - 1) / filter.PageSize
-	if totalPages == 0 {
-		totalPages = 1
-	}
-	pagedSecrets := allSecrets[start:end]
-
-	response = &models.SecretListResponse{
-		Secrets:    pagedSecrets,
-		Total:      total,
-		Page:       filter.Page,
-		PageSize:   filter.PageSize,
-		TotalPages: totalPages,
 	}
 	h.resolveSecretNames(r.Context(), response.Secrets)
 	h.sendSuccess(w, newSecretListResponseWire(response), "")

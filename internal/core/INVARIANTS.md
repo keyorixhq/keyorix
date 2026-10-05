@@ -374,6 +374,28 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   all red/green-proved against a planted second definition);
   behaviour: `project_membership_definition_test.go`,
   `server/http/handlers/users_memberships_2781_test.go`.
+- **INV-CORE-46** Every surface that answers "what can this caller READ" answers it from one
+  place, and the number agrees with the list: `VisibleProjects` (project_visibility.go) is the
+  single source for project/environment visibility (`GET /api/v1/projects`,
+  `GET /api/v1/environments`, gRPC `ProjectService.ListProjects`), and
+  `ListReadableSecrets`/`CountReadableSecrets` (secret_readable_listing.go) is the single
+  source for secret visibility (`GET /api/v1/secrets` and the dashboard's TOTAL SECRETS,
+  whose value is that function's own `Total`). Every project a listing returns is one the
+  caller is authorized to read at the PROJECT scope — the same check `GET /projects/{id}`
+  applies — so a listing can never disclose a project its caller could not already fetch by
+  id. Why: #2780 — the listings were gated on GLOBAL `secrets.read` and then returned
+  everything unfiltered, so a project-scoped member got 403 and the UI reported "you have
+  nothing"; separately the dashboard counted secrets the caller had AUTHORED, so the number
+  was 0 for anyone who had created none. Guard: `project_visibility_test.go`,
+  `secret_readable_listing_test.go`,
+  `server/http/handlers/catalog_list_scoped_2780_test.go`,
+  `server/http/project_listing_least_privilege_2780_test.go` (real router, so re-adding a
+  route-level global gate fails it — the handler-level tests by construction cannot),
+  `server/http/dashboard_readable_count_2780_test.go` (asserts
+  `dashboard.totalSecrets == GET /api/v1/secrets total`, not a hard-coded number),
+  `server/grpc/services/project_service_list_scoped_2780_test.go`; structurally,
+  `server/http/permission_sweep_test.go`'s `noPermissionGateAllowlist` +
+  `TestNoUngatedRoutes` and `scripts/e2e/routes.json`. All default-ci.
   Why: C-GUARD2-EXEMPT-REVIEW. Guard: user profile writes (#2653/#2654, fixed):
   `user_profile_column_scoped_guard_test.go:TestUserProfileWrites_AreColumnScoped` +
   `TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres` /
