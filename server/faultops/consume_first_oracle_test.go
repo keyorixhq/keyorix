@@ -223,6 +223,18 @@ var consumeFirstExemptions = []consumeFirstExemption{
 	// exemption. A planted class-A bug of exactly that shape SURVIVED. The
 	// stacked follow-up seeds those rows and kills it; until that lands, read
 	// this entry as covering the TOTP-step consumption only.
+	// SCOPE OF THIS ENTRY'S GREEN. A green here used to cover LESS than it
+	// looked: enrolMFADirect seeded no MFARecoveryCode rows, so a partial commit
+	// that wiped the old codes without writing new ones was structurally
+	// unobservable on this op, exemption or no exemption — a planted class-A bug
+	// of exactly that shape SURVIVED (#2838). THIS PR seeds those rows, and the
+	// same planted bug is now killed (diff [MFARecoveryCode AuditEvent
+	// MFASecret] — MFARecoveryCode falls outside the declared consumption).
+	//
+	// So a green here now covers both the TOTP-step consumption this entry
+	// declares AND the recovery-code replacement the op is named for. Stated
+	// rather than assumed, because the earlier version of this comment is what
+	// kept the gap visible until it could be closed.
 	{
 		op:              "REST POST /api/v1/auth/mfa/recovery-codes/regenerate",
 		fn:              "(*KeyorixCore).requireReauth",
