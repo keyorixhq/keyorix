@@ -431,6 +431,8 @@ func scanFileForBypassesG1619(fset *token.FileSet, file *ast.File, hooked map[st
 // #1840 for why. The ordinal only ever appears where one function raw-writes
 // the same field more than once.
 var beforeSaveBypassAllowlistG1619 = map[string]string{
+	"server/http/grpc_rest_secret_read_guard_parity_test.go::TestSecretReadGuards_DenyIdenticallyOverGRPCAndREST::SecretNode.Expiration#1": "SecretNode.Expiration — same \"simulate a not-yet-swept expiry\" fixture technique as " +
+		"local_sharing_test.go: `past := time.Now().UTC().Add(-time.Hour)`, already canonical, so BeforeSave would be a no-op; commented in place.",
 	"internal/storage/store/local_sharing_test.go::TestListShares_ExcludeExpiredIncludeActive::ShareRecord.ExpiresAt#1": "ShareRecord.ExpiresAt — #1619's original known case, fixed pre-#1619 in #1606: `past` is " +
 		"time.Now().UTC().Add(...), already canonical, so BeforeSave's normalization would be a no-op; the raw " +
 		"write is a deliberate \"simulate a not-yet-swept expiry\" fixture technique, commented in place as such.",
