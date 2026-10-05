@@ -57,20 +57,7 @@ const SPEC_GAP_REASON =
     'openapi.yaml -- the same pre-existing "145 undocumented operations" backlog ADR-074 ' +
     'describes. Remove this entry once an operation is added for this path+method.';
 
-const SERVICE_ACCOUNTS_REASON =
-    'No server-side route exists for this path at all (verified against router.go) -- not a ' +
-    'spec-documentation gap, a dead endpoint. Wired into a real page (APITokensPage.tsx via ' +
-    'useServiceAccounts.ts). NEEDS A PRODUCT DECISION (build the missing feature, or delete the ' +
-    'dead frontend code) -- see #2486. Remove this entry once that decision lands and one or the ' +
-    'other happens.';
-
 const KNOWN_VIOLATIONS = {
-    'mfa.ts:25': {
-        issue: '#2441',
-        reason:
-            "activate(code) posts { code } only; ActivateMFA's requestBody also requires password. " +
-            'Fix in flight: WEB-MFA #2466. Remove this entry once #2466 merges.',
-    },
     'admin.ts:58': { issue: 'ADR-074', reason: SPEC_GAP_REASON },
     'admin.ts:66': { issue: 'ADR-074', reason: SPEC_GAP_REASON },
     'admin.ts:73': { issue: 'ADR-074', reason: SPEC_GAP_REASON },
@@ -87,15 +74,8 @@ const KNOWN_VIOLATIONS = {
     'notificationChannels.ts:64': { issue: 'ADR-074', reason: SPEC_GAP_REASON },
     'notificationChannels.ts:74': { issue: 'ADR-074', reason: SPEC_GAP_REASON },
     'rbac.ts:96': { issue: 'ADR-074', reason: SPEC_GAP_REASON },
-    'secrets.ts:145': { issue: 'ADR-074', reason: SPEC_GAP_REASON },
+    'secrets.ts:162': { issue: 'ADR-074', reason: SPEC_GAP_REASON },
     'users.ts:149': { issue: 'ADR-074', reason: SPEC_GAP_REASON },
-    'serviceAccounts.ts:32': { issue: '#2486', reason: SERVICE_ACCOUNTS_REASON },
-    'serviceAccounts.ts:39': { issue: '#2486', reason: SERVICE_ACCOUNTS_REASON },
-    'serviceAccounts.ts:48': { issue: '#2486', reason: SERVICE_ACCOUNTS_REASON },
-    'serviceAccounts.ts:54': { issue: '#2486', reason: SERVICE_ACCOUNTS_REASON },
-    'serviceAccounts.ts:58': { issue: '#2486', reason: SERVICE_ACCOUNTS_REASON },
-    'serviceAccounts.ts:66': { issue: '#2486', reason: SERVICE_ACCOUNTS_REASON },
-    'serviceAccounts.ts:74': { issue: '#2486', reason: SERVICE_ACCOUNTS_REASON },
 };
 
 // ---------------------------------------------------------------------------
