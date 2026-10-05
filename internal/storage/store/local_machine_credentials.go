@@ -42,7 +42,19 @@ type credentialWithIdentityState struct {
 	IdentityState string `gorm:"column:identity_state"`
 }
 
+// GetMachineIdentityCredentialWithIdentityStateByHash is the live
+// revocation re-check every machine-token request runs, cache hit or miss
+// (PR-1/PR-2 deliberately never cache it). H3 (PERF-3): served from a
+// hand-written prepared statement (credential_lookup_raw.go) when
+// available — see that file's header for why, and
+// TestCredentialLookupRaw_MatchesGORM_Fuzz for the proof the two paths
+// agree. Falls back to the original GORM query unchanged whenever the raw
+// path isn't available (transaction-scoped LocalStorage, or a prepare
+// failure) — this method's observable behavior is identical either way.
 func (ls *LocalStorage) GetMachineIdentityCredentialWithIdentityStateByHash(ctx context.Context, hash string) (*models.MachineIdentityCredential, string, error) {
+	if cred, state, handled, err := ls.getMachineIdentityCredentialWithIdentityStateByHashRaw(ctx, hash); handled {
+		return cred, state, err
+	}
 	var row credentialWithIdentityState
 	err := ls.db.WithContext(ctx).
 		Table("machine_identity_credentials AS c").
