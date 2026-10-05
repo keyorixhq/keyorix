@@ -1115,19 +1115,13 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// report: the recommended resolution is to teach oracle (a) the class-B
 	// ledger, not to change either function).
 	//
-	// #2817: DisableMFA (internal/core/mfa.go) runs requireReauth -- itself a
-	// class-B row (atomicity-exempt.tsv:61) -- BEFORE the
-	// SetUserMFAEnabled+DeleteMFAForUser transaction. requireReauth's
-	// MarkTOTPStepUsed burns the matched TOTP time-step
-	// (MFASecret.LastUsedStep) and writes an "mfa.reauth_verified" AuditEvent
-	// on c.storage, outside that transaction, so a DeleteMFAForUser error
-	// rolls the disable back and correctly leaves the step burned.
-	{
-		op: "REST POST /api/v1/auth/mfa/disable", method: "DeleteMFAForUser", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2817", expires: "2026-10-17",
-		tables:     []string{"AuditEvent", "MFASecret"},
-		findingDoc: "#2817",
-	},
+	// #2817's tolerance was here and is REMOVED by this PR -- oracle (a) now
+	// knows the class-B consume-first shape directly
+	// (consumeFirstAccountsForDiff, consume_first_oracle_test.go), so the
+	// exemption is derived from docs/atomicity-exempt.tsv rather than listed
+	// as an open finding, and it covers EVERY storage method on the op rather
+	// than the one method a tolerance row could name.
+	//
 	// #2814: CompleteSAML (internal/core/sso.go) is itself a class-B row
 	// (atomicity-exempt.tsv:76) -- ConsumeSSOLoginState burns the single-use
 	// RelayState row first, by design, because st.Nonce is what the
@@ -1417,6 +1411,18 @@ func checkOracles(t *testing.T, in oracleInput) {
 				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in outcome-log tables %v — see "+
 					"onlyOutcomeLogTables' doc comment on the SUCCESS branch above; the same reasoning applies "+
 					"to a reported ERROR", label, diff)
+				return
+			}
+			// Fourth layer, ERROR branch only: the consume-first shape
+			// docs/atomicity-exempt.tsv already classifies as correct (class B).
+			// Accepts ONLY when the entire before→after change is the op's
+			// declared single-use consumption — see consume_first_oracle_test.go
+			// for exactly what it verifies and, as importantly, what it does not.
+			if e, ok := consumeFirstAccountsForDiff(in); ok {
+				t.Logf("ACCEPTABLE-BY-DESIGN (consume-first, docs/atomicity-exempt.tsv class B, %s): %s: "+
+					"state diverges in %v, but every table and column OUTSIDE this op's declared single-use "+
+					"consumption is byte-for-byte identical to this run's own pre-fault state — %s",
+					e.fn, label, diff, e.why)
 				return
 			}
 			report("a", diff, "%s: ORACLE (a) VIOLATION — reported an ERROR but logical state changed anyway "+
