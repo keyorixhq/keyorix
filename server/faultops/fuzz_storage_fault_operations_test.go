@@ -878,80 +878,26 @@ var knownOpenTolerances = []knownOpenTolerance{
 		tables:     []string{"MFAStepUpGrant", "LoginAttempt", "AuditEvent"},
 		findingDoc: "#2807",
 	},
-	// docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md
-	// (SESSION-FI, AT5): NOT a bug -- BulkRejectAccessRequests' unconditional
-	// summary audit event legitimately differs in content (X/Y counts) when
-	// the one requested item fails. Same shape onlyOutcomeLogTables already
-	// accepts unconditionally in the SUCCESS branch; the error-reporting
-	// `default:` branch has no equivalent exemption yet (filed as #2549,
-	// alongside the stepup NOTE below -- a harness-oracle gap, not a product
-	// bug, needs a decision on whether to build a general exemption).
-	// Reproduced directly against this PR's rebased opCatalog: op="REST POST
-	// /api/v1/access-requests/bulk-reject" fault=(method=GetAccessRequest,
-	// NthCall=1, kind=error) -- oracle (a) VIOLATION, differing tables:
-	// [AuditEvent].
-	{
-		op: "REST POST /api/v1/access-requests/bulk-reject", method: "GetAccessRequest", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2549", expires: "2026-10-17",
-		findingDoc: "docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md",
-	},
-	// Third instance of the identical #2549 harness-oracle gap, this time on
-	// BulkApproveAccessRequests' own sibling unconditional summary audit event
-	// (internal/core/bulk_access_requests.go: "Written unconditionally... a
-	// batch where every item fails ... would otherwise leave no trail that
-	// this bulk operation was attempted") -- same shape as the bulk-reject
-	// entry directly above, just the approve-side counterpart. Found live by
-	// CI's own fuzz shard 1 on this PR's own run (not caused by this PR --
-	// bulk-approve's opCatalog wiring and result-detection fix are #2392's
-	// own, but the underlying audit-write shape is pre-existing and shared
-	// with bulk-reject). Reproduced directly: op="REST POST
-	// /api/v1/access-requests/bulk-approve" fault=(method=GetAccessRequest,
-	// NthCall=1, kind=error) -- oracle (a) VIOLATION, differing tables:
-	// [AuditEvent].
-	{
-		op: "REST POST /api/v1/access-requests/bulk-approve", method: "GetAccessRequest", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2549", expires: "2026-10-17",
-		tables:     []string{"AuditEvent"},
-		findingDoc: "docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md",
-	},
-	// A SECOND distinct (method, nth) trigger of the identical #2549 gap on
-	// the SAME op, found by the next CI run: BulkApproveAccessRequests' loop
-	// calls Authorize (which calls RoleSetBypassesPermissionChecks) per item,
-	// so a fault on ANY per-item storage call -- not just GetAccessRequest --
-	// reaches the same unconditional final audit write and produces the
-	// identical AuditEvent-only diff. Narrowly re-added per-(method, nth) as
-	// its own entry rather than widening to a method wildcard, since the
-	// existing knownOpenTolerance struct has no nth-wildcard mechanism (unlike
-	// method's blank-matches-any) and inventing one is a shared-mechanism
-	// change, not a data entry -- flagging for the coordinator to decide
-	// whether that's worth building, since CI's fuzz-changed will likely keep
-	// finding new (method, nth) pairs within this same loop otherwise.
-	// Reproduced directly: op="REST POST /api/v1/access-requests/bulk-approve"
-	// fault=(method=RoleSetBypassesPermissionChecks, NthCall=4, kind=error) --
-	// oracle (a) VIOLATION, differing tables: [AuditEvent].
-	{
-		op: "REST POST /api/v1/access-requests/bulk-approve", method: "RoleSetBypassesPermissionChecks", kind: faultstorage.KindError,
-		nth: 4, oracle: "a", issue: "#2549", expires: "2026-10-17",
-		tables:     []string{"AuditEvent"},
-		findingDoc: "docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md",
-	},
-	// THIRD distinct (method, nth) trigger of the identical bulk-approve gap,
-	// found by yet another CI shard: GetRolePermissions#1/error, same
-	// [AuditEvent]-only diff. See the coordinator-flag comment on this PR --
-	// three independent storage calls inside BulkApproveAccessRequests' own
-	// per-item loop (GetAccessRequest, RoleSetBypassesPermissionChecks,
-	// GetRolePermissions -- all reachable from ApproveAccessRequest's
-	// Authorize call for a single item) now confirm the root cause is
-	// structural to the WHOLE LOOP, not any specific call within it.
-	// Reproduced directly: op="REST POST /api/v1/access-requests/bulk-approve"
-	// fault=(method=GetRolePermissions, NthCall=1, kind=error) -- oracle (a)
-	// VIOLATION, differing tables: [AuditEvent].
-	{
-		op: "REST POST /api/v1/access-requests/bulk-approve", method: "GetRolePermissions", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2549", expires: "2026-10-17",
-		tables:     []string{"AuditEvent"},
-		findingDoc: "docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md",
-	},
+	// FOUR entries citing #2549 for the bulk access-request ops
+	// (bulk-reject/GetAccessRequest#1, and bulk-approve/GetAccessRequest#1,
+	// /RoleSetBypassesPermissionChecks#4, /GetRolePermissions#1) were DELETED
+	// here, not fixed and not re-filed: they had gone DEAD. #2549 was filed
+	// when the error-reporting branch had no outcome-log exemption; it has one
+	// now, so an [AuditEvent]-only diff is accepted there and report() is never
+	// reached, which means matchingKnownOpen was never consulted for any of the
+	// four. They were expiring carve-outs for a case nothing flags.
+	//
+	// Verified by driving each one: diff vs the pre-fault state is [AuditEvent],
+	// accepted by onlyOutcomeLogTables with an ACCEPTABLE-BY-DESIGN log line.
+	// What covers them now is pinned by
+	// TestOracleAErrorBranch_BulkAccessRequestAuditDiffIsAcceptedWithoutATolerance
+	// (oracle_a_by_design_test.go), so a future reader seeing that log line can
+	// tell it is deliberate and does not re-add a tolerance "just in case".
+	//
+	// The staleness that hid this is now itself checked:
+	// TestKnownOpenTolerances_AreLoadBearing drives every fully-specified entry
+	// in this list and fails on any that no longer tolerates anything.
+	//
 	// docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md
 	// (SESSION-FI, AT5, out of OWNS, not fixed there): loadTOTPSecret's
 	// GetMFASecret error is checked with `err == nil` as the gate to even
@@ -1000,22 +946,45 @@ var knownOpenTolerances = []knownOpenTolerance{
 		tables:     []string{"LoginAttempt"},
 		findingDoc: "docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md",
 	},
-	// docs/findings/2026-10-02-NOTE-mfa-stepup-consume-first-grant-failure-reported-as-error.md
-	// (SESSION-FI2): NOT a bug -- VerifyMFAStepUp's own doc comment and
-	// TestVerifyMFAStepUp_GrantFailureAfterConsume_FailsClosed already prove
-	// this exact shape (TOTP step consumed, then CreateMFAStepUpGrant fails,
-	// reported as an error) is the intended fail-closed design. Same harness-
-	// oracle gap as the bulk-access-request NOTE above; filed together as
-	// #2549. Reproduced directly against this PR's rebased opCatalog:
-	// op="REST POST /api/v1/auth/mfa/stepup"
-	// fault=(method=CreateMFAStepUpGrant, NthCall=1, kind=error) -- oracle (a)
-	// VIOLATION, differing tables: [MFASecret].
+	// The KindPanic arm of the SAME #2548 wildcard entry directly above. Found by
+	// a live run while working #2549, confirmed PRE-EXISTING by byte-for-byte
+	// replay against unmodified origin/main (fault=GetMFASecret#1/panic, oracle
+	// (a), differing tables: [LoginAttempt]).
+	//
+	// FLAG FOR THE COORDINATOR — a pattern, not just a row. Both of this run's
+	// LoginAttempt findings (this one and the webauthn/login/finish panic above)
+	// are the KindPanic arm of an EXISTING KindError wildcard entry, same op,
+	// same table, same root cause (reserveLoginAttempt writes unconditionally
+	// before the faulted call runs, so the row is there whatever the fault is).
+	// The existing entries wildcard `method` precisely so the next storage call
+	// CI finds is not a fresh red build — but `kind` has no wildcard, so every
+	// such entry needs its panic twin added by hand, and CI's randomized
+	// fuzz-changed will keep producing them one at a time. That is the same
+	// shared-mechanism question an earlier author already flagged for `nth`
+	// ("the existing knownOpenTolerance struct has no nth-wildcard mechanism ...
+	// inventing one is a shared-mechanism change, not a data entry"). Deciding
+	// whether to add a kind-wildcard belongs with that one; NOT invented here,
+	// and deliberately not worked around by widening either existing entry
+	// (COMMON-RULES: never widen an existing tolerance to make CI green).
 	{
-		op: "REST POST /api/v1/auth/mfa/stepup", method: "CreateMFAStepUpGrant", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2549", expires: "2026-10-17",
-		tables:     []string{"MFASecret"},
-		findingDoc: "docs/findings/2026-10-02-NOTE-mfa-stepup-consume-first-grant-failure-reported-as-error.md",
+		op: "REST POST /auth/mfa/verify", kind: faultstorage.KindPanic,
+		nth: 1, oracle: "a", issue: "#2548", expires: "2026-10-17",
+		tables:     []string{"LoginAttempt"},
+		findingDoc: "docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md",
 	},
+	// The fifth #2549 entry (op="REST POST /api/v1/auth/mfa/stepup",
+	// method=CreateMFAStepUpGrant#1, tables=[MFASecret]) MOVED to
+	// oracleAByDesignErrors (oracle_a_by_design_test.go). Unlike the four bulk-op
+	// entries above it was genuinely load-bearing — MFASecret is business state,
+	// not an outcome log, so no existing exemption reached it — but a
+	// knownOpenTolerance was the wrong instrument: this list means "a filed,
+	// not-yet-fixed bug, tolerated until someone fixes it", and the entry's own
+	// comment said the opposite ("NOT a bug ... the intended fail-closed
+	// design"). An expiring bug tolerance over intended behaviour can only be
+	// re-filed forever. It now sits in a mechanism whose rows assert
+	// by-design-ness and are required to cite the production comment and the
+	// proving test that establish it.
+	//
 	// Pre-existing, unrelated to this PR's own MFA-reauth changes -- found by
 	// a live 2-minute FuzzStorageFaultOperations run during this PR's rebase,
 	// confirmed to reproduce identically on unmodified origin/main. Filed as
@@ -1057,6 +1026,117 @@ var knownOpenTolerances = []knownOpenTolerance{
 		nth: 1, oracle: "a", issue: "#2565", expires: "2026-10-17",
 		tables:     []string{"LoginAttempt"},
 		findingDoc: "#2565",
+	},
+	// The KindPanic arm of the SAME #2565 finding, found by a 2-minute live
+	// FuzzStorageFaultOperations run while working #2549
+	// (fault=ListWebAuthnCredentials#1/panic, oracle (a), differing tables:
+	// [LoginAttempt]). Confirmed PRE-EXISTING, not caused by #2549's change:
+	// replayed byte-for-byte against unmodified origin/main, where it fails
+	// identically (COMMON-RULES' "replay the failing input on origin/main
+	// first" rule). #2549 only ADDS an exemption branch and deletes tolerances
+	// that were already never consulted, neither of which can make the oracle
+	// report more.
+	//
+	// Same op, same oracle, same LoginAttempt-only diff, same root cause the
+	// KindError entry above describes (reserveLoginAttempt writes
+	// UNCONDITIONALLY, before the verification path runs, so the row is there
+	// whatever the fault is). kind is the ONLY axis that differs, so this is a
+	// one-field sibling, not a widening: method stays blank for the reason that
+	// entry gives, and tables stays scoped to LoginAttempt so a diff touching
+	// anything else still fails. Remove when #2565 is fixed.
+	//
+	// No corpus seed committed for it deliberately: this harness's input bytes
+	// encode the op as a raw opCatalog INDEX, so a committed seed decodes to a
+	// different op after any rebase that reorders the catalog (a hazard this
+	// repo has already been bitten by). The tolerance is keyed on
+	// (op, kind, nth, tables), which is rebase-stable; the seed would not be.
+	{
+		op: "REST POST /auth/webauthn/login/finish", kind: faultstorage.KindPanic,
+		nth: 1, oracle: "a", issue: "#2565", expires: "2026-10-17",
+		tables:     []string{"LoginAttempt"},
+		findingDoc: "#2565",
+	},
+	// Also found by the same live run while working #2549, also confirmed
+	// PRE-EXISTING by byte-for-byte replay against unmodified origin/main, also
+	// not caused by #2549's change. Filed as #2834 (no prior issue found).
+	//
+	// buildClassificationPosture (internal/core/compliance_posture.go:714)
+	// degrades rather than fails when a sub-count read errors: the snapshot is
+	// PERSISTED with partial counts and the request reports success. The
+	// degradation is recorded (cp.degrade sets Degraded/DegradedReasons, and the
+	// persisted row carries DegradedControls), which is the same deliberate
+	// partial-snapshot-with-a-durable-marker shape OpenAccessReviewCampaign uses
+	// (#483) -- so this is PROBABLY acceptable-by-design and belongs in
+	// opScopedBestEffortTables with requireLogSubstring pinned to the degrade
+	// line. #2834 asks the compliance-posture owner to decide that; classifying
+	// another subsystem's behaviour as by-design without its owner is exactly the
+	// claim #2549 was filed about, so it is tolerated here rather than
+	// reclassified.
+	//
+	// method is NOT wildcarded even though the three sibling counts share the
+	// root cause: a wildcard would hide a future, genuinely different divergence
+	// on this op. tables is the one table, so anything else still fails. Remove
+	// when #2834 is resolved either way.
+	{
+		op: "REST POST /api/v1/compliance/snapshots", method: "CountDynamicSecretConfigsByClassification",
+		kind: faultstorage.KindError,
+		nth:  1, oracle: "a", issue: "#2834", expires: "2026-11-07",
+		tables:     []string{"CompliancePostureSnapshot"},
+		findingDoc: "#2834",
+	},
+	// Third pre-existing finding from the same live runs, also confirmed by
+	// byte-for-byte replay against unmodified origin/main. Filed as #2841,
+	// SEPARATELY from #2565 (the LoginAttempt-only finding on this same op)
+	// because the shape is different, not just wider: the WebAuthn assertion
+	// VERIFIES, so the session row, the unconditional MFAStepUpGrant both
+	// WebAuthn login paths mint, and the login audit event all land — and then
+	// the faulted GetUserRoles on the validate-session step
+	// (internal/core/auth.go:568) maps to ErrRoleResolutionUnavailable and the
+	// handler reports failure. A caller told the login failed is in fact
+	// authenticated, holding a live ambient step-up grant.
+	//
+	// Not an escalation (the user authenticated correctly), but the response and
+	// the persisted state disagree, and #2841 asks the auth/WebAuthn owner which
+	// way to resolve it — role-NAME resolution failing is arguably not grounds to
+	// fail a verified login at all, which is the opposite fix from rolling the
+	// session and grant back. Either answer is defensible; picking one is not
+	// #2549's call.
+	//
+	// method is PINNED here, unlike #2565's wildcard entry on the same op:
+	// #2565's tables is [LoginAttempt] and correctly does not cover this
+	// three-table diff, so leaving this unpinned would have widened #2565 in
+	// effect (COMMON-RULES: never widen an existing tolerance to make CI green).
+	// Remove when #2841 is resolved either way.
+	{
+		op: "REST POST /auth/webauthn/login/finish", method: "GetUserRoles", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2841", expires: "2026-11-07",
+		tables:     []string{"AuditEvent", "LoginAttempt", "MFAStepUpGrant"},
+		findingDoc: "#2841",
+	},
+	// Fourth and LAST pre-existing finding tolerated from the same live runs,
+	// also confirmed by byte-for-byte replay against unmodified origin/main.
+	// Filed as #2844, which also records the thing that made me stop here: FOUR
+	// distinct pre-existing oracle (a) findings surfaced in ~15 minutes of live
+	// fuzzing, the committed corpus being green throughout. Per-finding
+	// tolerances cannot converge at that rate, and COMMON-RULES' remedy assumes
+	// roughly one such event per PR rather than a stream — so #2844 asks for a
+	// batch triage of the standing backlog (#2407 #2548 #2554 #2565 #2599 #2606
+	// #2834 #2841 and itself) instead of an unbounded tolerance list growing
+	// inside #2549's PR. Expect CI's fuzz-changed to find a fifth; that is the
+	// documented, expected outcome, not a surprise.
+	//
+	// WebAuthn registration finishing is expected to invalidate the user's other
+	// sessions (an MFA/credential-enrollment change is one of the session-revoke
+	// events); when DeleteSessionsForUserExcept fails, the registration still
+	// reports SUCCESS, so the credential is enrolled and the other sessions
+	// survive. Whether that should fail closed or retry is the auth owner's call.
+	// Remove when #2844 is resolved.
+	{
+		op: "REST POST /api/v1/auth/webauthn/register/finish", method: "DeleteSessionsForUserExcept",
+		kind: faultstorage.KindError,
+		nth:  1, oracle: "a", issue: "#2844", expires: "2026-11-07",
+		tables:     []string{"Session"},
+		findingDoc: "#2844",
 	},
 	// Pre-existing, unrelated to this PR's own MFA-reauth changes (#2392 only
 	// newly wires /auth/mfa/verify into the fuzzer, it doesn't touch this code
@@ -1224,6 +1304,16 @@ var knownOpenTolerances = []knownOpenTolerance{
 	},
 }
 
+// observeKnownOpenMatch, when non-nil, is called with every tolerance
+// matchingKnownOpen actually returns. #2549: it exists so
+// TestKnownOpenTolerances_AreLoadBearing can watch the REAL suppression
+// decision instead of re-deriving checkOracles' accept-before-report ordering.
+// A reconstruction of that ordering would be a second implementation of it, and
+// if the two drifted the staleness check would report a LIVE tolerance as dead
+// and invite someone to delete a real carve-out — the one failure mode a
+// staleness check must not have.
+var observeKnownOpenMatch func(*knownOpenTolerance)
+
 func matchingKnownOpen(in oracleInput, oracle string, diff []string) *knownOpenTolerance {
 	for i, k := range knownOpenTolerances {
 		if k.op != in.op || k.kind != in.kind || k.nth != in.nth || k.oracle != oracle {
@@ -1234,6 +1324,9 @@ func matchingKnownOpen(in oracleInput, oracle string, diff []string) *knownOpenT
 		}
 		if len(k.tables) > 0 && !diffSubsetOf(diff, k.tables) {
 			continue
+		}
+		if observeKnownOpenMatch != nil {
+			observeKnownOpenMatch(&knownOpenTolerances[i])
 		}
 		return &knownOpenTolerances[i]
 	}
@@ -1510,6 +1603,19 @@ func checkOracles(t *testing.T, in oracleInput) {
 					"state diverges in %v, but every table and column OUTSIDE this op's declared single-use "+
 					"consumption is byte-for-byte identical to this run's own pre-fault state — %s",
 					e.fn, label, diff, e.why)
+			// #2549: the error-reporting branch's own business-state exemption.
+			// The three layers above all describe a side effect the code is
+			// willing to LOSE (best-effort) or a log of the reported outcome.
+			// Neither covers the opposite shape: a mutation the code
+			// deliberately KEEPS while reporting failure, where the mutation IS
+			// the security behaviour (VerifyMFAStepUp advancing the TOTP replay
+			// window before failing closed). Each row is reviewed, names the
+			// production comment and the test that establish the design, and
+			// allowlists an EXACT table set — see oracle_a_by_design_test.go.
+			if e := oracleAErrorByDesign(in.op, in.method, in.kind, in.nth, diff); e != nil {
+				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in %v, which this op/method pair "+
+					"deliberately keeps while reporting failure — %s (proving test: %s)",
+					label, diff, e.designComment, e.provingTest)
 				return
 			}
 			report("a", diff, "%s: ORACLE (a) VIOLATION — reported an ERROR but logical state changed anyway "+
