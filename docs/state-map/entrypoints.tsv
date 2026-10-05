@@ -413,7 +413,6 @@ grpc	UserService.DeleteUser	server/proto/keyorix.proto	99	DeleteUser	none	single
 grpc	UserService.GetUser	server/proto/keyorix.proto	93	GetUser	none	single/no write-shaped call found by a 1-hop scan of the handler body
 grpc	UserService.ListUsers	server/proto/keyorix.proto	102	ListUsers	none	single/no write-shaped call found by a 1-hop scan of the handler body
 grpc	UserService.UpdateUser	server/proto/keyorix.proto	96	UpdateUser	none	single/no write-shaped call found by a 1-hop scan of the handler body
-job	anomaly_detection	server/main.go	1232		none	single/no write-shaped call found by a 1-hop scan of the handler body
 job	audit_checkpoint	server/main.go	1547		none	single/no write-shaped call found by a 1-hop scan of the handler body
 job	auto_rotation	server/main.go	1435		none	single/no write-shaped call found by a 1-hop scan of the handler body
 job	certificate_expiry	server/main.go	1390		none	single/no write-shaped call found by a 1-hop scan of the handler body

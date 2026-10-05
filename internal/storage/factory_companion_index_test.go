@@ -39,6 +39,11 @@ func TestCompanionIndexes_CreatedOnUpgrade(t *testing.T) {
 		{"machine_identity_credentials.classification", "idx_machine_identity_credentials_classification"},
 		{"dynamic_secret_configs.classification", "idx_dynamic_secret_configs_classification"},
 		{"anomaly_alerts.alerted", "idx_anomaly_alerts_alerted"},
+		// C-PERF-FIXES: CreateAnomalyAlert's dedup count and the anomaly detector's
+		// per-secret / candidate access-log reads.
+		{"anomaly_alerts dedup (composite)", "idx_anomaly_alerts_dedup"},
+		{"secret_access_logs (secret_node_id, access_time)", "idx_secret_access_logs_secret_time"},
+		{"secret_access_logs.access_time", "idx_secret_access_logs_access_time"},
 		// ADR-029 tamper-evidence hash chain — the highest-stakes case: VerifyAuditChain
 		// is a security control, and an unindexed prev_hash/entry_hash lookup degrading
 		// to a full table scan as audit_events grows risks the check being skipped

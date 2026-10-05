@@ -1282,6 +1282,12 @@ type Storage interface {
 	// implementation's doc comment for why `since` must stay a coarse (date-scale)
 	// bound rather than a narrow live-window one.
 	PrincipalSecretFirstSeen(ctx context.Context, since time.Time) (map[string]map[uint]time.Time, error)
+	// ListSecretIDsAccessedSince returns the distinct secret IDs with at least one
+	// access-log row (any action, any accessor) at or after since. Backs the anomaly
+	// detector's incremental sweep: a secret with no access-log row in the detection
+	// horizon cannot trip any per-secret rule, so the detector skips its per-secret
+	// access-log reads instead of sweeping every secret on every pass.
+	ListSecretIDsAccessedSince(ctx context.Context, since time.Time) ([]uint, error)
 	// MostAccessedSecrets returns the most-read secrets (optionally scoped to a
 	// project and, further, to a single environment within it) in the window
 	// since `since`, ordered by read count descending, capped at `limit`. Backs

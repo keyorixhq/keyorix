@@ -1233,7 +1233,10 @@ func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.
 		if alertsEnabled {
 			log.Printf("Anomaly alerting enabled: scan + alert every %s", interval)
 		}
-		runScheduler(ctx, "anomaly_detection", interval, func() middleware.SchedulerOutcome {
+		// First pass deferred + jittered, not run at startup — see anomalyFirstPassDelay.
+		firstDelay := anomalyFirstPassDelay(interval, defaultRandN)
+		log.Printf("Anomaly detection: first pass in %s, then every %s", firstDelay.Round(time.Second), interval)
+		runSchedulerAfter(ctx, "anomaly_detection", interval, firstDelay, func() middleware.SchedulerOutcome {
 			return lockedRun(ctx, coreService.Storage(), schedLockAnomaly, "Anomaly detection", func() error {
 				// Hotload: re-apply the persisted config before each pass so an operator's
 				// runtime change takes effect without a restart. Best-effort: a transient

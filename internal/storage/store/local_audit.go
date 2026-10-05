@@ -121,6 +121,33 @@ func (ls *LocalStorage) PrincipalSecretFirstSeen(ctx context.Context, since time
 	return out, nil
 }
 
+// ListSecretIDsAccessedSince returns the distinct secret IDs with at least one
+// access-log row at or after since — every action and every accessor (including an
+// empty accessed_by), deliberately unlike PrincipalSecretFirstSeen's accessed_by != ”
+// filter: the anomaly detector uses this to decide which secrets to evaluate at all,
+// and its off_hours/frequency_spike/cumulative_rate rules fire on rows regardless of
+// accessor, so narrowing it here would silently drop detections. Served by
+// idx_secret_access_logs_access_time.
+func (ls *LocalStorage) ListSecretIDsAccessedSince(ctx context.Context, since time.Time) ([]uint, error) {
+	// G81 (SecretAccessLog.AccessTime): normalize internally — see GetAuditLogs.
+	//
+	// The unary plus in `DISTINCT +secret_node_id` is deliberate (a no-op on both
+	// dialects): with a bare `DISTINCT secret_node_id`, SQLite's stats-less planner
+	// prefers a full scan of idx_secret_access_logs_secret_time (already ordered by
+	// secret_node_id, so DISTINCT needs no sort) over a range scan of
+	// idx_secret_access_logs_access_time — reading the whole append-only table every
+	// pass. The expression hides that ordering, so the range scan wins.
+	// TestAnomalyQueries_UseTheirIndexes pins the resulting plan.
+	var ids []uint
+	err := ls.db.WithContext(ctx).
+		Raw("SELECT DISTINCT +secret_node_id AS secret_node_id FROM secret_access_logs WHERE access_time >= ?", since.UTC()).
+		Scan(&ids).Error
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 // scanTime portably scans a SQL timestamp that some drivers return as time.Time
 // (Postgres) and others as a string from an aggregate like MAX() (SQLite).
 type scanTime struct{ t *time.Time }
