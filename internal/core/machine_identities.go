@@ -352,7 +352,14 @@ func machineVerb(to string) string {
 }
 
 func (c *KeyorixCore) logMachineEvent(ctx context.Context, eventType string, m *models.MachineIdentity, actorID uint) {
+	c.logMachineEventOn(ctx, c.auditNow(), eventType, m, actorID)
+}
+
+// logMachineEventOn is logMachineEvent against an explicit audit target
+// (audit_target.go) — the access-review revoke path writes a machine role
+// removal's event inside the same transaction as the removal.
+func (c *KeyorixCore) logMachineEventOn(ctx context.Context, tgt auditTarget, eventType string, m *models.MachineIdentity, actorID uint) {
 	aid, pid := actorID, m.ProjectID
-	c.writeAuditEventFull(ctx, eventType, &aid, nil, &pid, "",
+	c.writeAuditEventFullOn(ctx, tgt, eventType, &aid, nil, &pid, "",
 		fmt.Sprintf("machine identity %q (%s) in project %d → %s", m.Name, m.IdentityType, m.ProjectID, m.State))
 }

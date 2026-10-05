@@ -251,14 +251,36 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
 - **INV-CORE-37** A SUCCESS audit event never textually precedes the storage write it reports
   on, in the same function; denial/failure events are exempt by construction, anything else
   needs a reviewed `AUDIT:<fn>` exemption. Guard: `atomicity_guard_test.go:TestAtomicityGuard_AuditBeforeWrite`.
-- **INV-CORE-41** `DecideAccessReviewItem`'s attest path does every fallible read
-  (reviewer controls, the live grant re-verification) BEFORE the conditional claim that commits
-  the item's decision, and nothing that can fail after it — so a reported error means the item
-  is still pending. (The revoke path must act after its claim to keep the #1646 race closed; its
-  post-claim failure window is logged as `SECURITY: ... manual reconciliation required`.) Why:
-  #2570, found by `FuzzStorageFaultOperations`. Guard:
-  `access_review_decide_read_before_write_test.go:TestDecideAccessReviewItem_AttestGrantLookupErrorLeavesItemPending`,
-  corpus seed `2570_decideaccessreviewitem_listprojectroleassignments_error`.
+- **INV-CORE-41** A failed `DecideAccessReviewItem` leaves the item PENDING and the grant
+  untouched — for BOTH decisions, so a reported error always means "nothing happened, retry",
+  never "the evidence says one thing and the access says another". The two halves get there
+  differently because they must:
+  - **attest** does every fallible read (reviewer controls, the live grant re-verification)
+    BEFORE the conditional claim, and nothing that can fail after it. Why: #2570, found by
+    `FuzzStorageFaultOperations`. Guard:
+    `access_review_decide_read_before_write_test.go:TestDecideAccessReviewItem_AttestGrantLookupErrorLeavesItemPending`,
+    corpus seed `2570_decideaccessreviewitem_listprojectroleassignments_error`.
+  - **revoke** cannot use that ordering — claim-before-act is what closes #1646's
+    cross-replica attest/revoke race — so it runs claim + removal + both audit events in ONE
+    transaction (`access_review_decide_tx.go`), named lock OUTSIDE and transaction INSIDE.
+    Closed 2026-10-05 (#2676); before it, a failed removal left the item stamped `revoked`
+    while the grant was still live (false ISO 27001 A.5.18 / SOC 2 CC6.2-6.3 evidence) and
+    un-retryable, logged as `SECURITY: ... manual reconciliation required`. Reachable with no
+    fault injection at all: a last-project-admin guard REFUSAL took the same path. Guards:
+    `access_review_decide_atomicity_test.go` (faultstorage, plus the guard-refusal and
+    audit-write-failure calibration cases),
+    `concurrency_access_review_revoke_tx_postgres_test.go` (pg-gated: the lock-ordering and
+    two-connection budget the nesting costs, which is also what pins no third pooled
+    connection is taken inside the transaction).
+
+    The revoke path and the standalone `RevokeAccessReviewGrant` endpoint share ONE
+    validation + principal-kind dispatch (`planReviewRevoke`) and ONE lock-and-guard decision
+    per removal shape (`with{User,Group,Machine}RoleRemovalGuards`, also used by the public
+    `RemoveUserRole`/`RemoveRoleFromGroup`/`RemoveMachineRole`). Guard that the sharing is
+    real, not claimed:
+    `access_review_decide_atomicity_test.go:TestDecideAccessReviewItem_RevokeStillRefusedByLastProjectAdminGuard`
+    — if the access-review path ever re-implemented the removal, that is the assertion that
+    would go red.
 
 ## Check-then-act across replicas (GUARD-2)
 
