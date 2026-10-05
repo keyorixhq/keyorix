@@ -500,7 +500,11 @@ func newRBACAdvancedStore(t *testing.T) *LocalStorage {
 		&models.Project{}, &models.Environment{},
 		&models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.User{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
-		&models.MachineIdentity{}, &models.MachineIdentityRole{})
+		&models.MachineIdentity{}, &models.MachineIdentityRole{},
+		// SystemMetadata: AssignPermissionToRole/RemovePermissionFromRole/
+		// DeleteRole bump the PERF-3 PR-2 role_permissions cache generation
+		// (a system_metadata row) in the same transaction as the real write.
+		&models.SystemMetadata{})
 }
 
 func TestRBAC_RemoveAllProjectRoleGrants(t *testing.T) {

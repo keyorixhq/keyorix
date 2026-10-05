@@ -173,6 +173,13 @@ type LocalStorage struct {
 	// secret_metadata_cache.go's own header for why this must NOT be a package-level
 	// global instead.
 	secretMetaCache *secretMetadataCache
+	// rolePermCache backs RoleSetHasPermission's read-path cache (PERF-3,
+	// docs/specs/read-path-caching.md PR-2). A pointer so a transaction-scoped
+	// LocalStorage (see WithTransaction) shares the SAME cache as its parent,
+	// same sharing reason as auditChainMu etc. above — see
+	// role_permission_cache.go's own header for why this must NOT be a
+	// package-level global instead.
+	rolePermCache *rolePermissionCache
 }
 
 // clockWatermark pairs a mutex with the time.Time it guards, so a single
@@ -199,6 +206,7 @@ func NewLocalStorage(db *gorm.DB) *LocalStorage {
 		rbacClockWatermark:    &clockWatermark{},
 		auditFlusher:          &auditFlusherState{},
 		secretMetaCache:       newSecretMetadataCache(),
+		rolePermCache:         newRolePermissionCache(),
 	}
 }
 

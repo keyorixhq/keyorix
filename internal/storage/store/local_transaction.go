@@ -25,6 +25,7 @@ func (ls *LocalStorage) WithTransaction(ctx context.Context, fn func(storage.Sto
 			consumeClockWatermark: ls.consumeClockWatermark,
 			rbacClockWatermark:    ls.rbacClockWatermark,
 			secretMetaCache:       ls.secretMetaCache,
+			rolePermCache:         ls.rolePermCache,
 		})
 	})
 }
