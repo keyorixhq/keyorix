@@ -172,14 +172,15 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 			if reserved {
 				h.coreService.ReleaseLoginAttempt(r.Context(), attemptID)
 			}
-			// FIX-1 (#2548): a storage error never reached a verdict on the code at
-			// all — reporting it as "Invalid or expired code" would tell the caller
-			// their credential was wrong when it was never checked. A distinct
-			// 5xx-class response tells a legitimate client "retry", not "your code
-			// was wrong" (err itself is never passed through: it wraps the raw
-			// storage error, see ErrMFAVerificationStorageFailure's doc).
-			sendError(w, "ServiceUnavailable", errMFAVerificationUnavailable, http.StatusServiceUnavailable, nil)
-			return
+			// FIX-1 (#2548) + #2740 review (option C): 503 "retry" ONLY when the
+			// failure happened before any code was evaluated. A failure after the
+			// code was found correct stays a plain 401, identical to a wrong code,
+			// so the response can never confirm a correct guess. err itself is
+			// never passed through (it wraps the raw storage error).
+			if errors.Is(err, core.ErrMFAVerificationUnavailable) {
+				sendError(w, "ServiceUnavailable", errMFAVerificationUnavailable, http.StatusServiceUnavailable, nil)
+				return
+			}
 		}
 		sendError(w, "Unauthorized", "Invalid or expired code", http.StatusUnauthorized, nil)
 		return

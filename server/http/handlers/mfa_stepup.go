@@ -36,10 +36,17 @@ func (h *AuthHandler) MFAStepUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.coreService.VerifyMFAStepUp(r.Context(), userCtx.UserID, body.Code); err != nil {
-		if errors.Is(err, core.ErrMFAVerificationStorageFailure) {
-			// FIX-1 (#2548 sibling): a storage error never reached a verdict on the
-			// code at all — see errMFAVerificationUnavailable's doc (mfa.go).
+		if errors.Is(err, core.ErrMFAVerificationUnavailable) {
+			// FIX-1 (#2548 sibling) + #2740 review: no code was evaluated, so
+			// "retry" leaks nothing. See errMFAVerificationUnavailable (mfa.go).
 			sendError(w, "ServiceUnavailable", errMFAVerificationUnavailable, http.StatusServiceUnavailable, nil)
+			return
+		}
+		if errors.Is(err, core.ErrMFAVerificationStorageFailure) {
+			// Storage failed AFTER the code was found correct: answer exactly like
+			// a wrong code (same status, same text) so a correct guess is never
+			// confirmed, and never echo the wrapped storage error.
+			sendError(w, "Unauthorized", "invalid code", http.StatusUnauthorized, nil)
 			return
 		}
 		sendError(w, "Unauthorized", err.Error(), http.StatusUnauthorized, nil)

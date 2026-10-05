@@ -114,7 +114,7 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 		expectedPurpose: "",
 		reason:          "see internal/faultstorage/faulty_storage_generated.go:2233 — the second (KindEffectThenError) call to the real GetActiveMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
 	},
-	"internal/core/mfa.go:600": {
+	"internal/core/mfa.go:618": {
 		expectedPurpose: "MFAStepUpPurposeReauth",
 		reason: "(Line shifted to :600 by #2667 (ErrMFAEnrollmentChanged + pinned activation) after merging main's #2465 doc-comment additions on requireReauth together with this PR's own CR3 fix -- same ConsumeMFAStepUpGrant call, same purpose, not a new site.) requireReauth's account-security-factor-change gate (DisableMFA, " +
 			"RegenerateMFARecoveryCodes, ActivateMFA, WebAuthn credential register/delete, email change). " +
@@ -132,7 +132,7 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 			"reading a ClassificationRestricted secret's value. Must reject a MFAStepUpPurposeReauth grant " +
 			"(minted only for account-security changes) -- the two purposes must never satisfy each other.",
 	},
-	"internal/core/mfa_stepup.go:120": {
+	"internal/core/mfa_stepup.go:125": {
 		expectedPurpose: "",
 		reason: "HasActiveMFAStepUp's own implementation: forwards the `purpose` PARAMETER it was called " +
 			"with straight through to storage.GetActiveMFAStepUpGrant. This is the shared primitive, not a " +

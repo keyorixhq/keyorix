@@ -93,9 +93,11 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 // preempt a genuinely valid recovery code.
 func (c *KeyorixCore) verifyMFAStepUpCode(ctx context.Context, userID uint, code string) (bool, error) {
 	var storageErr error
+	codeMatched := false // see VerifyMFACredentials / ErrMFAVerificationUnavailable
 	if secret, serr := c.loadTOTPSecret(ctx, userID); serr != nil {
 		storageErr = serr
 	} else if step, ok := c.validateTOTPStep(secret, code); ok {
+		codeMatched = true
 		if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, userID, step); ferr != nil {
 			storageErr = ferr
 		} else if fresh {
@@ -107,6 +109,9 @@ func (c *KeyorixCore) verifyMFAStepUpCode(ctx context.Context, userID uint, code
 		storageErr = cerr
 	} else if consumed {
 		return true, nil
+	}
+	if storageErr != nil && !codeMatched {
+		storageErr = fmt.Errorf("%w: %w", ErrMFAVerificationUnavailable, storageErr)
 	}
 	return false, storageErr
 }
