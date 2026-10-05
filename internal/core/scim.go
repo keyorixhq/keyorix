@@ -371,8 +371,18 @@ func (c *KeyorixCore) scimUpdateUserTx(ctx context.Context, tx storage.Storage, 
 	if user.AccountState != origState {
 		// #454: persist the state transition FIRST and abort if the backend can't —
 		// prevents a false "success" that leaves login-blocking state silently unchanged.
-		if err := tx.SetAccountState(ctx, id, user.AccountState, c.now()); err != nil {
+		// C-RACE-FIX-B2: conditional on origState, the value applySCIMActiveState
+		// derived the new state from. UpdateUserIfActiveStateMatches below writes
+		// only the profile columns (#2653/#2654), so this is the ONLY write of
+		// account_state here, and a blind one would revert a SuspendUser that
+		// committed after the read above in the #G42 window (or anywhere the row
+		// lock is not held): a reactivation would turn that suspension into active.
+		matched, err := tx.SetAccountStateIfMatches(ctx, id, origState, user.AccountState, c.now())
+		if err != nil {
 			return nil, false, err
+		}
+		if !matched {
+			return nil, false, fmt.Errorf("user %d: %w", id, ErrUserAccountStateConflict)
 		}
 	}
 	user.UpdatedAt = c.now()
@@ -579,12 +589,20 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 			user.UpdatedAt = c.now()
 			if user.AccountState != origState {
 				// #454: persist the state transition via the narrow column-only write (not
-				// folded into the full-row write below). See SetAccountState's doc comment.
-				if err := tx.SetAccountState(ctx, id, user.AccountState, user.UpdatedAt); err != nil {
+				// folded into the profile-column write below, which never writes
+				// account_state, #2653/#2654). C-RACE-FIX-B2: conditional on origState —
+				// the value the "never downgrade a suspension" check above was evaluated
+				// against — so a suspension that commits after that read is refused here
+				// rather than overwritten with deprovisioned.
+				matched, err := tx.SetAccountStateIfMatches(ctx, id, origState, user.AccountState, user.UpdatedAt)
+				if err != nil {
 					return err
 				}
+				if !matched {
+					return fmt.Errorf("user %d: %w", id, ErrUserAccountStateConflict)
+				}
 			}
-			// Persist IsActive (and the rest of the now-fresh row) via the same conditional
+			// Persist IsActive (and the other profile columns) via the same conditional
 			// write every other IsActive-flipping path in this package uses, rather than a
 			// blind tx.UpdateUser: succeeds only if the row's current is_active still
 			// matches wasActive, which — since user was just read under LockUserForUpdate

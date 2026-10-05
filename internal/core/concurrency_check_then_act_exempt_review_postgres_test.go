@@ -377,8 +377,16 @@ func TestCTAReview_IssueLease_vs_DeleteProject_CrossReplicaPostgres(t *testing.T
 // suspension. UpdateUser's default branch writes the full pre-read row
 // (Select("*")) gated only on is_active, and SuspendUser changes
 // account_state, not is_active — so the stale account_state='active' wins.
+//
+// Bug origin (#2653):
+//
+//	Introduced-by: UpdateUserIfActiveStateMatches's Select("*") full-row write
+//	Detected-by:   C-GUARD2-EXEMPT-REVIEW #2662
+//	Class:         cross-replica check-then-act
+//	Severity:      high (a reported-successful suspension is reverted)
+//	Guard:         this test (pg-gated) + TestUserProfileWrites_AreColumnScoped
+//	Fix:           the write is column-scoped to the profile columns UpdateUser owns
 func TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2653: UpdateUser's full-row conditional write reverts a concurrent SuspendUser; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	target := f.user("cta-suspendee", "project_viewer")
@@ -399,8 +407,18 @@ func TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres(t *testing.T) 
 // self-service sibling of the test above, reachable with only a session. A
 // display-name-only profile update (no re-auth) in flight while the account
 // holder changes their password writes the OLD password hash back.
+//
+// Bug origin (#2654):
+//
+//	Introduced-by: UpdateUserIfActiveStateMatches's Select("*") full-row write
+//	               (UpdateOwnProfile reaches it through UpdateUser's default branch)
+//	Detected-by:   C-GUARD2-EXEMPT-REVIEW #2662
+//	Class:         cross-replica check-then-act
+//	Severity:      high (only a session needed to revert a password change,
+//	               suspension or MFA enable)
+//	Guard:         this test (pg-gated) + TestUserProfileWrites_AreColumnScoped
+//	Fix:           same as #2653 — the write is column-scoped
 func TestCTAReview_UpdateOwnProfile_vs_ChangePassword_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2654: UpdateOwnProfile's full-row write reverts a concurrent password change; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	victim := f.user("cta-victim", "project_viewer")

@@ -879,9 +879,11 @@ type Storage interface {
 	LockUserForUpdate(ctx context.Context, id uint) (*models.User, error)
 	GetUserByEmail(ctx context.Context, email string) (*models.User, error)
 	UpdateUser(ctx context.Context, user *models.User) (*models.User, error)
-	// UpdateUserIfActiveStateMatches persists user's full row — every field
-	// UpdateUser already applied to it in memory from the same request
-	// (username/email/display name, plus the new IsActive value) — via a single
+	// UpdateUserIfActiveStateMatches persists ONLY the profile columns UpdateUser
+	// applies in memory from a request (username/username_folded, email/
+	// email_folded, display name, the new IsActive value, updated_at) — never the
+	// full row, so it cannot revert a concurrent narrow write to any other column
+	// (SetAccountState, SetPasswordHash, MFA, lockout; #2653/#2654) — via a single
 	// conditional "UPDATE ... WHERE id = ? AND is_active = ?", succeeding only if
 	// the row's CURRENT persisted is_active still equals fromActive (the value
 	// UpdateUser observed via GetUser, i.e. wasActive, before applying any of the
@@ -914,11 +916,22 @@ type Storage interface {
 	UpdateLastLogin(ctx context.Context, userID uint, loginAt time.Time) error
 	// SetAccountState persists ONLY the account_state column (plus updated_at) —
 	// narrower than the generic UpdateUser, and deliberately so (#454): an admin
-	// suspend/reactivate (setAccountState) or a SCIM deprovision/reactivate (UpdateSCIMUser)
-	// is an explicit, security-relevant directive, not passive accounting — the caller must
+	// suspend/reactivate (setAccountState) or a SCIM deprovision/reactivate (UpdateSCIMUser,
+	// via the conditional SetAccountStateIfMatches below) is an explicit, security-relevant directive, not passive accounting — the caller must
 	// see a hard error rather than a false "success" that leaves the account state
 	// unchanged if this write ever fails.
 	SetAccountState(ctx context.Context, id uint, state string, updatedAt time.Time) error
+	// SetAccountStateIfMatches is SetAccountState made conditional on the row's
+	// CURRENT account_state still being fromState (the value the caller read
+	// before computing toState): "UPDATE ... SET account_state, updated_at WHERE
+	// id = ? AND account_state = ? AND deleted_at IS NULL". matched=false (no
+	// error) means the row moved — or is gone — since that read; the caller must
+	// fail closed rather than revert a concurrent writer's state (e.g. a SCIM
+	// reactivation must not turn a suspension that committed after its read back
+	// into active). Used by the SCIM lifecycle paths, whose new state is derived
+	// from the old one (applySCIMActiveState, DeprovisionSCIMUser); see
+	// C-RACE-FIX-B2. A NULL column is matched by fromState "".
+	SetAccountStateIfMatches(ctx context.Context, id uint, fromState, toState string, updatedAt time.Time) (bool, error)
 	// SetPasswordHash persists ONLY the password_hash and password_changed_at columns
 	// (plus updated_at) — narrower than the generic UpdateUser, and deliberately so
 	// (#484, the same rationale as SetAccountState above). A password change

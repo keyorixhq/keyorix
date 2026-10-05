@@ -103,6 +103,15 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   under concurrent reads — atomic conditional UPDATE, fail closed. Why: "atomic security
   counters" review-finding pattern. Guard: `concurrency_max_reads_test.go`
   (`TestConcurrency_MaxReads_NeverExceedsCap`, `TestConcurrency_MaxReadsSecretLevel_NeverExceedsCap`).
+- **INV-STORE-21** `UpdateUserIfActiveStateMatches` writes only the seven profile columns
+  (`username`, `username_folded`, `email`, `email_folded`, `display_name`, `is_active`,
+  `updated_at`), never the full row; `account_state` is written only by `SetAccountState`
+  (a state that does not depend on the pre-read one) or `SetAccountStateIfMatches`
+  (`WHERE id = ? AND account_state = <pre-read> AND deleted_at IS NULL`, matched=false on a
+  moved, missing or soft-deleted row). Why: #2653/#2654, C-RACE-FIX-B2. Guard:
+  `local_users_set_account_state_if_matches_test.go`
+  (`TestSetAccountStateIfMatches_RefusesWhenStateMoved` et al.);
+  `internal/core` `TestUserProfileWrites_AreColumnScoped`.
 
 ## Soft-delete / purge races
 
