@@ -1,171 +1,208 @@
-# Keyorix golden-path demo script (~20 minutes)
+# Keyorix 10-minute demo script
 
-A live, working demo script for a new customer: install, secure first start, an
-admin's day-one workflow, a CI-style machine identity, and tamper-evident audit —
-verified end to end against a fresh SQLite single-node build of `origin/main`
-(DEMO-1, 2026-10-03). "Known rough edges" at the end links every gap this exact
-script runs into, found driving it as a stranger would.
+A live, working demo script for the air-gapped edition, built on
+`scripts/demo/up.sh`: install offline, MFA login, least privilege, an
+audited secret reveal, a CI-style machine identity, audit search with
+offline chain verification, live backup/restore, and the footprint numbers.
+Verified end to end against a fresh SQLite single-node build of
+`origin/main` (DEMO-2, 2026-10-05). "Known rough edges" at the end links
+every gap this exact script runs into.
 
-This script deliberately uses the SQLite single-binary path (`QUICK_START.md`) —
-it's the fastest to stand up live. The PostgreSQL/Docker path
-(`docs/SELF_HOSTING.md`) is equivalent for everything shown here except the two
-backup-related rough edges noted below, which are Postgres-specific.
+This replaces the previous ~20-minute, manually-bootstrapped version
+(DEMO-1, 2026-10-03) — `scripts/demo/up.sh` now does steps 0-1 in one
+command, and most of DEMO-1's findings are fixed (MFA, least-privilege CLI
+access, live backup, fresh-volume restore). What's left open is smaller and
+listed below.
 
-## 0. Before you're on stage
+## 0. Before you're on stage (~1 min)
 
 ```sh
 git clone https://github.com/keyorixhq/keyorix.git && cd keyorix
-make build
+./scripts/demo/up.sh
 ```
 
-Produces `./bin/keyorix` (CLI) and `./bin/keyorix-server` (API server). Keep a
-terminal with `./bin` on hand and a browser tab ready.
+One command: builds a local air-gapped image with the web UI embedded,
+starts it, bootstraps an admin, and seeds a realistic org — 3 projects, 2
+groups, a least-privilege user, 2 secrets (one with 2 versions), a machine
+identity, and a populated audit trail — through the public API/CLI only.
+Prints the URL and every login it just created. Re-running it is a no-op
+(idempotent); `./scripts/demo/down.sh` stops it, `--wipe` resets it.
 
-## 1. First start (~3 min)
+Say out loud: this exact container — same image, same binary — runs with
+**zero outbound network** the entire time, proven by `scripts/airgap-e2e.sh`
+with `--network none`: install, bootstrap, secrets, backup, restore, audit
+anchoring, tamper-detection, all offline. No cloud SDKs are linked in at all
+(`-tags noaws,noazure,nogcp` — confirmed zero AWS/Azure/GCP packages via
+`scripts/airgap-dependency-guard.sh`).
+
+## 1. Log in, show the dashboard (~1 min)
+
+Open the URL `up.sh` printed (default **http://localhost:8080**) and log in
+with the admin credentials it printed. Walk the dashboard: total secrets,
+active users, audit events, security status.
+
+## 2. MFA enrollment, live (~1.5 min)
+
+My Account -> Security -> Two-Factor Authentication -> **Enable**. Scan the
+QR/enter the setup key in any TOTP app, enter the 6-digit code and your
+password, confirm. Log out, log back in — the server now challenges for the
+code. This is now fully working end to end (was DEMO-1's #1 blocker,
+#2552 — fixed by #2466/#2467).
+
+Caveat worth knowing before you enable it on the account you'll keep using
+for the rest of the demo: the CLI doesn't support MFA login yet (#2737) —
+either demo MFA on a throwaway account, or disable it again afterward
+(Security -> Disable; **use a fresh TOTP code, not the password** — the
+password-only path is correctly rejected once MFA is enrolled, and a
+rejected attempt currently leaves the dialog stuck, #2738 — close and
+reopen it if that happens).
+
+## 3. Least privilege (~1 min)
+
+`alice` is already seeded with `project_viewer` on `backend-api` only. Show
+it either way:
 
 ```sh
-export KEYORIX_MASTER_PASSWORD='choose-a-strong-passphrase'
-./bin/keyorix-server admin init --config ./keyorix.yaml
-./bin/keyorix-server admin encryption init --config ./keyorix.yaml
-./bin/keyorix-server admin migrate --config ./keyorix.yaml
-
-export KEYORIX_BOOTSTRAP_TOKEN='choose-a-bootstrap-token'
-KEYORIX_CONFIG_PATH=./keyorix.yaml ./bin/keyorix-server &
-
-./bin/keyorix system init --server http://localhost:8080 \
-  --admin-username admin --admin-email admin@keyorix.local \
-  --admin-password 'Correct-Horse-Battery9' \
-  --bootstrap-token "$KEYORIX_BOOTSTRAP_TOKEN"
+export HOME=./.demo-2-cli-home   # the isolated CLI credential store up.sh used
+./bin/keyorix login --server http://localhost:8080 --username alice --password '<from up.sh output>'
+./bin/keyorix secret list --project 2     # numeric ID — alice holds no deployment-wide role,
+                                           # so a project NAME needs one; the CLI says so
+                                           # and tells you the numeric ID to use instead
 ```
 
-Say out loud while it runs: TLS is off in this generated config (loud warning in the
-server log, by design, for local dev) — see `docs/CONFIGURATION.md`'s `server.http.tls`
-section for turning it on with your own cert, or front it with a proxy, before any
-real deployment.
+(Fixed since DEMO-1's #2562 — a scoped user can now reach their own project
+via the CLI, with a clear error pointing at the numeric-ID workaround when
+they use a name instead.) Or just log in as alice in the web UI and show
+`backend-api` is the only project she can see.
 
-**Generate the admin recovery key right after bootstrap, before anything else:**
+## 4. An audited secret reveal (~1.5 min)
 
 ```sh
-./bin/keyorix-server admin recovery-key rotate --config ./keyorix.yaml
+./bin/keyorix login --server http://localhost:8080 --username admin --password '<from up.sh output>'
+./bin/keyorix secret get --id 1 --show-value       # stripe-api-key, already rotated to v2 by up.sh
+./bin/keyorix audit logs --limit 3                 # the reveal is right there: secret.read
 ```
 
-(Needs the server stopped — kill the background `keyorix-server`, run this, restart
-it the same way. See known rough edges below.) Save the printed key; it's the only
-way back in if every admin is ever locked out.
+## 5. A machine identity reading a secret (~1 min)
 
-## 2. Log in, show the dashboard (~2 min)
+`ci-app` is already seeded with `project_viewer` on `default` and a token
+(printed by `up.sh`). As the "CI job" would:
 
 ```sh
-./bin/keyorix login --server http://localhost:8080 --username admin --password 'Correct-Horse-Battery9'
+curl -H "Authorization: Bearer <machine token from up.sh output>" http://localhost:8080/api/v1/secrets/1
+./bin/keyorix audit logs --limit 3    # actor_type=machine_identity on the read
 ```
 
-Open **http://localhost:8080** in the browser, log in with the same credentials.
-Walk the dashboard: total secrets, active users, audit events, security status.
-
-Skip MFA enrollment live (My Account -> Security -> Two-Factor Authentication) —
-it's currently broken end to end (see rough edges).
-
-## 3. Org structure (~2 min)
-
-In the web UI: **Projects -> New Project** twice (e.g. `backend-api`, `mobile-app`
-— `default` already exists with 3 seeded environments). **Access Control -> Groups
--> New Group** twice (e.g. `platform-team`, `mobile-team`).
-
-## 4. A least-privilege user (~2 min)
+## 6. Audit search + offline chain verification (~2 min) — the dramatic finish
 
 ```sh
-./bin/keyorix user create --username alice --email alice@keyorix.local --password 'Nebula-Quartz-742'
-./bin/keyorix rbac assign-role --user alice@keyorix.local --role project_viewer --project backend-api
-```
-
-Say out loud: alice now holds `project_viewer` on `backend-api` only. **Demo this
-via the web UI, not the CLI** — logging in as alice and using `keyorix project
-list`/`secret list --project ...` from the CLI currently fails for her even on her
-own granted project (see rough edges); the web UI path works.
-
-## 5. Secrets lifecycle (~4 min) — the strongest part of this demo
-
-```sh
-./bin/keyorix secret create --name "stripe-api-key" --value "sk_test_..." --project 1 --environment 1
-./bin/keyorix secret get --id 1 --show-value                              # reveal (audited)
-./bin/keyorix secret rotate --id 1 --value "sk_test_...-v2"                # creates version 2
-./bin/keyorix secret versions --id 1                                       # read the table, not the "Latest Version" line (see rough edges)
-./bin/keyorix secret delete --id 1 --force                                 # soft-delete
-./bin/keyorix secret trash --project 1                                    # it's right here
-./bin/keyorix secret restore --id 1
-./bin/keyorix secret get --id 1 --show-value                               # exact value back
-```
-
-## 6. A machine identity reading a secret (~3 min)
-
-```sh
-./bin/keyorix machine create --name ci-app --project default --type ci
-./bin/keyorix machine grant-role ci-app --project default --role project_viewer
-./bin/keyorix machine token issue ci-app --name "ci-pipeline-token" --project default
-```
-
-Then, as the "CI job" would:
-
-```sh
-curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/secrets/1
-```
-
-## 7. Audit trail + tamper-evidence (~4 min) — the dramatic finish
-
-```sh
-./bin/keyorix audit logs --limit 10        # find the reveal and the machine read
+./bin/keyorix audit logs --limit 10
 ./bin/keyorix audit export --all > audit.ndjson
 ./bin/keyorix audit verify                 # Audit chain: VALID
 ```
 
-For the dramatic version (needs the server stopped and `sqlite3` on hand):
+For the dramatic version (needs the container stopped and `sqlite3` on the
+host, pointed at the named volume):
 
 ```sh
-kill %1   # stop the background server
-sqlite3 ./keyorix.db "UPDATE audit_events SET description='TAMPERED' WHERE id=5;"
-KEYORIX_CONFIG_PATH=./keyorix.yaml ./bin/keyorix-server &
+docker stop keyorix-demo
+docker run --rm -v keyorix-demo-data:/data alpine sh -c \
+  "apk add --no-cache sqlite >/dev/null && sqlite3 /data/keyorix.db \"UPDATE audit_events SET description='TAMPERED' WHERE id=5;\""
+docker start keyorix-demo
 ./bin/keyorix audit verify                 # Audit chain: BROKEN, first broken id: 5
 ```
 
-Then restore the original description and re-verify `VALID` before moving on.
+Then restore the original description the same way and re-verify `VALID`
+before moving on — or just `./scripts/demo/down.sh --wipe && ./scripts/demo/up.sh`
+for a clean instance if you're not rerunning the tamper demo again this
+session.
+
+## 7. Backup and restore (~1.5 min)
+
+This demo's air-gapped edition is SQLite, which has no live-snapshot
+primitive — `admin backup` needs the server stopped here, by design (say so
+out loud; it's documented, not a bug). Mention, don't demo live (needs a
+Postgres backend to show): on Postgres, `admin backup` now works **beside a
+running server**, no stop needed — fixed since DEMO-1 (#2602, merged via
+#2613).
+
+```sh
+docker stop keyorix-demo
+docker run --rm -v keyorix-demo-data:/app/data -w /app/data \
+  -e KEYORIX_MASTER_PASSWORD='<from up.sh — see .demo-2-state>' \
+  keyorix-demo:airgap /app/keyorix-server admin backup --output backup.tar.gz --config keyorix.yaml
+```
+
+Simulate the disaster — move the live database aside — then restore:
+
+```sh
+docker run --rm -v keyorix-demo-data:/app/data -w /app/data \
+  keyorix-demo:airgap mv keyorix.db keyorix.db.pre-restore
+
+docker run --rm -v keyorix-demo-data:/app/data -w /app/data \
+  -e KEYORIX_MASTER_PASSWORD='<same as above>' \
+  keyorix-demo:airgap /app/keyorix-server admin restore \
+  --input backup.tar.gz --config keyorix.yaml --overwrite-existing
+# --overwrite-existing: the key files are untouched (same host, same config)
+# but still present, so restore needs telling this is a genuine DR restore,
+# not an accidental double-restore — it moves them aside, doesn't delete them.
+
+docker start keyorix-demo
+./bin/keyorix secret get --id 1 --show-value    # the exact post-rotation value survives
+```
+
+Restoring onto a genuinely fresh/empty keys volume on a different host —
+the real disaster-recovery scenario `--overwrite-existing` isn't — also now
+works, on both backends (was #2604); see `docs/AIRGAP_RUNBOOK.md` for that
+full drill rather than live here, since it needs a second volume and isn't
+worth the extra live-demo fragility for 10 minutes on stage.
+
+## 8. Footprint (~30 sec) — close on the koi-pond pitch
+
+Measured 2026-10-05, one Docker build, arm64, indicative (not a repeated
+benchmark — see `~/proj/prompts/reports/SESSION-R.md` for the methodology
+this follows):
+
+| | Air-gapped | Full |
+|---|---|---|
+| Image size (installed) | 146 MB | 196 MB |
+| Image size (download, gzip proxy) | ~36 MB | ~46 MB |
+| `go list -deps ./server` package count | 688 | 1019 |
+| ...of which AWS/Azure/GCP SDK | **0** | 145+ |
+| Idle memory (one container, served `/health` once) | ~11.6 MB | — |
+
+Say out loud: this is the same "16 MB idle, serving immediately, zero cloud
+SDK" pitch the footprint benchmark already made against Vault/OpenBao/
+Infisical (`~/proj/prompts/reports/SESSION-R.md`) — now demonstrated live,
+offline, in front of the audience, not just measured in a lab.
 
 ## Known rough edges
 
-Everything below was found and filed driving this exact script (DEMO-1,
-2026-10-03). Fixed items are already merged or awaiting merge; the rest are open.
+**Fixed since DEMO-1** (no longer blockers): MFA enrollment/login (#2552),
+least-privilege CLI access (#2562), live Postgres backup (#2602),
+fresh-volume restore (#2604), stale `keyorix-next` CLI text (#2489), missing
+TLS docs (#2491), wrong "Latest Version" summary (#2563), wrong
+soft-delete confirmation text (#2568), stale docker-compose image pins
+(#2601), wrong relative time on Projects list (#2553).
 
-**Blockers worth knowing before you go live:**
-- MFA/TOTP enrollment always fails (server rejects a correct, promptly-submitted
-  code every time) — [#2552](https://github.com/keyorixhq/keyorix/issues/2552).
-  Don't attempt it live.
-- A least-privilege, project-scoped user can't use CLI commands that take
-  `--project`, even for a project they were explicitly granted — the CLI always
-  resolves `--project` via an admin-only endpoint —
-  [#2562](https://github.com/keyorixhq/keyorix/issues/2562). Demo step 4 via the
-  web UI instead.
-- `admin recovery-key rotate` and `admin backup` both refuse to run against a live
-  server on both SQLite and Postgres — stop the server (or
-  `docker compose stop backend`) first. SELF_HOSTING.md documents running both
-  live; that doesn't currently work —
-  [#2540](https://github.com/keyorixhq/keyorix/issues/2540) /
-  [#2602](https://github.com/keyorixhq/keyorix/issues/2602).
-- Restoring a Postgres backup into a genuinely fresh/empty `keyorix_keys` volume
-  (the real disaster-recovery scenario) fails —
-  [#2604](https://github.com/keyorixhq/keyorix/issues/2604). Not reproduced on
-  SQLite restoring into the same config the backup came from.
+**New, found while re-walking (DEMO-2, 2026-10-05):**
+- The CLI doesn't support MFA login at all — breaks with a misleading
+  "login failed: HTTP 200" the moment MFA is enabled on the account used
+  for CLI work — [#2737](https://github.com/keyorixhq/keyorix/issues/2737).
+  Demo MFA on a throwaway account, or disable it again before step 3.
+- The "Disable two-factor authentication" dialog hangs forever (no error
+  shown) after one rejected attempt (e.g. password instead of a code), and
+  survives closing/reopening — only a full page reload clears it —
+  [#2738](https://github.com/keyorixhq/keyorix/issues/2738).
+- Neither published Docker image (full or `-airgap`) embeds the web UI —
+  only the GitHub Release tarballs do. `scripts/demo/up.sh` works around
+  this by building its own image locally first —
+  [#2752](https://github.com/keyorixhq/keyorix/issues/2752).
+- `admin recovery-key rotate`, like every admin command except a live Postgres
+  backup, needs the server stopped. That is by design: it holds the exclusive
+  admin lock for the whole rotation
+  ([#2540](https://github.com/keyorixhq/keyorix/issues/2540)). Stop the server
+  (`docker stop keyorix-demo`) first, run it, then start the server again.
 
-**Polish, safe to demo through:**
-- `keyorix secret versions`' "Latest Version" summary line is wrong (fixed in
-  [PR #2566](https://github.com/keyorixhq/keyorix/pull/2566), pending merge) — read
-  the table above it instead.
-- The CLI's own "Next steps" after bootstrap said `keyorix-next login`, a command
-  that doesn't exist (fixed in
-  [PR #2490](https://github.com/keyorixhq/keyorix/pull/2490), pending merge).
-- `secret delete`'s confirmation prompt said "cannot be undone, permanently
-  deleted" — it's actually a restorable soft-delete, exactly as step 5 above shows
-  (fixed in [PR #2569](https://github.com/keyorixhq/keyorix/pull/2569), pending
-  merge).
-- `docker-compose.yml`'s pinned image tags are already behind the latest release —
-  [#2601](https://github.com/keyorixhq/keyorix/issues/2601).
-- The Projects list page shows a wrong "created X ago" time —
-  [#2553](https://github.com/keyorixhq/keyorix/issues/2553).
+**Polish, safe to demo through:** none currently open that affect this
+script's own steps.
