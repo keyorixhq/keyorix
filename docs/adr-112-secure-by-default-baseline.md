@@ -4,6 +4,11 @@
 
 **Proposed** (2026-10-02). Two decisions are already recorded (see "Decisions recorded"); the remaining open questions are listed at the end.
 
+Amended 2026-10-05 (decision by Andrei, "Amendment 1" below): the
+audit-before-disclosure and `synchronous` baseline items gain one named
+`insecure_` opt-out, `storage.database.insecure_audit_skip_durable_sync`. The
+defaults are unchanged. Full spec: `docs/specs/fast-audit-mode.md`.
+
 Related: ADR-111 (signed connector host, host connector allowlist), ADR-098 (process memory hardening), ADR-064 (air-gap update bundles), ADR-109 (air-gapped build profile).
 
 A read-only gap check of `main` @ 219160b2 against this baseline (2026-10-02) found 9 of 22 items in place, 5 partial and 8 missing; see "Gap check results".
@@ -58,10 +63,10 @@ Each item is a default that holds unless an `insecure_` setting says otherwise.
 - Authorization is deny by default; any error while resolving permissions denies (fail closed). The fault-injection fuzzer's oracle (c) enforces this; #2412 is a current violation.
 
 **Secrets and audit**
-- A secret value is never returned before its audit record is durably committed (audit-before-disclosure, group commit). If the audit write fails, the read fails.
+- A secret value is never returned before its audit record is durably committed (audit-before-disclosure, group commit). If the audit write fails, the read fails. One named opt-out exists (`storage.database.insecure_audit_skip_durable_sync`, default off) which skips only the *wait for the disk sync*, not the write and not the fail-closed behaviour — see Amendment 1.
 - Secret values never appear in logs, error messages, URLs or metrics. Enforced by a test oracle over all operations, not by review alone.
 - The audit log is hash-chained with signed checkpoints and offline verification (exists).
-- SQLite runs `synchronous=FULL`; Postgres runs with `fsync`, `synchronous_commit` and `full_page_writes` on (#2403).
+- SQLite runs `synchronous=FULL`; Postgres runs with `fsync`, `synchronous_commit` and `full_page_writes` on (#2403). `storage.database.insecure_audit_skip_durable_sync` (default off) is the only setting that relaxes this, and only as described in Amendment 1.
 
 **Keys**
 - Scheduled KEK rotation on by default, with a configurable interval.
@@ -99,6 +104,72 @@ Each item is a default that holds unless an `insecure_` setting says otherwise.
 9. Optional mutual TLS for machine identities.
 10. CI enforcement: one test per baseline item and the zero-deviation posture gate.
 
+## Amendment 1 (2026-10-05): fast audit mode, an `insecure_` opt-out for guaranteed-power deployments
+
+Decision by Andrei, 2026-10-05. Spec: `docs/specs/fast-audit-mode.md`.
+
+### Why an opt-out is warranted here specifically
+
+PERF-2 measured Keyorix at ~10x Vault's single-client read latency on pve01
+(8.36ms vs 1.30ms p50) **with Vault's own file audit device enabled**, and
+confirmed that at c=1 essentially the entire 8.36ms is one durable Postgres
+commit (the independently measured `fdatasync` floor on that disk is 9.33ms). A
+source-verified read of each competitor's audit write path
+(Vault, OpenBao, Conjur, Infisical) found that **none of them fsync audit before
+answering**: Vault and OpenBao do one `write()` to an `O_APPEND` file with no
+`fsync` anywhere, Conjur fires into syslog, Infisical queues to Redis and
+swallows request-path errors. Their speed is not a technique Keyorix is missing;
+it is the durability Keyorix declines to skip.
+
+That makes audit-before-disclosure a genuine differentiator worth keeping as the
+default — and it also makes "I have a UPS and a battery-backed write cache, give
+me Vault's number" a legitimate operator request that the baseline should answer
+with a named, loud, audited setting rather than with a fork or a patch.
+
+### The opt-out
+
+`storage.database.insecure_audit_skip_durable_sync`, boolean, default **false**,
+settable from the config file only. When true:
+
+- Postgres: the audit-commit transaction, and only that transaction, issues
+  `SET LOCAL synchronous_commit = off`.
+- SQLite: the DSN uses `_synchronous=NORMAL` instead of `FULL`, in the WAL mode
+  that is already the default.
+
+It carries the full §1 opt-out treatment: a `WARNING:` line at **every** start, an
+`admin.audit_durable_sync_skipped_at_startup` audit event at every start (so the
+tamper-evident chain itself records the window the install ran weakened), an entry
+in the `insecure_` registry, a line in `admin validate`'s posture output, and a
+boolean in `GET /system/info` so a buyer's auditor can see it without host access.
+
+### What the mode does and does not change
+
+Unchanged, and tested to stay unchanged:
+
+- The audit row is still INSERTed and COMMITted in the same transaction/batch,
+  before the secret value is returned. No background writer, no queue.
+- If the audit row cannot be written, the request still fails. Only the *wait for
+  the disk sync* is skipped.
+- The hash chain can lose a **tail** of entries to an OS crash or power loss. It
+  can never gap or fork: WAL (Postgres) and `-wal` frames (SQLite) are totally
+  ordered and recovery accepts only a valid prefix, so a surviving row's
+  `prev_hash` always points at a row that also survived. `verify-audit` must pass
+  after a `kill -9` under load, on both backends, and there is a test for it.
+
+Changed, and stated plainly rather than minimised:
+
+- Postgres: up to ~600ms (3 × `wal_writer_delay`) of audit entries can be lost to
+  an OS or database-server crash.
+- SQLite: `PRAGMA synchronous` is per-connection and the pool is shared, so the
+  relaxation is **database-wide**, not audit-only — a power loss can lose the last
+  fraction of a second of secret writes too. The narrower alternative (flip the
+  pragma per transaction, restore afterwards) was rejected because it fails open:
+  a skipped restore leaves a connection permanently weakened with nothing
+  reporting it.
+
+This is Vault's guarantee, not a safe one, and the hardening guide says so in
+those words.
+
 ## Consequences
 
 - The baseline becomes part of the product's documentation and sales material: "here is the secure configuration, and here is how you prove you're running it."
@@ -119,6 +190,16 @@ Each item is a default that holds unless an `insecure_` setting says otherwise.
 - Break-glass remains single-person, with mandatory alert, audit event and post-activation review. Two-person break-glass is rejected: an emergency path that needs a second person fails exactly when it's needed.
 - TLS 1.2 remains allowed with forward-secret AEAD suites; TLS 1.3-only is available as strict mode.
 - Approval workflows are deferred to a separate feature; licensing is open question 5.
+
+## Decisions recorded (2026-10-05)
+
+- Audit-before-disclosure stays the default. One named `insecure_` opt-out
+  (`storage.database.insecure_audit_skip_durable_sync`) is added for deployments
+  with guaranteed power, giving Vault-equivalent semantics and Vault-equivalent
+  speed. See Amendment 1. Two sub-decisions are still open and are listed as
+  **NEEDS ANDREI** in `docs/specs/fast-audit-mode.md` §4 and §6: whether the
+  setting reports as in-effect on a `remote` backend, and whether the SQLite
+  database-wide scope is accepted or the setting is restricted to Postgres.
 
 ## Definition of done
 
