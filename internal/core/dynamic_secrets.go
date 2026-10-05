@@ -396,11 +396,22 @@ func (c *KeyorixCore) ClassifyDynamicSecretConfig(ctx context.Context, actorID u
 		return cfg, nil // no-op
 	}
 	old := cfg.Classification
-	cfg.Classification = level
-	cfg.UpdatedAt = c.now()
-	if err := c.storage.UpdateDynamicSecretConfig(ctx, cfg); err != nil {
+	// #2698: a column-scoped write of `classification` alone, conditional on the
+	// value this function read. The previous full-row Save carried the whole
+	// pre-read struct back — `disabled` included — so a SetDynamicSecretConfigEnabled(false)
+	// (the incident kill switch, which also revokes the config's live leases) or a
+	// DeleteProject #369 cascade committing between the read above and this write was
+	// silently undone, and IssueLease could mint real database credentials again. A
+	// no-match means another classifier moved the label; fail closed rather than
+	// clobber it, and write no audit event (nothing of ours was persisted).
+	matched, err := c.storage.SetDynamicSecretConfigClassification(ctx, cfg.ID, old, level, c.now())
+	if err != nil {
 		return nil, err
 	}
+	if !matched {
+		return nil, fmt.Errorf("dynamic-secret config classification changed concurrently; re-read and retry")
+	}
+	cfg.Classification = level
 	aid := actorID
 	pid := cfg.ProjectID
 	diff := fmt.Sprintf(`{"classification":{"before":%q,"after":%q}}`, old, level)
@@ -716,7 +727,9 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 		// falsely claim the role was dropped at this time, even though it wasn't —
 		// and it wasn't dropped at all yet, so there is no "revoked at" moment to
 		// record. RevokedAt is set only on the success path below.
-		_ = c.storage.UpdateDynamicSecretLease(ctx, lease)
+		// #2698: record only the revocation columns. The former full-row Save also
+		// rewrote expires_at from this call's pre-read copy.
+		_, _ = c.storage.RecordDynamicSecretLeaseRevocation(ctx, lease.LeaseID, lease.Status, lease.RevokeReason, lease.RevokeError, lease.RevokedAt)
 		c.writeAuditEventFull(ctx, "dynamic_lease.revoke_failed", uidPtr, nil, &pid, "",
 			fmt.Sprintf("FAILED to revoke dynamic lease %s (role %s): %v", lease.LeaseID, lease.RoleName, rerr))
 		return fmt.Errorf("failed to revoke on target: %w", rerr)
@@ -755,8 +768,9 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	if !auditOK {
 		lease.RevokeError = "revoked on target, but the audit record failed to persist — verify manually (see server log)"
 	}
-	if err := c.storage.UpdateDynamicSecretLease(ctx, lease); err != nil {
-		return err
+	// #2698: see the revoke-failed branch above — revocation columns only.
+	if _, rerr := c.storage.RecordDynamicSecretLeaseRevocation(ctx, lease.LeaseID, lease.Status, lease.RevokeReason, lease.RevokeError, lease.RevokedAt); rerr != nil {
+		return rerr
 	}
 	if !auditOK {
 		return fmt.Errorf("lease %s revoked on target, but failed to record the audit event — treat as unconfirmed", lease.LeaseID)
@@ -1063,10 +1077,22 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 	if err := engine.Renew(ctx, adminDSN, lease.RoleName, newExpiry); err != nil {
 		return time.Time{}, fmt.Errorf("failed to renew on target: %w", err)
 	}
-	lease.ExpiresAt = newExpiry
-	if err := c.storage.UpdateDynamicSecretLease(ctx, lease); err != nil {
+	// #2698: write expires_at alone, and only while the lease is STILL active.
+	// The previous full-row Save wrote the stale Status/RevokeError/RevokedAt back
+	// too, so a RevokeLease that committed between this function's read and this
+	// write was reverted: a successful revoke became `active` again with a later
+	// expiry (the row then lying about a dead credential and holding a
+	// MaxActiveLeases slot until the sweep), and a `revoke_failed` record was
+	// erased with its error. engine.Renew is a documented no-op on several
+	// backends, so nothing downstream would have noticed.
+	matched, err := c.storage.ExtendDynamicSecretLeaseExpiry(ctx, lease.LeaseID, newExpiry)
+	if err != nil {
 		return time.Time{}, err
 	}
+	if !matched {
+		return time.Time{}, fmt.Errorf("lease %s is no longer active; renewal refused", lease.LeaseID)
+	}
+	lease.ExpiresAt = newExpiry
 	uid := userID
 	var uidPtr *uint
 	if userID != 0 {

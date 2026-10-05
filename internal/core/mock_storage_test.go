@@ -2333,6 +2333,8 @@ func (m *MockStorage) UpdateDynamicSecretConfig(_ context.Context, _ *models.Dyn
 }
 func (m *MockStorage) SetDynamicSecretConfigAdminDSN(_ context.Context, _ uint, _, _ []byte) error {
 	return nil
+func (m *MockStorage) SetDynamicSecretConfigClassification(_ context.Context, _ uint, _, _ string, _ time.Time) (bool, error) {
+	return true, nil
 }
 func (m *MockStorage) TransitionDynamicSecretConfigDisabled(ctx context.Context, c *models.DynamicSecretConfig, fromDisabled bool) (bool, error) {
 	if m.TransitionDynamicSecretConfigDisabledFunc != nil {
@@ -2357,6 +2359,12 @@ func (m *MockStorage) CountActiveLeases(_ context.Context, _ uint) (int64, error
 }
 func (m *MockStorage) UpdateDynamicSecretLease(_ context.Context, _ *models.DynamicSecretLease) error {
 	return nil
+}
+func (m *MockStorage) ExtendDynamicSecretLeaseExpiry(_ context.Context, _ string, _ time.Time) (bool, error) {
+	return true, nil
+}
+func (m *MockStorage) RecordDynamicSecretLeaseRevocation(_ context.Context, _, _, _, _ string, _ *time.Time) (bool, error) {
+	return true, nil
 }
 func (m *MockStorage) ListExpiredActiveLeases(_ context.Context, _ time.Time) ([]*models.DynamicSecretLease, error) {
 	return nil, nil
