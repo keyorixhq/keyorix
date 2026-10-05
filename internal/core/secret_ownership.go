@@ -138,11 +138,19 @@ func (c *KeyorixCore) transferOwnership(ctx context.Context, secretID, newOwnerI
 	}
 
 	oldOwner := secret.OwnerID
-	secret.OwnerID = newOwnerID
-	updated, err := c.storage.UpdateSecret(ctx, secret)
+	// #2695: owner_id only — see ClassifySecret's comment. Notably this is the
+	// column ClearProjectSecretOwnership (offboarding) also writes, so a
+	// full-row write from ANY other caller could hand the owner short-circuit
+	// back to a departed user.
+	matched, err := c.storage.UpdateSecretFields(ctx, secret.ID, storage.SecretFieldUpdate{OwnerID: &newOwnerID})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	if !matched {
+		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+	}
+	secret.OwnerID = newOwnerID
+	updated := secret
 
 	uid := actorID
 	sid := secretID

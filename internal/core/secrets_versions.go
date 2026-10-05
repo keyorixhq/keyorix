@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -149,7 +150,7 @@ func (c *KeyorixCore) storeNextSecretVersion(ctx context.Context, secret *models
 // guess, so there was a concrete row to roll back — and unlike RotateSecret, there is
 // no external upstream credential whose already-applied change that version would be
 // the only record of, so rolling it back loses nothing.
-func (c *KeyorixCore) updateSecretWithNewVersion(ctx context.Context, secret *models.SecretNode, value []byte) (*models.SecretNode, error) {
+func (c *KeyorixCore) updateSecretWithNewVersion(ctx context.Context, secret *models.SecretNode, value []byte, fields storage.SecretFieldUpdate) (*models.SecretNode, error) {
 	var updated *models.SecretNode
 	var lastErr error
 	for attempt := 0; attempt < maxRotateVersionAttempts; attempt++ {
@@ -168,11 +169,20 @@ func (c *KeyorixCore) updateSecretWithNewVersion(ctx context.Context, secret *mo
 			if err := c.storeSecretVersion(ctx, tx, secret, value, nextVersionNumber); err != nil {
 				return err
 			}
-			u, err := tx.UpdateSecret(ctx, secret)
-			if err != nil {
-				return err
+			// #2695: the row write inside this transaction is column-scoped
+			// too, to the same field set the caller derived from its request.
+			// A full-row Save here had the extra sting that it ran in the SAME
+			// transaction as the version insert, so a resurrection or a
+			// reverted suspend committed atomically with a new version — the
+			// row looked entirely self-consistent afterwards.
+			matched, uerr := tx.UpdateSecretFields(ctx, secret.ID, fields)
+			if uerr != nil {
+				return uerr
 			}
-			updated = u
+			if !matched {
+				return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+			}
+			updated = secret
 			return nil
 		})
 		if txErr == nil {
