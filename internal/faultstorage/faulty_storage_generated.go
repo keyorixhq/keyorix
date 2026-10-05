@@ -275,6 +275,23 @@ func (w *FaultyStorage) CheckSharePermission(ctx context.Context, secretID uint,
 	return w.real.CheckSharePermission(ctx, secretID, userID, now)
 }
 
+func (w *FaultyStorage) ClaimUserExternalIDIfUnset(ctx context.Context, id uint, externalID string, updatedAt time.Time) (bool, error) {
+	fire, kind, injected := w.check("ClaimUserExternalIDIfUnset")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ClaimUserExternalIDIfUnset(ctx, id, externalID, updatedAt)
+			return rv1, injected
+		}
+	}
+	return w.real.ClaimUserExternalIDIfUnset(ctx, id, externalID, updatedAt)
+}
+
 func (w *FaultyStorage) CleanupExpiredSessions(ctx context.Context) error {
 	fire, kind, injected := w.check("CleanupExpiredSessions")
 	if fire {

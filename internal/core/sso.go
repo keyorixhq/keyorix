@@ -497,11 +497,48 @@ func (c *KeyorixCore) resolveSSOUser(ctx context.Context, provider, sub, email s
 		// re-link it by asserting the same email. A subject-less claim still fully
 		// closes the cross-provider vector: ssoBoundToOtherProvider only cares which
 		// provider owns the scoped id, not whether a subject is present. Best-effort:
-		// a failed update just means we re-link on the next login.
-		u.ExternalID = ssoExternalID(provider, sub)
-		if updated, uerr := c.storage.UpdateUser(ctx, u); uerr == nil {
-			u = updated
+		// a failed claim just means we re-link on the next login.
+		//
+		// #2699: a column-scoped write of external_id alone, onto a row that is
+		// still live and still unfederated. It used to be the generic full-row
+		// UpdateUser, whose GORM Save upsert-fallback RESURRECTED an account an
+		// admin had deleted after the GetUserByEmail above — writing back
+		// deleted_at=NULL, is_active=true, account_state=active — and the same
+		// window also reverted a concurrent suspension, password change, MFA
+		// enable or lockout. The user controls the timing: they fire the first
+		// SSO login, and can fire several in parallel.
+		// The claimed flag is deliberately discarded: claiming is best-effort
+		// (that predates this change — "a failed claim just means we re-link on
+		// the next login"), and either way what the caller must act on is the
+		// re-read below, not this statement's own verdict. A no-match means
+		// another replica federated the account first or the row is gone; the
+		// re-read distinguishes those and handles both correctly.
+		if _, cerr := c.storage.ClaimUserExternalIDIfUnset(ctx, u.ID, ssoExternalID(provider, sub), c.now()); cerr != nil {
+			return nil, cerr
 		}
+		// Re-read regardless of whether the claim landed, and return the COMMITTED
+		// row rather than the snapshot read before it. Fixing only the write would
+		// leave the other half of #2699 open: CompleteSSO's login gate
+		// (!user.IsActive || AccountLoginBlocked) evaluates whatever this function
+		// returns, so handing back the stale struct — which still says active —
+		// mints a session for a deleted or suspended account even once the row
+		// itself is correctly left alone. A failed re-read means the account is
+		// gone or unreadable: fail closed, and in particular do NOT fall through
+		// to the caller's auto-provision branch, which would mint a brand-new
+		// account for the deleted one's email.
+		fresh, gerr := c.storage.GetUser(ctx, u.ID)
+		if gerr != nil {
+			return nil, fmt.Errorf("the account for this SSO identity is no longer available")
+		}
+		// The claim is conditional on external_id still being unset. If another
+		// provider claimed this account between our read and our write, the
+		// re-read shows ITS id: refuse instead of logging this provider's user in
+		// to an account bound elsewhere (the cross-provider vector the claim exists
+		// to close).
+		if fresh.ExternalID != ssoExternalID(provider, sub) {
+			return nil, fmt.Errorf("this account is already linked to a different sign-in provider")
+		}
+		u = fresh
 	}
 	return u, nil
 }

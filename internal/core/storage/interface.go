@@ -932,6 +932,21 @@ type Storage interface {
 	// from the old one (applySCIMActiveState, DeprovisionSCIMUser); see
 	// C-RACE-FIX-B2. A NULL column is matched by fromState "".
 	SetAccountStateIfMatches(ctx context.Context, id uint, fromState, toState string, updatedAt time.Time) (bool, error)
+	// ClaimUserExternalIDIfUnset persists ONLY external_id (plus updated_at) for
+	// a user whose external_id is still UNSET and whose row is still live:
+	// "UPDATE ... SET external_id, updated_at WHERE id = ? AND
+	// COALESCE(external_id,'') = '' AND deleted_at IS NULL". claimed=false (no
+	// error) means someone else federated the account first, or it is gone.
+	//
+	// This is resolveSSOUser's first-federation write (#2699). It used the
+	// generic full-row UpdateUser, whose GORM Save upsert-fallback resurrected
+	// an account an admin had deleted after resolveSSOUser's unlocked read —
+	// writing back deleted_at=NULL, is_active=true, account_state=active — and
+	// the same window also reverted a concurrent suspension, password change,
+	// MFA enable or lockout. Narrow and conditional here; the caller re-reads
+	// afterwards so its login gate sees the committed row, not its own stale
+	// snapshot.
+	ClaimUserExternalIDIfUnset(ctx context.Context, id uint, externalID string, updatedAt time.Time) (claimed bool, err error)
 	// SetPasswordHash persists ONLY the password_hash and password_changed_at columns
 	// (plus updated_at) — narrower than the generic UpdateUser, and deliberately so
 	// (#484, the same rationale as SetAccountState above). A password change
