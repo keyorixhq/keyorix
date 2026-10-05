@@ -490,19 +490,59 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 	// is deliberately left untouched here (still cwd-relative if configured
 	// that way, still fed as-is into sqliteDSN/withMigrationLock below) --
 	// this is diagnostics only, not a fix for the underlying resolution
-	// defect (tracked separately), and not the refuse-on-missing check
-	// ADR-095 Task 3 recommends (#2504, pending sign-off). Best-effort:
-	// filepath.Abs only fails if os.Getwd() fails, which would already be a
-	// more fundamental problem than this log line; never block startup on it.
-	logDbPath := dbPath
-	if abs, aerr := filepath.Abs(dbPath); aerr == nil {
+	// defect (tracked separately). Best-effort: filepath.Abs only fails if
+	// os.Getwd() fails, which would already be a more fundamental problem
+	// than this log line; never block startup on it.
+	//
+	// The existence question is asked through localStorageDBFile, not
+	// os.Stat(dbPath) directly: database.path may legitimately carry a DSN
+	// query suffix ("file:secrets.db?_busy_timeout=...", see
+	// TestCreateLocalStorage_S27_ExistingDSNQueryString), which os.Stat can
+	// never resolve, so the raw-path form reported EVERY such configuration as
+	// "no database found" even when the file was right there. Same helper
+	// acquireSQLiteMigrationLock and prepareLocalStorageFile already use, and
+	// it also answers "is there a file to pre-exist at all" for the in-memory
+	// shapes below.
+	statPath, isRealFile := localStorageDBFile(dbPath)
+	logDbPath := statPath
+	if logDbPath == "" {
+		logDbPath = dbPath
+	}
+	if abs, aerr := filepath.Abs(logDbPath); aerr == nil && isRealFile {
 		logDbPath = abs
 	}
-	if _, statErr := os.Stat(dbPath); statErr == nil {
+	dbFileExists := false
+	if isRealFile {
+		if _, statErr := os.Stat(statPath); statErr == nil {
+			dbFileExists = true
+		}
+	}
+	switch {
+	case !isRealFile:
+		log.Printf("storage: opening in-memory SQLite database (configured: %q)", cfg.Storage.Database.Path)
+	case dbFileExists:
 		log.Printf("storage: opening existing SQLite database at %s (configured: %q)", logDbPath, cfg.Storage.Database.Path)
-	} else {
+	default:
 		log.Printf("storage: no database found at %s (configured: %q) -- a NEW, EMPTY database will be created here", logDbPath, cfg.Storage.Database.Path)
 	}
+
+	// INV-STORAGE-22 / ADR-095 Task 3 (#2504): refuse rather than vivify, when
+	// the operator has asked for that. An absolute path is not enough on its
+	// own -- it stops two processes diverging onto two files, but a single
+	// mistyped path (or a volume mount that silently failed to attach) still
+	// produces a fresh, empty, healthy-looking store, with the real data still
+	// sitting untouched where it was meant to be read from. Opt-in because
+	// nothing in the supported first-boot paths creates the file beforehand;
+	// see DatabaseConfig.RequireExistingPath's own doc comment for why the
+	// default is NOT flipped here. In-memory DSNs are exempt by construction
+	// (nothing to pre-exist) rather than by a carve-out.
+	if cfg.Storage.Database.RequireExistingPath && isRealFile && !dbFileExists {
+		return nil, fmt.Errorf("no database found at %s (configured database.path: %q) and database.require_existing_path is set: "+
+			"run 'keyorix system init --database' to create one deliberately, or verify database.path and the working directory "+
+			"-- refusing to create a new, empty database in its place (INV-STORAGE-22, ADR-095 Task 3)",
+			logDbPath, cfg.Storage.Database.Path)
+	}
+
 	if err := prepareLocalStorageFile(dbPath); err != nil {
 		return nil, err
 	}

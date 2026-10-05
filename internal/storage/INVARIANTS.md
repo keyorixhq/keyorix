@@ -129,10 +129,21 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   `TestResolveConfigRelativePath_*`, `TestLoad_DatabasePathTraversal_Rejected` — these live in
   `internal/config`, not `internal/storage`, but gate `factory.go`'s `createLocalStorage` input
   directly.
-- **INV-STORAGE-22** Opening a missing SQLite path should eventually refuse rather than
-  silently create an empty DB. Why: ADR-095 "Task 3". UNGUARDED (#issue: `createLocalStorage`
-  currently doesn't check for the file's prior existence; ADR-095 itself recommends this but it
-  was not built).
+- **INV-STORAGE-22** Opening a missing SQLite path should refuse rather than silently create an
+  empty DB. Why: ADR-095 "Task 3". Built as the OPT-IN `database.require_existing_path`
+  (#2504): `createLocalStorage` resolves the configured path through `localStorageDBFile` and
+  refuses when the file is absent, naming `keyorix system init --database` as the deliberate way
+  to create one. In-memory DSNs are exempt by construction (no file to pre-exist); the Postgres
+  backend is out of scope. Guard: `factory_local_storage_missing_path_log_test.go`
+  (`TestCreateLocalStorage_RequireExistingPath_RefusesMissing` — asserts the EFFECT, that a
+  refused boot created neither the file nor its parent directory, not just the returned error —
+  plus `_OpensExisting`, `_InMemoryExempt` and `_DSNQuerySuffix_...`, so the refusal cannot be
+  satisfied by refusing unconditionally). **The default is still false, i.e. create-if-missing**,
+  deliberately: nothing in the supported first-boot paths (`server/entrypoint.sh`,
+  `docker-compose.yml`) creates the file before the server starts, so defaulting it on would
+  break every containerized first boot. Flipping the default is the deliberate sign-off ADR-095
+  Task 3 asks for and is NOT settled here — it needs first boot to run
+  `keyorix system init --database` (or equivalent) first.
 - **INV-STORAGE-23** Two processes migrating the same SQLite file are serialized by SQLite
   itself: `withMigrationLock` runs the whole migration inside one `BEGIN EXCLUSIVE` transaction
   on a dedicated connection (`withSQLiteInDBMigrationLock`), so it holds however each process
