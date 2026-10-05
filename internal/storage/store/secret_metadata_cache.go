@@ -84,29 +84,138 @@ import (
 	"context"
 	"errors"
 	"sync"
-	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
 )
 
-// nodeGeneration is the generation signal for a cached secret_nodes row:
-// every column of the row that any writer can change must move one of these
-// two fields. updated_at covers GORM's auto-timestamp writers (Save,
-// Update, Updates); read_count covers the one UpdateColumn writer, which
-// bypasses that callback. See this file's header for the live defect that
-// made the second field necessary.
+// nodeGeneration is the generation signal for a cached secret_nodes row. It is
+// deliberately NOT just (updated_at, read_count).
+//
+// updated_at alone covers only the writers that go through GORM's
+// auto-timestamp callback; read_count was added because the one UpdateColumn
+// writer bypasses it (see this file's header). But BOTH are still clock- or
+// counter-derived, and a timestamp can TIE: `updated_at` is computed in Go by
+// the writer, stored at microsecond precision on PostgreSQL, so two
+// UpdateSecret calls to the same row from two replicas within one microsecond
+// produce the same value. That cannot be proven impossible, so per the
+// coordinator's review it gets a non-clock component instead — and the
+// component is the row's own content.
+//
+// Every persisted column of models.SecretNode is in here EXCEPT the three
+// named in nodeGenerationExcludedFields (description, metadata, and the
+// structurally-handled ones), which is machine-checked by
+// TestNodeGeneration_CoversEveryPersistedSecretNodeField. A tie therefore
+// requires every included column to be equal, i.e. the cached row and the
+// committed row agree on everything any decision reads — so a tie cannot
+// produce a wrong answer, rather than merely being unlikely to.
+//
+// Pointer and time fields are normalised to comparable scalars (present flag +
+// value, UnixNano for times) so this type is usable with ==: a raw time.Time
+// compares its monotonic reading and *time.Location too, and a raw *int
+// compares pointer identity, which would make two reads of the same row
+// compare unequal.
 type nodeGeneration struct {
-	updatedAt time.Time
-	readCount int
+	updatedAtUnixNano int64
+	readCount         int
+
+	parentID               uint
+	hasParent              bool
+	projectID              uint
+	environmentID          uint
+	name                   string
+	isSecret               bool
+	typ                    string
+	maxReads               int
+	hasMaxReads            bool
+	expirationUnixNano     int64
+	hasExpiration          bool
+	classification         string
+	status                 string
+	createdBy              string
+	ownerID                uint
+	ownerMachineIdentityID uint
+	isShared               bool
+	createdAtUnixNano      int64
+	lastRotatedAtUnixNano  int64
+	hasLastRotatedAt       bool
+	autoRotate             bool
+	rotationLength         int
+	rotationCharset        string
+	rotationBackend        string
+	rotationRef            string
+	certNotAfterUnixNano   int64
+	hasCertNotAfter        bool
+	retentionOverrideDays  int
 }
 
-// equal compares with time.Time.Equal, never ==: == on a time.Time also
-// compares the monotonic reading and the *time.Location pointer, so two reads
-// of the same column can compare unequal and a correct cache would silently
-// never hit.
-func (g nodeGeneration) equal(other nodeGeneration) bool {
-	return g.readCount == other.readCount && g.updatedAt.Equal(other.updatedAt)
+// nodeGenerationOf derives the stamp from a fully-loaded row — the same-row
+// path, where the stamp and the data come from one query.
+func nodeGenerationOf(s *models.SecretNode) nodeGeneration {
+	g := nodeGeneration{
+		updatedAtUnixNano:      s.UpdatedAt.UnixNano(),
+		readCount:              s.ReadCount,
+		projectID:              s.ProjectID,
+		environmentID:          s.EnvironmentID,
+		name:                   s.Name,
+		isSecret:               s.IsSecret,
+		typ:                    s.Type,
+		classification:         s.Classification,
+		status:                 s.Status,
+		createdBy:              s.CreatedBy,
+		ownerID:                s.OwnerID,
+		ownerMachineIdentityID: s.OwnerMachineIdentityID,
+		isShared:               s.IsShared,
+		createdAtUnixNano:      s.CreatedAt.UnixNano(),
+		autoRotate:             s.AutoRotate,
+		rotationLength:         s.RotationLength,
+		rotationCharset:        s.RotationCharset,
+		rotationBackend:        s.RotationBackend,
+		rotationRef:            s.RotationRef,
+		retentionOverrideDays:  s.RetentionOverrideDays,
+	}
+	if s.ParentID != nil {
+		g.parentID, g.hasParent = *s.ParentID, true
+	}
+	if s.MaxReads != nil {
+		g.maxReads, g.hasMaxReads = *s.MaxReads, true
+	}
+	if s.Expiration != nil {
+		g.expirationUnixNano, g.hasExpiration = s.Expiration.UnixNano(), true
+	}
+	if s.LastRotatedAt != nil {
+		g.lastRotatedAtUnixNano, g.hasLastRotatedAt = s.LastRotatedAt.UnixNano(), true
+	}
+	if s.CertNotAfter != nil {
+		g.certNotAfterUnixNano, g.hasCertNotAfter = s.CertNotAfter.UnixNano(), true
+	}
+	return g
+}
+
+// scheduleGeneration is the schedule row's own (updated_at + the whole access
+// policy). Same reasoning as nodeGeneration: updated_at can tie between two
+// writes in one stored tick, and an access schedule is a read gate, so the
+// non-clock component here is the policy itself — a tie then means the two
+// schedules ARE the same policy, and serving the cached one is correct.
+// AllowedDays/StartHour/EndHour/Timezone are the complete set of policy
+// columns on models.SecretAccessSchedule, machine-checked by
+// TestScheduleGeneration_CoversEveryPersistedScheduleField.
+type scheduleGeneration struct {
+	updatedAtUnixNano int64
+	allowedDays       string
+	startHour         int
+	endHour           int
+	timezone          string
+}
+
+func scheduleGenerationOf(s *models.SecretAccessSchedule) scheduleGeneration {
+	return scheduleGeneration{
+		updatedAtUnixNano: s.UpdatedAt.UnixNano(),
+		allowedDays:       s.AllowedDays,
+		startHour:         s.StartHour,
+		endHour:           s.EndHour,
+		timezone:          s.Timezone,
+	}
 }
 
 // versionsGeneration is the generation signal for a cached "latest version of
@@ -143,7 +252,7 @@ type secretVersionCacheEntry struct {
 }
 
 type secretScheduleCacheEntry struct {
-	generation  time.Time
+	generation  scheduleGeneration
 	hasSchedule bool
 	schedule    *models.SecretAccessSchedule
 }
@@ -227,19 +336,31 @@ func (c *secretMetadataCache) evictSchedule(secretNodeID uint) {
 // fail-closed path: the caller must treat a generation-check error exactly
 // like a miss, never like "assume unchanged."
 func liveNodeGeneration(ctx context.Context, db *gorm.DB, id uint) (nodeGeneration, bool, error) {
-	var row struct {
-		UpdatedAt time.Time
-		ReadCount int
-	}
+	var row models.SecretNode
 	err := db.WithContext(ctx).Model(&models.SecretNode{}).
-		Select("updated_at", "read_count").Where(sqlWhereID, id).Take(&row).Error
+		Select(nodeGenerationColumns).Where(sqlWhereID, id).Take(&row).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nodeGeneration{}, false, nil
 		}
 		return nodeGeneration{}, false, err
 	}
-	return nodeGeneration{updatedAt: row.UpdatedAt, readCount: row.ReadCount}, true, nil
+	return nodeGenerationOf(&row), true, nil
+}
+
+// nodeGenerationColumns is the column list liveNodeGeneration selects: every
+// persisted secret_nodes column EXCEPT the ones in
+// nodeGenerationExcludedFields. An explicit list, not `*`, so the stamp read
+// genuinely avoids fetching description and metadata — the two columns that
+// make a full row fetch expensive, and therefore the margin the cache exists
+// to win. Machine-checked against the model by
+// TestNodeGeneration_CoversEveryPersistedSecretNodeField.
+var nodeGenerationColumns = []string{
+	"updated_at", "read_count", "parent_id", "project_id", "environment_id", "name",
+	"is_secret", "type", "max_reads", "expiration", "classification", "status",
+	"created_by", "owner_id", "owner_machine_identity_id", "is_shared", "created_at",
+	"last_rotated_at", "auto_rotate", "rotation_length", "rotation_charset",
+	"rotation_backend", "rotation_ref", "cert_not_after", "retention_override_days",
 }
 
 // liveVersionsGeneration reads the aggregate generation of secretNodeID's
@@ -266,20 +387,25 @@ func liveVersionsGeneration(ctx context.Context, db *gorm.DB, secretNodeID uint)
 }
 
 // liveScheduleGeneration is the schedule table's stamp-only read, used ONLY to
-// validate a warm entry; the entry itself is stamped with the row's own
-// updated_at read in the same query as the row (GetSecretAccessSchedule), so
-// there is no read-data-then-read-stamp window. SecretAccessSchedule has no
-// soft-delete column, so "not found" here always means
-// DeleteSecretAccessSchedule actually removed the row.
-func liveScheduleGeneration(ctx context.Context, db *gorm.DB, secretNodeID uint) (time.Time, bool, error) {
-	var row struct{ UpdatedAt time.Time }
+// validate a warm entry; the entry itself is stamped with the row's own values
+// read in the same query as the row (GetSecretAccessSchedule), so there is no
+// read-data-then-read-stamp window. SecretAccessSchedule has no soft-delete
+// column, so "not found" here always means DeleteSecretAccessSchedule actually
+// removed the row.
+//
+// The stamp is updated_at PLUS the whole access policy, so two schedule writes
+// landing in one stored timestamp tick cannot tie unless they are the same
+// policy — see scheduleGeneration.
+func liveScheduleGeneration(ctx context.Context, db *gorm.DB, secretNodeID uint) (scheduleGeneration, bool, error) {
+	var row models.SecretAccessSchedule
 	err := db.WithContext(ctx).Model(&models.SecretAccessSchedule{}).
-		Select("updated_at").Where(sqlWhereSecretNodeID, secretNodeID).Take(&row).Error
+		Select("updated_at", "allowed_days", "start_hour", "end_hour", "timezone").
+		Where(sqlWhereSecretNodeID, secretNodeID).Take(&row).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return time.Time{}, false, nil
+			return scheduleGeneration{}, false, nil
 		}
-		return time.Time{}, false, err
+		return scheduleGeneration{}, false, err
 	}
-	return row.UpdatedAt, true, nil
+	return scheduleGenerationOf(&row), true, nil
 }
