@@ -180,6 +180,7 @@ func (ls *LocalStorage) WithNamedLock(ctx context.Context, lockKey string, fn fu
 	if held[lockKey] {
 		return fn(ctx)
 	}
+	ctx = checkNamedLockOrder(ctx, lockKey) // C-GUARD-3: test builds panic on an out-of-order acquisition
 	next := make(map[string]bool, len(held)+1)
 	for k := range held {
 		next[k] = true
