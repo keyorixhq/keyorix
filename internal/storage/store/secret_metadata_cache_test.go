@@ -246,3 +246,41 @@ func TestSecretMetadataCache_IsPerInstanceNotPackageGlobal(t *testing.T) {
 	require.True(t, aHas)
 	require.False(t, bHas, "b's cache must not have been populated by a's read")
 }
+
+// Coordinator review of #2764: a rotation committing BETWEEN GetLatestSecretVersion's
+// version query and its generation read must not leave the pre-rotation version cached
+// under the post-rotation generation (a rotated, possibly compromised value would keep
+// being served). The callback commits version 2 right after the version query.
+func TestGetLatestSecretVersion_RotationDuringResolveIsNotCachedStale(t *testing.T) {
+	ls := newCacheTestStorage(t)
+	ctx := context.Background()
+	created, err := ls.CreateSecret(ctx, &models.SecretNode{Name: "x", ProjectID: 1, EnvironmentID: 1, CreatedAt: time.Now(), UpdatedAt: time.Now()})
+	require.NoError(t, err)
+	_, err = ls.CreateSecretVersion(ctx, &models.SecretVersion{SecretNodeID: created.ID, VersionNumber: 1, CreatedAt: time.Now()})
+	require.NoError(t, err)
+
+	armed := true
+	require.NoError(t, ls.db.Callback().Query().After("gorm:query").Register("test:rotate-after-version-read", func(tx *gorm.DB) {
+		if armed && tx.Statement.Table == "secret_versions" {
+			armed = false
+			time.Sleep(2 * time.Millisecond) // distinct updated_at
+			require.NoError(t, ls.db.Transaction(func(inner *gorm.DB) error {
+				txStore := &LocalStorage{db: inner, secretMetaCache: ls.secretMetaCache}
+				if _, err := txStore.CreateSecretVersion(ctx, &models.SecretVersion{SecretNodeID: created.ID, VersionNumber: 2, CreatedAt: time.Now()}); err != nil {
+					return err
+				}
+				created.UpdatedAt = time.Now()
+				_, err := txStore.UpdateSecret(ctx, created)
+				return err
+			}))
+		}
+	}))
+
+	_, err = ls.GetLatestSecretVersion(ctx, created.ID)
+	require.NoError(t, err)
+	require.False(t, armed, "the rotation never fired inside the resolve window")
+
+	v, err := ls.GetLatestSecretVersion(ctx, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, 2, v.VersionNumber, "the pre-rotation version was cached under the post-rotation generation")
+}

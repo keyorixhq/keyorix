@@ -35,11 +35,11 @@ func (ls *LocalStorage) GetSecretAccessSchedule(ctx context.Context, secretNodeI
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
-	liveGen, found, genErr := liveScheduleGeneration(ctx, ls.db, secretNodeID)
-	if genErr == nil && found {
-		cp := row
-		ls.secretMetaCache.setSchedule(secretNodeID, secretScheduleCacheEntry{generation: liveGen, hasSchedule: true, schedule: &cp})
-	}
+	// The generation is this row's own updated_at, read in the same query as the
+	// row (coordinator review of #2764): a separate later generation read could
+	// see a newer schedule and cache this older row under it.
+	cp := row
+	ls.secretMetaCache.setSchedule(secretNodeID, secretScheduleCacheEntry{generation: row.UpdatedAt, hasSchedule: true, schedule: &cp})
 	return &row, nil
 }
 

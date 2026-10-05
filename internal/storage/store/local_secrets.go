@@ -996,6 +996,14 @@ func (ls *LocalStorage) CreateSecretVersion(ctx context.Context, version *models
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	// A new version changes what GetLatestSecretVersion returns: bump the node's
+	// generation (updated_at) here, on the same handle (so inside the caller's
+	// transaction), so the read-path cache can never serve the previous latest
+	// version, whether or not the caller also touches the secret row.
+	if err := ls.db.WithContext(ctx).Model(&models.SecretNode{}).Where(sqlWhereID, version.SecretNodeID).
+		UpdateColumn("updated_at", time.Now()).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
 	return version, nil
 }
 
@@ -1017,9 +1025,14 @@ func (ls *LocalStorage) GetLatestSecretVersion(ctx context.Context, secretID uin
 		cp := *version
 		return &cp, nil
 	}
+	// Read the node generation BEFORE the version query (coordinator review of
+	// #2764): a rotation committing between the two would otherwise cache the
+	// pre-rotation version under the post-rotation generation, and the old value
+	// would keep being served. Read first, a race can only produce an entry under
+	// an already-stale generation, which never hits.
+	liveGen, found, genErr := liveNodeGeneration(ctx, ls.db, secretID)
 	var version models.SecretVersion
 	err := ls.db.WithContext(ctx).Where(sqlWhereSecretNodeID, secretID).Order("version_number DESC").First(&version).Error
-	liveGen, found, genErr := liveNodeGeneration(ctx, ls.db, secretID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			if genErr == nil && found {
