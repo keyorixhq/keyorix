@@ -581,7 +581,11 @@ func newRBACStore(t *testing.T) *LocalStorage {
 		// MachineIdentityRole/ConnectRefGrant: DeleteRole's cascade (SESSION-AT
 		// AT1 row 2) deletes from every RoleID-referencing table, so any
 		// fixture exercising a real (non-404) DeleteRole needs all five.
-		&models.MachineIdentity{}, &models.MachineIdentityRole{}, &models.ConnectRefGrant{})
+		&models.MachineIdentity{}, &models.MachineIdentityRole{}, &models.ConnectRefGrant{},
+		// SystemMetadata: AssignPermissionToRole/RemovePermissionFromRole/
+		// DeleteRole bump the PERF-3 PR-2 role_permissions cache generation
+		// (a system_metadata row) in the same transaction as the real write.
+		&models.SystemMetadata{})
 }
 
 func TestRBAC_RolesAndPermissions(t *testing.T) {

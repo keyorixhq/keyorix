@@ -166,6 +166,13 @@ type LocalStorage struct {
 	// construction and meaningless on a clone anyway (auditFlusher is nil
 	// there, so runAuditFlusher never runs for it).
 	auditFlusherLingerWindow time.Duration
+	// rolePermCache backs RoleSetHasPermission's read-path cache (PERF-3,
+	// docs/specs/read-path-caching.md PR-2). A pointer so a transaction-scoped
+	// LocalStorage (see WithTransaction) shares the SAME cache as its parent,
+	// same sharing reason as auditChainMu etc. above — see
+	// role_permission_cache.go's own header for why this must NOT be a
+	// package-level global instead.
+	rolePermCache *rolePermissionCache
 }
 
 // clockWatermark pairs a mutex with the time.Time it guards, so a single
@@ -191,6 +198,7 @@ func NewLocalStorage(db *gorm.DB) *LocalStorage {
 		consumeClockWatermark: &clockWatermark{},
 		rbacClockWatermark:    &clockWatermark{},
 		auditFlusher:          &auditFlusherState{},
+		rolePermCache:         newRolePermissionCache(),
 	}
 }
 
