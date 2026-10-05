@@ -253,6 +253,7 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   #2652 #2653 #2654 #2655 #2656 #2657 #2659.
   detect stale rows, see the TSV's `STALE` class). Open: #2646 #2647 #2648 #2649 #2650 #2651
   #2652 #2653 #2654 #2656 #2657 #2659.
+  #2652 #2653 #2654 #2655 #2656.
 - **INV-CORE-42** A write that persists a pre-read snapshot must not overwrite columns the
   operation did not change, and must not resurrect a soft-deleted row. GORM `Save(struct)` on
   a soft-delete model is a resurrection primitive under concurrency: its `UPDATE ... WHERE
@@ -272,6 +273,13 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   whole activation closed with `ErrMFAEnrollmentChanged`. Why: #2655. Guard:
   `TestActivateMFA_SecretSwappedAfterValidation_FailsClosed` (default-ci),
   `TestCTAReview_ActivateMFA_vs_BeginMFAEnrollment_CrossReplicaPostgres` (pg-gated).
+- **INV-CORE-44** A project membership never ends `revoked` while its user still holds the
+  role grant that membership conferred: every write moving a (project, user) membership into
+  or out of `active` (`TransitionMembership`, `inviteMemberWithMode`) runs its state change
+  and its grant/removal side effect under `WithNamedLock(membershipLockKey(project, user))`.
+  Why: #2657, #2659. Guard:
+  `TestCTAReview_TransitionMembership_ActivateVsRevoke_CrossReplicaPostgres`,
+  `TestCTAReview_InviteMemberOpenMode_vs_Revoke_CrossReplicaPostgres` (pg-gated).
 
 ## Account-state / exhaustiveness
 
