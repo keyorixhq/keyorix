@@ -61,6 +61,11 @@ const (
 	DynamicSecretLeaseStatusRevoked      DynamicSecretLeaseStatus = "revoked"
 )
 
+// Defines values for MFAChallengeDataMfaRequired.
+const (
+	MFAChallengeDataMfaRequiredTrue MFAChallengeDataMfaRequired = true
+)
+
 // Defines values for MachineIdentityState.
 const (
 	MachineIdentityStateActive    MachineIdentityState = "active"
@@ -194,8 +199,8 @@ const (
 
 // Defines values for ListProjectEnvironmentsParamsIncludeDeleted.
 const (
-	False ListProjectEnvironmentsParamsIncludeDeleted = "false"
-	True  ListProjectEnvironmentsParamsIncludeDeleted = "true"
+	ListProjectEnvironmentsParamsIncludeDeletedFalse ListProjectEnvironmentsParamsIncludeDeleted = "false"
+	ListProjectEnvironmentsParamsIncludeDeletedTrue  ListProjectEnvironmentsParamsIncludeDeleted = "true"
 )
 
 // Defines values for TransitionMachineIdentityJSONBodyAction.
@@ -531,6 +536,41 @@ type GroupRoleGrant struct {
 	Id          *int       `json:"id,omitempty"`
 	Name        *string    `json:"name,omitempty"`
 }
+
+// LoginSuccessData defines model for LoginSuccessData.
+type LoginSuccessData struct {
+	// AbsoluteExpiresAt Hard ceiling past which refresh is refused
+	AbsoluteExpiresAt      *time.Time `json:"absolute_expires_at,omitempty"`
+	AccountState           *string    `json:"account_state,omitempty"`
+	DisplayName            *string    `json:"display_name,omitempty"`
+	Email                  *string    `json:"email,omitempty"`
+	ExpiresAt              *time.Time `json:"expires_at,omitempty"`
+	PasswordChangeRequired *bool      `json:"password_change_required,omitempty"`
+	Permissions            *[]string  `json:"permissions,omitempty"`
+	Role                   *string    `json:"role,omitempty"`
+	Roles                  *[]string  `json:"roles,omitempty"`
+
+	// Token Session bearer token
+	Token    string  `json:"token"`
+	UserId   *int    `json:"user_id,omitempty"`
+	Username *string `json:"username,omitempty"`
+}
+
+// MFAChallengeData The password (or setup token) was correct, but a second factor is required -- core.ErrMFARequired. The client must complete POST /auth/mfa/verify (TOTP/recovery code) with this challenge, or the WebAuthn login ceremony, to get a real session.
+type MFAChallengeData struct {
+	// MfaChallenge Single-use challenge token to pass to /auth/mfa/verify
+	MfaChallenge string                      `json:"mfa_challenge"`
+	MfaRequired  MFAChallengeDataMfaRequired `json:"mfa_required"`
+
+	// TotpAvailable Whether this account can complete the challenge with a TOTP/recovery code
+	TotpAvailable bool `json:"totp_available"`
+
+	// WebauthnAvailable Whether this account can complete the challenge via a WebAuthn passkey
+	WebauthnAvailable bool `json:"webauthn_available"`
+}
+
+// MFAChallengeDataMfaRequired defines model for MFAChallengeData.MfaRequired.
+type MFAChallengeDataMfaRequired bool
 
 // MachineAuditReport Deployment-wide machine identity audit report (GET /machine-identities/audit).
 type MachineAuditReport struct {
@@ -1653,7 +1693,10 @@ type DeleteProjectParamsForce string
 // UpdateProjectJSONBody defines parameters for UpdateProject.
 type UpdateProjectJSONBody struct {
 	Description *string `json:"description,omitempty"`
-	Name        *string `json:"name,omitempty"`
+	Name        string  `json:"name"`
+
+	// RequireMfa ADR-037 per-project security-policy control. Omit (or null) to leave unchanged. Changing it additionally requires roles.assign at the project, not just secrets.write.
+	RequireMfa *bool `json:"require_mfa"`
 }
 
 // CreateAccessRequestJSONBody defines parameters for CreateAccessRequest.
@@ -2273,6 +2316,15 @@ type AuthLoginJSONBody struct {
 	Username string `json:"username"`
 }
 
+// VerifyMFALoginJSONBody defines parameters for VerifyMFALogin.
+type VerifyMFALoginJSONBody struct {
+	// Code A current TOTP code, or an unused recovery code
+	Code string `json:"code"`
+
+	// MfaChallenge The challenge token from /auth/login's mfa_required response
+	MfaChallenge string `json:"mfa_challenge"`
+}
+
 // SystemInitJSONBody defines parameters for SystemInit.
 type SystemInitJSONBody struct {
 	// BootstrapToken Prefer the X-Keyorix-Bootstrap-Token header; this field is the fallback for clients that cannot set headers.
@@ -2525,6 +2577,9 @@ type UpdateUserRolesJSONRequestBody UpdateUserRolesJSONBody
 
 // AuthLoginJSONRequestBody defines body for AuthLogin for application/json ContentType.
 type AuthLoginJSONRequestBody AuthLoginJSONBody
+
+// VerifyMFALoginJSONRequestBody defines body for VerifyMFALogin for application/json ContentType.
+type VerifyMFALoginJSONRequestBody VerifyMFALoginJSONBody
 
 // SystemInitJSONRequestBody defines body for SystemInit for application/json ContentType.
 type SystemInitJSONRequestBody SystemInitJSONBody
