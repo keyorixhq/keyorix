@@ -6717,21 +6717,21 @@ func (w *FaultyStorage) UpdateDynamicSecretLease(ctx context.Context, l *models.
 	return w.real.UpdateDynamicSecretLease(ctx, l)
 }
 
-func (w *FaultyStorage) UpdateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {
-	fire, kind, injected := w.check("UpdateGroup")
+func (w *FaultyStorage) UpdateGroupFields(ctx context.Context, id uint, name *string, nameFolded *string, description *string, updatedAt time.Time) (bool, error) {
+	fire, kind, injected := w.check("UpdateGroupFields")
 	if fire {
 		switch kind {
 		case KindPanic:
 			panic(injected)
 		case KindError:
-			var zero1 *models.Group
+			var zero1 bool
 			return zero1, injected
 		case KindEffectThenError:
-			rv1, _ := w.real.UpdateGroup(ctx, group)
+			rv1, _ := w.real.UpdateGroupFields(ctx, id, name, nameFolded, description, updatedAt)
 			return rv1, injected
 		}
 	}
-	return w.real.UpdateGroup(ctx, group)
+	return w.real.UpdateGroupFields(ctx, id, name, nameFolded, description, updatedAt)
 }
 
 func (w *FaultyStorage) UpdateLastLogin(ctx context.Context, userID uint, loginAt time.Time) error {
@@ -6830,21 +6830,21 @@ func (w *FaultyStorage) UpdateNotificationRetryPolicy(ctx context.Context, chann
 	return w.real.UpdateNotificationRetryPolicy(ctx, channelID, maxRetries, backoffMs)
 }
 
-func (w *FaultyStorage) UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error) {
-	fire, kind, injected := w.check("UpdateProject")
+func (w *FaultyStorage) UpdateProjectFields(ctx context.Context, id uint, name string, description string, requireMFA *bool, updatedAt time.Time) (bool, error) {
+	fire, kind, injected := w.check("UpdateProjectFields")
 	if fire {
 		switch kind {
 		case KindPanic:
 			panic(injected)
 		case KindError:
-			var zero1 *models.Project
+			var zero1 bool
 			return zero1, injected
 		case KindEffectThenError:
-			rv1, _ := w.real.UpdateProject(ctx, project)
+			rv1, _ := w.real.UpdateProjectFields(ctx, id, name, description, requireMFA, updatedAt)
 			return rv1, injected
 		}
 	}
-	return w.real.UpdateProject(ctx, project)
+	return w.real.UpdateProjectFields(ctx, id, name, description, requireMFA, updatedAt)
 }
 
 func (w *FaultyStorage) UpdateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) (bool, error) {

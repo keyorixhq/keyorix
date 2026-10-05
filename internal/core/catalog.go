@@ -184,14 +184,25 @@ func (c *KeyorixCore) UpdateProject(ctx context.Context, id uint, name, descript
 		return nil, err
 	}
 	mfaChanged := requireMFA != nil && *requireMFA != project.RequireMFA
-	project.Name = name
-	project.Description = description
-	if requireMFA != nil {
-		project.RequireMFA = *requireMFA
-	}
-	updated, err := c.storage.UpdateProject(ctx, project)
+	// #2697: a column-scoped write of the fields this call actually owns, onto a
+	// row that is still live. The previous full-row Save carried the whole
+	// pre-read struct back: its upsert fallback resurrected a project deleted
+	// after the GetProject above, and it rewrote require_mfa even when requireMFA
+	// was nil — silently disabling an ADR-037 per-project MFA requirement an
+	// admin had just enabled, with no audit event, since mfaChanged is false in
+	// exactly that case. requireMFA stays a pointer all the way down so a nil one
+	// never reaches the UPDATE's SET list.
+	matched, err := c.storage.UpdateProjectFields(ctx, id, name, description, requireMFA, c.now())
 	if err != nil {
 		return nil, translateProjectNameError(err)
+	}
+	if !matched {
+		return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+	}
+	// Return the committed row, not the struct read before the write.
+	updated, err := c.storage.GetProject(ctx, id)
+	if err != nil {
+		return nil, err
 	}
 	if mfaChanged {
 		pid := id

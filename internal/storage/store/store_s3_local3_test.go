@@ -52,9 +52,11 @@ func TestProject_CRUD(t *testing.T) {
 	_, err = ls.GetProject(ctx, 99999)
 	require.Error(t, err)
 
-	// UpdateProject.
-	p.Description = "updated"
-	updated, err := ls.UpdateProject(ctx, p)
+	// UpdateProjectFields.
+	matched, err := ls.UpdateProjectFields(ctx, p.ID, p.Name, "updated", nil, time.Now())
+	require.NoError(t, err)
+	require.True(t, matched)
+	updated, err := ls.GetProject(ctx, p.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "updated", updated.Description)
 }
@@ -467,10 +469,11 @@ func TestGroup_UpdateAndList(t *testing.T) {
 	g, err := ls.CreateGroup(ctx, &models.Group{Name: "list-group", NameFolded: "list-group"})
 	require.NoError(t, err)
 
-	// UpdateGroup.
-	g.Description = "updated"
-	_, err = ls.UpdateGroup(ctx, g)
+	// UpdateGroupFields.
+	desc := "updated"
+	matched, err := ls.UpdateGroupFields(ctx, g.ID, nil, nil, &desc, time.Now())
 	require.NoError(t, err)
+	require.True(t, matched)
 	got, err := ls.GetGroup(ctx, g.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "updated", got.Description)

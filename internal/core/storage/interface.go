@@ -149,7 +149,27 @@ type Storage interface {
 	// Project / Environment management
 	CreateProject(ctx context.Context, project *models.Project) (*models.Project, error)
 	GetProject(ctx context.Context, id uint) (*models.Project, error)
-	UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error)
+	// UpdateProjectFields persists ONLY name, description and updated_at — plus
+	// require_mfa when (and only when) requireMFA is non-nil — onto a LIVE
+	// project row: "UPDATE projects SET ... WHERE id = ? AND deleted_at IS
+	// NULL". matched=false (no error) means the project is gone; the caller must
+	// not report success.
+	//
+	// This REPLACES the former UpdateProject, a bare GORM Save of a struct the
+	// caller read earlier (#2697). Two consequences, both closed by the shape
+	// above rather than by the caller being careful:
+	//   - Save's 0-rows fallback is an upsert that writes deleted_at = NULL, so
+	//     a rename landing after DeleteProject resurrected the project row
+	//     alone (its secrets and environments stayed deleted), after which
+	//     requireLiveProject and the RestoreSecret/RestoreEnvironment liveness
+	//     checks passed again for project-scoped grant holders;
+	//   - Save wrote every column, so a plain rename whose read predated an
+	//     admin enabling ADR-037's per-project require_mfa wrote `false` back
+	//     over it — no roles.assign needed, and no audit event, because
+	//     core.UpdateProject only audits when ITS OWN argument changes the
+	//     value it read. requireMFA is a pointer here so "I am not changing
+	//     this flag" is expressible, and a nil one never reaches the UPDATE.
+	UpdateProjectFields(ctx context.Context, id uint, name, description string, requireMFA *bool, updatedAt time.Time) (matched bool, err error)
 	DeleteProject(ctx context.Context, id uint) error
 	// DeleteProjectIfEmpty atomically enforces DeleteProject(force=false)'s guard —
 	// reject the delete if the project still has any live secret — and, only when the
@@ -1016,7 +1036,24 @@ type Storage interface {
 	// Group Management
 	CreateGroup(ctx context.Context, group *models.Group) (*models.Group, error)
 	GetGroup(ctx context.Context, id uint) (*models.Group, error)
-	UpdateGroup(ctx context.Context, group *models.Group) (*models.Group, error)
+	// UpdateGroupFields persists ONLY the non-nil fields among name,
+	// nameFolded and description (plus updated_at) onto a LIVE group row:
+	// "UPDATE groups SET ... WHERE id = ? AND deleted_at IS NULL".
+	// matched=false (no error) means the group is gone; the caller must not
+	// report success. name and nameFolded must be passed together — they are
+	// one value in two columns (#1642) and a stale nameFolded would leave the
+	// uniqueness index checking a name the group no longer has.
+	//
+	// This REPLACES the former UpdateGroup, a bare GORM Save (#2697). Save's
+	// 0-rows fallback is an upsert that writes deleted_at = NULL, and DeleteGroup
+	// deliberately KEEPS a deleted group's GroupRole and UserGroup rows so
+	// RestoreGroup can work — so a rename landing after a delete or SCIM
+	// deprovision brought the group back with every role grant and membership
+	// live, with no restore audit event and without going through RestoreGroup.
+	// An IdP DELETE closely followed by a PUT is enough: ReplaceSCIMGroup and
+	// PatchSCIMGroup rename through this same primitive, outside the
+	// withGroupProjectAdminGuardLocks that deleteGroupGuarded holds.
+	UpdateGroupFields(ctx context.Context, id uint, name, nameFolded, description *string, updatedAt time.Time) (matched bool, err error)
 	DeleteGroup(ctx context.Context, id uint) error
 	// RestoreGroup clears a soft-deleted group's deleted_at (with its grants/members).
 	RestoreGroup(ctx context.Context, id uint) error

@@ -178,10 +178,18 @@ func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uin
 		if ferr != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
 		}
-		group.Name = displayName
-		group.NameFolded = foldedName.Folded()
-		if _, err := c.storage.UpdateGroup(ctx, group); err != nil {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		// #2697: column-scoped, conditional on the group row still being live —
+		// a full-row Save here resurrected a group a concurrent
+		// DeprovisionSCIMGroup/DeleteGroup had just removed, bringing its
+		// retained role grants and memberships back with it. An IdP DELETE
+		// followed closely by a PUT/PATCH is exactly this interleaving.
+		folded := foldedName.Folded()
+		matched, uerr := c.storage.UpdateGroupFields(ctx, groupID, &displayName, &folded, nil, c.now())
+		if uerr != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), uerr)
+		}
+		if !matched {
+			return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
 		}
 	}
 	current, err := c.storage.ListGroupMembers(ctx, groupID)
@@ -223,10 +231,14 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 		if ferr != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
 		}
-		group.Name = *newName
-		group.NameFolded = foldedName.Folded()
-		if _, err := c.storage.UpdateGroup(ctx, group); err != nil {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		// #2697: see ReplaceSCIMGroup's identical rename above.
+		folded := foldedName.Folded()
+		matched, uerr := c.storage.UpdateGroupFields(ctx, groupID, newName, &folded, nil, c.now())
+		if uerr != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), uerr)
+		}
+		if !matched {
+			return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
 		}
 	}
 	if hasSCIMAdditions(addIDs) && c.scimGroupConfersAdmin(ctx, groupID) {
