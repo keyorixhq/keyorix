@@ -54,10 +54,19 @@ const (
 )
 
 // applyAuditCommitDurability is the ONE place the ADR-112 Amendment 1 fast
-// audit mode (FASTAUDIT-1, docs/specs/fast-audit-mode.md) touches the Postgres
-// audit-commit path. Callers must already have established that tx's dialect
-// is postgres; SQLite's equivalent is a connection-level DSN pragma applied in
-// internal/storage/factory.go's sqliteDSN, not here.
+// audit mode (FASTAUDIT-1, docs/specs/fast-audit-mode.md) touches the
+// audit-commit path, and the ONLY implementation of the mode anywhere.
+//
+// POSTGRES ONLY. Callers must already have established that tx's dialect is
+// postgres. There is NO SQLite counterpart, and deliberately never was in a
+// shipped build: the mode is PostgreSQL-only (Andrei's decision, 2026-10-05)
+// and config validation REFUSES TO START a SQLite backend that sets the key
+// (internal/config's auditSkipDurableSyncSQLiteUnsupportedError), so a
+// SQLite-backed LocalStorage can never reach this function with skip == true.
+// SQLite's own DSN says `_synchronous=FULL` unconditionally and has no other
+// branch. See config.DatabaseConfig.InsecureAuditSkipDurableSync for the two
+// reasons SQLite was rejected (a per-connection pragma would relax every
+// table, not just audit; and the measured p99 got worse under concurrency).
 //
 // skip == false (the default, and the secure baseline) is a strict NO-OP: no
 // statement is issued at all, so the default path is byte-identical to what it

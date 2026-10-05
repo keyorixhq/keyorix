@@ -150,8 +150,9 @@ func TestFastAuditMode_SQLiteRefusesToStartEndToEnd(t *testing.T) {
 	// cfg.Validate at all, so it applies schema migrations regardless of this
 	// setting -- pre-existing behaviour for every other config error, not
 	// something this change introduced or should silently paper over. Harmless
-	// here (migrate neither serves secrets nor writes audit), and recorded as a
-	// finding in FASTAUDIT-1's report rather than fixed inside this PR.
+	// here (migrate neither serves secrets nor writes audit). Filed as #2854;
+	// when that is decided, add "migrate" to this list if it starts
+	// validating.
 	for _, cmd := range []string{"validate", "diagnose"} {
 		out, err := runAdmin(t, bin, dir, env, cmd, "--config", "./keyorix.yaml")
 		if err == nil {

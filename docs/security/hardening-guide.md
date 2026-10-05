@@ -186,7 +186,15 @@ you cannot show that the last fraction of a second of reads were recorded.
   every start, so the tamper-evident log itself records the window the install
   ran weakened. Written only when the setting is actually *in effect* — a
   configured-but-ignored setting weakened no window, and the event must not
-  claim otherwise;
+  claim otherwise. **Note that this event is written through the very path whose
+  durability the setting relaxes**, so it is async-committed like every other
+  audit entry: a crash within ~600 ms of boot can lose it. That is accepted
+  rather than engineered around, because the event marks a *window* and not a
+  single instant — the next boot re-records it, and the live setting is also
+  reported by `admin validate` and `GET /system/info`, neither of which depends
+  on the chain. Do not treat a missing event as evidence the mode was off;
+- read the live setting from the posture report or the API, not from the
+  absence of a chain entry;
 - `keyorix-server admin validate` lists it as a posture deviation;
 - `GET /api/v1/system/info` reports `security.audit_durable_sync_skipped: true`
   — the one that needs no host access. That field reports **in effect**, not

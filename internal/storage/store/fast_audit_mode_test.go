@@ -19,7 +19,12 @@ package store
 
 import (
 	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -86,9 +91,10 @@ func TestFastAuditMode_DefaultIsDurableSync(t *testing.T) {
 // relax the commit durability of the caller's whole transaction -- the secret
 // mutation included -- not just the audit row.
 //
-// A refactor to a whole-struct copy (`clone := *ls`) would silently propagate
-// the field and break exactly that, while every other test in this package
-// stayed green. This is the test that goes red.
+// Behavioural half: exercises the real WithTransaction and reads the field off
+// the clone it actually hands out. The structural half, which covers every
+// clone site including ones this test never calls, is
+// TestEveryLocalStorageCloneOmitsAuditSkipDurableSync below.
 func TestWithTransaction_CloneNeverInheritsAuditSkipDurableSync(t *testing.T) {
 	ls := newAuditChainTestStore(t)
 	ls.SetAuditSkipDurableSync(true)
@@ -110,17 +116,144 @@ func TestWithTransaction_CloneNeverInheritsAuditSkipDurableSync(t *testing.T) {
 			"not just the audit row (see local_transaction.go's comment)")
 }
 
-// TestFastAuditMode_StillFailsClosedOnWriteFailure is S1. The mode removes
-// the WAIT for a sync, never the fail-closed behaviour: if the audit row
-// cannot be WRITTEN, LogAuditEvent still returns an error and the caller
-// still fails.
+// TestEveryLocalStorageCloneOmitsAuditSkipDurableSync is the structural half,
+// added after coordinator review of #2828 pointed out that
+// RemoveGlobalAdminRoleGuarded (local_rbac.go) builds a SECOND
+// transaction-scoped clone which the behavioural test above never touches --
+// correct today, but untested, and a third clone site would be invisible to a
+// hand-written list.
 //
-// Asserts the EFFECT (no row, non-nil error), not a return value alone, and
-// drops the table out from under the writer to make the write genuinely
-// impossible rather than mocking a failure shape the real system may not
-// produce.
+// AST-DERIVED, not grep-derived, and not file-listed. It parses every non-test
+// file in this package and finds every composite literal of type LocalStorage,
+// so a clone added tomorrow in a file nobody thought about is covered the
+// moment it is written. Then it asserts that none of them -- except the root
+// constructor NewLocalStorage, which is the one place that legitimately
+// populates the struct -- sets auditSkipDurableSync.
+//
+// WHAT IT DOES NOT CATCH, stated so the gap reads as considered: a clone built
+// by whole-struct copy (`clone := *ls`) rather than a composite literal, or by
+// reflection, carries every field including this one and is NOT a composite
+// literal, so this walk would not see it. The behavioural test above is what
+// catches that shape for WithTransaction specifically. The two together cover
+// "every literal clone site, known or future" plus "the one clone path a
+// caller actually receives"; neither alone covers both.
+func TestEveryLocalStorageCloneOmitsAuditSkipDurableSync(t *testing.T) {
+	const fieldName = "auditSkipDurableSync"
+	const rootConstructor = "NewLocalStorage"
+
+	_, thisFile, _, ok := runtime.Caller(0)
+	require.True(t, ok, "runtime.Caller failed")
+	pkgDir := filepath.Dir(thisFile)
+
+	entries, err := os.ReadDir(pkgDir)
+	require.NoError(t, err)
+
+	fset := token.NewFileSet()
+	type site struct {
+		fn       string
+		pos      string
+		setsSkip bool
+	}
+	var sites []site
+
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, perr := parser.ParseFile(fset, filepath.Join(pkgDir, name), nil, parser.ParseComments)
+		require.NoErrorf(t, perr, "parse %s", name)
+
+		for _, decl := range f.Decls {
+			fn, isFunc := decl.(*ast.FuncDecl)
+			if !isFunc || fn.Body == nil {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				lit, isLit := n.(*ast.CompositeLit)
+				if !isLit {
+					return true
+				}
+				// Matches both `LocalStorage{...}` and `&LocalStorage{...}`
+				// (the & is a UnaryExpr wrapping this same literal, so the
+				// literal's own Type is the bare Ident either way).
+				ident, isIdent := lit.Type.(*ast.Ident)
+				if !isIdent || ident.Name != "LocalStorage" {
+					return true
+				}
+				s := site{fn: fn.Name.Name, pos: fset.Position(lit.Pos()).String()}
+				for _, elt := range lit.Elts {
+					kv, isKV := elt.(*ast.KeyValueExpr)
+					if !isKV {
+						continue
+					}
+					if key, kok := kv.Key.(*ast.Ident); kok && key.Name == fieldName {
+						s.setsSkip = true
+					}
+				}
+				sites = append(sites, s)
+				return true
+			})
+		}
+	}
+
+	// Positive controls. If the walk finds nothing, or finds only the
+	// constructor, it has stopped looking at what it claims to look at and
+	// every assertion below would hold vacuously.
+	require.NotEmpty(t, sites,
+		"the AST walk found NO LocalStorage composite literals in this package. Either the type was renamed "+
+			"or this walk is broken -- either way it is no longer guarding anything")
+	var sawConstructor, cloneCount int
+	for _, s := range sites {
+		if s.fn == rootConstructor {
+			sawConstructor++
+			continue
+		}
+		cloneCount++
+	}
+	require.Equal(t, 1, sawConstructor,
+		"expected exactly one LocalStorage literal inside %s (the root constructor). Found %d. Sites: %+v",
+		rootConstructor, sawConstructor, sites)
+	require.GreaterOrEqualf(t, cloneCount, 2,
+		"expected at least 2 clone sites outside %s (WithTransaction in local_transaction.go and "+
+			"RemoveGlobalAdminRoleGuarded in local_rbac.go). Found %d: %+v. If a clone site was legitimately "+
+			"removed, lower this number deliberately -- do not let the guard silently stop covering anything.",
+		rootConstructor, cloneCount, sites)
+
+	for _, s := range sites {
+		if s.fn == rootConstructor {
+			continue
+		}
+		require.Falsef(t, s.setsSkip,
+			"%s (%s) sets %s on a transaction-scoped LocalStorage clone. It must NOT: a clone's audit append "+
+				"runs logAuditEventDirect inside the CALLER's transaction, so `SET LOCAL synchronous_commit = "+
+				"off` issued there would relax the commit durability of the caller's whole transaction -- the "+
+				"secret mutation included -- rather than just the audit row. Leave the field at its zero "+
+				"value (false, durable). See local_transaction.go's comment.",
+			s.fn, s.pos, fieldName)
+	}
+
+	t.Logf("checked %d LocalStorage literal(s): 1 constructor + %d clone site(s)", len(sites), cloneCount)
+}
+
+// TestFastAuditMode_StillFailsClosedOnWriteFailure is S1. The mode removes the
+// WAIT for a sync, never the fail-closed behaviour: if the audit row cannot be
+// WRITTEN, LogAuditEvent still returns an error and the caller still fails.
+//
+// POSTGRES-GATED, and that is the point. The first version of this test ran on
+// SQLite, where the flag is inert after the Postgres-only decision — so it
+// would have passed identically with the mode OFF, which makes it a test of
+// LogAuditEvent's ordinary error path rather than of this mode's fail-closed
+// behaviour. Coordinator review of #2828 caught that. On Postgres the mode is
+// genuinely in effect (`SET LOCAL synchronous_commit = off` really is issued
+// inside the transaction that then fails), so the assertion is about the thing
+// its name claims.
+//
+// Asserts the EFFECT, not a return value alone, and drops the table out from
+// under the writer to make the write genuinely impossible rather than mocking a
+// failure shape the real system may not produce.
 func TestFastAuditMode_StillFailsClosedOnWriteFailure(t *testing.T) {
-	ls := newAuditChainTestStore(t)
+	ls, _ := newPostgresAuditStore(t)
 	ls.SetAuditSkipDurableSync(true)
 
 	// Positive control first: the mode is on and an ordinary append works, so
@@ -138,24 +271,44 @@ func TestFastAuditMode_StillFailsClosedOnWriteFailure(t *testing.T) {
 	require.Error(t, err,
 		"with the fast audit mode on, an audit row that cannot be WRITTEN must still fail the call -- "+
 			"only the wait for the disk sync is skipped, never the write and never the fail-closed path")
+
+	// And no row survives: assert the effect, not just the returned error. A
+	// mode that had quietly become best-effort could return an error from one
+	// layer while still having committed something.
+	var n int64
+	require.NoError(t, ls.db.Raw(
+		"SELECT count(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'audit_events'",
+	).Scan(&n).Error)
+	require.Zero(t, n, "the table really is gone, so the failed write had nowhere to land")
 }
 
-// TestFastAuditMode_ChainStaysLinkedWhenEnabled is S2's visibility half: a
-// committed row is immediately VISIBLE under both async commit (Postgres) and
-// synchronous=NORMAL (SQLite); only its durability lags. So consecutive
-// appends still link, and the chain still verifies, with the mode on.
+// TestFastAuditMode_ChainStaysLinkedWhenEnabled is S2's visibility half: under
+// Postgres async commit a committed row is immediately VISIBLE, and only its
+// DURABILITY lags. So consecutive appends still link and the chain still
+// verifies with the mode on.
+//
+// POSTGRES-GATED for the same reason as the test above — on SQLite the flag is
+// inert, so the chain would link whether or not the mode did anything.
 func TestFastAuditMode_ChainStaysLinkedWhenEnabled(t *testing.T) {
-	ls := newAuditChainTestStore(t)
+	ls, cap := newPostgresAuditStore(t)
 	ls.SetAuditSkipDurableSync(true)
 
 	base := time.Now().UTC()
 	first := appendEvent(t, ls, "fastaudit.one", "first", base)
 	second := appendEvent(t, ls, "fastaudit.two", "second", base.Add(time.Millisecond))
 
+	// Precondition, asserted rather than assumed: the mode really was active
+	// for these appends. Without this the linkage assertions below would hold
+	// trivially on a durable commit too, which is exactly the flaw the SQLite
+	// version of this test had.
+	require.True(t, cap.saw("set local synchronous_commit = off"),
+		"the fast audit mode was not actually exercised -- no SET LOCAL was issued, so this test would "+
+			"pass identically with the mode off. Statements seen: %v", cap.stmts)
+
 	require.Equal(t, auditGenesisHash, first.PrevHash)
 	require.Equal(t, first.EntryHash, second.PrevHash,
 		"the second append must link onto the first even with the sync wait skipped -- a committed row is "+
-			"immediately visible regardless of whether its WAL frame has reached the disk yet")
+			"immediately visible regardless of whether its WAL record has reached the disk yet")
 
 	v, err := ls.VerifyAuditChain(context.Background(), nil)
 	require.NoError(t, err)
