@@ -13,6 +13,7 @@
 // brief describes. Documented here and in the report rather than asserting
 // a UI state that doesn't exist.
 import { test, expect, Page } from '@playwright/test';
+import { compliantPassword, personalInfoCandidates } from './support/password';
 
 const ADMIN_USERNAME = process.env.KEYORIX_E2E_ADMIN_USERNAME;
 const ADMIN_PASSWORD = process.env.KEYORIX_E2E_ADMIN_PASSWORD;
@@ -59,7 +60,21 @@ test('a limited (project_viewer) user cannot see or reach what their role denies
     // name (see scripts/smoke.sh's own header comment on this exact trap, and
     // CLAUDE.md's "local-only test failures" notes). A shared stamp here
     // silently 400s the create-user call with a generic "ValidationError".
-    const limitedPassword = 'Quartz-Falcon-77-Ridge!-' + Math.random().toString(36).slice(2, 10);
+    //
+    // #2815: the previous literal here, 'Quartz-Falcon-77-Ridge!-' + base-36,
+    // was compliant only because of the hardcoded "77" -- its sibling in
+    // mfa-login.spec.ts had no literal digit and flaked ~14% of runs. Switched
+    // to the shared generator so this one is compliant by construction too,
+    // rather than by a detail no future edit is obliged to preserve.
+    const limitedDisplayName = `Limited User ${stamp}`;
+    const limitedEmail = `${limitedUsername}@example.invalid`;
+    const limitedPassword = compliantPassword(
+        personalInfoCandidates({
+            username: limitedUsername,
+            email: limitedEmail,
+            displayName: limitedDisplayName,
+        })
+    );
 
     // ── Setup as admin: a project, and a user scoped to only that project ──
     await page.goto('/login');
@@ -74,8 +89,8 @@ test('a limited (project_viewer) user cannot see or reach what their role denies
     await page.goto('/admin/users');
     await page.getByRole('button', { name: 'New User' }).click();
     await page.getByLabel('Username').fill(limitedUsername);
-    await page.getByLabel('Display Name').fill(`Limited User ${stamp}`);
-    await page.getByLabel('Email').fill(`${limitedUsername}@example.invalid`);
+    await page.getByLabel('Display Name').fill(limitedDisplayName);
+    await page.getByLabel('Email').fill(limitedEmail);
     await page.locator('#create-password').fill(limitedPassword);
     // Default-role project assignment: the typeahead attaches project_viewer
     // (web/src/features/admin/ProjectAssignmentsPicker.tsx's DEFAULT_ROLE) --
