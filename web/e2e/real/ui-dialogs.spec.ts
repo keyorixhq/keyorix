@@ -9,19 +9,14 @@
 //      be there on the second -- the state-leak failure a user sees as "it
 //      remembered what I abandoned").
 //
-// DIALOGS is a hand-maintained list rather than "click every button that looks
-// like an opener". A generic sweep was tried first and is the wrong tool here:
-// it cannot tell a control that legitimately isn't a dialog (Export CSV, a tab)
-// from one that is broken, so every such control lands in the result set as an
-// indistinguishable maybe. Naming each dialog makes the list itself the thing a
-// reviewer can check against the pages, and makes a dialog that disappears from
-// a page fail loudly instead of silently dropping out of coverage.
-//
-// Each entry names the page, the accessible name of the control that opens the
-// dialog, and the accessible name of the dialog's own heading.
+// The dialog list itself lives in ./dialog-inventory.ts, shared with
+// ui-dialog-viewport.spec.ts -- see that file's header for why it is
+// hand-maintained rather than discovered by clicking every opener-looking
+// button.
 //
 // Run via scripts/e2e/web-real-smoke.sh, never directly.
 import { test, expect, Page } from '@playwright/test';
+import { DIALOGS, type DialogCase } from './dialog-inventory';
 
 const ADMIN_USERNAME = process.env.KEYORIX_E2E_ADMIN_USERNAME;
 const ADMIN_PASSWORD = process.env.KEYORIX_E2E_ADMIN_PASSWORD;
@@ -32,26 +27,6 @@ if (!ADMIN_USERNAME || !ADMIN_PASSWORD) {
             'scripts/e2e/web-real-smoke.sh, which bootstraps a real admin and exports them.'
     );
 }
-
-interface DialogCase {
-    page: string;
-    opener: string;
-    /** Substring of the dialog's own visible title. */
-    title: string;
-}
-
-const DIALOGS: DialogCase[] = [
-    { page: '/secrets', opener: 'New Secret', title: 'Create New Secret' },
-    { page: '/secrets/dynamic', opener: 'New config', title: 'New dynamic-secret config' },
-    { page: '/secrets/rotation', opener: 'New Policy', title: 'New Rotation Policy' },
-    { page: '/projects/2/secrets', opener: 'New Secret', title: 'New Secret' },
-    { page: '/projects/2/members', opener: 'Invite by email', title: 'Invite to' },
-    { page: '/admin/users', opener: 'New User', title: 'Create User' },
-    { page: '/admin/users', opener: 'Invite User', title: 'Invite User' },
-    { page: '/admin/roles', opener: 'New Role', title: 'New Role' },
-    { page: '/admin/groups', opener: 'New Group', title: 'New Group' },
-    { page: '/admin/notification-channels', opener: 'New Channel', title: 'New Channel' },
-];
 
 const DIRTY = 'websweep1-abandoned-value';
 

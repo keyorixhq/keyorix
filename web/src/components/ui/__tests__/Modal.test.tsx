@@ -150,4 +150,42 @@ describe('Modal', () => {
         );
         expect(screen.getByRole('dialog')).toHaveClass('custom-modal');
     });
+
+    // A structural tripwire, NOT the real check, and it says so because the
+    // difference matters: jsdom does no layout, so nothing here can measure
+    // whether a dialog actually fits a window. The real guard is
+    // web/e2e/real/ui-dialog-viewport.spec.ts, which opens every dialog in a
+    // browser at 1280x720 and 1440x800 and asserts its box lies inside the
+    // viewport. This test exists only so that removing the height bound or the
+    // scroll container during an unrelated refactor fails fast, in a 20ms unit
+    // run, instead of waiting for the real-backend suite.
+    //
+    // What it is guarding (#2775): the panel is vertically centred with
+    // -translate-y-1/2, so without a max-height a dialog taller than the window
+    // overflowed symmetrically and overflow-hidden clipped its header AND its
+    // footer at once, with nothing to scroll. Create User (869px) was therefore
+    // impossible to submit at either laptop height.
+    it('bounds the panel height and makes the body a scroll container', () => {
+        render(
+            <Modal isOpen onClose={vi.fn()} title="Details">
+                <p>Body</p>
+            </Modal>
+        );
+
+        const panel = screen.getByRole('dialog');
+        expect(panel.className, 'the panel must be height-bounded relative to the viewport').toMatch(/max-h-\[/);
+        expect(panel, 'a flex column is what lets the body take the remaining height').toHaveClass('flex', 'flex-col');
+
+        // The body region is the panel's last element child: header (optional)
+        // then body. Queried by position rather than by a test id so this
+        // asserts the shape the browser sees, not a hook added for the test.
+        const body = panel.lastElementChild as HTMLElement;
+        expect(body).toHaveTextContent('Body');
+        expect(body, 'the body must scroll rather than be clipped').toHaveClass('overflow-y-auto');
+        // min-h-0 is load-bearing, not decoration: a flex item defaults to
+        // min-height:auto, which refuses to shrink below its content and would
+        // push the panel past its own max-height, reproducing the bug with the
+        // max-height still in place.
+        expect(body, 'a flex item needs min-h-0 before it will actually shrink and scroll').toHaveClass('min-h-0');
+    });
 });

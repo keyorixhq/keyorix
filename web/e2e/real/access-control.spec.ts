@@ -38,16 +38,16 @@ async function logout(page: Page) {
 }
 
 test('a limited (project_viewer) user cannot see or reach what their role denies', async ({ page }) => {
-    // The "New User" modal (web/src/pages/admin/AdminPage.tsx) has no internal
-    // scroll container -- its content (username/display-name/email, 3 create
-    // modes with descriptions, password field + policy hints, project
-    // assignment picker) overflows a standard 1280x720 viewport with no way
-    // to reach the submit button (confirmed live: Playwright's own
-    // scroll-into-view retried for the full 30s timeout and never found it
-    // visible). Real product gap, folded into SESSION-WEB-E2E's J36 UI-polish
-    // report rather than filed standalone; worked around here with a taller
-    // viewport so this test can still exercise the create flow.
-    await page.setViewportSize({ width: 1280, height: 2200 });
+    // This test used to raise the viewport to 1280x2200 to work around the
+    // "New User" modal having no internal scroll container: taller than a
+    // standard 1280x720 window, clipped by the shared Modal's overflow-hidden,
+    // submit button unreachable. That was a real product gap (#2775), and the
+    // workaround meant no test exercised the real geometry -- the suite that
+    // would have caught it was hiding it. Fixed in the shared Modal
+    // (web/src/components/ui/Modal.tsx: max-h + a scrollable body), so this
+    // test now runs at the default Desktop Chrome viewport like everything
+    // else. web/e2e/real/ui-dialog-viewport.spec.ts is what guards the
+    // geometry, over every dialog in the app, at two real laptop heights.
 
     // Unique per run so repeat runs against a persistent dev DB don't collide.
     const stamp = Math.floor(Math.random() * 1_000_000);
@@ -95,7 +95,12 @@ test('a limited (project_viewer) user cannot see or reach what their role denies
     await logout(page);
 
     // ── As the limited user ─────────────────────────────────────────────────
-    await page.goto('/login');
+    // No page.goto('/login') here: logout() already waits for **/login, so the
+    // browser is on it. Navigating to the URL it is already settling on raced
+    // the login page's own in-flight navigation and aborted it -- intermittent
+    // `page.goto: net::ERR_ABORTED at .../login`, reproduced twice on an
+    // otherwise-unmodified copy of this file. The login form is simply filled
+    // in where logout() left us.
     await submitLogin(page, limitedUsername, limitedPassword);
     await page.waitForURL('/dashboard', { timeout: 15_000 });
 
