@@ -11,60 +11,51 @@
 // AuthorizeSecret/AuthorizePrincipal decide, only how cheaply the data they
 // and the handler read is served.
 //
-// # The generation signal is derived from the columns actually cached
+// # One rule, three signals
 //
-// A timestamp alone is NOT a sufficient generation, and both ways it can fail
-// were found live on this PR's own CI. The rule the three signals below follow
-// is: a generation must change whenever ANY column of the cached value
-// changes, so it is derived from those columns rather than from a timestamp
-// that only some writers happen to advance.
+// A generation must change whenever ANY column of the cached value changes.
+// A timestamp does not satisfy that, and both of its failure modes were found
+// live on this PR's own CI: updated_at is advanced only by writers that go
+// through GORM's auto-timestamp callback (so UpdateColumn silently does not
+// move it), and two writes landing in one stored microsecond tie.
 //
-//   - secret_nodes: (updated_at, read_count). UpdatedAt alone covers every
-//     writer that goes through GORM's auto-timestamp callback — which includes
-//     Save() (the full-struct write UpdateSecret uses) and every
-//     Update/Updates call, but NOT UpdateColumn. The one UpdateColumn writer
-//     of this table, TryIncrementSecretNodeReadCount (the #133 max-reads
-//     budget), therefore left updated_at untouched while changing read_count,
-//     which the cached node exposes. A warm cache then served read_count=0
-//     indefinitely, and RotateSecret's read-modify-write (GetSecret →
-//     Save) wrote that stale zero back, handing a burn-after-N-reads secret a
-//     fresh budget — TestMaxReads_SurvivesRotateAndRollback, red on
-//     c87207ac3. Including read_count in the generation closes it without
-//     touching updated_at's user-visible meaning and without adding a
-//     statement to any write path.
-//     (Deliberately NOT done: bumping updated_at from the read path. That
-//     changes a timestamp the UI and the rotation-due reports read, and
-//     updated_at is load-bearing elsewhere — see the version signal below.)
+//   - secret_nodes: cache_epoch, a per-row counter maintained by a DATABASE
+//     TRIGGER (store.EnsureSecretNodeCacheEpoch). The database bumps it on
+//     every update, so Save(), Updates(), UpdateColumn() and raw SQL are all
+//     covered with no Go code to forget — and the stamp is ONE int64, so the
+//     check is a single indexed PK lookup. Chosen after three Go-side
+//     mechanisms each turned out to have a hole; see that function's doc
+//     comment. If the trigger is absent (a trigger-less restore, a
+//     bare-AutoMigrate test schema) the stamp would be frozen, so the node
+//     cache is disabled outright rather than trusted — see
+//     SecretNodeCacheEpochTriggerPresent.
 //   - secret_versions, for GetLatestSecretVersion: (count, max(version_number),
-//     sum(read_count)) over the secret's own versions. This table has no
-//     updated_at column at all, so the first implementation borrowed
-//     secret_nodes.updated_at and had CreateSecretVersion bump it. That bump
-//     was reverted: it put a second UPDATE on secret_nodes inside rotation's
-//     transaction, and — worse — made the cache's invalidation depend on
-//     timestamp RESOLUTION. Two rotations of one secret landing inside the
-//     same stored updated_at tick produce equal generations, so
-//     storeNextSecretVersion's retry loop kept re-reading the SAME cached
-//     "latest" version, recomputed the same next version_number, and burned
-//     all 20 attempts against the unique index
-//     (TestConcurrency_RotateSecret_NoDuplicateVersionNumbers, red on
-//     86dea1220 in CI under load). A content-derived generation has no clock
-//     in it: a new version changes count and max(version_number)
-//     immediately, a deleted version (local_purge.go) changes count, and a
-//     read_count increment changes sum(read_count).
-//   - secret_access_schedules: the schedule row's own updated_at, read in the
-//     SAME query as the row. Same-row, so there is no window between reading
-//     the stamp and reading the data for a write to commit into.
+//     sum(read_count)) over the secret's own versions — content-derived, no
+//     clock. A new version moves count and max immediately, a purge moves
+//     count, and a read_count increment moves the sum. Deliberately NOT a
+//     second trigger: this table has no residual tie risk that a trigger would
+//     close, except the one named below, and a second column+trigger doubles
+//     the migration surface for it. (An earlier attempt borrowed
+//     secret_nodes.updated_at and had CreateSecretVersion bump it; that was
+//     reverted because it put a second UPDATE inside rotation's transaction and
+//     made invalidation depend on timestamp RESOLUTION, which
+//     storeNextSecretVersion's retry loop re-entered fast enough to tie —
+//     TestConcurrency_RotateSecret_NoDuplicateVersionNumbers, red in CI.)
+//   - secret_access_schedules: the schedule row's own (updated_at + the whole
+//     access policy), read in the SAME query as the row. Also deliberately not
+//     a trigger: the row is tiny, so covering every policy column costs nothing
+//     and leaves NO residual gap — a tie then means the two schedules are the
+//     same policy, and serving the cached one is correct.
 //
 // Known gap, named rather than left implicit: internal/encryption/sweep.go's
-// DEK rotation sweep rewrites secret_versions.encrypted_value without
-// changing count, max(version_number) or sum(read_count), so a warm
-// latest-version entry can outlive a rewrap. That sweep runs only under the
-// exclusive key lock (ADR-010, RotateDEKWithSweep), the operator-triggered
-// stopped-server class, and its failure mode is a decrypt error against a
-// retired key — fail-closed, not a disclosure. Covered by
-// TestSecretVersionGenerationCoversEveryWriter's own documented exception
-// list, so a NEW writer of this table fails that test instead of silently
-// joining the exception.
+// DEK rotation sweep rewrites secret_versions.encrypted_value without changing
+// count, max(version_number) or sum(read_count), so a warm latest-version entry
+// can outlive a rewrap. That sweep runs only under the exclusive key lock
+// (ADR-010, RotateDEKWithSweep), the operator-triggered stopped-server class,
+// and its failure mode is a decrypt error against a retired key — fail-closed,
+// not a disclosure. A secret_versions.cache_epoch trigger with a
+// SUM(cache_epoch) term would close it; recommended as a follow-up rather than
+// bundled here.
 //
 // Deliberately a FIELD on *LocalStorage, not a package-level global: a
 // package-level cache would be silently shared across every LocalStorage
@@ -88,110 +79,35 @@ import (
 	"gorm.io/gorm"
 )
 
-// nodeGeneration is the generation signal for a cached secret_nodes row. It is
-// deliberately NOT just (updated_at, read_count).
+// nodeGeneration is the generation signal for a cached secret_nodes row: the
+// row's own cache_epoch, and nothing else.
 //
-// updated_at alone covers only the writers that go through GORM's
-// auto-timestamp callback; read_count was added because the one UpdateColumn
-// writer bypasses it (see this file's header). But BOTH are still clock- or
-// counter-derived, and a timestamp can TIE: `updated_at` is computed in Go by
-// the writer, stored at microsecond precision on PostgreSQL, so two
-// UpdateSecret calls to the same row from two replicas within one microsecond
-// produce the same value. That cannot be proven impossible, so per the
-// coordinator's review it gets a non-clock component instead — and the
-// component is the row's own content.
+// cache_epoch is maintained by a DATABASE TRIGGER
+// (internal/storage/factory.go's ensureSecretNodeCacheEpoch), which bumps it on
+// EVERY update to the row — Save(), Updates(), UpdateColumn() and raw SQL
+// alike, with no Go code to forget and nothing for a new writer to opt into.
+// That is what lets this be one int64 instead of the row's whole content: the
+// three earlier attempts each had a hole the trigger does not (see that
+// function's doc comment for updated_at-misses-UpdateColumn, the
+// SetColumn-is-a-no-op-under-Save() GORM hook, and the per-write-site bump),
+// and the content-derived stamp that did work made the stamp read nearly as
+// wide as the row, costing the cache most of its point.
 //
-// Every persisted column of models.SecretNode is in here EXCEPT the three
-// named in nodeGenerationExcludedFields (description, metadata, and the
-// structurally-handled ones), which is machine-checked by
-// TestNodeGeneration_CoversEveryPersistedSecretNodeField. A tie therefore
-// requires every included column to be equal, i.e. the cached row and the
-// committed row agree on everything any decision reads — so a tie cannot
-// produce a wrong answer, rather than merely being unlikely to.
+// Deliberately NOT a field on models.SecretNode, so no Go write can set it even
+// by accident — and on Postgres the BEFORE trigger overwrites whatever a client
+// sent regardless.
 //
-// Pointer and time fields are normalised to comparable scalars (present flag +
-// value, UnixNano for times) so this type is usable with ==: a raw time.Time
-// compares its monotonic reading and *time.Location too, and a raw *int
-// compares pointer identity, which would make two reads of the same row
-// compare unequal.
+// A monotonically-increasing per-row counter also cannot TIE the way a
+// timestamp can (two writers inside one stored microsecond produced the same
+// updated_at, which is why the content-derived stamp existed at all), and it
+// cannot repeat after a hard delete and ID re-creation either — see
+// TestCacheEpoch_HardDeletedIDIsNeverReissued for the proof rather than the
+// assumption.
 type nodeGeneration struct {
-	updatedAtUnixNano int64
-	readCount         int
-
-	parentID               uint
-	hasParent              bool
-	projectID              uint
-	environmentID          uint
-	name                   string
-	isSecret               bool
-	typ                    string
-	maxReads               int
-	hasMaxReads            bool
-	expirationUnixNano     int64
-	hasExpiration          bool
-	classification         string
-	status                 string
-	createdBy              string
-	ownerID                uint
-	ownerMachineIdentityID uint
-	isShared               bool
-	createdAtUnixNano      int64
-	lastRotatedAtUnixNano  int64
-	hasLastRotatedAt       bool
-	autoRotate             bool
-	rotationLength         int
-	rotationCharset        string
-	rotationBackend        string
-	rotationRef            string
-	certNotAfterUnixNano   int64
-	hasCertNotAfter        bool
-	retentionOverrideDays  int
+	cacheEpoch int64
 }
 
 func (nodeGeneration) isCacheGeneration() {}
-
-// nodeGenerationOf derives the stamp from a fully-loaded row — the same-row
-// path, where the stamp and the data come from one query.
-func nodeGenerationOf(s *models.SecretNode) nodeGeneration {
-	g := nodeGeneration{
-		updatedAtUnixNano:      s.UpdatedAt.UnixNano(),
-		readCount:              s.ReadCount,
-		projectID:              s.ProjectID,
-		environmentID:          s.EnvironmentID,
-		name:                   s.Name,
-		isSecret:               s.IsSecret,
-		typ:                    s.Type,
-		classification:         s.Classification,
-		status:                 s.Status,
-		createdBy:              s.CreatedBy,
-		ownerID:                s.OwnerID,
-		ownerMachineIdentityID: s.OwnerMachineIdentityID,
-		isShared:               s.IsShared,
-		createdAtUnixNano:      s.CreatedAt.UnixNano(),
-		autoRotate:             s.AutoRotate,
-		rotationLength:         s.RotationLength,
-		rotationCharset:        s.RotationCharset,
-		rotationBackend:        s.RotationBackend,
-		rotationRef:            s.RotationRef,
-		retentionOverrideDays:  s.RetentionOverrideDays,
-	}
-	if s.ParentID != nil {
-		g.parentID, g.hasParent = *s.ParentID, true
-	}
-	if s.MaxReads != nil {
-		g.maxReads, g.hasMaxReads = *s.MaxReads, true
-	}
-	if s.Expiration != nil {
-		g.expirationUnixNano, g.hasExpiration = s.Expiration.UnixNano(), true
-	}
-	if s.LastRotatedAt != nil {
-		g.lastRotatedAtUnixNano, g.hasLastRotatedAt = s.LastRotatedAt.UnixNano(), true
-	}
-	if s.CertNotAfter != nil {
-		g.certNotAfterUnixNano, g.hasCertNotAfter = s.CertNotAfter.UnixNano(), true
-	}
-	return g
-}
 
 // scheduleGeneration is the schedule row's own (updated_at + the whole access
 // policy). Same reasoning as nodeGeneration: updated_at can tie between two
@@ -287,41 +203,31 @@ func (c *secretMetadataCache) evictNode(id uint) {
 	invalidateCachedRead(c.versions, id)
 }
 
-// liveNodeGeneration reads ONLY the generation columns of secret_nodes for id
-// (updated_at, read_count), applying the same soft-delete scope GetSecret
-// itself relies on (Model(&SecretNode{}) auto-scopes deleted_at IS NULL).
+// liveNodeGeneration reads ONE column — secret_nodes.cache_epoch — for id,
+// applying the same soft-delete scope GetSecret itself relies on
+// (Model(&SecretNode{}) auto-scopes deleted_at IS NULL), so the whole stamp
+// check is a single indexed primary-key lookup of a single int64.
+//
 // Returns (zero, false, nil) when the row doesn't exist or is soft-deleted —
 // the caller treats that identically to a cache miss, which correctly falls
 // through to the live GetSecret call that will itself return
 // ErrRecordNotFound. Returns (zero, false, err) on any other DB error — the
 // fail-closed path: the caller must treat a generation-check error exactly
 // like a miss, never like "assume unchanged."
+//
+// Scanned into an anonymous struct, not models.SecretNode, because cache_epoch
+// is deliberately not a field on that model (see nodeGeneration).
 func liveNodeGeneration(ctx context.Context, db *gorm.DB, id uint) (nodeGeneration, bool, error) {
-	var row models.SecretNode
+	var row struct{ CacheEpoch int64 }
 	err := db.WithContext(ctx).Model(&models.SecretNode{}).
-		Select(nodeGenerationColumns).Where(sqlWhereID, id).Take(&row).Error
+		Select("cache_epoch").Where(sqlWhereID, id).Take(&row).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nodeGeneration{}, false, nil
 		}
 		return nodeGeneration{}, false, err
 	}
-	return nodeGenerationOf(&row), true, nil
-}
-
-// nodeGenerationColumns is the column list liveNodeGeneration selects: every
-// persisted secret_nodes column EXCEPT the ones in
-// nodeGenerationExcludedFields. An explicit list, not `*`, so the stamp read
-// genuinely avoids fetching description and metadata — the two columns that
-// make a full row fetch expensive, and therefore the margin the cache exists
-// to win. Machine-checked against the model by
-// TestNodeGeneration_CoversEveryPersistedSecretNodeField.
-var nodeGenerationColumns = []string{
-	"updated_at", "read_count", "parent_id", "project_id", "environment_id", "name",
-	"is_secret", "type", "max_reads", "expiration", "classification", "status",
-	"created_by", "owner_id", "owner_machine_identity_id", "is_shared", "created_at",
-	"last_rotated_at", "auto_rotate", "rotation_length", "rotation_charset",
-	"rotation_backend", "rotation_ref", "cert_not_after", "retention_override_days",
+	return nodeGeneration{cacheEpoch: row.CacheEpoch}, true, nil
 }
 
 // liveVersionsGeneration reads the aggregate generation of secretNodeID's

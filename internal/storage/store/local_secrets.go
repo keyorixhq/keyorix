@@ -471,11 +471,11 @@ func (ls *LocalStorage) CreateSecret(ctx context.Context, secret *models.SecretN
 // generation-check error is always treated as a miss, never as "assume
 // unchanged" — see secret_metadata_cache.go's liveNodeGeneration doc comment.
 //
-// SAME-ROW case (read_path_cache.go's cachedReadSameRow): the generation is
-// (updated_at, read_count) of the very row the load returns, so one query
-// yields both and there is no window between them for a write to commit into.
+// SAME-ROW case (read_path_cache.go's cachedReadSameRow): the generation is the
+// cache_epoch of the very row the load returns, so one query yields both and
+// there is no window between them for a write to commit into.
 func (ls *LocalStorage) GetSecret(ctx context.Context, id uint) (*models.SecretNode, error) {
-	secret, err := cachedReadSameRow(ctx, ls, ls.secretMetaCache.nodes, id,
+	secret, err := cachedReadSameRow(ctx, ls, ls.nodeCache(), id,
 		ls.nodeGenerationFor(id),
 		func(ctx context.Context) (*models.SecretNode, nodeGeneration, error) {
 			var row models.SecretNode
@@ -493,7 +493,7 @@ func (ls *LocalStorage) GetSecret(ctx context.Context, id uint) (*models.SecretN
 			// A copy the caller never sees, so nothing can mutate the cached value
 			// behind the cache's back.
 			cached := row
-			return &cached, nodeGenerationOf(&row), nil
+			return &cached, nodeGeneration{cacheEpoch: row.CacheEpoch}, nil
 		})
 	if err != nil {
 		return nil, err
@@ -516,7 +516,7 @@ func (ls *LocalStorage) nodeGenerationFor(id uint) genGeneration[nodeGeneration]
 // through the helper's own hit check (cachedHit → probe) so it cannot diverge
 // from what GetSecret does.
 func (ls *LocalStorage) getCachedSecret(ctx context.Context, id uint) (*models.SecretNode, bool) {
-	cached, hit := cachedHit(ctx, ls, ls.secretMetaCache.nodes, id, ls.nodeGenerationFor(id))
+	cached, hit := cachedHit(ctx, ls, ls.nodeCache(), id, ls.nodeGenerationFor(id))
 	if !hit || cached == nil {
 		return nil, false
 	}
