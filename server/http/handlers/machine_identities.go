@@ -132,7 +132,11 @@ func (h *CatalogHandler) CreateMachineIdentity(w http.ResponseWriter, r *http.Re
 		sendError(w, "ValidationError", "name is required", http.StatusBadRequest, nil)
 		return
 	}
-	m, err := h.coreService.CreateMachineIdentity(r.Context(), id, body.Name, body.IdentityType, body.Description, body.Classification, actor.UserID, machineID(r))
+	// #2545, extended to machine identities: a client-asserted origin (e.g. keyorix-migrate's
+	// source Vault auth-role) is recorded as a labelled note on the audit event, never as
+	// attribution.
+	auditCtx := core.WithClientOrigin(r.Context(), r.Header.Get(core.ClientOriginHeader))
+	m, err := h.coreService.CreateMachineIdentity(auditCtx, id, body.Name, body.IdentityType, body.Description, body.Classification, actor.UserID, machineID(r))
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
@@ -286,7 +290,10 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 		t := time.Now().AddDate(0, 0, body.ExpiresInDays)
 		expiresAt = &t
 	}
-	result, err := h.coreService.IssueMachineToken(r.Context(), projectID, uint(machineID), actor.UserID, core.IssueMachineTokenParams{
+	// #2545, extended to machine credentials: a client-asserted origin is recorded as a
+	// labelled note on the audit event, never as attribution.
+	auditCtx := core.WithClientOrigin(r.Context(), r.Header.Get(core.ClientOriginHeader))
+	result, err := h.coreService.IssueMachineToken(auditCtx, projectID, uint(machineID), actor.UserID, core.IssueMachineTokenParams{
 		Name:                body.Name,
 		ExpiresAt:           expiresAt,
 		Classification:      body.Classification,
@@ -551,7 +558,9 @@ func (h *CatalogHandler) changeMachineRole(w http.ResponseWriter, r *http.Reques
 
 	scope := core.Scope{ProjectID: uint(projectID), EnvironmentID: environmentID}
 	if grant {
-		ctx := r.Context()
+		// #2545, extended to machine role grants: a client-asserted origin is recorded as a
+		// labelled note on the audit event, never as attribution.
+		ctx := core.WithClientOrigin(r.Context(), r.Header.Get(core.ClientOriginHeader))
 		if actor.ActorKind() == core.ActorTypeMachine {
 			// A genuine, directly-authenticated machine actor requesting this
 			// grant as itself (not a /system proxy relay) -- tag ctx so
@@ -629,7 +638,10 @@ func (h *CatalogHandler) CreateOIDCBinding(w http.ResponseWriter, r *http.Reques
 		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
-	b, err := h.coreService.CreateOIDCBinding(r.Context(), projectID, machineID, body.Issuer, body.Subject, actor.UserID)
+	// #2545, extended to OIDC bindings: a client-asserted origin is recorded as a labelled
+	// note on the audit event, never as attribution.
+	auditCtx := core.WithClientOrigin(r.Context(), r.Header.Get(core.ClientOriginHeader))
+	b, err := h.coreService.CreateOIDCBinding(auditCtx, projectID, machineID, body.Issuer, body.Subject, actor.UserID)
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
