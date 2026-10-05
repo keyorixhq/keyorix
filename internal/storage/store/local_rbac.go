@@ -836,6 +836,17 @@ func (ls *LocalStorage) RoleSetHasPermission(ctx context.Context, roleIDs []uint
 	if allowed, hit := ls.getCachedRolePermission(ctx, key); hit {
 		return allowed, nil
 	}
+	// Never publish an answer resolved inside a transaction into the shared
+	// cache: it was computed from UNCOMMITTED rows under an UNCOMMITTED
+	// generation, so a rollback would leave it there to be validated (and
+	// served) by the next committed write that reproduces the same generation
+	// value. With the generation a monotonic integer, the very next committed
+	// role_permissions write reproduces a rolled-back N+1 exactly. See
+	// cacheEnabled's doc comment on LocalStorage. getCachedRolePermission above
+	// is gated by the same flag, so a tx-scoped read is fully live.
+	if !ls.cacheEnabled {
+		return ls.liveRoleSetHasPermission(ctx, roleIDs, permission)
+	}
 	// Read the generation BEFORE the live join (coordinator review of #2767):
 	// a grant/revoke committing between the join and a later generation read
 	// would otherwise cache this pre-change answer under the POST-change
@@ -843,6 +854,20 @@ func (ls *LocalStorage) RoleSetHasPermission(ctx context.Context, roleIDs []uint
 	// unrelated role_permissions edit. Read first, the worst case is a cache
 	// entry under an already-stale generation, which simply never hits.
 	gen, genErr := liveRolePermissionsGeneration(ctx, ls)
+	allowed, err := ls.liveRoleSetHasPermission(ctx, roleIDs, permission)
+	if err != nil {
+		return false, err
+	}
+	if genErr == nil {
+		ls.rolePermCache.set(key, rolePermCacheEntry{generation: gen, allowed: allowed})
+	}
+	return allowed, nil
+}
+
+// liveRoleSetHasPermission is the uncached join — the behaviour this method had
+// before PERF-3, and what every cache miss (and every read inside a
+// transaction) falls through to.
+func (ls *LocalStorage) liveRoleSetHasPermission(ctx context.Context, roleIDs []uint, permission string) (bool, error) {
 	var count int64
 	err := ls.db.WithContext(ctx).Table("permissions").
 		Joins(sqlJoinRolePerms).
@@ -852,18 +877,18 @@ func (ls *LocalStorage) RoleSetHasPermission(ctx context.Context, roleIDs []uint
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
 	}
-	allowed := count > 0
-	if genErr == nil {
-		ls.rolePermCache.set(key, rolePermCacheEntry{generation: gen, allowed: allowed})
-	}
-	return allowed, nil
+	return count > 0, nil
 }
 
 // getCachedRolePermission returns (allowed, true) on a confirmed-current
 // cache hit, or (false, false) on any miss — including a generation-check
 // error (fail closed: never trust the cache over a check that itself
-// failed).
+// failed) and a transaction-scoped store, which must never read the shared
+// cache (see cacheEnabled's doc comment on LocalStorage).
 func (ls *LocalStorage) getCachedRolePermission(ctx context.Context, key string) (bool, bool) {
+	if !ls.cacheEnabled {
+		return false, false
+	}
 	cached, ok := ls.rolePermCache.get(key)
 	if !ok {
 		return false, false
