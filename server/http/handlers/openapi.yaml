@@ -6061,7 +6061,11 @@ paths:
     get:
       tags: [Audit]
       summary: Cursor-paginated full-fidelity audit feed for SIEM pull
-      description: Return a cursor-paginated, full-fidelity audit event feed designed for SIEM ingestion.
+      description: >-
+        Return a cursor-paginated, full-fidelity audit event feed designed
+        for SIEM ingestion. Gated by audit.read AND system.read (same bar as
+        /audit/anomalies): this feed includes ip_address, which /audit/logs
+        and /audit/search deliberately omit.
       operationId: exportAuditLogs
       security: [{bearerAuth: []}]
       parameters:
@@ -6086,7 +6090,9 @@ paths:
       description: >-
         Returns a bounded, human/auditor-friendly CSV attachment with a header
         row. Distinct from the JSON /audit/export SIEM feed — this is a
-        single one-shot download capped at 10 000 rows. Gated by audit.read.
+        single one-shot download capped at 10 000 rows. Gated by audit.read
+        AND system.read (same bar as /audit/anomalies): the export includes
+        ip_address, which /audit/logs and /audit/search deliberately omit.
       operationId: exportAuditLogsCSV
       security: [{bearerAuth: []}]
       parameters:
