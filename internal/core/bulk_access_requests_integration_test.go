@@ -134,7 +134,7 @@ func TestBulkApproveAccessRequests_SuccessPath(t *testing.T) {
 
 	reqID := seedPendingRequest(t, k, projectID, requesterID, "editor")
 
-	result, err := k.BulkApproveAccessRequests(ctx, []uint{reqID}, approverID)
+	result, err := k.BulkApproveAccessRequests(ctx, []uint{reqID}, approverID, 0)
 	require.NoError(t, err)
 	require.Contains(t, result.Approved, reqID, "request must be in the approved list")
 	require.Empty(t, result.Failed, "no failures expected")
@@ -147,7 +147,7 @@ func TestBulkRejectAccessRequests_SuccessPath(t *testing.T) {
 
 	reqID := seedPendingRequest(t, k, projectID, requesterID, "editor")
 
-	result, err := k.BulkRejectAccessRequests(ctx, []uint{reqID}, approverID, "you are not qualified")
+	result, err := k.BulkRejectAccessRequests(ctx, []uint{reqID}, approverID, 0, "you are not qualified")
 	require.NoError(t, err)
 	require.Contains(t, result.Rejected, reqID, "request must be in the rejected list")
 	require.Empty(t, result.Failed, "no failures expected")
@@ -180,7 +180,7 @@ func TestBulkApproveAccessRequests_AtBatchLimit_RealApprovals(t *testing.T) {
 		ids[i] = seedPendingRequest(t, k, projectID, userID, "editor")
 	}
 
-	result, err := k.BulkApproveAccessRequests(ctx, ids, approverID)
+	result, err := k.BulkApproveAccessRequests(ctx, ids, approverID, 0)
 	require.NoError(t, err)
 	require.Empty(t, result.Failed, "no failures expected at exactly the cap")
 	require.Len(t, result.Approved, maxBulkAccessRequestBatchSize)

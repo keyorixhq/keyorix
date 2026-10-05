@@ -181,7 +181,7 @@ func (h *CatalogHandler) MigrateUserToMachine(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	m, err := h.coreService.MigrateUserToMachine(r.Context(), body.Username, id, body.IdentityType, body.Name, actor.UserID, !body.KeepUser)
+	m, err := h.coreService.MigrateUserToMachine(r.Context(), body.Username, id, body.IdentityType, body.Name, actor.UserID, machineID(r), !body.KeepUser)
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()

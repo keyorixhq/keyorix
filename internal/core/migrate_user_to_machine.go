@@ -23,7 +23,16 @@ import (
 // suspended (login blocked) so it can no longer authenticate as a human. actorID
 // is the acting admin, recorded on every audit event. The created machine
 // identity is returned.
-func (c *KeyorixCore) MigrateUserToMachine(ctx context.Context, username string, projectID uint, identityType, name string, actorID uint, suspendSource bool) (*models.MachineIdentity, error) {
+// actorMachineID is the acting MACHINE identity, or 0 for a human actor —
+// #2495, found by actor_kind_literal_completeness_test.go. This path is HTTP-
+// reachable (POST /api/v1/projects/{id}/machine-identities/migrate-from-user)
+// and the route gate is actor-aware, so a machine identity holding the required
+// permissions can perform the migration; passing only actorID recorded
+// CreatedByMachineIdentityID as 0 on the resulting identity, leaving a
+// machine-created machine identity attributed to nobody. Attribution only — no
+// privilege ceiling consults it — which is why this is a lower-severity sibling
+// of the bulk-approval defect in the same change, not a second ceiling bypass.
+func (c *KeyorixCore) MigrateUserToMachine(ctx context.Context, username string, projectID uint, identityType, name string, actorID, actorMachineID uint, suspendSource bool) (*models.MachineIdentity, error) {
 	if username == "" {
 		return nil, fmt.Errorf("username is required")
 	}
@@ -55,7 +64,7 @@ func (c *KeyorixCore) MigrateUserToMachine(ctx context.Context, username string,
 	desc := fmt.Sprintf("Migrated from user %q (id %d)", user.Username, user.ID)
 
 	createIdentity := func(ctx context.Context) (*models.MachineIdentity, error) {
-		return c.CreateMachineIdentity(ctx, projectID, name, identityType, desc, "", actorID, 0)
+		return c.CreateMachineIdentity(ctx, projectID, name, identityType, desc, "", actorID, actorMachineID)
 	}
 
 	var m *models.MachineIdentity

@@ -771,12 +771,22 @@ func (c *KeyorixCore) ListAccessRequests(ctx context.Context, projectID uint) ([
 	return rows, nil
 }
 
-// ApproveAccessRequest approves a pending request, granting grantedRole (falling
-// back to the suggested role) at the project scope, permanently. No auto-approval —
-// an admin performs this explicitly.
-func (c *KeyorixCore) ApproveAccessRequest(ctx context.Context, projectID, requestID, approverID uint, grantedRole string) (*models.AccessRequest, error) {
-	return c.ApproveAccessRequestWithExpiry(ctx, projectID, requestID, approverID, 0, grantedRole, 0)
-}
+// ApproveAccessRequest, a 4-argument convenience wrapper that hardcoded
+// approverMachineID=0, was DELETED in #2495. It is deliberately not replaced.
+//
+// Hardcoding 0 means "there is no acting machine identity", and that is not a
+// safe default on this path: a machine caller's approverID is also 0 (ADR-030 —
+// a machine identity has no UserID), so the pair (approverID=0,
+// approverMachineID=0) is exactly the unauthenticated/system pseudo-actor that
+// requireGranterHoldsRolePermissions exempts from the escalation-by-proxy
+// ceiling. A machine approver routed through that wrapper was therefore reported
+// to the ceiling as trusted-system and skipped it entirely. The bulk
+// approve/reject path (bulk_access_requests.go) did exactly that, which is the
+// defect #2495 closes.
+//
+// Call ApproveAccessRequestWithExpiry directly and state the machine identity
+// (0 for a genuine human approver) at the call site, so the claim is visible
+// where it is made rather than buried in a wrapper.
 
 // SetDualControlPolicy sets the N-of-M approval threshold for access requests
 // (A.5.3). <=1 = single approval (the default).
