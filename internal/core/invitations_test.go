@@ -180,7 +180,7 @@ func TestApproveAccessRequest_GrantsRole(t *testing.T) {
 	store.On("CreateAccessRequestApproval", ctx, mock.Anything).Return(nil)
 
 	allowNotifications(store) // best-effort outcome notification to the requester
-	out, err := c.ApproveAccessRequest(ctx, 1, 3, 9, "project_developer")
+	out, err := c.ApproveAccessRequestWithExpiry(ctx, 1, 3, 9, 0, "project_developer", 0)
 	require.NoError(t, err)
 	assert.Equal(t, AccessRequestApproved, out.State)
 	store.AssertCalled(t, "AssignRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1})
@@ -214,7 +214,7 @@ func TestApproveAccessRequest_FallsBackToSuggestedRole(t *testing.T) {
 
 	allowNotifications(store) // best-effort outcome notification to the requester
 	// Empty grantedRole → uses the suggested role.
-	out, err := c.ApproveAccessRequest(ctx, 1, 3, 9, "")
+	out, err := c.ApproveAccessRequestWithExpiry(ctx, 1, 3, 9, 0, "", 0)
 	require.NoError(t, err)
 	assert.Equal(t, "project_viewer", out.GrantedRole)
 }
@@ -298,7 +298,7 @@ func TestApproveAccessRequest_RejectsAdminGrantByNonAdmin(t *testing.T) {
 	store.On("GetRolePermissions", ctx, uint(2)).Return([]*models.Permission{{ID: 51, Name: "system.admin"}}, nil)
 	store.On("RoleSetHasPermission", ctx, []uint{6}, "system.admin").Return(false, nil)
 
-	_, err := c.ApproveAccessRequest(ctx, 1, 3, 9, "admin")
+	_, err := c.ApproveAccessRequestWithExpiry(ctx, 1, 3, 9, 0, "admin", 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "do not hold permission")
 	// The grant was refused before any role assignment or approval record.
@@ -329,7 +329,7 @@ func TestApproveAccessRequest_AdminApproverMayGrantAdmin(t *testing.T) {
 	store.On("CreateAccessRequestApproval", ctx, mock.Anything).Return(nil)
 	allowNotifications(store)
 
-	out, err := c.ApproveAccessRequest(ctx, 1, 3, 9, "admin")
+	out, err := c.ApproveAccessRequestWithExpiry(ctx, 1, 3, 9, 0, "admin", 0)
 	require.NoError(t, err)
 	assert.Equal(t, AccessRequestApproved, out.State)
 }
@@ -350,7 +350,7 @@ func TestApproveAccessRequest_RejectsExpired(t *testing.T) {
 		return r.State == AccessRequestExpired
 	})).Return(true, nil)
 
-	_, err := c.ApproveAccessRequest(ctx, 1, 3, 9, "")
+	_, err := c.ApproveAccessRequestWithExpiry(ctx, 1, 3, 9, 0, "", 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expired")
 	store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
@@ -363,7 +363,7 @@ func TestApproveAccessRequest_RejectsNonPending(t *testing.T) {
 	ctx := context.Background()
 	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{ID: 3, ProjectID: 1, State: AccessRequestApproved}, nil)
 
-	_, err := c.ApproveAccessRequest(ctx, 1, 3, 9, "project_viewer")
+	_, err := c.ApproveAccessRequestWithExpiry(ctx, 1, 3, 9, 0, "project_viewer", 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "only a pending")
 	store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
@@ -381,7 +381,7 @@ func TestApproveAccessRequest_RejectsOtherProject(t *testing.T) {
 		ID: 3, ProjectID: 2, UserID: 2, SuggestedRole: "project_admin", State: AccessRequestPending,
 	}, nil)
 
-	_, err := c.ApproveAccessRequest(ctx, 1, 3, 9, "project_admin")
+	_, err := c.ApproveAccessRequestWithExpiry(ctx, 1, 3, 9, 0, "project_admin", 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 	store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)

@@ -65,11 +65,31 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
 - **INV-CORE-13** An `/system` proxy relay granter refuses admin-tier role grants — no
   delegation of admin-tier grants through the relay path. Why: ADR-087/088/093. Guard:
   `authz_system_proxy_relay_ceiling_test.go:TestSystemProxyRelayGranter_RefusesAdminTierRoles`.
-- **INV-CORE-14** `requireGranterHoldsRolePermissions`'s other callers (`AddProjectMember`'s
-  own callers, the `AssignRole` endpoint, access-request approval) pass `actorIsMachine=false`
-  unconditionally — a sibling gap to the fixed `AssignRoleWithExpiryProxy` path, left open per
-  the allowlist note. Why: `actor_sentinel_completeness_test.go` note. UNGUARDED (#issue: audit
-  whether these call sites can be reached by a genuine machine actor and close if so).
+- **INV-CORE-14** Every request-reachable call site of a core entry point carrying an
+  actor-kind companion parameter (`actorIsMachine bool`, or a `…MachineID uint`
+  attribution companion) DERIVES it from the real authenticated actor, never a hardcoded
+  `false`/`0`. The split exists because a machine identity has no UserID (ADR-030), so every
+  machine caller arrives with `actorID==0` — the same value as the unauthenticated
+  local-CLI/system pseudo-actor that `requireGranterHoldsRolePermissions` and the #169
+  self-permission-bundling check deliberately exempt from their per-actor ceilings. A
+  hardcoded companion on a reachable path therefore reports the calling machine AS the
+  trusted system, skipping the ceiling.
+  Audited 2026-10-05 (#2495): the `AddProjectMember`/`AssignRole`/`SetUserRoles`/
+  `AddUserToGroup` call sites the earlier allowlist note named were all already closed by
+  #1542/#1545; that note was stale. One live gap remained — bulk access-request
+  approve/reject, which called a 4-argument `ApproveAccessRequest` convenience wrapper that
+  hardcoded `approverMachineID=0`. Its ceiling skip was unreachable only because the same
+  function resolved the per-item authorization through the user-only `Authorize` against
+  `approverID=0`, which denied every item — simultaneously a functional bug (machine
+  identities could not bulk-approve at all) and a one-line-away ceiling bypass. Both fixed;
+  the wrapper is deleted rather than replaced, so there is no hardcoding site left to inherit.
+  Why: ADR-030, #1524/#1542/#1545/#2495. Guard:
+  `actor_kind_literal_completeness_test.go` (`TestActorKindLiteralsAreAllowlisted`) — an
+  AST scan of `internal/core` and `server/` that derives each function's companion-parameter
+  position from its own signature and fails on any unreviewed literal; plus
+  `bulk_access_request_machine_actor_test.go` and
+  `server/http/handlers/bulk_access_requests_machine_actor_test.go` for the behaviour at both
+  layers.
 
 ## Last-admin / lockout
 
