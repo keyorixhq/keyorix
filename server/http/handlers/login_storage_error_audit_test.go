@@ -48,8 +48,25 @@ func (s *usernameLookupDownStore) GetUserByUsername(context.Context, string) (*m
 
 func TestLogin_UsernameLookupStorageError_AuditsLoginErrorAndReleasesTheSlot(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
-	db, err := gorm.Open(sqlite.Open("file:kxlogin2745?mode=memory&cache=shared&_timeout=30000"), &gorm.Config{})
+	// A PLAIN :memory: DSN with the pool capped at one connection, not a NAMED
+	// shared-cache one. The async audit write below needs every connection to
+	// see the same database (a bare :memory: DSN gives each physical connection
+	// its own private one, so the goSafe goroutine's row can land somewhere the
+	// test's own query never looks) — capping the pool achieves that, same as
+	// setupMFAVerifyStorageErrorTest does for the same reason. A named
+	// shared-cache DB achieves it too, and was the first thing tried, but it
+	// SURVIVES the test: the cache lives as long as the process holds any
+	// connection to that name, so under `-count=N` iteration 2 starts with
+	// iteration 1's audit row still in place and the exact-count assertion
+	// below can never be satisfied (observed: 3 of 5 iterations failing, each
+	// burning the full 5s Eventually budget). The exact count is the right
+	// assertion — ONE login_error per request, and never a login_failed — so
+	// the fixture has to be the thing that is fresh.
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.AuditEvent{}, &models.LoginAttempt{}, &models.Session{}))
 
 	h := NewAuthHandler(core.NewKeyorixCore(&usernameLookupDownStore{Storage: store.NewLocalStorage(db)}), false)
