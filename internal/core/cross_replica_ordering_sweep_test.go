@@ -206,9 +206,6 @@ var g5KnownOrderingViolations = map[string]string{
 	"project-lifecycle/DeleteProject||IssueLease:B-check,A-check,B-act,A-act":                             "2652",
 	"project-lifecycle/DeleteProject||RestoreEnvironment:B-check,A-check,A-act,B-act":                     "2656",
 	"project-lifecycle/DeleteProject||RestoreEnvironment:B-check,A-check,B-act,A-act":                     "2656",
-	"project-lifecycle/DeleteProject||SetDynamicSecretConfigEnabled(on):A-check,A-act,B-check,B-act":      "2806",
-	"project-lifecycle/DeleteProject||SetDynamicSecretConfigEnabled(on):A-check,B-check,A-act,B-act":      "2806",
-	"project-lifecycle/DeleteProject||SetDynamicSecretConfigEnabled(on):A-check,B-check,B-act,A-act":      "2806",
 	"user-account-state/SuspendUser||UpdateUser:A-check,B-check,A-act,B-act":                              "2653",
 	"user-account-state/SuspendUser||UpdateUser:A-check,B-check,B-act,A-act":                              "2653",
 	"user-account-state/SuspendUser||UpdateUser:B-check,A-check,A-act,B-act":                              "2653",
@@ -236,14 +233,11 @@ var g5KnownOrderingViolations = map[string]string{
 // silenced regression rather than a known bug. A blanket exception would
 // defeat that; an enumerated one with a reason per entry does not.
 var g5LedgerIssuesWithoutASeed = map[string]string{
-	// Found BY this sweep (serial ordering), so it never had a fuzzer seed to
-	// begin with — there is nothing for the pending-seed promotion gate to
-	// track. Its regression test is
-	// TestSetDynamicSecretConfigEnabled_RefusesUnderDeletedProject
-	// (dynamic_config_reenable_parent_liveness_test.go), which is SQLite and
-	// runs in the default CI path. Delete these rows in the PR that fixes
-	// #2806 and un-skips that test.
-	"2806": "found by the serial ordering in this sweep; no fuzzer seed exists, regression test is in dynamic_config_reenable_parent_liveness_test.go",
+	// Empty, and that is the correct steady state: every ledger row should be
+	// traceable to a pending fuzzer seed, so that promoting the seed forces
+	// the row to be deleted with it. #2806 lived here while its fix was
+	// pending (the sweep found it serially, so it never had a seed); the fix
+	// landed in the same PR as this deletion.
 }
 
 // --- the sweep ---------------------------------------------------------------
