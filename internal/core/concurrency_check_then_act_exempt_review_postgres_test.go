@@ -555,9 +555,18 @@ func TestCTAReview_InviteMemberOpenMode_vs_Revoke_CrossReplicaPostgres(t *testin
 // Unlike the tests above, B cannot run to completion inside A's hook (it
 // blocks on A's own row locks), so the hook starts B in a goroutine, waits
 // until Postgres reports a backend waiting on a lock, and only then lets A's
-// INSERT and COMMIT proceed.
+// INSERT and COMMIT proceed. With the #2660 fix B blocks on the per-project
+// named lock A holds instead, and runs its cycle check after A commits.
+//
+// Bug origin
+//
+//	Introduced-by: #260 (CreateSecretDependencyExclusive relied on FOR UPDATE of
+//	               existing edges, which does not block phantom inserts)
+//	Detected-by:   C-GUARD2-EXEMPT-REVIEW #2662
+//	Class:         cross-replica check-then-act
+//	Severity:      medium (INV-CORE-31 integrity: a persisted dependency cycle)
+//	Guard:         this test; fixed by secretDependencyGraphLockKey
 func TestCTAReview_AddSecretDependency_CrossReplicaCycle_Postgres(t *testing.T) {
-	t.Skip("open gap #2660: cross-replica AddSecretDependency can persist a dependency cycle (INV-CORE-31); un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	s1 := f.secret("cta-dep-1", f.adminID)
@@ -577,6 +586,11 @@ func TestCTAReview_AddSecretDependency_CrossReplicaCycle_Postgres(t *testing.T) 
 		}()
 		deadline := time.Now().Add(5 * time.Second)
 		for time.Now().Before(deadline) {
+			select {
+			case <-done:
+				return
+			default:
+			}
 			var waiting int64
 			require.NoError(t, f.setupDB.Raw(
 				"SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'").
@@ -596,4 +610,6 @@ func TestCTAReview_AddSecretDependency_CrossReplicaCycle_Postgres(t *testing.T) 
 		"(dependent_secret_id = ? AND depends_on_secret_id = ?) OR (dependent_secret_id = ? AND depends_on_secret_id = ?)",
 		s1.ID, s2.ID, s2.ID, s1.ID)
 	assert.Less(t, both, int64(2), "INV-CORE-31 violated: both s1->s2 and s2->s1 committed — a dependency cycle")
+	assert.NoError(t, errA, "A held the graph lock first, so its edge commits")
+	assert.ErrorContains(t, errB, "cycle", "B's cycle check must run after A commits and refuse s2->s1")
 }
