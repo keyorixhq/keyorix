@@ -32,6 +32,8 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"sort"
 	"strconv"
 	"strings"
@@ -103,5 +105,13 @@ func liveRolePermissionsGeneration(ctx context.Context, ls *LocalStorage) (strin
 // cascade) — a reader can never observe the new role_permissions row with
 // the old generation, or vice versa.
 func bumpRolePermissionsGenerationTx(ctx context.Context, tx *LocalStorage) error {
-	return tx.SetSystemMetadata(ctx, rolePermissionsGenerationKey, strconv.FormatInt(time.Now().UnixNano(), 10))
+	return tx.SetSystemMetadata(ctx, rolePermissionsGenerationKey, strconv.FormatInt(time.Now().UnixNano(), 10)+"-"+randomGenerationSuffix())
+}
+
+// randomGenerationSuffix makes two bumps on different replicas in the same
+// nanosecond (or under clock skew) still produce different generations.
+func randomGenerationSuffix() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }

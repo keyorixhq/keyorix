@@ -836,6 +836,13 @@ func (ls *LocalStorage) RoleSetHasPermission(ctx context.Context, roleIDs []uint
 	if allowed, hit := ls.getCachedRolePermission(ctx, key); hit {
 		return allowed, nil
 	}
+	// Read the generation BEFORE the live join (coordinator review of #2767):
+	// a grant/revoke committing between the join and a later generation read
+	// would otherwise cache this pre-change answer under the POST-change
+	// generation, and a revoked permission would keep authorizing until some
+	// unrelated role_permissions edit. Read first, the worst case is a cache
+	// entry under an already-stale generation, which simply never hits.
+	gen, genErr := liveRolePermissionsGeneration(ctx, ls)
 	var count int64
 	err := ls.db.WithContext(ctx).Table("permissions").
 		Joins(sqlJoinRolePerms).
@@ -846,7 +853,7 @@ func (ls *LocalStorage) RoleSetHasPermission(ctx context.Context, roleIDs []uint
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
 	}
 	allowed := count > 0
-	if gen, genErr := liveRolePermissionsGeneration(ctx, ls); genErr == nil {
+	if genErr == nil {
 		ls.rolePermCache.set(key, rolePermCacheEntry{generation: gen, allowed: allowed})
 	}
 	return allowed, nil
