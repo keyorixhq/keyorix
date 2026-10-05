@@ -58,7 +58,7 @@ table — file an issue; don't take the row on faith.
 | Continuous fuzzing programme | [`testing.md`](testing.md) §2 |
 | Dependency policy (Dependabot, govulncheck, OSV-Scanner, license allowlist) | [`SDLC.md`](SDLC.md) § Dependency policy |
 | Vulnerability disclosure process + remediation SLA | [`../../SECURITY.md`](../../SECURITY.md), [ADR-104](../adr-104-security-remediation-sla.md) |
-| Branch protection — **honestly scoped, not overstated** | [`SDLC.md`](SDLC.md) § Branch protection — states the one real gap (an org-admin bypass actor on the live ruleset) that earlier documents had incorrectly claimed didn't exist |
+| Branch protection — **honestly scoped, not overstated; one gap found and resolved same-day** | [`SDLC.md`](SDLC.md) § Branch protection — found an org-admin bypass actor earlier documents had incorrectly claimed didn't exist; resolved 2026-10-05 by narrowing it to a pull-request-only break-glass path rather than removing it; also added no-force-push/no-deletion rules on `main` the same day |
 | Required code-owner review on security-sensitive paths — **currently a designation, not a GitHub-enforced gate** | [`../compliance/SECURITY-VERIFICATION.md`](../compliance/SECURITY-VERIFICATION.md#process-controls) |
 | K8s delivery (operator/sync-agent/ESO): least-privilege RBAC, confused-deputy guard | [`threat-models/kubernetes-operator.md`](threat-models/kubernetes-operator.md) |
 | Web UI: session-cookie-only auth (no token in `localStorage`), CSRF, CSP | [`threat-models/web-ui.md`](threat-models/web-ui.md) |
@@ -70,9 +70,10 @@ table — file an issue; don't take the row on faith.
 Two rows above are deliberately phrased as "honestly scoped" rather than
 "in place" — a prior version of several documents in this repository
 overstated branch-protection and code-owner-review enforcement, found
-and corrected while writing this evidence pack (2026-10-05). They're
-listed here rather than omitted, consistent with this repository's own
-stated engineering principle: a claim with no mechanism that fails when
-it stops being true is a comment, however carefully written — and an
-overstated claim, once found, gets corrected in place, not quietly
-dropped from a buyer-facing table.
+while writing this evidence pack (2026-10-05). The branch-protection gap
+was resolved the same day (narrowed, not removed, per Andrei's decision —
+see `SDLC.md`); the code-owner-review gap is still open. Both rows stay
+here rather than being quietly rewritten to "in place" without a trace,
+consistent with this repository's own stated engineering principle: a
+claim with no mechanism that fails when it stops being true is a comment,
+however carefully written.
