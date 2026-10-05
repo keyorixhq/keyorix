@@ -29,6 +29,17 @@ Format: `INV-ENCRYPTION-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#is
   operation "wins" the race. Why: #195. Guard: `keymanager_lock_test.go`
   (`TestAcquireExclusiveKeyLock_MutualExclusion`,
   `TestRewrapAndRotate_ConcurrentRace_FinalDEKMatchesDB`).
+- **INV-ENCRYPTION-28** Every key-file rewriter (`RotateDEKWithSweep` including its
+  re-encryption sweep commit, `RotateKEKPassphrase`, `RewrapDEK*`) holds the key-file rewrite
+  lock (`<dek_path>.lock`) EXCLUSIVELY for its whole write, so a holder of that lock in
+  SHARED mode (`Service.AcquireKeyFileReadLock`) observes neither a key-file change nor a
+  sweep commit. That lock is distinct from the server's `dek.lock` and does not conflict with
+  a live server — the property `admin backup`'s live-server path relies on to archive a key
+  set consistent with its database snapshot. Why: #2602. Guard:
+  `key_file_read_lock_test.go` (`TestAcquireKeyFileReadLock_ExcludesKeyFileRewriters`,
+  `TestAcquireKeyFileReadLock_CoexistsWithLiveServerLock`), end to end
+  `server/admin/backup_restore_live_test.go:TestAdminBackup_Postgres_LiveServer_RefusesDuringKeyRotation`
+  (pg-gated).
 
 ## Crash consistency (write-pending → rename → fsync)
 
