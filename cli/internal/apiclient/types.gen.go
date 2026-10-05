@@ -526,10 +526,12 @@ type Group struct {
 
 // GroupRoleGrant One role a group holds, with its time-bound expiry if any (internal/core/storage.GroupRoleGrant).
 type GroupRoleGrant struct {
-	Description *string    `json:"description,omitempty"`
-	ExpiresAt   *time.Time `json:"expires_at"`
-	Id          *int       `json:"id,omitempty"`
-	Name        *string    `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+
+	// ExpiresAt Omitted (never null) for a permanent grant.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Id        *int       `json:"id,omitempty"`
+	Name      *string    `json:"name,omitempty"`
 }
 
 // MachineAuditReport Deployment-wide machine identity audit report (GET /machine-identities/audit).
@@ -850,6 +852,7 @@ type RotationPlanWave struct {
 // RotationPolicy A secret-rotation policy (ADR-108 PR 1 addition). Snake_case, matching this spec's usual convention and the model's real wire format: models.RotationPolicy (internal/storage/models/models.go) previously had no `json:` tags on most fields, so encoding/json's default marshaling emitted the bare Go field names verbatim (ID, Name, ProjectID, IntervalDays, ...) instead -- a PascalCase wire format silently decoded by any snake_case-tagged consumer (Go's case-insensitive JSON fallback matches "ID"~"id" but not "ProjectID"~"project_id", an extra underscore is not a case difference) as the zero value for every multi-word field. Fixed at the source (the model itself now carries these exact tags) rather than documented here as a PascalCase exception -- see the model's own doc comment for the full writeup, and docs/cli-split-inventory.md §7 PR 1's closure note for how this was found.
 type RotationPolicy struct {
 	AlertDaysBefore *int                 `json:"alert_days_before,omitempty"`
+	CreatedAt       *time.Time           `json:"created_at,omitempty"`
 	CreatedBy       *string              `json:"created_by,omitempty"`
 	Description     *string              `json:"description,omitempty"`
 	EnvironmentId   *uint32              `json:"environment_id"`
@@ -860,6 +863,7 @@ type RotationPolicy struct {
 	NotifyOnBreach  *bool                `json:"notify_on_breach,omitempty"`
 	ProjectId       *uint32              `json:"project_id"`
 	Scope           *RotationPolicyScope `json:"scope,omitempty"`
+	UpdatedAt       *time.Time           `json:"updated_at,omitempty"`
 }
 
 // RotationPolicyScope defines model for RotationPolicy.Scope.
@@ -867,13 +871,15 @@ type RotationPolicyScope string
 
 // RotationPolicyEvaluation One policy-covered secret's rotation posture, as returned by GET /api/v1/rotation-policies/evaluate (ADR-108 PR 1 addition).
 type RotationPolicyEvaluation struct {
-	DaysOverdue   *int    `json:"days_overdue,omitempty"`
-	IsApproaching *bool   `json:"is_approaching,omitempty"`
-	IsOverdue     *bool   `json:"is_overdue,omitempty"`
-	PolicyName    *string `json:"policy_name,omitempty"`
-	ProjectId     *uint32 `json:"project_id,omitempty"`
-	SecretId      *uint32 `json:"secret_id,omitempty"`
-	SecretName    *string `json:"secret_name,omitempty"`
+	DaysOverdue   *int       `json:"days_overdue,omitempty"`
+	IsApproaching *bool      `json:"is_approaching,omitempty"`
+	IsOverdue     *bool      `json:"is_overdue,omitempty"`
+	LastRotatedAt *time.Time `json:"last_rotated_at"`
+	PolicyId      *uint32    `json:"policy_id,omitempty"`
+	PolicyName    *string    `json:"policy_name,omitempty"`
+	ProjectId     *uint32    `json:"project_id,omitempty"`
+	SecretId      *uint32    `json:"secret_id,omitempty"`
+	SecretName    *string    `json:"secret_name,omitempty"`
 }
 
 // Secret A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
@@ -951,20 +957,27 @@ type SecretAccessor struct {
 
 	// Source How access was granted: owner, direct share, or group share.
 	Source   *string `json:"source,omitempty"`
+	UserId   *int    `json:"user_id,omitempty"`
 	Username *string `json:"username,omitempty"`
 }
 
 // SecretAuditEntry One lifecycle event of a secret. Never carries a plaintext value.
 type SecretAuditEntry struct {
-	ActorType     *string                 `json:"actor_type,omitempty"`
-	Description   *string                 `json:"description,omitempty"`
-	Diff          *map[string]interface{} `json:"diff"`
-	EventType     *string                 `json:"event_type,omitempty"`
-	Id            *int                    `json:"id,omitempty"`
-	Impersonation *bool                   `json:"impersonation,omitempty"`
-	Success       *bool                   `json:"success,omitempty"`
-	Timestamp     *string                 `json:"timestamp,omitempty"`
-	UserId        *int                    `json:"user_id"`
+	ActorType   *string `json:"actor_type,omitempty"`
+	Description *string `json:"description,omitempty"`
+
+	// Diff Omitted (never null) when the event recorded no diff.
+	Diff      *map[string]interface{} `json:"diff,omitempty"`
+	EventType *string                 `json:"event_type,omitempty"`
+	Id        *int                    `json:"id,omitempty"`
+
+	// Impersonation Omitted when false.
+	Impersonation *bool   `json:"impersonation,omitempty"`
+	Success       *bool   `json:"success,omitempty"`
+	Timestamp     *string `json:"timestamp,omitempty"`
+
+	// UserId Omitted (never null) when the event has no acting user.
+	UserId *int `json:"user_id,omitempty"`
 }
 
 // SecretDependencies defines model for SecretDependencies.

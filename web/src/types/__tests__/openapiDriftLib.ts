@@ -1,0 +1,234 @@
+// Comparison engine for the web/src/types <-> openapi.yaml drift guard
+// (INV-WEB-05). Kept separate from the test so the engine itself can be
+// calibrated against synthetic red/green cases (openapiDrift.engine.test.ts).
+//
+// What it compares, per mapped (TS interface, OpenAPI schema) pair, recursively:
+//   - field names, in both directions (a field the UI declares that the server
+//     never sends; a field the server sends that the UI type does not declare);
+//   - JSON kind (string / number / boolean / array / object);
+//   - nullability (`nullable: true` <-> `| null`);
+//   - enums (`enum: [...]` <-> a string-literal union, as sets);
+//   - optionality, but ONLY where the schema declares a `required` list: a spec
+//     without `required` says nothing about presence, so it is not compared.
+// For a request body (`request = true`) optionality is one-directional: TS may
+// require more than the schema, never less.
+// What it does NOT compare: string formats, numeric ranges, `description`s, and
+// anything under `additionalProperties`/`Record<>` beyond its being an object.
+import ts from 'typescript';
+
+export interface Shape {
+    kind: 'string' | 'number' | 'boolean' | 'array' | 'object' | 'unknown';
+    nullable: boolean;
+    literals?: string[];
+    items?: Shape;
+    record?: boolean;
+    props?: Record<string, { optional: boolean; shape: Shape }>;
+}
+
+type Schema = Record<string, any>;
+
+export function createProgram(sources: Record<string, string>): ts.Program {
+    const options: ts.CompilerOptions = {
+        strict: true,
+        noEmit: true,
+        skipLibCheck: true,
+        types: [],
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.ESNext,
+        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        jsx: ts.JsxEmit.ReactJSX,
+    };
+    const host = ts.createCompilerHost(options);
+    const origRead = host.readFile.bind(host);
+    const origExists = host.fileExists.bind(host);
+    const origSF = host.getSourceFile.bind(host);
+    host.readFile = (f) => sources[f] ?? origRead(f);
+    host.fileExists = (f) => f in sources || origExists(f);
+    host.getSourceFile = (f, lang, ...rest) =>
+        f in sources ? ts.createSourceFile(f, sources[f]!, lang) : origSF(f, lang, ...rest);
+    return ts.createProgram(Object.keys(sources), options, host);
+}
+
+/** Every exported interface, by name, across the given program's root files. */
+export function exportedInterfaces(program: ts.Program, files: string[]): Map<string, ts.Type> {
+    const checker = program.getTypeChecker();
+    const out = new Map<string, ts.Type>();
+    for (const f of files) {
+        const sf = program.getSourceFile(f);
+        if (!sf) throw new Error(`source file not found: ${f}`);
+        for (const stmt of sf.statements) {
+            if (
+                ts.isInterfaceDeclaration(stmt) &&
+                stmt.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+            ) {
+                if (out.has(stmt.name.text)) throw new Error(`duplicate exported interface ${stmt.name.text}`);
+                out.set(stmt.name.text, checker.getTypeAtLocation(stmt.name));
+            }
+        }
+    }
+    return out;
+}
+
+export function toShape(checker: ts.TypeChecker, type: ts.Type, seen: ts.Type[] = []): Shape {
+    let nullable = false;
+    let members: ts.Type[] = type.isUnion() ? type.types : [type];
+    members = members.filter((m) => {
+        if (m.flags & ts.TypeFlags.Null) {
+            nullable = true;
+            return false;
+        }
+        return !(m.flags & ts.TypeFlags.Undefined);
+    });
+    if (members.length > 0 && members.every((m) => m.flags & ts.TypeFlags.BooleanLiteral)) {
+        return { kind: 'boolean', nullable };
+    }
+    if (members.length > 0 && members.every((m) => m.isStringLiteral())) {
+        return { kind: 'string', nullable, literals: members.map((m) => (m as ts.StringLiteralType).value).sort() };
+    }
+    if (members.length !== 1) return { kind: 'unknown', nullable };
+    const t = members[0]!;
+    if (t.flags & ts.TypeFlags.StringLike) return { kind: 'string', nullable };
+    if (t.flags & ts.TypeFlags.NumberLike) return { kind: 'number', nullable };
+    if (t.flags & ts.TypeFlags.BooleanLike) return { kind: 'boolean', nullable };
+    if (checker.isArrayType(t)) {
+        const el = checker.getTypeArguments(t as ts.TypeReference)[0]!;
+        return { kind: 'array', nullable, items: toShape(checker, el, seen) };
+    }
+    if (t.flags & ts.TypeFlags.Object) {
+        if (checker.getIndexInfosOfType(t).length > 0 && checker.getPropertiesOfType(t).length === 0) {
+            return { kind: 'object', nullable, record: true };
+        }
+        if (seen.includes(t)) return { kind: 'object', nullable, record: true };
+        const props: NonNullable<Shape['props']> = {};
+        for (const p of checker.getPropertiesOfType(t)) {
+            const decl = p.valueDeclaration ?? p.declarations?.[0];
+            if (!decl) continue;
+            props[p.name] = {
+                optional: (p.flags & ts.SymbolFlags.Optional) !== 0,
+                shape: toShape(checker, checker.getTypeOfSymbolAtLocation(p, decl), [...seen, t]),
+            };
+        }
+        return { kind: 'object', nullable, props };
+    }
+    return { kind: 'unknown', nullable };
+}
+
+function resolve(doc: Schema, s: Schema | undefined): Schema {
+    let cur = s ?? {};
+    for (let i = 0; cur.$ref && i < 20; i++) {
+        const path = String(cur.$ref).replace(/^#\//, '').split('/');
+        cur = path.reduce((n: any, k) => n?.[k], doc);
+        if (!cur) throw new Error(`unresolvable $ref ${s?.$ref}`);
+    }
+    return cur;
+}
+
+export type Locator =
+    | { schema: string }
+    | { response: string }
+    | { op: { path: string; method: string; status?: string; request?: boolean }; at?: string[] };
+
+export function locate(doc: Schema, loc: Locator): Schema {
+    if ('schema' in loc) {
+        const s = doc.components?.schemas?.[loc.schema];
+        if (!s) throw new Error(`components.schemas.${loc.schema} not found in openapi.yaml`);
+        return s;
+    }
+    if ('response' in loc) {
+        const s = resolve(doc, doc.components?.responses?.[loc.response])?.content?.['application/json']?.schema;
+        if (!s) throw new Error(`components.responses.${loc.response} has no application/json schema`);
+        return s;
+    }
+    const { path, method, status = '200', request } = loc.op;
+    const op = doc.paths?.[path]?.[method];
+    if (!op) throw new Error(`${method.toUpperCase()} ${path} not found in openapi.yaml`);
+    const body = request ? op.requestBody : op.responses?.[status];
+    let s: Schema | undefined = resolve(doc, body)?.content?.['application/json']?.schema;
+    if (!s)
+        throw new Error(
+            `${method.toUpperCase()} ${path} ${request ? 'request' : status} has no application/json schema`
+        );
+    for (const k of loc.at ?? []) {
+        s = resolve(doc, s).properties?.[k];
+        if (!s) throw new Error(`${method.toUpperCase()} ${path}: no property "${k}" on the path ${loc.at!.join('.')}`);
+    }
+    return s;
+}
+
+const KIND: Record<string, Shape['kind']> = {
+    string: 'string',
+    integer: 'number',
+    number: 'number',
+    boolean: 'boolean',
+    array: 'array',
+    object: 'object',
+};
+
+/** Exemptions: key is `<path>` (dotted field path under the pair) -> reason. */
+export type Allow = Record<string, string>;
+
+export function compare(
+    doc: Schema,
+    shape: Shape,
+    rawSchema: Schema,
+    at: string,
+    allow: Allow,
+    used: Set<string>,
+    out: string[],
+    request = false
+): void {
+    const schema = resolve(doc, rawSchema);
+    const flag = (msg: string) => {
+        if (at in allow) used.add(at);
+        else out.push(`${at}: ${msg}`);
+    };
+    const kind = schema.type ? KIND[schema.type] : schema.properties ? 'object' : undefined;
+    if (!kind) return flag(`schema has no usable "type"`);
+    if (shape.kind !== kind) return flag(`TS kind is ${shape.kind}, schema type is ${schema.type}`);
+    if (shape.nullable !== (schema.nullable === true)) {
+        flag(`TS ${shape.nullable ? 'allows' : 'forbids'} null, schema nullable=${schema.nullable === true}`);
+    }
+    if (schema.enum) {
+        const want = [...schema.enum].map(String).sort();
+        if (!shape.literals) flag(`schema enum [${want}] but TS is not a string-literal union`);
+        else if (JSON.stringify(want) !== JSON.stringify(shape.literals)) {
+            flag(`enum mismatch: TS [${shape.literals}] vs schema [${want}]`);
+        }
+    } else if (shape.literals) {
+        flag(`TS is a literal union [${shape.literals}] but the schema declares no enum`);
+    }
+    if (kind === 'array' && shape.items && schema.items) {
+        compare(doc, shape.items, schema.items, `${at}[]`, allow, used, out, request);
+    }
+    if (kind === 'object' && shape.props && !shape.record) {
+        const sProps: Schema = schema.properties ?? {};
+        const required: string[] | undefined = schema.required;
+        for (const [name, p] of Object.entries(shape.props)) {
+            const here = `${at}.${name}`;
+            if (!(name in sProps)) {
+                if (here in allow) used.add(here);
+                else out.push(`${here}: declared in TS but not in the schema (the server never sends it)`);
+                continue;
+            }
+            // A request body may be stricter than the server demands (a TS-required
+            // field the spec leaves optional is fine); only the reverse is drift.
+            const optionalityDrift = request
+                ? p.optional && required?.includes(name)
+                : required && p.optional === required.includes(name);
+            if (optionalityDrift) {
+                if (here in allow) used.add(here);
+                else
+                    out.push(
+                        `${here}: TS ${p.optional ? 'optional' : 'required'} but schema ${required.includes(name) ? 'requires' : 'does not require'} it`
+                    );
+            }
+            compare(doc, p.shape, sProps[name], here, allow, used, out, request);
+        }
+        for (const name of Object.keys(sProps)) {
+            const here = `${at}.${name}`;
+            if (name in shape.props) continue;
+            if (here in allow) used.add(here);
+            else out.push(`${here}: sent by the server (in the schema) but not declared in TS`);
+        }
+    }
+}

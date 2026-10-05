@@ -1736,7 +1736,7 @@ export interface paths {
         post?: never;
         /**
          * Remove a project role from a machine identity
-         * @description Revoke a previously granted project-scoped role from a machine identity.
+         * @description Revoke a previously granted project- or environment-scoped role from a machine identity.
          */
         delete: operations["removeMachineRole"];
         options?: never;
@@ -4105,7 +4105,7 @@ export interface paths {
         };
         /**
          * Cursor-paginated full-fidelity audit feed for SIEM pull
-         * @description Return a cursor-paginated, full-fidelity audit event feed designed for SIEM ingestion.
+         * @description Return a cursor-paginated, full-fidelity audit event feed designed for SIEM ingestion. Gated by audit.read AND system.read (same bar as /audit/anomalies): this feed includes ip_address, which /audit/logs and /audit/search deliberately omit.
          */
         get: operations["exportAuditLogs"];
         put?: never;
@@ -4125,7 +4125,7 @@ export interface paths {
         };
         /**
          * Download audit events as CSV (compliance hand-off)
-         * @description Returns a bounded, human/auditor-friendly CSV attachment with a header row. Distinct from the JSON /audit/export SIEM feed — this is a single one-shot download capped at 10 000 rows. Gated by audit.read.
+         * @description Returns a bounded, human/auditor-friendly CSV attachment with a header row. Distinct from the JSON /audit/export SIEM feed — this is a single one-shot download capped at 10 000 rows. Gated by audit.read AND system.read (same bar as /audit/anomalies): the export includes ip_address, which /audit/logs and /audit/search deliberately omit.
          */
         get: operations["exportAuditLogsCSV"];
         put?: never;
@@ -5118,11 +5118,14 @@ export interface components {
             id?: number;
             event_type?: string;
             timestamp?: string;
-            user_id?: number | null;
+            /** @description Omitted (never null) when the event has no acting user. */
+            user_id?: number;
             actor_type?: string;
             description?: string;
             success?: boolean;
-            diff?: Record<string, never> | null;
+            /** @description Omitted (never null) when the event recorded no diff. */
+            diff?: Record<string, never>;
+            /** @description Omitted when false. */
             impersonation?: boolean;
         };
         OwnershipRecord: {
@@ -5602,6 +5605,7 @@ export interface components {
         };
         /** @description One entry in a secret's effective access list (owner, direct share, or group share). */
         SecretAccessor: {
+            user_id?: number;
             username?: string;
             permission?: string;
             /** @description How access was granted: owner, direct share, or group share. */
@@ -5689,8 +5693,11 @@ export interface components {
             id?: number;
             name?: string;
             description?: string;
-            /** Format: date-time */
-            expires_at?: string | null;
+            /**
+             * Format: date-time
+             * @description Omitted (never null) for a permanent grant.
+             */
+            expires_at?: string;
         };
         /** @description A minimal role reference (id, name only) -- GET /api/v1/users/{id}/roles's shape. */
         RoleRef: {
@@ -5853,15 +5860,23 @@ export interface components {
             notify_on_breach?: boolean;
             is_active?: boolean;
             created_by?: string;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
         };
         /** @description One policy-covered secret's rotation posture, as returned by GET /api/v1/rotation-policies/evaluate (ADR-108 PR 1 addition). */
         RotationPolicyEvaluation: {
+            /** Format: uint32 */
+            policy_id?: number;
             policy_name?: string;
             /** Format: uint32 */
             secret_id?: number;
             secret_name?: string;
             /** Format: uint32 */
             project_id?: number;
+            /** Format: date-time */
+            last_rotated_at?: string | null;
             days_overdue?: number;
             is_overdue?: boolean;
             is_approaching?: boolean;
@@ -8827,6 +8842,8 @@ export interface operations {
             content: {
                 "application/json": {
                     role_id: number;
+                    /** @description Scope the grant to one environment in this project; 0 or omitted = global (every environment). */
+                    environment_id?: number;
                 };
             };
         };
@@ -8847,7 +8864,10 @@ export interface operations {
     };
     removeMachineRole: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Remove the grant scoped to this one environment (must belong to the project; 400 otherwise). Omitted or 0 removes the project-wide grant only. */
+                environment_id?: number;
+            };
             header?: never;
             path: {
                 id: number;

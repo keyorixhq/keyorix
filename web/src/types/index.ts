@@ -94,6 +94,8 @@ export interface ShareFormData {
 // GET /secrets/{id}/access-log (server JSON is snake_case -- see
 // server/http/handlers/secrets_access_history.go and openapi.yaml).
 export interface SecretAccessLogEntry {
+    id: number;
+    secret_version_id: number;
     accessed_by: string;
     access_time: string;
     action: string;
@@ -112,6 +114,9 @@ export interface SecretAuditEntry {
     user_id?: number;
     description: string;
     success: boolean;
+    // Omitted when the event recorded no diff / was not made under impersonation.
+    diff?: Record<string, unknown>;
+    impersonation?: boolean;
 }
 
 // SecretPolicy is the active create-time policy set, from GET /secrets/policy.
@@ -211,10 +216,14 @@ export interface PaginatedResponse<T> {
     totalPages: number;
 }
 
+// ApiError mirrors the server's error body (sendError, helpers.go): `error` is a
+// short type label, `message` the human text, `code` the HTTP status.
 export interface ApiError {
+    success: boolean;
+    code: number;
     error: string;
-    code: string;
-    details?: Record<string, string>;
+    message: string;
+    details?: Record<string, unknown> | null;
 }
 
 // Form types
@@ -365,6 +374,7 @@ export interface RotationPolicyEvaluation {
     policy_name: string;
     secret_id: number;
     secret_name: string;
+    project_id: number;
     last_rotated_at: string | null;
     days_overdue: number;
     is_overdue: boolean;
@@ -402,6 +412,9 @@ export interface SecretRiskScore {
     score: number; // 0-100 weighted composite
     band: RiskBand;
     factors: SecretRiskFactor[];
+    // true when the exposure factor could not be fully computed: treat score/band
+    // as a floor, not a verified value.
+    degraded: boolean;
 }
 
 export type RotationStatus = 'overdue' | 'due_soon' | 'ok';
