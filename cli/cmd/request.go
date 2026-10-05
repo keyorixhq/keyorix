@@ -55,22 +55,27 @@ func requestProjectName(flagValue string) (string, error) {
 
 // projectIDFlagUsage is the shared --project-id help text. Every `keyorix request`
 // subcommand carries it (#2360): project-NAME resolution goes through
-// resolveRequestProjectID -> GET /api/v1/projects, which is gated on a
-// deployment-wide role. A caller with no project grants -- exactly the persona
-// self-service access requests exist for -- is correctly denied that listing, and
-// so has no way to turn a name into the ID every one of these project-scoped routes
-// needs in its URL. The routes themselves impose no such restriction.
-const projectIDFlagUsage = "Project ID -- use this instead of --project when GET /api/v1/projects is denied to the caller " +
-	"(it requires a deployment-wide role); the project-scoped access-request routes themselves do not require it"
+// resolveRequestProjectID -> GET /api/v1/projects.
+//
+// Since #2780 that listing serves a project-scoped caller their own projects, so
+// --project now works for anyone who already holds a grant somewhere. It still
+// cannot help the persona self-service access requests exist for -- a caller with
+// NO project grant at all, who has nothing to list and therefore no way to turn a
+// name into the ID these project-scoped routes need in their URL. That is a
+// property of not having access yet, not a gate the listing imposes, and
+// --project-id is how such a caller proceeds.
+const projectIDFlagUsage = "Project ID -- use this instead of --project when the caller holds no project grant yet " +
+	"(nothing to list, so a name cannot be resolved); the project-scoped access-request routes themselves do not require it"
 
 // requestProjectTarget resolves which project a `keyorix request` subcommand targets
 // from its own --project-id / --project flags (and KEYORIX_PROJECT), before any network
 // call, so a missing flag fails fast without contacting the server.
 //
 // A nonzero projectID means --project-id was given: resolveRequestProjectID (and the
-// GET /api/v1/projects listing behind it) is bypassed entirely, which is the only path
-// open to a caller holding no project grants. Otherwise projectName still needs
-// resolving through that listing, for callers who can use it.
+// GET /api/v1/projects listing behind it) is bypassed entirely, which remains the only
+// path open to a caller holding no project grants — since #2780 the listing serves a
+// project-scoped caller their own projects, but a caller with nothing granted still has
+// nothing to list. Otherwise projectName is resolved through that listing.
 //
 // Exactly one of the two return values is ever meaningful: (id, "") or (0, name).
 func requestProjectTarget(projectIDFlag uint, projectNameFlag string) (projectID uint, projectName string, err error) {
@@ -404,9 +409,9 @@ func init() {
 	requestReviewCmd.Flags().UintVar(&requestReviewProjectID, "project-id", 0, projectIDFlagUsage)
 	_ = requestReviewCmd.MarkFlagRequired("id")
 	_ = requestReviewCmd.MarkFlagRequired("action")
-	// --project is NOT MarkFlagRequired: #2360 -- a reviewer whose roles.assign comes
-	// from a PROJECT-scoped grant (not a deployment-wide role) is denied
-	// GET /api/v1/projects too, so a name is unresolvable for them. One of
+	// --project is NOT MarkFlagRequired: #2360 -- a reviewer may have no resolvable
+	// project name available (a caller holding no project grant has nothing to list;
+	// before #2780 a project-scoped reviewer was denied the listing outright). One of
 	// --project / --project-id / KEYORIX_PROJECT is required, enforced in runRequestReview.
 	requestReviewCmd.MarkFlagsMutuallyExclusive("project", "project-id")
 }

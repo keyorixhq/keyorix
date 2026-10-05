@@ -1678,7 +1678,7 @@ type PatHygieneParams struct {
 
 // ListProjectsParams defines parameters for ListProjects.
 type ListProjectsParams struct {
-	// IncludeDeleted When 'true', also returns soft-deleted projects (each flagged via deleted/deleted_at) for the restore UI.
+	// IncludeDeleted When 'true', also returns soft-deleted projects (each flagged via deleted/deleted_at) for the restore UI. This form requires secrets.read at the GLOBAL scope: project-scoped role grants deliberately survive a soft-delete (so RestoreProject can work) while GET /api/v1/projects/{id} returns 404 for a deleted project, so a project-scoped reader cannot read a soft-deleted project through any path and must not see one listed. A caller without the global grant gets 403 for this form, and 200 for the default one.
 	IncludeDeleted *ListProjectsParamsIncludeDeleted `form:"include_deleted,omitempty" json:"include_deleted,omitempty"`
 }
 

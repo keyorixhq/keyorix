@@ -705,7 +705,7 @@ export interface paths {
         };
         /**
          * List projects with secret and environment counts
-         * @description List all projects accessible to the caller, including secret and environment counts.
+         * @description List the projects the CALLER CAN READ, including secret and environment counts. A caller holding secrets.read at the global scope gets every project; a caller whose grants are project-scoped gets exactly the projects they are authorized to read at the project scope — the same check GET /api/v1/projects/{id} applies, so every project listed here is one the caller can also fetch by id. A caller with no such grant gets 200 with an empty array, not 403.
          */
         get: operations["listProjects"];
         put?: never;
@@ -1197,7 +1197,7 @@ export interface paths {
         };
         /**
          * List all environments (global, backward-compat)
-         * @description Return all environments across all projects accessible to the authenticated user.
+         * @description Return the environments belonging to projects the CALLER CAN READ, across all of them. Scoped exactly like GET /api/v1/projects: a global secrets.read holder gets every environment, a project-scoped reader gets only their projects', and a caller with no such grant gets 200 with an empty array rather than 403.
          */
         get: operations["listEnvironments"];
         put?: never;
@@ -6979,7 +6979,7 @@ export interface operations {
     listProjects: {
         parameters: {
             query?: {
-                /** @description When 'true', also returns soft-deleted projects (each flagged via deleted/deleted_at) for the restore UI. */
+                /** @description When 'true', also returns soft-deleted projects (each flagged via deleted/deleted_at) for the restore UI. This form requires secrets.read at the GLOBAL scope: project-scoped role grants deliberately survive a soft-delete (so RestoreProject can work) while GET /api/v1/projects/{id} returns 404 for a deleted project, so a project-scoped reader cannot read a soft-deleted project through any path and must not see one listed. A caller without the global grant gets 403 for this form, and 200 for the default one. */
                 include_deleted?: "true" | "false";
             };
             header?: never;

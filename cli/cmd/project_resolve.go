@@ -16,24 +16,34 @@ import (
 //
 // Resolution order:
 //
-//  1. GET /api/v1/projects (the deployment-wide listing). It requires a GLOBAL
-//     secrets.read, so it works for admin-tier callers. On 200: match ref by
-//     name (case-insensitively when fold is set, matching what each caller did
-//     before), then -- only if no name matched -- by numeric ID.
-//  2. On a 403 from that listing -- the normal answer for a least-privilege
-//     caller whose only grants are project-scoped -- a NUMERIC ref is resolved
-//     through GET /api/v1/projects/{id}, the per-project read the server
-//     authorizes against the caller's grant on exactly that project
+//  1. GET /api/v1/projects (the project listing). Since #2780 it serves every
+//     caller the projects they can read -- an admin-tier caller gets all of them, a
+//     project-scoped caller gets theirs -- so this path now resolves a NAME for a
+//     least-privilege caller too, which is the common case it used to fail. On 200:
+//     match ref by name (case-insensitively when fold is set, matching what each
+//     caller did before), then -- only if no name matched -- by numeric ID. A
+//     caller with no project grant gets 200 with an empty list, and falls through
+//     to the "not found" error below rather than to step 2.
+//
+//  2. On a 403 from that listing, a NUMERIC ref is resolved through
+//     GET /api/v1/projects/{id}, the per-project read the server authorizes against
+//     the caller's grant on exactly that project
 //     (RequireScopedPermission(secrets.read, projectScope)). The server still
 //     decides: a project the caller holds no grant in answers 403 there too, and
 //     this function surfaces that as an error, never as a resolved ID.
+//
+//     This arm is now a safety net rather than the ordinary least-privilege path:
+//     `?include_deleted=true` still 403s a non-global caller, and an older server
+//     predating #2780 still 403s the plain listing. It is deliberately kept so the
+//     CLI keeps working against both.
+//
 //  3. A non-numeric ref after a 403 cannot be resolved without a listing the
 //     caller is allowed to see, so the error says exactly that and names the
 //     numeric-ID form as the way through.
 //
 // This deliberately loosens nothing server-side: it only stops the CLI from
-// making the admin-only listing a hard prerequisite of commands whose real
-// endpoint is project-scoped.
+// making a listing a hard prerequisite of commands whose real endpoint is
+// project-scoped.
 func resolveProjectRef(ctx context.Context, client *apiclient.ClientWithResponses, ref string, fold bool) (name string, id int, err error) {
 	p, err := resolveProject(ctx, client, ref, fold)
 	if err != nil {
