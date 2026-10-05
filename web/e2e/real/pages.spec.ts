@@ -127,7 +127,14 @@ const PAGES: Array<[string, string]> = [
     ['audit', '/audit'],
     ['notification channels (notifications/alerts)', '/admin/notification-channels'],
     ['compliance', '/compliance'],
-    ['settings', '/settings'],
+    // WEB-SWEEP-1: this entry used to be '/settings'. App.tsx declares no such
+    // route -- ROUTES.SETTINGS exists in web/src/constants.ts but nothing wires
+    // it to a page and nothing links to it, so '/settings' falls through to the
+    // catch-all and renders the 404 page. This test's checks (no console error,
+    // no failed API call, no bounce to /login) all pass on a 404 page, so the
+    // entry claimed settings coverage it never had. '/settings/appearance' is
+    // the real, nav-reachable settings page every persona can open.
+    ['settings (appearance)', '/settings/appearance'],
 ];
 
 test('every main page loads with no console errors or failed API calls (single session)', async ({ page }) => {
