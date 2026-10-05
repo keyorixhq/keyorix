@@ -1,2 +1,2 @@
 go test fuzz v1
-[]byte("Lx0")
+[]byte("L\x00#\x00\x00")
