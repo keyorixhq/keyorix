@@ -797,6 +797,15 @@ func FuzzCrossReplicaInvariants(f *testing.F) {
 	f.Add([]byte{9, 0, 8, 0})   // #2648: RevokeShare vs UpdateSharePermission (fixed, #2666)
 	f.Add([]byte{36, 0, 37, 0}) // #2658 class: both admins' global role removed concurrently (fixed, #2665)
 	f.Add([]byte{28, 0, 29, 0}) // #2660: AddSecretDependency both directions (fixed, #2670)
+	f.Add([]byte{0, 0, 6, 0})   // #2646: ShareSecret vs DeleteSecret (fixed, #2785)
+	f.Add([]byte{0, 0, 7, 0})   // #2647: ShareSecretWithGroup vs DeleteSecret (fixed, #2785)
+	f.Add([]byte{0, 0, 10, 0})  // #2649: GrantSecretACL vs DeleteSecret (fixed, #2785)
+	f.Add([]byte{2, 0, 30, 0})  // #2652: IssueLease vs DeleteProject (fixed, #2785)
+	f.Add([]byte{21, 0, 23, 0}) // #2653: UpdateUser vs SuspendUser (fixed, #2785)
+	f.Add([]byte{25, 0, 24, 0}) // #2654: UpdateOwnProfile vs ChangePassword (fixed, #2785)
+	f.Add([]byte{27, 0, 26, 0}) // #2655: ActivateMFA vs BeginMFAEnrollment (fixed, #2667)
+	f.Add([]byte{2, 0, 5, 0})   // #2656: RestoreEnvironment vs DeleteProject (fixed, #2785)
+	f.Add([]byte{14, 0, 13, 0}) // #2657: TransitionMembership activate vs revoke (fixed, #2669)
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, program []byte) {
