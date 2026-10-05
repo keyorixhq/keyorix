@@ -539,8 +539,12 @@ func (ls *LocalStorage) GetSecret(ctx context.Context, id uint) (*models.SecretN
 	// into. Reading the stamp in a SEPARATE later query is the bug class
 	// GUARD-6 exists for: it would cache this pre-change row under a
 	// post-change stamp.
-	cp := secret
-	ls.secretMetaCache.setNode(id, nodeGeneration{updatedAt: secret.UpdatedAt, readCount: secret.ReadCount}, &cp)
+	// Never publish a row read inside a transaction: it is UNCOMMITTED, and the
+	// shared cache outlives the transaction (see cacheEnabled's doc comment).
+	if ls.cacheEnabled {
+		cp := secret
+		ls.secretMetaCache.setNode(id, nodeGenerationOf(&secret), &cp)
+	}
 	cp2 := secret
 	return &cp2, nil
 }
@@ -550,12 +554,15 @@ func (ls *LocalStorage) GetSecret(ctx context.Context, id uint) (*models.SecretN
 // miss. Callers must treat false exactly like a cold cache — do the full live
 // read.
 func (ls *LocalStorage) getCachedSecret(ctx context.Context, id uint) (*models.SecretNode, bool) {
+	if !ls.cacheEnabled {
+		return nil, false
+	}
 	cached, ok := ls.secretMetaCache.getNode(id)
 	if !ok || cached.node == nil {
 		return nil, false
 	}
 	liveGen, found, err := liveNodeGeneration(ctx, ls.db, id)
-	if err != nil || !found || !liveGen.equal(cached.generation) {
+	if err != nil || !found || liveGen != cached.generation {
 		return nil, false
 	}
 	cp := *cached.node
@@ -1205,7 +1212,7 @@ func (ls *LocalStorage) GetLatestSecretVersion(ctx context.Context, secretID uin
 	err := ls.db.WithContext(ctx).Where(sqlWhereSecretNodeID, secretID).Order("version_number DESC").First(&version).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			if genErr == nil {
+			if genErr == nil && ls.cacheEnabled {
 				ls.secretMetaCache.setVersion(secretID, liveGen, nil)
 			}
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorVersionNotFound", nil), storage.ErrSecretVersionNotFound)
@@ -1214,8 +1221,12 @@ func (ls *LocalStorage) GetLatestSecretVersion(ctx context.Context, secretID uin
 	}
 	// Only cache when the generation read itself succeeded — never cache
 	// against a generation-check error (fail closed: an uncached version is
-	// simply a future cache miss, never a correctness problem).
-	if genErr == nil {
+	// simply a future cache miss, never a correctness problem) — and never from
+	// inside a transaction, where both the generation and the version row are
+	// UNCOMMITTED and a rollback would leave this entry to be validated by the
+	// next committed write that reproduces the same aggregate (see
+	// cacheEnabled's doc comment on LocalStorage).
+	if genErr == nil && ls.cacheEnabled {
 		cp := version
 		ls.secretMetaCache.setVersion(secretID, liveGen, &cp)
 	}
@@ -1226,6 +1237,9 @@ func (ls *LocalStorage) GetLatestSecretVersion(ctx context.Context, secretID uin
 // — version is nil when the cache has already confirmed "no version exists"
 // for the current generation. Returns (nil, false) on any miss.
 func (ls *LocalStorage) getCachedLatestVersion(ctx context.Context, secretID uint) (*models.SecretVersion, bool) {
+	if !ls.cacheEnabled {
+		return nil, false
+	}
 	cached, ok := ls.secretMetaCache.getVersion(secretID)
 	if !ok || !cached.hasVersion {
 		return nil, false
