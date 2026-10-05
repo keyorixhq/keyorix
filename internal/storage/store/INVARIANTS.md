@@ -132,6 +132,9 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   two replicas): `internal/core/concurrency_check_then_act_exempt_review_postgres_test.go`
   (`TestCTAReview_ShareSecret_vs_DeleteSecret_CrossReplicaPostgres`,
   `_ShareSecretWithGroup_vs_DeleteSecret_`, `_ShareSecret_DeleteSecretAfterInsert_`).
+  ACL grants (#2649, `CreateOrUpdateSecretACL` vs `DeleteSecret`'s CWE-284 cascade):
+  `_GrantSecretACL_vs_DeleteSecret_`, `_GrantSecretACL_DeleteSecretAfterUpsert_`, and
+  `local_secret_acl_test.go:TestLocalACL_RefusesSoftDeletedSecret` (default-ci).
 
 ## GORM hook / timezone correctness (`internal/storage/models`, `store`)
 
