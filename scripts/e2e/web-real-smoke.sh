@@ -35,14 +35,27 @@
 # outright on a named file that doesn't exist -- on every individual PR
 # branch that doesn't yet have every other in-flight real-backend spec file
 # merged into it. Today's real per-file login counts run 2-5 each.
-# MAX_SPECS_PER_GROUP=2 (not 3): confirmed live that 3 of today's 5 files
-# (access-control + audit-and-session + mfa-login, alphabetically the first
-# chunk) sum to EXACTLY 10 logins -- the hard ceiling, zero margin, one more
-# login anywhere in any of those three files away from breaking again. At 2
-# per group the worst real pairing today is 7 (mfa-login + pages), leaving
-# real headroom.
+# MAX_SPECS_PER_GROUP=1 (2026-10-05, #2738): one spec file per freshly-booted
+# server, so NO group's budget is ever a sum of per-file counts. The previous
+# value of 2 was a hand-tuned number ("the worst real pairing today is 7"), and
+# the comment it replaced was itself a hand-tuned 3 that had already broken
+# once -- every added spec file re-opens the arithmetic, and the failure mode is
+# a mid-suite 429 that reads as a broken test. Adding mfa-disable-dialog.spec.ts
+# would have put the [mfa-disable-dialog + mfa-login] pairing at 9 plus the
+# group's own 1 project-seeding login = the ceiling exactly, zero margin: the
+# precise trap the old comment warned about, two spec files later. At 1 per
+# group the binding constraint is a SINGLE file's own login count against the
+# full budget, which a spec author can see while writing that file instead of
+# having to know what else exists and how the alphabetical chunking lands.
+# Today's worst single file is mfa-login at 6 (+1 seeding = 7 of 10).
+# Cost: one server boot per spec file instead of per pair.
 #
-# Usage: scripts/e2e/web-real-smoke.sh
+# Usage: scripts/e2e/web-real-smoke.sh [spec-file ...]
+#   With no arguments: every e2e/real/*.spec.ts file (what CI runs).
+#   With arguments: only those spec files, each still in its own group with its
+#   own freshly-booted server -- for iterating on one spec without booting a
+#   server for every other file. Paths are relative to web/ (e.g.
+#   e2e/real/mfa-disable-dialog.spec.ts).
 #   Requires: go, pnpm, a working `pnpm exec playwright install` (browsers
 #   already cached locally is fine -- this script does not re-install them).
 set -euo pipefail
@@ -50,7 +63,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SERVER_BIN="$REPO_ROOT/bin/keyorix-server"
 WEB_DIR="$REPO_ROOT/web"
-MAX_SPECS_PER_GROUP=2
+MAX_SPECS_PER_GROUP=1
 
 # KEYORIX_E2E_SPECS optionally narrows the run to a space-separated list of
 # spec paths (relative to web/), for iterating on one file without paying for
@@ -63,6 +76,11 @@ if [ -n "${KEYORIX_E2E_SPECS:-}" ]; then
     # shellcheck disable=SC2206
     ALL_SPECS=(${KEYORIX_E2E_SPECS})
     echo "==> KEYORIX_E2E_SPECS is set: running only ${ALL_SPECS[*]}"
+if [ "$#" -gt 0 ]; then
+    ALL_SPECS=("$@")
+    for spec in "${ALL_SPECS[@]}"; do
+        [ -f "$WEB_DIR/$spec" ] || { echo "no such spec file: $WEB_DIR/$spec" >&2; exit 1; }
+    done
 else
     mapfile -t ALL_SPECS < <(cd "$WEB_DIR" && find e2e/real -maxdepth 1 -name '*.spec.ts' | sort)
 fi
@@ -86,6 +104,41 @@ fail() {
     echo "" >&2
     echo "WEB E2E SMOKE FAILED: $1" >&2
     exit 1
+}
+
+# free_port prints the first TCP port at or above $1 that nothing is listening on.
+#
+# 2026-10-05 (#2738): this harness used FIXED ports -- 18189+group for the server and
+# 18190+group for the Vite dev server -- two ranges that INTERLEAVE, so group N+1's
+# server port IS group N's web port. Two failures follow from that, both confirmed live
+# on this machine:
+#
+#   1. A second concurrent run of this script on the same host collides outright. The
+#      colliding server then fails to bind while the /health poll SUCCEEDS, because the
+#      other run's server answers it -- so the script sails past its own
+#      "did-it-start?" gate and sends the rest of the group's setup, including POST
+#      /system/init, to a stranger's server. (Harmless in the event: /system/init on an
+#      already-initialised system is a no-op. The next call, /auth/login with this run's
+#      own password, 401s against that other admin, and the failure looks like a broken
+#      spec.)
+#   2. Any lingering dev server from group N makes group N+1's server fail to bind the
+#      same way. MAX_SPECS_PER_GROUP=1 multiplies the number of groups, so this went
+#      from unlikely to likely.
+#
+# Probing for a free port cannot be atomic (something may grab it between the probe and
+# the bind), but it removes both deterministic collisions. Uses bash's own /dev/tcp
+# rather than nc, so it needs nothing extra installed.
+free_port() {
+    local p=$1
+    while [ "$p" -lt 65000 ]; do
+        if ! (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
+            echo "$p"
+            return 0
+        fi
+        exec 3<&- 2>/dev/null || true
+        p=$((p + 1))
+    done
+    fail "no free TCP port found at or above $1"
 }
 
 if [ ! -x "$SERVER_BIN" ]; then
@@ -251,9 +304,13 @@ run_group() {
     local group_label="$1"
     shift
     local specs=("$@")
-    local server_port=$((18189 + group_label))
+    # Disjoint ranges (server 182xx, web 183xx), each probed for availability -- see
+    # free_port's comment for the interleaved-fixed-ports failures this replaces.
+    local server_port
+    server_port="$(free_port $((18200 + group_label)))"
     local server_url="http://127.0.0.1:$server_port"
-    local web_port=$((18190 + group_label))
+    local web_port
+    web_port="$(free_port $((18300 + group_label)))"
 
     local smoke_dir
     smoke_dir="$(mktemp -d)"

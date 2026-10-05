@@ -13,6 +13,12 @@ export interface RecoveryCodesStatus {
     total: number;
 }
 
+// MfaReauthProof is what the security-factor-change endpoints accept from this UI:
+// a current authenticator code, and nothing else. See disable() below.
+export interface MfaReauthProof {
+    code: string;
+}
+
 export const mfaApi = {
     // Begin enrolment: returns the otpauth:// URI (for a QR) and the base32 secret.
     async enroll(): Promise<MfaEnrollment> {
@@ -32,8 +38,16 @@ export const mfaApi = {
         return (response.data.data?.recovery_codes ?? []) as string[];
     },
 
-    // Disable MFA after re-auth with a current code or the account password.
-    async disable(proof: { code?: string; password?: string }): Promise<void> {
+    // Disable MFA after re-auth with a CURRENT authenticator code.
+    //
+    // #2738: the proof type is deliberately code-only. The endpoint also reads a
+    // `password` field, but internal/core's requireReauth refuses the password alone
+    // once a second factor is enrolled, and its password-accepting branch
+    // additionally requires a live MFAStepUpPurposeReauth grant that no web login
+    // flow mints — so a password submitted from this UI is always refused. Typing it
+    // isn't representable here, which is what the old "code or password" label
+    // invited and what made the dialog look broken.
+    async disable(proof: MfaReauthProof): Promise<void> {
         await apiClient.post('/api/v1/auth/mfa/disable', proof);
     },
 
@@ -43,8 +57,9 @@ export const mfaApi = {
         return response.data.data as RecoveryCodesStatus;
     },
 
-    // Replace all recovery codes after re-auth; returns the new one-time codes.
-    async regenerateRecoveryCodes(proof: { code?: string; password?: string }): Promise<string[]> {
+    // Replace all recovery codes after re-auth with a current authenticator code;
+    // returns the new one-time codes. Same code-only proof as disable() — see there.
+    async regenerateRecoveryCodes(proof: MfaReauthProof): Promise<string[]> {
         const response = await apiClient.post('/api/v1/auth/mfa/recovery-codes/regenerate', proof);
         return (response.data.data?.recovery_codes ?? []) as string[];
     },

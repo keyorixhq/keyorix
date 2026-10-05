@@ -211,6 +211,19 @@ async function createDedicatedUser(usernamePrefix: string): Promise<{ username: 
         await api.dispose();
     }
 }
+import { test, expect } from '@playwright/test';
+import {
+    createDedicatedUser,
+    enableMfaViaApi,
+    realLogin,
+    submitLogin,
+    totpCode,
+    waitForFreshTotpCode,
+} from './helpers';
+
+// The TOTP/base32/apiLogin/createDedicatedUser/enableMfaViaApi helpers these tests use
+// now live in ./helpers.ts, shared with mfa-disable-dialog.spec.ts (#2738). Nothing about
+// them changed in the move; see that file's own comments.
 
 // #2815's guard. Deliberately added to THIS spec file rather than a new
 // *.spec.ts: scripts/e2e/web-real-smoke.sh discovers groups with
@@ -329,42 +342,6 @@ test('MFA enrollment via Profile → Security completes (fixes known bug #2441)'
     // What SHOULD happen: recovery codes render, confirming activation.
     await expect(page.getByText('Save your recovery codes')).toBeVisible({ timeout: 10_000 });
 });
-
-// enableMfaViaApi is test SETUP ONLY, not a UI shortcut taken out of laziness:
-// this test exercises LOGIN's code-entry step, not enrollment's UI (that's
-// the test above), so it reaches its precondition (an MFA-enabled account)
-// via the same direct API path web-real-smoke.sh already uses for setup, not
-// through the UI. Operates on the dedicated user created below, NEVER on the
-// shared admin -- enabling MFA is a one-way, session-breaking mutation on
-// whichever account it's applied to, so doing this to ADMIN_USERNAME would
-// make every later spec's admin login order-dependent on this one running
-// (or not) first. Returns activatedStep alongside the secret so the caller
-// can wait for a TOTP step strictly after it before the login verify below --
-// see waitForFreshTotpCode's own comment for why.
-async function enableMfaViaApi(username: string, password: string): Promise<{ secret: string; activatedStep: number }> {
-    const token = await apiLogin(username, password);
-    const auth = { Authorization: `Bearer ${token}` };
-    // A separate, cookie-free context for the actual mutations -- see
-    // apiLogin's comment for why this can't reuse the login context.
-    const api = await apiRequestFactory.newContext({ baseURL: BACKEND_URL });
-    try {
-        const enrollRes = await api.post('/api/v1/auth/mfa/enroll', { headers: auth, data: {} });
-        if (!enrollRes.ok()) throw new Error(`setup enroll failed: ${enrollRes.status()} ${await enrollRes.text()}`);
-        const secret = (await enrollRes.json()).data.secret as string;
-
-        const activateAtSeconds = Date.now() / 1000;
-        const activateRes = await api.post('/api/v1/auth/mfa/activate', {
-            headers: auth,
-            data: { code: totpCode(secret, activateAtSeconds), password },
-        });
-        if (!activateRes.ok())
-            throw new Error(`setup activate failed: ${activateRes.status()} ${await activateRes.text()}`);
-
-        return { secret, activatedStep: Math.floor(activateAtSeconds / 30) };
-    } finally {
-        await api.dispose();
-    }
-}
 
 test('logging in with MFA enabled completes via the code-entry step (fixes known bug #2442)', async ({ page }) => {
     // https://github.com/keyorixhq/keyorix/issues/2442 -- server/http/handlers/auth.go's
