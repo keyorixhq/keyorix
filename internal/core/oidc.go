@@ -275,7 +275,11 @@ func (c *KeyorixCore) ValidateOIDCToken(ctx context.Context, raw string) (*model
 		return nil, nil, fmt.Errorf("no machine identity bound to this token")
 	}
 	if m.State != MachineActive {
-		return nil, nil, fmt.Errorf("machine identity is %s", m.State)
+		// #2518: the same typed sentinel the opaque-token paths return for this
+		// identical condition (machine_token.go). This path has no positive
+		// auth cache today, so nothing can mistake it for a transient failure —
+		// kept in step so a future cached OIDC path cannot inherit the trap.
+		return nil, nil, fmt.Errorf("%w: %s", ErrMachineIdentityNotActive, m.State)
 	}
 	roles, err := c.storage.GetMachineRoles(ctx, m.ID)
 	if err != nil {

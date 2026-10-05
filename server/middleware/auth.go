@@ -569,7 +569,19 @@ func serveAuthCacheHit(next http.Handler, w http.ResponseWriter, r *http.Request
 		case strings.HasPrefix(token, machineTokenPrefix):
 			fresh, err := coreService.CurrentMachineTokenRestriction(r.Context(), token)
 			switch {
-			case errors.Is(err, core.ErrMachineTokenRevoked) || errors.Is(err, core.ErrMachineTokenExpired):
+			// #2518: ErrMachineIdentityNotActive belongs with the other two.
+			// CurrentMachineTokenRestriction's doc comment always listed a
+			// no-longer-active owning identity as a signal to deny rather than
+			// degrade past, but it returned a bare fmt.Errorf, so this branch
+			// could not see it and a suspended machine identity's token kept
+			// authenticating for up to validTokenTTL on every replica other
+			// than the one that ran the suspension (only that one flushes the
+			// cache, via SetMachineTokenCacheFlusher). Suspension is the
+			// incident-response control for a machine identity; "effective in
+			// 30s, on one replica" is not what it promises.
+			case errors.Is(err, core.ErrMachineTokenRevoked) ||
+				errors.Is(err, core.ErrMachineTokenExpired) ||
+				errors.Is(err, core.ErrMachineIdentityNotActive):
 				denyRevokedCacheHit(w, token)
 				return
 			case err == nil:

@@ -149,17 +149,21 @@ func TestCacheHit_SessionTransientStorageError_DegradesToStaleSnapshot(t *testin
 
 // TestCacheHit_MachineIdentityInactive_IsDefinitiveNotTransient pins the
 // boundary between the two halves of INV-MW-05: CurrentMachineTokenRestriction's
-// doc comment says a no-longer-active machine identity is one of three
-// signals the caller "must treat as deny the request, not a transient lookup
-// failure to degrade past" — but it is returned as a plain fmt.Errorf, and
-// serveAuthCacheHit only denies on the two revoked/expired sentinels, so it
-// currently falls into the degrade-to-stale branch. On the replica that ran
-// the suspension the token cache is flushed (SetMachineTokenCacheFlusher), so
-// this is visible on every OTHER replica (and wherever the flusher is not
-// wired) for up to validTokenTTL. Auth semantics: not fixed here, see #2518.
+// doc comment says a no-longer-active machine identity is one of three signals
+// the caller "must treat as deny the request, not a transient lookup failure to
+// degrade past" — but it used to be returned as a plain fmt.Errorf, and
+// serveAuthCacheHit only denied on the two revoked/expired sentinels, so it fell
+// into the degrade-to-stale branch. On the replica that ran the suspension the
+// token cache is flushed (SetMachineTokenCacheFlusher), so the stale accept was
+// visible on every OTHER replica (and wherever the flusher is not wired) for up
+// to validTokenTTL.
+//
+// Closed 2026-10-05 (#2518): core.ErrMachineIdentityNotActive is now a typed
+// sentinel and this branch denies on it, so the doc comment's claim is checkable
+// rather than asserted. This test was previously t.Skip'ed with that gap as its
+// reason; the skip is removed in the same change that closes it.
 func TestCacheHit_MachineIdentityInactive_IsDefinitiveNotTransient(t *testing.T) {
-	t.Skip("#2518: suspended machine identity degrades to the stale cache snapshot on a cache hit instead of being denied; fix is in auth semantics, tracked on the issue")
-
+	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.MachineIdentity{}, &models.MachineIdentityCredential{}))
