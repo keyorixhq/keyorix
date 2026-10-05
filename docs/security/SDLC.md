@@ -1,0 +1,214 @@
+# Secure Development Policy
+
+> **Positioning.** This is a factual account of what actually happens in this
+> repository today, not an aspirational policy document. Every claim below
+> cites the file, workflow, or live GitHub API response that proves it, and
+> every claim is marked **in place** (with evidence) or **planned** (not yet
+> true). Where an earlier document overstated something — most notably a
+> repeated "no bypass, including for maintainers" claim that turned out not
+> to match the live branch-protection ruleset — that correction is recorded
+> here and cross-linked from the corrected documents, not quietly dropped.
+> Companion documents: [`testing.md`](testing.md) (CI gates and the fuzzing
+> programme, in depth), [`threat-model.md`](threat-model.md) and
+> [`threat-models/`](threat-models/) (what's defended against),
+> [`SECURE-CODING.md`](SECURE-CODING.md) (the coding rules this policy's
+> gates exist to enforce).
+
+## Branch protection
+
+**In place, with one gap and one honest caveat — read via the live API, not
+assumed:**
+
+```
+$ gh api repos/keyorixhq/keyorix/rulesets --jq '.[] | {name,target,enforcement}'
+{"enforcement":"disabled","name":"Code Quality Copilot review for default branch","target":"branch"}
+{"enforcement":"active","name":"Require core CI checks on main","target":"branch"}
+
+$ gh api repos/keyorixhq/keyorix/rulesets/<id> --jq '.rules[].type'
+required_status_checks
+merge_queue
+
+$ gh api repos/keyorixhq/keyorix/branches/main/protection
+{"message":"Branch not protected", ...}  # 404 — this repo uses Rulesets, not classic branch protection
+```
+
+- **Required status checks (in place).** The active ruleset names 18
+  required status-check contexts: `build-and-test`, `static-analysis`,
+  `lint`, `licenses`, `fuzz-targets`, `fuzz-reach`, `adr-numbers`,
+  `exclusion-freshness`, `assert-leg-completeness`, `base-branch-check`,
+  `gitleaks`, `helm-chart`, `helm-chart-security`, `operator`,
+  `pnpm-workspace-root-guard`, `workflow-lint`, `dco-check`,
+  `security-fix-regression-check`. These are CI job names from `ci.yml` and
+  sibling workflows; [`testing.md`](testing.md) groups the underlying tools
+  (`govulncheck`, `gosec`, `golangci-lint`, `go test -race`, `go vet`,
+  `gitleaks`, `CodeQL`, `checkov`, `go-licenses`, fuzz-target staleness,
+  DCO) conceptually — the two lists describe the same gate at different
+  levels, not two different gates.
+- **Merge queue (in place).** `grouping_strategy: ALLGREEN`,
+  `merge_method: SQUASH`, `max_entries_to_build: 4`,
+  `max_entries_to_merge: 5`, `check_response_timeout_minutes: 180`. Every
+  merge to `main` goes through the queue; nothing merges directly.
+- **Bypass actor — a real gap, not a hypothetical (corrected 2026-10-05).**
+  The ruleset's `bypass_actors` carries one entry:
+  `{"actor_type":"OrganizationAdmin","bypass_mode":"always"}`. Several
+  existing documents (`SECURITY.md`, `CONTRIBUTING.md`,
+  `docs/security/testing.md`, `docs/security/threat-model.md`,
+  `docs/compliance/SECURITY-VERIFICATION.md`) previously stated flatly that
+  there is "no bypass, including for maintainers." That was not accurate,
+  and all five have been corrected in the same PR that adds this document
+  (cross-referencing here) rather than left to quietly contradict this
+  page. **NEEDS ANDREI**: is the org-admin bypass intentional (a genuine
+  break-glass path for an outage where CI itself is broken), or should it
+  be removed? This document does not change the ruleset — that's a live
+  GitHub setting change, out of scope for a docs-only pass, and a judgment
+  call about operational risk that isn't this document's to make.
+- **Required reviewer — planned, not in place.** `.github/CODEOWNERS`
+  designates `@aibeshkov` as the intended reviewer for cryptography, auth/
+  RBAC, middleware, storage migrations, the CI/CD pipeline, and this policy
+  itself. Reading the ruleset directly shows **no required-reviewer rule
+  exists** — the two rules are `required_status_checks` and `merge_queue`
+  only, and classic branch protection reports "Branch not protected" (404).
+  CODEOWNERS today documents intended ownership; GitHub does not block a
+  merge on it. See "Review flow" below for why this has not mattered in
+  practice so far, and why it's still listed as a gap rather than closed.
+
+## DCO (Developer Certificate of Origin)
+
+**In place.** `dco-check` is one of the 18 required status-check contexts
+above; the workflow is [`.github/workflows/dco.yml`](../../.github/workflows/dco.yml).
+Every commit must carry a `Signed-off-by` trailer matching its author
+(`git commit -s`); `CONTRIBUTING.md` documents this for external
+contributors.
+
+## Review flow
+
+**Stated honestly, per this policy's own positioning:** Keyorix is written
+by one person, Andrei Beshkov, using Claude Code AI coding sessions under
+his direct, same-day supervision — he reviews and signs off on what merges;
+there is no separate human reviewer today. This is verifiable, not asserted:
+of the last 1000 commits on `main`, 939 are authored by Andrei Beshkov and
+61 by `dependabot[bot]` (`git log --format='%an' -1000 | sort | uniq -c`) —
+every human-authored commit in that window is his; there is no second
+human account in the history to review against. `CODEOWNERS` names him as the designated reviewer for every
+security-sensitive path listed above.
+
+**A human second reviewer for crypto/auth/audit changes is a stated goal,
+not a current practice.** Today's actual second-opinion mechanism is
+process, not personnel: a documented adversarial-review campaign
+(`keyorix-private/adversarial-review/`, referenced throughout this
+codebase's ADRs and ADR-conformance ledger), AI-assisted review sessions
+distinct from the implementing session, and the machine-checked ledgers
+(`docs/review-coverage.tsv`, `docs/security-closures.tsv`,
+`docs/adr-conformance-enforced.tsv`, all three CI-enforced — see
+[`testing.md`](testing.md) §4) that make "was this reviewed" and "is this
+fix real" checkable rather than a matter of recollection. None of that is a
+substitute for an independent second human reviewer with standing to block
+a merge; this document does not claim it is.
+
+## CI gates
+
+**In place.** Full list, what each gate catches, and the hardening log
+behind each one (what it has actually caught, not just what it's designed
+to catch): [`testing.md`](testing.md) §1. Not repeated here to avoid two
+documents drifting out of sync on the same list.
+
+## Fuzzing programme
+
+**In place.** Per-PR/weekly bounded fuzzing plus a continuous-discovery rig
+on dedicated infrastructure; harness quality gates (reach/coverage-delta,
+rediscovery); 93 declared `FuzzXxx` targets as of `testing.md`'s writing,
+bidirectionally checked against `scripts/fuzzing/targets.d/` by CI. Full
+detail: [`testing.md`](testing.md) §2.
+
+**Embargo handling (in place).** Per `testing.md`'s own positioning note:
+findings against embargoed third-party libraries (at this writing,
+`crewjam/saml` and `digitorus/pkcs7`, embargoed until upstream disclosure)
+are not detailed in any public document — only the *mechanism* that would
+catch or has caught such issues is described, never the specific finding,
+until the upstream advisory ships.
+
+## Dependency policy
+
+**In place.**
+
+- **Dependabot** (`.github/dependabot.yml`): monthly, with a 7-day
+  cooldown, across four ecosystems (`github-actions`, `gomod` root,
+  `gomod` operator, `npm` web, `npm` root). Patch/minor bumps are grouped
+  per ecosystem to avoid one-PR-per-bump CI cost; majors are left
+  individual since they can be breaking. GitHub Actions are pinned to full
+  commit SHAs specifically so Dependabot's SHA-bump support (not tag
+  tracking) is what keeps them current — see the file's own header comment
+  for why an ungrouped `codeql-action` bump broke CI twice (#1257, #1260)
+  before the grouping was added.
+- **`govulncheck`** runs on every PR/push touching Go code (`static-analysis`
+  job) *and* on a standalone weekly schedule
+  (`.github/workflows/govulncheck-scheduled.yml`, Fridays, matching
+  OSV-Scanner's cadence) — closing the gap where a new entry lands in
+  `vuln.go.dev` for a symbol this code already calls, between two PRs that
+  happen not to touch Go.
+- **OSV-Scanner** (`.github/workflows/osv-scanner.yml`) — PR/push plus the
+  same weekly schedule, a second, independently-sourced vulnerability
+  database from `govulncheck`'s.
+- **Trivy** (`.github/workflows/trivy.yml`) and **OSSF Scorecard**
+  (`.github/workflows/scorecard.yml`) — container/dependency scanning and
+  supply-chain posture scoring respectively.
+- **`go-licenses`** (one of the 18 required contexts, as `licenses`) rejects
+  any dependency outside an explicit permissive allowlist (MIT/Apache-2.0/
+  BSD-2/3-Clause/ISC/MPL-2.0) — the allowlist was derived from the real
+  dependency tree and verified to fail on an injected AGPL test dependency
+  (see `testing.md` §1).
+
+## Release signing, SBOM, and SLSA provenance
+
+**In place.** Verification commands and the full design are published in
+[`../../SECURITY.md`](../../SECURITY.md) § Verifying a Release; summarized
+here with the workflow evidence:
+
+- **Keyless signing**: `checksums.txt` and every container image are signed
+  with Sigstore/cosign via GitHub's OIDC token (`sigstore/cosign-installer`
+  in both `release.yml` and `docker-publish.yml`) — no long-lived signing
+  key exists to leak.
+- **SLSA build provenance**: `actions/attest-build-provenance` runs in both
+  `release.yml` and `docker-publish.yml` (ADR-109 step 6), a second,
+  independent mechanism from the cosign signature — an in-toto statement
+  GitHub itself attests to, naming the exact workflow run, inputs, and
+  builder identity. Verifiable with `gh attestation verify`, not just
+  `cosign`.
+- **SBOM**: `docker-publish.yml` emits BuildKit-native `provenance:
+  mode=max` / `sbom: true` attestations pushed alongside each image;
+  `release.yml` generates a CycloneDX SBOM per release binary (15 total
+  across CLI/server/server-airgap/keyorix-migrate × platform/arch, per
+  `SECURITY.md`); `anchore-syft.yml` additionally runs an SPDX-format SBOM
+  scan (`sbom.spdx.json`) as its own CI artifact.
+
+## Remediation SLA
+
+**In place.** [ADR-104](../adr-104-security-remediation-sla.md) is the
+internal-target and CRITICAL-definition document;
+[`../../SECURITY.md`](../../SECURITY.md) § Remediation Timelines is the
+authoritative published commitment (the two are deliberately split by
+authority — ADR-104 itself says so — and `SECURITY.md` wins if they ever
+disagree). Headline: 48h acknowledge, 7d initial assessment, 90-day ceiling
+across all severities (not severity-tiered — ADR-104's Context section
+explains why a severity-tiered deadline was tried first and abandoned),
+1-week advance notice for High/Critical before a security release ships,
+GHSA-with-CVE same day as the fix.
+
+## Merge queue and mis-based-merge detection
+
+**In place**, with a known structural limitation that is itself documented
+rather than hidden. The merge queue (above) is the admission mechanism. A
+separate, scheduled workflow,
+[`mis-based-merge-detector.yml`](../../.github/workflows/mis-based-merge-detector.yml),
+exists because `base-branch-check` (a required status check) turned out to
+be **structurally unable to block a mis-based merge**: it only runs on
+`pull_request` events and only fails when a PR's base isn't `main`, but
+required-check enforcement only applies on `main` itself — so a PR based on
+some other branch and merged there was never actually gated by it (verified
+directly: PR #1609 merged mis-based with `base-branch-check` red). The
+detector workflow is hourly, scans merged PRs in a lookback window, and
+fails + files an issue for any whose base wasn't `main` — detection within
+the hour instead of the days it took to notice #1563–#1566 and #1594
+manually. It is deliberately *not* added to the required-checks list, for
+the reason given in its own file header: doing so would recreate the exact
+false reassurance `base-branch-check` already gave for weeks.
