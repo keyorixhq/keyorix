@@ -490,10 +490,12 @@ func (c *KeyorixCore) authEffectiveNow() time.Time {
 	return now
 }
 
-// ErrRoleResolutionUnavailable is returned by ValidateSessionToken and
-// ValidatePATToken when the credential itself checked out (found, unrevoked,
-// unexpired, owning account active and not blocked) but the owner's role
-// names could not be read from storage (#1944). It is deliberately distinct
+// ErrRoleResolutionUnavailable is returned by ValidateSessionToken,
+// ValidatePATToken, ValidateMachineToken and ValidateOIDCToken when the
+// credential itself checked out (found, unrevoked, unexpired, owning account
+// active and not blocked / machine identity active) but the principal's role
+// names could not be read from storage (#1944 for the two user-credential
+// validators, #2748 for the two machine ones). It is deliberately distinct
 // from every "invalid credential" error: the failure says nothing about the
 // token, so callers must not treat it as a bad credential (no 401 / negative
 // cache / brute-force strike) — the HTTP middleware answers 503 and the gRPC
