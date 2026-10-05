@@ -28,6 +28,12 @@ func newCacheTestStorage(t testing.TB) *LocalStorage {
 		&models.SecretNode{}, &models.SecretVersion{}, &models.SecretAccessSchedule{},
 		&models.ShareRecord{}, &models.SecretACL{},
 	))
+	// cache_epoch and its trigger are NOT model fields, so AutoMigrate cannot
+	// create them (see secret_node_cache_epoch.go). Without this the node
+	// cache's stamp would never move and every test in this file that asserts
+	// the cache reflects a write would pass vacuously — the production
+	// migration calls exactly this function, so there is one definition.
+	require.NoError(t, EnsureSecretNodeCacheEpoch(db))
 	return NewLocalStorage(db)
 }
 
@@ -232,6 +238,7 @@ func TestSecretMetadataCache_IsPerInstanceNotPackageGlobal(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.ShareRecord{}, &models.SecretACL{}))
+	require.NoError(t, EnsureSecretNodeCacheEpoch(db)) // see newCacheTestStorage
 	a := NewLocalStorage(db)
 	b := NewLocalStorage(db)
 	require.NotSame(t, a.secretMetaCache, b.secretMetaCache)

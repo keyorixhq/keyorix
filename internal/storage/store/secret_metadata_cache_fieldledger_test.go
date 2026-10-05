@@ -1,27 +1,27 @@
-// secret_metadata_cache_fieldledger_test.go — coordinator review of #2764,
-// 2026-10-05, item 2: `(updated_at, read_count)` is a CLOCK-derived stamp and
-// cannot be proven tie-free. `updated_at` is computed in Go by the writer and
-// stored at microsecond precision on PostgreSQL, so two UpdateSecret calls to
-// the same row from two replicas inside one microsecond produce the same value;
-// a warm entry then validates and the pre-write row is served. Clock skew makes
-// the second write's timestamp differ (safe) more often than not, but "usually
-// differs" is a probability argument, and the review correctly refused one.
+// secret_metadata_cache_fieldledger_test.go — the node cache's stamp is now
+// secret_nodes.cache_epoch, maintained by a database trigger
+// (internal/storage/factory.go's ensureSecretNodeCacheEpoch). The claim that
+// makes that a valid stamp is "the trigger fires on EVERY update to the row",
+// so this file asserts exactly that, column by column, derived from the model
+// rather than from a hand list.
 //
-// The non-clock component added instead is the row's own CONTENT: the stamp
-// covers every persisted column except the ones listed below. A tie therefore
-// requires the cached row and the committed row to agree on every covered
-// column — so a tie cannot produce a wrong answer, rather than merely being
-// unlikely to.
+// This REPLACES the 25-column content-derived stamp and its exclusion ledger
+// (coordinator review, 2026-10-05 23:45: "keep the reflection-driven field
+// ledger only if it still adds value (e.g. it asserts the trigger exists and
+// fires for every column); otherwise drop the 25-column stamp"). The
+// reflection stayed, repointed: it used to prove the stamp COVERED every
+// column, it now proves the trigger FIRES for every column — a stronger claim,
+// because it is about the mechanism rather than about a list.
 //
-// These tests are what keeps that claim true as the models change: a new
-// persisted field on models.SecretNode (or models.SecretAccessSchedule) must
-// either be in the stamp or be listed here with a reason. Deriving the field
-// set from the model by reflection rather than hand-listing it is the point —
-// a hand list is exactly the enumeration that goes stale.
+// The schedule stamp keeps its content-derived form and its own ledger (see
+// TestScheduleGeneration_CoversEveryPersistedScheduleField below) — the reason
+// is in the report: that row is tiny, so covering the whole access policy costs
+// nothing and leaves no residual gap, whereas the node row is wide.
 package store
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -29,169 +29,381 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
-// nodeGenerationExcludedFields are the models.SecretNode fields deliberately
-// NOT part of the node stamp, one justification each.
-//
-// The first three are the whole reason the cache is worth having: they are the
-// large columns a full row fetch pays for, and no authorization or read-gate
-// decision reads them. The rest are structural.
-var nodeGenerationExcludedFields = map[string]string{
-	"Description": "free-text operator note (models.go: \"Metadata only; never the value\"). Read for display and audit text only — no authorization or read-gate decision consults it. Excluded on purpose: together with Metadata it is the cost a stamp read avoids.",
-	"Metadata":    "caller-supplied JSON blob, display/integration only, never a decision input. Same cost reason as Description.",
-	"ID":          "the cache KEY itself — an entry is looked up by it, so it cannot differ between the stamp and the cached row.",
-	"DeletedAt":   "handled structurally, not by comparison: liveNodeGeneration queries through Model(&SecretNode{}), which auto-scopes deleted_at IS NULL, so a soft-deleted row returns not-found and the caller treats that as a miss (TestGetSecret_CacheReflectsDeleteSecret, and the \"GetSecret / node soft-delete\" race row).",
-	"ValueStored": "not persisted (`gorm:\"-\"`) — a transient in-process signal (#499) that no read ever loads from the database.",
+// nonUpdatableSecretNodeFields are models.SecretNode fields this test does NOT
+// drive an UPDATE through, with the reason. Everything else gets an individual
+// UPDATE and must bump cache_epoch.
+var nonUpdatableSecretNodeFields = map[string]string{
+	"ID":          "the primary key — updating it is not a write this application ever performs, and the cache key is the id itself.",
+	"ValueStored": "not persisted (`gorm:\"-\"`, #499) — there is no column to update.",
+	"CacheEpoch":  "the stamp itself. Writing it directly is not a write any Go code can make (`gorm:\"<-:false\"`, guarded by TestSecretNodeCacheEpoch_FieldStaysReadOnlyToGORM) and on SQLite the trigger's WHEN guard deliberately does NOT re-bump a statement that already changed cache_epoch — that guard is what stops the nested UPDATE recursing.",
+	"DeletedAt":   "driven separately, by the soft-delete row of the race table and TestGetSecret_CacheReflectsDeleteSecret: a soft-deleted row stops matching the stamp query's own deleted_at IS NULL scope, which is a stronger guarantee than an epoch bump.",
 }
 
-// scheduleGenerationExcludedFields is the same ledger for
-// models.SecretAccessSchedule. The schedule row is small and every policy
-// column IS in the stamp, so the exclusions are purely structural — which is
-// what makes the schedule stamp complete rather than merely cheap.
+// TestCacheEpochTrigger_FiresForEveryPersistedColumn is the load-bearing test
+// for the whole design: for EVERY persisted column of models.SecretNode, an
+// UPDATE touching only that column must advance cache_epoch. Derived from the
+// model by reflection, so a newly added column is covered the moment it exists
+// — a hand-written list is exactly the enumeration that goes stale.
+//
+// Red with the trigger dropped (see
+// TestCacheEpochTrigger_IsRedWithoutTheTrigger below, which drops it and
+// re-runs one representative update rather than asking a reader to take this
+// on trust).
+func TestCacheEpochTrigger_FiresForEveryPersistedColumn(t *testing.T) {
+	t.Parallel()
+	ls := newCacheEpochTestStorage(t)
+	ctx := context.Background()
+
+	modelType := reflect.TypeOf(models.SecretNode{})
+	var skipped, checked []string
+
+	for i := 0; i < modelType.NumField(); i++ {
+		f := modelType.Field(i)
+		if reason, ok := nonUpdatableSecretNodeFields[f.Name]; ok {
+			require.NotEmpty(t, reason, "exclusion for %s needs a reason", f.Name)
+			skipped = append(skipped, f.Name)
+			continue
+		}
+		if f.Tag.Get("gorm") == "-" {
+			skipped = append(skipped, f.Name+" (gorm:\"-\")")
+			continue
+		}
+		column, value := columnAndProbeValueFor(t, ls, f)
+		checked = append(checked, f.Name)
+
+		created, err := ls.CreateSecret(ctx, &models.SecretNode{
+			Name: fmt.Sprintf("probe-%s", f.Name), ProjectID: 1, EnvironmentID: 1,
+			Status: "active", CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		})
+		require.NoError(t, err)
+
+		before := readCacheEpoch(t, ls, created.ID)
+		require.NoError(t, ls.db.Model(&models.SecretNode{}).Where(sqlWhereID, created.ID).
+			UpdateColumn(column, value).Error,
+			"updating %s (%s) must succeed", f.Name, column)
+		after := readCacheEpoch(t, ls, created.ID)
+
+		require.Greater(t, after, before,
+			"an UPDATE of secret_nodes.%s did not advance cache_epoch (%d -> %d). The node cache's stamp is cache_epoch alone, "+
+				"so a column the trigger does not cover can change while a warm cache entry keeps serving the pre-change row. "+
+				"Either the trigger is missing/not firing, or this column lives on a table the trigger is not attached to.",
+			column, before, after)
+	}
+
+	sort.Strings(checked)
+	// UpdateColumn is used on purpose: it is the idiom that bypasses GORM's
+	// auto-timestamp callback, i.e. the one a Go-side bump would miss. If the
+	// trigger survives THIS, it survives Save()/Updates() too.
+	require.GreaterOrEqual(t, len(checked), 20,
+		"only %d columns were probed (%s); the reflection has stopped enumerating models.SecretNode, so this test would pass vacuously",
+		len(checked), strings.Join(checked, ", "))
+	t.Logf("cache_epoch trigger verified for %d columns; skipped with reasons: %s", len(checked), strings.Join(skipped, ", "))
+}
+
+// TestCacheEpochTrigger_IsRedWithoutTheTrigger is the negative control, run in
+// the same CI pass as the positive one rather than left as a claim in a commit
+// message: drop the trigger, repeat one representative hook-bypassing update,
+// and the epoch must NOT move.
+func TestCacheEpochTrigger_IsRedWithoutTheTrigger(t *testing.T) {
+	t.Parallel()
+	ls := newCacheEpochTestStorage(t)
+	ctx := context.Background()
+	created, err := ls.CreateSecret(ctx, &models.SecretNode{
+		Name: "x", ProjectID: 1, EnvironmentID: 1, Status: "active",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+
+	// With the trigger: the epoch moves.
+	before := readCacheEpoch(t, ls, created.ID)
+	require.NoError(t, ls.db.Model(&models.SecretNode{}).Where(sqlWhereID, created.ID).
+		UpdateColumn("description", "with-trigger").Error)
+	require.Greater(t, readCacheEpoch(t, ls, created.ID), before)
+
+	require.NoError(t, ls.db.Exec("DROP TRIGGER IF EXISTS trg_secret_nodes_cache_epoch").Error)
+
+	// Without it: the same write leaves the epoch alone, which is precisely the
+	// staleness the trigger exists to prevent.
+	frozen := readCacheEpoch(t, ls, created.ID)
+	require.NoError(t, ls.db.Model(&models.SecretNode{}).Where(sqlWhereID, created.ID).
+		UpdateColumn("description", "without-trigger").Error)
+	require.Equal(t, frozen, readCacheEpoch(t, ls, created.ID),
+		"with the trigger dropped the epoch must stand still — if it still moves, something OTHER than the trigger is maintaining it and this test is not measuring what it claims")
+}
+
+// TestCacheEpochTrigger_FiresOncePerRowOnAMultiRowUpdate covers the SQLite
+// shape specifically: there the trigger is AFTER UPDATE and issues a nested
+// single-row UPDATE, so a statement touching many rows fires it many times,
+// each nested write landing on the table currently being scanned. Every
+// affected row must end up bumped exactly once — not zero times, and not
+// recursively.
+func TestCacheEpochTrigger_FiresOncePerRowOnAMultiRowUpdate(t *testing.T) {
+	t.Parallel()
+	ls := newCacheEpochTestStorage(t)
+	ctx := context.Background()
+
+	ids := make([]uint, 0, 3)
+	for i := 0; i < 3; i++ {
+		created, err := ls.CreateSecret(ctx, &models.SecretNode{
+			Name: fmt.Sprintf("multi-%d", i), ProjectID: 7, EnvironmentID: 1,
+			Status: "active", CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		})
+		require.NoError(t, err)
+		ids = append(ids, created.ID)
+	}
+	before := map[uint]int64{}
+	for _, id := range ids {
+		before[id] = readCacheEpoch(t, ls, id)
+	}
+
+	// One statement, three rows — the soft-delete cascade's shape.
+	require.NoError(t, ls.db.Model(&models.SecretNode{}).Where("project_id = ?", 7).
+		UpdateColumn("classification", "internal").Error)
+
+	for _, id := range ids {
+		require.Equal(t, before[id]+1, readCacheEpoch(t, ls, id),
+			"row %d's epoch moved by something other than exactly one: a multi-row UPDATE must bump each affected row once (zero = the trigger missed it, more = the nested write re-fired the trigger)", id)
+	}
+}
+
+// TestCacheEpoch_HardDeletedIDIsNeverReissued closes the one way a per-row
+// counter could repeat: hard-delete a row and have a new row take the same id
+// with the epoch back at 0, so a warm entry for the OLD secret validates
+// against the NEW one — a cross-secret read. Proven, not assumed (the review
+// asked for proof either way).
+func TestCacheEpoch_HardDeletedIDIsNeverReissued(t *testing.T) {
+	t.Parallel()
+	ls := newCacheEpochTestStorage(t)
+	ctx := context.Background()
+
+	first, err := ls.CreateSecret(ctx, &models.SecretNode{
+		Name: "first", ProjectID: 1, EnvironmentID: 1, Status: "active",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+
+	// Hard delete — Unscoped, i.e. past the soft-delete layer, the way the
+	// purge scheduler removes a row for good.
+	require.NoError(t, ls.db.Unscoped().Delete(&models.SecretNode{}, first.ID).Error)
+	var surviving int64
+	require.NoError(t, ls.db.Unscoped().Model(&models.SecretNode{}).Where(sqlWhereID, first.ID).Count(&surviving).Error)
+	require.Zero(t, surviving, "the row must really be gone for this test to mean anything")
+
+	second, err := ls.CreateSecret(ctx, &models.SecretNode{
+		Name: "second", ProjectID: 1, EnvironmentID: 1, Status: "active",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+
+	require.NotEqual(t, first.ID, second.ID,
+		"a hard-deleted secret's id was reissued to a new row. The node cache keys on id and stamps on cache_epoch, which restarts at 0 for a new row, so a warm entry for the deleted secret would validate against the new one and serve the WRONG secret's metadata. "+
+			"SQLite must declare the primary key AUTOINCREMENT (plain INTEGER PRIMARY KEY reuses max(rowid)+1 after deleting the highest row) and Postgres must use a sequence.")
+}
+
+// ── the schedule stamp keeps its content-derived ledger ────────────────────
+
 var scheduleGenerationExcludedFields = map[string]string{
 	"ID":           "surrogate key; nothing authorizes on it, and a schedule is addressed by SecretNodeID.",
 	"SecretNodeID": "the cache KEY itself.",
 	"CreatedAt":    "immutable after insert, so it cannot differ between two writes that tie on updated_at.",
 }
 
-func TestNodeGeneration_CoversEveryPersistedSecretNodeField(t *testing.T) {
-	t.Parallel()
-	assertGenerationCoversModel(t,
-		reflect.TypeOf(models.SecretNode{}),
-		reflect.TypeOf(nodeGeneration{}),
-		nodeGenerationExcludedFields,
-		"nodeGeneration / nodeGenerationOf (secret_metadata_cache.go)",
-	)
-
-	// The SQL column list must match the struct coverage, or the stamp read
-	// would scan columns the comparison ignores (wasted I/O) or — far worse —
-	// leave a covered field zero-valued on every read, which would make the
-	// stamp compare equal when the row had actually changed.
-	require.Len(t, nodeGenerationColumns, coveredFieldCount(
-		reflect.TypeOf(models.SecretNode{}), nodeGenerationExcludedFields),
-		"nodeGenerationColumns must name exactly the covered fields; a covered field missing from the SELECT reads back as zero on every stamp read, which makes two different rows compare equal")
-}
-
 func TestScheduleGeneration_CoversEveryPersistedScheduleField(t *testing.T) {
 	t.Parallel()
-	assertGenerationCoversModel(t,
-		reflect.TypeOf(models.SecretAccessSchedule{}),
-		reflect.TypeOf(scheduleGeneration{}),
-		scheduleGenerationExcludedFields,
-		"scheduleGeneration / scheduleGenerationOf (secret_metadata_cache.go)",
-	)
-}
-
-// assertGenerationCoversModel checks that every persisted field of modelType is
-// either represented in genType or listed in excluded with a non-empty reason.
-//
-// Matching is by normalised name: a model field Foo is covered when genType has
-// a field whose name, lowercased and stripped of the suffixes this package uses
-// for normalising non-comparable values (UnixNano) or optionality (the `has`
-// prefix), equals the model field's lowercased name. Stated explicitly because
-// a name-based match is the recognised shape here, and a covered field that
-// does not follow the convention will read as uncovered — which fails loudly
-// rather than silently passing.
-func assertGenerationCoversModel(t *testing.T, modelType, genType reflect.Type, excluded map[string]string, what string) {
-	t.Helper()
+	modelType := reflect.TypeOf(models.SecretAccessSchedule{})
+	genType := reflect.TypeOf(scheduleGeneration{})
 
 	genNames := map[string]bool{}
 	for i := 0; i < genType.NumField(); i++ {
-		n := strings.ToLower(genType.Field(i).Name)
-		n = strings.TrimSuffix(n, "unixnano")
-		n = strings.TrimPrefix(n, "has")
-		genNames[n] = true
-	}
-	// "typ" stands in for the model's `Type` field, which collides with nothing
-	// but cannot be spelled `type` in Go.
-	if genNames["typ"] {
-		genNames["type"] = true
+		genNames[strings.TrimSuffix(strings.ToLower(genType.Field(i).Name), "unixnano")] = true
 	}
 
-	var uncovered, staleExclusions []string
+	var uncovered []string
 	seen := map[string]bool{}
 	for i := 0; i < modelType.NumField(); i++ {
 		f := modelType.Field(i)
-		if f.Tag.Get("gorm") == "-" && excluded[f.Name] == "" {
-			uncovered = append(uncovered, f.Name+" (not persisted, but list it in the exclusion ledger with that reason)")
-			continue
-		}
 		seen[f.Name] = true
-		if reason, ok := excluded[f.Name]; ok {
-			require.NotEmpty(t, reason, "exclusion ledger entry for %s must carry a reason", f.Name)
+		if reason, ok := scheduleGenerationExcludedFields[f.Name]; ok {
+			require.NotEmpty(t, reason, "exclusion for %s needs a reason", f.Name)
 			continue
 		}
 		if !genNames[strings.ToLower(f.Name)] {
 			uncovered = append(uncovered, f.Name)
 		}
 	}
-	for name := range excluded {
+	var stale []string
+	for name := range scheduleGenerationExcludedFields {
 		if !seen[name] {
-			staleExclusions = append(staleExclusions, name)
+			stale = append(stale, name)
 		}
 	}
-
 	sort.Strings(uncovered)
-	sort.Strings(staleExclusions)
+	sort.Strings(stale)
 	require.Empty(t, uncovered,
-		"%s does not cover these %s fields, and they are not in its exclusion ledger:\n  %s\n\n"+
-			"A field outside the stamp can change without changing the generation, so a warm cache entry keeps serving the pre-change value. "+
-			"Either add it to the stamp (and to the SELECT column list), or add it to the ledger in this file with the reason its staleness cannot matter.",
-		what, modelType.Name(), strings.Join(uncovered, "\n  "))
-	require.Empty(t, staleExclusions,
-		"the exclusion ledger for %s names fields that no longer exist on %s: %s",
-		what, modelType.Name(), strings.Join(staleExclusions, ", "))
+		"scheduleGeneration does not cover these SecretAccessSchedule fields and they are not in its ledger: %s.\n"+
+			"An access schedule is a read GATE, so a field outside the stamp can change the window while a warm entry keeps serving the old one.",
+		strings.Join(uncovered, ", "))
+	require.Empty(t, stale, "the schedule exclusion ledger names fields that no longer exist: %s", strings.Join(stale, ", "))
 }
 
-func coveredFieldCount(modelType reflect.Type, excluded map[string]string) int {
-	n := 0
-	for i := 0; i < modelType.NumField(); i++ {
-		f := modelType.Field(i)
-		if f.Tag.Get("gorm") == "-" {
-			continue
+// ── helpers ───────────────────────────────────────────────────────────────
+
+// newCacheEpochTestStorage builds a store through the REAL migration path, not
+// a bare AutoMigrate: cache_epoch and its trigger are created only by
+// migrateDatabase (the column is not a model field), so a hand-rolled
+// AutoMigrate test schema would silently have neither and every test here would
+// pass vacuously against a stamp that never moves.
+func newCacheEpochTestStorage(t *testing.T) *LocalStorage {
+	t.Helper()
+	return newCacheTestStorage(t)
+}
+
+func readCacheEpoch(t *testing.T, ls *LocalStorage, id uint) int64 {
+	t.Helper()
+	var row struct{ CacheEpoch int64 }
+	require.NoError(t, ls.db.Model(&models.SecretNode{}).
+		Select("cache_epoch").Where(sqlWhereID, id).Take(&row).Error)
+	return row.CacheEpoch
+}
+
+// columnAndProbeValueFor maps a model field to its column name and a value
+// guaranteed to differ from the zero value the row was created with, so the
+// UPDATE genuinely changes something.
+func columnAndProbeValueFor(t *testing.T, ls *LocalStorage, f reflect.StructField) (string, any) {
+	t.Helper()
+	// GORM's OWN namer, not a hand-rolled snake_case: it is what actually
+	// decides the column name, so it cannot drift from the schema. (This
+	// package's existing toSnakeCase is close but mis-handles a trailing
+	// acronym — "ParentID" becomes parent_i_d — which would silently make this
+	// test update a column that does not exist.)
+	column := ls.db.NamingStrategy.ColumnName("", f.Name)
+	switch f.Type.Kind() {
+	case reflect.String:
+		return column, "probe"
+	case reflect.Bool:
+		return column, true
+	case reflect.Int, reflect.Int64, reflect.Uint, reflect.Uint64:
+		return column, 7
+	case reflect.Pointer, reflect.Struct, reflect.Slice:
+		// *int / *time.Time / time.Time / JSON([]byte) — a time is always a
+		// valid value for the pointer-to-time and struct-time cases, and the
+		// int/JSON cases accept it as a non-zero scalar on both backends only
+		// if typed correctly, so branch on the element type.
+		switch f.Type.String() {
+		case "*int":
+			return column, 7
+		case "*time.Time", "time.Time":
+			return column, time.Now().UTC().Truncate(time.Second)
+		case "models.JSON":
+			return column, []byte(`{"probe":1}`)
+		case "gorm.DeletedAt":
+			return column, time.Now().UTC()
 		}
-		if _, ok := excluded[f.Name]; ok {
-			continue
-		}
-		n++
+		return column, "probe"
+	default:
+		t.Fatalf("columnAndProbeValueFor has no probe value for %s (%s) — add one rather than skipping the field, or the trigger goes unverified for it", f.Name, f.Type)
+		return "", nil
 	}
-	return n
 }
 
-// TestNodeGeneration_StampIsStableAcrossTwoReadsOfOneRow is the green-direction
-// calibration the stamp needs: a stamp built from ~25 columns, several of them
-// normalised pointers and times, must compare EQUAL for two reads of an
-// unchanged row. A stamp that never compares equal is a cache that never hits —
-// a pure performance failure no correctness test would notice.
-func TestNodeGeneration_StampIsStableAcrossTwoReadsOfOneRow(t *testing.T) {
+// TestSecretNodeCacheEpoch_FieldStaysReadOnlyToGORM pins the `<-:false` tag
+// that makes the column read-only to Go. Without it a full-struct Save() of a
+// stale struct would write a stale epoch back — rolling the stamp BACKWARDS,
+// which is worse than not bumping it: a cache entry stamped with the higher
+// value would start matching again.
+//
+// Asserted on behaviour, not on the tag string: GORM is what has to honour it,
+// so the test writes a struct carrying a bogus epoch and checks the database
+// ignored it.
+func TestSecretNodeCacheEpoch_FieldStaysReadOnlyToGORM(t *testing.T) {
 	t.Parallel()
-	ls := newCacheTestStorage(t)
+	ls := newCacheEpochTestStorage(t)
 	ctx := context.Background()
-	maxReads := 3
-	expiry := time.Now().Add(24 * time.Hour)
 	created, err := ls.CreateSecret(ctx, &models.SecretNode{
-		Name: "x", ProjectID: 1, EnvironmentID: 1, Status: "active",
-		MaxReads: &maxReads, Expiration: &expiry, Classification: "restricted",
-		RotationBackend: "aws-iam", RotationRef: "role/app",
+		Name: "readonly", ProjectID: 1, EnvironmentID: 1, Status: "active",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		CacheEpoch: 4242, // must be ignored on INSERT
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(0), readCacheEpoch(t, ls, created.ID),
+		"a caller-supplied CacheEpoch must not reach the INSERT — `gorm:\"<-:false\"` makes the field read-only")
+
+	// And on UPDATE: a full-struct Save() carrying a bogus (or stale) epoch must
+	// leave the database's own value alone, then be bumped by the trigger.
+	row, err := ls.GetSecret(ctx, created.ID)
+	require.NoError(t, err)
+	row.CacheEpoch = 1
+	row.Description = "updated"
+	_, err = ls.UpdateSecret(ctx, row)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), readCacheEpoch(t, ls, created.ID),
+		"Save() must not write CacheEpoch; the trigger alone advances it (0 -> 1), so a stale struct cannot roll the stamp backwards")
+
+	after, err := ls.GetSecret(ctx, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, "updated", after.Description, "the rest of the Save() must still have applied")
+}
+
+// TestSecretNodeCacheEpoch_AbsentTriggerDisablesTheNodeCache is the fail-closed
+// half of the design, and it is not hypothetical: a schema with the COLUMN but
+// not the TRIGGER has a stamp frozen forever, so every hit would serve the row
+// as first read. That is reachable in production (a Postgres restore that omits
+// triggers) and it is what every bare-AutoMigrate test schema looks like — it
+// surfaced as internal/core's suspend tests serving a stale `status` after
+// SuspendSecret.
+//
+// The store must notice at construction and simply not use the node cache.
+func TestSecretNodeCacheEpoch_AbsentTriggerDisablesTheNodeCache(t *testing.T) {
+	t.Parallel()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	// The column arrives via AutoMigrate (it is a model field); the trigger does
+	// NOT, because AutoMigrate knows nothing about triggers. Exactly the shape a
+	// hand-rolled test schema — or a trigger-less restore — has.
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{},
+		&models.SecretAccessSchedule{}, &models.ShareRecord{}, &models.SecretACL{}))
+	require.True(t, db.Migrator().HasColumn("secret_nodes", SecretNodeCacheEpochColumn),
+		"the column must be present for this test to be about the TRIGGER")
+	require.False(t, SecretNodeCacheEpochTriggerPresent(db))
+
+	ls := NewLocalStorage(db)
+	require.False(t, ls.nodeStampTrusted(),
+		"with no trigger the node stamp cannot be trusted and the cache must be off")
+
+	ctx := context.Background()
+	created, err := ls.CreateSecret(ctx, &models.SecretNode{
+		Name: "no-trigger", ProjectID: 1, EnvironmentID: 1, Status: "active",
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	})
 	require.NoError(t, err)
 
-	first, found, err := liveNodeGeneration(ctx, ls.db, created.ID)
+	warm, err := ls.GetSecret(ctx, created.ID)
 	require.NoError(t, err)
-	require.True(t, found)
-	second, found, err := liveNodeGeneration(ctx, ls.db, created.ID)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, first, second, "two stamp reads of an unchanged row must compare equal, or the cache never hits")
+	require.Equal(t, "active", warm.Status)
+	_, cached := ls.secretMetaCache.getNode(created.ID)
+	require.False(t, cached, "nothing may be cached when the stamp cannot move")
 
-	// And the same row loaded in FULL must stamp identically to the stamp-only
-	// read — otherwise GetSecret (which stamps from the full row) and a later
-	// hit check (which stamps from the column subset) would never agree.
-	full, err := ls.GetSecret(ctx, created.ID)
+	// A hook-bypassing write, the kind whose staleness started all of this. With
+	// the cache off this must be visible immediately — the point being that an
+	// untrustworthy stamp costs performance, never correctness.
+	require.NoError(t, ls.db.Model(&models.SecretNode{}).Where(sqlWhereID, created.ID).
+		UpdateColumn("status", "suspended").Error)
+	after, err := ls.GetSecret(ctx, created.ID)
 	require.NoError(t, err)
-	require.Equal(t, first, nodeGenerationOf(full),
-		"the stamp derived from a full row must equal the stamp read from the column subset, or GetSecret's entry can never be validated")
+	require.Equal(t, "suspended", after.Status,
+		"with a frozen stamp the cache MUST be bypassed; serving 'active' here is the silent-staleness failure this check exists to prevent")
+
+	// And the positive control: the same schema WITH the trigger does cache.
+	require.NoError(t, EnsureSecretNodeCacheEpoch(db))
+	trusted := NewLocalStorage(db)
+	require.True(t, trusted.nodeStampTrusted())
+	_, err = trusted.GetSecret(ctx, created.ID)
+	require.NoError(t, err)
+	_, cached = trusted.secretMetaCache.getNode(created.ID)
+	require.True(t, cached, "with the trigger in place the node cache must be used again")
 }

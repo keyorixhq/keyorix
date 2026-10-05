@@ -533,17 +533,17 @@ func (ls *LocalStorage) GetSecret(ctx context.Context, id uint) (*models.SecretN
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
-	// The generation is this row's own (updated_at, read_count), taken from the
-	// very row the query returned — a same-row stamp, so there is no window
-	// between reading the data and reading the stamp for a write to commit
-	// into. Reading the stamp in a SEPARATE later query is the bug class
-	// GUARD-6 exists for: it would cache this pre-change row under a
-	// post-change stamp.
+	// The stamp is this row's own cache_epoch, selected by the SAME query that
+	// returned the row — the same-row case, so there is no window between
+	// reading the data and reading the stamp for a write to commit into.
+	// Reading the stamp in a SEPARATE query is the bug class GUARD-6 exists
+	// for: it would cache this pre-change row under a post-change stamp.
+	//
 	// Never publish a row read inside a transaction: it is UNCOMMITTED, and the
 	// shared cache outlives the transaction (see cacheEnabled's doc comment).
-	if ls.cacheEnabled {
+	if ls.cacheEnabled && ls.nodeStampTrusted() {
 		cp := secret
-		ls.secretMetaCache.setNode(id, nodeGenerationOf(&secret), &cp)
+		ls.secretMetaCache.setNode(id, nodeGeneration{cacheEpoch: secret.CacheEpoch}, &cp)
 	}
 	cp2 := secret
 	return &cp2, nil
@@ -554,7 +554,7 @@ func (ls *LocalStorage) GetSecret(ctx context.Context, id uint) (*models.SecretN
 // miss. Callers must treat false exactly like a cold cache — do the full live
 // read.
 func (ls *LocalStorage) getCachedSecret(ctx context.Context, id uint) (*models.SecretNode, bool) {
-	if !ls.cacheEnabled {
+	if !ls.cacheEnabled || !ls.nodeStampTrusted() {
 		return nil, false
 	}
 	cached, ok := ls.secretMetaCache.getNode(id)
