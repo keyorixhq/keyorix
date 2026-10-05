@@ -562,8 +562,8 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 	}
 	secondFactorEnrolled := user.MFAEnabled || user.WebAuthnEnabled
 	ok := false
-	// storageErr tracks a genuine storage-read/write failure on either path
-	// below, as distinct from a CONFIRMED negative result (wrong code/password),
+	// storageErr tracks a genuine storage-read failure that happened BEFORE any
+	// code or password was evaluated (only loading the TOTP secret), as distinct from a CONFIRMED negative result (wrong code/password),
 	// mirroring VerifyMFACredentials' own storageErr handling (#2548 sibling,
 	// found during the FIX-1 sweep): a resolution error here must not be
 	// indistinguishable from a legitimate negative result, or it both wrongly
@@ -581,9 +581,10 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 			// Use the same anti-replay path as VerifyMFACredentials: identify the
 			// matched time-step and atomically mark it used so a stolen code cannot
 			// be replayed within the ±1 step (~90 s) window.
-			if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, user.ID, step); ferr != nil {
-				storageErr = ferr
-			} else if fresh {
+			// A MarkTOTPStepUsed failure here happens AFTER the code matched: it
+			// must stay indistinguishable from a wrong code (no storageErr), or the
+			// distinct response confirms a correct guess (#2740 option C).
+			if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, user.ID, step); ferr == nil && fresh {
 				ok = true
 			}
 		}
@@ -591,9 +592,9 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 	if !ok && codeOrPassword != "" && bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(codeOrPassword)) == nil {
 		if !secondFactorEnrolled {
 			ok = true
-		} else if consumed, gerr := c.storage.ConsumeMFAStepUpGrant(ctx, user.ID, models.MFAStepUpPurposeReauth, c.authEffectiveNow()); gerr != nil {
-			storageErr = gerr
-		} else if consumed {
+		} else if consumed, gerr := c.storage.ConsumeMFAStepUpGrant(ctx, user.ID, models.MFAStepUpPurposeReauth, c.authEffectiveNow()); gerr == nil && consumed {
+			// (A ConsumeMFAStepUpGrant error is only reachable once the password
+			// was CORRECT, so it must not set storageErr: same #2740 option C rule.)
 			// The password is correct AND the caller independently proved they
 			// still hold the enrolled second factor recently, FOR THIS PURPOSE —
 			// password alone would not be enough on its own, but password + a

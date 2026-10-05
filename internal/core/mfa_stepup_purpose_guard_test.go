@@ -114,7 +114,7 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 		expectedPurpose: "",
 		reason:          "see internal/faultstorage/faulty_storage_generated.go:2232 — the second (KindEffectThenError) call to the real GetActiveMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
 	},
-	"internal/core/mfa.go:594": {
+	"internal/core/mfa.go:595": {
 		expectedPurpose: "MFAStepUpPurposeReauth",
 		reason: "(Line shifted to :594 by FIX-1's sibling fix for #2548's bug class in requireReauth itself -- storageErr tracking added above this call, same ConsumeMFAStepUpGrant call, same purpose, not a new site.) requireReauth's account-security-factor-change gate (DisableMFA, " +
 			"RegenerateMFARecoveryCodes, ActivateMFA, WebAuthn credential register/delete, email change). " +
