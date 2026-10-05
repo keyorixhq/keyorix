@@ -150,24 +150,12 @@ func runApplyAccess(cmd *cobra.Command, _ []string) error {
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "WARNING:", w)
 	}
 
-	toExecute := make([]accessplan.Item, 0, len(reviewed))
-	seen := map[string]bool{}
-	for _, it := range fresh.Items {
-		key := accessplan.Key(it)
-		if !reviewed[key] {
-			continue // never execute something the operator did not review.
-		}
-		seen[key] = true
-		if it.Outcome != accessplan.Create {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "WARNING: %s %s no longer resolves to \"create\" (now %q) — not applied; re-run plan-access and review\n", it.Kind, it.SourceRef, it.Outcome)
-			continue
-		}
-		toExecute = append(toExecute, it)
-	}
-	for key := range reviewed {
-		if !seen[key] {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "WARNING: reviewed item %q is no longer part of the live Vault/Keyorix state — not applied; re-run plan-access and review\n", key)
-		}
+	// SelectForApply also passes the fresh plan's Skip-outcome roles/machine identities (never
+	// written, only their ids read) so a resumed run can attach grants to parents an earlier,
+	// interrupted run created.
+	toExecute, selWarnings := accessplan.SelectForApply(fresh.Items, reviewed)
+	for _, w := range selWarnings {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "WARNING:", w)
 	}
 
 	credFile, err := os.OpenFile(aaCredentialsOut, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) // #nosec G304 -- operator-supplied output path, a CLI flag, not user/network input
@@ -175,6 +163,13 @@ func runApplyAccess(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("open --credentials-out %q: %w", aaCredentialsOut, err)
 	}
 	defer credFile.Close() //nolint:errcheck
+	// O_CREATE's 0600 applies only to a NEW file. An existing file that group/others can read
+	// would receive live machine credentials, so refuse it instead of appending.
+	if st, err := credFile.Stat(); err != nil {
+		return fmt.Errorf("stat --credentials-out %q: %w", aaCredentialsOut, err)
+	} else if st.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("--credentials-out %q is readable or writable by group/others (mode %04o): chmod 600 it or pass a new path", aaCredentialsOut, st.Mode().Perm())
+	}
 
 	results := accessplan.Apply(ctx, toExecute, writer)
 	var created, skipped, failed int
