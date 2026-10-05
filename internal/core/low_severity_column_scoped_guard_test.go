@@ -21,12 +21,18 @@ import "testing"
 //	core.UpdateSecretTemplate          -> c.storage.UpdateSecretTemplateFields
 //	markWebAuthnCredentialClonedDisabled -> c.storage.DisableWebAuthnCredential
 //
-// AdvanceWebAuthnCredentialCounter's own switch to
-// SetWebAuthnCredentialCounterState is not covered here: it lives in
-// internal/storage/store, not internal/core, so these core-scoped helpers cannot
-// reach it. #2700 classes that site SAFE anyway (it holds SELECT ... FOR UPDATE
-// on the row in the same transaction), and it was converted only so the model
-// has no full-row writer left — stated rather than implied to be guarded.
+//	AdvanceWebAuthnCredentialCounter  -> tx.SetWebAuthnCredentialCounterState
+//
+// That last one was previously declared out of reach, on the grounds that it
+// lives in internal/storage/store and "these core-scoped helpers cannot reach
+// it". That was wrong, and wrong in the direction that leaves a gap: what was
+// core-scoped was the WRAPPER's hardcoded "KeyorixCore" receiver type, not the
+// AST walk underneath it, which has always taken an arbitrary path and receiver
+// type. #2836 added assertStorageWritesOnlyVia and the site is now covered like
+// every other. #2700 still classes it SAFE on its own merits (it holds
+// SELECT ... FOR UPDATE on the row inside the same transaction) — the guard is
+// about keeping the model free of any full-row writer, not about that site being
+// unsafe.
 func TestLowSeverityWrites_AreColumnScoped(t *testing.T) {
 	assertColumnScopedStorageWrite(t, "../storage/store/local_rotation_policies.go", "UpdateRotationPolicyFields")
 	assertColumnScopedStorageWrite(t, "../storage/store/local_secret_templates.go", "UpdateSecretTemplateFields")
@@ -39,4 +45,6 @@ func TestLowSeverityWrites_AreColumnScoped(t *testing.T) {
 		"UpdateSecretTemplateFields", "Save", "UpdateSecretTemplate")
 	assertCoreWritesOnlyVia(t, "webauthn.go", "markWebAuthnCredentialClonedDisabled", "storage",
 		"DisableWebAuthnCredential", "Save", "UpdateWebAuthnCredential")
+	assertStorageWritesOnlyVia(t, "../storage/store/local_webauthn.go", "AdvanceWebAuthnCredentialCounter", "tx",
+		"SetWebAuthnCredentialCounterState", "Save", "UpdateWebAuthnCredential")
 }
