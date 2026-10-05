@@ -43,6 +43,10 @@
 // else depends on, neither test needs a disable-MFA cleanup step.
 import { test, expect, Page, request as apiRequestFactory } from '@playwright/test';
 import { createHmac } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { compliantPassword, passwordPolicyFailures, personalInfoCandidates } from './support/password';
 
 const ADMIN_USERNAME = process.env.KEYORIX_E2E_ADMIN_USERNAME;
 const ADMIN_PASSWORD = process.env.KEYORIX_E2E_ADMIN_PASSWORD;
@@ -176,19 +180,26 @@ async function createDedicatedUser(usernamePrefix: string): Promise<{ username: 
     try {
         const stamp = Date.now();
         const username = `${usernamePrefix}${stamp}`;
-        // Deliberately NOT derived from `stamp` (or any other username/email/
-        // display-name substring) -- internal/core/rules.password_policy.go's
-        // containsPersonalInfo rejects a password containing any 3+-char word
-        // of the display name, and "MFA Test User <stamp>" has `stamp` as one
-        // of those words. A shared stamp here silently 400s the create-user
-        // call with a generic "ValidationError". Confirmed live.
-        const password = `Quartz-Falcon-${Math.random().toString(36).slice(2, 10)}-Garnet!`;
+        const email = `${username}@example.invalid`;
+        const displayName = `MFA Test User ${stamp}`;
+        // #2815: this used to be
+        //   `Quartz-Falcon-${Math.random().toString(36).slice(2, 10)}-Garnet!`
+        // which contains no literal digit, so DefaultPasswordPolicy's
+        // RequireDigit was met only when the base-36 chunk happened to include
+        // one -- 7.4% of calls it did not, and with two dedicated users per run
+        // ~14% of runs 400'd here in SETUP, failing whatever PR was in CI.
+        // compliantPassword satisfies every class by construction and verifies
+        // the result, and is passed this user's own personal-info candidates so
+        // containsPersonalInfo cannot reject it either (the `stamp` in the
+        // display name is a plain substring match -- the original reason the
+        // password could not simply be derived from the username).
+        const password = compliantPassword(personalInfoCandidates({ username, email, displayName }));
         const createRes = await api.post('/api/v1/users', {
             headers: { Authorization: `Bearer ${token}` },
             data: {
                 username,
-                email: `${username}@example.invalid`,
-                display_name: `MFA Test User ${stamp}`,
+                email,
+                display_name: displayName,
                 password,
             },
         });
@@ -200,6 +211,91 @@ async function createDedicatedUser(usernamePrefix: string): Promise<{ username: 
         await api.dispose();
     }
 }
+
+// #2815's guard. Deliberately added to THIS spec file rather than a new
+// *.spec.ts: scripts/e2e/web-real-smoke.sh discovers groups with
+// `find e2e/real -maxdepth 1 -name '*.spec.ts'` and bootstraps a fresh backend
+// per group, so a new file would cost a whole extra backend for two tests that
+// need no server at all. These run in milliseconds inside an existing group.
+test('the fixture password generator always satisfies the password policy (#2815)', () => {
+    // 200 runs, the number #2815 asks for. The flaw it replaces failed 7.4% of
+    // calls, so 200 runs would have produced ~15 failures -- measured at
+    // exactly 15/200 locally before the fix. Zero is the only passing result.
+    const RUNS = 200;
+    const stamp = Date.now();
+    const username = `mfaguard${stamp}`;
+    const info = personalInfoCandidates({
+        username,
+        email: `${username}@example.invalid`,
+        displayName: `MFA Test User ${stamp}`,
+    });
+    const offenders: string[][] = [];
+    for (let i = 0; i < RUNS; i++) {
+        const failures = passwordPolicyFailures(compliantPassword(info), info);
+        if (failures.length > 0) offenders.push(failures);
+    }
+    expect(offenders, `${offenders.length}/${RUNS} generated passwords did not satisfy DefaultPasswordPolicy`).toEqual(
+        []
+    );
+
+    // Calibration: the assertion above is only meaningful if the predicate it
+    // uses can actually fail. Feed it the exact literal #2815 was about (no
+    // digit anywhere) and the exact personal-info trap, and require both to be
+    // reported -- otherwise a vacuous predicate would make the 200 runs above
+    // pass no matter what the generator did.
+    expect(passwordPolicyFailures('Quartz-Falcon-ifvoqppv-Garnet!')).toContain('contain a digit');
+    expect(passwordPolicyFailures('short1A!')).toContain('be at least 16 characters');
+    expect(passwordPolicyFailures(`Aa1!bbbbbbbbbbbb${stamp}`, info).join(' ')).toContain(
+        'username, email or display name'
+    );
+});
+
+test('no real-backend spec hand-rolls a fixture password (#2815)', () => {
+    // Family-wide guard, not a guard on the one fixed line: the broken idiom
+    // was a base-36 stringification of a random float used as the ONLY source
+    // of a required character class. Both known instances now call
+    // compliantPassword, and this keeps the next one from being written.
+    //
+    // WHAT THIS RECOGNISES, stated per CLAUDE.md's "an enumeration is only as
+    // complete as the idioms it knows about": exactly one idiom -- the base-36
+    // random stringification assembled in IDIOM below -- on a non-comment line
+    // that also mentions "password" (case-insensitive), in any *.spec.ts
+    // directly under e2e/real. It does NOT recognise a hand-written password
+    // literal with no randomness, a password built in a helper file outside
+    // e2e/real, or randomness drawn from node:crypto. Those would need their
+    // own check; this one closes the idiom that actually caused #2815.
+    //
+    // IDIOM is assembled from fragments rather than written as one literal so
+    // this guard cannot match its own source -- it scans the directory it
+    // lives in, and a verbatim literal here made it fail on its own prose.
+    // Comment lines are skipped for the same reason: a sibling spec is allowed
+    // to EXPLAIN the idiom without being accused of using it.
+    const IDIOM = ['Math', '.random()', '.toString(', '36)'].join('');
+    // ESM: no __dirname. Resolve this spec's own directory from import.meta.
+    const dir = fileURLToPath(new URL('.', import.meta.url));
+    const offenders: string[] = [];
+    const specs = readdirSync(dir).filter((n) => n.endsWith('.spec.ts'));
+    // A zero-file sweep would make this assertion vacuously green -- the exact
+    // "a check that always passes" failure mode. This file is itself one of
+    // them, so the floor is 1.
+    expect(specs.length, `found no *.spec.ts files under ${dir} -- the sweep would be vacuous`).toBeGreaterThan(0);
+    for (const name of specs) {
+        const lines = readFileSync(join(dir, name), 'utf8').split('\n');
+        lines.forEach((line, idx) => {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('//') || trimmed.startsWith('*')) return;
+            if (!trimmed.includes(IDIOM)) return;
+            if (!/password/i.test(trimmed)) return;
+            offenders.push(`${name}:${idx + 1}: ${trimmed}`);
+        });
+    }
+    expect(
+        offenders,
+        'these lines build a fixture password from a base-36 random stringification, which ' +
+            'satisfies DefaultPasswordPolicy only by chance (#2815) -- use compliantPassword() ' +
+            'from ./support/password instead'
+    ).toEqual([]);
+});
 
 test('MFA enrollment via Profile → Security completes (fixes known bug #2441)', async ({ page }) => {
     // https://github.com/keyorixhq/keyorix/issues/2441 -- server/http/handlers/mfa.go's
