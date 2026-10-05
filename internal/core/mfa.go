@@ -10,6 +10,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -314,7 +315,14 @@ func (c *KeyorixCore) CreateMFAChallenge(ctx context.Context, userID uint) (stri
 // verifyMFAWireResponse in internal/storage/store for why nothing else is
 // needed past this point) and whether a recovery code (rather than a TOTP
 // code) was used.
-func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code string) (*models.User, bool, error) { // NOSONAR -- cognitive complexity 18, suppress go:S3776
+// VerifyMFACredentials consumes the login challenge and verifies a TOTP or
+// recovery code. The 3rd return value, consumedTOTPStep, is non-nil only when
+// verification succeeded via a freshly-marked TOTP step (nil for a recovery
+// code, or on any failure) — VerifyMFALogin uses it to release the step back
+// (#2567) if a later, independent storage call (mintSession) fails after this
+// one already succeeded, since the caller's code was never actually at
+// fault.
+func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code string) (*models.User, bool, *int64, error) { // NOSONAR -- cognitive complexity 18, suppress go:S3776
 	ch, err := c.storage.ConsumeMFAChallenge(ctx, sha256Hex(challenge), c.now())
 	if err != nil {
 		// Deliberately NOT tagged with ErrMFAVerificationStorageFailure, unlike the
@@ -324,13 +332,13 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 		// legitimately belongs in the per-IP throttle's count — confirmed by
 		// FuzzLoginThrottleConcurrency's oracle (a) (login_throttle_fuzz_test.go),
 		// which failed when this branch was tagged too.
-		return nil, false, fmt.Errorf("invalid or expired challenge")
+		return nil, false, nil, fmt.Errorf("invalid or expired challenge")
 	}
 	user, err := c.storage.GetUser(ctx, ch.UserID)
 	if err != nil {
 		// Same ambiguity as above: GetUser failing on a storage hiccup must not read
 		// the same as "this challenge really does belong to no user."
-		return nil, false, fmt.Errorf("%w: user not found", ErrMFAVerificationStorageFailure)
+		return nil, false, nil, fmt.Errorf("%w: user not found", ErrMFAVerificationStorageFailure)
 	}
 	// Completing a second factor still mints a login session, so a suspended or
 	// deactivated account must be refused here too — the challenge may have been
@@ -338,7 +346,7 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 	// nothing rechecks the state between the two steps. Mirrors the password,
 	// session, PAT, and passwordless-WebAuthn gates.
 	if !user.IsActive || AccountLoginBlocked(user.ID, user.AccountState) {
-		return nil, false, fmt.Errorf("account is not active")
+		return nil, false, nil, fmt.Errorf("account is not active")
 	}
 	// Per-account lockout also gates the second factor. The per-IP rate limiter is
 	// spoofable behind a misconfigured proxy, and it is otherwise the ONLY online
@@ -346,7 +354,7 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 	// by ch.UserID, which the attacker does not control) makes second-factor brute force
 	// cost the same lockout as password brute force.
 	if c.loginLocked(user) {
-		return nil, false, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+		return nil, false, nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 	}
 	// storageErr tracks a genuine storage-read/write failure on either path below,
 	// as distinct from a CONFIRMED negative result (wrong code / non-matching
@@ -360,6 +368,7 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 	// audit trail (docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md).
 	verified, usedRecovery := false, false
 	var storageErr error
+	var consumedTOTPStep *int64 // non-nil iff verified via a freshly-marked TOTP step (#2567, see VerifyMFALogin)
 	if secret, err := c.loadTOTPSecret(ctx, ch.UserID); err != nil {
 		storageErr = err
 	} else if step, ok := c.validateTOTPStep(secret, code); ok {
@@ -371,6 +380,7 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 			storageErr = ferr
 		} else if fresh {
 			verified = true
+			consumedTOTPStep = &step
 		}
 	}
 	if !verified {
@@ -390,26 +400,26 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 			// attempt and do NOT count it toward the lockout: this request never
 			// actually got a verdict on whether its code was right.
 			c.auditMFAError(ctx, ch.UserID, "login", storageErr)
-			return nil, false, fmt.Errorf("%w: %s: %w", ErrMFAVerificationStorageFailure, i18n.T("ErrorRetrievalFailed", nil), storageErr)
+			return nil, false, nil, fmt.Errorf("%w: %s: %w", ErrMFAVerificationStorageFailure, i18n.T("ErrorRetrievalFailed", nil), storageErr)
 		}
 		c.auditMFAFailed(ctx, ch.UserID, "login")
 		c.recordFailedLogin(ctx, user) // count the failed second factor toward the lockout
-		return nil, false, fmt.Errorf("invalid code")
+		return nil, false, nil, fmt.Errorf("invalid code")
 	}
 	// Cleared the second factor — but a concurrent burst of failed second-factor
 	// attempts against this account may have tripped the lock since the
 	// pre-verification snapshot check above (TOCTOU). Re-check under the same
 	// serialization recordFailedLogin uses before minting a session.
 	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
-		return nil, false, err
+		return nil, false, nil, err
 	}
-	return user, usedRecovery, nil
+	return user, usedRecovery, consumedTOTPStep, nil
 }
 
 // VerifyMFALogin consumes a challenge, verifies a TOTP code or a recovery code,
 // and on success mints and returns the session (the second login step).
 func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userAgent, ip string) (*models.Session, *models.User, error) {
-	user, usedRecovery, err := c.VerifyMFACredentials(ctx, challenge, code)
+	user, usedRecovery, consumedTOTPStep, err := c.VerifyMFACredentials(ctx, challenge, code)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -421,6 +431,20 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 	}
 	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
 	if err != nil {
+		// #2567: VerifyMFACredentials already consumed the TOTP step (anti-replay)
+		// before this, independent mintSession/CreateSession call. A failure here
+		// has nothing to do with whether the code was right, but the caller is
+		// left unable to retry with the SAME correct code until the next 30s
+		// time-step — give the step back. Best-effort and CAS-guarded (releases
+		// only if nothing else has since advanced the step further): a release
+		// failure must not mask the real mintSession error, and must never
+		// retroactively weaken anti-replay for a step a LATER request already
+		// legitimately consumed.
+		if consumedTOTPStep != nil {
+			if _, rerr := c.storage.ReleaseTOTPStepIfUnchanged(ctx, user.ID, *consumedTOTPStep); rerr != nil {
+				log.Printf("VerifyMFALogin: failed to release TOTP step after mintSession failure for user %d: %v", user.ID, rerr)
+			}
+		}
 		return nil, nil, err
 	}
 	// Record the MFA step-up window when the classification gate requires it.
