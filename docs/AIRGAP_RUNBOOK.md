@@ -171,6 +171,31 @@ doc or behavior differences found between the full and air-gapped images for
 this flow — expected, since none of `admin backup`/`admin restore`/`admin
 verify-audit`'s own code paths touch any cloud SDK.
 
+**Resolved (2026-10-05, #2752):** neither published image — `keyorix-server`
+nor its `-airgap` variant — used to embed the web dashboard. Both served the
+placeholder page ("This build does not bundle the web dashboard") at `/`,
+because `server/Dockerfile` compiled the server without ever building `web/`
+first, and the only thing git tracks under `server/webui/dist/` is that
+placeholder. Getting a dashboard therefore meant also pre-staging a second,
+separate `keyorix-web` image that has no `-airgap` variant and was never
+profiled for air-gap suitability — which undercut ADR-109's single-artifact
+pitch. The release **tarballs** never had this gap (`make release` depends on
+`populate-webui-dist`); it was Docker-only. `server/Dockerfile` now builds the
+dashboard in its own stage and embeds it, so
+
+```sh
+docker build -f server/Dockerfile --build-arg BUILD_TAGS=noaws,noazure,nogcp -t keyorix-airgap .
+```
+
+produces **one image that serves both the API and the real dashboard at `/`**,
+with no second container. `scripts/docker-webui-embedded-check.sh <tag>` asserts
+exactly that against a running container (and refuses a placeholder page); the
+air-gap guarantees are unchanged — `scripts/airgap-dependency-guard.sh` still
+reports 0 forbidden cloud-SDK packages, and `scripts/airgap-e2e.sh` still passes
+end to end with `--network none` against the new image. The three-container
+`docker compose` path in [SELF_HOSTING.md](SELF_HOSTING.md) is unaffected and
+remains the documented self-host default.
+
 **Resolved (2026-09-25):** `docker build -f server/Dockerfile .` previously
 failed on a clean checkout — `server/admin/init.go` imports
 `github.com/keyorixhq/keyorix/configs`, but `.dockerignore` excluded
