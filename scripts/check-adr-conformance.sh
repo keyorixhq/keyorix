@@ -13,4 +13,10 @@
 #   ./scripts/check-adr-conformance.sh --self-test   # prove the check can go red
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-exec env CLOSURE_LEDGER="$REPO_ROOT/docs/adr-conformance-enforced.tsv" "$REPO_ROOT/scripts/check-closures.sh" "$@"
+# New rows go in docs/adr-conformance-enforced.d/<claim_id>.tsv (one row per
+# file, same columns), read IN ADDITION to the flat ledger — see that
+# directory's README.md. The flat ledger's existing rows stay where they are
+# until scripts/ledgers/migrate-to-fragments.sh is run in a quiet window.
+exec env CLOSURE_LEDGER="$REPO_ROOT/docs/adr-conformance-enforced.tsv" \
+    CLOSURE_LEDGER_D="$REPO_ROOT/docs/adr-conformance-enforced.d" \
+    "$REPO_ROOT/scripts/check-closures.sh" "$@"
