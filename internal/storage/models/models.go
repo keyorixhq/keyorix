@@ -1491,6 +1491,16 @@ type AuditEvent struct {
 	// empty on legacy rows written before ADR-029 (an unchained prefix).
 	PrevHash  string `gorm:"index"`
 	EntryHash string `gorm:"index"`
+
+	// Journal origin (ADR-115, PERF-4 prototype). Set only when this row was
+	// replayed from a local audit journal rather than written directly;
+	// nil/empty on every row written the original way (journal disabled, or
+	// written before it existed). Lets a reconciliation tool or operator
+	// trace a DB row back to its journal-local (replica_id, journal_seq)
+	// origin independent of the replay cursor in
+	// audit_journal_replay_state -- see that model's doc comment.
+	JournalReplicaID *string `gorm:"index"`
+	JournalSeq       *uint64
 }
 
 // BeforeSave normalises EventTime to UTC so SQLite string comparisons are
@@ -1558,6 +1568,22 @@ type AuditCheckpoint struct {
 	AnchoredAt     *time.Time `json:"anchored_at,omitempty"`     // the time the TSA asserts
 	AnchorProvider string     `json:"anchor_provider,omitempty"` // e.g. "rfc3161:https://freetsa.org/tsr"
 	CreatedAt      time.Time  `json:"created_at"`
+}
+
+// AuditJournalReplayState (ADR-115, PERF-4 prototype) is the per-replica
+// replay cursor for the local audit journal replicator: the sequence number
+// of the last journal record that replica has durably replayed into
+// audit_events. One row per ReplicaID, upserted in the SAME transaction as
+// the audit_events rows it covers -- see store.replayJournalBatch -- so the
+// cursor and the rows it accounts for can never commit independently of
+// each other. This is the whole crash-safety argument for exactly-once
+// visibility: there is no window where rows are durable but the cursor
+// wasn't advanced (would replay them again on restart) or vice versa
+// (would skip rows the cursor claims were already replayed).
+type AuditJournalReplayState struct {
+	ReplicaID       string `gorm:"primaryKey"`
+	LastReplayedSeq uint64
+	UpdatedAt       time.Time
 }
 
 type Setting struct {

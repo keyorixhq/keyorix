@@ -57,6 +57,13 @@ type Config struct {
 	// JITAccessExpiry configures the opt-in background sweeper that removes
 	// time-bound role grants whose expiry has passed (just-in-time access).
 	JITAccessExpiry JITAccessExpiryConfig `yaml:"jit_access_expiry"`
+	// LocalAuditJournal configures the opt-in local append-only audit
+	// journal prototype (ADR-115, PERF-4): an alternative durability point
+	// for audit-before-disclosure (a local fsync instead of a Postgres/
+	// SQLite commit), with the result asynchronously replicated into the
+	// unmodified audit_events table. Off by default -- the existing
+	// group-commit flusher (ADR-029/#2420) remains the default mechanism.
+	LocalAuditJournal LocalAuditJournalConfig `yaml:"local_audit_journal"`
 	// BreakGlass configures opt-in self-service emergency access (incident response).
 	BreakGlass BreakGlassConfig `yaml:"break_glass"`
 	// DualControl configures N-of-M approval for access-request grants (A.5.3).
@@ -1619,6 +1626,19 @@ func (c AuditCheckpointsConfig) GetInterval() time.Duration {
 		}
 	}
 	return 24 * time.Hour
+}
+
+// LocalAuditJournalConfig configures ADR-115's local append-only audit
+// journal prototype (PERF-4). Enabled defaults to false -- the existing
+// Postgres/SQLite group-commit flusher (ADR-029/#2420) remains the default
+// durability mechanism. Directory and ReplicaID are both REQUIRED when
+// Enabled is true; the factory refuses to start rather than guess either
+// (a shared/wrong directory across replicas, or a reused replica ID, would
+// silently corrupt the ADR-115 multi-replica-ordering guarantee).
+type LocalAuditJournalConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Directory string `yaml:"directory"`
+	ReplicaID string `yaml:"replica_id"`
 }
 
 // JITAccessExpiryConfig configures the just-in-time access-expiry sweeper: a

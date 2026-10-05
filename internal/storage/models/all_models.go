@@ -81,6 +81,7 @@ func AllTestModels() []any {
 		// list, so SQLite-backed integration tests set up a schema that didn't
 		// match what a real install actually gets.
 		&AuditCheckpoint{},
+		&AuditJournalReplayState{}, // ADR-115 (PERF-4 prototype)
 		&APIClient{},
 		&APIToken{},
 		&APICallLog{},

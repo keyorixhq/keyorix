@@ -210,6 +210,18 @@ func (ls *LocalStorage) LogAuditEventWithAccessLog(ctx context.Context, event *m
 
 func (ls *LocalStorage) logAuditEvent(ctx context.Context, event *models.AuditEvent, accessLog *models.SecretAccessLog) error {
 	normalizeAuditEventForHash(event)
+	// ADR-115 (PERF-4 prototype): when the local audit journal is enabled,
+	// durability moves to a local journal fsync instead of a DB commit --
+	// checked FIRST, ahead of the batching-flusher fallback below, since an
+	// enabled journal takes over this LocalStorage's whole durability path.
+	// ls.localAuditJournal is nil on a transaction-scoped LocalStorage (see
+	// its own field doc comment, entry.go), so a caller inside WithTransaction
+	// always falls through to the direct/batched DB path below, same as
+	// ls.auditFlusher already does -- a journal write is independent of,
+	// and cannot participate in, the caller's own transaction.
+	if ls.localAuditJournal != nil {
+		return ls.logAuditEventViaJournal(ctx, event, accessLog)
+	}
 	// ls.auditFlusher is nil on a transaction-scoped LocalStorage (see
 	// WithTransaction/RemoveGlobalAdminRoleGuarded's clone construction) --
 	// batching across to a DIFFERENT, independent transaction would break the
