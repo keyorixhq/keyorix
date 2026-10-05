@@ -37,10 +37,12 @@ branching decision) merged back to `main` via PR.
 directly: "Open a PR against `main`. CI must pass in full before it can merge
 (branch protection enforces this — there's no bypass, including for maintainers)."
 **Correction (2026-10-05):** that line in `CONTRIBUTING.md` has been corrected —
-the live ruleset carries a standing `OrganizationAdmin`/`always` bypass actor.
-This ADR's quote is left as the historical record of what was stated at the
-time rather than rewritten; see [`docs/security/SDLC.md`](security/SDLC.md#branch-protection)
-for the current, verified state.
+the live ruleset carried a standing `OrganizationAdmin`/`always` bypass actor,
+resolved the same day by narrowing it to `bypass_mode: pull_request` (kept as
+a deliberate break-glass path, not removed). This ADR's quote is left as the
+historical record of what was stated at the time rather than rewritten; see
+[`docs/security/SDLC.md`](security/SDLC.md#branch-protection) for the
+current, verified state.
 Eleven required checks gate every merge (go vet/build/test, gosec, golangci-lint,
 govulncheck, gitleaks, CodeQL, Helm lint/kubeconform, checkov, go-licenses, per
 `CONTRIBUTING.md`'s own enumeration). `.github/CODEOWNERS` scopes mandatory review

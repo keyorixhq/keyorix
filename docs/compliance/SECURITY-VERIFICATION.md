@@ -118,11 +118,13 @@ each strengthens:
 
 11 required status checks gate every pull request and merge to `main` —
 branch protection enforces this via a GitHub ruleset routing merges through
-a squash-only merge queue. **Correction (2026-10-05):** this used to say
-"no bypass, including for maintainers" — the live ruleset carries a
-standing `OrganizationAdmin`/`bypass_mode: always` bypass actor (checked
-via `gh api repos/keyorixhq/keyorix/rulesets`), so that wasn't accurate.
-See [`SDLC.md`](../security/SDLC.md#branch-protection) for the ruleset
+a squash-only merge queue, with force-pushing and deletion of `main` blocked
+outright. **Correction (2026-10-05):** this used to say "no bypass,
+including for maintainers" — the live ruleset carried a standing
+`OrganizationAdmin`/`bypass_mode: always` bypass actor, so that wasn't
+accurate. Resolved the same day: kept as a deliberate break-glass path,
+narrowed to `bypass_mode: pull_request` rather than removed. See
+[`SDLC.md`](../security/SDLC.md#branch-protection) for the full ruleset
 evidence:
 
 - **`govulncheck`** — fails the build on a known vulnerability in any dependency

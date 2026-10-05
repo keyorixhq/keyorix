@@ -199,17 +199,18 @@ Download releases only from `github.com/keyorixhq/keyorix/releases` over HTTPS.
 - External contributions require DCO sign-off (`git commit -s` — see
   [CONTRIBUTING.md](CONTRIBUTING.md)) and maintainer review. Branch protection
   on `main` is a GitHub ruleset requiring every required CI check to pass
-  before a PR can merge, via a merge queue (squash-only). **Correction
-  (2026-10-05):** this page previously stated that enforcement has "no
-  bypass, including for maintainers." Reading the live ruleset directly
-  (`gh api repos/keyorixhq/keyorix/rulesets/<id>`) shows a standing
-  `bypass_actors` entry for `OrganizationAdmin` with `bypass_mode: always` —
-  an org admin can bypass this ruleset's required checks. That is a real,
-  configured capability, not a hypothetical, so it is stated here rather
-  than repeated as "no bypass." See
+  before a PR can merge, via a merge queue (squash-only); force-pushing or
+  deleting `main` is blocked outright. **Correction (2026-10-05):** this
+  page previously stated that enforcement has "no bypass, including for
+  maintainers." Reading the live ruleset directly showed a standing
+  `OrganizationAdmin` bypass actor on the required checks — real, not a
+  hypothetical. **Resolved the same day**: kept as a deliberate break-glass
+  path for a CI outage, narrowed from `bypass_mode: always` to
+  `bypass_mode: pull_request` — it only applies inside a pull request's own
+  checks, every use is visible on the PR, and it is scoped to the
+  `OrganizationAdmin` actor type, not named individuals. See
   [`docs/security/SDLC.md`](docs/security/SDLC.md) § Branch protection for
-  the full ruleset detail and whether this is an intended break-glass
-  capability or should be tightened.
+  the full ruleset detail.
 
 ## Safe Harbor
 

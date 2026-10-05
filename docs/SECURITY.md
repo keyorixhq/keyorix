@@ -86,9 +86,10 @@ repository. Branch protection is a GitHub ruleset requiring 18 status-check
 contexts (static analysis, `govulncheck`, fuzz coverage, license compliance,
 DCO, and more — see [`security/testing.md`](security/testing.md) and
 [`security/SDLC.md`](security/SDLC.md) for the full ruleset detail), merged
-only through a squash-only merge queue. **Correction (2026-10-05):** this
-previously said "no bypass, including for maintainers" — the live ruleset
-(checked via `gh api`) carries a standing `OrganizationAdmin`/`always`
-bypass actor, so that line was not accurate and is corrected here; see
-`security/SDLC.md` for the evidence and the open question of whether to
-narrow it.
+only through a squash-only merge queue; force-pushing or deleting `main` is
+blocked outright. **Correction (2026-10-05):** this previously said "no
+bypass, including for maintainers" — the live ruleset carried a standing
+`OrganizationAdmin`/`always` bypass actor, which was real, not a
+hypothetical. Resolved the same day: kept as a deliberate, narrowed
+break-glass path (`bypass_mode: pull_request`, visible on the PR) rather
+than removed — see `security/SDLC.md` for the full detail.
