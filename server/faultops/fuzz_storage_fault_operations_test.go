@@ -852,6 +852,28 @@ var knownOpenTolerances = []knownOpenTolerance{
 		tables:     []string{"MFAStepUpGrant", "LoginAttempt", "AuditEvent"},
 		findingDoc: "#2807",
 	},
+	// #2812 (filed 2026-10-05 from THIS PR's SECOND fuzz-changed run; the
+	// fuzzer explores randomly, so it surfaced a different pre-existing finding
+	// than #2807 did. REPLAY_HEX=3b6362): MigrateUserToMachineIdentity
+	// DELIBERATELY returns the created machine identity alongside an error when
+	// the source-user suspend fails, with the identity's ID in the message, so
+	// the operator can finish the job rather than be left with an active human
+	// login beside a new machine identity (see that function's own comment).
+	// The user row is NOT half-written -- the diff is only the identity the code
+	// chose to keep. So this is the #2549 harness-oracle gap, not a product bug:
+	// oracle (a) allows "nothing committed OR the caller needs no new ID to
+	// clean up" and this path satisfies the second clause, but the oracle cannot
+	// recognise that. Fourth #2549 instance, and the first whose surviving row
+	// is a real STATE table, so onlyOutcomeLogTables cannot absorb it.
+	// Confirmed PRE-EXISTING on origin/main @ cbb9863e. Remove this entry in
+	// whichever PR resolves #2812 -- by building #2549's exemption or by
+	// changing the design.
+	{
+		op: "REST POST /api/v1/projects/{id}/machine-identities/migrate-from-user", method: "SetAccountState", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2812", expires: "2026-10-19",
+		tables:     []string{"MachineIdentity", "AuditEvent"},
+		findingDoc: "#2812",
+	},
 	// docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md
 	// (SESSION-FI, AT5): NOT a bug -- BulkRejectAccessRequests' unconditional
 	// summary audit event legitimately differs in content (X/Y counts) when
