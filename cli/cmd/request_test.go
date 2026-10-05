@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func setRequestCreds(t *testing.T, srv *httptest.Server) {
@@ -209,6 +211,186 @@ func TestRunRejectionTemplatesList_MatchesOldCLIOutputShape(t *testing.T) {
 	})
 	if !containsAll(out, "id=1", "name=insufficient-justification", "reason=The justification provided does not meet policy.") {
 		t.Fatalf("output = %q", out)
+	}
+}
+
+// ── #2360: --project-id on every project-scoped request subcommand ───────────
+//
+// resolveRequestProjectID's backing call (GET /api/v1/projects) is gated on a
+// DEPLOYMENT-WIDE role. A caller holding no project grants -- the persona
+// self-service access requests exist for -- and a reviewer whose roles.assign
+// comes from a project-scoped grant are both correctly denied it, so neither can
+// turn a project NAME into the ID these routes need in their URL. The three tests
+// below drive each subcommand with --project-id against a server that FAILS THE
+// TEST if the listing route is touched at all, which is what makes them red
+// without the flag: the pre-fix code calls resolveRequestProjectID
+// unconditionally.
+
+// newNoListingServer is an httptest server that treats any request to
+// GET /api/v1/projects as a test failure (the route a zero-grant caller is denied),
+// and serves handler for everything else.
+func newNoListingServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/projects" && r.Method == http.MethodGet {
+			t.Errorf("caller without the deployment-wide listing role must never hit GET /api/v1/projects")
+			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		handler(w, r)
+	}))
+}
+
+func TestRunRequestList_ProjectIDSkipsTheDeniedListing(t *testing.T) {
+	srv := newNoListingServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/projects/7/access-requests" && r.Method == http.MethodGet:
+			_, _ = fmt.Fprint(w, `{"data":{"access_requests":[{"ID":9,"ProjectID":7,"UserID":2,"State":"pending","Reason":"onboarding"}]}}`)
+		case r.URL.Path == "/api/v1/users/2" && r.Method == http.MethodGet:
+			_, _ = fmt.Fprint(w, `{"data":{"id":2,"username":"bob"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	defer srv.Close()
+	setRequestCreds(t, srv)
+	requestListProject = ""
+	requestListProjectID = 7
+	defer func() { requestListProjectID = 0 }()
+
+	out := captureStdout(t, func() {
+		if err := runRequestList(requestListCmd, nil); err != nil {
+			t.Fatalf("runRequestList: %v", err)
+		}
+	})
+	if !containsAll(out, "9", "bob (#2)", "pending", "onboarding") {
+		t.Fatalf("output missing expected fields: %q", out)
+	}
+}
+
+func TestRunRequestWithdraw_ProjectIDSkipsTheDeniedListing(t *testing.T) {
+	srv := newNoListingServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/projects/7/access-requests/9/withdraw" && r.Method == http.MethodPost {
+			_, _ = fmt.Fprint(w, `{"data":null}`)
+			return
+		}
+		http.NotFound(w, r)
+	})
+	defer srv.Close()
+	setRequestCreds(t, srv)
+	requestWithdrawID = 9
+	requestWithdrawProject = ""
+	requestWithdrawProjectID = 7
+	defer func() { requestWithdrawID, requestWithdrawProjectID = 0, 0 }()
+
+	out := captureStdout(t, func() {
+		if err := runRequestWithdraw(requestWithdrawCmd, nil); err != nil {
+			t.Fatalf("runRequestWithdraw: %v", err)
+		}
+	})
+	if !containsAll(out, "Withdrawing access request 9 from project id=7", "Access request 9 withdrawn.") {
+		t.Fatalf("output missing expected fields: %q", out)
+	}
+}
+
+func TestRunRequestReview_ProjectIDSkipsTheDeniedListing(t *testing.T) {
+	srv := newNoListingServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/projects/7/access-requests" && r.Method == http.MethodGet:
+			_, _ = fmt.Fprint(w, `{"data":{"access_requests":[{"ID":9,"ProjectID":7,"UserID":2,"SuggestedRole":"project_viewer","GrantedRole":"project_viewer","State":"approved"}]}}`)
+		case r.URL.Path == "/api/v1/users/2" && r.Method == http.MethodGet:
+			_, _ = fmt.Fprint(w, `{"data":{"id":2,"username":"bob"}}`)
+		case r.URL.Path == "/api/v1/projects/7/access-requests/9" && r.Method == http.MethodPut:
+			_, _ = fmt.Fprint(w, `{"data":null}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	defer srv.Close()
+	setRequestCreds(t, srv)
+	requestReviewID = 9
+	requestReviewAction = "approve"
+	requestReviewProject = ""
+	requestReviewProjectID = 7
+	requestReviewRole, requestReviewTTL, requestReviewReason = "", "", ""
+	defer func() { requestReviewID, requestReviewAction, requestReviewProjectID = 0, "", 0 }()
+
+	out := captureStdout(t, func() {
+		if err := runRequestReview(requestReviewCmd, nil); err != nil {
+			t.Fatalf("runRequestReview: %v", err)
+		}
+	})
+	if !containsAll(out, "Resolved access request 9 in project id=7: requester bob (#2), state=approved.",
+		"Access request 9 approved: granted role \"project_viewer\" to bob (#2) permanently.") {
+		t.Fatalf("output = %q", out)
+	}
+}
+
+// TestRequestSubcommands_ProjectRequirementNamesBothFlags: --project is no longer
+// cobra-MarkFlagRequired on withdraw/review (that would reject the --project-id-only
+// invocation at parse time, before RunE ever runs). The requirement moved into RunE
+// and must name both flags.
+func TestRequestSubcommands_ProjectRequirementNamesBothFlags(t *testing.T) {
+	t.Setenv("KEYORIX_PROJECT", "")
+	for _, tc := range []struct {
+		name string
+		run  func() error
+	}{
+		{"withdraw", func() error {
+			requestWithdrawID, requestWithdrawProject, requestWithdrawProjectID = 9, "", 0
+			return runRequestWithdraw(requestWithdrawCmd, nil)
+		}},
+		{"review", func() error {
+			requestReviewID, requestReviewAction = 9, "approve"
+			requestReviewProject, requestReviewProjectID = "", 0
+			return runRequestReview(requestReviewCmd, nil)
+		}},
+		{"list", func() error {
+			requestListProject, requestListProjectID = "", 0
+			return runRequestList(requestListCmd, nil)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.run()
+			if err == nil || !containsAll(err.Error(), "--project", "--project-id", "KEYORIX_PROJECT") {
+				t.Fatalf("err = %v, want a missing-project error naming --project, --project-id and KEYORIX_PROJECT", err)
+			}
+		})
+	}
+	requestWithdrawID, requestReviewID, requestReviewAction = 0, 0, ""
+}
+
+// mutuallyExclusiveAnnotation is cobra's own (unexported) annotation key set by
+// MarkFlagsMutuallyExclusive. Asserting its presence by literal string is the only
+// way to check that wiring from outside cobra; if cobra ever renames it this test
+// goes red rather than silently passing.
+const mutuallyExclusiveAnnotation = "cobra_annotation_mutually_exclusive"
+
+// TestRequestProjectFlagsWiring guards the flag wiring itself on every project-scoped
+// request subcommand: both flags exist, neither is cobra-required (which would reject
+// the other one's only invocation at parse time), and passing both at once is refused
+// rather than silently preferring one.
+//
+// What it does NOT catch: the command list below is hand-written, so a NEW project-scoped
+// request subcommand added without --project-id is invisible to it. It is a regression
+// guard over today's four, not a completeness check over the subcommand set.
+func TestRequestProjectFlagsWiring(t *testing.T) {
+	for _, c := range []*cobra.Command{requestAccessCmd, requestListCmd, requestWithdrawCmd, requestReviewCmd} {
+		t.Run(c.Name(), func(t *testing.T) {
+			for _, f := range []string{"project", "project-id"} {
+				flag := c.Flags().Lookup(f)
+				if flag == nil {
+					t.Fatalf("request %s: --%s is not defined", c.Name(), f)
+				}
+				if _, ok := flag.Annotations[cobra.BashCompOneRequiredFlag]; ok {
+					t.Fatalf("request %s: --%s must not be MarkFlagRequired -- it rejects the other flag's only invocation", c.Name(), f)
+				}
+				if _, ok := flag.Annotations[mutuallyExclusiveAnnotation]; !ok {
+					t.Fatalf("request %s: --%s is not in a mutually-exclusive group with the other project flag", c.Name(), f)
+				}
+			}
+		})
 	}
 }
 
