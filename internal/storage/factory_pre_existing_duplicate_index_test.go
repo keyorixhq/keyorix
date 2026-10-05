@@ -233,5 +233,5 @@ func TestReminderNotificationDedupIndex_NoDuplicates_CreatesIndex(t *testing.T) 
 // migration helpers directly against a hand-seeded database.
 func gormOpenForTest(t *testing.T, dbPath string) (*gorm.DB, error) {
 	t.Helper()
-	return gorm.Open(sqlite.Open(sqliteDSN(dbPath, false)), gormConfig())
+	return gorm.Open(sqlite.Open(sqliteDSN(dbPath)), gormConfig())
 }

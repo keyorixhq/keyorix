@@ -183,11 +183,12 @@ type LocalStorage struct {
 	//
 	// Read by commitBatchAttempt and logAuditEventDirect, and acted on ONLY on
 	// Postgres (`SET LOCAL synchronous_commit = off`, transaction-scoped).
-	// SQLite's equivalent is a connection-level DSN pragma applied in
-	// internal/storage/factory.go's sqliteDSN, not here — so on SQLite this
-	// field is read and correctly does nothing, because the relaxation has
-	// already happened at Open time (and, unavoidably, for the whole
-	// database; see that function's doc comment).
+	// There is no SQLite equivalent and deliberately never was in a shipped
+	// build: the mode is PostgreSQL-only (Andrei's decision, 2026-10-05) and
+	// config validation refuses to start a SQLite backend that sets it, so a
+	// SQLite-backed LocalStorage can never have this field true. See
+	// config.DatabaseConfig.InsecureAuditSkipDurableSync for the two reasons
+	// (per-connection pragma relaxes every table; measured p99 regression).
 	//
 	// Deliberately NOT shared with transaction-scoped clones, same as
 	// auditFlusherLingerWindow: read-only after construction, and a clone's

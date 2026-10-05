@@ -2,28 +2,39 @@ package main
 
 // fast_audit_mode_integration_test.go — ADR-112 Amendment 1 / FASTAUDIT-1
 // (docs/specs/fast-audit-mode.md) driven the way an operator drives it: the
-// real built binary, a real config file edit, a real boot, and the real
-// `keyorix-server admin verify-audit` command.
+// real built binary, a real config file edit, real `admin` commands.
 //
 // Reuses this package's existing harness (buildServerBinary/runAdmin/baseEnv
 // from admin_integration_test.go, bootstrapAdminViaHTTP from
 // admin_recover_admin_integration_test.go) and deliberately mirrors
 // TestAdminRecoverAdmin_KeylessMode_SQLite's structure: this is the same
-// category of setting (a config-file-only security opt-out that must be loud,
-// audited, and surfaced), so it earns the same end-to-end treatment.
+// category of setting (a config-file-only security opt-out that must be loud
+// and surfaced), so it earns the same end-to-end treatment.
 //
-// What it covers that a unit test cannot: that the setting actually reaches
-// the running server from a YAML file, that the warning really is printed to
-// the server's own output on a real boot, that the audit event really lands in
-// the real database through the real audit path, and that `verify-audit` — the
-// customer-facing offline verification command, not VerifyAuditChain called
-// directly — passes against a database written in fast mode.
+// WHAT IS AND IS NOT COVERED HERE, after Andrei's 2026-10-05 decision that the
+// mode is PostgreSQL-only. This harness's `admin init` generates a SQLite
+// config, so what it can exercise end-to-end against the real binary is:
+//
+//   - the SQLite REFUSAL — now the user-visible behaviour on this backend, and
+//     the single most important thing to prove with the real binary, because
+//     "no silent ignore" is the whole point of the decision;
+//   - the default install staying silent and durable.
+//
+// It does NOT cover the in-effect Postgres boot end-to-end: that needs a real
+// Postgres cluster, which this package's harness has no fixture for. That path
+// is covered instead by internal/storage/store's pg-gated tests (the SET LOCAL
+// mechanism, its non-leakage, and a real postmaster-crash tail-loss test) and
+// by internal/startup's posture test. Stated rather than left implicit, per
+// this repo's rule about naming what a mechanism does not check.
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
@@ -86,91 +97,120 @@ func fastAuditStartupEventCount(t *testing.T, dbPath string) int {
 	return len(events)
 }
 
-// TestFastAuditMode_LoudAuditedAndVerifiableEndToEnd is the on case: a real
-// boot with the setting enabled must warn, audit, and still produce a database
-// whose chain `verify-audit` accepts.
-func TestFastAuditMode_LoudAuditedAndVerifiableEndToEnd(t *testing.T) {
+// TestFastAuditMode_SQLiteRefusesToStartEndToEnd is Andrei's "no silent
+// ignore" requirement, proven against the real binary rather than against
+// config.Validate in isolation: a SQLite install that sets the setting must
+// FAIL, with the named error, on every command that loads config — not start
+// quietly while the operator believes their durability is relaxed and their
+// reads are fast, when on SQLite neither would be true.
+//
+// Checks more than one command on purpose. The refusal lives in
+// config.Validate, so it has to bite wherever config is loaded; a refusal that
+// only fired on `admin validate` would let the server itself boot.
+func TestFastAuditMode_SQLiteRefusesToStartEndToEnd(t *testing.T) {
 	bin := buildServerBinary(t)
 	dir := t.TempDir()
-	env := append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD=test-passphrase-fast-audit-mode")
+	env := append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD=test-passphrase-fast-audit-sqlite-refusal")
 
 	if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin init failed: %v\n%s", err, out)
 	}
 	cfgPath := filepath.Join(dir, "keyorix.yaml")
+
+	// Positive control: the SAME config, before the one-line edit, works. So
+	// the failures below are attributable to the setting and not to a broken
+	// fixture.
+	if out, err := runAdmin(t, bin, dir, env, "migrate", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("control: admin migrate must succeed BEFORE the setting is added: %v\n%s", err, out)
+	}
+
 	enableFastAuditModeInConfig(t, cfgPath)
 
-	// `diagnose` is what creates the encryption key files (keys/kek.salt,
-	// keys/dek.key); without it the server refuses to start on its own
-	// file-permission startup validation. Same ordering
-	// TestAdminRecoverAdmin_KeylessMode_SQLite uses.
-	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
-		t.Fatalf("admin diagnose failed: %v\n%s", err, out)
+	const wantErr = "insecure_audit_skip_durable_sync is only supported with PostgreSQL"
+
+	// THE SERVER ITSELF. This is the contract Andrei's decision is about:
+	// server/main.go calls cfg.Validate() on its boot path, so the process
+	// must die rather than serve reads while the operator believes their
+	// durability is relaxed.
+	serverOut := runServerExpectingExit(t, bin, dir, env)
+	if !strings.Contains(serverOut, wantErr) {
+		t.Errorf("the SERVER did not refuse to boot with the named refusal (%q) on a SQLite config that sets "+
+			"insecure_audit_skip_durable_sync. This is the whole point of the Postgres-only decision -- the "+
+			"process must not come up. Server output:\n%s", wantErr, serverOut)
 	}
-	if out, err := runAdmin(t, bin, dir, env, "migrate", "--config", "./keyorix.yaml"); err != nil {
-		t.Fatalf("admin migrate failed: %v\n%s", err, out)
+	if !strings.Contains(serverOut, "remove it or switch storage to postgres") {
+		t.Errorf("the refusal must tell the operator what to DO, not just that it is wrong. Output:\n%s", serverOut)
 	}
 
-	// A real boot, which is what produces the warning and the audit event.
-	bootstrapAdminViaHTTP(t, bin, dir, env, "8080", "fastauditadmin", "fast-audit-e2e@example.com", "InitialPassw0rd!")
-
-	// `admin validate` is the posture surface (ADR-112 Amendment 1): the
-	// deviation has to be visible to an operator who runs it. Asserted on the
-	// real command's real output, not on ValidateStartup's return value.
+	// `admin validate` and `admin diagnose` both load AND validate config
+	// (server/admin/validate.go via internal/startup.ValidateStartup;
+	// server/admin/diagnose.go calls cfg.Validate directly), so both refuse too.
 	//
-	// Run AFTER the first boot on purpose: the encryption key files
-	// (keys/kek.salt, keys/dek.key) are created on first server start, not by
-	// `admin init`, so a pre-boot `validate` fails its own key-file
-	// permission check for reasons that have nothing to do with this setting.
-	validateOut, err := runAdmin(t, bin, dir, env, "validate", "--config", "./keyorix.yaml")
-	if err != nil {
-		t.Fatalf("admin validate failed: %v\n%s", err, validateOut)
+	// `admin migrate` is deliberately NOT in this list: it does not call
+	// cfg.Validate at all, so it applies schema migrations regardless of this
+	// setting -- pre-existing behaviour for every other config error, not
+	// something this change introduced or should silently paper over. Harmless
+	// here (migrate neither serves secrets nor writes audit), and recorded as a
+	// finding in FASTAUDIT-1's report rather than fixed inside this PR.
+	for _, cmd := range []string{"validate", "diagnose"} {
+		out, err := runAdmin(t, bin, dir, env, cmd, "--config", "./keyorix.yaml")
+		if err == nil {
+			t.Errorf("`admin %s` SUCCEEDED on a SQLite config with insecure_audit_skip_durable_sync set; "+
+				"it must refuse. Output:\n%s", cmd, out)
+			continue
+		}
+		if !strings.Contains(out, wantErr) {
+			t.Errorf("`admin %s` failed, but not with the named refusal (%q). An unrelated failure would "+
+				"make this test pass for the wrong reason. Output:\n%s", cmd, wantErr, out)
+		}
 	}
-	if !strings.Contains(validateOut, "insecure_audit_skip_durable_sync") {
-		t.Errorf("`admin validate` did not report the fast audit mode as a posture deviation. "+
-			"ADR-112 Amendment 1 requires it in the posture surface; an operator running this command has "+
-			"to be told. Output was:\n%s", validateOut)
-	}
-
-	serverLog, err := os.ReadFile(filepath.Join(dir, "bootstrap-server.log")) //nolint:gosec // test-generated path
-	if err != nil {
-		t.Fatalf("read server log: %v", err)
-	}
-	logText := string(serverLog)
-	if !strings.Contains(logText, "insecure_audit_skip_durable_sync is ENABLED") {
-		t.Errorf("the server did not print the fast-audit-mode startup WARNING naming the setting. "+
-			"ADR-112 §1 requires a warning at EVERY start. Server log was:\n%s", logText)
-	}
-	// The SQLite-specific scope caveat is the one way this setting is broader
-	// than its name, and this is a SQLite deployment, so it must be in the
-	// warning an operator actually sees -- not only in the docs.
-	if !strings.Contains(logText, "DATABASE-WIDE, NOT AUDIT-ONLY") {
-		t.Errorf("the startup warning on a SQLite backend must say the relaxation is database-wide, not "+
-			"audit-only (PRAGMA synchronous is per-connection and the pool is shared). Server log was:\n%s", logText)
-	}
-
-	if n := fastAuditStartupEventCount(t, filepath.Join(dir, "keyorix.db")); n != 1 {
-		t.Fatalf("expected exactly 1 %s audit event after one boot, got %d -- ADR-112 §1 requires the "+
-			"tamper-evident chain itself to carry a record of the weaker mode, at every start",
-			fastAuditStartupEventType, n)
-	}
-
-	// The requirement in the brief's own words: "verify-audit must pass".
-	// Run the real command against the real database written in fast mode.
-	verifyOut, err := runAdmin(t, bin, dir, env, "verify-audit", "--config", "./keyorix.yaml")
-	if err != nil {
-		t.Fatalf("`admin verify-audit` failed against a database written with the fast audit mode on: %v\n%s\n"+
-			"Lost tail entries are permitted in this mode; a chain verify-audit rejects is not.", err, verifyOut)
-	}
-	t.Logf("verify-audit output:\n%s", verifyOut)
 }
 
-// TestFastAuditMode_DefaultBootIsSilentAndDurable is the off case, and it is
-// the half that stops the on case from passing for the wrong reason: a default
-// install must print no such warning, write no such audit event, and report no
-// such posture deviation. Without this, a change that emitted the warning
-// unconditionally would leave the test above green while making every
-// deployment look deviant.
+// runServerExpectingExit starts the built binary as a real server and expects
+// it to EXIT on its own rather than serve. Returns its combined output.
+//
+// Fails if the process is still alive after the grace period: a server that
+// keeps running is precisely the "silent ignore" outcome this test exists to
+// rule out, so a hang must be a failure rather than a timeout nobody reads.
+func runServerExpectingExit(t *testing.T, bin, dir string, env []string) string {
+	t.Helper()
+	cmd := exec.Command(bin) //nolint:gosec // bin is this suite's own freshly built binary
+	cmd.Dir = dir
+	cmd.Env = append(append([]string{}, env...), "KEYORIX_CONFIG_PATH=./keyorix.yaml")
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start server: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Errorf("the server exited with status 0 on a config it must REFUSE. A clean exit is not a "+
+				"refusal -- an operator's supervisor would read it as success. Output:\n%s", buf.String())
+		}
+		return buf.String()
+	case <-time.After(20 * time.Second):
+		_ = cmd.Process.Kill()
+		<-done
+		t.Fatalf("the server was STILL RUNNING 20s after being started with a config it must refuse. That is "+
+			"the silent-ignore outcome the Postgres-only decision rules out. Output:\n%s", buf.String())
+		return buf.String()
+	}
+}
+
+// TestFastAuditMode_DefaultBootIsSilentAndDurable is the off case: a default
+// install must print no fast-audit warning, write no such audit event, and
+// report no such posture deviation.
+//
+// This is the half that stops the other tests from passing for the wrong
+// reason. Without it, a change that emitted the warning unconditionally — or
+// that reported every install as deviant — would leave them green while making
+// the posture report useless, which is the "a check that always fails is as
+// useless as one that always passes" failure.
 func TestFastAuditMode_DefaultBootIsSilentAndDurable(t *testing.T) {
 	bin := buildServerBinary(t)
 	dir := t.TempDir()
@@ -180,10 +220,6 @@ func TestFastAuditMode_DefaultBootIsSilentAndDurable(t *testing.T) {
 		t.Fatalf("admin init failed: %v\n%s", err, out)
 	}
 	// Deliberately NO config edit: this is what `admin init` generates.
-	// `diagnose` is what creates the encryption key files (keys/kek.salt,
-	// keys/dek.key); without it the server refuses to start on its own
-	// file-permission startup validation. Same ordering
-	// TestAdminRecoverAdmin_KeylessMode_SQLite uses.
 	if out, err := runAdmin(t, bin, dir, env, "diagnose", "--config", "./keyorix.yaml"); err != nil {
 		t.Fatalf("admin diagnose failed: %v\n%s", err, out)
 	}
@@ -193,13 +229,15 @@ func TestFastAuditMode_DefaultBootIsSilentAndDurable(t *testing.T) {
 
 	bootstrapAdminViaHTTP(t, bin, dir, env, "8080", "defaultadmin", "fast-audit-default@example.com", "InitialPassw0rd!")
 
-	// After the boot, for the same key-file reason as the on case above.
+	// After the boot: the encryption key files are created on first server
+	// start, not by `admin init`, so a pre-boot `validate` fails its own
+	// key-file permission check for reasons unrelated to this setting.
 	validateOut, err := runAdmin(t, bin, dir, env, "validate", "--config", "./keyorix.yaml")
 	if err != nil {
 		t.Fatalf("admin validate failed: %v\n%s", err, validateOut)
 	}
 	if strings.Contains(validateOut, "insecure_audit_skip_durable_sync") {
-		t.Errorf("a DEFAULT install reported the fast audit mode as a posture deviation. ADR-112 §4's gate "+
+		t.Errorf("a DEFAULT install reported the fast audit mode in its posture output. ADR-112 §4's gate "+
 			"is that the posture report shows zero deviations on the default configuration. Output:\n%s", validateOut)
 	}
 
@@ -207,12 +245,22 @@ func TestFastAuditMode_DefaultBootIsSilentAndDurable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read server log: %v", err)
 	}
-	if strings.Contains(string(serverLog), "insecure_audit_skip_durable_sync is ENABLED") {
-		t.Errorf("a default boot printed the fast-audit-mode warning. The default must be durable AND "+
-			"silent about a setting nobody enabled. Server log was:\n%s", serverLog)
+	if strings.Contains(string(serverLog), "insecure_audit_skip_durable_sync") {
+		t.Errorf("a default boot mentioned insecure_audit_skip_durable_sync in its log. The default must be "+
+			"durable AND silent about a setting nobody enabled. Server log was:\n%s", serverLog)
 	}
 
 	if n := fastAuditStartupEventCount(t, filepath.Join(dir, "keyorix.db")); n != 0 {
 		t.Fatalf("a default boot wrote %d %s audit event(s); expected 0", n, fastAuditStartupEventType)
+	}
+
+	// The default install's chain must still verify — the baseline this whole
+	// feature is an opt-out from.
+	verifyOut, err := runAdmin(t, bin, dir, env, "verify-audit", "--config", "./keyorix.yaml")
+	if err != nil {
+		t.Fatalf("`admin verify-audit` failed on a default install: %v\n%s", err, verifyOut)
+	}
+	if !strings.Contains(verifyOut, "VALID") {
+		t.Errorf("expected a VALID verdict from verify-audit on a default install, got:\n%s", verifyOut)
 	}
 }

@@ -612,7 +612,7 @@ func TestWarnIfDuplicatesExist_S28_NoWhereWithDuplicates(t *testing.T) {
 
 // TestSQLiteDSN_S28_NoPriorParams verifies that a plain path gets "?" appended.
 func TestSQLiteDSN_S28_NoPriorParams(t *testing.T) {
-	dsn := sqliteDSN("/tmp/mydb.db", false)
+	dsn := sqliteDSN("/tmp/mydb.db")
 	assert.Contains(t, dsn, "?", "plain path must get '?' separator")
 	assert.Contains(t, dsn, "_foreign_keys=1")
 	assert.Contains(t, dsn, "_busy_timeout=10000")
@@ -622,7 +622,7 @@ func TestSQLiteDSN_S28_NoPriorParams(t *testing.T) {
 // TestSQLiteDSN_S28_WithExistingParams verifies that a path with "?" already
 // gets "&" appended (not a second "?").
 func TestSQLiteDSN_S28_WithExistingParams(t *testing.T) {
-	dsn := sqliteDSN("file:mydb?mode=memory", false)
+	dsn := sqliteDSN("file:mydb?mode=memory")
 	assert.NotContains(t, dsn, "??")
 	assert.Contains(t, dsn, "_foreign_keys=1")
 	assert.Contains(t, dsn, "_journal_mode=WAL")

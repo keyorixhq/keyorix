@@ -130,7 +130,7 @@ func BenchmarkPoolSize(b *testing.B) {
 				var db *gorm.DB
 				var err error
 				if l.dialect == "sqlite" {
-					db, err = gorm.Open(sqlite.Open(sqliteDSN(filepath.Join(b.TempDir(), "bench.db"), false)), gormConfig())
+					db, err = gorm.Open(sqlite.Open(sqliteDSN(filepath.Join(b.TempDir(), "bench.db"))), gormConfig())
 				} else {
 					db, err = gorm.Open(postgres.Open(benchPGDatabase(b)), gormConfig())
 				}

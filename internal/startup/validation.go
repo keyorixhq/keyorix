@@ -24,6 +24,36 @@ type ValidationResult struct {
 	DatabaseOK    bool
 	Warnings      []string
 	Errors        []string
+	// InsecureSettings is the STRUCTURED posture view of every ADR-112
+	// `insecure_` opt-out this validator knows about, alongside the
+	// human-readable Warnings above. Structured on purpose (Andrei's decision,
+	// 2026-10-05): "configured but not in effect, and here is why" is a
+	// distinct state from both "off" and "weakening your durability", and a
+	// consumer — the posture report, a dashboard, an auditor's script — has to
+	// be able to tell them apart from a field rather than by parsing log text.
+	//
+	// Today it carries exactly one entry's worth of settings (the fast audit
+	// mode). When ADR-112's registry (#2454) lands, this slice should be
+	// populated by iterating that registry instead of being hand-built here.
+	InsecureSettings []InsecureSettingStatus
+}
+
+// InsecureSettingStatus is one ADR-112 `insecure_` opt-out's posture state.
+type InsecureSettingStatus struct {
+	// Name is the canonical dotted config path, insecure_-prefixed leaf.
+	Name string
+	// Configured is true when the operator wrote the key into the config file,
+	// whether or not it does anything on this backend.
+	Configured bool
+	// InEffect is true only when the setting is configured AND actually
+	// weakening something right now.
+	InEffect bool
+	// NotInEffectReason is non-empty ONLY when Configured is true and InEffect
+	// is false — so a non-empty value always means "you wrote this and it is
+	// doing nothing", and never means anything else.
+	NotInEffectReason string
+	// Describe is a one-line explanation of what being in effect weakens.
+	Describe string
 }
 
 // ValidateStartup performs comprehensive startup validation. forceAutoFix, when
@@ -85,39 +115,79 @@ func ValidateStartup(configPath string, forceAutoFix bool) (*ValidationResult, e
 
 	// ADR-112 Amendment 1 (docs/specs/fast-audit-mode.md) requires the fast
 	// audit mode to appear in the posture surface. Until the dedicated
-	// `admin validate --posture` report lands (#2478), this -- the Warnings
-	// list that `keyorix-server admin validate` prints -- IS the posture
-	// surface, so the deviation goes here.
-	//
-	// Reported whenever the setting is PRESENT, including on a `remote`
-	// backend where it has no local database to act on and is therefore
-	// inert. That is deliberate: a setting an operator wrote into their
-	// config file that reports "not in effect" is exactly the silent
-	// weakening ADR-112 §1 exists to prevent. (Flagged as the spec's first
-	// NEEDS ANDREI; this is the recommended behaviour, not a settled one.)
-	if cfg.Storage.Database.InsecureAuditSkipDurableSync {
-		result.Warnings = append(result.Warnings, AuditDurableSyncSkippedWarning)
-	}
+	// `admin validate --posture` report lands (#2478), this -- what
+	// `keyorix-server admin validate` prints -- IS the posture surface, so the
+	// deviation goes here, both as a human-readable Warnings line and as a
+	// structured InsecureSettings entry.
+	appendFastAuditPosture(cfg, result)
 
 	return result, nil
 }
 
-// AuditDurableSyncSkippedWarning is the posture-deviation line for
-// storage.database.insecure_audit_skip_durable_sync (ADR-112 Amendment 1).
-// Exported so a test can assert on the exact string rather than a substring
-// that a later reword could silently stop matching, the same way
-// validation_test.go already pins "File permission checks are disabled" and
-// "Encryption is disabled" literally (admin/validate.go matches those by
-// equality to pick a recommendation line).
-//
-// Deliberately does NOT restate the per-backend SQLite scope caveat that
-// server/main.go's startup warning carries: this string is produced by
-// ValidateStartup, which runs for every backend, and a line that named SQLite
-// unconditionally would be wrong on Postgres. The authority on the full
-// trade-off is docs/security/hardening-guide.md, which this points at.
+// AuditSkipDurableSyncSettingName is the canonical dotted config path of the
+// fast audit mode, insecure_-prefixed leaf per ADR-112 section 1. Exported so
+// a posture consumer can match on it without hardcoding the string.
+const AuditSkipDurableSyncSettingName = "storage.database.insecure_audit_skip_durable_sync"
+
+// auditSkipDurableSyncDescribe is the one-line "what being in effect weakens"
+// text, in the shape ADR-112's registry (#2454) uses for every entry.
+const auditSkipDurableSyncDescribe = "the audit commit no longer waits for a disk sync, so an OS or " +
+	"database-server crash can lose the most recent audit entries"
+
+// AuditDurableSyncSkippedWarning is the posture-deviation line for the fast
+// audit mode when it is actually IN EFFECT. Exported so a test can assert the
+// exact string rather than a substring a later reword could silently stop
+// matching, the same way validation_test.go already pins "File permission
+// checks are disabled" and "Encryption is disabled" literally
+// (admin/validate.go matches those by equality to pick a recommendation line).
 const AuditDurableSyncSkippedWarning = "Durable audit sync is DISABLED " +
 	"(storage.database.insecure_audit_skip_durable_sync): audit commits no longer wait for a disk sync, so an OS " +
 	"crash or power loss can lose the most recent audit entries -- see docs/security/hardening-guide.md"
+
+// AuditDurableSyncIgnoredWarningPrefix starts the posture line for a setting
+// that is CONFIGURED BUT NOT IN EFFECT (Andrei's decision, 2026-10-05: show it
+// as off, with the reason). A prefix rather than a whole constant because the
+// reason varies by backend and is appended verbatim; a test asserts the
+// prefix plus the reason rather than a single frozen sentence.
+//
+// Worded as IGNORED, never as "audit durability weakened" -- the whole point of
+// this state is that nothing has been weakened, and a line that implied
+// otherwise would send an operator chasing a durability problem they do not
+// have.
+const AuditDurableSyncIgnoredWarningPrefix = "storage.database.insecure_audit_skip_durable_sync is set but IGNORED, " +
+	"not in effect: "
+
+// appendFastAuditPosture records the fast audit mode's state in result, in
+// both forms. Three outcomes, and each is a distinct, separately-reported
+// state rather than a boolean:
+//
+//   - not configured: nothing recorded at all, so a default install still
+//     shows ZERO deviations (ADR-112 section 4's own gate).
+//   - configured and in effect: the AuditDurableSyncSkippedWarning deviation,
+//     InEffect true, empty NotInEffectReason.
+//   - configured and NOT in effect: an IGNORED line carrying the reason, and
+//     a structured entry with InEffect false plus that same reason. Still
+//     reported, because a config line an operator wrote and believes is doing
+//     something is worth surfacing -- but not reported as a weakening,
+//     because it is not one.
+func appendFastAuditPosture(cfg *config.Config, result *ValidationResult) {
+	st := cfg.Storage.Database.AuditDurableSyncStatus(cfg.Storage.Type)
+	if !st.Configured {
+		return
+	}
+	result.InsecureSettings = append(result.InsecureSettings, InsecureSettingStatus{
+		Name:              AuditSkipDurableSyncSettingName,
+		Configured:        true,
+		InEffect:          st.InEffect,
+		NotInEffectReason: st.NotInEffectReason,
+		Describe:          auditSkipDurableSyncDescribe,
+	})
+	if st.InEffect {
+		result.Warnings = append(result.Warnings, AuditDurableSyncSkippedWarning)
+		return
+	}
+	result.Warnings = append(result.Warnings, AuditDurableSyncIgnoredWarningPrefix+st.NotInEffectReason)
+}
 
 // SafeFilePermPath cleans path and rejects it if the cleaned form still
 // contains a ".." segment. Unlike validateEncryption/validateDatabase (whose

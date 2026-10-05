@@ -19,7 +19,7 @@ import (
 // (file:name?mode=memory&cache=shared) gets the pragmas appended via "&"
 // (not "?") because the path already contains "?".
 func TestSQLiteDSN_S23_InMemoryPath(t *testing.T) {
-	dsn := sqliteDSN("file:TestFoo?mode=memory&cache=shared", false)
+	dsn := sqliteDSN("file:TestFoo?mode=memory&cache=shared")
 	assert.Contains(t, dsn, "_foreign_keys=1")
 	assert.Contains(t, dsn, "_busy_timeout=10000")
 	assert.Contains(t, dsn, "_journal_mode=WAL")
@@ -39,7 +39,7 @@ func TestSQLiteDSN_S23_InMemoryPath(t *testing.T) {
 // TestSQLiteDSN_S23_BusyTimeoutValue verifies that the busy timeout constant
 // is embedded in the DSN string as a decimal integer.
 func TestSQLiteDSN_S23_BusyTimeoutValue(t *testing.T) {
-	dsn := sqliteDSN("/tmp/x.db", false)
+	dsn := sqliteDSN("/tmp/x.db")
 	assert.Contains(t, dsn, "_busy_timeout=10000",
 		"sqliteDSN must embed the 10-second busy-timeout value")
 }

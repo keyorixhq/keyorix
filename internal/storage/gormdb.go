@@ -66,7 +66,7 @@ func OpenGormDB(cfg *config.Config) (*gorm.DB, error) {
 		if err := prepareLocalStorageFile(dbPath); err != nil {
 			return nil, err
 		}
-		db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath, cfg.Storage.Database.InsecureAuditSkipDurableSync)), gormConfig())
+		db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath)), gormConfig())
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to database: %w", err)
 		}

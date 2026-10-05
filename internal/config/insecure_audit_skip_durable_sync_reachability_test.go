@@ -11,7 +11,9 @@
 // only as complete as the idioms it knows about"). These tests recognise
 // exactly TWO call shapes, and nothing else:
 //
-//  1. the literal Go selector `.InsecureAuditSkipDurableSync` (case-sensitive);
+//  1. the literal Go selector `.InsecureAuditSkipDurableSync` (case-sensitive),
+//     with // and /* */ comments STRIPPED first, so a doc comment that merely
+//     names the field is not mistaken for a read of it;
 //  2. the literal YAML key `insecure_audit_skip_durable_sync`.
 //
 // Both are grepped across every non-test *.go file in the main module's repo
@@ -42,41 +44,26 @@ import (
 )
 
 // insecureAuditSkipDurableSyncAllowedFiles is the exhaustive, reasoned
-// inventory of every non-test file allowed to reference the field at all.
-// Every one of them only ever READS it. A file listed here that turns out to
-// WRITE it fails TestInsecureAuditSkipDurableSync_NoWriteAssignment
-// independently of this allowlist.
+// inventory of every non-test file OUTSIDE internal/config allowed to
+// reference the raw field at all.
 //
-// internal/config/config.go is deliberately absent: the field's own
-// DECLARATION has no leading dot, so the `.InsecureAuditSkipDurableSync`
-// selector this scan looks for never matches it. It is handled (and specially
-// exempted, as the one legitimate write path — ordinary YAML unmarshal) by the
-// write test's own file-path check.
-var insecureAuditSkipDurableSyncAllowedFiles = map[string]string{
-	"internal/storage/factory.go": "reads it twice — once to build the SQLite DSN (sqliteDSN's skipDurableSync " +
-		"parameter) and once per backend to configure the LocalStorage (SetAuditSkipDurableSync). Never writes " +
-		"it; both are right-hand-side reads of an already-loaded *config.Config.",
-	"internal/storage/gormdb.go": "reads it once to build the SQLite DSN for the handful of host-side CLI admin " +
-		"commands that need a raw *gorm.DB (DEK rotation, auth-encryption stats — ADR-049). Never writes it, and " +
-		"no HTTP or gRPC transport reaches this code path at all (ADR-108 §B: no admin command starts a listener).",
-	"internal/storage/store/entry.go": "does not reference the field in CODE at all — this is a COMMENT-only " +
-		"match (auditSkipDurableSync's and SetAuditSkipDurableSync's doc comments name " +
-		"config.DatabaseConfig.InsecureAuditSkipDurableSync as the value they are set from). Listed rather " +
-		"than filtered out because this scan matches raw file bytes, comments included, exactly like " +
-		"keyless_mode_reachability_test.go's: a comment match is a false positive for reachability but a TRUE " +
-		"positive for \"a human should look at this file when the field changes,\" which is what the allowlist " +
-		"is for. The write test below is the one that enforces the security property, and it is unaffected " +
-		"either way.",
-	"internal/startup/validation.go": "reads it once in ValidateStartup to append the posture-deviation warning " +
-		"`keyorix-server admin validate` prints (ADR-112 Amendment 1's posture-surface requirement). Never " +
-		"writes it.",
-	"server/main.go": "reads it once at server startup (only) to print the repeated-every-boot warning and write " +
-		"the startup audit event. Never writes it.",
-	"server/http/handlers/system.go": "reads it once to populate SecurityInfo.AuditDurableSyncSkipped for the " +
-		"authenticated GET /system/info response — never writes it. This is the one HTTP handler that touches " +
-		"the field AT ALL, and it is read-only by construction: a http.HandlerFunc closure over an " +
-		"already-loaded *config.Config, with no request body ever reaching this value.",
-}
+// IT IS DELIBERATELY EMPTY, and that is the invariant this file now enforces.
+// After the Postgres-only/remote-ignored decision (2026-10-05) every consumer
+// reads DatabaseConfig.AuditDurableSyncStatus instead of the bool, so the raw
+// field is touched in exactly two places, both inside
+// internal/config/config.go: Validate's SQLite refusal, and
+// AuditDurableSyncStatus itself. That is a stronger guarantee than the
+// previous five-file allowlist, because the rule "is this setting in effect?"
+// now has ONE implementation rather than five call sites that could each drift
+// from it. Comment-only mentions elsewhere (internal/storage/store/entry.go
+// names the field in a doc comment) are excluded by the scan below, which
+// strips comments before matching.
+//
+// If a future file genuinely needs the raw bool rather than the computed
+// status, add it here WITH the reason it cannot use AuditDurableSyncStatus —
+// and expect that reason to be challenged, because "configured" and "in
+// effect" being the same question is exactly the bug this shape prevents.
+var insecureAuditSkipDurableSyncAllowedFiles = map[string]string{}
 
 // repoRootForFastAuditScan resolves the main module's repo root from this
 // file's own location (internal/config/..), so the scan works regardless of
@@ -90,6 +77,23 @@ func repoRootForFastAuditScan() string {
 }
 
 var fastAuditSelectorRe = regexp.MustCompile(`\.InsecureAuditSkipDurableSync\b`)
+
+// commentStripRe removes // line comments and /* */ block comments. Needed
+// because this scan matches raw file bytes: internal/storage/store/entry.go
+// legitimately NAMES the field in a doc comment ("set once at construction
+// from config.DatabaseConfig.InsecureAuditSkipDurableSync") while reading only
+// the computed status, and counting that as a reference would force a
+// permanent allowlist entry for a file that does not actually touch the field.
+// Crude by design -- it will also blank a // inside a string literal, which in
+// this scan can only ever cause a MISSED match in a file that embeds the
+// field's name in a string, and no such file exists (checked: the only string
+// form anywhere is the YAML key, which has no leading dot and so never matches
+// this selector regardless).
+var commentStripRe = regexp.MustCompile(`(?s)//[^\n]*|/\*.*?\*/`)
+
+func stripGoComments(data []byte) []byte {
+	return commentStripRe.ReplaceAll(data, []byte(" "))
+}
 
 // walkMainModuleGoFiles calls fn(repoRelativeSlashPath, contents) for every
 // non-test *.go file in the main module's tree.
@@ -134,7 +138,14 @@ func TestInsecureAuditSkipDurableSync_ReferencesAreAllowlisted(t *testing.T) {
 	root := repoRootForFastAuditScan()
 	actual := map[string]bool{}
 	walkMainModuleGoFiles(t, root, func(rel string, data []byte) {
-		if fastAuditSelectorRe.Match(data) {
+		if strings.HasPrefix(rel, "internal/config/") {
+			// The field's owning package. Validate's SQLite refusal and
+			// AuditDurableSyncStatus are the two legitimate reads, and they
+			// are the whole point of the design -- scanning them would just
+			// require permanently allowlisting the owner.
+			return
+		}
+		if fastAuditSelectorRe.Match(stripGoComments(data)) {
 			actual[rel] = true
 		}
 	})
@@ -146,11 +157,14 @@ func TestInsecureAuditSkipDurableSync_ReferencesAreAllowlisted(t *testing.T) {
 		}
 	}
 	if len(missing) > 0 {
-		t.Errorf("found file(s) referencing InsecureAuditSkipDurableSync with NO allowlist entry in "+
-			"insecureAuditSkipDurableSyncAllowedFiles (internal/config/"+
-			"insecure_audit_skip_durable_sync_reachability_test.go): %v\n"+
-			"Every new reference needs a reasoned entry there — especially an HTTP handler or gRPC service, "+
-			"which must never SET this field (ADR-112 Amendment 1: config file only).", missing)
+		t.Errorf("found file(s) OUTSIDE internal/config referencing the raw InsecureAuditSkipDurableSync "+
+			"field: %v\n"+
+			"Read DatabaseConfig.AuditDurableSyncStatus(storageType) instead. The raw bool answers "+
+			"\"did the operator write this key\"; the status answers \"is it actually in effect on this "+
+			"backend, and if not, why not\" — and those are different questions on a remote backend. "+
+			"Keeping the rule in one place is what stops a new surface from reporting a setting as "+
+			"weakening durability when it is being ignored. If you genuinely need the bool, add a reasoned "+
+			"entry to insecureAuditSkipDurableSyncAllowedFiles.", missing)
 	}
 
 	var stale []string
@@ -161,7 +175,8 @@ func TestInsecureAuditSkipDurableSync_ReferencesAreAllowlisted(t *testing.T) {
 	}
 	if len(stale) > 0 {
 		t.Errorf("allowlist entr(y/ies) no longer reference InsecureAuditSkipDurableSync: %v\n"+
-			"Remove the stale entry — it has either been refactored away or the reference moved.", stale)
+			"Remove the stale entry — it has either been refactored away or moved to "+
+			"AuditDurableSyncStatus, which is where it belongs.", stale)
 	}
 }
 
@@ -236,13 +251,14 @@ func TestInsecureAuditSkipDurableSync_NotSettableFromTheEnvironment(t *testing.T
 // not against a doc claim — a rename that dropped the prefix would go red here
 // even if every other test still passed.
 func TestInsecureAuditSkipDurableSync_YAMLKeyCarriesTheInsecurePrefix(t *testing.T) {
-	cfg := &Config{}
-	cfg.Storage.Database.InsecureAuditSkipDurableSync = true
-
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
+	// A POSTGRES config on purpose: a SQLite backend with this key set cannot
+	// pass Validate at all (TestConfigValidate_RejectsFastAuditModeOnSQLite),
+	// so writing one here would pin a state no deployment can reach.
 	if err := os.WriteFile(path, []byte(
-		"storage:\n  type: local\n  database:\n    path: ./secrets.db\n    insecure_audit_skip_durable_sync: true\n",
+		"storage:\n  type: postgres\n  database:\n    host: db\n    name: keyorix\n    user: keyorix\n"+
+			"    insecure_audit_skip_durable_sync: true\n",
 	), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}

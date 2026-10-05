@@ -16,13 +16,13 @@ import (
 // signal the append logic picked the wrong separator.
 func TestSqliteDSN_TxlockImmediate(t *testing.T) {
 	t.Run("plain path", func(t *testing.T) {
-		dsn := sqliteDSN("/tmp/foo.db", false)
+		dsn := sqliteDSN("/tmp/foo.db")
 		require.Equal(t, 1, strings.Count(dsn, "_txlock=immediate"),
 			"expected exactly one _txlock=immediate parameter, got DSN: %s", dsn)
 	})
 
 	t.Run("path with pre-existing query params", func(t *testing.T) {
-		dsn := sqliteDSN("/tmp/foo.db?_time_format=sqlite", false)
+		dsn := sqliteDSN("/tmp/foo.db?_time_format=sqlite")
 		require.Equal(t, 1, strings.Count(dsn, "_txlock=immediate"),
 			"expected exactly one _txlock=immediate parameter, got DSN: %s", dsn)
 		require.Contains(t, dsn, "_time_format=sqlite", "the operator's own pre-existing parameter must be preserved")

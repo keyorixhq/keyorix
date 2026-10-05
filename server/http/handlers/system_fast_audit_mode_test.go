@@ -23,6 +23,11 @@ import (
 // the same four flagging requirements, so it gets the same guard.
 func TestMakeSystemInfoHandler_AuditDurableSyncSkippedReflectsConfig(t *testing.T) {
 	cfg := &config.Config{}
+	// Postgres: the ONE backend where the mode is in effect (Andrei's
+	// decision, 2026-10-05 -- SQLite refuses to start, remote reports it
+	// ignored). Setting the bool without the backend would assert a state no
+	// deployment can reach.
+	cfg.Storage.Type = "postgres"
 	cfg.Storage.Database.InsecureAuditSkipDurableSync = true
 
 	req := userCtxForTest(httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil))
@@ -37,7 +42,13 @@ func TestMakeSystemInfoHandler_AuditDurableSyncSkippedReflectsConfig(t *testing.
 	require.True(t, present,
 		"GET /system/info's security block must carry audit_durable_sync_skipped -- it is the one place "+
 			"ADR-112 Amendment 1 requires the deviation to be visible without host access")
-	assert.True(t, val.(bool), "audit_durable_sync_skipped must reflect the config when the setting is on")
+	assert.True(t, val.(bool),
+		"audit_durable_sync_skipped must be true on Postgres with the setting on: this field reports IN "+
+			"EFFECT, i.e. \"is my audit durability weakened right now\"")
+	_, reasonPresent := security["audit_durable_sync_skip_not_in_effect_reason"]
+	assert.False(t, reasonPresent,
+		"an IN EFFECT setting must carry NO not-in-effect reason (the field is omitempty), or a consumer "+
+			"cannot use a non-empty reason as the unambiguous signal of the ignored state")
 
 	// Zero-value config: the field must be present and false. Present AND
 	// false matters, not just false: a missing key would read as "this server

@@ -84,7 +84,7 @@ const (
 //     and therefore makes every EARLIER async commit durable too, so the
 //     inversion ("a later audit row survives while an earlier one is lost")
 //     has no mechanism by which to happen. See the spec §5 and
-//     TestFastAuditMode_KillNineLosesNothing and TestFastAuditMode_WalTailLossLeavesAPrefixNotAGap.
+//     TestFastAuditMode_PostgresCrashLosesOnlyATail.
 //
 // Not parameterised: the value is a fixed literal, never interpolated from
 // config or any request, so there is no injection surface here (SET does not
