@@ -166,6 +166,15 @@ type LocalStorage struct {
 	// construction and meaningless on a clone anyway (auditFlusher is nil
 	// there, so runAuditFlusher never runs for it).
 	auditFlusherLingerWindow time.Duration
+	// localAuditJournal backs the opt-in ADR-115 local audit journal
+	// (PERF-4 prototype). nil unless EnableLocalAuditJournal was called on
+	// THIS exact LocalStorage -- same reasoning as auditFlusher, and
+	// deliberately NOT copied onto a transaction-scoped clone (see
+	// WithTransaction/local_rbac.go's clone constructions, both of which
+	// omit it): a journal write is independent of, and cannot participate
+	// in, the caller's own transaction, so a clone must fall back to the
+	// safe non-journal path.
+	localAuditJournal *localAuditJournalState
 }
 
 // clockWatermark pairs a mutex with the time.Time it guards, so a single

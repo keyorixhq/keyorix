@@ -32,6 +32,7 @@ func AllModels() []any {
 		&models.APIClient{},
 		&models.APIToken{},
 		&models.AuditCheckpoint{},
+		&models.AuditJournalReplayState{}, // ADR-115 (PERF-4 prototype)
 		&models.AuditEvent{},
 		&models.BreakGlassActivation{},
 		&models.CompliancePostureSnapshot{},

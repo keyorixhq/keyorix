@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -545,6 +546,9 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 
 	ls := store.NewLocalStorage(db)
 	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
+	if err := enableLocalAuditJournalIfConfigured(ls, cfg); err != nil {
+		return nil, err
+	}
 	return ls, nil
 }
 
@@ -571,10 +575,35 @@ func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (stora
 
 	ls := store.NewLocalStorage(db)
 	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
+	if err := enableLocalAuditJournalIfConfigured(ls, cfg); err != nil {
+		return nil, err
+	}
 	return ls, nil
 }
 
 // applyPoolSettings configures the connection pool on the underlying *sql.DB
+// enableLocalAuditJournalIfConfigured turns on ADR-115's opt-in local audit
+// journal (PERF-4 prototype) when cfg.LocalAuditJournal.Enabled is set.
+// Requires both Directory and ReplicaID -- refusing to guess either avoids
+// two deployments silently sharing a journal directory or replica ID,
+// which would violate ADR-115's per-replica isolation.
+func enableLocalAuditJournalIfConfigured(ls *store.LocalStorage, cfg *config.Config) error {
+	jc := cfg.LocalAuditJournal
+	if !jc.Enabled {
+		return nil
+	}
+	if jc.Directory == "" {
+		return fmt.Errorf("local_audit_journal.enabled is true but local_audit_journal.directory is not set")
+	}
+	if jc.ReplicaID == "" {
+		return fmt.Errorf("local_audit_journal.enabled is true but local_audit_journal.replica_id is not set")
+	}
+	if err := ls.EnableLocalAuditJournal(context.Background(), jc.Directory, jc.ReplicaID); err != nil {
+		return fmt.Errorf("failed to enable local audit journal: %w", err)
+	}
+	return nil
+}
+
 func applyPoolSettings(db *gorm.DB, dbCfg *config.DatabaseConfig) error {
 	sqlDB, err := db.DB()
 	if err != nil {
@@ -1402,6 +1431,23 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 				return err
 			}
 		}
+		// ADR-115 (PERF-4 prototype): journal origin, nil on every row except
+		// one replayed from the opt-in local audit journal. Additive and
+		// nullable -- a deployment that never enables the journal never
+		// populates these.
+		if !columnExists(db, "audit_events", "journal_replica_id") {
+			if err := exec("ALTER TABLE audit_events ADD COLUMN journal_replica_id TEXT"); err != nil {
+				return err
+			}
+		}
+		if !columnExists(db, "audit_events", "journal_seq") {
+			if err := exec("ALTER TABLE audit_events ADD COLUMN journal_seq INTEGER"); err != nil {
+				return err
+			}
+		}
+		if err := exec("CREATE INDEX IF NOT EXISTS idx_audit_events_journal_replica_id ON audit_events (journal_replica_id)"); err != nil {
+			return err
+		}
 		// Companion indexes (models.AuditEvent.PrevHash/EntryHash are both
 		// `gorm:"index"`). VerifyAuditChain walks this hash chain as a security
 		// control; without these an upgraded install's audit_events table degrades
@@ -1740,6 +1786,15 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	// generates the first key.
 	if err := db.AutoMigrate(&models.RecoveryKeyRecord{}); err != nil {
 		return fmt.Errorf("failed to migrate recovery_key_records table: %w", err)
+	}
+
+	// Create the audit_journal_replay_state table (ADR-115, PERF-4 prototype)
+	// unconditionally, like every other opt-in-feature table on this path --
+	// its SCHEMA exists on every install regardless of whether
+	// local_audit_journal.enabled is set; only the feature's behavior is
+	// gated by config (see EnableLocalAuditJournal).
+	if err := db.AutoMigrate(&models.AuditJournalReplayState{}); err != nil {
+		return fmt.Errorf("failed to migrate audit_journal_replay_state table: %w", err)
 	}
 
 	// Create the audit_checkpoints table if missing (ADR-029 signed checkpoints,
