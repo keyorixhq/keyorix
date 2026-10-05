@@ -10,6 +10,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -34,7 +35,21 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 		return fmt.Errorf("MFA is not enabled on this account; enrol with 'keyorix auth mfa enroll' first")
 	}
 
-	if !c.verifyMFAStepUpCode(ctx, userID, code) {
+	// storageErr distinguishes a genuine storage-read/write failure from a
+	// CONFIRMED negative result (wrong code / non-matching recovery code),
+	// mirroring VerifyMFACredentials' own storageErr handling (#2548): a
+	// resolution error here must not be indistinguishable from a legitimate
+	// negative result, or it both wrongly reports "invalid code" and wrongly
+	// counts toward the account lockout for a code that was never actually
+	// checked. verifyMFAStepUpCode used to collapse both cases into a single
+	// bool, which is exactly the bug #2548 fixed for the login path but never
+	// reached here — this is that same sibling, found during the FIX-1 sweep.
+	verified, storageErr := c.verifyMFAStepUpCode(ctx, userID, code)
+	if !verified {
+		if storageErr != nil {
+			c.auditMFAError(ctx, userID, "stepup", storageErr)
+			return fmt.Errorf("%w: %s: %w", ErrMFAVerificationStorageFailure, i18n.T("ErrorRetrievalFailed", nil), storageErr)
+		}
 		c.auditMFAFailed(ctx, userID, "stepup")
 		c.recordFailedLogin(ctx, user)
 		return fmt.Errorf("invalid code")
@@ -68,16 +83,32 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 //
 // verifyMFAStepUpCode checks code against the user's TOTP secret, falling
 // back to a recovery code, mirroring the login second-factor verification.
-func (c *KeyorixCore) verifyMFAStepUpCode(ctx context.Context, userID uint, code string) bool {
-	if secret, serr := c.loadTOTPSecret(ctx, userID); serr == nil {
-		if step, ok := c.validateTOTPStep(secret, code); ok {
-			if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, userID, step); ferr == nil && fresh {
-				return true
-			}
+// Returns (true, nil) on a confirmed match, (false, nil) on a confirmed
+// negative result (the code genuinely doesn't match either path), and
+// (false, err) when a storage failure left either path unable to reach a
+// verdict at all — the caller (VerifyMFAStepUp) must not treat the last case
+// as a wrong code. The recovery-code path is tried regardless of a TOTP-phase
+// storage error, same as VerifyMFACredentials: the caller may have supplied a
+// recovery code, not a TOTP code, and a failed TOTP secret read must not
+// preempt a genuinely valid recovery code.
+func (c *KeyorixCore) verifyMFAStepUpCode(ctx context.Context, userID uint, code string) (bool, error) {
+	var storageErr error
+	if secret, serr := c.loadTOTPSecret(ctx, userID); serr != nil {
+		storageErr = serr
+	} else if step, ok := c.validateTOTPStep(secret, code); ok {
+		if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, userID, step); ferr != nil {
+			storageErr = ferr
+		} else if fresh {
+			return true, nil
 		}
 	}
 	consumed, cerr := c.storage.ConsumeMFARecoveryCode(ctx, userID, sha256Hex(normalizeRecoveryCode(code)), c.now())
-	return cerr == nil && consumed
+	if cerr != nil {
+		storageErr = cerr
+	} else if consumed {
+		return true, nil
+	}
+	return false, storageErr
 }
 
 // HasActiveMFAStepUp reports whether userID holds a current, unexpired step-up

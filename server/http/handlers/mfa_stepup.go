@@ -6,9 +6,11 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -34,6 +36,12 @@ func (h *AuthHandler) MFAStepUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.coreService.VerifyMFAStepUp(r.Context(), userCtx.UserID, body.Code); err != nil {
+		if errors.Is(err, core.ErrMFAVerificationStorageFailure) {
+			// FIX-1 (#2548 sibling): a storage error never reached a verdict on the
+			// code at all — see errMFAVerificationUnavailable's doc (mfa.go).
+			sendError(w, "ServiceUnavailable", errMFAVerificationUnavailable, http.StatusServiceUnavailable, nil)
+			return
+		}
 		sendError(w, "Unauthorized", err.Error(), http.StatusUnauthorized, nil)
 		return
 	}

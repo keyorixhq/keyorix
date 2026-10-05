@@ -168,8 +168,18 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	attemptID, reserved := h.coreService.ReserveLoginAttempt(r.Context(), ip)
 	session, user, err := h.coreService.VerifyMFALogin(r.Context(), body.Challenge, body.Code, r.Header.Get("User-Agent"), ip)
 	if err != nil {
-		if reserved && errors.Is(err, core.ErrMFAVerificationStorageFailure) {
-			h.coreService.ReleaseLoginAttempt(r.Context(), attemptID)
+		if errors.Is(err, core.ErrMFAVerificationStorageFailure) {
+			if reserved {
+				h.coreService.ReleaseLoginAttempt(r.Context(), attemptID)
+			}
+			// FIX-1 (#2548): a storage error never reached a verdict on the code at
+			// all — reporting it as "Invalid or expired code" would tell the caller
+			// their credential was wrong when it was never checked. A distinct
+			// 5xx-class response tells a legitimate client "retry", not "your code
+			// was wrong" (err itself is never passed through: it wraps the raw
+			// storage error, see ErrMFAVerificationStorageFailure's doc).
+			sendError(w, "ServiceUnavailable", errMFAVerificationUnavailable, http.StatusServiceUnavailable, nil)
+			return
 		}
 		sendError(w, "Unauthorized", "Invalid or expired code", http.StatusUnauthorized, nil)
 		return
@@ -184,6 +194,14 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	goSafe(func() { _ = h.coreService.RecordLogin(context.Background(), user.ID) }) // #nosec G118
 	sendSuccess(w, resp, "Login successful")
 }
+
+// errMFAVerificationUnavailable is returned (with http.StatusServiceUnavailable)
+// when a storage error kept an MFA verification from reaching a verdict on the
+// code at all (core.ErrMFAVerificationStorageFailure) — deliberately distinct
+// from "Invalid or expired code" (#2548, FIX-1): the caller's credential was
+// never actually checked, so telling them it was wrong would be misleading, and
+// retrying immediately is the correct client behavior for a transient failure.
+const errMFAVerificationUnavailable = "A temporary error occurred while verifying your code. Please try again."
 
 // mfaSafeMessages are the fixed, deliberately client-safe error strings core's
 // MFA functions return for expected failure modes (missing user, already/not

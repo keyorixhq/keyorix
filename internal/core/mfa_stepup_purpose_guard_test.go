@@ -132,7 +132,7 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 			"reading a ClassificationRestricted secret's value. Must reject a MFAStepUpPurposeReauth grant " +
 			"(minted only for account-security changes) -- the two purposes must never satisfy each other.",
 	},
-	"internal/core/mfa_stepup.go:89": {
+	"internal/core/mfa_stepup.go:120": {
 		expectedPurpose: "",
 		reason: "HasActiveMFAStepUp's own implementation: forwards the `purpose` PARAMETER it was called " +
 			"with straight through to storage.GetActiveMFAStepUpGrant. This is the shared primitive, not a " +

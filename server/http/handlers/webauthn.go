@@ -271,6 +271,13 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 			if reserved {
 				h.coreService.ReleaseLoginAttempt(r.Context(), attemptID)
 			}
+			// FIX-1 (#2548 sibling, consistency with VerifyMFA/MFAStepUp): a storage
+			// error never reached a verdict on the assertion — see
+			// errMFAVerificationUnavailable's doc (mfa.go). Reused here rather than
+			// a separate constant: the message is about retrying a second-factor
+			// check generically, not specific to TOTP.
+			sendError(w, "ServiceUnavailable", errMFAVerificationUnavailable, http.StatusServiceUnavailable, nil)
+			return
 		}
 		sendError(w, "Unauthorized", "Assertion failed or challenge expired", http.StatusUnauthorized, nil)
 		return
