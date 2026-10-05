@@ -1055,6 +1055,60 @@ var knownOpenTolerances = []knownOpenTolerance{
 		tables:     []string{"AccessReviewItem"},
 		findingDoc: "#2606",
 	},
+	// ---- SESSION ORACLE-A-1, item 1: unblock the merge queue --------------
+	// Two pre-existing oracle (a) error-branch findings landed on main unfixed
+	// (SESSION-STALE-PR-1: both were found on PRs that touched neither code
+	// path -- #2719 and #2461 -- and both merged with the fuzz leg red, so they
+	// now fail UNRELATED PRs at random). Both confirmed to reproduce on
+	// pristine main at 98031965 by direct replay before these entries were
+	// written, so neither is caused by any open PR.
+	//
+	// Both are the SAME shape, and the shape is one this repo has ALREADY
+	// reviewed, classified and machine-enforced as correct:
+	// docs/atomicity-exempt.tsv class B, "consume-first by design: a single-use
+	// value is consumed BEFORE later work and must stay consumed even if later
+	// work fails (replay protection)". Both functions carry their own
+	// `// atomicity: consume-first by design` marker comment and a verifying
+	// *_FailsClosed test. Oracle (a)'s error branch has no knowledge of that
+	// ledger, so it reads a deliberately-retained consumption as a partial
+	// commit -- the same harness-oracle gap as #2549's stepup entry above, not
+	// a product bug. "Fixing" either by rolling the consume back into the
+	// transaction would un-consume a single-use token on a later failure,
+	// which is precisely what class B and those tests forbid.
+	//
+	// Each entry is scoped to ONE op + ONE storage method + ONE fault kind +
+	// ONE nth + the exact tables the consumption can touch: a diff that
+	// includes anything else is a DIFFERENT finding and must still fail
+	// loudly. Remove each when its issue is resolved (see this session's
+	// report: the recommended resolution is to teach oracle (a) the class-B
+	// ledger, not to change either function).
+	//
+	// #2817: DisableMFA (internal/core/mfa.go) runs requireReauth -- itself a
+	// class-B row (atomicity-exempt.tsv:61) -- BEFORE the
+	// SetUserMFAEnabled+DeleteMFAForUser transaction. requireReauth's
+	// MarkTOTPStepUsed burns the matched TOTP time-step
+	// (MFASecret.LastUsedStep) and writes an "mfa.reauth_verified" AuditEvent
+	// on c.storage, outside that transaction, so a DeleteMFAForUser error
+	// rolls the disable back and correctly leaves the step burned.
+	{
+		op: "REST POST /api/v1/auth/mfa/disable", method: "DeleteMFAForUser", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2817", expires: "2026-10-17",
+		tables:     []string{"AuditEvent", "MFASecret"},
+		findingDoc: "#2817",
+	},
+	// #2814: CompleteSAML (internal/core/sso.go) is itself a class-B row
+	// (atomicity-exempt.tsv:76) -- ConsumeSSOLoginState burns the single-use
+	// RelayState row first, by design, because st.Nonce is what the
+	// InResponseTo check validates against and a replayable state row would
+	// let a captured (RelayState, SAMLResponse) pair re-drive user
+	// resolution/provisioning. A GetUserByUsername error inside
+	// resolveSSOUser therefore fails closed with the state correctly consumed.
+	{
+		op: "REST POST /auth/saml/{provider}/acs", method: "GetUserByUsername", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2814", expires: "2026-10-17",
+		tables:     []string{"SSOLoginState"},
+		findingDoc: "#2814",
+	},
 }
 
 func matchingKnownOpen(in oracleInput, oracle string, diff []string) *knownOpenTolerance {
