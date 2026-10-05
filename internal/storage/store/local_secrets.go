@@ -463,16 +463,52 @@ func (ls *LocalStorage) CreateSecret(ctx context.Context, secret *models.SecretN
 	return secret, nil
 }
 
-// GetSecret retrieves a secret by ID.
+// GetSecret retrieves a secret by ID. Served from the read-path metadata
+// cache (PERF-3, docs/specs/read-path-caching.md) when a live, indexed
+// generation-check confirms the cached row is still current; any miss
+// (cold cache, stale generation, not-found, or a generation-check error
+// itself) falls through to the exact live read this method always did. A
+// generation-check error is always treated as a miss, never as "assume
+// unchanged" — see secret_metadata_cache.go's liveNodeGeneration doc comment.
 func (ls *LocalStorage) GetSecret(ctx context.Context, id uint) (*models.SecretNode, error) {
+	if secret, ok := ls.getCachedSecret(ctx, id); ok {
+		return secret, nil
+	}
 	var secret models.SecretNode
 	if err := ls.db.WithContext(ctx).First(&secret, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			ls.secretMetaCache.evictNode(id)
 			return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
-	return &secret, nil
+	// The generation is this row's own (updated_at, read_count), taken from the
+	// very row the query returned — a same-row stamp, so there is no window
+	// between reading the data and reading the stamp for a write to commit
+	// into. Reading the stamp in a SEPARATE later query is the bug class
+	// GUARD-6 exists for: it would cache this pre-change row under a
+	// post-change stamp.
+	cp := secret
+	ls.secretMetaCache.setNode(id, nodeGeneration{updatedAt: secret.UpdatedAt, readCount: secret.ReadCount}, &cp)
+	cp2 := secret
+	return &cp2, nil
+}
+
+// getCachedSecret returns (a defensive copy of the cached row, true) on a
+// confirmed-current cache hit with a populated node, or (nil, false) on any
+// miss. Callers must treat false exactly like a cold cache — do the full live
+// read.
+func (ls *LocalStorage) getCachedSecret(ctx context.Context, id uint) (*models.SecretNode, bool) {
+	cached, ok := ls.secretMetaCache.getNode(id)
+	if !ok || cached.node == nil {
+		return nil, false
+	}
+	liveGen, found, err := liveNodeGeneration(ctx, ls.db, id)
+	if err != nil || !found || !liveGen.equal(cached.generation) {
+		return nil, false
+	}
+	cp := *cached.node
+	return &cp, true
 }
 
 // GetSecretsByIDs batch-fetches secrets by ID in one query — the batch form of
@@ -965,6 +1001,17 @@ func (ls *LocalStorage) CreateSecretVersion(ctx context.Context, version *models
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	// No secret_nodes touch here, deliberately. An earlier revision bumped the
+	// node's updated_at from this method so the latest-version cache would be
+	// invalidated by a new version; that is now unnecessary (the version cache's
+	// generation is derived from the version rows themselves — see
+	// secret_metadata_cache.go's liveVersionsGeneration) and was actively
+	// harmful: it put a second UPDATE on one shared secret_nodes row inside
+	// rotation's transaction, and made invalidation depend on the stored
+	// timestamp's RESOLUTION, which storeNextSecretVersion's retry loop
+	// re-entered fast enough to tie
+	// (TestConcurrency_RotateSecret_NoDuplicateVersionNumbers, red in CI on
+	// 86dea1220).
 	return version, nil
 }
 
@@ -979,14 +1026,53 @@ func (ls *LocalStorage) GetSecretVersions(ctx context.Context, secretID uint) ([
 
 // GetLatestSecretVersion retrieves the most recent version of a secret.
 func (ls *LocalStorage) GetLatestSecretVersion(ctx context.Context, secretID uint) (*models.SecretVersion, error) {
+	if version, hit := ls.getCachedLatestVersion(ctx, secretID); hit {
+		if version == nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorVersionNotFound", nil), storage.ErrSecretVersionNotFound)
+		}
+		cp := *version
+		return &cp, nil
+	}
+	// Read the generation BEFORE the version query (coordinator review of
+	// #2764): a rotation committing between the two would otherwise cache the
+	// pre-rotation version under the post-rotation generation, and the old value
+	// would keep being served. Read first, a race can only produce an entry under
+	// an already-stale generation, which never hits.
+	liveGen, genErr := liveVersionsGeneration(ctx, ls.db, secretID)
 	var version models.SecretVersion
-	if err := ls.db.WithContext(ctx).Where(sqlWhereSecretNodeID, secretID).Order("version_number DESC").First(&version).Error; err != nil {
+	err := ls.db.WithContext(ctx).Where(sqlWhereSecretNodeID, secretID).Order("version_number DESC").First(&version).Error
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			if genErr == nil {
+				ls.secretMetaCache.setVersion(secretID, liveGen, nil)
+			}
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorVersionNotFound", nil), storage.ErrSecretVersionNotFound)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
+	// Only cache when the generation read itself succeeded — never cache
+	// against a generation-check error (fail closed: an uncached version is
+	// simply a future cache miss, never a correctness problem).
+	if genErr == nil {
+		cp := version
+		ls.secretMetaCache.setVersion(secretID, liveGen, &cp)
+	}
 	return &version, nil
+}
+
+// getCachedLatestVersion returns (version, true) on a confirmed-current hit
+// — version is nil when the cache has already confirmed "no version exists"
+// for the current generation. Returns (nil, false) on any miss.
+func (ls *LocalStorage) getCachedLatestVersion(ctx context.Context, secretID uint) (*models.SecretVersion, bool) {
+	cached, ok := ls.secretMetaCache.getVersion(secretID)
+	if !ok || !cached.hasVersion {
+		return nil, false
+	}
+	liveGen, err := liveVersionsGeneration(ctx, ls.db, secretID)
+	if err != nil || liveGen != cached.generation {
+		return nil, false
+	}
+	return cached.latestVersion, true
 }
 
 // IncrementSecretReadCount atomically increments the read counter for a secret version.
