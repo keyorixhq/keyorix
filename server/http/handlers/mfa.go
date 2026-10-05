@@ -218,6 +218,7 @@ func (h *AuthHandler) verifyMFALoginReleasingOnPanic(ctx context.Context, challe
 	}()
 	return h.coreService.VerifyMFALogin(ctx, challenge, code, userAgent, ip)
 }
+
 // errMFAVerificationUnavailable is returned (with http.StatusServiceUnavailable)
 // when a storage error kept an MFA verification from reaching a verdict on the
 // code at all (core.ErrMFAVerificationStorageFailure) — deliberately distinct
