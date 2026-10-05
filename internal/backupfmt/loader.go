@@ -86,7 +86,20 @@ func checkSchemaDelta(modelName string, currentColumns []string, archived TableE
 // and loads normally; recordSchemaEpoch is the ONLY migrateDatabase call
 // site that seeds this table (confirmed by inspection), so this single,
 // named exclusion is complete, not a guess.
+//
+// ADR-101 added a second key recordSchemaEpoch upserts in the SAME statement,
+// schemaMinCompatibleEpochMetadataKey below: the compatibility floor of the
+// schema the target's own migration just produced. It is skipped for the
+// identical reason -- it describes the restoring binary's schema, not
+// portable data -- and loading the archive's copy would also hit the same
+// UNIQUE constraint. These two keys are the complete set recordSchemaEpoch
+// writes.
 const schemaEpochMetadataKey = "schema_epoch"
+
+// schemaMinCompatibleEpochMetadataKey mirrors internal/storage's unexported
+// constant of the same name (ADR-101) -- byte-for-byte, same reason as
+// schemaEpochMetadataKey above.
+const schemaMinCompatibleEpochMetadataKey = "schema_min_compatible_epoch"
 
 // systemMetadataTableName is SystemMetadata's GORM table name -- the one
 // table loadTable applies the schemaEpochMetadataKey skip to.
@@ -108,7 +121,8 @@ const systemMetadataTableName = "system_metadata"
 // row-count sanity check below stays a check on "did the staged file match
 // what was verified," not silently weakened by this one exclusion.
 // isSystemMetadataSchemaEpochRow reports whether rowPtr (a freshly-decoded
-// row for table tableName) is system_metadata's own schema_epoch row --
+// row for table tableName) is one of system_metadata's own schema_epoch /
+// schema_min_compatible_epoch rows (the two recordSchemaEpoch writes) --
 // via reflection on a "Key" field, not a models.SystemMetadata type
 // assertion, so this package doesn't need to import internal/storage/models
 // for one narrow check.
@@ -117,7 +131,11 @@ func isSystemMetadataSchemaEpochRow(tableName string, rowPtr reflect.Value) bool
 		return false
 	}
 	keyField := rowPtr.Elem().FieldByName("Key")
-	return keyField.IsValid() && keyField.Kind() == reflect.String && keyField.String() == schemaEpochMetadataKey
+	if !keyField.IsValid() || keyField.Kind() != reflect.String {
+		return false
+	}
+	k := keyField.String()
+	return k == schemaEpochMetadataKey || k == schemaMinCompatibleEpochMetadataKey
 }
 
 func loadTable(db *gorm.DB, model any, entry TableEntry, stagingDir string) (int64, error) {
