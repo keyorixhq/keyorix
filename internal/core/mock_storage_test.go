@@ -1912,8 +1912,8 @@ func (m *MockStorage) ListRotationPolicies(ctx context.Context, projectID *uint,
 	return args.Get(0).([]*models.RotationPolicy), args.Error(1)
 }
 
-func (m *MockStorage) UpdateRotationPolicy(_ context.Context, _ *models.RotationPolicy) error {
-	return nil
+func (m *MockStorage) UpdateRotationPolicyFields(_ context.Context, _ uint, _ storage.RotationPolicyFieldUpdate, _ time.Time) (bool, error) {
+	return true, nil
 }
 
 func (m *MockStorage) DeleteRotationPolicy(_ context.Context, _ uint) error {
@@ -2342,8 +2342,11 @@ func (m *MockStorage) GetWebAuthnCredentialByCredID(_ context.Context, _ []byte,
 func (m *MockStorage) LockWebAuthnCredentialForUpdate(_ context.Context, _ []byte, _ uint) (*models.WebAuthnCredential, error) {
 	return nil, nil
 }
-func (m *MockStorage) UpdateWebAuthnCredential(_ context.Context, _ *models.WebAuthnCredential) error {
-	return nil
+func (m *MockStorage) DisableWebAuthnCredential(_ context.Context, _ uint) (bool, error) {
+	return true, nil
+}
+func (m *MockStorage) SetWebAuthnCredentialCounterState(_ context.Context, _ uint, _ []byte, _ time.Time) (bool, error) {
+	return true, nil
 }
 func (m *MockStorage) AdvanceWebAuthnCredentialCounter(_ context.Context, _ []byte, _ uint, _ []byte, _ uint32, _ time.Time) (bool, error) {
 	return false, nil

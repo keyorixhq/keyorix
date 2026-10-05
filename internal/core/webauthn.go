@@ -17,6 +17,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -737,10 +738,21 @@ func (c *KeyorixCore) rejectIfCloned(ctx context.Context, userID uint, cred *web
 // call scopes ownership by construction; MarkWebAuthnCredentialClonedByLookup
 // below does the same for a caller that only has (credentialID, userID)).
 func (c *KeyorixCore) markWebAuthnCredentialClonedDisabled(ctx context.Context, row *models.WebAuthnCredential, ip string) error {
-	row.Disabled = true
-	if err := c.storage.UpdateWebAuthnCredential(ctx, row); err != nil {
+	// #2700: write `disabled` alone. The previous full-row Save re-INSERTED a
+	// passkey the user had concurrently deleted (WebAuthnCredential is hard-
+	// deleted, so Save's 0-rows fallback upserts it back). A no-match means the
+	// credential is already gone — nothing to disable, and nothing to audit as
+	// disabled either, so report it rather than claiming a mutation that did not
+	// happen. The caller's rejectIfCloned path already audits the clone signal
+	// separately for the credential-missing case.
+	matched, err := c.storage.DisableWebAuthnCredential(ctx, row.ID)
+	if err != nil {
 		return err
 	}
+	if !matched {
+		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+	}
+	row.Disabled = true
 	uid := row.UserID
 	c.writeAuditEventFull(ctx, EventWebAuthnCloneDetected, &uid, nil, nil, ip,
 		fmt.Sprintf("authentication refused for user %d: signature-counter regression (possible cloned authenticator) — credential disabled pending re-registration", row.UserID))
