@@ -196,6 +196,20 @@ type LocalStorage struct {
 	// fails closed (no caching) rather than open (caching from inside a
 	// transaction).
 	cacheEnabled bool
+	// nodeStampProbe is cacheEnabled's per-cache companion for the node cache
+	// specifically: the node stamp is only a stamp while secret_nodes'
+	// cache_epoch trigger exists, and without it the stamp is frozen so every
+	// hit would serve the row as first read. See
+	// SecretNodeCacheEpochTriggerPresent for the two ways a real database ends
+	// up with the column but not the trigger.
+	//
+	// Resolved LAZILY, on first use, not in NewLocalStorage: that constructor
+	// deliberately performs no I/O, and tests rely on it (the dialect-SQL tests
+	// capture every statement a handle issues and assert on the count, and one
+	// of them builds an unconnected DryRun handle on purpose). nil on a derived
+	// store, which therefore never trusts the stamp — same fail-closed shape as
+	// cacheEnabled.
+	nodeStampProbe *nodeStampProbe
 }
 
 // clockWatermark pairs a mutex with the time.Time it guards, so a single
@@ -225,6 +239,10 @@ func NewLocalStorage(db *gorm.DB) *LocalStorage {
 		// The ONLY place this is set. See the field's doc comment: every derived
 		// or transaction-scoped LocalStorage must leave it false.
 		cacheEnabled: true,
+		// Fail closed: without the trigger the node stamp never moves, so the
+		// node cache must not be used at all. Probed on first use, not here —
+		// see the field's doc comment.
+		nodeStampProbe: &nodeStampProbe{},
 	}
 }
 
