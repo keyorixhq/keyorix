@@ -59,8 +59,10 @@ defect too, found in #2764/#2767's own CI and fixed there (`4b31a9d6`, `34495c0d
 - `secret_nodes.updated_at` alone misses `TryIncrementSecretNodeReadCount`, whose
   `UpdateColumn` write bypasses GORM's auto-timestamp callback. A warm entry served
   `read_count=0` forever, and `RotateSecret`'s `GetSecret` → mutate → `Save()` wrote that
-  stale zero back — a fresh budget for a burn-after-N-reads secret. Fixed by making the
-  node stamp `(updated_at, read_count)`.
+  stale zero back — a fresh budget for a burn-after-N-reads secret. The node stamp is now
+  `secret_nodes.cache_epoch`, maintained by a database trigger — see §1.1.1, which supersedes
+  the `(updated_at, read_count)` and content-derived stamps this document originally
+  described for this cache.
 - the latest-version cache borrowed `secret_nodes.updated_at`, so **no** version writer moved
   it; the mitigation (bump it from `CreateSecretVersion`) made invalidation depend on the
   stored timestamp's *resolution*, and `storeNextSecretVersion`'s retry loop re-entered fast
@@ -76,13 +78,78 @@ defect too, found in #2764/#2767's own CI and fixed there (`4b31a9d6`, `34495c0d
 Three rules fall out, and §2 builds them into the helper's contract rather than restating
 them:
 
-1. **Derive the stamp from the cached columns.** A timestamp is a stamp only for writers that
-   advance it; enumerate the ones that do not (`UpdateColumn`/`UpdateColumns` and raw SQL) and
-   either include their columns in the stamp or make them unreachable.
+1. **Derive the stamp from something every writer moves.** A timestamp is a stamp only for
+   writers that advance it; enumerate the ones that do not (`UpdateColumn`/`UpdateColumns` and
+   raw SQL) and either cover them or make them unreachable. For a wide, frequently-written
+   table the answer is a trigger-maintained counter, not an enumeration — §1.1.1.
 2. **No clock in a stamp for a table written in a tight loop.** Resolution ties are
    indistinguishable from "nothing changed".
 3. **A stamp must be deterministic.** A clock- or randomness-derived stamp is invisible to
    every state-comparison oracle in this repo, which means it silently disables them.
+
+#### 1.1.1 For a wide row, the stamp is a trigger-maintained counter, not derived content
+
+**Decision (Andrei, 2026-10-05). Code lands with #2764; this section is the normative rule from
+now on.** `secret_nodes` gained `cache_epoch BIGINT NOT NULL DEFAULT 0`, bumped by a database
+trigger on every UPDATE. The node cache's generation is that column alone.
+
+Rule 1 above says "derive the stamp from the cached columns". Taken literally for a 25-column
+row, that produces a stamp whose read costs as much as the row read it was meant to avoid:
+
+| node stamp | cache hit | cache miss (the row read) |
+|---|---|---|
+| `updated_at` only (incorrect — misses `UpdateColumn`) | 6.0–6.5 µs | 23.3–23.9 µs |
+| all 25 persisted columns (correct, but) | **24.6–25.5 µs** | 23.1–23.5 µs |
+| `cache_epoch` trigger (correct) | 6.6–7.4 µs | 24.3–25.7 µs |
+
+A hit that costs *more than a miss* is a pessimisation wearing a cache's name. So for a wide
+row the rule is: **make the database maintain a single integer that moves on every write**, and
+stamp on that.
+
+Every Go-side alternative was tried first and has a hole:
+
+- `updated_at` misses `UpdateColumn`/`UpdateColumns`, which bypass GORM's auto-timestamp
+  callback. That is the original bug.
+- a `BeforeUpdate` hook calling `SetColumn` is **silently a no-op for a full-struct `Save()`**,
+  which is what `UpdateSecret` uses.
+- bumping it at each write site requires every current and future writer to remember, raw
+  `db.Exec` included: opt-in correctness, this codebase's recurring defect shape.
+
+A trigger has none of them: `Save()`, `Updates()`, `UpdateColumn()` and raw SQL are covered
+identically, with no Go code to forget. Keep the column **read-only to GORM** (`gorm:"<-:false"`)
+— a full-struct `Save()` of a stale struct would otherwise roll the stamp *backwards*, which is
+worse than not bumping it, because an entry stamped with the higher value starts matching again.
+
+Two dialect forms, both load-bearing: Postgres gets a BEFORE UPDATE trigger assigning
+`NEW.cache_epoch`; SQLite **cannot** (a SQLite trigger body may only run
+INSERT/UPDATE/DELETE/SELECT, never assign to `NEW`), so it gets an AFTER UPDATE trigger issuing
+a nested single-row UPDATE with `WHEN NEW.cache_epoch = OLD.cache_epoch` as the recursion guard.
+
+**A stamp a trigger maintains must be probed for, and its absence must disable the cache.** A
+database with the *column* but not the *trigger* has a stamp frozen at 0 forever, so every hit
+serves the row as first read — indefinitely, with no error and no symptom. That is not
+hypothetical: it is what every bare-`AutoMigrate` test schema looks like, and
+`pg_restore --disable-triggers` or a schema-only restore produces it in production.
+`SecretNodeCacheEpochTriggerPresent` checks for it and the cache is **disabled** when it is
+absent. Any new trigger-stamped cache owes the same fail-closed probe, and any test fixture
+building its own schema owes the `EnsureSecretNodeCacheEpoch` call — a cache test against a
+triggerless schema passes against an *uncached* path, which is a vacuous pass, not a green one.
+That exact vacuity was found in this spec's own race harness (§4): 13 rows were passing with no
+cache in play.
+
+**Where content-derived stamps are still right.** Not everything needs a trigger, and adding one
+costs a column, a trigger pair, an upgrade path and a fail-closed probe per table:
+
+- `secret_access_schedules` — the row is small enough that the stamp covers the *whole* policy
+  (`allowed_days`, `start_hour`, `end_hour`, `timezone`) at no cost, leaving no residual gap: a
+  tie implies an identical policy, so serving the cached one is correct.
+- `secret_versions` — the aggregate `(count, max(version_number), sum(read_count))` has no clock
+  in it and one known residual exception (a DEK rewrap rewrites `encrypted_value` without moving
+  any term, under an exclusive key lock, failing closed). A `secret_versions.cache_epoch` trigger
+  would close it; it is a recommended follow-up, not a current requirement.
+
+The test: **is the row wide enough that reading a content stamp approaches reading the row?** If
+yes, trigger. If no, derive from content and state the residual gap.
 
 ### 1.2 The one legitimate exception
 
