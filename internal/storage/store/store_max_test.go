@@ -1836,16 +1836,21 @@ func TestCreateMachineIdentityCredential_Error(t *testing.T) {
 	require.Error(t, err)
 }
 
-// UpdateMachineIdentityCredential — error path.
-func TestUpdateMachineIdentityCredential_Error(t *testing.T) {
+// SetMachineIdentityCredentialClassification — error path.
+func TestSetMachineIdentityCredentialClassification_Error(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
-	err = ls.UpdateMachineIdentityCredential(context.Background(), &models.MachineIdentityCredential{})
+	// No migrated table: the UPDATE errors, and the method must surface that
+	// rather than reporting a clean no-match (#2696 — a no-match means "the row
+	// moved", which a caller is allowed to treat as a benign concurrent write;
+	// a storage error must never be collapsed into it).
+	matched, err := ls.SetMachineIdentityCredentialClassification(context.Background(), 1, "", "internal")
 	require.Error(t, err)
+	require.False(t, matched)
 }
 
 // ListMachineIdentityCredentials — empty.

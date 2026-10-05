@@ -244,10 +244,22 @@ func (c *KeyorixCore) ClassifyMachineToken(ctx context.Context, projectID, machi
 		return cred, nil // no-op
 	}
 	old := cred.Classification
-	cred.Classification = level
-	if err := c.storage.UpdateMachineIdentityCredential(ctx, cred); err != nil {
+	// #2696: a column-scoped write of `classification` alone, conditional on the
+	// value this function actually read. The previous full-row Save carried every
+	// other column of the unlocked read back with it — `revoked` included — so a
+	// RevokeMachineToken committing on another replica between the read above and
+	// this write was silently reverted and the revoked token authenticated again.
+	// A no-match means the label moved under us; fail closed rather than clobber
+	// the concurrent classifier's value, and write no audit event (nothing of ours
+	// was persisted).
+	matched, err := c.storage.SetMachineIdentityCredentialClassification(ctx, cred.ID, old, level)
+	if err != nil {
 		return nil, err
 	}
+	if !matched {
+		return nil, fmt.Errorf("token classification changed concurrently; re-read and retry")
+	}
+	cred.Classification = level
 	aid, pid := actorID, m.ProjectID
 	diff := fmt.Sprintf(`{"classification":{"before":%q,"after":%q}}`, old, level)
 	c.writeAuditEventDiff(ctx, "machine_identity.token_classified", &aid, nil, &pid, "",
@@ -279,10 +291,18 @@ func (c *KeyorixCore) ClassifyMachineTokenByID(ctx context.Context, credentialID
 		return nil // no-op
 	}
 	old := cred.Classification
-	cred.Classification = level
-	if err := c.storage.UpdateMachineIdentityCredential(ctx, cred); err != nil {
+	// #2696: same column-scoped conditional write as ClassifyMachineToken's —
+	// see its comment. This function has no production caller today, which is
+	// precisely why it must not be left holding the full-row primitive for
+	// whoever adds one.
+	matched, err := c.storage.SetMachineIdentityCredentialClassification(ctx, cred.ID, old, level)
+	if err != nil {
 		return err
 	}
+	if !matched {
+		return fmt.Errorf("token classification changed concurrently; re-read and retry")
+	}
+	cred.Classification = level
 	var pid *uint
 	if m, err := c.storage.GetMachineIdentity(ctx, cred.MachineIdentityID); err == nil {
 		pid = &m.ProjectID
