@@ -839,20 +839,34 @@ func (ls *LocalStorage) RoleSetHasPermission(ctx context.Context, roleIDs []uint
 	if len(roleIDs) == 0 {
 		return false, nil
 	}
-	return cachedRead(ctx, ls.rolePermCache.entries, rolePermKey(roleIDs, permission),
+	// cachedRead itself honours LocalStorage.cacheEnabled, so a
+	// transaction-scoped store neither reads nor writes the shared cache and
+	// falls straight through to liveRoleSetHasPermission below. That check is
+	// in the helper, not here, so it cannot be forgotten at a call site —
+	// read_path_cache_guard_test.go fails the build on any cache access that
+	// bypasses it.
+	return cachedRead(ctx, ls, ls.rolePermCache.entries, rolePermKey(roleIDs, permission),
 		ls.rolePermissionsGeneration(),
 		func(ctx context.Context) (bool, error) {
-			var count int64
-			err := ls.db.WithContext(ctx).Table("permissions").
-				Joins(sqlJoinRolePerms).
-				Where("role_permissions.role_id IN ?", roleIDs).
-				Where("permissions.name = ?", permission).
-				Count(&count).Error
-			if err != nil {
-				return false, fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
-			}
-			return count > 0, nil
+			return ls.liveRoleSetHasPermission(ctx, roleIDs, permission)
 		})
+}
+
+// liveRoleSetHasPermission is the uncached join — the behaviour this method had
+// before PERF-3, and what every cache miss (and every read inside a
+// transaction) falls through to. One function, so the bypass path and the
+// miss path can never drift apart.
+func (ls *LocalStorage) liveRoleSetHasPermission(ctx context.Context, roleIDs []uint, permission string) (bool, error) {
+	var count int64
+	err := ls.db.WithContext(ctx).Table("permissions").
+		Joins(sqlJoinRolePerms).
+		Where("role_permissions.role_id IN ?", roleIDs).
+		Where("permissions.name = ?", permission).
+		Count(&count).Error
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
+	}
+	return count > 0, nil
 }
 
 // rolePermissionsGeneration binds the global role_permissions generation read
@@ -865,11 +879,11 @@ func (ls *LocalStorage) rolePermissionsGeneration() genGeneration[rolePermGenera
 
 // getCachedRolePermission returns (allowed, true) on a confirmed-current cache
 // hit, or (false, false) on any miss — including a generation-check error
-// (fail closed: never trust the cache over a check that itself failed).
-// Read-only probe, through the helper's own hit check so it cannot diverge
-// from what RoleSetHasPermission does.
+// (fail closed: never trust the cache over a check that itself failed) and a
+// transaction-scoped store. Read-only probe, through the helper's own hit
+// check so it cannot diverge from what RoleSetHasPermission does.
 func (ls *LocalStorage) getCachedRolePermission(ctx context.Context, key string) (bool, bool) {
-	return cachedHit(ctx, ls.rolePermCache.entries, key, ls.rolePermissionsGeneration())
+	return cachedHit(ctx, ls, ls.rolePermCache.entries, key, ls.rolePermissionsGeneration())
 }
 
 // RoleSetBypassesPermissionChecks reports whether any role in roleIDs has

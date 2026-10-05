@@ -156,27 +156,36 @@ func (c *genCache[K, G, V]) size() int {
 
 // probe is the ONLY place a generation is read on a read path, and it reads it
 // BEFORE its caller can possibly call a loader — that is how the ordering
-// constraint is enforced structurally rather than remembered.
+// constraint is enforced structurally rather than remembered. It is also the
+// one place LocalStorage.cacheEnabled is consulted, so a transaction-scoped
+// store is cache-free on every path through this file at once.
 //
 // Returns:
 //
 //	value, true,  stamp, true   a confirmed-current hit
 //	_,     false, stamp, true   a miss, with a stamp read strictly before any load
-//	_,     false, _,     false  the generation read failed or found no row: a
-//	                            miss that must NOT be cached under any stamp
+//	_,     false, _,     false  caching is off for this store, or the generation
+//	                            read failed or found no row: a miss that must
+//	                            NOT be cached under any stamp
 func probe[K comparable, G cacheGeneration, V any](
-	ctx context.Context, cache *genCache[K, G, V], key K, gen genGeneration[G],
+	ctx context.Context, ls *LocalStorage, cache *genCache[K, G, V], key K, gen genGeneration[G],
 ) (value V, hit bool, stamp G, stampUsable bool) {
+	var zeroG G
+	var zeroV V
+	// A transaction-scoped store must not read the cache (its own uncommitted
+	// writes are visible live and a hit would hide them) and must not write it
+	// (a rolled-back answer would outlive the transaction). stampUsable=false
+	// gives both at once.
+	if ls == nil || !ls.cacheEnabled || cache == nil {
+		return zeroV, false, zeroG, false
+	}
 	stamp, found, err := gen(ctx)
 	if err != nil || !found {
-		var zeroG G
-		var zeroV V
 		return zeroV, false, zeroG, false
 	}
 	if e, ok := cache.get(key); ok && e.stamp == stamp {
 		return e.value, true, stamp, true
 	}
-	var zeroV V
 	return zeroV, false, stamp, true
 }
 
@@ -205,18 +214,19 @@ func probe[K comparable, G cacheGeneration, V any](
 // it like any other value.
 func cachedRead[K comparable, G cacheGeneration, V any](
 	ctx context.Context,
+	ls *LocalStorage,
 	cache *genCache[K, G, V],
 	key K,
 	gen genGeneration[G],
 	load func(context.Context) (V, error),
 ) (V, error) {
-	cached, hit, stamp, stampUsable := probe(ctx, cache, key, gen)
+	cached, hit, stamp, stampUsable := probe(ctx, ls, cache, key, gen)
 	if hit {
 		return cached, nil
 	}
 	value, err := load(ctx)
 	if err != nil {
-		cache.drop(key)
+		dropIfCaching(ls, cache, key)
 		var zero V
 		return zero, err
 	}
@@ -248,24 +258,42 @@ func cachedRead[K comparable, G cacheGeneration, V any](
 // query it cost before the cache existed rather than two.
 func cachedReadSameRow[K comparable, G cacheGeneration, V any](
 	ctx context.Context,
+	ls *LocalStorage,
 	cache *genCache[K, G, V],
 	key K,
 	gen genGeneration[G],
 	load func(context.Context) (V, G, error),
 ) (V, error) {
-	if _, present := cache.get(key); present {
-		if cached, hit, _, _ := probe(ctx, cache, key, gen); hit {
-			return cached, nil
+	caching := ls != nil && ls.cacheEnabled && cache != nil
+	if caching {
+		if _, present := cache.get(key); present {
+			if cached, hit, _, _ := probe(ctx, ls, cache, key, gen); hit {
+				return cached, nil
+			}
 		}
 	}
 	value, loadedStamp, err := load(ctx)
 	if err != nil {
-		cache.drop(key)
+		dropIfCaching(ls, cache, key)
 		var zero V
 		return zero, err
 	}
-	cache.store(key, loadedStamp, value)
+	if caching {
+		cache.store(key, loadedStamp, value)
+	}
 	return value, nil
+}
+
+// dropIfCaching evicts key when this store owns the cache at all. A
+// transaction-scoped store must not even evict: its view is uncommitted, so a
+// load error it saw says nothing about what the committed state holds, and
+// dropping on it would let a transaction that later rolls back still throw away
+// a perfectly good entry other requests are using.
+func dropIfCaching[K comparable, G cacheGeneration, V any](ls *LocalStorage, cache *genCache[K, G, V], key K) {
+	if ls == nil || !ls.cacheEnabled || cache == nil {
+		return
+	}
+	cache.drop(key)
 }
 
 // cachedHit is probe's hit check with nothing else — the read-only "is this
@@ -274,9 +302,9 @@ func cachedReadSameRow[K comparable, G cacheGeneration, V any](
 // the same reason everything else does: a second, hand-written copy of the
 // hit check is a second place the rules can be got wrong.
 func cachedHit[K comparable, G cacheGeneration, V any](
-	ctx context.Context, cache *genCache[K, G, V], key K, gen genGeneration[G],
+	ctx context.Context, ls *LocalStorage, cache *genCache[K, G, V], key K, gen genGeneration[G],
 ) (V, bool) {
-	value, hit, _, _ := probe(ctx, cache, key, gen)
+	value, hit, _, _ := probe(ctx, ls, cache, key, gen)
 	return value, hit
 }
 
