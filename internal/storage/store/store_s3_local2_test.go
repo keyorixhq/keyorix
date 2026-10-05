@@ -40,8 +40,16 @@ func TestMFA_UpsertGetActivate(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, got.Activated)
 
-	// Activate.
-	require.NoError(t, ls.ActivateMFASecret(ctx, 1))
+	// Activate: a stale ciphertext matches nothing (#2655); the current one does.
+	matched, err := ls.ActivateMFASecret(ctx, 1, []byte("stale-enc"))
+	require.NoError(t, err)
+	assert.False(t, matched)
+	got1, err := ls.GetMFASecret(ctx, 1)
+	require.NoError(t, err)
+	assert.False(t, got1.Activated, "a mismatched ciphertext must not activate the secret")
+	matched, err = ls.ActivateMFASecret(ctx, 1, []byte("enc"))
+	require.NoError(t, err)
+	assert.True(t, matched)
 	got2, err := ls.GetMFASecret(ctx, 1)
 	require.NoError(t, err)
 	assert.True(t, got2.Activated)

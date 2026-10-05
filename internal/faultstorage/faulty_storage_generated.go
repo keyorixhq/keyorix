@@ -27,20 +27,21 @@ func (w *FaultyStorage) AcknowledgeAnomalyAlert(ctx context.Context, id uint, ac
 	return w.real.AcknowledgeAnomalyAlert(ctx, id, actorID, at)
 }
 
-func (w *FaultyStorage) ActivateMFASecret(ctx context.Context, userID uint) error {
+func (w *FaultyStorage) ActivateMFASecret(ctx context.Context, userID uint, secretEnc []byte) (bool, error) {
 	fire, kind, injected := w.check("ActivateMFASecret")
 	if fire {
 		switch kind {
 		case KindPanic:
 			panic(injected)
 		case KindError:
-			return injected
+			var zero1 bool
+			return zero1, injected
 		case KindEffectThenError:
-			_ = w.real.ActivateMFASecret(ctx, userID)
-			return injected
+			rv1, _ := w.real.ActivateMFASecret(ctx, userID, secretEnc)
+			return rv1, injected
 		}
 	}
-	return w.real.ActivateMFASecret(ctx, userID)
+	return w.real.ActivateMFASecret(ctx, userID, secretEnc)
 }
 
 func (w *FaultyStorage) AddPasswordHistory(ctx context.Context, userID uint, hash string, at time.Time) error {

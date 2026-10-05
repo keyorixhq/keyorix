@@ -40,11 +40,11 @@ func (f *failingStorage) WithTransaction(ctx context.Context, fn func(storage.St
 	})
 }
 
-func (f *failingStorage) ActivateMFASecret(ctx context.Context, userID uint) error {
+func (f *failingStorage) ActivateMFASecret(ctx context.Context, userID uint, secretEnc []byte) (bool, error) {
 	if f.failMethod == "ActivateMFASecret" {
-		return errInjectedFailure
+		return false, errInjectedFailure
 	}
-	return f.Storage.ActivateMFASecret(ctx, userID)
+	return f.Storage.ActivateMFASecret(ctx, userID, secretEnc)
 }
 
 func (f *failingStorage) SetUserMFAEnabled(ctx context.Context, userID uint, enabled bool) error {

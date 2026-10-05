@@ -28,9 +28,17 @@ func (ls *LocalStorage) GetMFASecret(ctx context.Context, userID uint) (*models.
 	return &s, nil
 }
 
-func (ls *LocalStorage) ActivateMFASecret(ctx context.Context, userID uint) error {
-	return ls.db.WithContext(ctx).Model(&models.MFASecret{}).
-		Where(sqlWhereUserID, userID).Update("activated", true).Error
+// ActivateMFASecret is a conditional write (#2655): the WHERE re-asserts that
+// the stored secret is still the one the caller validated a code against, so a
+// re-enrolment (UpsertMFASecret) landing in between matches zero rows instead
+// of being activated.
+func (ls *LocalStorage) ActivateMFASecret(ctx context.Context, userID uint, secretEnc []byte) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.MFASecret{}).
+		Where("user_id = ? AND secret_enc = ?", userID, secretEnc).Update("activated", true)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
 }
 
 // MarkTOTPStepUsed atomically advances the user's last-used TOTP step. The single

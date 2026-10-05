@@ -1453,7 +1453,12 @@ type Storage interface {
 	// MFA / TOTP (per-user two-factor authentication).
 	UpsertMFASecret(ctx context.Context, s *models.MFASecret) error
 	GetMFASecret(ctx context.Context, userID uint) (*models.MFASecret, error)
-	ActivateMFASecret(ctx context.Context, userID uint) error
+	// ActivateMFASecret marks userID's TOTP secret activated only if its stored
+	// ciphertext still equals secretEnc, the row ActivateMFA validated the code
+	// against (#2655). matched=false means a concurrent BeginMFAEnrollment
+	// replaced the secret in between; nothing was written and the caller must
+	// fail closed rather than activate a secret no code was checked against.
+	ActivateMFASecret(ctx context.Context, userID uint, secretEnc []byte) (matched bool, err error)
 	// MarkTOTPStepUsed atomically records that the given TOTP time-step was accepted for
 	// userID, returning true only if it was newly consumed (step strictly greater than
 	// the stored last-used step). A false return means the code is a replay.

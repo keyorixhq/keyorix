@@ -51,6 +51,12 @@ var ErrMFARequired = errors.New("mfa required")
 // when that branch was tagged too.
 var ErrMFAVerificationStorageFailure = errors.New("mfa verification storage failure")
 
+// ErrMFAEnrollmentChanged is returned (wrapped) by ActivateMFA when the pending
+// TOTP secret was replaced, e.g. by a concurrent BeginMFAEnrollment, after the
+// submitted code was validated against it (#2655). Nothing was activated; the
+// user must begin enrolment again.
+var ErrMFAEnrollmentChanged = errors.New("MFA enrolment changed during activation; begin enrolment again")
+
 const (
 	mfaIssuer            = "Keyorix"
 	mfaRecoveryCodeCount = 10
@@ -118,7 +124,13 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 	if err := c.requireReauth(ctx, user, password, "activate_reauth"); err != nil {
 		return nil, err
 	}
-	secret, err := c.loadTOTPSecret(ctx, userID)
+	// #2655: keep the validated row's ciphertext so the activation below can
+	// require that exact secret is still the stored one.
+	pending, err := c.storage.GetMFASecret(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("no pending MFA enrolment; begin enrolment first")
+	}
+	secret, err := c.decryptAuthSecret(pending.SecretEnc, pending.SecretMeta, ports.MFASecretAAD(userID))
 	if err != nil {
 		return nil, fmt.Errorf("no pending MFA enrolment; begin enrolment first")
 	}
@@ -140,8 +152,16 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 	// account in an inconsistent state (e.g. MFAEnabled=true with no recovery codes ever
 	// issued, locking the user out with no fallback the moment their device is lost).
 	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
-		if err := tx.ActivateMFASecret(ctx, userID); err != nil {
+		// #2655: a conditional write pinned to the secret the code was just
+		// validated against. A BeginMFAEnrollment on another replica that
+		// replaced it in between (e.g. from a stolen session) matches zero rows;
+		// fail closed so the whole transaction rolls back and MFA stays off.
+		matched, err := tx.ActivateMFASecret(ctx, userID, pending.SecretEnc)
+		if err != nil {
 			return fmt.Errorf("failed to activate MFA: %w", err)
+		}
+		if !matched {
+			return fmt.Errorf("failed to activate MFA: %w", ErrMFAEnrollmentChanged)
 		}
 		if err := tx.SetUserMFAEnabled(ctx, userID, true); err != nil {
 			return fmt.Errorf("failed to enable MFA: %w", err)
