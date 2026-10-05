@@ -1372,6 +1372,39 @@ jobs:
           path: web/playwright-report/
           retention-days: 7
 
+  # repo-guards (2026-10-05): the repo-wide structural guard tests (every
+  # Test...Guard / ...Sweep / ...Completeness test: state-map completeness,
+  # key-material wipe sweep, BeforeSave bypass, check-then-act, MFA step-up
+  # purpose, ...) scan the WHOLE codebase, so a PR can break one without
+  # touching the guarded package. The quick tier only runs affected packages,
+  # so these failures used to surface first inside the merge queue, where each
+  # one restarts every group behind it (~40 min each). They take ~1 min, so
+  # they run on every non-docs PR here. The package list is derived at run
+  # time, so a new guard test is picked up automatically. Not a required check:
+  # the coordinator's merge script holds back PRs whose repo-guards failed, and
+  # merge_group still runs the full suite as the real gate.
+  repo-guards:
+    needs: [changes]
+    if: github.event_name == 'pull_request' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+
+      - name: Run repo-wide guard tests
+        run: |
+          pkgs=$(grep -rlE --include='*_test.go' 'func Test[A-Za-z0-9_]*(Guard|Sweep|Completeness)' ./internal ./server | xargs -n1 dirname | sort -u)
+          echo "guard packages:"; echo "$pkgs"
+          # shellcheck disable=SC2086
+          go test -count=1 -timeout 600s -run '^Test[A-Za-z0-9_]*(Guard|Sweep|Completeness)' $pkgs
+
   lint:
     needs: [changes]
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
