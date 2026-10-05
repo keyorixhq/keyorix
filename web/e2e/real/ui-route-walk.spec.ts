@@ -4,15 +4,23 @@
 // globally + project_viewer on the seeded project, created by
 // scripts/e2e/web-real-smoke.sh's seed_demo_data).
 //
-// Why a second persona, and not just the admin with a flag flipped: almost
-// every page in this app issues at least one API call that a project-scoped
-// account is not permitted to make (server/http/router.go gates
-// GET /api/v1/projects on RequirePermission, i.e. global scope -- a
-// project_viewer gets 403 on it from every single page, because the layout's
-// project switcher asks for it). An admin-only walk cannot see any of that, so
-// it cannot tell a page that renders a clear "you don't have access" state from
-// one that renders a blank panel or spins forever. Those are the two failure
-// shapes a demo audience actually hits, and they are what this file asserts.
+// Why a second persona, and not just the admin with a flag flipped: many pages
+// in this app issue at least one API call that a project-scoped account is not
+// permitted to make, so an admin-only walk cannot tell a page that renders a
+// clear "you don't have access" state from one that renders a blank panel or
+// spins forever. Those are the two failure shapes a demo audience actually
+// hits, and they are what this file asserts.
+//
+// This header used to name GET /api/v1/projects as the example: it was gated on
+// RequirePermission (global scope), so a project_viewer took a 403 on it from
+// every single page, because the layout's project switcher asks for it.
+// PROJ-ACCESS-1 fixed that (#2780) -- that call now serves this persona the
+// projects they can read -- so the example is historical. The reason for the
+// second persona is not: /secrets/rotation, /sharing and the admin panels on
+// /compliance still degrade for it, which is exactly what this walk watches.
+// What this file still deliberately does NOT assert is the dashboard's counts;
+// those are web/e2e/real/project-access-least-privilege.spec.ts's job, which
+// checks them against what GET /api/v1/secrets actually returns.
 //
 // Deliberately NOT asserted: an empty browser console. A legitimate 403 on an
 // API call the page is designed to tolerate produces a browser-level "Failed to
