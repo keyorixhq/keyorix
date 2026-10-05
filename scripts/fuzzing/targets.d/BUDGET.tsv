@@ -17,6 +17,7 @@ internal-core__FuzzSSRFGuardDifferential.conf	high
 internal-libconformance__FuzzDigitorusPKCS7BoundedWork.conf	high
 server-http-handlers-webauthnparse__FuzzWebAuthnCredentialResponse.conf	high
 server-http__FuzzCanarySecretLeakage.conf	high
+internal-core__FuzzCrossReplicaInvariants.conf	high
 
 # low: the target's own targets.d/*.conf comment says it is saturated
 # (+0 or +1 new-interesting per run) as of the comment's own dated
