@@ -70,19 +70,28 @@ func (ls *LocalStorage) CreatePermission(ctx context.Context, permission *models
 	return permission, nil
 }
 
+// AssignPermissionToRole grants permissionID to roleID. Bumps the global
+// role_permissions cache-invalidation generation (PERF-3, PR-2) in the SAME
+// transaction as the grant, so a reader can never observe the new grant
+// under a stale cached "no" decision.
 func (ls *LocalStorage) AssignPermissionToRole(ctx context.Context, roleID, permissionID uint) error {
-	rp := models.RolePermission{RoleID: roleID, PermissionID: permissionID}
-	if err := ls.db.WithContext(ctx).Create(&rp).Error; err != nil {
-		if isUniqueViolation(err) {
-			// role_permissions' composite primary key (role_id, permission_id) is
-			// already held -- see storage.ErrDuplicateRolePermission's doc comment
-			// for why this needs to be distinguishable from any other storage
-			// failure (a generic 500 instead of 409 Conflict).
-			return fmt.Errorf("%w: %v", storage.ErrDuplicateRolePermission, err)
+	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		rp := models.RolePermission{RoleID: roleID, PermissionID: permissionID}
+		if err := tx.Create(&rp).Error; err != nil {
+			if isUniqueViolation(err) {
+				// role_permissions' composite primary key (role_id, permission_id) is
+				// already held -- see storage.ErrDuplicateRolePermission's doc comment
+				// for why this needs to be distinguishable from any other storage
+				// failure (a generic 500 instead of 409 Conflict).
+				return fmt.Errorf("%w: %v", storage.ErrDuplicateRolePermission, err)
+			}
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	return nil
+		if err := bumpRolePermissionsGenerationTx(ctx, &LocalStorage{db: tx}); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		return nil
+	})
 }
 
 // --- Roles ---
@@ -213,6 +222,14 @@ func (ls *LocalStorage) DeleteRole(ctx context.Context, id uint) (storage.RoleDe
 		}
 		counts.MachineAssignments = int(mr.RowsAffected)
 		if err := tx.Where("role_id = ?", id).Delete(&models.RolePermission{}).Error; err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		// PERF-3 PR-2: a deleted role's own grants are gone too; bump the
+		// global generation defensively (see AssignPermissionToRole's doc
+		// comment) even though the deleted role's own membership rows are
+		// also removed in this same transaction, which already keeps any
+		// (roleIDs-including-this-one, permission) cache key unreachable.
+		if err := bumpRolePermissionsGenerationTx(ctx, &LocalStorage{db: tx}); err != nil {
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
 		if err := tx.Where("role_id = ?", id).Delete(&models.ConnectRefGrant{}).Error; err != nil {
@@ -803,9 +820,21 @@ func (ls *LocalStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, 
 
 // RoleSetHasPermission reports whether any role in roleIDs grants the named
 // permission (e.g. "secrets.read") via the role_permissions join.
+// RoleSetHasPermission reports whether any role in roleIDs grants permission.
+// Served from the read-path "principal permissions" cache (PERF-3,
+// docs/specs/read-path-caching.md PR-2) when a live global generation check
+// confirms no role_permissions edit has happened since this exact
+// (roleIDs, permission) pair was last resolved; any miss (cold cache, stale
+// generation, or a generation-check error) falls through to the exact live
+// join this method always ran. See role_permission_cache.go's header for why
+// only the role→permission MAPPING is cached here, never role membership.
 func (ls *LocalStorage) RoleSetHasPermission(ctx context.Context, roleIDs []uint, permission string) (bool, error) {
 	if len(roleIDs) == 0 {
 		return false, nil
+	}
+	key := rolePermKey(roleIDs, permission)
+	if allowed, hit := ls.getCachedRolePermission(ctx, key); hit {
+		return allowed, nil
 	}
 	var count int64
 	err := ls.db.WithContext(ctx).Table("permissions").
@@ -816,7 +845,27 @@ func (ls *LocalStorage) RoleSetHasPermission(ctx context.Context, roleIDs []uint
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
 	}
-	return count > 0, nil
+	allowed := count > 0
+	if gen, genErr := liveRolePermissionsGeneration(ctx, ls); genErr == nil {
+		ls.rolePermCache.set(key, rolePermCacheEntry{generation: gen, allowed: allowed})
+	}
+	return allowed, nil
+}
+
+// getCachedRolePermission returns (allowed, true) on a confirmed-current
+// cache hit, or (false, false) on any miss — including a generation-check
+// error (fail closed: never trust the cache over a check that itself
+// failed).
+func (ls *LocalStorage) getCachedRolePermission(ctx context.Context, key string) (bool, bool) {
+	cached, ok := ls.rolePermCache.get(key)
+	if !ok {
+		return false, false
+	}
+	liveGen, err := liveRolePermissionsGeneration(ctx, ls)
+	if err != nil || liveGen != cached.generation {
+		return false, false
+	}
+	return cached.allowed, true
 }
 
 // RoleSetBypassesPermissionChecks reports whether any role in roleIDs has
@@ -891,17 +940,22 @@ func (ls *LocalStorage) GetRolePermissions(ctx context.Context, roleID uint) ([]
 }
 
 // RemovePermissionFromRole removes a permission from a role.
+// RemovePermissionFromRole revokes permissionID from roleID. Bumps the
+// global role_permissions cache generation (PERF-3, PR-2) in the SAME
+// transaction as the revoke — see AssignPermissionToRole's doc comment.
 func (ls *LocalStorage) RemovePermissionFromRole(ctx context.Context, roleID, permissionID uint) error {
-	result := ls.db.WithContext(ctx).
-		Where("role_id = ? AND permission_id = ?", roleID, permissionID).
-		Delete(&models.RolePermission{})
-	if result.Error != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
-	}
-	return nil
+	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.
+			Where("role_id = ? AND permission_id = ?", roleID, permissionID).
+			Delete(&models.RolePermission{})
+		if result.Error != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		}
+		return bumpRolePermissionsGenerationTx(ctx, &LocalStorage{db: tx})
+	})
 }
 
 // GetGroupRoles returns all roles assigned to a group.

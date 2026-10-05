@@ -35,6 +35,7 @@ func (ls *LocalStorage) WithTransaction(ctx context.Context, fn func(storage.Sto
 			// TestWithTransaction_CloneNeverInheritsAuditSkipDurableSync is the
 			// guard; a future refactor to a `clone := *ls` whole-struct copy
 			// would break it and must re-read this.
+			rolePermCache:         ls.rolePermCache,
 		})
 	})
 }
