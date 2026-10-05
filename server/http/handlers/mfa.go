@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -166,7 +167,13 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	// already shows the same orphaned-LoginAttempt-row symptom GetMFASecret's
 	// finding did — see docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md.
 	attemptID, reserved := h.coreService.ReserveLoginAttempt(r.Context(), ip)
-	session, user, err := h.coreService.VerifyMFALogin(r.Context(), body.Challenge, body.Code, r.Header.Get("User-Agent"), ip)
+	// CR3's release-on-error only covers a RETURNED storage error; a PANIC inside
+	// VerifyMFALogin (e.g. ConsumeMFAChallenge#1/panic, FuzzStorageFaultOperations)
+	// skips the err!=nil branch below entirely, bypassing ReleaseLoginAttempt the exact
+	// same way the CR3 finding did — see FinishWebAuthnLogin's identical sibling fix
+	// (webauthn.go) for the full reasoning; this is the same release-only-pre-verdict
+	// rule applied to VerifyMFA's own reservation.
+	session, user, err := h.verifyMFALoginReleasingOnPanic(r.Context(), body.Challenge, body.Code, r.Header.Get("User-Agent"), ip, reserved, attemptID)
 	if err != nil {
 		if reserved && errors.Is(err, core.ErrMFAVerificationStorageFailure) {
 			h.coreService.ReleaseLoginAttempt(r.Context(), attemptID)
@@ -183,6 +190,22 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	}) // #nosec G118
 	goSafe(func() { _ = h.coreService.RecordLogin(context.Background(), user.ID) }) // #nosec G118
 	sendSuccess(w, resp, "Login successful")
+}
+
+// verifyMFALoginReleasingOnPanic calls core.VerifyMFALogin, releasing the reserved
+// login-attempt slot and re-panicking unchanged if the call panics instead of
+// returning — see VerifyMFA's call-site comment, and FinishWebAuthnLogin's identical
+// sibling (webauthn.go), for why this exists.
+func (h *AuthHandler) verifyMFALoginReleasingOnPanic(ctx context.Context, challenge, code, userAgent, ip string, reserved bool, attemptID uint) (session *models.Session, user *models.User, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			if reserved {
+				h.coreService.ReleaseLoginAttempt(ctx, attemptID)
+			}
+			panic(rec)
+		}
+	}()
+	return h.coreService.VerifyMFALogin(ctx, challenge, code, userAgent, ip)
 }
 
 // mfaSafeMessages are the fixed, deliberately client-safe error strings core's
