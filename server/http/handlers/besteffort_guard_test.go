@@ -4,7 +4,7 @@
 // internal/besteffortguard.
 //
 // This package currently has ZERO hits, and that is a real result rather than a
-// dead check: the scan detects writes in 132 of its 584 functions and finds 34
+// dead check: the scan detects writes in 132 of its 584 functions and finds 29
 // discard sites, but every one of those discards textually PRECEDES its
 // function's last write, so none can misreport an already-committed operation.
 //
@@ -36,7 +36,7 @@ const (
 	besteffortWriteReceiverField = "coreService"
 
 	// Floors: see the package comment. Current values are 132 functions with a
-	// detected write and 34 discard sites; these sit well below that so routine
+	// detected write and 29 discard sites; these sit well below that so routine
 	// handler churn doesn't trip them, and far enough above zero that a broken
 	// matcher does.
 	besteffortMinFuncsWithWrite = 90

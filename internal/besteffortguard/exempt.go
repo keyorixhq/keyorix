@@ -95,15 +95,22 @@ func LoadExemptions(path, pkgPrefix string) (map[Key]Exemption, error) {
 	return out, nil
 }
 
+// exemptRowColumns is the full row width: key, guard, reason, added_by,
+// reviewed_by. The last two are consumed by
+// internal/core/exempt_ledger_review_test.go, not here -- that test is what
+// enforces "a different session vouched for this claim". This loader only
+// insists they EXIST, so a row cannot be added in a shape that test would skip.
+const exemptRowColumns = 5
+
 func splitExemptionRow(path string, lineNo int, trimmed string) (rawKey, guard, reason string, err error) {
 	fields := strings.Split(trimmed, "\t")
-	if len(fields) < 3 {
-		return "", "", "", fmt.Errorf("besteffortguard: %s:%d: expected 3 tab-separated fields (<package>:<function>#<callee>, guard, reason), got %d in %q",
-			path, lineNo, len(fields), trimmed)
+	if len(fields) != exemptRowColumns {
+		return "", "", "", fmt.Errorf("besteffortguard: %s:%d: expected %d tab-separated fields (<package>:<function>#<callee>, guard, reason, added_by, reviewed_by), got %d in %q",
+			path, lineNo, exemptRowColumns, len(fields), trimmed)
 	}
 	rawKey = strings.TrimSpace(fields[0])
 	guard = strings.TrimSpace(fields[1])
-	reason = strings.TrimSpace(strings.Join(fields[2:], " "))
+	reason = strings.TrimSpace(fields[2])
 	if !strings.Contains(rawKey, ":") || !strings.Contains(rawKey, "#") {
 		return "", "", "", fmt.Errorf("besteffortguard: %s:%d: key %q must be \"<package>:<function>#<callee>\"", path, lineNo, rawKey)
 	}

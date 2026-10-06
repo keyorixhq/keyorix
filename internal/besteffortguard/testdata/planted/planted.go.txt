@@ -33,8 +33,36 @@ type store struct{}
 func (store) CreateThing() error { return nil }
 func (store) GetThing() error    { return nil }
 
+// selfRecoveringHelper is NOT panic-safe despite the name: its body has no
+// deferred recover. The name is deliberate — the scanner must judge by the
+// body, never by what a function is called.
 func (s *svc) selfRecoveringHelper() error { return nil }
 func (s *svc) voidHelper()                 {}
+
+// genuinelyRecovers IS panic-safe: its own body defers a recover(), so a
+// caller discarding its result after a committed write is not a finding. This
+// is the DERIVED protection that replaced a family of exemption rows (#2561).
+func (s *svc) genuinelyRecovers() error {
+	defer func() { _ = recover() }()
+	return nil
+}
+
+// recoversViaBestEffort is panic-safe through besteffort.RunRecover, the
+// function-wide guard shape goSafe's own goroutine body uses.
+func (s *svc) recoversViaBestEffort() error {
+	defer besteffort.RunRecover("thing")()
+	return nil
+}
+
+// delegatesToRecoverer calls a recoverer but does NOT itself defer one, so it
+// is NOT panic-safe: the recover in its callee protects only that callee, and
+// a panic anywhere else in this body still escapes. An earlier draft of the
+// safety rule was transitive and wrongly cleared this shape — which marked 365
+// of internal/core's 1430 functions "safe".
+func (s *svc) delegatesToRecoverer() error {
+	_ = s.genuinelyRecovers()
+	return nil
+}
 
 // --- POSITIVES: each one must produce exactly one hit ------------------------
 
@@ -181,5 +209,39 @@ func (s *svc) MustNotFlagDiscardAfterReadOnlyCall() error {
 		return err
 	}
 	_ = s.selfRecoveringHelper()
+	return nil
+}
+
+// MustNotFlagDiscardOfDerivedSafeCallee: the callee's OWN body defers a
+// recover(), so a panic in it cannot reach this already-committed caller. This
+// is DERIVED, not exempted — strictly stronger than a row, because deleting
+// genuinelyRecovers' defer turns this back into a finding, whereas an
+// exemption row would have kept pardoning it.
+func (s *svc) MustNotFlagDiscardOfDerivedSafeCallee() error {
+	if err := s.storage.CreateThing(); err != nil {
+		return err
+	}
+	_ = s.genuinelyRecovers()
+	s.genuinelyRecovers()
+	return nil
+}
+
+// MustNotFlagDiscardOfRunRecoverCallee: same, via besteffort.RunRecover.
+func (s *svc) MustNotFlagDiscardOfRunRecoverCallee() error {
+	if err := s.storage.CreateThing(); err != nil {
+		return err
+	}
+	_ = s.recoversViaBestEffort()
+	return nil
+}
+
+// MustFlagDiscardOfMerelyDelegatingCallee is the counterpart: the callee calls
+// a recoverer but defers none itself, so it is NOT safe and the discard IS a
+// finding. This is the case the transitive rule got wrong.
+func (s *svc) MustFlagDiscardOfMerelyDelegatingCallee() error {
+	if err := s.storage.CreateThing(); err != nil {
+		return err
+	}
+	_ = s.delegatesToRecoverer()
 	return nil
 }

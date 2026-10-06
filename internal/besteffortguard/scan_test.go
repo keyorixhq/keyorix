@@ -76,7 +76,7 @@ func TestScan_PlantedFixtureIsFlagged(t *testing.T) {
 			wantClean = append(wantClean, "(*svc)."+name)
 		}
 	}
-	if len(wantFlagged) < 5 || len(wantClean) < 8 {
+	if len(wantFlagged) < 6 || len(wantClean) < 10 {
 		t.Fatalf("planted fixture parsed as %d positive / %d negative case(s); the fixture itself is broken or was gutted",
 			len(wantFlagged), len(wantClean))
 	}
@@ -339,5 +339,36 @@ func unrelatedRecoverer() error { defer func() { _ = recover() }(); return nil }
 				t.Errorf("guard %q on callee %q reported %v; want none", tc.guard, tc.key.Callee, probs)
 			}
 		})
+	}
+}
+
+// TestScan_DerivedSafetyIsNotTransitive is the regression test for a draft of
+// #2561 that got this wrong. The rule "safe if it CALLS something that
+// recovers" cleared 365 of internal/core's 1430 functions, because almost
+// everything eventually reaches an audit helper -- and it is false: a recover()
+// in a callee protects only that callee.
+func TestScan_DerivedSafetyIsNotTransitive(t *testing.T) {
+	t.Parallel()
+	res, err := Scan(plantedRoot(t), Options{})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	safe := map[string]bool{}
+	for _, n := range res.SafeCallees {
+		safe[n] = true
+	}
+	for _, want := range []string{"genuinelyRecovers", "recoversViaBestEffort"} {
+		if !safe[want] {
+			t.Errorf("%s defers a recover() in its own body but was not derived as panic-safe", want)
+		}
+	}
+	for _, notWant := range []string{"delegatesToRecoverer", "selfRecoveringHelper", "doesNotRecoverAtAll"} {
+		if safe[notWant] {
+			t.Errorf("%s has no deferred recover() in its OWN body but was derived as panic-safe -- the safety rule has "+
+				"become transitive again, which silently suppresses exactly the reports this guard exists to make", notWant)
+		}
+	}
+	if res.Stats.ProtectedDiscards == 0 {
+		t.Error("no discards were classified as protected; the derived-safety path is not running at all")
 	}
 }

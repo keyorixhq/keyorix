@@ -147,12 +147,26 @@ type Stats struct {
 	// irrespective of position relative to a write -- the other half of the
 	// precondition. Hits are the subset that follow the last write.
 	DiscardSites int
+	// ProtectedDiscards is how many post-write discards were classified as
+	// already panic-safe (see panicSafetyIndex) and so are NOT hits.
+	//
+	// This is the number that keeps the guard honest once the codebase is
+	// clean. With protection DERIVED rather than exempted, a correct package
+	// legitimately has zero hits, so a hit floor cannot distinguish "clean"
+	// from "the scanner resolved nothing". A non-zero ProtectedDiscards proves
+	// the scanner is still resolving callees AND still finding their recovers
+	// -- the two steps that produce the "safe" verdict.
+	ProtectedDiscards int
 }
 
 // Result is a scan's output.
 type Result struct {
 	Hits  []Hit
 	Stats Stats
+	// SafeCallees lists the package-local functions the scan classified as
+	// panic-safe, so a guard can assert the specific ones its correctness
+	// depends on are still being recognised.
+	SafeCallees []string
 }
 
 // Scan walks every non-test, non-generated *.go file directly under root and
@@ -166,6 +180,8 @@ func Scan(root string, opts Options) (*Result, error) {
 	}
 	localReturns := buildLocalReturnArity(files)
 
+	safe := newPanicSafetyIndex(files)
+
 	res := &Result{Stats: Stats{Files: len(files)}}
 	for name, f := range files {
 		for _, d := range f.Decls {
@@ -174,17 +190,19 @@ func Scan(root string, opts Options) (*Result, error) {
 				continue
 			}
 			res.Stats.Funcs++
-			hits, st := scanFunc(fset, name, fd, localReturns, opts)
+			hits, st := scanFunc(fset, name, fd, localReturns, safe, opts)
 			if st.sawWrite {
 				res.Stats.FuncsWithWrite++
 			}
 			res.Stats.DiscardSites += st.discards
+			res.Stats.ProtectedDiscards += st.protected
 			if funcHasRunRecoverGuard(fd.Body) {
 				continue // the whole function recovers any panic in itself
 			}
 			res.Hits = append(res.Hits, hits...)
 		}
 	}
+	res.SafeCallees = safe.SafeCallees()
 	hits := res.Hits
 	sort.Slice(hits, func(i, j int) bool {
 		if hits[i].Func != hits[j].Func {
@@ -267,13 +285,100 @@ type discardSite struct {
 	kind   DiscardKind
 }
 
-// funcStats is scanFunc's precondition reporting (see Stats).
-type funcStats struct {
-	sawWrite bool
-	discards int
+// panicSafetyIndex answers "is a panic inside this package-local function
+// already recovered before it can reach its caller?"
+//
+// This is #2561's main structural change, and it is why the exemption file has
+// no rows. v1 (and this PR's first draft) recorded "the callee recovers its own
+// panic" as a human-vouched exemption ROW. That is strictly weaker than
+// deriving it: an exemption keeps pardoning the call site even after someone
+// deletes the recover() it was premised on, which is the exact shape of a guard
+// that certifies a real bug as correct. Derived, the same fact fails loudly the
+// moment it stops being true -- CLAUDE.md's "derive and check it" over "assert
+// it in prose".
+//
+// A function is panic-safe here ONLY if its OWN body defers a recover()
+// (directly, or via besteffort.RunRecover). Nothing transitive.
+//
+// That restriction is the whole correctness of this index, and it cost a draft
+// to learn. The obvious generalisation -- "safe if it CALLS something that
+// recovers" -- marked 365 of internal/core's 1430 functions safe, because
+// almost every function eventually calls an audit helper that funnels into
+// emitAudit's recover(). It is simply false: a recover() in a callee protects
+// only that callee. A panic in any other part of the caller's body still
+// escapes, so the generalisation would have suppressed exactly the reports this
+// guard exists to make.
+//
+// The cost of being strict is that a pure delegating wrapper whose own body has
+// no defer (writeAuditEventFull -> writeAuditEventDiff -> emitAudit) is NOT
+// derived-safe and still needs a reviewed exemption. That is the right trade:
+// the wrapper really can panic before reaching the choke point (argument
+// evaluation, the struct-building writeAuditEventDiff does before calling
+// emitAudit), so the residual risk is real even if small, and a human saying
+// "accepted" is more honest than a derivation quietly claiming "impossible".
+type panicSafetyIndex struct {
+	bodies map[string]*ast.FuncDecl
+	memo   map[string]bool
 }
 
-func scanFunc(fset *token.FileSet, file string, fd *ast.FuncDecl, localReturns map[string]int, opts Options) ([]Hit, funcStats) {
+func newPanicSafetyIndex(files map[string]*ast.File) *panicSafetyIndex {
+	idx := &panicSafetyIndex{bodies: map[string]*ast.FuncDecl{}, memo: map[string]bool{}}
+	for _, f := range files {
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Body != nil {
+				// Keyed by bare name, so same-named methods on different types
+				// collide. Resolved toward "NOT safe" (the first declaration
+				// wins only if it recovers; see isSafe's any-collision rule) so
+				// an ambiguous name is reported rather than suppressed.
+				if _, dup := idx.bodies[fd.Name.Name]; !dup {
+					idx.bodies[fd.Name.Name] = fd
+				}
+			}
+		}
+	}
+	return idx
+}
+
+// isSafe reports whether name is a package-local function whose panics cannot
+// escape. A name that is not declared in this package is never "safe": the
+// scanner cannot see it, so it must not claim anything about it.
+func (p *panicSafetyIndex) isSafe(name string) bool {
+	if v, ok := p.memo[name]; ok {
+		return v
+	}
+	fd, ok := p.bodies[name]
+	if !ok {
+		p.memo[name] = false
+		return false
+	}
+	safe := bodyDefersRecover(fd.Body)
+	p.memo[name] = safe
+	return safe
+}
+
+// SafeCallees returns the package-local functions this index considers
+// panic-safe, sorted. Exposed so a package's guard can assert that the specific
+// callees its correctness depends on are still being recognised -- guarding the
+// condition rather than the conclusion.
+func (p *panicSafetyIndex) SafeCallees() []string {
+	var out []string
+	for name := range p.bodies {
+		if p.isSafe(name) {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// funcStats is scanFunc's precondition reporting (see Stats).
+type funcStats struct {
+	sawWrite  bool
+	discards  int
+	protected int
+}
+
+func scanFunc(fset *token.FileSet, file string, fd *ast.FuncDecl, localReturns map[string]int, safe *panicSafetyIndex, opts Options) ([]Hit, funcStats) {
 	var lastWrite token.Pos
 	var lastWriteName string
 	var discards []discardSite
@@ -326,6 +431,13 @@ func scanFunc(fset *token.FileSet, file string, fd *ast.FuncDecl, localReturns m
 	var hits []Hit
 	for _, d := range discards {
 		if d.pos <= lastWrite {
+			continue
+		}
+		// The callee already recovers (itself, or through a package-local
+		// funnel), so a panic in it cannot reach this already-committed
+		// caller. Derived, not exempted -- see panicSafetyIndex.
+		if safe.isSafe(d.callee) {
+			st.protected++
 			continue
 		}
 		hits = append(hits, Hit{
