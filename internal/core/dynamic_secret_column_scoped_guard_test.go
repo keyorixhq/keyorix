@@ -36,19 +36,17 @@ func TestDynamicSecretWrites_AreColumnScoped(t *testing.T) {
 // depend on anyone remembering to update a per-function guard.
 //
 // #2698 could not DELETE the two full-row primitives the way #2696 and #2697
-// deleted theirs: `UpdateDynamicSecretConfig` still has one production caller,
-// CreateDynamicSecretConfig's encrypted-DSN write, and that call site belongs to
-// #2651 — fixed in open PR #2675 with SetDynamicSecretConfigAdminDSN, in the same
-// few lines of local_dynamic.go and interface.go. Deleting the method here would
-// have made this PR conflict with one the coordinator is about to merge, for no
-// safety gain.
+// deleted theirs when this test was first written: `UpdateDynamicSecretConfig`
+// had one production caller, CreateDynamicSecretConfig's encrypted-DSN write,
+// a #2651 call site. #2675 has since landed SetDynamicSecretConfigAdminDSN and
+// moved that write off UpdateDynamicSecretConfig, so the allowance below is now
+// empty — both full-row methods are production-callerless and can be deleted
+// in a follow-up.
 //
 // So the property is enforced by derivation instead of by removal, which is the
 // stronger form anyway: a sweep over every non-test file under internal/core and
-// server/ asserting that NOTHING calls the full-row lease writer. UpdateDynamicSecretConfig
-// is asserted down to its ONE known remaining caller, named explicitly, so the
-// count going UP fails here and #2675 landing lets the allowance drop to zero
-// (at which point both methods can simply be deleted).
+// server/ asserting that NOTHING calls the full-row lease writer, with any
+// future caller named explicitly here so the count going up fails loudly.
 //
 // What this does not cover: a call reached through a helper that itself takes a
 // storage.Storage, or reflection. Both are absent from this repo's storage call
@@ -69,11 +67,7 @@ func TestUpdateDynamicSecretLease_HasNoProductionCaller(t *testing.T) {
 	allowed := map[string]struct {
 		count int
 		why   string
-	}{
-		"internal/core/dynamic_secrets.go:CreateDynamicSecretConfig -> UpdateDynamicSecretConfig": {1,
-			"the encrypted-DSN write, which is #2651's site, not #2698's; open PR #2675 moves it to " +
-				"SetDynamicSecretConfigAdminDSN. Drop this entry (and delete both full-row methods) once that lands."},
-	}
+	}{}
 
 	root := dynGuardRepoRoot(t)
 	found := map[string]int{} // "file:enclosing func -> called method" -> number of call sites
