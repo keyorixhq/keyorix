@@ -61,7 +61,6 @@
 package core
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -72,8 +71,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-
-	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // --- sync-point specs --------------------------------------------------------
@@ -178,38 +175,12 @@ type g5SeedCase struct {
 	why string
 	// pre runs after g4ResetIteration and before the pair, for a seed whose
 	// bad interleaving needs fixture state the fuzzer's world does not have.
-	// Exactly one row needs it (#2657) and the reason is recorded there.
+	// No row needs it since #2831 promoted #2657 (the only user) to the live
+	// corpus; the hook is kept because the gap it covered is still open — the
+	// fuzzer's world cannot reach every state a seed may require, and closing
+	// that inside the fuzzer means new op kinds, which changes g4NumOpKinds and
+	// so reinterprets every byte of every existing seed. See the PR body.
 	pre func(t *testing.T, w *g4World)
-}
-
-// g5SeedProvisionedMembership seeds a `provisioned` project membership for the
-// world's member user, which #2657's pair needs and the fuzzer's world cannot
-// produce.
-//
-// Why it has to be a test-local pre-step and not part of g4ResetIteration:
-// op kind 13 (TransitionMembership activate) only fires on a membership in
-// state `provisioned`, and the only op that CREATES a membership is kind 12
-// (InviteMember) which, in the open validation mode this world runs in,
-// commits it straight as `active`. So no sequence of the fuzzer's own ops can
-// produce a provisioned membership, and op 13 is unreachable — meaning #2657's
-// seed (revoke, activate) is two no-ops in the blind fuzzer, which is a large
-// part of why it never reproduced. Seeding one in the shared reset instead
-// would break #2659: inviteMemberWithMode refuses when any membership already
-// exists ("one active onboarding per (project, user)"), so #2659's invite —
-// which must succeed for its race to exist — would start refusing.
-//
-// Closing this inside the fuzzer needs a second membership user plus its own
-// op kinds, which changes g4NumOpKinds and therefore reinterprets every byte
-// of every existing seed. That is a deliberate follow-up, not a drive-by: see
-// the PR body.
-func g5SeedProvisionedMembership(t *testing.T, w *g4World) {
-	t.Helper()
-	require.NoError(t, w.setupDB.Exec("DELETE FROM project_memberships WHERE project_id = ? AND user_id = ?",
-		w.projID, w.memberUserID).Error)
-	_, err := w.c0.Storage().CreateProjectMembership(context.Background(), &models.ProjectMembership{
-		ProjectID: w.projID, UserID: w.memberUserID, Role: "project_viewer", State: MembershipProvisioned,
-	})
-	require.NoError(t, err)
 }
 
 // g5SeedCases: one row per pending seed, naming the stale writer.
