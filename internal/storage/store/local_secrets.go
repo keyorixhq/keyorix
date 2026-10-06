@@ -563,10 +563,63 @@ func (ls *LocalStorage) ClearProjectSecretOwnership(ctx context.Context, userID,
 	return nil
 }
 
+// secretNodeSQLOwnedColumns are the secret_nodes columns whose value is owned by
+// the DATABASE, not by any in-memory *models.SecretNode, so a full-struct write
+// must never carry them.
+//
+// # Why this exists (#2843)
+//
+// read_count is the lifetime counter behind MaxReads — a burn-after-N-reads
+// budget (#133). It is only ever advanced by a conditional SQL expression
+// (TryIncrementSecretNodeReadCount: `read_count = read_count + 1` guarded by
+// `read_count < max_reads`), precisely so that concurrent readers cannot
+// overshoot the cap. Any full-struct write of a SecretNode re-sends the
+// read_count the caller happened to load, which means:
+//
+//	reader A: TryIncrementSecretNodeReadCount  -> read_count 4 -> 5 (cap 5, done)
+//	editor B: GetSecret (read_count 4) ... UpdateSecret(description) -> read_count 4
+//	reader C: TryIncrementSecretNodeReadCount  -> 4 < 5, granted
+//
+// i.e. an UNRELATED metadata edit silently REFUNDS reads against the cap, and
+// the editor needs no permission over the cap to do it. Every UpdateSecret
+// caller in internal/core has this shape (load, mutate one field, save):
+// secret_description, classification, secret_move, secret_ownership,
+// secret_bulk_rename, secret_extend_expiring, rotation_executor, and
+// secrets.go's own update path. It is not one site's bug.
+//
+// Omitting the column is the whole fix: GORM leaves it out of the UPDATE's SET
+// list, so the database's value stands and the conditional increment remains the
+// only writer. Note this is NOT the same defect as the stale-cache one
+// cache_epoch addresses — that was a stale READ of this column; this is a stale
+// WRITE of it. Both had to be fixed, and neither fixes the other.
+var secretNodeSQLOwnedColumns = []string{"read_count"}
+
 // UpdateSecret updates an existing secret.
+//
+// read_count is omitted deliberately — see secretNodeSQLOwnedColumns. A caller
+// that genuinely needs to change the counter must go through the dedicated
+// conditional path, not through a full-struct save.
 func (ls *LocalStorage) UpdateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error) {
-	if err := ls.db.WithContext(ctx).Save(secret).Error; err != nil {
+	if err := ls.db.WithContext(ctx).Omit(secretNodeSQLOwnedColumns...).Save(secret).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	// Save() wrote every other column but left read_count alone, so the struct we
+	// hand back still carries the caller's stale value. Re-read it rather than
+	// returning a row that disagrees with the database about a security counter.
+	//
+	// The error is deliberately swallowed, and that is safe rather than merely
+	// convenient: the write above has already COMMITTED, so returning an error
+	// here would tell the caller its update failed when it did not. What a failed
+	// re-read costs is a stale ReadCount on the returned struct and nothing more
+	// — enforcement never consults this field (TryIncrementSecretNodeReadCount
+	// evaluates `read_count < max_reads` inside the UPDATE itself, against the
+	// stored value), and the Omit above means the stale number can never be
+	// written back. So the failure mode is a cosmetically stale number in one
+	// response, not a refunded read.
+	var fresh models.SecretNode
+	if err := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
+		Select("read_count").Where(sqlWhereID, secret.ID).Take(&fresh).Error; err == nil {
+		secret.ReadCount = fresh.ReadCount
 	}
 	return secret, nil
 }
@@ -582,6 +635,10 @@ func (ls *LocalStorage) TransitionSecretStatus(ctx context.Context, secret *mode
 	res := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
 		Where("id = ? AND status = ?", secret.ID, fromStatus).
 		Select("*").
+		// Same reason as UpdateSecret: Select("*") would otherwise re-send the
+		// caller's stale read_count and refund reads against MaxReads. A status
+		// transition has no business moving a read counter.
+		Omit(secretNodeSQLOwnedColumns...).
 		Updates(secret)
 	if res.Error != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
