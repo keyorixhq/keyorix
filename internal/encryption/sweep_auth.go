@@ -330,6 +330,101 @@ func sweepDynamicSecretLeases(tx *gorm.DB, oldSvc *EncryptionService, newSvc *En
 	return swept, legacyUpgraded, nil
 }
 
+// sweepNotificationChannels re-encrypts notification channel destination URLs
+// (notification_channels.url_enc), bound to NotificationChannelURLAAD(ID)
+// (#2433). Legacy rows are upgraded to AAD in place -- see sweepMFASecrets.
+// Missing this sweeper's re-encryption step entirely would leave the webhook/
+// Slack/Teams bearer credential undecryptable after a DEK rotation, silently
+// breaking every outbound alert escalation until each channel's URL was
+// manually re-entered. dryRun skips the final Updates() write only; every
+// other step still runs. Returns (rowsSwept, legacyRowsUpgraded, error).
+func sweepNotificationChannels(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, int, error) { // NOSONAR -- cognitive complexity 24, suppress go:S3776
+	var rows []models.NotificationChannel
+	if err := tx.Find(&rows).Error; err != nil {
+		return 0, 0, fmt.Errorf("failed to fetch notification_channels: %w", err)
+	}
+	swept, legacyUpgraded := 0, 0
+	for _, row := range rows {
+		// url_enc is self-describing (#2468). Unlike the sibling sweeps above,
+		// this column can legitimately hold a PLAINTEXT passthrough value --
+		// notification channels, alone among the encrypted auth-secret columns,
+		// have no write path that refuses when encryption is off, because they
+		// predate encryption here. The format tag is what tells the two apart;
+		// before it existed, this loop handed those plaintext bytes to
+		// DeserializeEncryptedData and returned an error, which SweepAllTables
+		// propagates -- hard-failing the DEK rotation for every table, not just
+		// this one, on an install that had ever run with encryption off.
+		tag, payload, err := NotificationChannelURLUnwrap(row.URLEnc)
+		if err != nil {
+			return swept, legacyUpgraded, fmt.Errorf("notification_channel id=%d: %w", row.ID, err)
+		}
+		aad := NotificationChannelURLAAD(row.ID)
+		var plaintext []byte
+		isLegacy := false
+		switch tag {
+		case NotificationChannelURLTagAbsent:
+			continue
+		case NotificationChannelURLTagPlaintext:
+			// A row still awaiting the startup backfill's off->on upgrade. A
+			// rotation only happens with encryption ON, so encrypting it here
+			// under the NEW key is both correct and the stronger outcome: the
+			// sweep's contract is that every row is under newKeyVersion
+			// afterwards, and leaving this one in plaintext would break that
+			// silently.
+			plaintext = append([]byte(nil), payload...)
+		default: // NotificationChannelURLTagEncrypted
+			encrypted, derr := DeserializeEncryptedData(payload)
+			if derr != nil {
+				return swept, legacyUpgraded, fmt.Errorf("failed to deserialize notification_channel id=%d: %w", row.ID, derr)
+			}
+			// NO legacy no-AAD fallback for this column, unlike every sibling
+			// sweep above (#2468 round 2). Those tables have real rows that
+			// predate #94 and must still be re-keyable; url_enc was introduced
+			// by #2468 itself, so an envelope here declaring no aad_version
+			// cannot be legitimate — it is ciphertext somebody copied in from
+			// elsewhere in the database. Decrypting it without AAD would make
+			// the rotation sweep the same decryption oracle the read path just
+			// stopped being (internal/core's decryptNotificationChannelURL),
+			// and would then RE-ENCRYPT the result as a properly AAD-bound
+			// channel URL, laundering it. Refuse instead: a rotation that
+			// cannot account for a row must stop, not normalise it.
+			if encrypted.Metadata.AADVersion == "" {
+				return swept, legacyUpgraded, fmt.Errorf("notification_channel id=%d: URL envelope declares no AAD version; this column has no legitimate pre-AAD rows, so refusing to re-encrypt it (manual investigation required: the row was written by something other than the notification-channel CRUD path)", row.ID)
+			}
+			plaintext, derr = oldSvc.DecryptWithAAD(encrypted, aad)
+			if derr != nil {
+				return swept, legacyUpgraded, fmt.Errorf("failed to decrypt notification_channel id=%d: %w", row.ID, derr)
+			}
+		}
+		newEncrypted, err := newSvc.EncryptWithAAD(plaintext, newKeyVersion, aad)
+		wipeBytes(plaintext)
+		if err != nil {
+			return swept, legacyUpgraded, fmt.Errorf("failed to re-encrypt notification_channel id=%d: %w", row.ID, err)
+		}
+		newBytes, err := SerializeEncryptedData(newEncrypted)
+		if err != nil {
+			return swept, legacyUpgraded, fmt.Errorf("failed to serialize notification_channel id=%d: %w", row.ID, err)
+		}
+		metaBytes, err := json.Marshal(newEncrypted.Metadata)
+		if err != nil {
+			return swept, legacyUpgraded, fmt.Errorf("failed to marshal notification_channel metadata id=%d: %w", row.ID, err)
+		}
+		if !dryRun {
+			if err := tx.Model(&models.NotificationChannel{}).Where(sqlWhereID, row.ID).Updates(map[string]interface{}{
+				"url_enc":  NotificationChannelURLWrap(NotificationChannelURLTagEncrypted, newBytes),
+				"url_meta": metaBytes,
+			}).Error; err != nil {
+				return swept, legacyUpgraded, fmt.Errorf("failed to update notification_channel id=%d: %w", row.ID, err)
+			}
+		}
+		swept++
+		if isLegacy {
+			legacyUpgraded++
+		}
+	}
+	return swept, legacyUpgraded, nil
+}
+
 // dryRun skips the final Updates() write only; every other step still runs.
 // Returns (rowsSwept, legacyRowsUpgraded, error).
 func sweepPasswordResets(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, int, error) { // NOSONAR -- cognitive complexity 24, suppress go:S3776

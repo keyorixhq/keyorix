@@ -45,6 +45,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/connect"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/delivery"
@@ -63,6 +64,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/startup"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	localstore "github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/pkg/trust"
 	"github.com/keyorixhq/keyorix/server/admin"
 	"github.com/keyorixhq/keyorix/server/grpc"
@@ -617,6 +619,36 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		// encryption is off.
 		if key, keyVer, ok := encSvc.EvidenceSignKey(); ok {
 			coreService.SetEvidenceSignKey(key, keyVer)
+		}
+	}
+
+	// #2433: bring every NotificationChannel row's webhook/Slack/Teams URL (the
+	// bearer credential) into the encrypted, self-describing url_enc/url_meta
+	// columns -- a real envelope when encSvc is wired and enabled, an
+	// explicitly-tagged plaintext passthrough otherwise. Local-storage-only
+	// (notification channels have no remote-storage implementation at all).
+	//
+	// #2468: this FAILS STARTUP rather than logging and continuing, and that
+	// choice is deliberate over the "it is idempotent, a later restart will
+	// retry" alternative. The migration now has a second, recurring job besides
+	// the one-time legacy backfill: upgrading a plaintext-passthrough row the
+	// first time encryption is enabled (see its own doc comment). A permanently
+	// failing run of THAT job leaves webhook bearer credentials in plaintext at
+	// rest on an install that has explicitly configured encryption -- and
+	// leaves them readable and working, so nothing else ever surfaces it. That
+	// is precisely the condition the SecretValueEncryptionActive check a few
+	// lines above refuses to start on, for the same reason.
+	if ls, ok := store.(*localstore.LocalStorage); ok {
+		var encryptor ports.EncryptionProvider
+		if encSvc != nil {
+			encryptor = encSvc
+		}
+		n, merr := ls.MigrateNotificationChannelURLsToEncrypted(context.Background(), encryptor)
+		if merr != nil {
+			return nil, nil, fmt.Errorf("notification channel URL encryption backfill failed: %w -- refusing to start rather than leave a webhook credential unencrypted at rest", merr)
+		}
+		if n > 0 {
+			log.Printf("notification channel URL encryption backfill: migrated %d channel(s)", n)
 		}
 	}
 

@@ -66,7 +66,11 @@ func (c *KeyorixCore) RunRecoverAdminAlerting(ctx context.Context) (int, error) 
 		return 0, nil
 	}
 
-	channels, err := c.storage.ListNotificationChannels(ctx)
+	// ListNotificationChannels (the core-layer wrapper), not
+	// c.storage.ListNotificationChannels directly (#2433): the raw storage
+	// rows' URL is encrypted (URLEnc/URLMeta) -- only the wrapper decrypts it
+	// into ch.URL, which the postJSONToURL call below needs to actually dial.
+	channels, err := c.ListNotificationChannels(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("recover-admin alerting: list channels: %w", err)
 	}

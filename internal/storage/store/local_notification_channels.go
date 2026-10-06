@@ -57,13 +57,20 @@ func (ls *LocalStorage) CreateNotificationChannel(ctx context.Context, ch *model
 }
 
 func (ls *LocalStorage) UpdateNotificationChannel(ctx context.Context, ch *models.NotificationChannel) error {
+	// url_enc/url_meta (#2433), not the legacy plaintext "url" column: the core
+	// layer (notification_channels.go) is responsible for encrypting ch.URL into
+	// ch.URLEnc/ch.URLMeta before calling this -- this map update must carry
+	// those fields through explicitly since ch.URL's own gorm:"-" tag means
+	// Model(ch).Updates would otherwise silently skip it AND it must never write
+	// the plaintext URL back into a column.
 	res := ls.db.WithContext(ctx).Model(ch).Updates(map[string]interface{}{
-		"name":    ch.Name,
-		"type":    ch.Type,
-		"enabled": ch.Enabled,
-		"url":     ch.URL,
-		"email":   ch.Email,
-		"events":  ch.Events,
+		"name":     ch.Name,
+		"type":     ch.Type,
+		"enabled":  ch.Enabled,
+		"url_enc":  ch.URLEnc,
+		"url_meta": ch.URLMeta,
+		"email":    ch.Email,
+		"events":   ch.Events,
 	})
 	if res.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
