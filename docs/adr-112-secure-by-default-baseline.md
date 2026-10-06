@@ -6,8 +6,10 @@
 
 Amended 2026-10-05 (decision by Andrei, "Amendment 1" below): the
 audit-before-disclosure and `synchronous` baseline items gain one named
-`insecure_` opt-out, `storage.database.insecure_audit_skip_durable_sync`. The
-defaults are unchanged. Full spec: `docs/specs/fast-audit-mode.md`.
+`insecure_` opt-out, `storage.database.insecure_audit_skip_durable_sync`,
+**PostgreSQL only**. The defaults are unchanged, and SQLite's
+`synchronous=FULL` becomes unconditional rather than merely default. Full spec
+(Accepted): `docs/specs/fast-audit-mode.md`.
 
 Related: ADR-111 (signed connector host, host connector allowlist), ADR-098 (process memory hardening), ADR-064 (air-gap update bundles), ADR-109 (air-gapped build profile).
 
@@ -66,7 +68,7 @@ Each item is a default that holds unless an `insecure_` setting says otherwise.
 - A secret value is never returned before its audit record is durably committed (audit-before-disclosure, group commit). If the audit write fails, the read fails. One named opt-out exists (`storage.database.insecure_audit_skip_durable_sync`, default off) which skips only the *wait for the disk sync*, not the write and not the fail-closed behaviour — see Amendment 1.
 - Secret values never appear in logs, error messages, URLs or metrics. Enforced by a test oracle over all operations, not by review alone.
 - The audit log is hash-chained with signed checkpoints and offline verification (exists).
-- SQLite runs `synchronous=FULL`; Postgres runs with `fsync`, `synchronous_commit` and `full_page_writes` on (#2403). `storage.database.insecure_audit_skip_durable_sync` (default off) is the only setting that relaxes this, and only as described in Amendment 1.
+- SQLite runs `synchronous=FULL`, **unconditionally — no setting relaxes it**; Postgres runs with `fsync`, `synchronous_commit` and `full_page_writes` on (#2403). `storage.database.insecure_audit_skip_durable_sync` (default off, **PostgreSQL only**) is the only setting that relaxes any of this, and only `synchronous_commit`, only on the audit transaction, as described in Amendment 1. A SQLite backend that sets it refuses to start.
 
 **Keys**
 - Scheduled KEK rotation on by default, with a configurable interval.
@@ -129,12 +131,17 @@ with a named, loud, audited setting rather than with a fork or a patch.
 ### The opt-out
 
 `storage.database.insecure_audit_skip_durable_sync`, boolean, default **false**,
-settable from the config file only. When true:
+settable from the config file only. **PostgreSQL only** (decided 2026-10-05):
+the audit-commit transaction, and only that transaction, issues `SET LOCAL
+synchronous_commit = off`. `SET LOCAL` is transaction-scoped, so a concurrent
+secret write still commits durably and the relaxation cannot follow the pooled
+connection into the next transaction.
 
-- Postgres: the audit-commit transaction, and only that transaction, issues
-  `SET LOCAL synchronous_commit = off`.
-- SQLite: the DSN uses `_synchronous=NORMAL` instead of `FULL`, in the WAL mode
-  that is already the default.
+| `storage.type` | Behaviour |
+|---|---|
+| `postgres` / `postgresql` | supported; in effect when true |
+| `local` / `sqlite` | **refuses to start** with a named error |
+| `remote` | not applicable — a server cannot run with remote storage (ADR-083) |
 
 It carries the full §1 opt-out treatment: a `WARNING:` line at **every** start, an
 `admin.audit_durable_sync_skipped_at_startup` audit event at every start (so the
@@ -158,14 +165,22 @@ Unchanged, and tested to stay unchanged:
 
 Changed, and stated plainly rather than minimised:
 
-- Postgres: up to ~600ms (3 × `wal_writer_delay`) of audit entries can be lost to
-  an OS or database-server crash.
-- SQLite: `PRAGMA synchronous` is per-connection and the pool is shared, so the
-  relaxation is **database-wide**, not audit-only — a power loss can lose the last
-  fraction of a second of secret writes too. The narrower alternative (flip the
-  pragma per transaction, restore afterwards) was rejected because it fails open:
-  a skipped restore leaves a connection permanently weakened with nothing
-  reporting it.
+- Up to ~600ms (3 × `wal_writer_delay`) of audit entries can be lost to an OS or
+  database-server crash. Measured effect of accepting that: a single-client read
+  goes from 16.6ms to 3.7ms p50 on pve01, i.e. from 11.8x to 2.7x slower than
+  Vault with its own audit device on (both sides re-measured in the same
+  session).
+
+Rejected, with the reasons recorded so the decision does not have to be
+re-litigated:
+
+- **SQLite.** `PRAGMA synchronous` is per-connection and the pool is shared, so
+  the relaxation would be database-wide, not audit-only — a power loss could
+  undo a just-committed secret rotation or revocation. And it was not a clean
+  latency win: p99 got worse at 10 and 50 clients. The narrower alternative
+  (flip the pragma per transaction, restore afterwards) was rejected separately
+  for failing open — a skipped restore leaves a pooled connection permanently
+  weakened with nothing reporting it.
 
 This is Vault's guarantee, not a safe one, and the hardening guide says so in
 those words.
@@ -196,10 +211,17 @@ those words.
 - Audit-before-disclosure stays the default. One named `insecure_` opt-out
   (`storage.database.insecure_audit_skip_durable_sync`) is added for deployments
   with guaranteed power, giving Vault-equivalent semantics and Vault-equivalent
-  speed. See Amendment 1. Two sub-decisions are still open and are listed as
-  **NEEDS ANDREI** in `docs/specs/fast-audit-mode.md` §4 and §6: whether the
-  setting reports as in-effect on a `remote` backend, and whether the SQLite
-  database-wide scope is accepted or the setting is restricted to Postgres.
+  speed. See Amendment 1.
+- **The opt-out is PostgreSQL only.** A SQLite backend that sets it refuses to
+  start, with a named error — not a silent ignore. SQLite was rejected because
+  `PRAGMA synchronous` is per-connection and the pool is shared, so the
+  relaxation would cover every table (a power loss could undo a just-committed
+  secret rotation, not merely lose audit entries), and because the measured p99
+  got *worse* under concurrency anyway (328.8→518.0 ms at 10 clients,
+  703.7→919.0 ms at 50).
+- **A configured setting that cannot take effect is reported as off, with the
+  reason, as a structured field** — not as a weakening, and not only in log
+  text. One start-up warning still prints, worded as "ignored".
 
 ## Definition of done
 
