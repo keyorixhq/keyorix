@@ -104,27 +104,22 @@ func reqFieldsRead(t *testing.T, file, fn string) []string {
 // asserting nothing calls the full-row UpdateSecret except the ONE call site
 // #2695 deliberately left alone.
 //
-// #2695 could not delete the primitive the way #2696/#2697 deleted theirs.
-// SetSecretAutoRotate (rotation_executor.go) is #2650's site and is converted to
-// a column-scoped UpdateSecretRotationConfig by open PR #2668, in the same few
-// lines of local_secrets.go and interface.go; deleting UpdateSecret here would
-// have made this PR conflict with one the coordinator is about to merge, for no
-// safety gain, since that call site is exactly what #2668 fixes.
+// #2695 could not delete the primitive the way #2696/#2697 deleted theirs when
+// this test was first written: SetSecretAutoRotate (rotation_executor.go) was
+// #2650's site. #2668 has since landed the column-scoped UpdateSecretRotationConfig
+// and moved that call off UpdateSecret, so the allowance below is now empty —
+// UpdateSecret is production-callerless and can be deleted, along with this
+// test, in a follow-up.
 //
 // So the property is derived rather than achieved by removal — the stronger
 // form anyway, because it fails in BOTH directions: a new caller appearing, and
-// the allowance going stale once #2668 lands (at which point UpdateSecret, and
-// this test, get deleted).
+// any future allowance going stale the same way this one just did.
 //
 // What this does not cover: a call reached through a helper that itself takes a
 // storage.Storage, or reflection. Neither occurs in this repo's storage call
 // style, and the direct-call shape is the one the defect took.
 func TestUpdateSecret_HasNoProductionCallerBeyond2668(t *testing.T) {
-	allowed := map[string]string{
-		"internal/core/rotation_executor.go:SetSecretAutoRotate": "#2650's site, not #2695's; open PR #2668 moves it " +
-			"to the column-scoped UpdateSecretRotationConfig. Drop this entry — and delete UpdateSecret plus this " +
-			"whole test — once that lands.",
-	}
+	allowed := map[string]string{}
 
 	root := updateSecretGuardRepoRoot(t)
 	found := map[string][]string{}
