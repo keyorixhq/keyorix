@@ -50,13 +50,17 @@ import (
 // (global admin, ID adminID), one project with one environment, and two
 // independent replicas A and B on their own connections into the same schema.
 type ctaReview struct {
-	t         *testing.T
-	ctx       context.Context
-	setupDB   *gorm.DB
-	setup     *KeyorixCore
-	dbA       *gorm.DB
+	t       *testing.T
+	ctx     context.Context
+	setupDB *gorm.DB
+	setup   *KeyorixCore
+	dbA     *gorm.DB
+	coreA   *KeyorixCore
+	// dbB is replica B's own connection pool, exposed for GUARD-5's
+	// interleaving driver (interleave_sync_points_test.go), which needs a
+	// sync point on BOTH replicas to force the orderings where A's write
+	// lands before B's. beforeA below only ever needed A's.
 	dbB       *gorm.DB
-	coreA     *KeyorixCore
 	coreB     *KeyorixCore
 	enc       ports.EncryptionProvider
 	adminID   uint
@@ -96,10 +100,11 @@ func newCTAReview(t *testing.T) *ctaReview {
 	env, err := setup.CreateEnvironment(ctx, proj.ID, "cta-review-env")
 	require.NoError(t, err)
 
-	dbA, dbB := pgOpen(t, dsn), pgOpen(t, dsn)
+	dbA := pgOpen(t, dsn)
+	dbB := pgOpen(t, dsn)
 	return &ctaReview{
 		t: t, ctx: ctx, setupDB: setupDB, setup: setup,
-		dbA: dbA, dbB: dbB, coreA: newCore(dbA), coreB: newCore(dbB),
+		dbA: dbA, coreA: newCore(dbA), dbB: dbB, coreB: newCore(dbB),
 		enc: enc, adminID: boot.User.ID, projectID: proj.ID, envID: env.ID,
 	}
 }
