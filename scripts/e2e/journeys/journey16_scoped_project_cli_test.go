@@ -25,6 +25,15 @@ import (
 // grant on that one project. The server's authorization is unchanged, and the
 // assertions below pin that too (global listing still 403s; another
 // project's ID still 403s).
+//
+// #2780 changed the premise, not the outcome: GET /api/v1/projects is now a
+// least-privilege listing that serves this persona their one project with 200,
+// so the 403 that used to FORCE the CLI down the numeric fallback no longer
+// happens on this route. Everything asserted below still holds -- the persona
+// can drive every project-scoped command by numeric ID, and still cannot see or
+// resolve project B -- but this journey no longer exercises the CLI's 403
+// fallback branch itself. That branch still matters for personas the listing
+// serves nothing to, and wants its own coverage; see the PR discussion.
 func TestJourney_ScopedUserProjectCLI(t *testing.T) {
 	serverBin, cliBin := harness.BuildBinaries(t)
 	s := harness.StartServer(t, serverBin, harness.DBBackend{Name: "sqlite"})
@@ -65,11 +74,17 @@ func TestJourney_ScopedUserProjectCLI(t *testing.T) {
 	refA := strconv.Itoa(idA)
 	refB := strconv.Itoa(idB)
 
-	// Precondition, not the fix: the server's global listing stays admin-only.
-	// If this ever starts returning 200 the rest of this journey no longer
-	// exercises the fallback path at all.
-	if env := restCall(t, s, viewerToken, http.MethodGet, "/api/v1/projects", nil); env.StatusCode != http.StatusForbidden {
-		t.Fatalf("precondition: viewer GET /api/v1/projects: want 403, got %d: %s", env.StatusCode, string(env.Raw))
+	// Precondition, not the fix: the server's global listing is least-privilege
+	// (#2780) -- it serves this viewer project A and ONLY project A. Project B
+	// never being named here is the half of the precondition that still guards a
+	// real boundary; see the #2780 note in this test's doc comment for why the
+	// status code is now 200.
+	env := restCall(t, s, viewerToken, http.MethodGet, "/api/v1/projects", nil)
+	if env.StatusCode != http.StatusOK {
+		t.Fatalf("precondition: viewer GET /api/v1/projects: want 200, got %d: %s", env.StatusCode, string(env.Raw))
+	}
+	if got := listedProjectNames(t, env); len(got) != 1 || got[0] != projA {
+		t.Fatalf("precondition: viewer GET /api/v1/projects: want exactly [%s], got %v: %s", projA, got, string(env.Raw))
 	}
 
 	t.Run("viewer lists and reads secrets in own project by ID", func(t *testing.T) {
