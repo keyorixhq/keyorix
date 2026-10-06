@@ -221,31 +221,17 @@ func g5SeedProvisionedMembership(t *testing.T, w *g4World) {
 // racing activation is about to create), so there is no statement for a sync
 // point to sit on and arming one would time out and report DEGRADED. See the
 // nil-sync-point path in interleave_sync_points_test.go.
+// #2831 promoted nine of the original twelve seeds (2646, 2647, 2649, 2652,
+// 2653, 2654, 2655, 2656, 2657) out of testdata/fuzz-pending/ and into
+// testdata/fuzz/FuzzCrossReplicaInvariants/, so their regression coverage is
+// now the live corpus rather than a forced ordering here. Their rows are gone
+// accordingly: a g5SeedCases row whose seed dir no longer exists is what
+// TestG5SyncPointSpecsCoverEveryPendingSeed rejects.
 var g5SeedCases = []g5SeedCase{
-	// seed (DeleteSecret, ShareSecret): the share INSERT is the stale write.
-	{issue: "2646", stale: "B", why: "a live share on a soft-deleted secret"},
-	// seed (DeleteSecret, ShareSecretWithGroup).
-	{issue: "2647", stale: "B", why: "a live group share on a soft-deleted secret"},
-	// seed (DeleteSecret, GrantSecretACL).
-	{issue: "2649", stale: "B", why: "an ACL grant on a soft-deleted secret"},
 	// seed (DeleteSecret, SetSecretAutoRotate): the full-row Save is stale.
 	{issue: "2650", stale: "B", why: "a secret undeleted by a stale full-row Save"},
 	// seed (DeleteProject, CreateDynamicSecretConfig): the second Save is stale.
 	{issue: "2651", stale: "B", why: "an enabled dynamic-secret config under a deleted project"},
-	// seed (DeleteProject, IssueLease): the lease INSERT is stale.
-	{issue: "2652", stale: "B", why: "an active lease under a deleted project"},
-	// seed (SuspendUser, UpdateUser): UpdateUser's full-row write is stale.
-	{issue: "2653", stale: "B", why: "a suspension reverted by a concurrent profile edit"},
-	// seed (ChangePassword, UpdateOwnProfile): the self-service write is stale.
-	{issue: "2654", stale: "B", why: "a password change reverted by a stale self-service profile write"},
-	// seed (ActivateMFA, BeginMFAEnrollment): ActivateMFA is pair[0], and it
-	// is the stale writer — it activates whatever secret exists at write time,
-	// not the one its code validated. The only row where the stale side is A.
-	{issue: "2655", stale: "A", why: "MFA activated with a TOTP secret the holder never validated"},
-	// seed (DeleteProject, RestoreEnvironment): the un-delete is stale.
-	{issue: "2656", stale: "B", why: "a live environment under a deleted project"},
-	// seed (revoke, activate): the activation's grant INSERT is stale.
-	{issue: "2657", stale: "B", why: "a revoked membership still holding its role grant", pre: g5SeedProvisionedMembership},
 	// seed (revoke, InviteMember): the invite's grant INSERT is stale.
 	{issue: "2659", stale: "B", why: "a revoked membership still holding an invite's role grant"},
 }
