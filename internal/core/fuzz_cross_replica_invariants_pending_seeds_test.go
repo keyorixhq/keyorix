@@ -30,7 +30,7 @@ import (
 // promoted out of testdata/fuzz-pending/<issue>/ into
 // testdata/fuzz/FuzzCrossReplicaInvariants/ — both in the same commit.
 var pendingSeedFix = map[string]int{
-	"2659": 0,    // open-mode InviteMember vs revoke: #2669 merged but the seed still fails ~2 in 7 runs on Postgres; no fix PR yet
+	"2659": 0, // open-mode InviteMember vs revoke: #2669 merged but the seed still fails ~2 in 7 runs on Postgres; no fix PR yet
 }
 
 func TestPendingSeedsPromotedAfterFix(t *testing.T) {
