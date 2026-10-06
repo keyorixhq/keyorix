@@ -5,12 +5,17 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // newCatalogHandlerBreakGlassS13 returns a CatalogHandler backed by a fresh isolated DB.
@@ -188,4 +193,81 @@ func TestReviewBreakGlass_NoteTooShort_S13(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ReviewBreakGlass(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// seedBreakGlassActivationS13 inserts an activation directly, so the transport
+// tests below can exercise ReviewBreakGlass's refusals without driving a whole
+// real activation flow (project + membership + emergency role + policy).
+func seedBreakGlassActivationS13(t *testing.T, db *gorm.DB, userID uint, state string) uint {
+	t.Helper()
+	expires := time.Now().UTC().Add(4 * time.Hour)
+	a := &models.BreakGlassActivation{
+		ProjectID: 1, UserID: userID, RoleID: 3, RoleName: "project_developer",
+		State: state, Justification: "seeded for a transport-layer test",
+		CreatedAt: time.Now().UTC().Add(-2 * time.Hour), ExpiresAt: &expires,
+	}
+	require.NoError(t, db.Create(a).Error)
+	return a.ID
+}
+
+// TestReviewBreakGlass_SelfReviewIsForbidden_S13 pins the STATUS CODE for
+// #2461's self-review refusal, not just the refusal itself. The core error
+// carries "an independent reviewer is required", and the handler's 400 arm
+// matches "required" -- so without the permission-denied arm being checked
+// FIRST, a deliberate authorization refusal would surface as a malformed
+// request. withUserCtx authenticates as user 1, and the activation below is
+// user 1's own.
+func TestReviewBreakGlass_SelfReviewIsForbidden_S13(t *testing.T) {
+	cs, db := freshCoreS12WithAdmin(t)
+	h := NewCatalogHandler(cs)
+	id := seedBreakGlassActivationS13(t, db, 1, "revoked")
+
+	body := strings.NewReader(`{"note":"I reviewed my own emergency access"}`)
+	req := withUserCtx(withChiParams(httptest.NewRequest(http.MethodPost, "/", body),
+		map[string]string{"id": "1", "activationId": fmt.Sprint(id)}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ReviewBreakGlass(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+}
+
+// TestReviewBreakGlass_StillActiveIsBadRequest_S13: a still-live activation
+// must be revoked or expired before it can be reviewed, surfaced as 400 rather
+// than falling through to a 500 that reads as a server fault.
+func TestReviewBreakGlass_StillActiveIsBadRequest_S13(t *testing.T) {
+	cs, db := freshCoreS12WithAdmin(t)
+	h := NewCatalogHandler(cs)
+	id := seedBreakGlassActivationS13(t, db, 2, "active")
+
+	body := strings.NewReader(`{"note":"reviewing while the grant is still live"}`)
+	req := withUserCtx(withChiParams(httptest.NewRequest(http.MethodPost, "/", body),
+		map[string]string{"id": "1", "activationId": fmt.Sprint(id)}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ReviewBreakGlass(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "still active")
+}
+
+// TestReviewBreakGlass_IndependentReviewerOnConcludedActivationSucceeds_S13 is
+// the green side: the two refusals above must not have made the happy path
+// unreachable over the transport.
+func TestReviewBreakGlass_IndependentReviewerOnConcludedActivationSucceeds_S13(t *testing.T) {
+	cs, db := freshCoreS12WithAdmin(t)
+	h := NewCatalogHandler(cs)
+	id := seedBreakGlassActivationS13(t, db, 2, "revoked")
+
+	body := strings.NewReader(`{"note":"checked the justification and what was accessed"}`)
+	req := withUserCtx(withChiParams(httptest.NewRequest(http.MethodPost, "/", body),
+		map[string]string{"id": "1", "activationId": fmt.Sprint(id)}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ReviewBreakGlass(w, req)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var got models.BreakGlassActivation
+	require.NoError(t, db.First(&got, id).Error)
+	require.NotNil(t, got.ReviewedAt)
+	assert.Equal(t, uint(1), got.ReviewedBy)
+	assert.Equal(t, "checked the justification and what was accessed", got.ReviewNote)
 }

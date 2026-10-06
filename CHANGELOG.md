@@ -15,17 +15,28 @@ All notable changes to Keyorix are documented here. This project follows
   the opt-in upgrade for a deployment that can require 1.3-only clients.
   `tls.allowed_ciphers` has no effect under strict mode (TLS 1.3 negotiates
   its own suite set) and now warns if both are set.
-- **Every break-glass activation can now be reviewed after the fact**
+- **Every break-glass activation must now be reviewed after the fact**
   (ADR-112, secure-by-default baseline, break-glass review item 5):
   `POST /api/v1/projects/{id}/break-glass/{activationId}/review` records who
   reviewed an activation, when, and a note — exactly once (a second attempt
-  is refused, not a silent overwrite), regardless of whether the activation
-  is still active, expired, or already revoked. Activation itself remains
-  single-person, by design (an emergency path that needs a second person
-  fails exactly when it's needed) — review is a separate, after-the-fact
-  check, not a second approver. A new `break_glass.review_window` setting
-  (default 72h) is how long an activation may go unreviewed before this
-  becomes visible as a deviation in the posture report (a later release).
+  is refused, not a silent overwrite). The reviewer must be **someone other
+  than the user who activated it**, and must be an attributable human (a
+  machine identity cannot review), and the activation must have **concluded**
+  first — a still-active grant has to be revoked or allowed to expire before
+  it can be reviewed, since a reviewer cannot assess access that is still in
+  use. Activation itself remains single-person, by design (an emergency path
+  that needs a second person fails exactly when it's needed) — review is the
+  separate, after-the-fact check that makes that safe, not a second approver.
+
+  `break_glass.review_window` (default 72h) is how long an activation may go
+  unreviewed before it is reported. Past that, it is counted as a deviation
+  in the compliance posture report (`emergency_access.unreviewed_activations`,
+  with the age of the worst outstanding one), and a recurring check logs a
+  `SECURITY:` warning and writes a `break_glass.review_overdue` audit event
+  — on startup and every 6h. That visibility is the whole of the
+  enforcement: nothing is locked out, no grant is cut short, and no user is
+  blocked, because an emergency path that can be disabled by unfiled
+  paperwork fails exactly when it is needed.
 
 ## v0.95.3 — 2026-10-01
 

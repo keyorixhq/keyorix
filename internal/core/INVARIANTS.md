@@ -201,6 +201,35 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   state in one transaction, with audit emission strictly after commit. Why: security-closures
   `breakglass-revoke-half-commit-001`. Guard: `FuzzStorageFaultOperations` permanent corpus
   entry `7c0a2492ee5d1dfa`; fix is `core.RevokeBreakGlassActivationAtomic`.
+- **INV-CORE-43** A break-glass activation's post-activation review is recorded by someone
+  OTHER than the activating user, by an attributable human (never `actorID==0`), exactly once,
+  and only after the activation has concluded (revoked or expired). Break-glass activation is
+  deliberately single-person (ADR-112 rejects two-person break-glass: "an emergency path that
+  needs a second person fails exactly when it's needed"), so the independent after-the-fact
+  review is the ONLY second pair of eyes in the whole lifecycle — a self-review collapses the
+  property to one person end to end. There is no co-approver to also exclude:
+  `BreakGlassActivation` carries no approver field, so the reviewer and the activating user are
+  the only two identities an activation has. Why: ADR-112 §3, #2461. Guard:
+  `break_glass_review_test.go` (`TestReviewBreakGlass_RefusesSelfReview`,
+  `TestReviewBreakGlass_RefusesUnattributableReviewer`,
+  `TestReviewBreakGlass_RefusesWhileStillActive`,
+  `TestReviewBreakGlass_AllowedOnConcludedActivation`), plus
+  `TestBreakGlassActivation_HasNoApproverField`, which guards the no-co-approver PREMISE rather
+  than the conclusion so adding co-approval later fails loudly instead of silently reopening a
+  second self-review path.
+- **INV-CORE-44** An activation unreviewed past `break_glass.review_window` is REPORTED (posture
+  report count + age, a recurring `SECURITY:` log line, and one `break_glass.review_overdue`
+  audit event per pass) and is never ENFORCED by a lockout. ADR-112's words are "an open
+  activation without a recorded review shows as a posture deviation" — visibility is the whole
+  control, by the same reasoning that rejected two-person break-glass, so no lockout may be
+  added here without an explicit product decision. A still-active unreviewed activation is
+  counted too ("an OPEN activation"), which matters because INV-CORE-43 refuses to review one
+  that is still active — excluding them would hide exactly the activations that cannot be closed
+  out yet. Why: ADR-112 §3 items 4–5, #2461. Guard:
+  `break_glass_review_surfacing_test.go:TestAccumulateBreakGlassPosture_CountsUnreviewedPastTheWindow`,
+  `TestRunBreakGlassReviewReminder_WarnsAndAuditsOncePerPass`,
+  `TestRunBreakGlassReviewReminder_StorageErrorIsReported` (a broken query must not read as
+  "nothing is overdue"), `TestBreakGlassReviewWindowDefaultMatchesConfig`.
 
 ## Soft-delete / purge (ADR-032, ADR-033)
 

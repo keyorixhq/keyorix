@@ -42,6 +42,11 @@ const (
 	EventBreakGlassRevoked        = "break_glass.revoked"         // #nosec G101 -- audit event type, not a credential
 	EventBreakGlassNotifyPanicked = "break_glass.notify_panicked" // #nosec G101 -- audit event type, not a credential
 	EventBreakGlassReviewed       = "break_glass.reviewed"        // #nosec G101 -- audit event type, not a credential
+	// EventBreakGlassReviewOverdue is emitted once per RunBreakGlassReviewReminder
+	// pass that finds at least one activation unreviewed past the review window
+	// (#2461) -- the permanent, auditable half of ADR-112's posture deviation,
+	// alongside the posture report's own count.
+	EventBreakGlassReviewOverdue = "break_glass.review_overdue" // #nosec G101 -- audit event type, not a credential
 )
 
 // minBreakGlassReviewNoteLen mirrors minBreakGlassJustificationLen's reasoning
@@ -57,6 +62,30 @@ type BreakGlassPolicy struct {
 	EmergencyRole string
 	DefaultTTL    time.Duration
 	MaxTTL        time.Duration
+	// ReviewWindow is how long an activation may go unreviewed before the
+	// compliance posture report lists it as a deviation (ADR-112 §3, item 4)
+	// and the periodic reminder logs it. Wired from
+	// config.BreakGlassConfig.GetReviewWindow() at startup; zero falls back to
+	// defaultBreakGlassReviewWindow, so a core built without SetBreakGlassPolicy
+	// (every unit test, and any embedder) still reports deviations rather than
+	// treating a zero window as "everything is overdue".
+	ReviewWindow time.Duration
+}
+
+// defaultBreakGlassReviewWindow mirrors config.BreakGlassConfig's own 72h
+// default. Duplicated rather than imported because internal/core must not
+// depend on internal/config (ADR-109); kept honest by
+// TestBreakGlassReviewWindowDefaultMatchesConfig.
+const defaultBreakGlassReviewWindow = 72 * time.Hour
+
+// breakGlassReviewWindow is the effective review window: the configured value,
+// or the 72h default when unset. Never returns zero -- a zero window would
+// make c.now().Add(-0) the cutoff and report every activation ever as overdue.
+func (c *KeyorixCore) breakGlassReviewWindow() time.Duration {
+	if c.breakGlassPolicy.ReviewWindow > 0 {
+		return c.breakGlassPolicy.ReviewWindow
+	}
+	return defaultBreakGlassReviewWindow
 }
 
 // SetBreakGlassPolicy configures self-service emergency access (default: disabled).
@@ -492,11 +521,45 @@ func (c *KeyorixCore) LogBreakGlassRevoked(ctx context.Context, actorID, project
 // single-person (decided) -- this is a SEPARATE, after-the-fact check, not a
 // second approver gating the grant. actorID is the reviewer; projectID scopes
 // and double-checks the activation the same way RevokeBreakGlass does.
-// Allowed regardless of the activation's active/expired/revoked state: a
-// review is a record about what happened, not a control over the grant.
+//
+// Three refusals, all added in #2461's coordinator review, each of which the
+// control is worthless without:
+//
+//   - An UNATTRIBUTABLE reviewer (actorID==0: a machine identity, which
+//     authenticates with UserID==0 and authorizes via PrincipalID, or an
+//     unauthenticated local-CLI invocation) is refused via the same
+//     requireHumanReviewer access-review decisions already use. A review whose
+//     reviewer is nobody records accountability to nobody.
+//   - SELF-review is refused. This is the load-bearing one: ADR-112 keeps
+//     activation single-person *because* an independent after-the-fact review
+//     follows it ("Break-glass remains single-person, with mandatory alert,
+//     audit event and post-activation review"). Letting the activator close
+//     out their own activation collapses the two-person property the whole
+//     design rests on into one person. There is no co-approver to also
+//     exclude: BreakGlassActivation carries no approver field and ADR-112
+//     explicitly rejects two-person break-glass ("an emergency path that needs
+//     a second person fails exactly when it's needed"), so the actor and the
+//     activating user are the only two identities an activation has.
+//     TestBreakGlassActivation_HasNoApproverField guards that premise rather
+//     than this conclusion, so adding co-approval later forces this exclusion
+//     to be revisited instead of silently leaving a second self-review path.
+//   - A STILL-ACTIVE activation is refused; it must be revoked or expired
+//     first. A reviewer cannot assess what was done with access that is still
+//     in use, and a recorded review of an unfinished event reads, to an
+//     auditor and to the posture report alike, as a closed item. Note State is
+//     a read-time projection (GetBreakGlassActivation), so a TTL-lapsed
+//     activation reads "expired" here without needing a write first.
+//
+// Refusing a review while active does NOT weaken the posture deviation: an
+// unreviewed activation past the review window is reported either way (see
+// accumulateBreakGlassPosture), which is exactly ADR-112's "an open activation
+// without a recorded review shows as a posture deviation."
 func (c *KeyorixCore) ReviewBreakGlass(ctx context.Context, actorID, projectID, activationID uint, note string) error {
 	if projectID == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
+	}
+	if err := requireHumanReviewer(actorID); err != nil {
+		return err
 	}
 	note = strings.TrimSpace(note)
 	if len(note) < minBreakGlassReviewNoteLen {
@@ -509,6 +572,14 @@ func (c *KeyorixCore) ReviewBreakGlass(ctx context.Context, actorID, projectID, 
 	}
 	if activation.ProjectID != projectID {
 		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+	}
+	if actorID == activation.UserID {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+			"you cannot review your own break-glass activation; an independent reviewer is required")
+	}
+	if activation.State == BreakGlassActive {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil),
+			"activation is still active; revoke it or wait for it to expire before reviewing")
 	}
 	now := c.now()
 	if err := c.storage.ReviewBreakGlassActivation(ctx, activationID, actorID, note, now); err != nil {
@@ -533,6 +604,51 @@ func (c *KeyorixCore) ListUnreviewedBreakGlassActivations(ctx context.Context, w
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return rows, nil
+}
+
+// RunBreakGlassReviewReminder is the periodic half of ADR-112's
+// post-activation-review requirement (#2461): it finds every activation that
+// has gone unreviewed past the configured review window and makes that
+// visible, returning how many it found.
+//
+// What "enforced" means here is exactly what ADR-112 says and nothing more.
+// The ADR's words are "every activation must be reviewed afterwards: an open
+// activation without a recorded review shows as a POSTURE DEVIATION", and
+// separately "Break-glass remains single-person, with mandatory alert, audit
+// event and post-activation review. Two-person break-glass is rejected: an
+// emergency path that needs a second person fails exactly when it's needed."
+// So the enforcement is visibility -- the posture report (item 4), this
+// recurring warning, and a permanent audit event -- NOT a lockout. Nothing
+// here blocks an activation, blocks a user, or expires a grant early, and no
+// such lockout should be added without an explicit product decision: an
+// emergency path that can be disabled by an un-filed piece of paperwork fails
+// exactly when it is needed, which is the failure mode the ADR already
+// rejected for two-person approval.
+//
+// Emits ONE audit event per pass when the count is non-zero, not one per
+// activation: the per-activation detail is already in the posture report and
+// in each activation's own break_glass.activated event, and a per-row event
+// would make a long-ignored review spam the audit log it is supposed to make
+// legible. A pass that finds nothing writes nothing.
+func (c *KeyorixCore) RunBreakGlassReviewReminder(ctx context.Context) (int, error) {
+	window := c.breakGlassReviewWindow()
+	rows, err := c.ListUnreviewedBreakGlassActivations(ctx, window)
+	if err != nil {
+		return 0, err
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	// Oldest first (ListUnreviewedBreakGlassActivationsBefore orders by
+	// created_at ASC), so the age reported is the worst one outstanding.
+	oldest := c.now().Sub(rows[0].CreatedAt)
+	log.Printf("SECURITY: %d break-glass activation(s) have gone unreviewed for longer than %s (oldest: activation %d, project %d, user %d, %s ago) -- ADR-112 requires a post-activation review of every activation; this is a compliance posture deviation until each is reviewed",
+		len(rows), window, rows[0].ID, rows[0].ProjectID, rows[0].UserID, oldest.Round(time.Hour))
+	auditCtx, userID := adminJobAuditContext(ctx)
+	c.writeAuditEvent(auditCtx, EventBreakGlassReviewOverdue, userID, nil,
+		fmt.Sprintf("break-glass: %d activation(s) unreviewed past the %s review window (oldest: activation %d, %s ago)",
+			len(rows), window, rows[0].ID, oldest.Round(time.Hour)))
+	return len(rows), nil
 }
 
 // notifyBreakGlassAdmins alerts the project's approver-role members that emergency

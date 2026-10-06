@@ -120,8 +120,13 @@ func (h *CatalogHandler) RevokeBreakGlass(w http.ResponseWriter, r *http.Request
 
 // ReviewBreakGlass handles POST /api/v1/projects/{id}/break-glass/{activationId}/review
 // (ADR-112 §3, break-glass review item 5): a post-activation check, distinct from and
-// independent of revoke -- an already-revoked or expired activation can still be
-// reviewed, since a review is a record about what happened, not a control over the grant.
+// independent of revoke -- it is a record about what happened, not a control over the
+// grant, so it neither extends nor shortens the activation.
+//
+// The activation must have CONCLUDED first (revoked or expired, #2461) and the reviewer
+// must be someone other than the activating user; ReviewBreakGlass itself enforces both,
+// and the error mapping below surfaces them as 400 and 403 rather than letting a
+// deliberate refusal read as a server fault.
 func (h *CatalogHandler) ReviewBreakGlass(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -149,9 +154,26 @@ func (h *CatalogHandler) ReviewBreakGlass(w http.ResponseWriter, r *http.Request
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
+		// #2461: the self-review and unattributable-reviewer refusals are
+		// ErrorPermissionDenied ("permission denied"), matching
+		// ActivateBreakGlass's own mapping above. Listed BEFORE the 400 arm
+		// because the self-review message also contains "required" ("an
+		// independent reviewer is required"), which would otherwise classify a
+		// deliberate authorization refusal as a malformed request.
+		// #2461: the self-review and unattributable-reviewer refusals are
+		// ErrorPermissionDenied ("permission denied"), matching
+		// ActivateBreakGlass's own mapping above. Listed BEFORE the 400 arm
+		// because the self-review message also contains "required" ("an
+		// independent reviewer is required"), which would otherwise classify a
+		// deliberate authorization refusal as a malformed request -- confirmed:
+		// with this arm removed, the self-review case returns 400 and the
+		// still-active case 500.
+		case strings.Contains(msg, "permission denied"):
+			status = http.StatusForbidden
 		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
-		case strings.Contains(msg, "already been reviewed") || strings.Contains(msg, "required") || strings.Contains(msg, "characters"):
+		case strings.Contains(msg, "already been reviewed") || strings.Contains(msg, "still active") ||
+			strings.Contains(msg, "required") || strings.Contains(msg, "characters"):
 			status = http.StatusBadRequest
 		default:
 			log.Printf("Error reviewing break-glass activation %d for project %d: %v", activationID, id, err)

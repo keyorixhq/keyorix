@@ -62,6 +62,28 @@ type IdentityPosture struct {
 type EmergencyAccessPosture struct {
 	ActiveActivations int `json:"active_activations"`
 	TotalActivations  int `json:"total_activations"`
+	// UnreviewedActivations is ADR-112's break-glass posture deviation (§3,
+	// item 4): activations with no recorded review that are already older than
+	// break_glass.review_window. This is what "every activation must be
+	// reviewed afterwards" is ENFORCED by -- the ADR's own words are "an open
+	// activation without a recorded review shows as a posture deviation", not a
+	// lockout, and deliberately so (see RunBreakGlassReviewReminder).
+	//
+	// Counted from the activations this snapshot already fetched per project,
+	// not from a second global query: ListUnreviewedBreakGlassActivationsBefore
+	// exists for the periodic reminder, which has no project list to work from,
+	// but re-running it here would read the same rows twice and could disagree
+	// with TotalActivations/ActiveActivations above if a row changed in between.
+	UnreviewedActivations int `json:"unreviewed_activations"`
+	// OldestUnreviewedAgeHours is the age of the longest-outstanding unreviewed
+	// activation, 0 when there are none. A bare count cannot distinguish "one
+	// review is a day late" from "one has been ignored for a year", and the
+	// second is the one an auditor cares about.
+	OldestUnreviewedAgeHours int `json:"oldest_unreviewed_age_hours"`
+	// ReviewWindowHours is the threshold the two fields above were computed
+	// against, so a report is interpretable without also knowing the
+	// deployment's config.
+	ReviewWindowHours int `json:"review_window_hours"`
 }
 
 // AccessRequestPosture summarises the dual-control access-request/approval workflow
@@ -773,7 +795,7 @@ func (c *KeyorixCore) accessGovernancePostureFromSnapshot(ctx context.Context, p
 		pid := proj.ID
 		accumulateCampaignPosture(p, pid, recertCutoff, snap)
 		p.AccessGovernance.DormantRoleGrants += c.countDormantRoleGrants(ctx, pid, p, sharedPermsByRole, sharedDegradedRoles)
-		accumulateBreakGlassPosture(p, pid, snap)
+		c.accumulateBreakGlassPosture(p, pid, snap)
 		accumulateAccessRequestPosture(p, pid, snap)
 	}
 }
@@ -808,16 +830,32 @@ func accumulateCampaignPosture(p *CompliancePosture, pid uint, recertCutoff time
 	}
 }
 
-func accumulateBreakGlassPosture(p *CompliancePosture, pid uint, snap *complianceSnapshot) {
+func (c *KeyorixCore) accumulateBreakGlassPosture(p *CompliancePosture, pid uint, snap *complianceSnapshot) {
 	acts, err := snap.breakGlassByProject[pid], snap.breakGlassErrByProject[pid]
 	if err != nil {
 		p.degrade(fmt.Sprintf("emergency_access:project=%d", pid), err)
 		return
 	}
+	// ADR-112 §3 item 4 (#2461): an activation with no recorded review, already
+	// older than the review window, IS the posture deviation the ADR requires.
+	// Reported for a still-active activation too, not only a concluded one --
+	// the ADR's wording is "an OPEN activation without a recorded review", and
+	// ReviewBreakGlass deliberately refuses to review one that is still active,
+	// so excluding those here would hide exactly the activations that cannot be
+	// closed out yet.
+	window := c.breakGlassReviewWindow()
+	p.EmergencyAccess.ReviewWindowHours = int(window.Hours())
+	cutoff := c.now().Add(-window)
 	p.EmergencyAccess.TotalActivations += len(acts)
 	for _, a := range acts {
 		if a.State == BreakGlassActive {
 			p.EmergencyAccess.ActiveActivations++
+		}
+		if a.ReviewedAt == nil && !a.CreatedAt.After(cutoff) {
+			p.EmergencyAccess.UnreviewedActivations++
+			if ageHours := int(c.now().Sub(a.CreatedAt).Hours()); ageHours > p.EmergencyAccess.OldestUnreviewedAgeHours {
+				p.EmergencyAccess.OldestUnreviewedAgeHours = ageHours
+			}
 		}
 	}
 }
