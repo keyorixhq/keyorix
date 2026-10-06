@@ -78,26 +78,26 @@ var legacyUnreviewedLedgers = map[string]string{
 
 const exemptLedgerDir = "../../docs"
 
-type ledgerRow struct {
+type reviewLedgerRow struct {
 	line   int
 	fields []string
 }
 
-func readLedgerRows(t *testing.T, path string) []ledgerRow {
+func readReviewLedgerRows(t *testing.T, path string) []reviewLedgerRow {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	var rows []ledgerRow
+	var rows []reviewLedgerRow
 	for i, line := range strings.Split(string(data), "\n") {
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		rows = append(rows, ledgerRow{line: i + 1, fields: strings.Split(line, "\t")})
+		rows = append(rows, reviewLedgerRow{line: i + 1, fields: strings.Split(line, "\t")})
 	}
 	return rows
 }
 
-func ledgerKey(r ledgerRow, cols []int) string {
+func ledgerKey(r reviewLedgerRow, cols []int) string {
 	parts := make([]string, len(cols))
 	for i, c := range cols {
 		if c < len(r.fields) {
@@ -107,7 +107,7 @@ func ledgerKey(r ledgerRow, cols []int) string {
 	return strings.Join(parts, "\t")
 }
 
-func field(r ledgerRow, c int) string {
+func field(r reviewLedgerRow, c int) string {
 	if c < 0 || c >= len(r.fields) {
 		return ""
 	}
@@ -155,7 +155,7 @@ func exemptLedgerProblems(t *testing.T, dir string) []string {
 			problems = append(problems, fmt.Sprintf("docs/%s is an exemption ledger not registered in exemptLedgers (internal/core/exempt_ledger_review_test.go): give it added_by/reviewed_by columns or a .reviewed.tsv sidecar and register it", name))
 			continue
 		}
-		rows := readLedgerRows(t, filepath.Join(dir, name))
+		rows := readReviewLedgerRows(t, filepath.Join(dir, name))
 		if l.sidecar == "" {
 			for _, r := range rows {
 				if p := checkReviewed(field(r, l.addedByCol), field(r, l.reviewedByCol)); p != "" {
@@ -164,8 +164,8 @@ func exemptLedgerProblems(t *testing.T, dir string) []string {
 			}
 			continue
 		}
-		side := map[string]ledgerRow{}
-		for _, r := range readLedgerRows(t, filepath.Join(dir, l.sidecar)) {
+		side := map[string]reviewLedgerRow{}
+		for _, r := range readReviewLedgerRows(t, filepath.Join(dir, l.sidecar)) {
 			k := ledgerKey(r, l.keyCols)
 			if _, dup := side[k]; dup {
 				problems = append(problems, fmt.Sprintf("docs/%s:%d duplicate sidecar row for %q", l.sidecar, r.line, k))
@@ -270,7 +270,7 @@ func TestExemptLedgers_PendingRowsNotMerged(t *testing.T) {
 		if !ok || l.reasonCol < 0 {
 			continue
 		}
-		for _, r := range readLedgerRows(t, filepath.Join(exemptLedgerDir, name)) {
+		for _, r := range readReviewLedgerRows(t, filepath.Join(exemptLedgerDir, name)) {
 			for _, m := range pendingRowRe.FindAllStringSubmatch(field(r, l.reasonCol), -1) {
 				rows = append(rows, pending{fmt.Sprintf("docs/%s:%d", name, r.line), m[1]})
 			}
