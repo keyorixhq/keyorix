@@ -58,6 +58,17 @@ var membershipTransitions = map[string][]string{
 	MembershipRevoked:          {},
 }
 
+// membershipStamps is a ProjectMembership's pair of lifecycle timestamps,
+// snapshotted before a transition so a failed side effect can restore the row
+// exactly as it was (#2800). Both fields are nullable and a nil here means
+// "that event has not happened", which is itself part of what must be restored
+// — so this is a value carrying two pointers, not two separately-optional
+// arguments that a caller could forget to pass.
+type membershipStamps struct {
+	ActivatedAt *time.Time
+	RevokedAt   *time.Time
+}
+
 // canTransition reports whether a membership may move from → to.
 func canTransition(from, to string) bool {
 	return slices.Contains(membershipTransitions[from], to)
@@ -242,7 +253,14 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 				// ListUserProjectMemberships indefinitely. There's no earlier state to fall
 				// back to (this row didn't exist before this call), so revert straight to
 				// revoked.
-				c.revertFailedActivation(ctx, created, MembershipRevoked)
+				// #2800: this row did not exist before this call, so there is
+				// no earlier state to restore — the revert IS a genuine
+				// terminal revocation. Say so explicitly (never activated,
+				// revoked now) instead of leaving revertFailedActivation to
+				// infer timestamps from the target state.
+				revokedAt := c.now()
+				c.revertFailedActivation(ctx, created, MembershipRevoked,
+					membershipStamps{ActivatedAt: nil, RevokedAt: &revokedAt})
 				return fmt.Errorf("failed to grant role on activation: %w", err)
 			}
 			c.logMembershipEvent(ctx, "membership.activated", created, invitedBy)
@@ -347,6 +365,11 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 		}
 
 		prevState := m.State
+		// #2800: snapshot the row's lifecycle timestamps BEFORE this transition
+		// stamps its own, so a failed side effect can put the row back exactly
+		// as it was rather than reconstructing timestamps from the target state
+		// (which got them wrong — see revertFailedActivation).
+		prevStamps := membershipStamps{ActivatedAt: m.ActivatedAt, RevokedAt: m.RevokedAt}
 		now := c.now()
 		m.State = to
 		m.UpdatedAt = now
@@ -381,7 +404,7 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 				// existed in a legitimate pending state, so a failed activation attempt
 				// should leave it retriable rather than terminally revoked. See
 				// revertFailedActivation.
-				c.revertFailedActivation(ctx, m, prevState)
+				c.revertFailedActivation(ctx, m, prevState, prevStamps)
 				return fmt.Errorf("failed to grant role on activation: %w", err)
 			}
 		case MembershipRevoked:
@@ -396,7 +419,7 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 				// same as the activation-failure handling above. ErrNotProjectMember
 				// (no grant existed to remove — already gone via some other path) is
 				// the one genuinely benign case and is still ignored.
-				c.revertFailedActivation(ctx, m, prevState)
+				c.revertFailedActivation(ctx, m, prevState, prevStamps)
 				return fmt.Errorf("failed to remove role grant on revocation: %w", err)
 			}
 		}
@@ -486,11 +509,26 @@ func (c *KeyorixCore) logMembershipEvent(ctx context.Context, eventType string, 
 // TransitionMembership passes the membership's own pre-transition state, so a
 // legitimate retry of the activation is still possible.
 //
+// stamps is what the row's ActivatedAt/RevokedAt must read afterwards, supplied by
+// the caller rather than inferred here.
+//
+// #2800: this used to derive them from toState — `RevokedAt = now` when reverting
+// to revoked, `ActivatedAt = nil` otherwise — which is wrong for the
+// revocation-failure path (:404). There, TransitionMembership has already stamped
+// `RevokedAt = now` for the revoke that then failed, and toState is the row's
+// pre-transition `active`. The old branch took the else arm: it cleared
+// ActivatedAt and left the failed revoke's RevokedAt standing, so the row read
+// `active` / never-activated / revoked-at-T — three mutually contradictory facts,
+// and a member who looks revoked to anything reading RevokedAt while actually
+// holding their role. The target state cannot tell you what the timestamps were;
+// only the pre-transition row can, so the caller snapshots it (prevStamps) and
+// passes it in. Guard: TestRevertFailedActivation_RestoresPreTransitionTimestamps.
+//
 // Best-effort and mirrors revokeInvitationGrants (invitations.go): m is already on a
 // path that's about to return an error to its caller, so a failure to revert is
 // audited (flagged for manual cleanup) rather than returned or retried — a partial
 // revert is strictly better than silently leaving the active row standing.
-func (c *KeyorixCore) revertFailedActivation(ctx context.Context, m *models.ProjectMembership, toState string) {
+func (c *KeyorixCore) revertFailedActivation(ctx context.Context, m *models.ProjectMembership, toState string, stamps membershipStamps) {
 	// #G42: m.State is still MembershipActive here (TransitionMembership's own
 	// write above just committed it) — capture that as fromState so this
 	// revert's write only matches if nothing else has touched the row since,
@@ -498,12 +536,8 @@ func (c *KeyorixCore) revertFailedActivation(ctx context.Context, m *models.Proj
 	fromState := m.State
 	m.State = toState
 	m.UpdatedAt = c.now()
-	if toState == MembershipRevoked {
-		t := c.now()
-		m.RevokedAt = &t
-	} else {
-		m.ActivatedAt = nil
-	}
+	m.ActivatedAt = stamps.ActivatedAt
+	m.RevokedAt = stamps.RevokedAt
 	matched, err := c.storage.TransitionProjectMembershipState(ctx, m, fromState)
 	if err == nil && !matched {
 		err = fmt.Errorf("%w", ErrMembershipStateConflict)
