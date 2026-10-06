@@ -54,15 +54,29 @@ func TestDynamicSecretWrites_AreColumnScoped(t *testing.T) {
 // storage.Storage, or reflection. Both are absent from this repo's storage call
 // style, and this test's own job is the direct-call shape the defect took.
 func TestUpdateDynamicSecretLease_HasNoProductionCaller(t *testing.T) {
-	// file -> enclosing func, for the one deliberately-remaining caller.
-	allowed := map[string]string{
-		"internal/core/dynamic_secrets.go:UpdateDynamicSecretConfig": "CreateDynamicSecretConfig — the encrypted-DSN " +
-			"write, which is #2651's site, not #2698's; open PR #2675 moves it to SetDynamicSecretConfigAdminDSN. " +
-			"Drop this entry (and delete both full-row methods) once that lands.",
+	// Keyed file:ENCLOSING FUNC -> called method, with the exact number of call
+	// sites expected, for the one deliberately-remaining caller.
+	//
+	// #2836 review: the first version of this list keyed on file:CALLED METHOD
+	// and merely collected the enclosing function names into an unchecked value.
+	// Two consequences, both of which defeat the guard's purpose: a SECOND
+	// full-row caller added anywhere in the same file mapped onto the same
+	// allowed key and passed silently, and a second call added to the SAME
+	// already-allowed function did too. An allowlist whose granularity is
+	// coarser than the thing it allows is an allow-the-file rule wearing an
+	// allow-the-call-site label. Keying on the enclosing function and asserting
+	// the count makes both cases red.
+	allowed := map[string]struct {
+		count int
+		why   string
+	}{
+		"internal/core/dynamic_secrets.go:CreateDynamicSecretConfig -> UpdateDynamicSecretConfig": {1,
+			"the encrypted-DSN write, which is #2651's site, not #2698's; open PR #2675 moves it to " +
+				"SetDynamicSecretConfigAdminDSN. Drop this entry (and delete both full-row methods) once that lands."},
 	}
 
 	root := dynGuardRepoRoot(t)
-	found := map[string][]string{} // key -> enclosing funcs
+	found := map[string]int{} // "file:enclosing func -> called method" -> number of call sites
 	for _, dir := range []string{"internal/core", "internal/storage/store", "server"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d os.DirEntry, walkErr error) error {
 			if walkErr != nil {
@@ -99,8 +113,7 @@ func TestUpdateDynamicSecretLease_HasNoProductionCaller(t *testing.T) {
 					}
 					switch sel.Sel.Name {
 					case "UpdateDynamicSecretLease", "UpdateDynamicSecretConfig":
-						key := rel + ":" + sel.Sel.Name
-						found[key] = append(found[key], fd.Name.Name)
+						found[rel+":"+fd.Name.Name+" -> "+sel.Sel.Name]++
 					}
 					return true
 				})
@@ -110,19 +123,24 @@ func TestUpdateDynamicSecretLease_HasNoProductionCaller(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	for key, funcs := range found {
-		if _, ok := allowed[key]; ok {
+	for key, n := range found {
+		want, ok := allowed[key]
+		if !ok {
+			t.Errorf("%s is still called from production code — #2698 moved every write of these two "+
+				"models onto column-scoped conditional methods; a full-row Save here reverts whatever a "+
+				"narrower concurrent writer changed (the dynamic-secret kill switch, a lease revocation)", key)
 			continue
 		}
-		t.Errorf("%s is still called from production code (%v) — #2698 moved every write of these two "+
-			"models onto column-scoped conditional methods; a full-row Save here reverts whatever a "+
-			"narrower concurrent writer changed (the dynamic-secret kill switch, a lease revocation)",
-			key, funcs)
+		if n != want.count {
+			t.Errorf("%s now has %d call site(s), not the %d reviewed — a full-row write added to an "+
+				"already-allowed function is exactly as much of a lost update as one in a new function. "+
+				"Reason the reviewed one is allowed: %s", key, n, want.count, want.why)
+		}
 	}
-	for key, why := range allowed {
+	for key, want := range allowed {
 		if _, ok := found[key]; !ok {
 			t.Errorf("allowed entry %q no longer matches any call site — delete it (and, if both full-row "+
-				"methods are now callerless, delete the methods). Reason it was allowed: %s", key, why)
+				"methods are now callerless, delete the methods). Reason it was allowed: %s", key, want.why)
 		}
 	}
 }

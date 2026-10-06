@@ -729,7 +729,19 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 		// record. RevokedAt is set only on the success path below.
 		// #2698: record only the revocation columns. The former full-row Save also
 		// rewrote expires_at from this call's pre-read copy.
-		_, _ = c.storage.RecordDynamicSecretLeaseRevocation(ctx, lease.LeaseID, lease.Status, lease.RevokeReason, lease.RevokeError, lease.RevokedAt)
+		//
+		// #2836 review: the outcome is checked rather than discarded. This branch
+		// already fails closed for the caller (it returns the target-revoke error
+		// below, which is the more important fact and must not be replaced), but a
+		// no-match or a storage error means the `revoke_failed` marker — the thing
+		// that tells an operator this credential is STILL LIVE and needs dropping
+		// by hand — never reached the database. There is no row left to carry that
+		// warning, so the log is the only place it can go.
+		if matched, rrerr := c.storage.RecordDynamicSecretLeaseRevocation(ctx, lease.LeaseID, lease.Status, lease.RevokeReason, lease.RevokeError, lease.RevokedAt); rrerr != nil || !matched {
+			log.Printf("dynamic secret lease %s: target revoke FAILED and the revoke_failed marker could not be "+
+				"persisted (matched=%v, err=%v) — the credential is still live with no row recording it",
+				lease.LeaseID, matched, rrerr)
+		}
 		c.writeAuditEventFull(ctx, "dynamic_lease.revoke_failed", uidPtr, nil, &pid, "",
 			fmt.Sprintf("FAILED to revoke dynamic lease %s (role %s): %v", lease.LeaseID, lease.RoleName, rerr))
 		return fmt.Errorf("failed to revoke on target: %w", rerr)
@@ -769,8 +781,21 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 		lease.RevokeError = "revoked on target, but the audit record failed to persist — verify manually (see server log)"
 	}
 	// #2698: see the revoke-failed branch above — revocation columns only.
-	if _, rerr := c.storage.RecordDynamicSecretLeaseRevocation(ctx, lease.LeaseID, lease.Status, lease.RevokeReason, lease.RevokeError, lease.RevokedAt); rerr != nil {
+	//
+	// #2836 review: `matched` is checked and fails closed, for the same reason
+	// the !auditOK branch below does. A no-match means the lease row was deleted
+	// concurrently, so this revocation was never recorded anywhere. The target
+	// credential IS dead (engine.Revoke succeeded above), so this is a bookkeeping
+	// hole rather than a live credential — but RevokeLeasesForConfig and the
+	// REST/gRPC bulk-revoke response both turn a nil return into an unconditional
+	// success, and a success report that no stored row corroborates is exactly
+	// what the !auditOK branch exists to prevent.
+	matched, rerr := c.storage.RecordDynamicSecretLeaseRevocation(ctx, lease.LeaseID, lease.Status, lease.RevokeReason, lease.RevokeError, lease.RevokedAt)
+	if rerr != nil {
 		return rerr
+	}
+	if !matched {
+		return fmt.Errorf("lease %s was revoked on target, but no lease row remained to record it (deleted concurrently) — treat as unconfirmed", lease.LeaseID)
 	}
 	if !auditOK {
 		return fmt.Errorf("lease %s revoked on target, but failed to record the audit event — treat as unconfirmed", lease.LeaseID)
