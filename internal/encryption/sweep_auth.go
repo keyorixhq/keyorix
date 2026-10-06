@@ -377,12 +377,21 @@ func sweepNotificationChannels(tx *gorm.DB, oldSvc *EncryptionService, newSvc *E
 			if derr != nil {
 				return swept, legacyUpgraded, fmt.Errorf("failed to deserialize notification_channel id=%d: %w", row.ID, derr)
 			}
-			isLegacy = encrypted.Metadata.AADVersion == ""
-			if isLegacy {
-				plaintext, derr = oldSvc.Decrypt(encrypted)
-			} else {
-				plaintext, derr = oldSvc.DecryptWithAAD(encrypted, aad)
+			// NO legacy no-AAD fallback for this column, unlike every sibling
+			// sweep above (#2468 round 2). Those tables have real rows that
+			// predate #94 and must still be re-keyable; url_enc was introduced
+			// by #2468 itself, so an envelope here declaring no aad_version
+			// cannot be legitimate — it is ciphertext somebody copied in from
+			// elsewhere in the database. Decrypting it without AAD would make
+			// the rotation sweep the same decryption oracle the read path just
+			// stopped being (internal/core's decryptNotificationChannelURL),
+			// and would then RE-ENCRYPT the result as a properly AAD-bound
+			// channel URL, laundering it. Refuse instead: a rotation that
+			// cannot account for a row must stop, not normalise it.
+			if encrypted.Metadata.AADVersion == "" {
+				return swept, legacyUpgraded, fmt.Errorf("notification_channel id=%d: URL envelope declares no AAD version; this column has no legitimate pre-AAD rows, so refusing to re-encrypt it (manual investigation required: the row was written by something other than the notification-channel CRUD path)", row.ID)
 			}
+			plaintext, derr = oldSvc.DecryptWithAAD(encrypted, aad)
 			if derr != nil {
 				return swept, legacyUpgraded, fmt.Errorf("failed to decrypt notification_channel id=%d: %w", row.ID, derr)
 			}

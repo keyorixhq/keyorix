@@ -76,6 +76,35 @@ func TestSweepNotificationChannels_UnknownFormatTagFailsClosed(t *testing.T) {
 	assert.Contains(t, err.Error(), "unrecognised at-rest format tag")
 }
 
+// TestSweepNotificationChannels_NonAADEnvelopeRefused is the sweep-side half of
+// #2468 round 2's decryption-oracle fix. Unlike every sibling sweep in this
+// file, notification_channels gets NO legacy no-AAD fallback: url_enc is new as
+// of #2468, so an envelope here with no aad_version is ciphertext somebody
+// copied in from elsewhere. Decrypting it without AAD would make the rotation
+// the same oracle the read path stopped being -- and would then RE-ENCRYPT the
+// result as a properly AAD-bound channel URL, laundering it.
+func TestSweepNotificationChannels_NonAADEnvelopeRefused(t *testing.T) {
+	db := newTestDB(t)
+	oldSvc, _ := newTestService(t, "old-passphrase")
+	newSvc, _ := newTestService(t, "new-passphrase")
+
+	// A valid envelope under the install's own DEK, but with no aad_version --
+	// exactly what EncryptSecret (the pre-#94 shape) produces.
+	stolen, meta, err := oldSvc.EncryptSecret([]byte("super-secret-value-from-another-table"))
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&models.NotificationChannel{
+		Name: "planted", Type: "webhook", Enabled: true,
+		URLEnc:  NotificationChannelURLWrap(NotificationChannelURLTagEncrypted, stolen),
+		URLMeta: meta,
+	}).Error)
+
+	_, _, serr := sweepNotificationChannels(db, oldSvc.encryptionService, newSvc.encryptionService, newSvc.keyManager.GetKeyVersion(), false)
+	require.Error(t, serr, "a no-AAD envelope must stop the rotation for this column, not be silently re-keyed into an AAD-bound one")
+	assert.Contains(t, serr.Error(), "declares no AAD version")
+	assert.NotContains(t, serr.Error(), "super-secret-value-from-another-table",
+		"the refusal must not leak the plaintext it declined to re-encrypt")
+}
+
 func TestSweepNotificationChannels_AbsentURLIsSkipped(t *testing.T) {
 	db := newTestDB(t)
 	oldSvc, _ := newTestService(t, "old-passphrase")

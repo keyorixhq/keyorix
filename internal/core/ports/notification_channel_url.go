@@ -30,7 +30,10 @@
 // or attacker-written row would get dialled as a URL.
 package ports
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // Format tags for the first byte of NotificationChannel.URLEnc.
 //
@@ -58,6 +61,37 @@ const (
 // genuinely closed finding rather than a dismissed one.
 func WrapNotificationChannelURL(tag byte, payload []byte) []byte {
 	return append([]byte{tag}, payload...)
+}
+
+// NotificationChannelURLEnvelopeIsAADBound reports whether an
+// encrypted-tagged payload carries a non-empty `aad_version`, i.e. whether its
+// AAD will actually be checked on decryption.
+//
+// This exists because the metadata that decides whether AAD is enforced is
+// written by whoever wrote the row. Service.DecryptSecretWithAAD falls back to
+// a no-AAD decrypt when `aad_version` is empty, so that rows predating #94
+// still read — and that fallback turned the AAD binding into a suggestion for
+// THIS column. url_enc is new as of #2468, so it has no legitimate pre-AAD
+// rows at all; a DB-write attacker could paste any old non-AAD ciphertext from
+// anywhere in the database into url_enc and read its plaintext back out of
+// GET /notification-channels. A decryption oracle, built entirely out of the
+// compatibility shim.
+//
+// Decoded here rather than in internal/encryption so internal/core can refuse
+// the shape without importing that package (ADR-109); this reads one field of
+// the envelope's own JSON and needs nothing but encoding/json. A payload that
+// does not decode at all is reported as an error, not as "not bound" — a
+// caller must not be able to confuse "malformed" with "merely legacy".
+func NotificationChannelURLEnvelopeIsAADBound(payload []byte) (bool, error) {
+	var envelope struct {
+		Metadata struct {
+			AADVersion string `json:"aad_version"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		return false, fmt.Errorf("notification channel URL: stored envelope is not decodable: %w", err)
+	}
+	return envelope.Metadata.AADVersion != "", nil
 }
 
 // UnwrapNotificationChannelURL splits a stored url_enc value into its format

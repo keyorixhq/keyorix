@@ -81,10 +81,41 @@ func (c *KeyorixCore) GetNotificationChannel(ctx context.Context, id uint) (*mod
 //     the decryptor is what used to fail the entire fail-closed list over one
 //     URL-less email channel.
 //   - Plaintext: written while encryption was off, or still awaiting the
-//     backfill that enables it. Returned as-is, no decrypt attempted.
+//     backfill that enables it. Returned as-is, no decrypt attempted — but ONLY
+//     while encryption is off. See the tag-downgrade refusal below.
 //   - Encrypted: a real envelope. Refused outright when no encryptor is wired,
 //     rather than letting decryptAuthSecret's passthrough branch hand the
 //     caller the envelope JSON AS the URL for alert dispatch to then dial.
+//     Also refused when the envelope declares no AAD version — see the
+//     decryption-oracle refusal below.
+//
+// Round 2 of #2468's review found that the format tag, on its own, still let a
+// DB-WRITE attacker (a compromised replica, a restored backup, SQL injection
+// elsewhere, a DBA — someone who can write the row but does NOT hold the DEK)
+// steer this column two ways. Both are closed here:
+//
+//   - TAG DOWNGRADE. A plaintext tag was accepted unconditionally, so an
+//     attacker could overwrite a channel's envelope with a plaintext URL of
+//     their choosing and redirect every alert for that channel. Plaintext
+//     carries no AAD, so nothing bound it to the channel at all — and the next
+//     startup backfill would then ENCRYPT the planted URL, laundering it into
+//     a properly-bound envelope and destroying the evidence. Refused whenever
+//     encryption is active, which costs nothing legitimate: the CRUD paths only
+//     ever write an envelope in that state, and the startup backfill refuses to
+//     complete (hence refuses to start the server) while any plaintext row
+//     remains — see MigrateNotificationChannelURLsToEncrypted's own
+//     no-plaintext-left verification. A URL-less channel is tag Absent, not
+//     tag Plaintext, so the email-channel case this PR already fixed is
+//     untouched.
+//
+//   - NO-AAD DECRYPTION ORACLE. Service.DecryptSecretWithAAD falls back to a
+//     no-AAD decrypt when the envelope's aad_version is empty, for rows
+//     predating #94. url_enc is new in this PR, so it has NO legitimate
+//     pre-AAD rows — and the attacker writes the metadata that decides whether
+//     AAD is checked, so they could paste ANY old non-AAD ciphertext from
+//     elsewhere in the database into url_enc and read its plaintext back out of
+//     GET /notification-channels. The AAD binding was sound but bypassable;
+//     requiring aad_version makes it load-bearing.
 func (c *KeyorixCore) decryptNotificationChannelURL(ch *models.NotificationChannel) error {
 	tag, payload, err := ports.UnwrapNotificationChannelURL(ch.URLEnc)
 	if err != nil {
@@ -95,11 +126,21 @@ func (c *KeyorixCore) decryptNotificationChannelURL(ch *models.NotificationChann
 		ch.URL = ""
 		return nil
 	case ports.NotificationChannelURLTagPlaintext:
+		if c.AuthEncryptionActive() {
+			return fmt.Errorf("notification channel %d URL is stored unencrypted while encryption is active: refusing it (no legitimate write path produces this, and an unencrypted URL carries no binding to the channel)", ch.ID)
+		}
 		ch.URL = string(payload)
 		return nil
 	default: // ports.NotificationChannelURLTagEncrypted -- Unwrap admits no other value
 		if !c.AuthEncryptionActive() {
 			return fmt.Errorf("notification channel %d URL is encrypted at rest but encryption is disabled: refusing to return the stored envelope as a URL", ch.ID)
+		}
+		aadBound, aerr := ports.NotificationChannelURLEnvelopeIsAADBound(payload)
+		if aerr != nil {
+			return fmt.Errorf("notification channel %d: %w", ch.ID, aerr)
+		}
+		if !aadBound {
+			return fmt.Errorf("notification channel %d URL envelope declares no AAD version: refusing it (this column has no legitimate pre-AAD rows, so a no-AAD decrypt here would be a decryption oracle for ciphertext copied in from elsewhere)", ch.ID)
 		}
 		plain, derr := c.decryptAuthSecret(payload, ch.URLMeta, ports.NotificationChannelURLAAD(ch.ID))
 		if derr != nil {

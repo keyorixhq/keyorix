@@ -191,6 +191,55 @@ func TestMigrateNotificationChannelURLsToEncrypted_UnknownFormatTagFailsLoudly(t
 	assert.Contains(t, err.Error(), "unrecognised at-rest format tag")
 }
 
+// TestMigrateNotificationChannelURLsToEncrypted_RefusesLeftoverPlaintextRow is
+// the postcondition internal/core's tag-downgrade refusal depends on (#2468
+// round 2). The read path refuses a plaintext-tagged url_enc whenever
+// encryption is active, which is only sound if a legitimate install can never
+// be in that state while serving. This proves the backfill is what makes that
+// true: a plaintext row it cannot account for stops startup.
+//
+// Both directions, so the check cannot be passing merely because it always
+// refuses: with encryption OFF a plaintext row is perfectly legal.
+func TestMigrateNotificationChannelURLsToEncrypted_RefusesLeftoverPlaintextRow(t *testing.T) {
+	ls := newNotificationChannelTestStore(t)
+	ctx := context.Background()
+
+	ch := &models.NotificationChannel{
+		Name: "written-while-off", Type: "webhook", Enabled: true,
+		URLEnc: ports.WrapNotificationChannelURL(ports.NotificationChannelURLTagPlaintext, []byte("https://hooks.example.com/off-era")),
+	}
+	require.NoError(t, ls.CreateNotificationChannel(ctx, ch))
+
+	require.NoError(t, ls.verifyNoPlaintextNotificationChannelURLs(ctx, false),
+		"with encryption off, a plaintext row is the correct steady state")
+
+	err := ls.verifyNoPlaintextNotificationChannelURLs(ctx, true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "still holds an unencrypted URL")
+}
+
+// TestMigrateNotificationChannelURLsToEncrypted_LeavesNoPlaintextOnSuccess is
+// the green side: a normal off -> on upgrade satisfies the postcondition, so
+// the refusal above is not simply unreachable in practice.
+func TestMigrateNotificationChannelURLsToEncrypted_LeavesNoPlaintextOnSuccess(t *testing.T) {
+	ls := newNotificationChannelTestStore(t)
+	ctx := context.Background()
+
+	ch := &models.NotificationChannel{
+		Name: "written-while-off", Type: "webhook", Enabled: true,
+		URLEnc: ports.WrapNotificationChannelURL(ports.NotificationChannelURLTagPlaintext, []byte("https://hooks.example.com/off-era")),
+	}
+	require.NoError(t, ls.CreateNotificationChannel(ctx, ch))
+
+	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())
+	require.NoError(t, enc.Initialize("test-passphrase"))
+
+	n, err := ls.MigrateNotificationChannelURLsToEncrypted(ctx, enc)
+	require.NoError(t, err, "the backfill must satisfy its own no-plaintext-left postcondition")
+	assert.Equal(t, 1, n)
+	require.NoError(t, ls.verifyNoPlaintextNotificationChannelURLs(ctx, true))
+}
+
 func TestMigrateNotificationChannelURLsToEncrypted_NoLegacyRows_NoOp(t *testing.T) {
 	ls := newNotificationChannelTestStore(t)
 	ctx := context.Background()

@@ -48,6 +48,24 @@ type legacyNotificationChannelURLRow struct {
 // encryptor state is not selected, so a steady-state restart rewrites nothing
 // and returns 0.
 //
+// Deliberately ROW-BY-ROW and NOT transactional (#2468 round 2, stated because
+// a reviewer will otherwise and reasonably ask). Each row's UPDATE commits on
+// its own, so a failure partway through leaves a mix of migrated and
+// unmigrated rows. That is safe here for two specific reasons, and only
+// because both hold:
+//
+//  1. Every row is independent — nothing reads two of them together, and
+//     per-row state is self-describing via the format tag, so a half-finished
+//     run has no inconsistent intermediate to observe.
+//  2. A failure is FATAL to startup (its caller in server/main.go returns the
+//     error), so no request is ever served against a half-migrated table; the
+//     next boot resumes from wherever it stopped.
+//
+// Wrapping the whole thing in one transaction would be worse, not better: on
+// an install with many channels it would hold a long write transaction over a
+// table the scheduler also touches, to protect against an intermediate state
+// nothing can see.
+//
 // Fails LOUDLY rather than logging and continuing (its caller in server/main.go
 // refuses to start on an error). The cheap-looking alternative — "it is
 // idempotent, a later restart will retry" — is wrong for job (2) specifically:
@@ -106,7 +124,21 @@ func (ls *LocalStorage) MigrateNotificationChannelURLsToEncrypted(ctx context.Co
 		updates := map[string]interface{}{"url_enc": urlEnc, "url_meta": urlMeta}
 		if hasLegacyColumn {
 			// Clear the legacy plaintext once its replacement is durable, so
-			// the bytes don't linger in the row.
+			// the bytes don't linger in the ROW.
+			//
+			// Not in the FILE, though, and that limit is worth stating rather
+			// than implying (#2468 round 2): an UPDATE to "" overwrites the
+			// logical value, but the old bytes survive in SQLite free pages and
+			// the WAL, and in PostgreSQL dead tuples, until a VACUUM (or
+			// VACUUM FULL / pg_repack) reclaims them. So this clears the
+			// plaintext from anything that reads the database, not from
+			// forensic recovery of its storage. An operator upgrading an
+			// install whose webhook URLs are treated as credentials should
+			// VACUUM after the first post-upgrade boot. Deliberately NOT done
+			// here: VACUUM is a long, exclusive, whole-database operation on
+			// both backends and must not be fired implicitly from a startup
+			// path -- see docs/CONFIGURATION.md's break-glass/notification
+			// section for the operator-facing note.
 			updates["url"] = ""
 		}
 		res := ls.db.WithContext(ctx).Model(&models.NotificationChannel{}).Where("id = ?", r.ID).Updates(updates)
@@ -115,7 +147,47 @@ func (ls *LocalStorage) MigrateNotificationChannelURLsToEncrypted(ctx context.Co
 		}
 		migrated++
 	}
+
+	if err := ls.verifyNoPlaintextNotificationChannelURLs(ctx, encryptionOn); err != nil {
+		return migrated, err
+	}
 	return migrated, nil
+}
+
+// verifyNoPlaintextNotificationChannelURLs is the postcondition the core read
+// path's tag-downgrade refusal rests on (#2468 round 2).
+//
+// internal/core's decryptNotificationChannelURL refuses a plaintext-tagged
+// url_enc whenever encryption is active, which is only safe to do if a
+// legitimate install can never BE in that state while serving. This is the
+// check that makes that true rather than assumed: with encryption on, the loop
+// above has re-encrypted every plaintext row, so finding one here means a write
+// landed outside the CRUD path (or the loop's own logic regressed). Either way
+// the server must not come up — its caller in server/main.go treats this error
+// as fatal.
+//
+// Guarding the CONDITION, not the conclusion: without it, "the read path can
+// refuse plaintext because startup leaves none" would be a claim in a comment,
+// and a reader of decryptNotificationChannelURL would have no way to check it.
+func (ls *LocalStorage) verifyNoPlaintextNotificationChannelURLs(ctx context.Context, encryptionOn bool) error {
+	if !encryptionOn {
+		return nil
+	}
+	var rows []legacyNotificationChannelURLRow
+	if err := ls.db.WithContext(ctx).Model(&models.NotificationChannel{}).
+		Select("id, url_enc").Find(&rows).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, r := range rows {
+		tag, _, err := ports.UnwrapNotificationChannelURL(r.URLEnc)
+		if err != nil {
+			return fmt.Errorf("notification channel %d: %w", r.ID, err)
+		}
+		if tag == ports.NotificationChannelURLTagPlaintext {
+			return fmt.Errorf("notification channel %d still holds an unencrypted URL after the backfill: refusing to continue, because the read path is entitled to assume encryption-active implies no plaintext rows (investigate how this row was written -- the CRUD path cannot produce it)", r.ID)
+		}
+	}
+	return nil
 }
 
 // notificationChannelURLRewritePlan decides what, if anything, row r still

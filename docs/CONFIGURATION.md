@@ -779,6 +779,29 @@ token, so set it via the env var.
 > / `KEYORIX_NOTIFY_SLACK_WEBHOOK` / `KEYORIX_NOTIFY_TEAMS_WEBHOOK` when set, falling
 > back to the YAML value — keep secrets out of the config file.
 
+### Runtime-managed channels: URL encryption at rest, and one upgrade caveat
+
+A notification channel created at runtime (the channel CRUD API, as opposed to
+the `notifications:` block above) stores its destination URL **encrypted** when
+`storage.encryption.enabled` is set — the URL embeds the platform's bearer
+token, so it is treated as a credential. The ciphertext is bound to the
+channel's own id, so it cannot be moved to another channel's row, and the URL
+never appears in an audit diff.
+
+**If you are upgrading an install that already had runtime channels**, the first
+boot after the upgrade migrates each row's URL into the encrypted column and
+clears the old plaintext one. That clears it from anything that *reads* the
+database — but not from its storage: the old bytes survive in SQLite free pages
+and the WAL, and in PostgreSQL dead tuples, until reclaimed. If you treat those
+webhook URLs as credentials, run a `VACUUM` (PostgreSQL: `VACUUM FULL` or
+`pg_repack` on `notification_channels`) after that first boot. Keyorix does not
+do this for you: `VACUUM` is a long, exclusive, whole-database operation and
+must not fire implicitly from a startup path.
+
+If the migration cannot complete, the server **refuses to start** rather than
+serve with webhook credentials still in plaintext on an install that asked for
+encryption. The error names the channel to investigate.
+
 ## compliance_digest
 
 An opt-in scheduler that periodically **broadcasts a compliance summary** to the
