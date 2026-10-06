@@ -493,6 +493,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: ./scripts/report-unlisted-security-issues.sh
 
+      # GATING, unlike the informational step above, and the difference is the
+      # signal each one keys on. That step keys on the `security` LABEL, which
+      # this repo applies unreliably (its header documents four confirmed
+      # misses), so its silence proves nothing and it must never fail a build.
+      # This one keys on issue STATE, which is not a human convention anyone has
+      # to remember to apply -- a closed issue is closed. See the script's own
+      # header, and #2844.
+      #
+      # It fails rather than passes when it cannot reach the API: green would
+      # otherwise mean "no closed issues found" when it actually means "nothing
+      # was looked at". The offline backstop is
+      # TestKnownOpenTolerances_CarryIssueAndExpiry's expiry check, which runs
+      # in the test-suite job regardless.
+      - name: Verify every fault-injection tolerance cites an open issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/check-fault-tolerance-issues.sh
+
   # Backstop for the actionlint pre-commit hook (.pre-commit-config.yaml) --
   # not a replacement for it. That hook is the PRIMARY guard: it runs on the
   # contributor's own machine before a broken workflow file is ever pushed,

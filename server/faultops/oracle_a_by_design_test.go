@@ -294,10 +294,12 @@ func TestKnownOpenTolerances_AreLoadBearing(t *testing.T) {
 
 	for _, label := range c.underspecified {
 		if !toleranceStalenessUndrivable[label] {
-			t.Errorf("knownOpenTolerance %q is not fully specified (blank method and/or nth==0) so this "+
-				"staleness check cannot drive it, and it is not listed in "+
-				"toleranceStalenessUndrivable. Add it there with a note, so the coverage gap is "+
-				"visible rather than silent", label)
+			t.Errorf("knownOpenTolerance %q wildcards at least one of method/kind/nth, so there is no single "+
+				"fault for this staleness check to arm and it cannot be driven — and it is not listed in "+
+				"toleranceStalenessUndrivable. Add it there with a note, so the coverage gap is visible "+
+				"rather than silent. (A wildcard row is still constrained by its mandatory non-empty "+
+				"tables, enforced by TestKnownOpenTolerances_CarryIssueAndExpiry; what it is NOT covered by "+
+				"is this staleness check.)", label)
 		}
 	}
 
@@ -396,7 +398,12 @@ func classifyToleranceStaleness(t *testing.T) toleranceStaleness {
 	var c toleranceStaleness
 	for _, k := range knownOpenTolerances {
 		label := fmt.Sprintf("%s/%s/%s#%d", k.op, k.method, k.kind, k.nth)
-		if k.method == "" || k.nth == 0 {
+		// A row wildcarded in ANY dimension cannot be driven: there is no
+		// single (method, nth, kind) to arm. Derived from the one shared
+		// definition of "wildcarded" (#2844) rather than re-spelled here, so
+		// this check and matchingKnownOpen's matching cannot disagree about
+		// which rows those are.
+		if len(toleranceWildcardedDimensions(k)) > 0 {
 			c.underspecified = append(c.underspecified, label)
 			continue
 		}
@@ -541,18 +548,22 @@ var toleranceDeadPendingTriage = map[string]string{
 // TestKnownOpenTolerances_AreLoadBearing cannot drive, with why. Keeping the
 // list explicit is the point: an unlisted undrivable entry fails the test, so
 // the uncovered set cannot grow silently.
+// The `none` in these keys is FaultKind's zero value rendering — i.e. the
+// kind wildcard (#2844 (a)). Both of these were a KindError/KindPanic PAIR of
+// near-identical rows before that change; collapsing each pair into one
+// kind-wildcarded row is why there are two keys here now instead of four.
 var toleranceStalenessUndrivable = map[string]bool{
-	// method is deliberately blank (wildcard): the finding's root cause is
+	// method AND kind are both wildcards: the finding's root cause is
 	// reserveLoginAttempt's unconditional write before the faulted call runs,
-	// so ANY fault on this op shows the same LoginAttempt-only diff. There is
-	// no single method to drive. Both fault kinds have their own entry (#2548).
-	"REST POST /auth/mfa/verify//error#1": true,
-	"REST POST /auth/mfa/verify//panic#1": true,
-	// Same wildcard shape: a webauthn-login-finish failure's diff comes from a
-	// write that lands before whichever call is faulted. Both fault kinds have
-	// their own entry in knownOpenTolerances (#2565), and both are wildcards.
-	"REST POST /auth/webauthn/login/finish//error#1": true,
+	// so ANY fault on this op, of any kind, shows the same LoginAttempt-only
+	// diff. There is no single (method, kind) to drive (#2548).
+	"REST POST /auth/mfa/verify//none#1": true,
+	// Same method wildcard, same LoginAttempt-only diff, different op and two
+	// distinct causes (the kind-split is deliberate, see those rows):
+	// #2879's panic arm (the release has no defer) and #2880's error arm (an
+	// evaluated assertion's later failure stays counted).
 	"REST POST /auth/webauthn/login/finish//panic#1": true,
+	"REST POST /auth/webauthn/login/finish//error#1": true,
 }
 
 // isOutcomeLogTable reports whether t is one of outcomeLogTables.

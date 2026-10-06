@@ -765,16 +765,44 @@ type oracleInput struct {
 // write-up (a docs/findings/*.md path, or a keyorix-private doc).
 //
 // nth and oracle (added alongside the first real entry, #2449) narrow the
-// match further: nth is the exact 1-indexed fault call number
-// (oracleInput.nth), and oracle is the exact letter ("a".."e") of the ONE
-// GOAL oracle this tolerance covers. Without them, (op, method, kind) alone
-// would match EVERY call number and EVERY oracle that happens to report a
-// violation on this triple -- silently swallowing a different, unrelated
-// violation (a different nth, or a different oracle) that happens to share
-// the same op/method/kind. Both are required, same as issue/expires.
+// match further: nth is the 1-indexed fault call number (oracleInput.nth), and
+// oracle is the exact letter ("a".."e") of the ONE GOAL oracle this tolerance
+// covers. oracle is never a wildcard: without it, (op, method, kind) alone
+// would match EVERY oracle that happens to report a violation on this triple,
+// silently swallowing a different, unrelated one.
+//
+// Wildcards (#2844 (a)). method, kind and nth each match ANYTHING on their zero
+// value. op and oracle never do.
+//
+// This is not a loosening on net, because the dimension that decides what gets
+// swallowed is `tables`, not these three. A finding whose root cause is
+// structural to the OP (a write that lands before the faulted call even runs)
+// produces the same diff for every method, every fault kind and every call
+// ordinal — so before this, it needed one near-identical row per combination,
+// each with its own issue+expiry, each re-filed on its own schedule. That
+// per-combination duplication is what the #2548/#2565 pairs were, and it is how
+// rows drift apart and go stale individually.
+//
+// What keeps a wildcard row narrow is enforced, not hoped for:
+// TestKnownOpenTolerances_CarryIssueAndExpiry REQUIRES a non-empty `tables`
+// whenever any of method/kind/nth is wildcarded. tables is a subset check, so
+// such a row still fails loudly the moment a diff contains one table it does
+// not list. Combined with TestKnownOpenTolerances_AreLoadBearing (which fails
+// on any row the oracle no longer consults), a widened row cannot outlive its
+// finding — which is exactly the precondition that makes widening safe.
 type knownOpenTolerance struct {
-	op, method string
-	kind       faultstorage.FaultKind
+	op string
+	// method == "" matches ANY storage method -- for a finding whose root
+	// cause is structural to the OP itself (e.g. a write that happens
+	// unconditionally before the faulted call even runs), not tied to one
+	// specific storage call. Requires a non-empty tables.
+	method string
+	// kind == faultstorage.KindNone matches ANY fault kind. KindNone is never
+	// a real armed fault (faultstorage's own zero value means "nothing armed"),
+	// so there is no ambiguity in repurposing it. Requires a non-empty tables.
+	kind faultstorage.FaultKind
+	// nth == 0 matches ANY call ordinal. Ordinals are 1-indexed, so 0 was
+	// already meaningless as a value. Requires a non-empty tables.
 	nth        int
 	oracle     string
 	issue      string
@@ -788,10 +816,6 @@ type knownOpenTolerance struct {
 	// original, table-unaware behavior: tolerate the full diff for this exact
 	// (op, method, kind, nth, oracle).
 	tables []string
-	// method == "" matches ANY storage method -- for a finding whose root
-	// cause is structural to the OP itself (e.g. a write that happens
-	// unconditionally before the faulted call even runs), not tied to one
-	// specific storage call.
 }
 
 // diffSubsetOf reports whether every table in diff also appears in allowed —
@@ -960,34 +984,30 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// mfa-verify-getuser-loginattempt-2548 below): op="REST POST
 	// /auth/mfa/verify" fault=(method=GetUser, NthCall=1, kind=error) --
 	// oracle (a) VIOLATION, differing tables: [LoginAttempt].
-	{
-		op: "REST POST /auth/mfa/verify", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2548", expires: "2026-10-17",
-		tables:     []string{"LoginAttempt"},
-		findingDoc: "docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md",
-	},
-	// The KindPanic arm of the SAME #2548 wildcard entry directly above. Found by
-	// a live run while working #2549, confirmed PRE-EXISTING by byte-for-byte
-	// replay against unmodified origin/main (fault=GetMFASecret#1/panic, oracle
-	// (a), differing tables: [LoginAttempt]).
 	//
-	// FLAG FOR THE COORDINATOR — a pattern, not just a row. Both of this run's
-	// LoginAttempt findings (this one and the webauthn/login/finish panic above)
-	// are the KindPanic arm of an EXISTING KindError wildcard entry, same op,
-	// same table, same root cause (reserveLoginAttempt writes unconditionally
-	// before the faulted call runs, so the row is there whatever the fault is).
-	// The existing entries wildcard `method` precisely so the next storage call
-	// CI finds is not a fresh red build — but `kind` has no wildcard, so every
-	// such entry needs its panic twin added by hand, and CI's randomized
-	// fuzz-changed will keep producing them one at a time. That is the same
-	// shared-mechanism question an earlier author already flagged for `nth`
-	// ("the existing knownOpenTolerance struct has no nth-wildcard mechanism ...
-	// inventing one is a shared-mechanism change, not a data entry"). Deciding
-	// whether to add a kind-wildcard belongs with that one; NOT invented here,
-	// and deliberately not worked around by widening either existing entry
-	// (COMMON-RULES: never widen an existing tolerance to make CI green).
+	// kind is wildcarded too, as of #2844 (a) — this ONE row replaces the
+	// KindError/KindPanic pair that used to sit here. That pair was identical
+	// in every field but `kind`, and the previous author left a note asking the
+	// coordinator for exactly this mechanism: "the existing entries wildcard
+	// `method` precisely so the next storage call CI finds is not a fresh red
+	// build — but `kind` has no wildcard, so every such entry needs its panic
+	// twin added by hand, and CI's randomized fuzz-changed will keep producing
+	// them one at a time." Both arms were separately confirmed pre-existing by
+	// byte-for-byte replay against unmodified origin/main
+	// (GetMFASecret#1/error and GetMFASecret#1/panic, oracle (a), differing
+	// tables [LoginAttempt] in both). Collapsing them is not a widening of what
+	// is tolerated: the root cause is kind-independent by construction (the
+	// write lands before the faulted call runs at all), tables is unchanged at
+	// [LoginAttempt], and a diff with anything else still fails loudly.
+	//
+	// nth stays PINNED at 1 deliberately. The same root-cause argument would
+	// justify wildcarding it, but no other ordinal has been observed producing
+	// this diff, and widening on an argument rather than an observation is how
+	// a narrow row becomes a blanket one. If an nth twin does show up, that is
+	// a one-line change then.
 	{
-		op: "REST POST /auth/mfa/verify", kind: faultstorage.KindPanic,
+		op: "REST POST /auth/mfa/verify",
+		// method, kind: both wildcard. nth pinned. tables mandatory (#2844).
 		nth: 1, oracle: "a", issue: "#2548", expires: "2026-10-17",
 		tables:     []string{"LoginAttempt"},
 		findingDoc: "docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md",
@@ -1035,40 +1055,68 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// -- same op, same kind, same LoginAttempt-only diff -- confirmed by
 	// direct replay; no separate tolerance entry needed for it. #2603 and
 	// #2565 look like the same tracked finding under two issue numbers.
-	{
-		op: "REST POST /auth/webauthn/login/finish", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2565", expires: "2026-10-17",
-		tables:     []string{"LoginAttempt"},
-		findingDoc: "#2565",
-	},
-	// The KindPanic arm of the SAME #2565 finding, found by a 2-minute live
-	// FuzzStorageFaultOperations run while working #2549
-	// (fault=ListWebAuthnCredentials#1/panic, oracle (a), differing tables:
-	// [LoginAttempt]). Confirmed PRE-EXISTING, not caused by #2549's change:
-	// replayed byte-for-byte against unmodified origin/main, where it fails
-	// identically (COMMON-RULES' "replay the failing input on origin/main
-	// first" rule). #2549 only ADDS an exemption branch and deletes tolerances
-	// that were already never consulted, neither of which can make the oracle
-	// report more.
 	//
-	// Same op, same oracle, same LoginAttempt-only diff, same root cause the
-	// KindError entry above describes (reserveLoginAttempt writes
-	// UNCONDITIONALLY, before the verification path runs, so the row is there
-	// whatever the fault is). kind is the ONLY axis that differs, so this is a
-	// one-field sibling, not a widening: method stays blank for the reason that
-	// entry gives, and tables stays scoped to LoginAttempt so a diff touching
-	// anything else still fails. Remove when #2565 is fixed.
+	// kind is wildcarded too, as of #2844 (a) — this ONE row replaces the
+	// KindError/KindPanic pair that used to sit here, the second of the two
+	// pairs whose existence prompted the kind-wildcard request. Both arms were
+	// separately confirmed pre-existing by byte-for-byte replay against
+	// unmodified origin/main (ListWebAuthnCredentials#1/error and
+	// ListWebAuthnCredentials#1/panic, oracle (a), differing tables
+	// [LoginAttempt] in both). Not a widening of what is tolerated: the root
+	// cause is kind-independent by construction, tables is unchanged at
+	// [LoginAttempt], and a diff with anything else still fails loudly. nth
+	// stays pinned at 1 for the same reason as #2548's row above.
 	//
-	// No corpus seed committed for it deliberately: this harness's input bytes
+	// No corpus seed committed for this deliberately: this harness's input bytes
 	// encode the op as a raw opCatalog INDEX, so a committed seed decodes to a
 	// different op after any rebase that reorders the catalog (a hazard this
 	// repo has already been bitten by). The tolerance is keyed on
 	// (op, kind, nth, tables), which is rebase-stable; the seed would not be.
+	// RE-ATTRIBUTED, 2026-10-06. #2565 is CLOSED (completed), and its fix
+	// works: every KindError fault on a not-evaluated call
+	// (ConsumeMFAChallenge, ConsumeWebAuthnSession, GetUser,
+	// ListWebAuthnCredentials) now leaves NOTHING behind — measured directly,
+	// diff == []. The row that used to sit here still matched anyway, which is
+	// how #2844 (b)'s new closed-issue gate found it on its first live run:
+	// one row was covering two unrelated things under a fixed bug's number.
+	// Split into the two rows below, one per real cause.
+	//
+	// Cause 1 (#2879, a real unfixed bug): the handler releases the per-IP
+	// reservation on its normal error path only, so a PANIC unwinds past
+	// ReleaseLoginAttempt to the Recovery middleware and the slot stays
+	// counted for a request that reached no verdict at all. Measured: every
+	// method above, kind=panic, leaves [LoginAttempt]. method is wildcarded
+	// because the root cause is the missing defer, not any one call.
 	{
 		op: "REST POST /auth/webauthn/login/finish", kind: faultstorage.KindPanic,
-		nth: 1, oracle: "a", issue: "#2565", expires: "2026-10-17",
+		// method wildcard. kind PINNED here — cause 2 below owns KindError,
+		// and collapsing them again would re-create the conflation this split
+		// just undid.
+		nth: 1, oracle: "a", issue: "#2879", expires: "2026-11-07",
 		tables:     []string{"LoginAttempt"},
-		findingDoc: "#2565",
+		findingDoc: "#2879",
+	},
+	// Cause 2 (#2880, awaiting the auth owner's call): a KindError fault that
+	// lands AFTER the assertion has been evaluated and passed (GetUserRoles,
+	// CreateSession) does not wrap ErrWebAuthnLoginNotEvaluated, so nothing
+	// releases the slot. That is arguably correct — the handler's own rule is
+	// that an evaluated attempt stays counted, and ErrLoginIdentityUnavailable
+	// documents it for the GetUserRoles case — but "arguably correct" is not a
+	// design citation, and oracleAByDesignErrors requires a proving test per
+	// row that CreateSession does not yet have. Filed rather than declared.
+	//
+	// Kept as a tolerance (not moved to oracleAByDesignErrors) precisely
+	// because the question is open: a tolerance means "filed, not yet
+	// resolved", which is the honest label today. #2880 says what each answer
+	// implies for this row.
+	{
+		op: "REST POST /auth/webauthn/login/finish", kind: faultstorage.KindError,
+		// method wildcard: both observed methods share the one mechanism (no
+		// release after a successful evaluation). tables stays [LoginAttempt],
+		// so any other divergence still fails loudly.
+		nth: 1, oracle: "a", issue: "#2880", expires: "2026-11-07",
+		tables:     []string{"LoginAttempt"},
+		findingDoc: "#2880",
 	},
 	// Also found by the same live run while working #2549, also confirmed
 	// PRE-EXISTING by byte-for-byte replay against unmodified origin/main, also
@@ -1328,10 +1376,19 @@ var observeKnownOpenMatch func(*knownOpenTolerance)
 
 func matchingKnownOpen(in oracleInput, oracle string, diff []string) *knownOpenTolerance {
 	for i, k := range knownOpenTolerances {
-		if k.op != in.op || k.kind != in.kind || k.nth != in.nth || k.oracle != oracle {
+		if k.op != in.op || k.oracle != oracle {
 			continue
 		}
+		// method, kind and nth all wildcard on their zero value (#2844 (a)).
+		// op and oracle never do: a row must always name the operation it is
+		// about and the single oracle it suppresses.
 		if k.method != "" && k.method != in.method {
+			continue
+		}
+		if k.kind != faultstorage.KindNone && k.kind != in.kind {
+			continue
+		}
+		if k.nth != 0 && k.nth != in.nth {
 			continue
 		}
 		if len(k.tables) > 0 && !diffSubsetOf(diff, k.tables) {
@@ -1346,26 +1403,90 @@ func matchingKnownOpen(in oracleInput, oracle string, diff []string) *knownOpenT
 }
 
 // TestKnownOpenTolerances_CarryIssueAndExpiry enforces knownOpenTolerance's own
-// doc comment: issue and expires are required, not optional decoration. Passes
-// trivially while knownOpenTolerances is empty (today) -- it exists for the next
-// entry, not this one; see docs/adr-069-testing-strategy.md's QUARANTINE
-// expiry-check precedent for why a tolerance without a checked issue+expiry pair
-// tends to become a silent permanent carve-out instead of the bounded, visible
-// one it's meant to be.
+// doc comment: issue and expires are required, not optional decoration. See
+// docs/adr-069-testing-strategy.md's QUARANTINE expiry-check precedent for why a
+// tolerance without a checked issue+expiry pair tends to become a silent
+// permanent carve-out instead of the bounded, visible one it's meant to be.
+//
+// #2844 adds the two checks that make those fields mean something:
+//
+//   - A wildcarded row (method, kind or nth left at its zero value) MUST carry a
+//     non-empty tables. This is the entire safety argument for wildcards: the
+//     dimension that decides what gets swallowed is tables, and a wildcard row
+//     without one would tolerate ANY divergence on its op.
+//   - An EXPIRED row fails the build. Until now `expires` was checked for
+//     presence and format only, so nothing happened when the date passed and the
+//     field was documentation. A date nobody enforces is not a deadline.
+//
+// Deliberately NOT checked here: whether the cited issue is still open. That
+// needs the network, which a unit test must not. It is
+// scripts/check-fault-tolerance-issues.sh, run as its own CI step — see that
+// script's header for why issue STATE (not labels) is the signal, and why it
+// refuses to run rather than pass when it cannot reach the API.
 func TestKnownOpenTolerances_CarryIssueAndExpiry(t *testing.T) {
 	for _, k := range knownOpenTolerances {
-		label := fmt.Sprintf("%s/%s/%s", k.op, k.method, k.kind)
+		label := fmt.Sprintf("%s/%s/%s#%d", k.op, k.method, k.kind, k.nth)
 		if k.issue == "" {
 			t.Errorf("knownOpenTolerance %s: issue is empty -- every tolerance must cite a GitHub issue (\"#1234\")", label)
+		}
+		if k.oracle == "" {
+			t.Errorf("knownOpenTolerance %s: oracle is empty -- oracle is never a wildcard, or this row would "+
+				"swallow every oracle that happens to fire on this op", label)
+		}
+		// #2844 (a): wildcards are safe only because tables stays narrow.
+		if wild := toleranceWildcardedDimensions(k); len(wild) > 0 && len(k.tables) == 0 {
+			t.Errorf("knownOpenTolerance %s wildcards %v but has an EMPTY tables list, so it tolerates ANY "+
+				"divergence on this op -- the blanket skip wildcards exist to avoid, not enable. tables is "+
+				"the dimension that keeps a widened row narrow (it is a subset check, so one unlisted table "+
+				"still fails loudly). Either name the tables this finding actually diverges in, or pin the "+
+				"dimension(s) you wildcarded", label, wild)
 		}
 		if k.expires == "" {
 			t.Errorf("knownOpenTolerance %s: expires is empty -- every tolerance must carry an explicit \"YYYY-MM-DD\" expiry", label)
 			continue
 		}
-		if _, err := time.Parse("2006-01-02", k.expires); err != nil {
+		exp, err := time.Parse("2006-01-02", k.expires)
+		if err != nil {
 			t.Errorf("knownOpenTolerance %s: expires %q does not parse as YYYY-MM-DD: %v", label, k.expires, err)
+			continue
+		}
+		// #2844 (b): an expiry that does not fail the build is documentation.
+		// Compared against the END of the named day (UTC) so a row expiring
+		// today is still valid today, rather than going red at 00:00 in a
+		// timezone nobody chose.
+		if deadline := exp.AddDate(0, 0, 1).UTC(); time.Now().UTC().After(deadline) {
+			t.Errorf("knownOpenTolerance %s EXPIRED on %s (issue %s) and is still suppressing an oracle "+
+				"violation.\n\n"+
+				"Re-triage it, do not just push the date out: by now either (1) the bug is fixed and the row "+
+				"must be DELETED (TestKnownOpenTolerances_AreLoadBearing will already be calling it dead), "+
+				"(2) the behaviour is intended and the row belongs in oracleAByDesignErrors with a design "+
+				"citation and a proving test, or (3) it is still a real open bug, in which case say so on "+
+				"%s and set a new date with a reason. Silently extending the expiry is how a bounded "+
+				"carve-out becomes a permanent one.", label, k.expires, k.issue, k.issue)
 		}
 	}
+}
+
+// toleranceWildcardedDimensions names which of method/kind/nth a row leaves at
+// its wildcard (zero) value.
+//
+// Kept as a named helper rather than inlined because three things have to agree
+// about what "wildcarded" means — matchingKnownOpen's matching, this file's
+// tables-required rule, and TestKnownOpenTolerances_AreLoadBearing's
+// "underspecified, cannot be driven" skip — and a drifted fourth copy would let
+// a row be treated as pinned by one and wildcarded by another.
+func toleranceWildcardedDimensions(k knownOpenTolerance) []string {
+	var wild []string
+	if k.method == "" {
+		wild = append(wild, "method")
+	}
+	if k.kind == faultstorage.KindNone {
+		wild = append(wild, "kind")
+	}
+	if k.nth == 0 {
+		wild = append(wild, "nth")
+	}
+	return wild
 }
 
 // bestEffortTables maps a storage method this codebase deliberately calls
