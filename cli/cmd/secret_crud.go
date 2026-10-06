@@ -683,6 +683,22 @@ func runSecretList(cmd *cobra.Command, args []string) error {
 	secrets := derefSecretListEntrySlice(resp.JSON200.Data.Secrets)
 	total := int64(derefSecretInt(resp.JSON200.Data.Total))
 
+	// `truncated` means the server hit a bound while assembling this caller's
+	// multi-scope view, so `total` is a FLOOR. Say so rather than print it as a
+	// count — a quietly short number is the defect this flag was added to stop
+	// (#2780 follow-up). Only reachable without --project: every other list call in
+	// this CLI passes an explicit project and so takes the server's scoped branch,
+	// which is never truncated.
+	if resp.JSON200.Data.Truncated != nil && *resp.JSON200.Data.Truncated {
+		reason := derefStr(resp.JSON200.Data.TruncatedReason)
+		fmt.Fprintf(os.Stderr,
+			"warning: the server could not list every secret you can read, so the total below (%d) is a "+
+				"lower bound, not a count. Narrow the query with --project to get an exact listing.\n", total)
+		if reason != "" {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", reason)
+		}
+	}
+
 	switch secretListFormat {
 	case "json":
 		return displaySecretsJSON(secrets, total, page, secretListLimit)

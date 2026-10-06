@@ -81,6 +81,20 @@ type SecretListResponse struct {
 	OwnedCount      int `json:"owned_count"`
 	SharedCount     int `json:"shared_count"`
 	ACLGrantedCount int `json:"acl_granted_count"` // secrets visible only via per-secret/per-folder ACL grant
+
+	// Truncated reports that this response does NOT cover everything the caller can
+	// read: a bound was hit while assembling it, so Total is a FLOOR, not a count.
+	// Only core.ListReadableSecrets' multi-scope union can set it, when a single
+	// scope held more secrets than maxUnionPageSize.
+	//
+	// It exists because the alternative is a silently short number, which is the
+	// defect class #2780 was: a count that is confidently wrong is worse than one
+	// that says it is incomplete. `DashboardStats.Degraded` is the same idea for the
+	// same reason, and GetDashboardStats degrades when this is set.
+	Truncated bool `json:"truncated,omitempty"`
+	// TruncatedReason names what was bounded, for the log/UI to show. Empty unless
+	// Truncated.
+	TruncatedReason string `json:"truncated_reason,omitempty"`
 }
 
 // SharingStatus represents the sharing status of a secret
