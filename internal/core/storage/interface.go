@@ -932,6 +932,21 @@ type Storage interface {
 	// from the old one (applySCIMActiveState, DeprovisionSCIMUser); see
 	// C-RACE-FIX-B2. A NULL column is matched by fromState "".
 	SetAccountStateIfMatches(ctx context.Context, id uint, fromState, toState string, updatedAt time.Time) (bool, error)
+	// ClaimUserExternalIDIfUnset persists ONLY external_id (plus updated_at) for
+	// a user whose external_id is still UNSET and whose row is still live:
+	// "UPDATE ... SET external_id, updated_at WHERE id = ? AND
+	// COALESCE(external_id,'') = '' AND deleted_at IS NULL". claimed=false (no
+	// error) means someone else federated the account first, or it is gone.
+	//
+	// This is resolveSSOUser's first-federation write (#2699). It used the
+	// generic full-row UpdateUser, whose GORM Save upsert-fallback resurrected
+	// an account an admin had deleted after resolveSSOUser's unlocked read —
+	// writing back deleted_at=NULL, is_active=true, account_state=active — and
+	// the same window also reverted a concurrent suspension, password change,
+	// MFA enable or lockout. Narrow and conditional here; the caller re-reads
+	// afterwards so its login gate sees the committed row, not its own stale
+	// snapshot.
+	ClaimUserExternalIDIfUnset(ctx context.Context, id uint, externalID string, updatedAt time.Time) (claimed bool, err error)
 	// SetPasswordHash persists ONLY the password_hash and password_changed_at columns
 	// (plus updated_at) — narrower than the generic UpdateUser, and deliberately so
 	// (#484, the same rationale as SetAccountState above). A password change
@@ -1515,6 +1530,18 @@ type Storage interface {
 	// userID, returning true only if it was newly consumed (step strictly greater than
 	// the stored last-used step). A false return means the code is a replay.
 	MarkTOTPStepUsed(ctx context.Context, userID uint, step int64) (bool, error)
+	// ReleaseTOTPStepIfUnchanged reverts a step MarkTOTPStepUsed just marked as
+	// used back to step-1 (re-permitting exactly that step), but ONLY if the
+	// stored last-used step still equals step unchanged since the mark — a CAS
+	// guard so this never regresses the anti-replay counter past a step some
+	// OTHER, later-arriving request has since legitimately advanced it to.
+	// Returns false (no error) when the CAS didn't match (nothing released).
+	// Exists for #2567: a caller that marked a step used and then failed to
+	// complete the side effect that depended on it (minting a session) can
+	// give the user back their one attempt at that same code, instead of
+	// forcing a wait for the next 30s time-step over a storage hiccup that had
+	// nothing to do with the code itself.
+	ReleaseTOTPStepIfUnchanged(ctx context.Context, userID uint, step int64) (bool, error)
 	DeleteMFAForUser(ctx context.Context, userID uint) error // clears secret + recovery codes
 	SetUserMFAEnabled(ctx context.Context, userID uint, enabled bool) error
 	CreateMFARecoveryCodes(ctx context.Context, userID uint, codeHashes []string) error

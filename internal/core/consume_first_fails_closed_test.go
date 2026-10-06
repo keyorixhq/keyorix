@@ -25,10 +25,21 @@ func (s *failCreateSessionStorage) CreateSession(ctx context.Context, session *m
 }
 
 // TestVerifyMFALogin_MintFailureAfterConsume_FailsClosed is O4's verification
-// for VerifyMFACredentials/VerifyMFALogin (Class B, consume-first): a failure
-// minting the session AFTER the challenge+TOTP-step are consumed must fail
-// closed -- no session issued, and the consumed code/challenge stay consumed
-// (a same-step replay, even with a fresh challenge, is still refused).
+// for VerifyMFACredentials/VerifyMFALogin, UPDATED for #2567 (FIX-1): a
+// failure minting the session AFTER the challenge+TOTP-step are consumed
+// must still fail closed for THIS attempt -- no session issued on the
+// faulted call. Unlike the original O4 "consume-first" decision (still in
+// force for VerifyMFAStepUp's grant creation, see
+// TestVerifyMFAStepUp_GrantFailureAfterConsume_FailsClosed below), the LOGIN
+// path now releases the just-consumed TOTP step when mintSession fails: a
+// storage hiccup unrelated to the code itself must not force the user to
+// wait a full ~30s time-step (or worse, lock them out of logging in at all
+// if the hiccup persists) to retry a code that was never actually wrong.
+// #2567's own text asked for exactly this call to be made, and explicitly
+// flagged that the two cases (login vs. step-up) could reasonably differ --
+// see this PR's body for why they do: a step-up grant failure leaves the
+// caller still fully logged in with the existing session, so consume-first
+// costs them only a 15-minute restricted-secret window, not an entire login.
 func TestVerifyMFALogin_MintFailureAfterConsume_FailsClosed(t *testing.T) {
 	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
@@ -57,15 +68,16 @@ func TestVerifyMFALogin_MintFailureAfterConsume_FailsClosed(t *testing.T) {
 	require.NoError(t, db.Model(&models.Session{}).Count(&sessionCount).Error)
 	assert.Zero(t, sessionCount, "a mint failure after consume must issue NO session")
 
-	// The code and challenge are consumed regardless -- a retry with a FRESH
-	// challenge but the SAME code (fault now removed) must still be refused,
-	// proving the TOTP step stayed consumed through the earlier failure.
+	// #2567: the TOTP step is released on a mint failure -- a retry with a
+	// FRESH challenge and the SAME code (fault now removed) must succeed,
+	// proving the user isn't locked out of their own account by a storage
+	// hiccup that had nothing to do with their code.
 	c.storage = base
 	ch2, err := c.CreateMFAChallenge(ctx, 1)
 	require.NoError(t, err)
 	sess2, _, err := c.VerifyMFALogin(ctx, ch2, code, "ua", "1.2.3.4")
-	require.Error(t, err, "the TOTP step must stay consumed even though the earlier mint failed")
-	assert.Nil(t, sess2)
+	require.NoError(t, err, "the TOTP step must be usable again once the earlier mint failure's fault clears")
+	require.NotNil(t, sess2)
 }
 
 // TestVerifyMFAStepUp_GrantFailureAfterConsume_FailsClosed is O4's

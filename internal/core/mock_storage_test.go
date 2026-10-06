@@ -958,6 +958,11 @@ func (m *MockStorage) SetAccountStateIfMatches(ctx context.Context, id uint, fro
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockStorage) ClaimUserExternalIDIfUnset(ctx context.Context, id uint, externalID string, updatedAt time.Time) (bool, error) {
+	args := m.Called(ctx, id, externalID, updatedAt)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStorage) SetPasswordHash(ctx context.Context, id uint, hash string, changedAt time.Time) error {
 	args := m.Called(ctx, id, hash, changedAt)
 	return args.Error(0)
@@ -2243,6 +2248,9 @@ func (m *MockStorage) ActivateMFASecret(_ context.Context, _ uint, _ []byte) (bo
 	return true, nil
 }
 func (m *MockStorage) MarkTOTPStepUsed(_ context.Context, _ uint, _ int64) (bool, error) {
+	return true, nil
+}
+func (m *MockStorage) ReleaseTOTPStepIfUnchanged(_ context.Context, _ uint, _ int64) (bool, error) {
 	return true, nil
 }
 func (m *MockStorage) DeleteMFAForUser(_ context.Context, _ uint) error          { return nil }

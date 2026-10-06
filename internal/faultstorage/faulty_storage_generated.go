@@ -275,6 +275,23 @@ func (w *FaultyStorage) CheckSharePermission(ctx context.Context, secretID uint,
 	return w.real.CheckSharePermission(ctx, secretID, userID, now)
 }
 
+func (w *FaultyStorage) ClaimUserExternalIDIfUnset(ctx context.Context, id uint, externalID string, updatedAt time.Time) (bool, error) {
+	fire, kind, injected := w.check("ClaimUserExternalIDIfUnset")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ClaimUserExternalIDIfUnset(ctx, id, externalID, updatedAt)
+			return rv1, injected
+		}
+	}
+	return w.real.ClaimUserExternalIDIfUnset(ctx, id, externalID, updatedAt)
+}
+
 func (w *FaultyStorage) CleanupExpiredSessions(ctx context.Context) error {
 	fire, kind, injected := w.check("CleanupExpiredSessions")
 	if fire {
@@ -5766,6 +5783,23 @@ func (w *FaultyStorage) ReleaseSchedulerLock(ctx context.Context, key int64, hol
 		}
 	}
 	return w.real.ReleaseSchedulerLock(ctx, key, holder)
+}
+
+func (w *FaultyStorage) ReleaseTOTPStepIfUnchanged(ctx context.Context, userID uint, step int64) (bool, error) {
+	fire, kind, injected := w.check("ReleaseTOTPStepIfUnchanged")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ReleaseTOTPStepIfUnchanged(ctx, userID, step)
+			return rv1, injected
+		}
+	}
+	return w.real.ReleaseTOTPStepIfUnchanged(ctx, userID, step)
 }
 
 func (w *FaultyStorage) RemoveAllProjectRoleGrants(ctx context.Context, userID uint, projectID uint) error {
