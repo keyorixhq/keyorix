@@ -288,29 +288,102 @@ func verifyOneGuard(root string, k Key, e Exemption, bodies map[string]*ast.Func
 	return problems
 }
 
-// bodyDefersRecover reports whether body contains a deferred recover() -- either
-// `defer func(){ ... recover() ... }()` or `defer besteffort.RunRecover(...)()`.
+// bodyDefersRecover reports whether body has a deferred recover() that
+// actually protects THIS function's own frame and does not re-panic the
+// recovered value -- either `defer func(){ ... recover() ... }()` (with no
+// re-panic) or `defer besteffort.RunRecover(...)()`.
+//
+// Walks only defers reachable from body without crossing into a nested
+// function literal (collectTopLevelDefers), not a full ast.Inspect walk over
+// everything the body contains (#2561 round 2). The pre-fix version walked
+// recursively, so it credited two shapes that provide NO protection to the
+// function's own synchronous frame:
+//
+//   - A defer nested inside a spawned `go func(){...}()`. That defer protects
+//     only the goroutine's own execution; a panic anywhere else in the
+//     enclosing function's body still escapes exactly as if the goroutine,
+//     and its recover, were not there (see recoversOnlyInsideGoroutine in the
+//     planted fixture).
+//   - A recovered panic that is immediately re-panicked (`panic(r)`). The
+//     panic still propagates -- it is merely relocated one stack frame later,
+//     not stopped (see recoversThenRepanics).
 func bodyDefersRecover(body *ast.BlockStmt) bool {
-	if funcHasRunRecoverGuard(body) {
-		return true
+	for _, ds := range collectTopLevelDefers(body) {
+		if deferIsRunRecoverGuard(ds) || deferRecoversWithoutRepanic(ds) {
+			return true
+		}
 	}
-	found := false
+	return false
+}
+
+// collectTopLevelDefers returns every *ast.DeferStmt reachable from body
+// without crossing into a nested function literal. A defer's scope is always
+// its own nearest enclosing function (Go's defer semantics), never a
+// function it merely appears textually inside -- so a defer inside a
+// conditional (if/for/switch/select) still counts, but one inside a `go
+// func(){...}()` or a plain `func(){...}()` closure does not: it only ever
+// protects that closure's own frame, never the function collectTopLevelDefers
+// was called for.
+func collectTopLevelDefers(body *ast.BlockStmt) []*ast.DeferStmt {
+	var defers []*ast.DeferStmt
 	ast.Inspect(body, func(n ast.Node) bool {
-		ds, ok := n.(*ast.DeferStmt)
+		switch v := n.(type) {
+		case *ast.FuncLit:
+			return false // boundary: never descend into a nested function's own frame
+		case *ast.DeferStmt:
+			defers = append(defers, v)
+			return false // its own Call is inspected directly by the caller, not recursed into here
+		}
+		return true
+	})
+	return defers
+}
+
+// deferIsRunRecoverGuard reports whether ds is `defer besteffort.RunRecover(...)()`.
+func deferIsRunRecoverGuard(ds *ast.DeferStmt) bool {
+	inner, ok := ds.Call.Fun.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := inner.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	x, ok := sel.X.(*ast.Ident)
+	return ok && x.Name == "besteffort" && sel.Sel.Name == "RunRecover"
+}
+
+// deferRecoversWithoutRepanic reports whether ds is `defer func(){ ... }()`
+// whose literal body calls recover() at least once and never calls panic(...)
+// anywhere in that same literal body. A precise "is this panic call fed the
+// recovered value" data-flow check would be more accurate but harder to get
+// right; this is a security control, so when uncertain the shape is treated
+// as unsafe (any panic(...) in the deferred literal disqualifies it, even one
+// unrelated to the recovered value).
+func deferRecoversWithoutRepanic(ds *ast.DeferStmt) bool {
+	lit, ok := ds.Call.Fun.(*ast.FuncLit)
+	if !ok {
+		return false
+	}
+	recovers, rePanics := false, false
+	ast.Inspect(lit.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		ast.Inspect(ds, func(m ast.Node) bool {
-			if call, ok := m.(*ast.CallExpr); ok {
-				if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "recover" {
-					found = true
-				}
-			}
+		id, ok := call.Fun.(*ast.Ident)
+		if !ok {
 			return true
-		})
+		}
+		switch id.Name {
+		case "recover":
+			recovers = true
+		case "panic":
+			rePanics = true
+		}
 		return true
 	})
-	return found
+	return recovers && !rePanics
 }
 
 // reaches reports whether target is reachable from start through package-local

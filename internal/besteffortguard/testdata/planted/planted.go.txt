@@ -54,6 +54,58 @@ func (s *svc) recoversViaBestEffort() error {
 	return nil
 }
 
+// recoversOnlyInsideGoroutine is NOT panic-safe: its recover() lives inside a
+// SPAWNED goroutine, which protects only that goroutine's own execution --
+// never this function's own synchronous frame. The unprotected
+// selfRecoveringHelper() call right above the `go` statement can still panic
+// and escape to this function's caller exactly as if the goroutine, and its
+// recover, were not there at all. #2561 round 2: the pre-fix scanner used
+// ast.Inspect's full recursive walk over the whole body and could not tell a
+// top-level defer from one buried inside an unrelated nested FuncLit, so it
+// credited this shape exactly like genuinelyRecovers above.
+func (s *svc) recoversOnlyInsideGoroutine() error {
+	_ = s.selfRecoveringHelper()
+	go func() {
+		defer func() { _ = recover() }()
+		_ = s.selfRecoveringHelper()
+	}()
+	return nil
+}
+
+// recoversThenRepanics is NOT panic-safe: the deferred recover immediately
+// re-panics the recovered value, so the panic still propagates to the
+// caller -- it is merely relocated one stack frame later, not stopped.
+// #2561 round 2: the pre-fix scanner matched any defer containing a call
+// named "recover" with no check for a following panic(...) in the same
+// deferred literal.
+func (s *svc) recoversThenRepanics() error {
+	defer func() {
+		if r := recover(); r != nil {
+			panic(r)
+		}
+	}()
+	return nil
+}
+
+// otherSvc exists only to plant a bare-name COLLISION with *svc (#2561 round
+// 2, BLOCKER 2): collidingName below is declared on both types, one safe and
+// one not.
+type otherSvc struct{}
+
+// collidingName (on *svc) genuinely recovers.
+func (s *svc) collidingName() error {
+	defer func() { _ = recover() }()
+	return nil
+}
+
+// collidingName (on *otherSvc) does NOT recover -- same bare name as the
+// method above, different type. The whole name "collidingName" must resolve
+// UNSAFE: a name is safe only if EVERY declaration sharing it is safe, and
+// this one on its own plainly is not.
+func (o *otherSvc) collidingName() error {
+	return nil
+}
+
 // delegatesToRecoverer calls a recoverer but does NOT itself defer one, so it
 // is NOT panic-safe: the recover in its callee protects only that callee, and
 // a panic anywhere else in this body still escapes. An earlier draft of the
@@ -113,6 +165,31 @@ func (s *svc) MustFlagDiscardInsideClosureAfterWrite() error {
 		return err
 	}
 	func() { _ = s.selfRecoveringHelper() }()
+	return nil
+}
+
+// MustFlagDiscardOfGoroutineOnlyRecoverCallee is #2561 round 2's first new
+// planted positive: recoversOnlyInsideGoroutine's recover lives inside a
+// spawned goroutine, so it does not protect this discarded call's own
+// synchronous execution -- a panic in recoversOnlyInsideGoroutine's
+// unprotected top-level call would still escape here exactly as if it called
+// selfRecoveringHelper directly.
+func (s *svc) MustFlagDiscardOfGoroutineOnlyRecoverCallee() error {
+	if err := s.storage.CreateThing(); err != nil {
+		return err
+	}
+	_ = s.recoversOnlyInsideGoroutine()
+	return nil
+}
+
+// MustFlagDiscardOfRepanickingRecoverCallee is #2561 round 2's second new
+// planted positive: recoversThenRepanics' recover immediately re-panics, so
+// it provides no protection at all -- the panic still reaches this discard.
+func (s *svc) MustFlagDiscardOfRepanickingRecoverCallee() error {
+	if err := s.storage.CreateThing(); err != nil {
+		return err
+	}
+	_ = s.recoversThenRepanics()
 	return nil
 }
 

@@ -372,3 +372,27 @@ func TestScan_DerivedSafetyIsNotTransitive(t *testing.T) {
 		t.Error("no discards were classified as protected; the derived-safety path is not running at all")
 	}
 }
+
+// TestScan_NameCollisionResolvesToUnsafe is #2561 round 2's BLOCKER 2 proving
+// test: "collidingName" is declared on BOTH *svc (genuinely recovers) and
+// *otherSvc (does not) in the planted fixture. The bare-name index must
+// resolve the whole name as UNSAFE -- a name is safe only if EVERY
+// declaration sharing it is safe. The pre-fix version kept only the first
+// declaration ENCOUNTERED while building the index (map iteration over the
+// scanned files has no defined order), so which one "won" was
+// nondeterministic, and a genuinely-unsafe method could be silently credited
+// as safe whenever its same-named, safe sibling happened to be visited first.
+func TestScan_NameCollisionResolvesToUnsafe(t *testing.T) {
+	t.Parallel()
+	res, err := Scan(plantedRoot(t), Options{})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	for _, n := range res.SafeCallees {
+		if n == "collidingName" {
+			t.Fatal("collidingName was derived as panic-safe, but one of its two same-named declarations " +
+				"(*otherSvc) does not recover -- a collision must resolve toward unsafe, not toward whichever " +
+				"declaration the index happened to see first")
+		}
+	}
+}

@@ -46,6 +46,16 @@
 //     listed on resolveLocalReturns. A call it cannot resolve is not flagged,
 //     so this half of the guard under-reports by construction rather than
 //     guessing.
+//   - panicSafetyIndex resolves a callee by its BARE name only, never by
+//     receiver type -- two methods on different types sharing a name are the
+//     SAME entry in the index (#2561 round 2). A collision resolves toward
+//     unsafe (every declaration sharing the name must itself be safe), which
+//     is the conservative direction, but it also means a genuinely-safe
+//     method can be denied the derivation solely because an unrelated,
+//     unsafe, same-named method exists elsewhere in the same package -- that
+//     site would then need a reviewed exemption despite being fine on its
+//     own. Resolving by (package, receiver type, name) instead would need a
+//     type-checked pass this scanner does not do.
 package besteffortguard
 
 import (
@@ -297,8 +307,11 @@ type discardSite struct {
 // moment it stops being true -- CLAUDE.md's "derive and check it" over "assert
 // it in prose".
 //
-// A function is panic-safe here ONLY if its OWN body defers a recover()
-// (directly, or via besteffort.RunRecover). Nothing transitive.
+// A function is panic-safe here if its OWN body defers a recover() (directly,
+// or via besteffort.RunRecover), OR -- #2561 round 2 -- its ENTIRE body is a
+// single statement that does nothing but tail-call another package-local,
+// already-safe function (pureTailDelegationCallee). Nothing broader than that
+// is transitive.
 //
 // That restriction is the whole correctness of this index, and it cost a draft
 // to learn. The obvious generalisation -- "safe if it CALLS something that
@@ -309,30 +322,37 @@ type discardSite struct {
 // escapes, so the generalisation would have suppressed exactly the reports this
 // guard exists to make.
 //
-// The cost of being strict is that a pure delegating wrapper whose own body has
-// no defer (writeAuditEventFull -> writeAuditEventDiff -> emitAudit) is NOT
-// derived-safe and still needs a reviewed exemption. That is the right trade:
-// the wrapper really can panic before reaching the choke point (argument
-// evaluation, the struct-building writeAuditEventDiff does before calling
-// emitAudit), so the residual risk is real even if small, and a human saying
-// "accepted" is more honest than a derivation quietly claiming "impossible".
+// The pure-tail-delegation exception is narrow enough to not be that bug: it
+// requires the body to be NOTHING ELSE -- no argument construction beyond
+// forwarding the exact same values, no other statement before or after. A
+// wrapper shaped that way adds zero panic surface of its own, so its safety
+// is IDENTICAL to its sole callee's, not inferred from a pattern that could
+// coexist with real, unprotected risk elsewhere in a larger body. Added when
+// main's #2827 turned writeAuditEventFull/writeAuditEventDiff into exactly
+// this shape (-> writeAuditEventFullOn/writeAuditEventDiffOn) and moved the
+// #2561 recover to the new choke point (writeAuditEventDiffOn, which now
+// protects its own argument/struct construction too, unlike the pre-#2827
+// writeAuditEventDiff this comment used to cite as the reason an exemption
+// was still needed) -- without it, those two thin wrappers regressed to
+// "not derived-safe" despite genuinely being so, which would have reopened
+// 42 call sites across internal/core to either a real fix or a reviewed
+// exemption for a risk that no longer exists.
 type panicSafetyIndex struct {
-	bodies map[string]*ast.FuncDecl
+	// bodies maps a bare function/method name to EVERY declaration sharing it
+	// -- see isSafe's doc comment for why a collision requires all of them.
+	bodies map[string][]*ast.FuncDecl
 	memo   map[string]bool
 }
 
 func newPanicSafetyIndex(files map[string]*ast.File) *panicSafetyIndex {
-	idx := &panicSafetyIndex{bodies: map[string]*ast.FuncDecl{}, memo: map[string]bool{}}
+	idx := &panicSafetyIndex{bodies: map[string][]*ast.FuncDecl{}, memo: map[string]bool{}}
 	for _, f := range files {
 		for _, d := range f.Decls {
 			if fd, ok := d.(*ast.FuncDecl); ok && fd.Body != nil {
 				// Keyed by bare name, so same-named methods on different types
-				// collide. Resolved toward "NOT safe" (the first declaration
-				// wins only if it recovers; see isSafe's any-collision rule) so
-				// an ambiguous name is reported rather than suppressed.
-				if _, dup := idx.bodies[fd.Name.Name]; !dup {
-					idx.bodies[fd.Name.Name] = fd
-				}
+				// collide -- every declaration sharing the name is kept, not
+				// just the first one (#2561 round 2; see isSafe).
+				idx.bodies[fd.Name.Name] = append(idx.bodies[fd.Name.Name], fd)
 			}
 		}
 	}
@@ -342,18 +362,84 @@ func newPanicSafetyIndex(files map[string]*ast.File) *panicSafetyIndex {
 // isSafe reports whether name is a package-local function whose panics cannot
 // escape. A name that is not declared in this package is never "safe": the
 // scanner cannot see it, so it must not claim anything about it.
+//
+// A name is safe only if EVERY declaration sharing it is safe (#2561 round
+// 2). The pre-fix version kept only the FIRST declaration encountered while
+// building the index -- map iteration over `files` has no defined order, so
+// which declaration "won" was nondeterministic, and whichever one won
+// decided the verdict for every OTHER same-named declaration too, including
+// ones the index never even looked at. A same-named method on a second type
+// that genuinely does not recover would have been silently credited as safe
+// whenever the OTHER same-named method's declaration happened to be visited
+// first.
 func (p *panicSafetyIndex) isSafe(name string) bool {
 	if v, ok := p.memo[name]; ok {
 		return v
 	}
-	fd, ok := p.bodies[name]
-	if !ok {
+	fds, ok := p.bodies[name]
+	if !ok || len(fds) == 0 {
 		p.memo[name] = false
 		return false
 	}
-	safe := bodyDefersRecover(fd.Body)
+	// Cycle guard: memoize false BEFORE recursing into pureTailDelegationCallee,
+	// so a self- or mutually-recursive pure delegation (which could never
+	// actually recover anything -- it would tail-call itself forever) resolves
+	// to not-safe instead of infinite-looping isSafe.
+	p.memo[name] = false
+	safe := true
+	for _, fd := range fds {
+		if p.isSafeDecl(fd) {
+			continue
+		}
+		safe = false
+		break
+	}
 	p.memo[name] = safe
 	return safe
+}
+
+// isSafeDecl reports whether one specific declaration is panic-safe, by
+// itself -- either its own body defers a recover, or it is a pure tail
+// delegation to another already-safe name.
+func (p *panicSafetyIndex) isSafeDecl(fd *ast.FuncDecl) bool {
+	if bodyDefersRecover(fd.Body) {
+		return true
+	}
+	callee, ok := pureTailDelegationCallee(fd.Body)
+	return ok && p.isSafe(callee)
+}
+
+// pureTailDelegationCallee reports the bare function/method name body
+// delegates to, when body is EXACTLY one statement -- `return callee(...)` or
+// a bare `callee(...)` expression statement -- with nothing else before or
+// after it. Resolved to a bare name (fn.Sel.Name for a method/package call,
+// fn.Name for a plain call), the same callee-resolution shape
+// deferIsRunRecoverGuard and funcHasRunRecoverGuard already use, consistent
+// with this package's documented bare-name collision caveat.
+func pureTailDelegationCallee(body *ast.BlockStmt) (string, bool) {
+	if len(body.List) != 1 {
+		return "", false
+	}
+	var call *ast.CallExpr
+	switch s := body.List[0].(type) {
+	case *ast.ReturnStmt:
+		if len(s.Results) != 1 {
+			return "", false
+		}
+		call, _ = s.Results[0].(*ast.CallExpr)
+	case *ast.ExprStmt:
+		call, _ = s.X.(*ast.CallExpr)
+	}
+	if call == nil {
+		return "", false
+	}
+	switch fn := call.Fun.(type) {
+	case *ast.Ident:
+		return fn.Name, true
+	case *ast.SelectorExpr:
+		return fn.Sel.Name, true
+	}
+	return "", false
 }
 
 // SafeCallees returns the package-local functions this index considers
@@ -510,31 +596,27 @@ func isProtectingCall(call *ast.CallExpr) bool {
 	return false
 }
 
-// funcHasRunRecoverGuard reports whether body contains, as a defer statement, a
-// call shaped like besteffort.RunRecover("...")() -- the function-wide guard
-// shape (used by goSafe's own goroutine body) that recovers a panic anywhere
-// later in the same function, not just inside a nested closure.
+// funcHasRunRecoverGuard reports whether body contains, as a TOP-LEVEL defer
+// statement, a call shaped like besteffort.RunRecover("...")() -- the
+// function-wide guard shape (used by goSafe's own goroutine body) that
+// recovers a panic anywhere later in the same function, not just inside a
+// nested closure.
+//
+// Scoped via collectTopLevelDefers (#2561 round 2), not a full ast.Inspect
+// walk: the pre-fix version matched this call shape anywhere in body,
+// including nested inside an unrelated spawned `go func(){...}()` elsewhere
+// in the function -- which recovers only THAT goroutine's own panics, not a
+// panic from any other, unprotected statement in this function's own
+// synchronous body. Crediting that nested match as "the whole function
+// recovers any panic in itself" (this function's sole caller, Scan) would
+// have suppressed every real discard finding for the rest of the function.
 func funcHasRunRecoverGuard(body *ast.BlockStmt) bool {
-	found := false
-	ast.Inspect(body, func(n ast.Node) bool {
-		ds, ok := n.(*ast.DeferStmt)
-		if !ok {
+	for _, ds := range collectTopLevelDefers(body) {
+		if deferIsRunRecoverGuard(ds) {
 			return true
 		}
-		inner, ok := ds.Call.Fun.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		sel, ok := inner.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		if x, ok := sel.X.(*ast.Ident); ok && x.Name == "besteffort" && sel.Sel.Name == "RunRecover" {
-			found = true
-		}
-		return true
-	})
-	return found
+	}
+	return false
 }
 
 // isBlankDiscard reports whether assign is `_ = f(...)` or `_, _ = f(...)`.
