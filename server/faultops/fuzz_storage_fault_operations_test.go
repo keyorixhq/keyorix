@@ -1154,6 +1154,74 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// docs/atomicity-exempt.tsv (consumeFirstAccountsForDiff,
 	// consume_first_oracle_test.go) instead of carrying it as an open finding
 	// against one named storage method.
+	// #2817: DisableMFA (internal/core/mfa.go) runs requireReauth -- itself a
+	// class-B row (atomicity-exempt.tsv:61) -- BEFORE the
+	// SetUserMFAEnabled+DeleteMFAForUser transaction. requireReauth's
+	// MarkTOTPStepUsed burns the matched TOTP time-step
+	// (MFASecret.LastUsedStep) and writes an "mfa.reauth_verified" AuditEvent
+	// on c.storage, outside that transaction, so a DeleteMFAForUser error
+	// rolls the disable back and correctly leaves the step burned.
+	{
+		op: "REST POST /api/v1/auth/mfa/disable", method: "DeleteMFAForUser", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2817", expires: "2026-10-17",
+		tables:     []string{"AuditEvent", "MFASecret"},
+		findingDoc: "#2817",
+	},
+	// #2814: CompleteSAML (internal/core/sso.go) is itself a class-B row
+	// (atomicity-exempt.tsv:76) -- ConsumeSSOLoginState burns the single-use
+	// RelayState row first, by design, because st.Nonce is what the
+	// InResponseTo check validates against and a replayable state row would
+	// let a captured (RelayState, SAMLResponse) pair re-drive user
+	// resolution/provisioning. A GetUserByUsername error inside
+	// resolveSSOUser therefore fails closed with the state correctly consumed.
+	{
+		op: "REST POST /auth/saml/{provider}/acs", method: "GetUserByUsername", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2814", expires: "2026-10-17",
+		tables:     []string{"SSOLoginState"},
+		findingDoc: "#2814",
+	},
+	// #2842 (ORACLE-A-1). Surfaced by CI's fuzz shard 0 + fuzz-changed on
+	// #2821, whose entire diff was the two auth/MFA/SAML rows directly above
+	// -- nothing in the secrets path. Confirmed to reproduce on pristine
+	// origin/main by direct replay before this entry was written.
+	//
+	// NOT a bug: RollbackSecret (internal/core/versions.go) re-instates a
+	// historical value via RotateSecret, whose storeNextSecretVersion +
+	// c.storage.UpdateSecret pair is DELIBERATELY non-transactional.
+	// updateSecretWithNewVersion's own doc comment
+	// (internal/core/secrets_versions.go) says so, and gives the reason by
+	// contrast with the UpdateSecret path it DID make transactional: for a
+	// rotation the new value may already have been applied to an external
+	// upstream system, and the version row is the only record of it, so
+	// rolling it back would trade a loud failure for silent loss of the only
+	// record of a live credential. The version row surviving the node update's
+	// failure is the intended outcome.
+	//
+	// Deliberately a tolerance and NOT a consumeFirstExemptions entry: that
+	// mechanism requires a class-B (consume-first) row in
+	// docs/atomicity-exempt.tsv, enforced by
+	// TestConsumeFirstExemptions_MatchAtomicityLedger, precisely so it cannot
+	// become a general "state on an error path is fine" carve-out. Nothing is
+	// consumed here -- the rationale is "must not roll back", a different
+	// claim. #2842 asks for RotateSecret to be classified in that ledger and
+	// for oracle (a) to key off the classification; remove this entry then.
+	//
+	// Scoping is sufficient here, and that is measured rather than assumed: a
+	// DERIVED sweep of this op -- run it once unfaulted, read the real call
+	// log off FaultyStorage.Calls(), then fault every (method, nth) pair the
+	// op actually makes -- enumerated all 96 real pairs and found exactly ONE
+	// oracle violation, the UpdateSecret#1 pair below. So unlike #2548/#2565
+	// (where the write lands before any faulted call, making every method on
+	// the op reproduce it and forcing a method wildcard), this one really is
+	// specific to the single call that straddles the version write. No
+	// wildcard needed, and no #2549-style treadmill of one new row per red
+	// build expected on this op.
+	{
+		op: "REST POST /api/v1/secrets/{id}/rollback", method: "UpdateSecret", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2842", expires: "2026-10-17",
+		tables:     []string{"SecretVersion"},
+		findingDoc: "#2842",
+	},
 }
 
 func matchingKnownOpen(in oracleInput, oracle string, diff []string) *knownOpenTolerance {
