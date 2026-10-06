@@ -220,12 +220,24 @@ func deleteProjectCascade(tx *gorm.DB, id uint) error {
 	// deleted and rolls back. Locking only at the project's own UPDATE at the end
 	// leaves a window where a child lands after its sweep but before the project lock.
 	// SQLite has no row lock; its single writer serializes the transaction instead.
-	if tx.Dialector.Name() == "postgres" {
-		var locked []uint
-		if err := tx.Model(&models.Project{}).Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where(sqlWhereID, id).Pluck("id", &locked).Error; err != nil {
-			return fmt.Errorf("failed to lock project: %w", err)
-		}
+	//
+	// #2723/#2724: the lock is UNSCOPED, and the liveness check is a separate read
+	// of the row it just locked. #2656's version used the default GORM scope, which
+	// appends `deleted_at IS NULL` — so on an ALREADY-deleted project it matched
+	// zero rows and locked nothing at all, and a concurrent RestoreProject was not
+	// serialized against this cascade in the one case that matters. Every later
+	// statement here is `deleted_at IS NULL`-scoped too, so under READ COMMITTED a
+	// restore committing mid-cascade produced: sweeps skip (their snapshots see
+	// deleted children), restore commits, then the final project UPDATE takes a
+	// fresh snapshot, sees the project live, and deletes it — leaving every restored
+	// environment and secret LIVE under a deleted project. No serial order produces
+	// that state.
+	//
+	// A lock with no row to take is not a lock. Locking by id regardless of
+	// deleted_at is what makes the two operations mutually exclusive in both
+	// directions.
+	if err := lockProjectRowForCascade(tx, id); err != nil {
+		return err
 	}
 	// Soft-delete all currently-live secrets in the project.
 	if err := tx.Model(&models.SecretNode{}).
@@ -292,6 +304,36 @@ func deleteProjectCascade(tx *gorm.DB, id uint) error {
 	return nil
 }
 
+// lockProjectRowForCascade row-locks project id REGARDLESS of its deleted_at
+// (FOR UPDATE on Postgres; SQLite's single writer serializes instead), then
+// reports "project not found" if the locked row is already soft-deleted or
+// missing.
+//
+// Unscoped deliberately (#2723/#2724): a `deleted_at IS NULL`-scoped lock takes
+// nothing on an already-deleted project, which is precisely the case where a
+// concurrent RestoreProject must be excluded. The liveness verdict is then read
+// off the row the lock is actually held on, rather than being folded into the
+// locking query's WHERE — that folding is what made the original lock vacuous.
+//
+// Returning early here, rather than letting the cascade's final
+// `UPDATE projects ... WHERE deleted_at IS NULL` report RowsAffected == 0, is the
+// same outcome with the same error text, reached before the child sweeps run
+// instead of after them (they would have been rolled back anyway).
+func lockProjectRowForCascade(tx *gorm.DB, id uint) error {
+	q := tx.Unscoped().Model(&models.Project{})
+	if tx.Dialector.Name() == "postgres" {
+		q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var deletedAt []gorm.DeletedAt
+	if err := q.Where(sqlWhereID, id).Limit(1).Pluck("deleted_at", &deletedAt).Error; err != nil {
+		return fmt.Errorf("failed to lock project: %w", err)
+	}
+	if len(deletedAt) == 0 || deletedAt[0].Valid {
+		return fmt.Errorf("project not found")
+	}
+	return nil
+}
+
 func (ls *LocalStorage) DeleteProject(ctx context.Context, id uint) error {
 	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return deleteProjectCascade(tx, id)
@@ -338,9 +380,27 @@ func (ls *LocalStorage) DeleteProjectIfEmpty(ctx context.Context, id uint) (int,
 // resurrects an unknown number of children with no forensic record of what came back.
 func (ls *LocalStorage) RestoreProject(ctx context.Context, id uint) (restoredEnvironments, restoredSecrets int, err error) {
 	txErr := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Read the cascade's deletion timestamp before clearing it.
+		// #2723/#2724: row-lock the project FIRST, before any child UPDATE, and
+		// unscoped — the project is soft-deleted by definition here, so a
+		// default-scoped lock would match nothing. This read is where the lock is
+		// taken: it is already the first statement in the transaction and already
+		// Unscoped, so it only needed the FOR UPDATE clause.
+		//
+		// Without it, this transaction's child UPDATEs could commit in the middle of
+		// a concurrent deleteProjectCascade — whose own lock, before this change,
+		// also took nothing on a deleted project — and the cascade's final project
+		// UPDATE would then see the freshly-restored project and delete it, stranding
+		// every restored environment and secret live under it.
+		//
+		// On Postgres FOR UPDATE on this row is what makes the two mutually
+		// exclusive. SQLite has no row lock and is single-writer, so the transaction
+		// alone serializes them — same split as lockLiveParent.
 		var project models.Project
-		if err := tx.Unscoped().Where("id = ? AND deleted_at IS NOT NULL", id).First(&project).Error; err != nil {
+		q := tx.Unscoped()
+		if tx.Dialector.Name() == "postgres" {
+			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		if err := q.Where("id = ? AND deleted_at IS NOT NULL", id).First(&project).Error; err != nil {
 			return fmt.Errorf("project not found or not deleted")
 		}
 		cascadeTS := project.DeletedAt.Time
