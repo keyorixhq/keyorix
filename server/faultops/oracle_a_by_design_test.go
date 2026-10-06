@@ -176,6 +176,14 @@ func TestOracleAByDesign_RowsAreFullyAttributed(t *testing.T) {
 			t.Errorf("oracleAByDesignError %q: op and method are both required — a blank method would make "+
 				"this a per-op blanket skip, which #2549 explicitly rules out", label)
 		}
+		if e.nth <= 0 {
+			t.Errorf("oracleAByDesignError %q: nth is %d, but oracleAErrorByDesign only compares it when "+
+				"nth > 0 (`if e.nth > 0 && e.nth != nth`) — so 0 silently matches EVERY call ordinal for "+
+				"this (op, method, kind). That is a wildcard wearing a specific row's clothes: the row "+
+				"reads as pinned to one call site while actually exempting all of them, including ones "+
+				"nobody reviewed. Name the ordinal the reviewed case actually uses (1 for the first call)",
+				label, e.nth)
+		}
 		if e.kind == faultstorage.KindEffectThenError {
 			t.Errorf("oracleAByDesignError %q: KindEffectThenError belongs to oracle (d), which has its own "+
 				"exclusions and its own reasoning — this mechanism covers the error-reporting branch only", label)
@@ -223,11 +231,14 @@ func TestOracleAByDesign_RowsAreLoadBearing(t *testing.T) {
 		e := e
 		label := fmt.Sprintf("%s/%s/%s", e.op, e.method, e.kind)
 		t.Run(label, func(t *testing.T) {
-			in, ok := driveFaultCase(t, e.op, e.method, e.nth, e.kind)
-			if !ok {
-				t.Fatalf("oracleAByDesignError %q: its own (op, method) could not be driven — the op is "+
-					"not in opCatalog, or the method is not a storage.Storage method. A row that cannot "+
-					"be exercised cannot be trusted", label)
+			in, outcome, reason := driveFaultCase(t, e.op, e.method, e.nth, e.kind)
+			if outcome != driveObserved {
+				// FAIL, never skip. A row whose own case could not be exercised
+				// has not been shown to exempt anything, and a SKIPPED subtest
+				// reads in CI exactly like one that passed its check.
+				t.Fatalf("oracleAByDesignError %q: its own (op, method, nth, kind) could not be driven "+
+					"(%s: %s). A row that cannot be exercised cannot be trusted — fix the row, or fix "+
+					"whatever made the case unreachable", label, outcome, reason)
 			}
 			if in.result.Success {
 				t.Fatalf("oracleAByDesignError %q: this op reported SUCCESS under its own fault, so it never "+
@@ -278,40 +289,31 @@ func TestOracleAByDesign_RowsAreLoadBearing(t *testing.T) {
 // and "the oracle no longer flags it" are different facts and only the second
 // justifies deleting a row.
 func TestKnownOpenTolerances_AreLoadBearing(t *testing.T) {
-	var dead, undrivable []string
-	for _, k := range knownOpenTolerances {
-		label := fmt.Sprintf("%s/%s/%s#%d", k.op, k.method, k.kind, k.nth)
-		if k.method == "" || k.nth == 0 {
-			if !toleranceStalenessUndrivable[label] {
-				t.Errorf("knownOpenTolerance %q is not fully specified (blank method and/or nth==0) so this "+
-					"staleness check cannot drive it, and it is not listed in "+
-					"toleranceStalenessUndrivable. Add it there with a note, so the coverage gap is "+
-					"visible rather than silent", label)
-			}
-			continue
-		}
-		consulted := false
-		target := label
-		prev := observeKnownOpenMatch
-		observeKnownOpenMatch = func(got *knownOpenTolerance) {
-			if fmt.Sprintf("%s/%s/%s#%d", got.op, got.method, got.kind, got.nth) == target {
-				consulted = true
-			}
-		}
-		_, ok := driveFaultCase(t, k.op, k.method, k.nth, k.kind)
-		observeKnownOpenMatch = prev
+	c := classifyToleranceStaleness(t)
+	dead, undrivable, inconclusive, revivedLive := c.dead, c.undrivable, c.inconclusive, c.revivedLive
 
-		switch {
-		case !ok:
-			undrivable = append(undrivable, label)
-		case !consulted:
-			if _, known := toleranceDeadPendingTriage[label]; !known {
-				dead = append(dead, label)
-			}
+	for _, label := range c.underspecified {
+		if !toleranceStalenessUndrivable[label] {
+			t.Errorf("knownOpenTolerance %q is not fully specified (blank method and/or nth==0) so this "+
+				"staleness check cannot drive it, and it is not listed in "+
+				"toleranceStalenessUndrivable. Add it there with a note, so the coverage gap is "+
+				"visible rather than silent", label)
 		}
 	}
-	sort.Strings(dead)
-	sort.Strings(undrivable)
+
+	if len(inconclusive) > 0 {
+		t.Errorf("found %d knownOpenTolerance entr(y/ies) this check could not evaluate at all — the "+
+			"fault-free reference run errored or failed, Setup errored, or a snapshot failed: %v\n\n"+
+			"This is a failure, not a skip: nothing was learned about those rows, so treating it as "+
+			"\"nothing to report\" is exactly the silent-decay shape this check exists to catch. Fix the "+
+			"harness or the op, then re-run.", len(inconclusive), inconclusive)
+	}
+	if len(revivedLive) > 0 {
+		t.Errorf("found %d toleranceDeadPendingTriage entr(y/ies) the oracle is consulting again: %v\n\n"+
+			"They are live tolerances, not dead debt. Remove them from toleranceDeadPendingTriage — a row "+
+			"left in the baseline is exempt from the dead-row check forever, so the next time it really "+
+			"does go dead nothing will say so.", len(revivedLive), revivedLive)
+	}
 
 	// Ratchet the other direction too: a baselined entry that came back to life
 	// (or was deleted) must not sit in the baseline pretending to be debt.
@@ -358,40 +360,181 @@ func TestKnownOpenTolerances_AreLoadBearing(t *testing.T) {
 	}
 }
 
-// toleranceDeadPendingTriage is the ratchet baseline: entries this check found
-// already dead when it was introduced (#2549), each mapped to the issue that
-// owns it. The check fails on a NEW dead entry, not on these — the
+// toleranceStaleness is classifyToleranceStaleness' result: every
+// knownOpenTolerance sorted into exactly one bucket.
+type toleranceStaleness struct {
+	// live: the oracle consulted this row — it is load-bearing.
+	live []string
+	// dead: its fault fired and the oracle flagged nothing, and it is NOT
+	// baselined in toleranceDeadPendingTriage.
+	dead []string
+	// revivedLive: baselined as dead, but the oracle consulted it again.
+	revivedLive []string
+	// undrivable: the op key is stale, the method was renamed, or the fault
+	// never fires at that ordinal.
+	undrivable []string
+	// inconclusive: the harness gave up before the oracle ran.
+	inconclusive []string
+	// underspecified: blank method and/or nth == 0, so there is nothing to
+	// drive.
+	underspecified []string
+}
+
+// classifyToleranceStaleness drives every fully-specified knownOpenTolerance
+// once and reports which bucket each landed in.
+//
+// Extracted so the calibration below can assert the classification
+// DISCRIMINATES, using the same code path the real check uses rather than a
+// reimplementation of it. (The previous calibration was a comment on one
+// baseline row — #2606, a tolerance for a bug that turned out to be fixed —
+// claiming its dead verdict proved the check worked. That row is now deleted,
+// as a tolerance for a fixed bug should be, so the calibration cannot live
+// there; and a calibration that depends on some row happening to be stale is
+// one deletion away from silently disappearing anyway.)
+func classifyToleranceStaleness(t *testing.T) toleranceStaleness {
+	t.Helper()
+	var c toleranceStaleness
+	for _, k := range knownOpenTolerances {
+		label := fmt.Sprintf("%s/%s/%s#%d", k.op, k.method, k.kind, k.nth)
+		if k.method == "" || k.nth == 0 {
+			c.underspecified = append(c.underspecified, label)
+			continue
+		}
+		consulted := false
+		target := label
+		prev := observeKnownOpenMatch
+		observeKnownOpenMatch = func(got *knownOpenTolerance) {
+			if fmt.Sprintf("%s/%s/%s#%d", got.op, got.method, got.kind, got.nth) == target {
+				consulted = true
+			}
+		}
+		_, outcome, reason := driveFaultCase(t, k.op, k.method, k.nth, k.kind)
+		observeKnownOpenMatch = prev
+
+		_, baselined := toleranceDeadPendingTriage[label]
+		switch {
+		case outcome == driveNotEvaluated:
+			// The harness itself gave up before the oracle ran. This used to
+			// end the entire test as SKIP on the first occurrence, leaving
+			// every later row unexamined — see drive_sink_test.go. It is a
+			// FAILURE now: an unevaluated row is an unchecked row.
+			c.inconclusive = append(c.inconclusive, label+" ("+reason+")")
+		case outcome != driveObserved:
+			c.undrivable = append(c.undrivable, label+" ("+outcome.String()+")")
+		case consulted && baselined:
+			// Ratchet in the live direction: a row baselined as dead that the
+			// oracle is consulting again is no longer debt, and leaving it in
+			// the baseline would make the NEXT time it dies invisible.
+			c.revivedLive = append(c.revivedLive, label)
+		case consulted:
+			c.live = append(c.live, label)
+		case !baselined:
+			c.dead = append(c.dead, label)
+		default:
+			// Baselined and still dead — the expected steady state for a row
+			// whose owning issue is still open. Not reported.
+		}
+	}
+	sort.Strings(c.live)
+	sort.Strings(c.dead)
+	sort.Strings(c.revivedLive)
+	sort.Strings(c.undrivable)
+	sort.Strings(c.inconclusive)
+	sort.Strings(c.underspecified)
+	return c
+}
+
+// TestKnownToleranceStaleness_DetectsDeadAndLiveRows is the calibration for
+// TestKnownOpenTolerances_AreLoadBearing: both directions, on the real list,
+// through the real classifier.
+//
+// The thing that can silently break is the `consulted` signal — it comes from
+// observeKnownOpenMatch, a hook matchingKnownOpen calls. If that hook stops
+// firing (renamed, removed, short-circuited by an earlier accept-by-design that
+// returns before matchingKnownOpen is reached), EVERY row reads as dead and the
+// check fails loudly — annoying, but not dangerous. The dangerous direction is
+// the opposite: if something makes `consulted` true unconditionally, every row
+// reads as load-bearing and the check passes forever while verifying nothing.
+// That is the failure this test catches.
+//
+// It asserts that the classifier puts at least one real row in the live bucket
+// AND at least one in a not-live bucket. A stuck signal can satisfy only one of
+// those. Deliberately NOT asserted: which specific rows land where — that
+// changes every time a bug is fixed or a tolerance added, and pinning it would
+// make this test a second copy of the list.
+func TestKnownToleranceStaleness_DetectsDeadAndLiveRows(t *testing.T) {
+	c := classifyToleranceStaleness(t)
+
+	notLive := len(c.dead) + len(c.undrivable) + len(c.inconclusive)
+	for label := range toleranceDeadPendingTriage {
+		// A baselined row that stayed dead is in no reported bucket (it is the
+		// expected steady state), but it IS a not-live observation, which is
+		// what this calibration needs.
+		isRevived := false
+		for _, r := range c.revivedLive {
+			if r == label {
+				isRevived = true
+			}
+		}
+		if !isRevived {
+			notLive++
+		}
+	}
+
+	if len(c.live) == 0 {
+		t.Errorf("the staleness classifier found NO load-bearing tolerance among %d entries. Either every "+
+			"tolerance really is dead (then TestKnownOpenTolerances_AreLoadBearing is already failing and "+
+			"says which), or the `consulted` signal is broken — observeKnownOpenMatch is no longer called "+
+			"by matchingKnownOpen, or an earlier accept-by-design now returns before it is reached. A "+
+			"classifier stuck on one answer cannot detect staleness.\n"+
+			"buckets: live=%v dead=%v revivedLive=%v undrivable=%v inconclusive=%v",
+			len(knownOpenTolerances), c.live, c.dead, c.revivedLive, c.undrivable, c.inconclusive)
+	}
+	if notLive == 0 {
+		t.Errorf("the staleness classifier found EVERY drivable tolerance load-bearing, with nothing dead, "+
+			"undrivable, inconclusive, or baselined-and-still-dead. That is the dangerous direction: a "+
+			"`consulted` signal stuck TRUE makes this check pass forever while verifying nothing. If the "+
+			"list genuinely has no debt left, delete toleranceDeadPendingTriage and replace this assertion "+
+			"with one that plants a known-dead row, rather than weakening it.\n"+
+			"buckets: live=%v dead=%v revivedLive=%v undrivable=%v inconclusive=%v baseline=%d",
+			c.live, c.dead, c.revivedLive, c.undrivable, c.inconclusive, len(toleranceDeadPendingTriage))
+	}
+	t.Logf("staleness classifier discriminates: %d live, %d not-live (dead=%d undrivable=%d inconclusive=%d "+
+		"baselined=%d)", len(c.live), notLive, len(c.dead), len(c.undrivable), len(c.inconclusive),
+		len(toleranceDeadPendingTriage))
+}
+
+// toleranceDeadPendingTriage is the ratchet baseline: knownOpenTolerances
+// entries this check found already dead, each mapped to the STILL-OPEN issue
+// that owns it. The check fails on a NEW dead entry, not on these — the
 // inventory_ratchet_test.go idiom, so existing debt is visible with an owner
 // instead of either blocking the build or being invisible.
 //
-// What I verified for each row below: its fault fires, the oracle reports no
-// violation for it, and matchingKnownOpen therefore never returns it. What I
-// did NOT verify: WHY each went quiet. That matters, because the right action
-// differs — a tolerance dead because its fix LANDED should be removed by the
-// fixing PR (CLAUDE.md: "The PR that fixes #NNNN removes its tolerance in the
-// same PR"), while one dead because an earlier accept-by-design now shadows it
-// may need to move to oracleAByDesignErrors with a design citation instead.
-// Deciding that per entry belongs to the owner of each issue, not to #2549's
-// mechanism change, and this file is a conflict hotspot every fuzzer PR touches
-// (COMMON-RULES' shared-file rule) — so these are baselined and reported, not
-// deleted here.
+// The entry condition is deliberately narrow, because a baselined row is exempt
+// from the dead-row check for as long as it sits here. A row belongs here only
+// when its issue is OPEN. A dead tolerance whose issue is CLOSED is not debt —
+// it is a tolerance for a fixed bug, which actively hides a regression in that
+// fix (the oracle would flag the behaviour coming back, and the tolerance would
+// absorb it). Those get DELETED from knownOpenTolerances, not baselined:
+// #2554, #2599 and #2606 were, each on three independent signals — issue
+// CLOSED, the fix's own artefact present in the tree, and this check reporting
+// the row dead. See each deletion note in knownOpenTolerances.
 //
-// The four #2549 bulk-op entries are NOT in this list: they were deleted in
-// this same change, because #2549 owns them.
+// What is verified for the rows below: the fault fires, the oracle reports no
+// violation, and matchingKnownOpen therefore never returns them. What is NOT
+// verified: WHY each went quiet — a tolerance may be dead because an earlier
+// accept-by-design now shadows it, in which case the right move is to move it
+// to oracleAByDesignErrors with a design citation rather than drop it. That
+// per-entry call belongs to the owner of each open issue.
+//
+// Both ratchets fire on these rows: TestKnownOpenTolerances_AreLoadBearing
+// fails if a baselined row's knownOpenTolerance is gone (stale baseline) AND if
+// the oracle starts consulting it again (it is live, not debt). The check's own
+// red/green calibration no longer depends on one of these rows happening to be
+// a fixed bug — see TestKnownOpenToleranceStaleness_DetectsDeadAndLiveRows.
 var toleranceDeadPendingTriage = map[string]string{
 	"REST PUT /api/v1/projects/{id}/access-requests/{requestId}/CreateAccessRequestApproval/error#1": "#2407",
 	"REST POST /auth/mfa/verify/GetMFASecret/error#1":                                                "#2548",
-	"REST PATCH /api/v1/secrets/{id}/classification/CreateSecretAccessLog/panic#1":                   "#2554",
-	"REST POST /api/v1/invitations/CountSetupTokensSince/error#1":                                    "#2599",
-	// This one is the check's own positive control: #2570 fixed exactly the
-	// behaviour its tolerance predicted (DecideAccessReviewItem's attest path
-	// now runs its reads before the claim, so a ListProjectRoleAssignments
-	// error leaves the item pending — proven by
-	// internal/core/TestDecideAccessReviewItem_AttestGrantLookupErrorLeavesItemPending).
-	// A tolerance for a fixed bug MUST read as dead, and this check says it
-	// does. That is the evidence the check detects real staleness rather than
-	// mis-reporting live entries.
-	"REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide/ListProjectRoleAssignments/error#1": "#2606",
 }
 
 // toleranceStalenessUndrivable names the knownOpenTolerances entries
@@ -423,10 +566,16 @@ func isOutcomeLogTable(t string) bool {
 }
 
 // driveFaultCase runs ONE (op, method, nth, kind) case through the real harness
-// and returns the oracleInput checkOracles would have seen. Shared by this
-// file's staleness checks and the bulk-access-request pin below, so all of them
-// observe exactly what the oracle observes rather than a reconstruction.
-func driveFaultCase(t *testing.T, op, method string, nth int, kind faultstorage.FaultKind) (oracleInput, bool) {
+// and returns the oracleInput checkOraclesReporting would have seen. Shared by
+// this file's staleness checks and the bulk-access-request pin below, so all of
+// them observe exactly what the oracle observes rather than a reconstruction.
+//
+// It drives the harness through a driveSink, so the harness's own Skip/Fatal
+// cannot end the CALLING test and its Errorf findings do not fail it. The
+// returned driveOutcome says which of the four things happened; the caller must
+// branch on it. See drive_sink_test.go for what passing the real *testing.T
+// here used to cost.
+func driveFaultCase(t *testing.T, op, method string, nth int, kind faultstorage.FaultKind) (oracleInput, driveOutcome, string) {
 	t.Helper()
 	opIdx := -1
 	for i, entry := range opCatalog {
@@ -443,7 +592,8 @@ func driveFaultCase(t *testing.T, op, method string, nth int, kind faultstorage.
 		}
 	}
 	if opIdx < 0 || methodIdx < 0 {
-		return oracleInput{}, false
+		return oracleInput{}, driveNotInCatalog, fmt.Sprintf("op %q in opCatalog: %t; method %q in storage.Storage: %t",
+			op, opIdx >= 0, method, methodIdx >= 0)
 	}
 	if nth < 1 {
 		nth = 1
@@ -452,14 +602,28 @@ func driveFaultCase(t *testing.T, op, method string, nth int, kind faultstorage.
 
 	var seen oracleInput
 	got := false
-	// The harness reports an unexempted violation via t.Errorf, which would
-	// fail THIS test for a case it is only inspecting. Run it against a
-	// throwaway *testing.T-shaped sink so only the observation escapes.
-	runOneFuzzIterationWithWorlds(t, data, nil, nil, func(in oracleInput) {
-		seen = in
-		got = true
-	})
-	return seen, got
+	sink := &driveSink{t: t}
+	func() {
+		// driveAborted means the sink recorded the reason in notEvaluated;
+		// anything else is a real panic and is re-thrown, never swallowed.
+		defer func() { rethrowUnlessDriveAbort(recover()) }()
+		runOneFuzzIterationReporting(t, sink, data, nil, nil, func(in oracleInput) {
+			seen = in
+			got = true
+		})
+	}()
+
+	switch {
+	case sink.notEvaluated != "":
+		return oracleInput{}, driveNotEvaluated, sink.notEvaluated
+	case !got:
+		// The harness ran to completion without reaching the oracle: the only
+		// path that does that is the armed fault never firing (NthCall beyond
+		// the real call count for this method during Execute).
+		return oracleInput{}, driveFaultNeverFired, fmt.Sprintf("fault %s#%d/%s never fired during %s", method, nth, kind, op)
+	default:
+		return seen, driveObserved, ""
+	}
 }
 
 // fuzzKindSelector maps a FaultKind back to the selector byte decodeFuzzOp
@@ -526,13 +690,20 @@ func TestOracleAErrorBranch_BulkAccessRequestAuditDiffIsAcceptedWithoutAToleranc
 			if c.method == "RoleSetBypassesPermissionChecks" {
 				nth = 4 // the ordinal the deleted tolerance recorded
 			}
-			in, ok := driveFaultCase(t, c.op, c.method, nth, faultstorage.KindError)
-			if !ok {
-				t.Skipf("op %q / method %q not present in this catalog", c.op, c.method)
+			in, outcome, reason := driveFaultCase(t, c.op, c.method, nth, faultstorage.KindError)
+			if outcome != driveObserved {
+				// FAIL, not skip: these four cases are the specific thing this
+				// test pins. If one of them stops being drivable, the claim
+				// "onlyOutcomeLogTables covers it" is unverified, and a skip
+				// would report that as covered.
+				t.Fatalf("op %q / method %q (nth %d) could not be driven (%s: %s) — this test's whole "+
+					"subject is what covers THESE cases, so an unevaluated one must not read as covered",
+					c.op, c.method, nth, outcome, reason)
 			}
 			diff := diffTables(in.before, in.after)
 			if len(diff) == 0 {
-				t.Skip("no divergence to classify in this run")
+				t.Fatalf("no divergence at all for op %q / method %q (nth %d) — then nothing needs covering "+
+					"here and this pin is stale. Remove it, or correct the case it names", c.op, c.method, nth)
 			}
 			if !onlyOutcomeLogTables(diff) {
 				t.Fatalf("this case now diverges in %v, which is NOT outcome-log-only — the thing that "+

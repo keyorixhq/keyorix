@@ -584,11 +584,31 @@ func runOneFuzzIteration(t *testing.T, data []byte) {
 // in place via resetForReuse instead of building a new one.
 func runOneFuzzIterationWithWorlds(t *testing.T, data []byte, reusedRef, reusedW *faultWorld, observe func(oracleInput)) {
 	t.Helper()
-	t.Log(traceFuzzOp(data)) // RULES: print the decoded operation/fault as a readable line, every run.
+	runOneFuzzIterationReporting(t, t, data, reusedRef, reusedW, observe)
+}
+
+// runOneFuzzIterationReporting is runOneFuzzIterationWithWorlds with the VERDICT
+// reporting split out from the *testing.T that owns the test's resources.
+//
+// rep receives everything the harness concludes about this iteration — the
+// decoded-op trace line, a skip when the fault-free reference run or Setup
+// errored, a fatal when a snapshot failed, and every oracle violation. t is
+// still the real *testing.T and is used only for building worlds (TempDir,
+// Cleanup, and newFaultWorld's own Fatalf on infrastructure failure), which must
+// take the whole test down rather than be recorded as one row's inconclusive
+// result.
+//
+// Every normal caller passes t for both, so nothing changes for them. The one
+// caller that does not is driveFaultCase, which passes a driveSink — see
+// drive_sink_test.go for why routing Skip/Fatal through the caller's own
+// *testing.T made both staleness checks pass while checking nothing.
+func runOneFuzzIterationReporting(t *testing.T, rep fuzzVerdict, data []byte, reusedRef, reusedW *faultWorld, observe func(oracleInput)) {
+	t.Helper()
+	rep.Log(traceFuzzOp(data)) // RULES: print the decoded operation/fault as a readable line, every run.
 
 	decoded, ok := decodeFuzzOp(data)
 	if !ok {
-		t.Skip("empty catalog/method list")
+		rep.Skip("empty catalog/method list")
 	}
 	op := opCatalog[decoded.opIndex]
 	ctx := context.Background()
@@ -603,17 +623,17 @@ func runOneFuzzIterationWithWorlds(t *testing.T, data []byte, reusedRef, reusedW
 	}
 	refResult, refErr := runOp(ctx, ref, op)
 	if refErr != nil {
-		t.Skipf("reference (fault-free) run itself errored — not a fault-injection finding: %v", refErr)
+		rep.Skipf("reference (fault-free) run itself errored — not a fault-injection finding: %v", refErr)
 	}
 	if !refResult.Success {
-		t.Skipf("reference (fault-free) run itself failed — not a fault-injection finding: %s", refResult.Detail)
+		rep.Skipf("reference (fault-free) run itself failed — not a fault-injection finding: %s", refResult.Detail)
 	}
 	// Same goSafe race as below: runOp's Setup+Execute may have dispatched a
 	// detached audit write that hasn't landed by the time we snapshot.
 	drainAllBackgroundGoroutines()
 	refAfter, err := snapshotDB(ref.db)
 	if err != nil {
-		t.Fatalf("snapshotting reference world: %v", err)
+		rep.Fatalf("snapshotting reference world: %v", err)
 	}
 
 	// Fault world: Setup runs UNFAULTED (spec nil at construction), so
@@ -629,7 +649,7 @@ func runOneFuzzIterationWithWorlds(t *testing.T, data []byte, reusedRef, reusedW
 	if op.Setup != nil {
 		state, err = op.Setup(ctx, w)
 		if err != nil {
-			t.Skipf("setup itself errored — not a fault-injection finding: %v", err)
+			rep.Skipf("setup itself errored — not a fault-injection finding: %v", err)
 		}
 	}
 	// Setup drives a real handler (e.g. CreateSecret), which may dispatch its own
@@ -645,7 +665,7 @@ func runOneFuzzIterationWithWorlds(t *testing.T, data []byte, reusedRef, reusedW
 	drainAllBackgroundGoroutines()
 	before, err := snapshotDB(w.db)
 	if err != nil {
-		t.Fatalf("snapshotting pre-fault (post-setup) world: %v", err)
+		rep.Fatalf("snapshotting pre-fault (post-setup) world: %v", err)
 	}
 
 	w.faulty.Arm(&faultstorage.FaultSpec{
@@ -668,7 +688,7 @@ func runOneFuzzIterationWithWorlds(t *testing.T, data []byte, reusedRef, reusedW
 			log.SetOutput(prevOut)
 			execLog = logBuf.String()
 			if r := recover(); r != nil {
-				t.Errorf("panic escaped the transport layer entirely for op %q (fault %s/%d/%s) — "+
+				rep.Errorf("panic escaped the transport layer entirely for op %q (fault %s/%d/%s) — "+
 					"the real Recovery middleware/RecoveryInterceptor should have converted this to "+
 					"a 500/codes.Internal response, not let it unwind past Execute(): %v",
 					op.Key, decoded.methodName, decoded.nthCall, decoded.kind, r)
@@ -681,7 +701,7 @@ func runOneFuzzIterationWithWorlds(t *testing.T, data []byte, reusedRef, reusedW
 		// our own test helper, etc.) — not itself an oracle finding, but worth
 		// surfacing since fault injection should never break the CALLER's own
 		// ability to make the request in the first place.
-		t.Fatalf("op.Execute returned a transport error (not an application error) for op %q, fault %s/%d/%s: %v",
+		rep.Fatalf("op.Execute returned a transport error (not an application error) for op %q, fault %s/%d/%s: %v",
 			op.Key, decoded.methodName, decoded.nthCall, decoded.kind, execErr)
 	}
 
@@ -699,7 +719,7 @@ func runOneFuzzIterationWithWorlds(t *testing.T, data []byte, reusedRef, reusedW
 	drainAllBackgroundGoroutines()
 	after, err := snapshotDB(w.db)
 	if err != nil {
-		t.Fatalf("snapshotting post-fault world: %v", err)
+		rep.Fatalf("snapshotting post-fault world: %v", err)
 	}
 
 	oi := oracleInput{
@@ -709,7 +729,7 @@ func runOneFuzzIterationWithWorlds(t *testing.T, data []byte, reusedRef, reusedW
 	if observe != nil {
 		observe(oi)
 	}
-	checkOracles(t, oi)
+	checkOraclesReporting(rep, oi)
 }
 
 type oracleInput struct {
@@ -985,20 +1005,14 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// by-design-ness and are required to cite the production comment and the
 	// proving test that establish it.
 	//
-	// Pre-existing, unrelated to this PR's own MFA-reauth changes -- found by
-	// a live 2-minute FuzzStorageFaultOperations run during this PR's rebase,
-	// confirmed to reproduce identically on unmodified origin/main. Filed as
-	// #2554; fix is PR #2560 (open) -- remove this entry once it merges.
-	// writeAccessLog (internal/core/audit.go) already discards a RETURNED
-	// error from CreateSecretAccessLog but has no recover() for a PANIC, so a
-	// panic there propagates past the classification update's already-
-	// committed SecretNode row and its own AuditEvent.
-	{
-		op: "REST PATCH /api/v1/secrets/{id}/classification", method: "CreateSecretAccessLog", kind: faultstorage.KindPanic,
-		nth: 1, oracle: "a", issue: "#2554", expires: "2026-10-17",
-		tables:     []string{"AuditEvent", "SecretNode"},
-		findingDoc: "#2554",
-	},
+	// (#2554's row — REST PATCH /api/v1/secrets/{id}/classification,
+	// CreateSecretAccessLog, panic, nth 1 — is GONE, not expired. Its entry
+	// said "remove this entry once PR #2560 merges"; it merged and nobody did,
+	// which is precisely the decay TestKnownOpenTolerances_AreLoadBearing was
+	// added to catch. writeAccessLog (internal/core/audit.go) now recovers from
+	// a PANIC in CreateSecretAccessLog, not just a returned error. Same three
+	// signals as the deletions at the end of this list: issue CLOSED, the
+	// recover() present in the tree, and the row reported dead.)
 	// Pre-existing, unrelated to this PR's own MFA-reauth changes -- found by
 	// a live 2-minute FuzzStorageFaultOperations run during this PR's rebase
 	// (ListWebAuthnCredentials#1/error), then CI's own fuzz-changed shard
@@ -1302,6 +1316,23 @@ var knownOpenTolerances = []knownOpenTolerance{
 		tables:     []string{"SecretVersion"},
 		findingDoc: "#2842",
 	},
+	// (#2599's row — REST POST /api/v1/invitations, CountSetupTokensSince,
+	// error, nth 1 — is GONE, not expired. The bug is fixed: a throttle count
+	// that cannot be read is now its own refusal
+	// (core.ErrResendThrottleUnverifiable, internal/core/invitations.go), so
+	// the invitation is no longer persisted while the request reports the
+	// failure. Confirmed on three independent signals before deleting: the
+	// issue is CLOSED, the fix's own sentinel is present in the tree, and
+	// TestKnownOpenTolerances_AreLoadBearing reports the row dead — the
+	// oracle no longer flags its case at all.)
+	//
+	// (#2606's row — .../items/{itemId}/decide, ListProjectRoleAssignments,
+	// error, nth 1 — is likewise GONE. Fixed by #2570: DecideAccessReviewItem's
+	// attest path runs its reads before the claim, so the item stays pending
+	// when the grant lookup errors. Same three signals: issue CLOSED, the
+	// proving test present in the tree
+	// (internal/core/TestDecideAccessReviewItem_AttestGrantLookupErrorLeavesItemPending),
+	// and the row reported dead.)
 }
 
 // observeKnownOpenMatch, when non-nil, is called with every tolerance
@@ -1454,7 +1485,11 @@ func acceptableByDesign(method string, diff []string) bool {
 // result.Success==false, exactly like any other injected error, and oracle (a)
 // covers it: a panic converted to success would be caught by the "success but
 // state doesn't match the reference" branch.
-func checkOracles(t *testing.T, in oracleInput) {
+// (Named *Reporting, and taking fuzzVerdict rather than *testing.T, for the
+// same reason runOneFuzzIterationReporting does: a test that is only INSPECTING
+// one case must be able to observe the oracle's verdict without that verdict
+// ending it. See drive_sink_test.go.)
+func checkOraclesReporting(t fuzzVerdict, in oracleInput) {
 	t.Helper()
 	label := fmt.Sprintf("op=%s fault=%s#%d/%s", in.op, in.method, in.nth, in.kind)
 
