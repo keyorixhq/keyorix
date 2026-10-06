@@ -84,6 +84,19 @@ func seedPreUpgradeChannel(t *testing.T, db *gorm.DB, name, chType, legacyURL, e
 	return ch.ID
 }
 
+// plaintextURLEnc builds the value storage holds for a channel URL when no
+// encryptor is wired: a plaintext-TAGGED payload, not the bare bytes.
+//
+// Shared by every mock-storage fixture in this package that stands in for a
+// stored row. Before the format tag (#2468) those fixtures could write
+// []byte("https://...") directly; now a raw URL there is an unrecognised
+// format byte (0x68, 'h') and the read path correctly refuses it — which is
+// the whole point, so the fixtures say which format they mean instead of the
+// reader being made lenient to accommodate them.
+func plaintextURLEnc(url string) []byte {
+	return ports.WrapNotificationChannelURL(ports.NotificationChannelURLTagPlaintext, []byte(url))
+}
+
 func newTestEncryptionService(t *testing.T) *encryption.Service {
 	t.Helper()
 	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())

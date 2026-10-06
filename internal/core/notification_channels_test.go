@@ -76,7 +76,7 @@ func TestNotificationChannel_CRUD(t *testing.T) {
 		ID:     1,
 		Name:   "webhook-siem",
 		Type:   "webhook",
-		URLEnc: []byte("https://siem.example.com/hook"),
+		URLEnc: plaintextURLEnc("https://siem.example.com/hook"),
 		Events: "anomaly.detected,secret.expiring",
 	}
 
@@ -196,7 +196,7 @@ func TestUpdateNotificationChannel_UpdateStorageError(t *testing.T) {
 		ID:     2,
 		Name:   "hook",
 		Type:   "webhook",
-		URLEnc: []byte("https://hook.example.com"),
+		URLEnc: plaintextURLEnc("https://hook.example.com"),
 	}
 	st.On("GetNotificationChannel", ctx, uint(2)).Return(existing, nil)
 	st.On("UpdateNotificationChannel", ctx, mock.AnythingOfType("*models.NotificationChannel")).

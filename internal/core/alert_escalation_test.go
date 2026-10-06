@@ -280,7 +280,7 @@ func TestRunAlertEscalation_DialTimeRefusesDNSRebind(t *testing.T) {
 	// URLEnc (#2433), not URL: GetNotificationChannel (the core-layer wrapper
 	// dispatchPolicyChannels now calls) decrypts ch.URLEnc into ch.URL -- a
 	// fixture that only set the latter would read back empty.
-	ch := &models.NotificationChannel{ID: 7, Name: created.Name, Type: created.Type, URLEnc: []byte(created.URL), Enabled: true}
+	ch := &models.NotificationChannel{ID: 7, Name: created.Name, Type: created.Type, URLEnc: plaintextURLEnc(created.URL), Enabled: true}
 	store.On("ListAlertEscalationPolicies", mock.Anything).Return([]models.AlertEscalationPolicy{p}, nil)
 	store.On("ListUnacknowledgedAnomalyAlertsBefore", mock.Anything, mock.Anything).Return([]models.AnomalyAlert{alert}, nil)
 	store.On("GetNotificationChannel", mock.Anything, uint(7)).Return(ch, nil)

@@ -81,7 +81,7 @@ func TestUpdateNotificationChannel_AuditsURLChange(t *testing.T) {
 
 	existing := &models.NotificationChannel{
 		ID: 22, Name: "ops-webhook", Type: "webhook",
-		URLEnc: []byte("https://legit.example.com/hook"), Enabled: true,
+		URLEnc: plaintextURLEnc("https://legit.example.com/hook"), Enabled: true,
 	}
 	store.On("GetNotificationChannel", ctx, uint(22)).Return(existing, nil)
 	store.On("UpdateNotificationChannel", ctx, mock.AnythingOfType("*models.NotificationChannel")).Return(nil)
@@ -123,7 +123,7 @@ func TestUpdateNotificationChannel_AuditsEnabledFlagChange(t *testing.T) {
 
 	existing := &models.NotificationChannel{
 		ID: 23, Name: "siem-webhook", Type: "webhook",
-		URLEnc: []byte("https://siem.example.com/hook"), Enabled: true,
+		URLEnc: plaintextURLEnc("https://siem.example.com/hook"), Enabled: true,
 	}
 	store.On("GetNotificationChannel", ctx, uint(23)).Return(existing, nil)
 	store.On("UpdateNotificationChannel", ctx, mock.AnythingOfType("*models.NotificationChannel")).Return(nil)
