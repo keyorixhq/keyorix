@@ -1,92 +1,107 @@
-# Best-effort-after-commit guard exemption list — GUARD-1 session.
+# Best-effort-after-commit guard exemption list — GUARD-1 (#2561 for the v2 format).
 #
-# internal/core/besteffort_guard_test.go (TestBestEffortGuard_UnprotectedPostWriteDiscard),
-# server/http/handlers/besteffort_guard_test.go, and
+# internal/core/besteffort_guard_test.go,
+# server/http/handlers/besteffort_guard_test.go and
 # server/grpc/services/besteffort_guard_test.go each fail the build when a
-# non-test function discards a call's result/error (`_ = f(...)`) that
-# textually follows a storage-write call in the same function, and the
-# discard is not routed through goSafe(...)/besteffort.Run(...) (package
-# internal/besteffort). Every hit must either be migrated to besteffort.Run,
-# or get a reviewed row here.
+# non-test function in their package drops a call's result after a storage
+# write has already committed, without routing it through
+# goSafe(...)/besteffort.Run(...) (package internal/besteffort). The scanner
+# itself lives in internal/besteffortguard; read its package doc for what it
+# does and, more importantly, what it does NOT see.
 #
-# Format: <package>:<function>\t<reason>
-# <package> is the scanned root (internal/core, server/http/handlers,
-# server/grpc/services) so identically-named functions in different packages
-# don't collide. <function> matches the guard's own fn label: "Name" for a
-# free function, "(*Type).Name" for a method.
+# The bug class, found 12+ times one call site at a time by QA-1: a best-effort
+# post-commit step (evict a cache, notify an admin, emit an audit event) panics,
+# the panic escapes, and the caller reports FAILURE for an operation that
+# actually succeeded.
 #
-# Seeded 2026-10-03 (GUARD-1): every row below is a caller-side discard of a
-# callee that ALREADY recovers its own panic internally (the callee is its
-# own choke point -- evictUserSessionCache, deleteSessionsForUserAndEvict,
-# notifyBreakGlassAdmins, revokeProjectDynamicSecretLeases,
-# seedProjectEnvironment, evictMachineIdentityCacheOrFlush, emitAudit) —
-# this caller-side AST walk cannot see that the callee is already safe, so
-# every one of its callers that discards the result shows up as a hit here.
-# None of these are migrated to besteffort.Run at the call site because the
-# callee's own protection is the correct layer (re-wrapping at every call
-# site would duplicate the recover, and some of these callees have bespoke
-# audit-on-panic/fail-closed-cache-flush logic besteffort.Run's generic
-# recover would not reproduce — see each callee's own doc comment).
+# ---------------------------------------------------------------------------
+# Format (3 tab-separated fields)
+#
+#   <package>:<function>#<callee>   <guard>   <reason>
+#
+# <package>  the scanned root: internal/core, server/http/handlers, or
+#            server/grpc/services. Identically-named functions in different
+#            packages therefore never collide.
+# <function> the ENCLOSING function, as the scanner labels it ("Name", or
+#            "(*Type).Name" for a method) — or "*" for a callee-level row,
+#            meaning "this callee is its own panic choke point, so any caller
+#            discarding its result is safe." The callee may NEVER be "*".
+# <callee>   the function whose result is being dropped.
+# <guard>    how this row's own safety claim is VERIFIED, not asserted:
+#              callee-recovers           the callee's body defers a recover().
+#              callee-recovers-via:<fn>  the callee funnels through <fn>, which
+#                                        defers a recover(). Checked both ways:
+#                                        <fn> must really recover, AND <fn> must
+#                                        be reachable from the callee.
+#              site-reviewed             a human claim no derived check covers.
+#                                        The escape hatch — a row using it must
+#                                        say why neither of the above applies.
+# <reason>   prose, minimum 40 chars. A one-word reason is a suppression.
+#
+# ---------------------------------------------------------------------------
+# What changed in v2 (#2561 coordinator review), and why the row count DROPPED
+# from 12 to 3 while the guard got strictly stronger:
+#
+# 1. The key was the enclosing FUNCTION alone, which made every row a blanket
+#    pardon for that whole function body. Once "(*KeyorixCore).ActivateMFA" was
+#    exempt for discarding one already-self-recovering callee, a NEW
+#    unprotected discard of a DIFFERENT callee added to that same function was
+#    absorbed by the existing row and never flagged. The key now names the
+#    callee, because that is what the claim was always about.
+#
+# 2. SEVEN of the twelve v1 rows pardoned ZERO hits — measured by running v1's
+#    own scanner, not inferred. The coordinator spotted evictUserSessionCache
+#    (the file's own comment admitted it was listed "for completeness of the
+#    corpus"); deleteSessionsForUserAndEvict, emitAudit,
+#    evictMachineIdentityCacheOrFlush, notifyBreakGlassAdmins,
+#    revokeProjectDynamicSecretLeases and seedProjectEnvironment were the same
+#    mistake — all six keyed as if they were enclosing functions when the claim
+#    was about them as CALLEES. StaleExemptions now fails the build on a pardon
+#    for nothing, because a row like that is indistinguishable from a
+#    load-bearing one to anyone reading the file, and because a row that goes
+#    stale by having its hit FIXED leaves the fix un-guarded: the shape can come
+#    back and land straight into a pardon that is already sitting there.
+#
+# 3. The scanner saw only `_ = f(...)`. A bare `f(...)` whose result is simply
+#    never assigned carries the identical panic-escape risk and was invisible.
+#    Adding it found 42 further (function, callee) pairs in internal/core, every
+#    one of them a dropped bool from writeAuditEventFull/writeAuditEventDiff.
+#    None is a real bug — see the two callee-level rows below — but none was
+#    being checked either.
+#
+# 4. Nothing proved the guard could fail. internal/besteffortguard's
+#    testdata/planted/planted.go.txt is a fixture whose functions are NAMED for
+#    the verdict the scanner must reach (MustFlag* / MustNotFlag*), asserted in
+#    both directions, so deleting a matcher goes red there instead of
+#    silently-passing in all three packages.
+#
+# 5. server/http/handlers and server/grpc/services legitimately have ZERO hits
+#    (every discard in them precedes its write). Their guards therefore prove
+#    nothing about hits, so they assert the scan's PRECONDITION instead —
+#    FuncsWithWrite — which would collapse if the write matcher broke. "Zero
+#    hits" with zero writes detected is not a clean package, it is a dead check.
+#
+# ---------------------------------------------------------------------------
 
-# The callee itself: account.go's evictUserSessionCache recovers its own
-# panic and logs, called from several role-removal sites (rbac_management.go)
-# with no return value to discard at all, so it produces no caller-side hit —
-# listed for completeness of the "callee already protected" corpus.
-internal/core:(*KeyorixCore).evictUserSessionCache	callee recovers its own panic (account.go); no bespoke logic to lose, but re-wrapping at every call site would duplicate the recover for no benefit.
+# deleteSessionsForUserAndEvict (account.go) recovers its own panic, sets a
+# named return (err = nil) so the discard is literally correct either way, AND
+# writes EventSessionRevocationPanicked under the affected user's ID on a panic
+# — bespoke audit-on-panic logic that besteffort.Run's generic recover would
+# lose. Its five callers (ActivateMFA, DisableMFA, DeleteWebAuthnCredential,
+# FinishWebAuthnRegistration, UpdateSCIMUser) all discard the result after a
+# committed write; the protection correctly lives in the callee, which is why a
+# caller-side AST walk cannot see it.
+internal/core:*#deleteSessionsForUserAndEvict	callee-recovers	The callee recovers its own panic in account.go and additionally persists EventSessionRevocationPanicked for the affected user, so wrapping it again at each of its five call sites would duplicate the recover and lose that bespoke audit-on-panic record.
 
-# The callee itself: account.go's deleteSessionsForUserAndEvict recovers its
-# own panic, sets a named return (err = nil) so the discard is literally
-# correct either way, AND writes EventSessionRevocationPanicked under the
-# affected user's ID on a panic — besteffort.Run's generic log would lose
-# that per-user audit trail.
-internal/core:(*KeyorixCore).deleteSessionsForUserAndEvict	callee recovers its own panic + audits under the affected user's ID (account.go); besteffort.Run's generic log would lose that audit trail.
-
-# Every caller-side discard of deleteSessionsForUserAndEvict above: the
-# callee is already safe, so these are not independently vulnerable. Found by
-# this guard's own AST walk, which cannot see protection inside a callee.
-internal/core:(*KeyorixCore).ActivateMFA	discards deleteSessionsForUserAndEvict, whose own recover already closes the gap (mfa.go).
-internal/core:(*KeyorixCore).DisableMFA	discards deleteSessionsForUserAndEvict, whose own recover already closes the gap (mfa.go).
-internal/core:(*KeyorixCore).DeleteWebAuthnCredential	discards deleteSessionsForUserAndEvict, whose own recover already closes the gap (webauthn.go).
-internal/core:(*KeyorixCore).FinishWebAuthnRegistration	discards deleteSessionsForUserAndEvict, whose own recover already closes the gap (webauthn.go).
-internal/core:(*KeyorixCore).UpdateSCIMUser	discards deleteSessionsForUserAndEvict, whose own recover already closes the gap (scim.go); the "write" this guard matched (Unlock@263) is a mutex unlock, not a storage write — a benign false match, left here rather than silently dropped.
-
-# break_glass.go's notifyBreakGlassAdmins: whole-function choke point with a
-# named return (err = nil on panic) and its own EventBreakGlassNotifyPanicked
-# audit write under the affected project's ID — same shape as
-# deleteSessionsForUserAndEvict above.
-internal/core:(*KeyorixCore).notifyBreakGlassAdmins	callee recovers its own panic + audits under the affected project's ID (break_glass.go); besteffort.Run's generic log would lose that audit trail.
-
-# catalog.go's revokeProjectDynamicSecretLeases: whole-function choke point
-# that writes dynamic_secret.project_cascade_failed on both the returned-error
-# AND the panic path — a richer failure record than besteffort.Run's generic
-# log, read by the lease-revocation sweep/manual-retry tooling.
-internal/core:(*KeyorixCore).revokeProjectDynamicSecretLeases	callee recovers its own panic + writes a structured cascade-failure audit event read by the lease sweep (catalog.go); besteffort.Run's generic log would lose that.
-
-# catalog.go's seedProjectEnvironment: runs inside the SAME outer transaction
-# (storage.WithTransaction) that created the project row, via a nested
-# SAVEPOINT -- its own doc comment explains why an audit write from inside
-# here would self-deadlock SQLite's single writer (a different connection via
-# c.storage while tx itself still holds an open write transaction). It also
-# returns a structured *projectEnvSeedFailure, not a plain error, for the
-# caller to audit AFTER the outer transaction commits. besteffort.Run doesn't
-# fit this shape without reproducing all of that by hand.
-internal/core:seedProjectEnvironment	runs inside a nested SAVEPOINT with a documented deadlock-avoidance constraint and a structured non-error return value; not a besteffort.Run shape.
-
-# machine_identities.go's evictMachineIdentityCacheOrFlush: on panic, its
-# recover does MORE than log -- it fails closed by flushing every
-# machine-token cache entry system-wide (c.machineTokenCacheFlusher) when the
-# exact credential hashes can't be determined. besteffort.Run's generic
-# recover has no hook for that fail-closed fallback.
-internal/core:(*KeyorixCore).evictMachineIdentityCacheOrFlush	callee's recover triggers a fail-closed, system-wide cache flush fallback (machine_identities.go); besteffort.Run has no equivalent hook.
-
-# service.go's emitAudit: the single busiest choke point in the system —
-# every c.Log*/writeAuditEvent* call funnels through it (confirmed by
-# TestDirectLogAuditEventCallersAreSafe). Its recover already closes the
-# panic gap, keeps its own specific "SECURITY: failed to persist audit
-# event..." log wording (existing log-based alerting may key off it), and
-# its returned-error branch already deliberately skips the auditForwarder/
-# auditStream side effects on failure — re-deriving that exact control flow
-# through besteffort.Run's generic wrapper is pure churn risk on the hottest
-# path in the codebase for no behavioral gain.
-internal/core:(*KeyorixCore).emitAudit	callee already recovers + has its own specific SECURITY log wording on the hottest path in the system; migrating is pure churn risk for no gain.
-
+# writeAuditEventFull / writeAuditEventDiff return "did this event durably
+# persist" (added by #2406 for the few callers that need to verify it); every
+# earlier caller ignores it, which is source-compatible and behaviour-unchanged.
+# Both funnel into emitAudit (service.go), whose deferred recover() is the
+# SINGLE choke point every c.Log*/writeAuditEvent* helper reaches — independently
+# machine-proved by TestDirectLogAuditEventCallersAreSafe, which allows no other
+# path to storage.LogAuditEvent. So a panic in any of these ~42 post-commit
+# audit emissions is already recovered one or two hops down, and the
+# callee-recovers-via guard below re-derives that reachability from the source
+# on every run rather than taking this paragraph's word for it.
+internal/core:*#writeAuditEventFull	callee-recovers-via:emitAudit	Thin wrapper over writeAuditEventDiff, which funnels into emitAudit; emitAudit defers a recover() and is the single choke point for every audit write (TestDirectLogAuditEventCallersAreSafe proves no other path to storage.LogAuditEvent exists), so a panic here never reaches the already-committed caller.
+internal/core:*#writeAuditEventDiff	callee-recovers-via:emitAudit	Funnels directly into emitAudit, whose deferred recover() is the single choke point for every audit write (TestDirectLogAuditEventCallersAreSafe proves no other path to storage.LogAuditEvent exists), so a panic here never reaches the already-committed caller.

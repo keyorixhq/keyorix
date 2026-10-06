@@ -1,0 +1,185 @@
+// planted.go.txt is the PLANTED POSITIVE FIXTURE for the best-effort guard
+// (#2561). Its whole job is to be flagged.
+//
+// The guard shipped green, with no demonstration that it could ever go red --
+// the exact failure mode CLAUDE.md calls out ("a guard nobody has watched fail
+// is not a guard", and "a check that always passes"). A guard validated only
+// against the codebase it was written for proves nothing about whether it
+// still fires: delete its matcher and it stays green forever.
+//
+// Stored as .txt, not .go, so the Go toolchain never builds or vets it: it is
+// input to a parser, not code. The scanner reads it through a temp dir, which
+// is also why the package name here is irrelevant.
+//
+// Every function below is named for what the scanner must conclude about it.
+// The negative cases matter as much as the positives: a scanner that flags
+// EVERYTHING is as useless as one that flags nothing, so this fixture pins
+// both directions in one file.
+package planted
+
+// --- helpers the fixture's own calls resolve against -------------------------
+//
+// resolveLocalReturns only looks up callees DECLARED IN THE SCANNED PACKAGE,
+// so the bare-call cases below need real declarations here.
+
+func helperWithError() error      { return nil }
+func helperWithTwo() (int, error) { return 0, nil }
+func helperVoid()                 {}
+
+type svc struct{ storage store }
+
+type store struct{}
+
+func (store) CreateThing() error { return nil }
+func (store) GetThing() error    { return nil }
+
+func (s *svc) selfRecoveringHelper() error { return nil }
+func (s *svc) voidHelper()                 {}
+
+// --- POSITIVES: each one must produce exactly one hit ------------------------
+
+// MustFlagBlankDiscardAfterWrite is the original shape the v1 guard caught:
+// an explicit `_ =` discard after a committed write.
+func (s *svc) MustFlagBlankDiscardAfterWrite() error {
+	if err := s.storage.CreateThing(); err != nil {
+		return err
+	}
+	_ = s.selfRecoveringHelper()
+	return nil
+}
+
+// MustFlagTwoValueBlankDiscardAfterWrite pins `_, _ =`.
+func (s *svc) MustFlagTwoValueBlankDiscardAfterWrite() error {
+	if err := s.storage.CreateThing(); err != nil {
+		return err
+	}
+	_, _ = helperWithTwo()
+	return nil
+}
+
+// MustFlagBareCallAfterWrite is #2561's widening: the result is dropped by
+// simply never assigning it. The panic-escape risk is identical to the
+// `_ =` form, and the v1 guard could not see it at all.
+func (s *svc) MustFlagBareCallAfterWrite() error {
+	if err := s.storage.CreateThing(); err != nil {
+		return err
+	}
+	s.selfRecoveringHelper()
+	return nil
+}
+
+// MustFlagBarePackageLevelCallAfterWrite pins the `foo(...)` call form.
+func (s *svc) MustFlagBarePackageLevelCallAfterWrite() error {
+	if err := s.storage.CreateThing(); err != nil {
+		return err
+	}
+	helperWithError()
+	return nil
+}
+
+// MustFlagDiscardInsideClosureAfterWrite: a discard nested in a func literal
+// that is NOT a protecting call must still be flagged -- otherwise wrapping a
+// post-commit step in any old closure would launder it past the guard.
+func (s *svc) MustFlagDiscardInsideClosureAfterWrite() error {
+	if err := s.storage.CreateThing(); err != nil {
+		return err
+	}
+	func() { _ = s.selfRecoveringHelper() }()
+	return nil
+}
+
+// --- NEGATIVES: each one must produce NO hit ---------------------------------
+
+// MustNotFlagDiscardBeforeWrite: the discard precedes the write, so no
+// already-committed write can be misreported by a panic in it.
+func (s *svc) MustNotFlagDiscardBeforeWrite() error {
+	_ = s.selfRecoveringHelper()
+	return s.storage.CreateThing()
+}
+
+// MustNotFlagProtectedByBestEffortRun: routed through besteffort.Run, which
+// recovers. This is the fix the guard's failure message tells you to apply, so
+// it had better not still be flagged afterwards.
+func (s *svc) MustNotFlagProtectedByBestEffortRun() error {
+	if err := s.storage.CreateThing(); err != nil {
+		return err
+	}
+	besteffort.Run("thing", func() { _ = s.selfRecoveringHelper() })
+	return nil
+}
+
+// MustNotFlagProtectedByGoSafe: same, via goSafe.
+func (s *svc) MustNotFlagProtectedByGoSafe() error {
+	if err := s.storage.CreateThing(); err != nil {
+		return err
+	}
+	goSafe("thing", func() { _ = s.selfRecoveringHelper() })
+	return nil
+}
+
+// MustNotFlagFunctionWideRunRecover: the whole function defers
+// besteffort.RunRecover(...)(), so a panic anywhere later in it is recovered.
+func (s *svc) MustNotFlagFunctionWideRunRecover() error {
+	defer besteffort.RunRecover("thing")()
+	if err := s.storage.CreateThing(); err != nil {
+		return err
+	}
+	_ = s.selfRecoveringHelper()
+	return nil
+}
+
+// MustNotFlagNoWriteAtAll: nothing committed, so there is nothing for a panic
+// to misreport.
+func (s *svc) MustNotFlagNoWriteAtAll() error {
+	_ = s.selfRecoveringHelper()
+	helperWithError()
+	return nil
+}
+
+// MustNotFlagBareVoidCallAfterWrite: a bare call to a callee with NO return
+// values is not a discard -- there is no result to drop. This is the scoping
+// that keeps the bare-call half from flagging every statement in the codebase.
+func (s *svc) MustNotFlagBareVoidCallAfterWrite() error {
+	if err := s.storage.CreateThing(); err != nil {
+		return err
+	}
+	s.voidHelper()
+	helperVoid()
+	return nil
+}
+
+// MustNotFlagBareForeignPackageCallAfterWrite: a bare call into another
+// package does not resolve against this package's own declarations, so it is
+// not flagged. Deliberate under-reporting -- see resolveLocalReturns -- and
+// the reason the bare-call half stays quiet about log.Printf and friends.
+func (s *svc) MustNotFlagBareForeignPackageCallAfterWrite() error {
+	if err := s.storage.CreateThing(); err != nil {
+		return err
+	}
+	log.Printf("committed")
+	fmt.Sprintf("x")
+	return nil
+}
+
+// MustNotFlagCheckedResultAfterWrite: the result IS checked, so it is not a
+// discard. Pins that the guard is about dropped results, not about calling
+// anything at all after a write.
+func (s *svc) MustNotFlagCheckedResultAfterWrite() error {
+	if err := s.storage.CreateThing(); err != nil {
+		return err
+	}
+	if err := s.selfRecoveringHelper(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MustNotFlagDiscardAfterReadOnlyCall: GetThing is not a write verb, so there
+// is no committed write in this function.
+func (s *svc) MustNotFlagDiscardAfterReadOnlyCall() error {
+	if err := s.storage.GetThing(); err != nil {
+		return err
+	}
+	_ = s.selfRecoveringHelper()
+	return nil
+}
