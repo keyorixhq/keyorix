@@ -909,7 +909,7 @@ func TestVerifyMFA_InvalidChallenge_S8(t *testing.T) {
 // → 200 with empty environments slice.
 func TestListEnvironments_HappyPath_S8(t *testing.T) {
 	h := newCatalogHandlerS8(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/environments", nil)
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/environments", nil)) // #2780: authorizes in-handler
 	w := httptest.NewRecorder()
 	h.ListEnvironments(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -923,7 +923,7 @@ func TestListEnvironments_HappyPath_S8(t *testing.T) {
 // TestListProjects_HappyPath_S8 tests ListProjects with an empty DB → 200.
 func TestListProjects_HappyPath_S8(t *testing.T) {
 	h := newCatalogHandlerS8(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)) // #2780: authorizes in-handler
 	w := httptest.NewRecorder()
 	h.ListProjects(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -935,10 +935,18 @@ func TestListProjects_HappyPath_S8(t *testing.T) {
 // TestListProjects_IncludeDeleted_S8 tests ListProjects with ?include_deleted=true.
 func TestListProjects_IncludeDeleted_S8(t *testing.T) {
 	h := newCatalogHandlerS8(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects?include_deleted=true", nil)
+	// #2780: ?include_deleted=true now requires secrets.read at the GLOBAL scope.
+	// Project-scoped grants deliberately survive a soft-delete (so RestoreProject
+	// works) while GetProject 404s on a deleted project, so a scoped reader cannot
+	// read a soft-deleted project through any path and must not see one listed. This
+	// fixture seeds no RBAC, so 403 is the correct answer and this test now pins that
+	// gate. The 200 path (a real global reader) is covered by
+	// catalog_list_scoped_2780_test.go's TestListProjects2780_IncludeDeletedStillRequiresGlobal,
+	// which seeds the grant properly rather than relying on the route having no gate.
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/projects?include_deleted=true", nil))
 	w := httptest.NewRecorder()
 	h.ListProjects(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 // ── groups_handler.go: ListGroups ────────────────────────────────────────────

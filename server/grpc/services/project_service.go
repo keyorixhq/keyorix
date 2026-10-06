@@ -42,13 +42,33 @@ func mapProjectError(err error) error {
 	}
 }
 
+// ListProjects returns the projects the CALLER CAN READ, matching the HTTP route
+// exactly (#2780).
+//
+// It used to require secrets.read at the GLOBAL scope and then return every
+// project unfiltered, so a caller whose only grants are project-scoped got
+// PermissionDenied here while being able to read those same projects one at a time
+// through GetProject. That is the identical defect the HTTP route had, and the
+// issue asked explicitly for both transports to get the same decision rather than
+// a divergent one.
+//
+// Same narrowing as the HTTP handler: core.VisibleProjects authorizes each project
+// at the project scope — the same check GetProject applies — so every project
+// returned is one this caller could already fetch by id. A global reader's list is
+// unchanged; a caller with no grants gets an empty list rather than
+// PermissionDenied.
 func (s *ProjectGRPCService) ListProjects(ctx context.Context, _ *emptypb.Empty) (*pb.ListProjectsResponse, error) {
 	user, err := requireUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, user, permSecretsRead); err != nil {
-		return nil, err
+	// Not routed through authorizeScoped: that helper denies outright on a failed
+	// check and also enforces the per-project MFA policy, neither of which fits a
+	// cross-project listing (the old global gate enforced no per-project MFA either,
+	// so this keeps parity with both transports' prior behaviour).
+	vis, err := s.core.VisibleProjects(ctx, user.ActorKind(), user.PrincipalID(), permSecretsRead)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "project operation failed")
 	}
 	projects, err := s.core.ListProjects(ctx)
 	if err != nil {
@@ -56,6 +76,9 @@ func (s *ProjectGRPCService) ListProjects(ctx context.Context, _ *emptypb.Empty)
 	}
 	out := make([]*pb.Project, 0, len(projects))
 	for _, p := range projects {
+		if p == nil || !vis.Allows(p.ID) {
+			continue
+		}
 		out = append(out, projectToProto(p))
 	}
 	return &pb.ListProjectsResponse{Projects: out}, nil
