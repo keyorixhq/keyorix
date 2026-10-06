@@ -29,10 +29,7 @@ import (
 // closes it. Remove a row the moment its PR merges AND its seed has been
 // promoted out of testdata/fuzz-pending/<issue>/ into
 // testdata/fuzz/FuzzCrossReplicaInvariants/ — both in the same commit.
-var pendingSeedFix = map[string]int{
-	"2659": 0,    // open-mode InviteMember vs revoke: #2669 merged but the seed still fails ~2 in 7 runs on Postgres; no fix PR yet
-	"2650": 2668, // SetSecretAutoRotate vs DeleteSecret
-}
+var pendingSeedFix = map[string]int{}
 
 func TestPendingSeedsPromotedAfterFix(t *testing.T) {
 	token := os.Getenv("GH_TOKEN")
@@ -41,7 +38,7 @@ func TestPendingSeedsPromotedAfterFix(t *testing.T) {
 	}
 
 	entries, err := os.ReadDir("testdata/fuzz-pending")
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		t.Fatalf("reading testdata/fuzz-pending: %v", err)
 	}
 
