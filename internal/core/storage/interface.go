@@ -766,6 +766,21 @@ type Storage interface {
 	// result must be treated exactly like a lost race — surfaced as an error to
 	// the caller — not retried or silently overwritten.
 	TransitionSecretStatus(ctx context.Context, secret *models.SecretNode, fromStatus string) (bool, error)
+	// UpdateSecretRotationConfig persists ONLY secret's auto-rotation columns
+	// (auto_rotate, rotation_length, rotation_charset, rotation_backend,
+	// rotation_ref) plus updated_at, via one conditional "UPDATE ... WHERE id = ?
+	// AND project_id = ? AND rotation_backend = ? AND deleted_at IS NULL". It
+	// succeeds only if the secret is still live, still in the project the caller
+	// authorized against, and its CURRENT rotation_backend still equals
+	// fromBackend — the pre-read value core.SetSecretAutoRotate's admin gate
+	// (#90) was decided on. Returns whether the write matched a row; a false
+	// result is a lost race and must fail closed, never be retried blind.
+	//
+	// It exists because SetSecretAutoRotate used to persist its pre-read
+	// snapshot with UpdateSecret's full-row Save, which undeleted a concurrently
+	// deleted secret (Save's upsert fallback writes deleted_at = NULL), reverted
+	// a concurrent admin's backend binding and restored cleared ownership (#2650).
+	UpdateSecretRotationConfig(ctx context.Context, secret *models.SecretNode, fromBackend string) (bool, error)
 	DeleteSecret(ctx context.Context, id uint) error
 	// RestoreSecret clears a soft-deleted secret's deleted_at (ADR-033).
 	RestoreSecret(ctx context.Context, id uint) error

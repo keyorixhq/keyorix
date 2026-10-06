@@ -652,6 +652,11 @@ func (m *MockStorage) TransitionSecretStatus(ctx context.Context, secret *models
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockStorage) UpdateSecretRotationConfig(ctx context.Context, secret *models.SecretNode, fromBackend string) (bool, error) {
+	args := m.Called(ctx, secret, fromBackend)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStorage) DeleteSecret(ctx context.Context, id uint) error {
 	return m.Called(ctx, id).Error(0)
 }
