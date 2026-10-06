@@ -222,9 +222,22 @@ describe('DashboardPage — operational signals', () => {
 });
 
 describe('DashboardPage — recent activity', () => {
-    it('shows an empty state with no activity', () => {
+    // The empty-state copy depends on whether the user actually has secrets (#2780).
+    // "Create your first secret to get started" is only true for a genuinely new
+    // user; a read-only project member who can see secrets but has generated no
+    // visible audit events was shown it too, under a TOTAL SECRETS count that was
+    // also wrong. Both branches are asserted, because only the pair pins the
+    // condition — a single test would pass with the copy hard-coded either way.
+    it('shows a neutral empty state when the user has secrets but no recent activity', () => {
+        render(<DashboardPage />); // baseStats.totalSecrets = 120
+        expect(screen.getByText(/no recent activity to show/i)).toBeInTheDocument();
+        expect(screen.queryByText(/create your first secret/i)).not.toBeInTheDocument();
+    });
+
+    it('invites a genuinely new user to create their first secret', () => {
+        mockHooks({ stats: { ...baseStats, totalSecrets: 0 } });
         render(<DashboardPage />);
-        expect(screen.getByText(/no activity yet/i)).toBeInTheDocument();
+        expect(screen.getByText(/create your first secret/i)).toBeInTheDocument();
     });
 
     it('renders activity rows', () => {
