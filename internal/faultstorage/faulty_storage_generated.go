@@ -5354,6 +5354,23 @@ func (w *FaultyStorage) ListWebAuthnCredentials(ctx context.Context, userID uint
 	return w.real.ListWebAuthnCredentials(ctx, userID)
 }
 
+func (w *FaultyStorage) LockLiveProject(ctx context.Context, projectID uint) (bool, error) {
+	fire, kind, injected := w.check("LockLiveProject")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.LockLiveProject(ctx, projectID)
+			return rv1, injected
+		}
+	}
+	return w.real.LockLiveProject(ctx, projectID)
+}
+
 func (w *FaultyStorage) LockMachineIdentityForUpdate(ctx context.Context, id uint) (*models.MachineIdentity, error) {
 	fire, kind, injected := w.check("LockMachineIdentityForUpdate")
 	if fire {

@@ -784,16 +784,37 @@ func (ls *LocalStorage) RestoreSecret(ctx context.Context, id uint) error {
 		return err
 	}
 
+	// #2702/#2712: the restore and the project re-check share one transaction,
+	// write-then-check, exactly as RestoreEnvironment does (#2656). The
+	// requireLiveProject call above runs BEFORE this and outside any transaction,
+	// so DeleteProject's cascade could commit in the window between it and the
+	// UPDATE — and the cascade skips an already-deleted secret (GORM scopes its
+	// sweep to deleted_at IS NULL), so nothing swept this row and the restore then
+	// cleared deleted_at underneath a deleted project. That is precisely the end
+	// state RestoreSecret's own error message says it prevents. The named
+	// environment lock does not help: deleteProjectCascade never takes it.
+	//
+	// requireLiveProject is kept as a cheap early rejection with a better message;
+	// it is no longer what makes this safe.
 	restore := func(ctx context.Context) error {
-		result := ls.db.WithContext(ctx).Unscoped().Model(&models.SecretNode{}).
-			Where("id = ? AND deleted_at IS NOT NULL", id).Update("deleted_at", nil)
-		if result.Error != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
-		}
-		if result.RowsAffected == 0 {
-			return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
-		}
-		return nil
+		return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			result := tx.Unscoped().Model(&models.SecretNode{}).
+				Where("id = ? AND deleted_at IS NOT NULL", id).Update("deleted_at", nil)
+			if result.Error != nil {
+				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+			}
+			if result.RowsAffected == 0 {
+				return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+			}
+			live, lerr := lockLiveParent(tx, &models.Project{}, sqlWhereID, secret.ProjectID)
+			if lerr != nil {
+				return lerr
+			}
+			if !live {
+				return fmt.Errorf("cannot restore: the parent project is deleted — restore the project first")
+			}
+			return nil
+		})
 	}
 
 	if secret.EnvironmentID == 0 {
