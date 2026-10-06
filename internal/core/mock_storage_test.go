@@ -120,8 +120,8 @@ func (m *MockStorage) GetProject(ctx context.Context, id uint) (*models.Project,
 	return &models.Project{}, nil
 }
 
-func (m *MockStorage) UpdateProject(_ context.Context, project *models.Project) (*models.Project, error) {
-	return project, nil
+func (m *MockStorage) UpdateProjectFields(_ context.Context, _ uint, _, _ string, _ *bool, _ time.Time) (bool, error) {
+	return true, nil
 }
 
 func (m *MockStorage) DeleteProject(_ context.Context, _ uint) error {
@@ -189,11 +189,27 @@ func (m *MockStorage) ListGlobalAdminAssignmentsForUpdate(_ context.Context, _ [
 	return nil, nil
 }
 
+// ListAdminBypassRoleIDs (#2496) is the structural replacement for
+// installAdminRoleIDSet's name lookups. MockStorage-driven tests never seed a
+// bypass-flagged role, so the honest answer here is "this install has none" —
+// returned directly rather than via m.Called so no existing test needs a stub,
+// which is exactly the position those tests were already in when every
+// install-admin name resolved as absent via GetRoleByName. Real last-admin
+// coverage lives against store.LocalStorage (last_admin_guard_external_test.go,
+// concurrency_last_admin_removal_test.go, admin_role_structural_source_test.go).
+//
+// The empty answer makes the last-admin guards no-op, never fail-open on a
+// masked error: an error return here would be indistinguishable from a real
+// storage failure and would turn every MockStorage test that touches a role
+// removal into a refusal.
+func (m *MockStorage) ListAdminBypassRoleIDs(_ context.Context) ([]uint, error) {
+	return nil, nil
+}
+
 // RemoveGlobalAdminRoleGuarded (#525) is likewise unused by MockStorage-driven
-// tests — every one of them mocks the three install-admin role names
-// (super_admin/admin/system_admin) as absent via GetRoleByName, so
-// RemoveUserRole's installAdminRoleIDSet is always empty and this is never
-// reached (real-storage RemoveUserRole/last-admin coverage lives in
+// tests — none of them seeds a bypass-flagged role, so RemoveUserRole's
+// adminBypassRoleIDSlice is always empty and this is never reached
+// (real-storage RemoveUserRole/last-admin coverage lives in
 // last_admin_guard_external_test.go and concurrency_last_admin_removal_test.go,
 // both against a real store.LocalStorage). If a future test DOES reach this
 // unmocked, m.Called panics loudly rather than silently allowing the removal.
@@ -942,6 +958,11 @@ func (m *MockStorage) SetAccountStateIfMatches(ctx context.Context, id uint, fro
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockStorage) ClaimUserExternalIDIfUnset(ctx context.Context, id uint, externalID string, updatedAt time.Time) (bool, error) {
+	args := m.Called(ctx, id, externalID, updatedAt)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStorage) SetPasswordHash(ctx context.Context, id uint, hash string, changedAt time.Time) error {
 	args := m.Called(ctx, id, hash, changedAt)
 	return args.Error(0)
@@ -1081,10 +1102,9 @@ func (m *MockStorage) GetGroup(ctx context.Context, id uint) (*models.Group, err
 	return args.Get(0).(*models.Group), args.Error(1)
 }
 
-func (m *MockStorage) UpdateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {
-	a := m.Called(ctx, group)
-	v, _ := a.Get(0).(*models.Group)
-	return v, a.Error(1)
+func (m *MockStorage) UpdateGroupFields(ctx context.Context, id uint, name, nameFolded, description *string, updatedAt time.Time) (bool, error) {
+	a := m.Called(ctx, id, name, nameFolded, description, updatedAt)
+	return a.Bool(0), a.Error(1)
 }
 
 func (m *MockStorage) DeleteGroup(ctx context.Context, id uint) error {
@@ -2229,6 +2249,9 @@ func (m *MockStorage) ActivateMFASecret(_ context.Context, _ uint, _ []byte) (bo
 func (m *MockStorage) MarkTOTPStepUsed(_ context.Context, _ uint, _ int64) (bool, error) {
 	return true, nil
 }
+func (m *MockStorage) ReleaseTOTPStepIfUnchanged(_ context.Context, _ uint, _ int64) (bool, error) {
+	return true, nil
+}
 func (m *MockStorage) DeleteMFAForUser(_ context.Context, _ uint) error          { return nil }
 func (m *MockStorage) SetUserMFAEnabled(_ context.Context, _ uint, _ bool) error { return nil }
 func (m *MockStorage) CreateMFARecoveryCodes(_ context.Context, _ uint, _ []string) error {
@@ -2265,6 +2288,9 @@ func (m *MockStorage) ListDynamicSecretConfigs(_ context.Context, _, _ uint) ([]
 	return nil, nil
 }
 func (m *MockStorage) UpdateDynamicSecretConfig(_ context.Context, _ *models.DynamicSecretConfig) error {
+	return nil
+}
+func (m *MockStorage) SetDynamicSecretConfigAdminDSN(_ context.Context, _ uint, _, _ []byte) error {
 	return nil
 }
 func (m *MockStorage) TransitionDynamicSecretConfigDisabled(ctx context.Context, c *models.DynamicSecretConfig, fromDisabled bool) (bool, error) {

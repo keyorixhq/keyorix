@@ -145,6 +145,9 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   row last). `_RestoreEnvironment_vs_DeleteProject_`, `_RestoreEnvironment_DeleteProjectAfterUpdate_`,
   and `_RestoreEnvironment_InsideDeleteProjectCascade_`, which runs A's whole restore between
   the cascade's environment sweep and its project UPDATE and fails without that up-front lock.
+  Configs (#2651, `CreateDynamicSecretConfig` vs `DeleteProject`'s #369 disable; the parent is
+  the project): `_CreateDynamicSecretConfig_DeleteProjectAfterInsert_` and
+  `local_dynamic_test.go:TestCreateDynamicSecretConfig_RefusesSoftDeletedProject` (default-ci).
 
 ## GORM hook / timezone correctness (`internal/storage/models`, `store`)
 

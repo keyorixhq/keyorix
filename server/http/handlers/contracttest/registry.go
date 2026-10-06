@@ -62,7 +62,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getUnusedSecrets":                   reasonSchemaNotYetWritten, // get /api/v1/secrets/usage/unused
 	"getUser":                            reasonSchemaNotYetWritten, // get /api/v1/users/{id}
 	"getUserByEmail":                     reasonSchemaNotYetWritten, // get /api/v1/users/by-email
-	"getUserMembershipsForUser":          reasonSchemaNotYetWritten, // get /api/v1/users/{id}/memberships
 	"grantMachineRole":                   reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/machine-identities/{machineId}/roles
 	"inviteMember":                       reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/memberships
 	"liftLegalHold":                      reasonSchemaNotYetWritten, // delete /api/v1/legal-hold
@@ -375,4 +374,7 @@ var exercisingTests = map[string][]string{
 	"createProjectEnvironment": {"TestContractCatalog_CreateProjectEnvironment"},
 	"listEnvironments":         {"TestContractCatalog_ListEnvironments"},
 	"cloneEnvironment":         {"TestContractCatalog_CloneEnvironment"},
+	// #2781 (one definition of project membership) --
+	// users_memberships_2781_test.go.
+	"getUserMembershipsForUser": {"TestContract2781_GetUserMembershipsForUser"},
 }

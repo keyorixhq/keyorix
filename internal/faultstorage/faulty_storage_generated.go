@@ -275,6 +275,23 @@ func (w *FaultyStorage) CheckSharePermission(ctx context.Context, secretID uint,
 	return w.real.CheckSharePermission(ctx, secretID, userID, now)
 }
 
+func (w *FaultyStorage) ClaimUserExternalIDIfUnset(ctx context.Context, id uint, externalID string, updatedAt time.Time) (bool, error) {
+	fire, kind, injected := w.check("ClaimUserExternalIDIfUnset")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ClaimUserExternalIDIfUnset(ctx, id, externalID, updatedAt)
+			return rv1, injected
+		}
+	}
+	return w.real.ClaimUserExternalIDIfUnset(ctx, id, externalID, updatedAt)
+}
+
 func (w *FaultyStorage) CleanupExpiredSessions(ctx context.Context) error {
 	fire, kind, injected := w.check("CleanupExpiredSessions")
 	if fire {
@@ -3990,6 +4007,23 @@ func (w *FaultyStorage) ListActivePersonalAccessTokens(ctx context.Context) ([]*
 	return w.real.ListActivePersonalAccessTokens(ctx)
 }
 
+func (w *FaultyStorage) ListAdminBypassRoleIDs(ctx context.Context) ([]uint, error) {
+	fire, kind, injected := w.check("ListAdminBypassRoleIDs")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 []uint
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ListAdminBypassRoleIDs(ctx)
+			return rv1, injected
+		}
+	}
+	return w.real.ListAdminBypassRoleIDs(ctx)
+}
+
 func (w *FaultyStorage) ListAlertEscalationPolicies(ctx context.Context) ([]models.AlertEscalationPolicy, error) {
 	fire, kind, injected := w.check("ListAlertEscalationPolicies")
 	if fire {
@@ -5751,6 +5785,23 @@ func (w *FaultyStorage) ReleaseSchedulerLock(ctx context.Context, key int64, hol
 	return w.real.ReleaseSchedulerLock(ctx, key, holder)
 }
 
+func (w *FaultyStorage) ReleaseTOTPStepIfUnchanged(ctx context.Context, userID uint, step int64) (bool, error) {
+	fire, kind, injected := w.check("ReleaseTOTPStepIfUnchanged")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ReleaseTOTPStepIfUnchanged(ctx, userID, step)
+			return rv1, injected
+		}
+	}
+	return w.real.ReleaseTOTPStepIfUnchanged(ctx, userID, step)
+}
+
 func (w *FaultyStorage) RemoveAllProjectRoleGrants(ctx context.Context, userID uint, projectID uint) error {
 	fire, kind, injected := w.check("RemoveAllProjectRoleGrants")
 	if fire {
@@ -6207,6 +6258,22 @@ func (w *FaultyStorage) SetAccountStateIfMatches(ctx context.Context, id uint, f
 		}
 	}
 	return w.real.SetAccountStateIfMatches(ctx, id, fromState, toState, updatedAt)
+}
+
+func (w *FaultyStorage) SetDynamicSecretConfigAdminDSN(ctx context.Context, id uint, enc []byte, meta []byte) error {
+	fire, kind, injected := w.check("SetDynamicSecretConfigAdminDSN")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			return injected
+		case KindEffectThenError:
+			_ = w.real.SetDynamicSecretConfigAdminDSN(ctx, id, enc, meta)
+			return injected
+		}
+	}
+	return w.real.SetDynamicSecretConfigAdminDSN(ctx, id, enc, meta)
 }
 
 func (w *FaultyStorage) SetMachineIdentityCredentialClassification(ctx context.Context, credentialID uint, fromClassification string, toClassification string) (bool, error) {
@@ -6717,21 +6784,21 @@ func (w *FaultyStorage) UpdateDynamicSecretLease(ctx context.Context, l *models.
 	return w.real.UpdateDynamicSecretLease(ctx, l)
 }
 
-func (w *FaultyStorage) UpdateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {
-	fire, kind, injected := w.check("UpdateGroup")
+func (w *FaultyStorage) UpdateGroupFields(ctx context.Context, id uint, name *string, nameFolded *string, description *string, updatedAt time.Time) (bool, error) {
+	fire, kind, injected := w.check("UpdateGroupFields")
 	if fire {
 		switch kind {
 		case KindPanic:
 			panic(injected)
 		case KindError:
-			var zero1 *models.Group
+			var zero1 bool
 			return zero1, injected
 		case KindEffectThenError:
-			rv1, _ := w.real.UpdateGroup(ctx, group)
+			rv1, _ := w.real.UpdateGroupFields(ctx, id, name, nameFolded, description, updatedAt)
 			return rv1, injected
 		}
 	}
-	return w.real.UpdateGroup(ctx, group)
+	return w.real.UpdateGroupFields(ctx, id, name, nameFolded, description, updatedAt)
 }
 
 func (w *FaultyStorage) UpdateLastLogin(ctx context.Context, userID uint, loginAt time.Time) error {
@@ -6830,21 +6897,21 @@ func (w *FaultyStorage) UpdateNotificationRetryPolicy(ctx context.Context, chann
 	return w.real.UpdateNotificationRetryPolicy(ctx, channelID, maxRetries, backoffMs)
 }
 
-func (w *FaultyStorage) UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error) {
-	fire, kind, injected := w.check("UpdateProject")
+func (w *FaultyStorage) UpdateProjectFields(ctx context.Context, id uint, name string, description string, requireMFA *bool, updatedAt time.Time) (bool, error) {
+	fire, kind, injected := w.check("UpdateProjectFields")
 	if fire {
 		switch kind {
 		case KindPanic:
 			panic(injected)
 		case KindError:
-			var zero1 *models.Project
+			var zero1 bool
 			return zero1, injected
 		case KindEffectThenError:
-			rv1, _ := w.real.UpdateProject(ctx, project)
+			rv1, _ := w.real.UpdateProjectFields(ctx, id, name, description, requireMFA, updatedAt)
 			return rv1, injected
 		}
 	}
-	return w.real.UpdateProject(ctx, project)
+	return w.real.UpdateProjectFields(ctx, id, name, description, requireMFA, updatedAt)
 }
 
 func (w *FaultyStorage) UpdateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) (bool, error) {

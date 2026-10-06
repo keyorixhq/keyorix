@@ -69,7 +69,7 @@ func (c *KeyorixCore) ShareSecret(ctx context.Context, req *ShareSecretRequest) 
 	// for at access time: CheckGroupPermissions (permissions.go) checks only group
 	// membership, never the accessing user's project affiliation.
 	if !req.IsGroup {
-		if isMember, merr := c.storage.IsProjectMember(ctx, req.RecipientID, secret.ProjectID); merr != nil {
+		if isMember, merr := c.IsProjectMember(ctx, req.RecipientID, secret.ProjectID); merr != nil {
 			return nil, fmt.Errorf("failed to verify project membership: %w", merr)
 		} else if !isMember {
 			return nil, fmt.Errorf("%s", i18n.T("ErrorPermissionDenied", nil))

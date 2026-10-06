@@ -149,7 +149,27 @@ type Storage interface {
 	// Project / Environment management
 	CreateProject(ctx context.Context, project *models.Project) (*models.Project, error)
 	GetProject(ctx context.Context, id uint) (*models.Project, error)
-	UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error)
+	// UpdateProjectFields persists ONLY name, description and updated_at — plus
+	// require_mfa when (and only when) requireMFA is non-nil — onto a LIVE
+	// project row: "UPDATE projects SET ... WHERE id = ? AND deleted_at IS
+	// NULL". matched=false (no error) means the project is gone; the caller must
+	// not report success.
+	//
+	// This REPLACES the former UpdateProject, a bare GORM Save of a struct the
+	// caller read earlier (#2697). Two consequences, both closed by the shape
+	// above rather than by the caller being careful:
+	//   - Save's 0-rows fallback is an upsert that writes deleted_at = NULL, so
+	//     a rename landing after DeleteProject resurrected the project row
+	//     alone (its secrets and environments stayed deleted), after which
+	//     requireLiveProject and the RestoreSecret/RestoreEnvironment liveness
+	//     checks passed again for project-scoped grant holders;
+	//   - Save wrote every column, so a plain rename whose read predated an
+	//     admin enabling ADR-037's per-project require_mfa wrote `false` back
+	//     over it — no roles.assign needed, and no audit event, because
+	//     core.UpdateProject only audits when ITS OWN argument changes the
+	//     value it read. requireMFA is a pointer here so "I am not changing
+	//     this flag" is expressible, and a nil one never reaches the UPDATE.
+	UpdateProjectFields(ctx context.Context, id uint, name, description string, requireMFA *bool, updatedAt time.Time) (matched bool, err error)
 	DeleteProject(ctx context.Context, id uint) error
 	// DeleteProjectIfEmpty atomically enforces DeleteProject(force=false)'s guard —
 	// reject the delete if the project still has any live secret — and, only when the
@@ -932,6 +952,21 @@ type Storage interface {
 	// from the old one (applySCIMActiveState, DeprovisionSCIMUser); see
 	// C-RACE-FIX-B2. A NULL column is matched by fromState "".
 	SetAccountStateIfMatches(ctx context.Context, id uint, fromState, toState string, updatedAt time.Time) (bool, error)
+	// ClaimUserExternalIDIfUnset persists ONLY external_id (plus updated_at) for
+	// a user whose external_id is still UNSET and whose row is still live:
+	// "UPDATE ... SET external_id, updated_at WHERE id = ? AND
+	// COALESCE(external_id,'') = '' AND deleted_at IS NULL". claimed=false (no
+	// error) means someone else federated the account first, or it is gone.
+	//
+	// This is resolveSSOUser's first-federation write (#2699). It used the
+	// generic full-row UpdateUser, whose GORM Save upsert-fallback resurrected
+	// an account an admin had deleted after resolveSSOUser's unlocked read —
+	// writing back deleted_at=NULL, is_active=true, account_state=active — and
+	// the same window also reverted a concurrent suspension, password change,
+	// MFA enable or lockout. Narrow and conditional here; the caller re-reads
+	// afterwards so its login gate sees the committed row, not its own stale
+	// snapshot.
+	ClaimUserExternalIDIfUnset(ctx context.Context, id uint, externalID string, updatedAt time.Time) (claimed bool, err error)
 	// SetPasswordHash persists ONLY the password_hash and password_changed_at columns
 	// (plus updated_at) — narrower than the generic UpdateUser, and deliberately so
 	// (#484, the same rationale as SetAccountState above). A password change
@@ -1016,7 +1051,24 @@ type Storage interface {
 	// Group Management
 	CreateGroup(ctx context.Context, group *models.Group) (*models.Group, error)
 	GetGroup(ctx context.Context, id uint) (*models.Group, error)
-	UpdateGroup(ctx context.Context, group *models.Group) (*models.Group, error)
+	// UpdateGroupFields persists ONLY the non-nil fields among name,
+	// nameFolded and description (plus updated_at) onto a LIVE group row:
+	// "UPDATE groups SET ... WHERE id = ? AND deleted_at IS NULL".
+	// matched=false (no error) means the group is gone; the caller must not
+	// report success. name and nameFolded must be passed together — they are
+	// one value in two columns (#1642) and a stale nameFolded would leave the
+	// uniqueness index checking a name the group no longer has.
+	//
+	// This REPLACES the former UpdateGroup, a bare GORM Save (#2697). Save's
+	// 0-rows fallback is an upsert that writes deleted_at = NULL, and DeleteGroup
+	// deliberately KEEPS a deleted group's GroupRole and UserGroup rows so
+	// RestoreGroup can work — so a rename landing after a delete or SCIM
+	// deprovision brought the group back with every role grant and membership
+	// live, with no restore audit event and without going through RestoreGroup.
+	// An IdP DELETE closely followed by a PUT is enough: ReplaceSCIMGroup and
+	// PatchSCIMGroup rename through this same primitive, outside the
+	// withGroupProjectAdminGuardLocks that deleteGroupGuarded holds.
+	UpdateGroupFields(ctx context.Context, id uint, name, nameFolded, description *string, updatedAt time.Time) (matched bool, err error)
 	DeleteGroup(ctx context.Context, id uint) error
 	// RestoreGroup clears a soft-deleted group's deleted_at (with its grants/members).
 	RestoreGroup(ctx context.Context, id uint) error
@@ -1158,6 +1210,23 @@ type Storage interface {
 	// resolve-by-ID replacement for roleSetContainsAdmin's old fixed-name-list
 	// lookup (internal/core/authz.go). Mirrors RoleSetHasPermission's shape.
 	RoleSetBypassesPermissionChecks(ctx context.Context, roleIDs []uint) (bool, error)
+	// ListAdminBypassRoleIDs enumerates every role ID carrying
+	// BypassesPermissionChecks = true (ADR-084) -- the ENUMERATION counterpart to
+	// RoleSetBypassesPermissionChecks' membership test, and the single source of
+	// truth for "which roles confer administrative authority" (#2496,
+	// INV-CORE-20). The last-install-admin guards need the set, not a yes/no on a
+	// candidate set: they ask "which assignment rows count as an admin grant" and
+	// "who else holds one", neither of which a membership predicate can answer.
+	// Before this existed, those guards resolved the set by NAME
+	// (installAdminRoleIDSet over a fixed super_admin/admin/system_admin list),
+	// a second definition of "admin" that disagreed with the flag in both
+	// directions -- see internal/core/admin_roles.go.
+	//
+	// Returns an error on any genuine resolution failure; callers must fail
+	// closed (refuse the mutation) rather than treat it as an empty set, for
+	// roleSetContainsAdmin's documented reason: an inability to verify must not
+	// be indistinguishable from "there is no admin role here".
+	ListAdminBypassRoleIDs(ctx context.Context) ([]uint, error)
 	GetUserPermissions(ctx context.Context, userID uint) ([]*Permission, error)
 	// GetUserGroupPermissions returns the permissions a user holds via GROUP
 	// membership (group → group_roles → role_permissions), scope-agnostically and
@@ -1498,6 +1567,18 @@ type Storage interface {
 	// userID, returning true only if it was newly consumed (step strictly greater than
 	// the stored last-used step). A false return means the code is a replay.
 	MarkTOTPStepUsed(ctx context.Context, userID uint, step int64) (bool, error)
+	// ReleaseTOTPStepIfUnchanged reverts a step MarkTOTPStepUsed just marked as
+	// used back to step-1 (re-permitting exactly that step), but ONLY if the
+	// stored last-used step still equals step unchanged since the mark — a CAS
+	// guard so this never regresses the anti-replay counter past a step some
+	// OTHER, later-arriving request has since legitimately advanced it to.
+	// Returns false (no error) when the CAS didn't match (nothing released).
+	// Exists for #2567: a caller that marked a step used and then failed to
+	// complete the side effect that depended on it (minting a session) can
+	// give the user back their one attempt at that same code, instead of
+	// forcing a wait for the next 30s time-step over a storage hiccup that had
+	// nothing to do with the code itself.
+	ReleaseTOTPStepIfUnchanged(ctx context.Context, userID uint, step int64) (bool, error)
 	DeleteMFAForUser(ctx context.Context, userID uint) error // clears secret + recovery codes
 	SetUserMFAEnabled(ctx context.Context, userID uint, enabled bool) error
 	CreateMFARecoveryCodes(ctx context.Context, userID uint, codeHashes []string) error
@@ -1512,6 +1593,12 @@ type Storage interface {
 	GetDynamicSecretConfig(ctx context.Context, id uint) (*models.DynamicSecretConfig, error)
 	ListDynamicSecretConfigs(ctx context.Context, projectID, environmentID uint) ([]*models.DynamicSecretConfig, error)
 	UpdateDynamicSecretConfig(ctx context.Context, c *models.DynamicSecretConfig) error
+	// SetDynamicSecretConfigAdminDSN writes ONLY a config's encrypted admin DSN
+	// (admin_dsn_enc, admin_dsn_meta) and updated_at, never the rest of the row
+	// (#2651). CreateDynamicSecretConfig's second write used UpdateDynamicSecretConfig
+	// (a full-row Save) and wrote disabled=false back over a concurrent DeleteProject's
+	// #369 disable. Returns an error when no row matched.
+	SetDynamicSecretConfigAdminDSN(ctx context.Context, id uint, enc, meta []byte) error
 	// TransitionDynamicSecretConfigDisabled persists cfg's full row via a single
 	// conditional write — "UPDATE ... WHERE id = ? AND disabled = ?" — succeeding
 	// only if the row's CURRENT persisted disabled value still equals fromDisabled

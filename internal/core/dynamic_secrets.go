@@ -239,9 +239,11 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	// #94: the admin DSN is encrypted bound to DynamicSecretConfigAAD(cfg.ID, ...), so
 	// it must be encrypted AFTER the row exists (cfg.ID is an auto-increment PK, not
 	// known beforehand) — insert first with the DSN columns empty, then encrypt and
-	// persist them in a second write. The gap between the two writes is invisible to
-	// any other caller: cfg.ID isn't returned to the requester until this function
-	// returns, so nothing else can observe or race the momentarily-DSN-less row.
+	// persist them in a second write. The inserted row IS visible between the two
+	// writes: the insert commits on its own, and DeleteProject's #369 cascade disables
+	// it by project, not by ID. So the second write touches ONLY the DSN columns
+	// (SetDynamicSecretConfigAdminDSN, #2651); a full-row Save here wrote
+	// disabled=false back over a concurrent DeleteProject.
 	cfg, err := c.insertDynamicSecretConfigRow(ctx, req)
 	if err != nil {
 		return nil, err
@@ -260,7 +262,7 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	if err := validateEncryptedAdminDSNField(cfg.AdminDSNEnc); err != nil {
 		return nil, fmt.Errorf("encrypted admin DSN is invalid: %w", err)
 	}
-	if err := c.storage.UpdateDynamicSecretConfig(ctx, cfg); err != nil {
+	if err := c.storage.SetDynamicSecretConfigAdminDSN(ctx, cfg.ID, cfg.AdminDSNEnc, cfg.AdminDSNMeta); err != nil {
 		return nil, fmt.Errorf("failed to persist encrypted admin DSN: %w", err)
 	}
 	pid := cfg.ProjectID

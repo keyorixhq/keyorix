@@ -69,20 +69,35 @@ func (c *KeyorixCore) UpdateGroup(ctx context.Context, actorID uint, req *Update
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
+	// #2697: a column-scoped write of only the fields this request carries, onto
+	// a row that is still live. The previous full-row Save persisted the whole
+	// pre-read struct, and its upsert fallback resurrected a group deleted (or
+	// SCIM-deprovisioned) after the GetGroup above — bringing back every
+	// GroupRole and UserGroup row, which DeleteGroup deliberately retains so
+	// RestoreGroup can work, with no restore audit event.
+	var namePtr, foldedPtr, descPtr *string
 	if req.Name != "" {
 		foldedName, ferr := identity.NewFoldedName(req.Name)
 		if ferr != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
 		}
-		group.Name = req.Name
-		group.NameFolded = foldedName.Folded()
+		folded := foldedName.Folded()
+		namePtr, foldedPtr = &req.Name, &folded
 	}
 	if req.Description != "" {
-		group.Description = req.Description
+		descPtr = &req.Description
 	}
-	updated, err := c.storage.UpdateGroup(ctx, group)
+	matched, err := c.storage.UpdateGroupFields(ctx, group.ID, namePtr, foldedPtr, descPtr, c.now())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	if !matched {
+		return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+	}
+	// Return the committed row, not the struct read before the write.
+	updated, err := c.storage.GetGroup(ctx, group.ID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	c.writeAuditEvent(ctx, EventGroupUpdated, actorPtr(actorID), nil,
 		fmt.Sprintf("group %q (id %d) updated", updated.Name, updated.ID))

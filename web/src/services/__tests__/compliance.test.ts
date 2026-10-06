@@ -259,10 +259,10 @@ describe('complianceApi legal hold', () => {
         expect(mock.post).toHaveBeenCalledWith('/api/v1/legal-hold', { reason: 'litigation' });
     });
 
-    it('liftLegalHold DELETEs the hold', async () => {
+    it('liftLegalHold DELETEs the hold, sending the required reason in the request body', async () => {
         mock.delete.mockResolvedValueOnce({ data: {} });
-        await complianceApi.liftLegalHold();
-        expect(mock.delete).toHaveBeenCalledWith('/api/v1/legal-hold');
+        await complianceApi.liftLegalHold('litigation closed');
+        expect(mock.delete).toHaveBeenCalledWith('/api/v1/legal-hold', { data: { reason: 'litigation closed' } });
     });
 });
 
