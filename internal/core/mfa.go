@@ -473,17 +473,37 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 }
 
 // VerifyMFALogin consumes a challenge, verifies a TOTP code or a recovery code,
-// and on success mints and returns the session (the second login step).
-func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userAgent, ip string) (*models.Session, *models.User, error) {
+// and on success mints and returns the session (the second login step) together
+// with the response identity.
+//
+// The identity is resolved here, BEFORE the session/step-up-token writes, and
+// returned so the handler does not re-read it — see
+// resolveLoginIdentityBeforeMint (#2841). This path is the TOTP sibling of the
+// two WebAuthn login paths: it mints no MFAStepUpGrant, but it DOES write a
+// user-scoped MFAStepupToken, which HasActiveMFAStepup reads per-user rather
+// than per-session. A login reported as failed because the handler's identity
+// read failed used to leave that token behind (completeLogin revoked only the
+// session), so the restricted-secret MFA gate stayed satisfied for the rest of
+// the window on a later session the user never completed a second factor for.
+func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userAgent, ip string) (*models.Session, *models.User, UserIdentity, error) {
 	user, usedRecovery, consumedTOTPStep, err := c.VerifyMFACredentials(ctx, challenge, code)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, UserIdentity{}, err
 	}
 	// Apply the same password-expiry hard gate as the non-MFA login path (ADR-025).
 	// Idempotent: the gate is a no-op when the state is already password_reset_required
 	// (set during the initial credential check for MFA-enabled accounts).
 	if err := c.enforcePasswordExpiryGate(ctx, user); err != nil {
-		return nil, nil, err
+		return nil, nil, UserIdentity{}, err
+	}
+	// #2841: the LAST fallible-and-reported read, done BEFORE the session and
+	// step-up-token writes. Not "before the first write" — the TOTP step mark,
+	// the lockout-counter clear and the password-expiry gate all write earlier;
+	// what matters is that nothing fallible runs AFTER the writes that outlive a
+	// login reported as failed.
+	identity, err := c.resolveLoginIdentityBeforeMint(ctx, user.ID)
+	if err != nil {
+		return nil, nil, UserIdentity{}, err
 	}
 	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
 	if err != nil {
@@ -501,7 +521,7 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 				log.Printf("VerifyMFALogin: failed to release TOTP step after mintSession failure for user %d: %v", user.ID, rerr)
 			}
 		}
-		return nil, nil, err
+		return nil, nil, UserIdentity{}, err
 	}
 	// Record the MFA step-up window when the classification gate requires it.
 	// Best-effort: a write failure does not block the login, but the user won't
@@ -514,7 +534,7 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 		c.writeAuditEventFull(ctx, "mfa.recovery_used", &uid, nil, nil, ip, fmt.Sprintf("user %s used a recovery code", user.Username))
 	}
 	c.writeAuditEventFull(ctx, "mfa.login_verified", &uid, nil, nil, ip, fmt.Sprintf("user %s passed MFA", user.Username))
-	return session, user, nil
+	return session, user, identity, nil
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────

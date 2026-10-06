@@ -1098,35 +1098,16 @@ var knownOpenTolerances = []knownOpenTolerance{
 		tables:     []string{"CompliancePostureSnapshot"},
 		findingDoc: "#2834",
 	},
-	// Third pre-existing finding from the same live runs, also confirmed by
-	// byte-for-byte replay against unmodified origin/main. Filed as #2841,
-	// SEPARATELY from #2565 (the LoginAttempt-only finding on this same op)
-	// because the shape is different, not just wider: the WebAuthn assertion
-	// VERIFIES, so the session row, the unconditional MFAStepUpGrant both
-	// WebAuthn login paths mint, and the login audit event all land — and then
-	// the faulted GetUserRoles on the validate-session step
-	// (internal/core/auth.go:568) maps to ErrRoleResolutionUnavailable and the
-	// handler reports failure. A caller told the login failed is in fact
-	// authenticated, holding a live ambient step-up grant.
+	// (The third pre-existing finding from the same live runs — #2841, op="REST
+	// POST /auth/webauthn/login/finish", method=GetUserRoles — was tolerated here
+	// and is now FIXED, so its row is gone rather than expired. Both WebAuthn
+	// login paths resolve the response identity before minting the session and
+	// the ambient MFAStepUpGrant, so a login that reports failure persists
+	// neither; guarded by webauthn_login_no_partial_grant_test.go here and by
+	// internal/core/login_identity_before_mint_test.go at the core
+	// boundary. #2565's wildcard entry on this same op still stands and still
+	// covers only [LoginAttempt] — unchanged, not widened.)
 	//
-	// Not an escalation (the user authenticated correctly), but the response and
-	// the persisted state disagree, and #2841 asks the auth/WebAuthn owner which
-	// way to resolve it — role-NAME resolution failing is arguably not grounds to
-	// fail a verified login at all, which is the opposite fix from rolling the
-	// session and grant back. Either answer is defensible; picking one is not
-	// #2549's call.
-	//
-	// method is PINNED here, unlike #2565's wildcard entry on the same op:
-	// #2565's tables is [LoginAttempt] and correctly does not cover this
-	// three-table diff, so leaving this unpinned would have widened #2565 in
-	// effect (COMMON-RULES: never widen an existing tolerance to make CI green).
-	// Remove when #2841 is resolved either way.
-	{
-		op: "REST POST /auth/webauthn/login/finish", method: "GetUserRoles", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2841", expires: "2026-11-07",
-		tables:     []string{"AuditEvent", "LoginAttempt", "MFAStepUpGrant"},
-		findingDoc: "#2841",
-	},
 	// Fourth and LAST pre-existing finding tolerated from the same live runs,
 	// also confirmed by byte-for-byte replay against unmodified origin/main.
 	// Filed as #2844, which also records the thing that made me stop here: FOUR
