@@ -118,27 +118,45 @@ func TestJourney_ScopedUserProjectCLI(t *testing.T) {
 	})
 
 	t.Run("viewer still cannot see other projects", func(t *testing.T) {
-		out := runCLIExpectErr(t, cliBin, vEnv, "project", "list")
-		for _, leak := range []string{projA, projB} {
-			if strings.Contains(out, leak) {
-				t.Fatalf("project list (denied) leaked %q:\n%s", leak, out)
-			}
+		// `project list` now succeeds (#2780) and serves the viewer their own
+		// project, so the assertion is no longer "it errors and names nothing"
+		// but "it names A and NOT B" -- which is the property this subtest is
+		// actually about. Project A appearing is the intended new behaviour; it
+		// is the project they hold a grant on.
+		out := runCLI(t, cliBin, vEnv, "project", "list")
+		if !strings.Contains(out, projA) {
+			t.Fatalf("project list: want the viewer's own project %q in output, got:\n%s", projA, out)
+		}
+		if strings.Contains(out, projB) {
+			t.Fatalf("project list leaked %q, a project the viewer holds no grant on:\n%s", projB, out)
 		}
 
 		out = runCLIExpectErr(t, cliBin, vEnv, "secret", "list", "--project", refB)
 		if strings.Contains(out, secretB) || strings.Contains(out, valueB) || strings.Contains(out, projB) {
 			t.Fatalf("secret list --project %s (no grant) leaked project B content:\n%s", refB, out)
 		}
-		if !strings.Contains(out, "403") {
-			t.Fatalf("secret list --project %s (no grant): want the server's 403 surfaced, got:\n%s", refB, out)
+		// The refusal no longer arrives as a surfaced server 403. Since #2780
+		// `--project` resolves against the listing, which now succeeds and
+		// simply does not contain B, so the CLI refuses client-side with
+		// `project "3" not found`. Still a refusal, and strictly less
+		// disclosive than before: it no longer confirms to a non-member that
+		// project 3 exists at all. What has to hold is that it FAILS (which
+		// runCLIExpectErr already asserts) and resolves nothing -- so assert
+		// the refusal is the not-found one rather than a silent empty success,
+		// which is the way this could regress.
+		if !strings.Contains(out, "not found") {
+			t.Fatalf("secret list --project %s (no grant): want a not-found refusal, got:\n%s", refB, out)
 		}
 		runCLIExpectErr(t, cliBin, vEnv, "project", "describe", refB)
 
-		// A NAME cannot be resolved without the global listing; the error
-		// must say how to proceed, and must not have resolved anything.
+		// Same for a NAME: it is not in the viewer's visible listing, so it
+		// does not resolve and nothing is read. Before #2780 the global
+		// listing 403'd and the CLI could not resolve ANY name, so it pointed
+		// the user at the numeric-ID form; now a name the caller can actually
+		// see does resolve, and only an invisible one fails -- as B does here.
 		out = runCLIExpectErr(t, cliBin, vEnv, "secret", "list", "--project", projB)
-		if !strings.Contains(out, "numeric ID") {
-			t.Fatalf("secret list --project <name> as scoped user: want guidance naming the numeric-ID form, got:\n%s", out)
+		if !strings.Contains(out, "not found") {
+			t.Fatalf("secret list --project %s (name, no grant): want a not-found refusal, got:\n%s", projB, out)
 		}
 		if strings.Contains(out, secretB) || strings.Contains(out, valueB) {
 			t.Fatalf("secret list --project %s (name, no grant) leaked project B content:\n%s", projB, out)
