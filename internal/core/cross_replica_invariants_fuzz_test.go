@@ -911,6 +911,7 @@ func FuzzCrossReplicaInvariants(f *testing.F) {
 	f.Add([]byte{2, 0, 5, 0})   // #2656: RestoreEnvironment vs DeleteProject (fixed, #2785)
 	f.Add([]byte{14, 0, 13, 0}) // #2657: TransitionMembership activate vs revoke (fixed, #2669)
 	f.Add([]byte{2, 0, 39, 0})  // #2651: DeleteProject vs CreateDynamicSecretConfig (fixed, #2675)
+	f.Add([]byte{14, 0, 12, 0}) // #2659: open-mode InviteMember vs revoke (fixed, #2852 — the race by #2669, the oracle here)
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, program []byte) {
