@@ -411,7 +411,6 @@ func TestCTAReview_SetSecretAutoRotate_vs_DeleteSecret_CrossReplicaPostgres(t *t
 // deliberately does not re-enable configs (#369), so this leaves a config
 // that can mint credentials as soon as the project is restored.
 func TestCTAReview_CreateDynamicSecretConfig_vs_DeleteProject_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2651: CreateDynamicSecretConfig's second Save re-enables a config disabled by a concurrent DeleteProject; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	fake := &dynamictest.FakeEngine{NativeExpiry: true}
@@ -434,6 +433,48 @@ func TestCTAReview_CreateDynamicSecretConfig_vs_DeleteProject_CrossReplicaPostgr
 	var got models.DynamicSecretConfig
 	require.NoError(t, f.setupDB.First(&got, cfg.ID).Error)
 	assert.True(t, got.Disabled, "#369 violated: a config in a deleted project is enabled (it mints again the moment the project is restored)")
+}
+
+// TestCTAReview_CreateDynamicSecretConfig_DeleteProjectAfterInsert_CrossReplicaPostgres:
+// B's DeleteProject commits after A's config INSERT ran but before A's insert
+// transaction commits. B's #369 disable cannot see A's uncommitted row, so without the
+// insert's own project re-check the config would commit enabled under the deleted
+// project, the same end state as the stale Save above, reached through the insert.
+//
+// Bug origin (#2651):
+//
+//	Introduced-by: #94's insert-then-encrypt-then-Save split in
+//	  CreateDynamicSecretConfig: the second write was a full-row Save, and the insert
+//	  never re-checked its project against #369's cascade.
+//	Detected-by: C-GUARD2-EXEMPT-REVIEW #2662
+//	Class: cross-replica check-then-act
+//	Severity: MEDIUM (an enabled config in a deleted project mints again on restore,
+//	  with no explicit re-enable)
+//	Guard: this test, the one above, SetDynamicSecretConfigAdminDSN's targeted write,
+//	  and lockLiveParent's write-then-FOR-SHARE project re-check in
+//	  LocalStorage.CreateDynamicSecretConfig (INV-STORE-21).
+func TestCTAReview_CreateDynamicSecretConfig_DeleteProjectAfterInsert_CrossReplicaPostgres(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	fake := &dynamictest.FakeEngine{NativeExpiry: true}
+	f.coreA.SetDynamicEngineFactory(func(string) (dynamic.CredentialEngine, error) { return fake, nil })
+	f.coreB.SetDynamicEngineFactory(func(string) (dynamic.CredentialEngine, error) { return fake, nil })
+
+	var errB error
+	fired := f.afterA("create", "dynamic_secret_configs", func() { errB = f.coreB.DeleteProject(f.ctx, f.projectID, true) })
+	_, errA := f.coreA.CreateDynamicSecretConfig(f.ctx, &CreateDynamicSecretConfigRequest{
+		Name: "cta-dyn-after", ProjectID: f.projectID, EnvironmentID: f.envID, BackendType: "postgres",
+		AdminDSN:          "postgres://admin:s3cr3t@db.internal:5432/app",
+		CreationTemplate:  "GRANT SELECT ON ALL TABLES IN SCHEMA public TO {{name}};",
+		DefaultTTLSeconds: 3600, CreatedBy: "admin", ActorID: f.adminID,
+	})
+	t.Logf("CreateDynamicSecretConfig (A) err=%v, DeleteProject (B) err=%v", errA, errB)
+	require.True(t, fired(), "the hook must have run B's DeleteProject after A's config INSERT")
+	require.NoError(t, errB)
+
+	assert.Error(t, errA, "A must fail closed: its project was deleted before its insert committed")
+	assert.Zero(t, f.countLive(&models.DynamicSecretConfig{}, "project_id = ? AND disabled = ?", f.projectID, false),
+		"#369 violated: an enabled dynamic-secret config exists in a deleted project")
 }
 
 // TestCTAReview_IssueLease_vs_DeleteProject_CrossReplicaPostgres: a lease

@@ -2291,6 +2291,9 @@ func (m *MockStorage) ListDynamicSecretConfigs(_ context.Context, _, _ uint) ([]
 func (m *MockStorage) UpdateDynamicSecretConfig(_ context.Context, _ *models.DynamicSecretConfig) error {
 	return nil
 }
+func (m *MockStorage) SetDynamicSecretConfigAdminDSN(_ context.Context, _ uint, _, _ []byte) error {
+	return nil
+}
 func (m *MockStorage) TransitionDynamicSecretConfigDisabled(ctx context.Context, c *models.DynamicSecretConfig, fromDisabled bool) (bool, error) {
 	if m.TransitionDynamicSecretConfigDisabledFunc != nil {
 		return m.TransitionDynamicSecretConfigDisabledFunc(ctx, c, fromDisabled)

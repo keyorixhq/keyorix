@@ -325,6 +325,10 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   detect stale rows, see the TSV's `STALE` class). Open: #2648 #2649 #2650 #2651
   detect stale rows, see the TSV's `STALE` class). Open: #2648 #2650 #2651
   #2653 #2654 #2655 #2657 #2659. Closed rows move to class `PARENT-LOCKED`
+  detect stale rows, see the TSV's `STALE` class). Open: #2648 #2649 #2650 #2651
+  detect stale rows, see the TSV's `STALE` class). Open: #2648 #2650 #2651
+  detect stale rows, see the TSV's `STALE` class). Open: #2648 #2650
+  #2653 #2654 #2655 #2657 #2659. Closed rows move to class `PARENT-LOCKED`
   (INV-STORE-21) or are removed when a `WithNamedLock` now covers them.
 - **INV-CORE-42** A write that persists a pre-read snapshot must not overwrite columns the
   operation did not change, and must not resurrect a soft-deleted row. GORM `Save(struct)` on
@@ -382,6 +386,11 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `scim_account_state_persisted_test.go`, and
   `TestCTAReview_SCIM_vs_SuspendUser_WithoutRowLock_CrossReplicaPostgres` (pg-gated).
   UNGUARDED: #2648 share revoke, #2650 secret undelete, #2651 dynamic config re-enable.
+  Why: C-GUARD2-EXEMPT-REVIEW. Guard: #2651 dynamic config re-enable is closed by a targeted
+  write (`SetDynamicSecretConfigAdminDSN`), guarded by
+  `TestCTAReview_CreateDynamicSecretConfig_vs_DeleteProject_CrossReplicaPostgres` (pg-gated)
+  and `TestSetDynamicSecretConfigAdminDSN_LeavesDisabledAlone`. UNGUARDED: #2648 share
+  revoke, #2650 secret undelete, #2653/#2654 user suspension/password revert.
 
 ## Account-state / exhaustiveness
 

@@ -1556,6 +1556,12 @@ type Storage interface {
 	GetDynamicSecretConfig(ctx context.Context, id uint) (*models.DynamicSecretConfig, error)
 	ListDynamicSecretConfigs(ctx context.Context, projectID, environmentID uint) ([]*models.DynamicSecretConfig, error)
 	UpdateDynamicSecretConfig(ctx context.Context, c *models.DynamicSecretConfig) error
+	// SetDynamicSecretConfigAdminDSN writes ONLY a config's encrypted admin DSN
+	// (admin_dsn_enc, admin_dsn_meta) and updated_at, never the rest of the row
+	// (#2651). CreateDynamicSecretConfig's second write used UpdateDynamicSecretConfig
+	// (a full-row Save) and wrote disabled=false back over a concurrent DeleteProject's
+	// #369 disable. Returns an error when no row matched.
+	SetDynamicSecretConfigAdminDSN(ctx context.Context, id uint, enc, meta []byte) error
 	// TransitionDynamicSecretConfigDisabled persists cfg's full row via a single
 	// conditional write — "UPDATE ... WHERE id = ? AND disabled = ?" — succeeding
 	// only if the row's CURRENT persisted disabled value still equals fromDisabled
