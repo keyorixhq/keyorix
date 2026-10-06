@@ -3990,6 +3990,23 @@ func (w *FaultyStorage) ListActivePersonalAccessTokens(ctx context.Context) ([]*
 	return w.real.ListActivePersonalAccessTokens(ctx)
 }
 
+func (w *FaultyStorage) ListAdminBypassRoleIDs(ctx context.Context) ([]uint, error) {
+	fire, kind, injected := w.check("ListAdminBypassRoleIDs")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 []uint
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ListAdminBypassRoleIDs(ctx)
+			return rv1, injected
+		}
+	}
+	return w.real.ListAdminBypassRoleIDs(ctx)
+}
+
 func (w *FaultyStorage) ListAlertEscalationPolicies(ctx context.Context) ([]models.AlertEscalationPolicy, error) {
 	fire, kind, injected := w.check("ListAlertEscalationPolicies")
 	if fire {

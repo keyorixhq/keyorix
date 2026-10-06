@@ -111,7 +111,15 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 	}
 	// Refuse an install-wide admin role as the emergency role: break-glass grants at a
 	// project scope and must not be a vehicle for install-wide super-user.
-	if c.installAdminRoleIDSet(ctx)[role.ID] {
+	// #2496: resolved from the structural admin-bypass flag, so a flag-carrying
+	// role named outside the retired fixed list (project_admin included — which
+	// the roles.assign check below names explicitly as unacceptable here) is
+	// refused too. Fails closed on a resolution error.
+	adminIDs, aerr := c.adminBypassRoleIDSet(ctx)
+	if aerr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), aerr)
+	}
+	if adminIDs[role.ID] {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "the configured emergency role grants install-wide administration and cannot be used for break-glass")
 	}
 	// Refuse an emergency role that can ASSIGN ROLES or issue credentials. The whole

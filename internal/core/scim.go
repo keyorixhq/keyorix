@@ -480,7 +480,13 @@ func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID u
 	if !isAdmin {
 		return nil // confirmed not an admin — not the last-admin case
 	}
-	adminIDs := c.installAdminRoleIDSet(ctx)
+	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+	if err != nil {
+		// #2496, same stance as the targetHasGlobalAdminRole error above: "can't
+		// tell which roles are admin-conferring" must not silently become "there
+		// are none", which would disable this guard entirely.
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
 	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
