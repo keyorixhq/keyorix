@@ -276,6 +276,7 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 	// then, so the slot must stay counted exactly like a successful or failed evaluation
 	// would (same release-only-pre-verdict rule #2619 established for the error path).
 	session, user, err := h.finishWebAuthnLoginReleasingOnPanic(r.Context(), body.Challenge, body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed, reserved, attemptID)
+	session, user, identity, err := h.coreService.FinishWebAuthnLogin(r.Context(), body.Challenge, body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed)
 	if err != nil {
 		if errors.Is(err, core.ErrWebAuthnLoginNotEvaluated) {
 			log.Printf("FinishWebAuthnLogin: %v", err)
@@ -290,10 +291,21 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 			sendError(w, "ServiceUnavailable", errMFAVerificationUnavailable, http.StatusServiceUnavailable, nil)
 			return
 		}
+		// #2841: the identity read now happens inside core, before any write.
+		// Keep its caller-visible shape identical to the 500 completeLogin used
+		// to produce for the same failure — a transient authz-resolution error
+		// is not an assertion failure and must not be reported as one (and
+		// unlike ErrWebAuthnLoginNotEvaluated, the assertion WAS evaluated and
+		// passed, so the attempt reservation stays counted exactly as before).
+		if errors.Is(err, core.ErrLoginIdentityUnavailable) {
+			log.Printf("FinishWebAuthnLogin: %v", err)
+			sendError(w, "Internal", errLoginIncomplete, http.StatusInternalServerError, nil)
+			return
+		}
 		sendError(w, "Unauthorized", "Assertion failed or challenge expired", http.StatusUnauthorized, nil)
 		return
 	}
-	resp, ok := h.completeLogin(w, r, session, user)
+	resp, ok := h.completeLoginWithIdentity(w, session, user, identity)
 	if !ok {
 		return
 	}
@@ -371,12 +383,18 @@ func (h *AuthHandler) FinishWebAuthnPasswordlessLogin(w http.ResponseWriter, r *
 	// F2 (2026-09-20): reserve before the (slow) assertion verification — see
 	// reserveLoginAttempt's doc (reserved after decode+parse, matching Login).
 	h.reserveLoginAttempt(r.Context(), ip)
-	session, user, err := h.coreService.FinishWebAuthnPasswordlessLogin(r.Context(), body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed)
+	session, user, identity, err := h.coreService.FinishWebAuthnPasswordlessLogin(r.Context(), body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed)
 	if err != nil {
+		// #2841, same reasoning as the second-factor path above.
+		if errors.Is(err, core.ErrLoginIdentityUnavailable) {
+			log.Printf("FinishWebAuthnPasswordlessLogin: %v", err)
+			sendError(w, "Internal", errLoginIncomplete, http.StatusInternalServerError, nil)
+			return
+		}
 		sendError(w, "Unauthorized", "Passwordless login failed", http.StatusUnauthorized, nil)
 		return
 	}
-	resp, ok := h.completeLogin(w, r, session, user)
+	resp, ok := h.completeLoginWithIdentity(w, session, user, identity)
 	if !ok {
 		return
 	}

@@ -174,6 +174,7 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	// (webauthn.go) for the full reasoning; this is the same release-only-pre-verdict
 	// rule applied to VerifyMFA's own reservation.
 	session, user, err := h.verifyMFALoginReleasingOnPanic(r.Context(), body.Challenge, body.Code, r.Header.Get("User-Agent"), ip, reserved, attemptID)
+	session, user, identity, err := h.coreService.VerifyMFALogin(r.Context(), body.Challenge, body.Code, r.Header.Get("User-Agent"), ip)
 	if err != nil {
 		if errors.Is(err, core.ErrMFAVerificationStorageFailure) {
 			if reserved {
@@ -189,10 +190,22 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// #2841: the identity read now happens inside core, before the session
+		// and the user-scoped step-up token are written. Keep its caller-visible
+		// shape identical to the 500 completeLogin used to produce for the same
+		// failure — a transient authz-resolution error is not a wrong code and
+		// must not be reported as one. Unlike ErrMFAVerificationStorageFailure,
+		// the code WAS verified and passed, so the attempt reservation stays
+		// counted exactly as before.
+		if errors.Is(err, core.ErrLoginIdentityUnavailable) {
+			log.Printf("VerifyMFALogin: %v", err)
+			sendError(w, "Internal", errLoginIncomplete, http.StatusInternalServerError, nil)
+			return
+		}
 		sendError(w, "Unauthorized", "Invalid or expired code", http.StatusUnauthorized, nil)
 		return
 	}
-	resp, ok := h.completeLogin(w, r, session, user)
+	resp, ok := h.completeLoginWithIdentity(w, session, user, identity)
 	if !ok {
 		return
 	}
