@@ -36,6 +36,8 @@
 // (the backend is); it exists so the drift shows up as a thrown error in the
 // generator rather than a flaky 400 in setup.
 
+import { randomInt } from 'node:crypto';
+
 /** DefaultPasswordPolicy()'s character-class and length requirements. */
 export const E2E_PASSWORD_POLICY = {
     minLength: 16,
@@ -54,10 +56,22 @@ const SPECIAL = '-_!@#%+=?.';
 
 const isSpecial = (ch: string): boolean => SPECIAL.includes(ch);
 
+// randomInt from node:crypto, not Math.random(). There is an open CodeQL alert
+// (#1191, js/insecure-randomness) on the Math.random() password expression this
+// module replaces; drawing fixture-password characters from a CSPRNG fixes that
+// finding rather than relocating it to this file -- CLAUDE.md's point that
+// editing near an alert marks the original "fixed" and respawns it at the new
+// line. Math.random() is also simply the wrong tool for generating a
+// credential, even a throwaway one, in a secrets product: randomInt costs
+// nothing here and removes the need for anyone to reason about whether this
+// particular password mattered.
+//
+// randomInt(max) is uniform over [0, max) -- no modulo bias to correct for,
+// unlike a hand-rolled bytes-mod-alphabet-length.
 function pick(alphabet: string, n: number): string {
     let out = '';
     for (let i = 0; i < n; i++) {
-        out += alphabet[Math.floor(Math.random() * alphabet.length)];
+        out += alphabet[randomInt(alphabet.length)];
     }
     return out;
 }
