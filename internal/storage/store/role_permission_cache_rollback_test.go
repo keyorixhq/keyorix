@@ -90,6 +90,11 @@ func TestRoleSetHasPermission_RolledBackGrantIsNotServedAfterAnUnrelatedCommit(t
 	require.NoError(t, err)
 	require.False(t, allowed,
 		"a permission from a ROLLED-BACK transaction is authorizing: the uncommitted answer was cached under the uncommitted generation, and the next committed write reproduced that generation exactly")
+
+	// Anti-vacuity: every assertion above is negative, so all of them hold if
+	// the cache is simply off. otherRole genuinely HAS otherPerm, so the root
+	// store must fill and hit for that pair.
+	requireRootRolePermCacheFillsAndHits(t, ctx, ls, otherRole.ID, "secrets.write")
 }
 
 // TestRoleSetHasPermission_TransactionScopedStoreNeverTouchesTheSharedCache
@@ -124,4 +129,39 @@ func TestRoleSetHasPermission_TransactionScopedStoreNeverTouchesTheSharedCache(t
 	_, cached = ls.rolePermCache.get(key)
 	require.False(t, cached,
 		"a read inside a transaction populated the shared cache; it reads uncommitted rows under an uncommitted generation, so nothing it resolves may be published")
+
+	// Anti-vacuity: the SAME read from the ROOT store must fill and hit, which
+	// is what makes "the tx-scoped store did not" a fact about the transaction
+	// rather than about the feature being off.
+	requireRootRolePermCacheFillsAndHits(t, ctx, ls, role.ID, "secrets.read")
+}
+
+// requireRootRolePermCacheFillsAndHits is the positive control both tests in
+// this file need (coordinator review of #2767, item 5).
+//
+// Both tests assert that something is NOT served from cache, and both would
+// pass trivially with the cache disabled — if cacheEnabled were dropped, if the
+// generation counter stopped advancing, if the feature were reverted outright.
+// A test that cannot distinguish "the bug is fixed" from "the feature is gone"
+// is not evidence for the fix.
+//
+// The hit is asserted through the real read-path predicate
+// (getCachedRolePermission), not inferred from an entry being present: an entry
+// whose generation check fails is present and useless, which is exactly the
+// state a broken generation signal would leave behind.
+func requireRootRolePermCacheFillsAndHits(t *testing.T, ctx context.Context, ls *LocalStorage, roleID uint, permission string) {
+	t.Helper()
+	allowed, err := ls.RoleSetHasPermission(ctx, []uint{roleID}, permission)
+	require.NoError(t, err)
+	require.True(t, allowed, "the control pair must genuinely be granted, or a false answer could be cached for the wrong reason")
+
+	key := rolePermKey([]uint{roleID}, permission)
+	_, filled := ls.rolePermCache.get(key)
+	require.True(t, filled,
+		"the root store did not FILL the role-permission cache — every not-served assertion in this file would pass with caching off")
+
+	cachedAllowed, hit := ls.getCachedRolePermission(ctx, key)
+	require.True(t, hit,
+		"the root store filled the cache but cannot HIT it: the generation written on store does not validate on read, so the cache is dead weight and this file's negative assertions prove nothing")
+	require.True(t, cachedAllowed, "the cached answer disagrees with the live one")
 }
