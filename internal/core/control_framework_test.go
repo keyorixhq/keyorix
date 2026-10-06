@@ -73,6 +73,38 @@ func TestEvaluateControls_GapsFromPosture(t *testing.T) {
 	assert.Equal(t, ControlStatusNotConfigured, findControl(t, controls, "data-retention").Status)
 }
 
+// TestEvaluateControls_EmergencyAccessGapsOnUnreviewedActivation is #2461
+// round 2's proving test: an unreviewed break-glass activation past the
+// review window used to be purely informational on this control (Status
+// hard-coded to never gap) -- INV-CORE-48 requires it to surface as a real
+// Gap, not just a number in Detail nobody is forced to notice.
+func TestEvaluateControls_EmergencyAccessGapsOnUnreviewedActivation(t *testing.T) {
+	t.Parallel()
+	clean := &CompliancePosture{EmergencyAccess: EmergencyAccessPosture{ActiveActivations: 1, TotalActivations: 3}}
+	assert.Equal(t, ControlStatusPass, findControl(t, EvaluateControls(clean), "emergency-access").Status)
+
+	unreviewed := &CompliancePosture{EmergencyAccess: EmergencyAccessPosture{TotalActivations: 3, UnreviewedActivations: 1}}
+	gapped := findControl(t, EvaluateControls(unreviewed), "emergency-access")
+	assert.Equal(t, ControlStatusGap, gapped.Status)
+	assert.Contains(t, gapped.Detail, "1 unreviewed")
+}
+
+// TestEvaluateControls_EmergencyAccessIndependentReviewerGapsWithOneAdmin is
+// INV-CORE-49's proving test: a deployment where independent review is
+// structurally impossible must gap on its OWN distinct control, regardless
+// of whether any activation is currently unreviewed.
+func TestEvaluateControls_EmergencyAccessIndependentReviewerGapsWithOneAdmin(t *testing.T) {
+	t.Parallel()
+	possible := &CompliancePosture{EmergencyAccess: EmergencyAccessPosture{IndependentReviewImpossible: false}}
+	passC := findControl(t, EvaluateControls(possible), "emergency-access-independent-reviewer")
+	assert.Equal(t, ControlStatusPass, passC.Status)
+
+	impossible := &CompliancePosture{EmergencyAccess: EmergencyAccessPosture{IndependentReviewImpossible: true}}
+	gapC := findControl(t, EvaluateControls(impossible), "emergency-access-independent-reviewer")
+	assert.Equal(t, ControlStatusGap, gapC.Status)
+	assert.Contains(t, gapC.Detail, "independent post-activation review is not currently possible")
+}
+
 // #396: the data-classification control must fold ALL FOUR classifiable surfaces —
 // static secrets, dynamic-secret configs, machine identities, and machine-token
 // credentials — into its pass/fail decision, not just static secrets. A deployment

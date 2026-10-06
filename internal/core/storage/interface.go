@@ -561,9 +561,13 @@ type Storage interface {
 	// reviewed_at IS NULL, the same shape as RevokeBreakGlassActivation's
 	// guard, so two concurrent review submissions for the same activation
 	// cannot both "win": only the first is recorded, the second gets
-	// ErrBreakGlassAlreadyReviewed. Allowed regardless of the activation's
-	// active/expired/revoked state -- a review is a record about what
-	// happened, not a control over whether the grant is still live.
+	// ErrBreakGlassAlreadyReviewed. This storage-layer primitive itself does
+	// not condition on active/expired/revoked state -- it records a review
+	// against whatever row id names. #2461 round 2: that is NOT the same as
+	// "a review is allowed at any state" -- core.ReviewBreakGlass, the only
+	// production caller, refuses a still-active activation BEFORE reaching
+	// here (ErrBreakGlassStillActive), so in practice this is only ever
+	// called once the activation has concluded.
 	ReviewBreakGlassActivation(ctx context.Context, id, reviewerID uint, note string, reviewedAt time.Time) error
 	// ListUnreviewedBreakGlassActivationsBefore returns every activation
 	// (across all projects) with reviewed_at still NULL and created_at at or

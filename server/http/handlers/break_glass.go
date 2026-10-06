@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -154,25 +157,24 @@ func (h *CatalogHandler) ReviewBreakGlass(w http.ResponseWriter, r *http.Request
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
-		// #2461: the self-review and unattributable-reviewer refusals are
-		// ErrorPermissionDenied ("permission denied"), matching
-		// ActivateBreakGlass's own mapping above. Listed BEFORE the 400 arm
-		// because the self-review message also contains "required" ("an
-		// independent reviewer is required"), which would otherwise classify a
-		// deliberate authorization refusal as a malformed request.
-		// #2461: the self-review and unattributable-reviewer refusals are
-		// ErrorPermissionDenied ("permission denied"), matching
-		// ActivateBreakGlass's own mapping above. Listed BEFORE the 400 arm
-		// because the self-review message also contains "required" ("an
-		// independent reviewer is required"), which would otherwise classify a
-		// deliberate authorization refusal as a malformed request -- confirmed:
-		// with this arm removed, the self-review case returns 400 and the
-		// still-active case 500.
-		case strings.Contains(msg, "permission denied"):
+		// #2461 round 2: mapped by sentinel (errors.Is), not by matching English
+		// message text against i18n.T's LOCALE-DEPENDENT output -- the previous
+		// strings.Contains(msg, "permission denied") etc. only worked because
+		// the server happened to be running in English; under ru/fr/de i18n.T
+		// returns translated text, so every one of these arms would silently
+		// stop matching and every refusal would fall through to 500.
+		//
+		// Self-review and unattributable-reviewer are listed BEFORE the 400 arm
+		// because ErrBreakGlassSelfReview's own message also contains "required"
+		// ("an independent reviewer is required"), which would otherwise
+		// classify a deliberate authorization refusal as a malformed request --
+		// confirmed: with this arm removed, the self-review case returns 400 and
+		// the still-active case 500.
+		case errors.Is(err, core.ErrBreakGlassSelfReview), errors.Is(err, core.ErrBreakGlassUnattributableReviewer):
 			status = http.StatusForbidden
 		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
-		case strings.Contains(msg, "already been reviewed") || strings.Contains(msg, "still active") ||
+		case errors.Is(err, storage.ErrBreakGlassAlreadyReviewed), errors.Is(err, core.ErrBreakGlassStillActive),
 			strings.Contains(msg, "required") || strings.Contains(msg, "characters"):
 			status = http.StatusBadRequest
 		default:

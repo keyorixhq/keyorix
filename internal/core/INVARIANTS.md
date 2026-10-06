@@ -201,7 +201,7 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   state in one transaction, with audit emission strictly after commit. Why: security-closures
   `breakglass-revoke-half-commit-001`. Guard: `FuzzStorageFaultOperations` permanent corpus
   entry `7c0a2492ee5d1dfa`; fix is `core.RevokeBreakGlassActivationAtomic`.
-- **INV-CORE-43** A break-glass activation's post-activation review is recorded by someone
+- **INV-CORE-47** A break-glass activation's post-activation review is recorded by someone
   OTHER than the activating user, by an attributable human (never `actorID==0`), exactly once,
   and only after the activation has concluded (revoked or expired). Break-glass activation is
   deliberately single-person (ADR-112 rejects two-person break-glass: "an emergency path that
@@ -217,19 +217,37 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `TestBreakGlassActivation_HasNoApproverField`, which guards the no-co-approver PREMISE rather
   than the conclusion so adding co-approval later fails loudly instead of silently reopening a
   second self-review path.
-- **INV-CORE-44** An activation unreviewed past `break_glass.review_window` is REPORTED (posture
-  report count + age, a recurring `SECURITY:` log line, and one `break_glass.review_overdue`
-  audit event per pass) and is never ENFORCED by a lockout. ADR-112's words are "an open
-  activation without a recorded review shows as a posture deviation" — visibility is the whole
-  control, by the same reasoning that rejected two-person break-glass, so no lockout may be
-  added here without an explicit product decision. A still-active unreviewed activation is
-  counted too ("an OPEN activation"), which matters because INV-CORE-43 refuses to review one
-  that is still active — excluding them would hide exactly the activations that cannot be closed
-  out yet. Why: ADR-112 §3 items 4–5, #2461. Guard:
+- **INV-CORE-48** An activation unreviewed past `break_glass.review_window` is REPORTED (posture
+  report count + age, the "emergency-access" control going to Gap — not merely informational --
+  a recurring `SECURITY:` log line, a repeating admin notification, and one
+  `break_glass.review_overdue` audit event per pass) and a pending review never ENFORCES a
+  lockout on break-glass ACTIVATION itself. ADR-112's words are "an open activation without a
+  recorded review shows as a posture deviation" — visibility, escalating until acted on, is the
+  control for the activation path specifically, by the same reasoning that rejected two-person
+  break-glass. This narrowly scopes to activation only (#2461 round 2, Andrei's decision): it
+  does NOT forbid a future, separately-decided, opt-in enforcement elsewhere (e.g. a policy
+  freezing risky admin config changes until a pending review clears) — only "a pending review
+  blocks activation" is ruled out without a fresh product decision. A still-active unreviewed
+  activation is counted too ("an OPEN activation"), which matters because INV-CORE-47 refuses to
+  review one that is still active — excluding them would hide exactly the activations that cannot
+  be closed out yet. Why: ADR-112 §3 items 4–5, #2461. Guard:
   `break_glass_review_surfacing_test.go:TestAccumulateBreakGlassPosture_CountsUnreviewedPastTheWindow`,
+  `TestEvaluateControls_EmergencyAccessGapsOnUnreviewedActivation`,
   `TestRunBreakGlassReviewReminder_WarnsAndAuditsOncePerPass`,
+  `TestRunBreakGlassReviewReminder_NotifiesAdmins`,
   `TestRunBreakGlassReviewReminder_StorageErrorIsReported` (a broken query must not read as
   "nothing is overdue"), `TestBreakGlassReviewWindowDefaultMatchesConfig`.
+- **INV-CORE-49** When no human other than a break-glass activator could ever independently
+  review that activation (a single-admin deployment, approximated the same way
+  `guardLastGlobalAdmin*` approximates "another administrator exists" -- active global
+  admin-tier holder count), the posture report says so explicitly as its own distinct finding
+  (`EmergencyAccessPosture.IndependentReviewImpossible`, surfaced as a Gap on a dedicated
+  control) rather than silently reading identical to "reviewed" or to an ordinary unreviewed
+  backlog. Self-review stays refused regardless (INV-CORE-47) — this invariant is about making
+  the structural impossibility VISIBLE, not about relaxing who may review. Why: #2461 round 2,
+  Andrei's decision item (c). Guard:
+  `TestAccumulateBreakGlassPosture_SingleAdminDeploymentFlagsIndependentReviewImpossible`,
+  `TestEvaluateControls_EmergencyAccessIndependentReviewerGapsWithOneAdmin`.
 
 ## Soft-delete / purge (ADR-032, ADR-033)
 

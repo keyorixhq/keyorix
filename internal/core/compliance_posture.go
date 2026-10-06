@@ -66,8 +66,12 @@ type EmergencyAccessPosture struct {
 	// item 4): activations with no recorded review that are already older than
 	// break_glass.review_window. This is what "every activation must be
 	// reviewed afterwards" is ENFORCED by -- the ADR's own words are "an open
-	// activation without a recorded review shows as a posture deviation", not a
-	// lockout, and deliberately so (see RunBreakGlassReviewReminder).
+	// activation without a recorded review shows as a posture deviation". A
+	// pending review never blocks break-glass ACTIVATION itself (INV-CORE-48,
+	// narrowed #2461 round 2) -- escalation here is the "emergency-access"
+	// control going to Gap (EvaluateControls), a recurring SECURITY: log line,
+	// a repeating admin notification, and an audit event (see
+	// RunBreakGlassReviewReminder), not a lockout on the activation path.
 	//
 	// Counted from the activations this snapshot already fetched per project,
 	// not from a second global query: ListUnreviewedBreakGlassActivationsBefore
@@ -84,6 +88,20 @@ type EmergencyAccessPosture struct {
 	// against, so a report is interpretable without also knowing the
 	// deployment's config.
 	ReviewWindowHours int `json:"review_window_hours"`
+	// IndependentReviewImpossible is INV-CORE-49 (#2461 round 2, Andrei's
+	// decision item (c)): true when the deployment has at most one active
+	// global admin-tier holder, so no human OTHER than a break-glass activator
+	// could ever satisfy ReviewBreakGlass's self-review refusal for an
+	// activation they performed -- independent review is structurally
+	// impossible, not merely currently unperformed. Approximated the same way
+	// guardLastGlobalAdmin* approximates "another administrator exists"
+	// elsewhere: active global admin-tier holder count, not a precise count of
+	// who holds roles.assign at every project (which would need scanning every
+	// project's grants and is out of scope here). Self-review stays refused
+	// regardless of this flag; it exists to make the structural gap VISIBLE,
+	// never to silently read identical to "reviewed" or to an ordinary
+	// unreviewed backlog.
+	IndependentReviewImpossible bool `json:"independent_review_impossible"`
 }
 
 // AccessRequestPosture summarises the dual-control access-request/approval workflow
@@ -798,6 +816,46 @@ func (c *KeyorixCore) accessGovernancePostureFromSnapshot(ctx context.Context, p
 		c.accumulateBreakGlassPosture(p, pid, snap)
 		accumulateAccessRequestPosture(p, pid, snap)
 	}
+	// Deployment-wide, not per-project -- computed once rather than inside the
+	// loop above (#2461 round 2, INV-CORE-49).
+	if impossible, err := c.independentBreakGlassReviewImpossible(ctx); err == nil {
+		p.EmergencyAccess.IndependentReviewImpossible = impossible
+	} else {
+		p.degrade("emergency_access:independent_reviewer", err)
+	}
+}
+
+// independentBreakGlassReviewImpossible reports whether this deployment has at
+// most one active global admin-tier holder -- i.e. whether a break-glass
+// activator could ever find an independent reviewer at all (INV-CORE-49,
+// #2461 round 2, Andrei's decision item (c)). Approximated the same way
+// guardLastGlobalAdmin* approximates "another administrator exists" elsewhere
+// in this file: active global admin-tier holder count, not a precise count of
+// who holds roles.assign at every project scope (scanning every project's
+// grants to answer that exactly is out of scope for a posture signal).
+//
+// No install-admin role seeded at all (adminIDs empty) returns false, not
+// true: this proxy has nothing to count in that configuration, and guessing
+// "impossible" from an absent signal would be worse than leaving the
+// question to the one check that genuinely answers it per-activation
+// (ReviewBreakGlass's own self-review refusal).
+func (c *KeyorixCore) independentBreakGlassReviewImpossible(ctx context.Context) (bool, error) {
+	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+	if err != nil {
+		return false, err // #2496: fail closed -- "can't tell" must not read as "fine"
+	}
+	if len(adminIDs) == 0 {
+		return false, nil
+	}
+	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
+	if err != nil {
+		return false, fmt.Errorf("failed to resolve global role assignments: %w", err)
+	}
+	holders, err := c.resolveGlobalAdminHolders(ctx, adminIDs, assignments, nil, nil)
+	if err != nil {
+		return false, err
+	}
+	return len(holders) <= 1, nil
 }
 
 func accumulateCampaignPosture(p *CompliancePosture, pid uint, recertCutoff time.Time, snap *complianceSnapshot) {

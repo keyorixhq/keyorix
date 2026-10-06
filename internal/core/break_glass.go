@@ -25,6 +25,18 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+// Break-glass review sentinel errors (#2461 round 2): ReviewBreakGlass wraps
+// these into its returned error alongside the i18n-translated, human-facing
+// message, so a caller can classify the refusal via errors.Is regardless of
+// the server's configured locale. Matching the English TEXT of an
+// i18n.T(...)-produced message (the previous approach) silently stops working
+// the moment the deployment's locale isn't English.
+var (
+	ErrBreakGlassSelfReview             = errors.New("break-glass: self-review refused")
+	ErrBreakGlassUnattributableReviewer = errors.New("break-glass: unattributable reviewer refused")
+	ErrBreakGlassStillActive            = errors.New("break-glass: activation still active")
+)
+
 // minBreakGlassJustificationLen is the minimum length, after trimming
 // surrounding whitespace, a break-glass justification must have. This becomes
 // a PERMANENT audit-trail record of why a real security incident required
@@ -54,6 +66,12 @@ const (
 // becomes the PERMANENT audit-trail record of what the reviewer actually
 // checked, so a bare non-empty string isn't enough.
 const minBreakGlassReviewNoteLen = 10
+
+// maxBreakGlassReviewNoteLen caps the review note (#2461 round 2): it is a
+// free-text field that lands permanently in the audit trail, so an unbounded
+// length would let a reviewer -- or anyone able to reach this path -- pack an
+// arbitrarily large payload into storage and into every audit-log reader/export.
+const maxBreakGlassReviewNoteLen = 2000
 
 // BreakGlassPolicy is the deployment configuration for emergency access, wired from
 // config at startup via SetBreakGlassPolicy.
@@ -559,12 +577,19 @@ func (c *KeyorixCore) ReviewBreakGlass(ctx context.Context, actorID, projectID, 
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
 	}
 	if err := requireHumanReviewer(actorID); err != nil {
-		return err
+		return fmt.Errorf("%w: %s: %s", ErrBreakGlassUnattributableReviewer, i18n.T("ErrorPermissionDenied", nil), err)
 	}
 	note = strings.TrimSpace(note)
 	if len(note) < minBreakGlassReviewNoteLen {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil),
 			fmt.Sprintf("review note must be at least %d characters", minBreakGlassReviewNoteLen))
+	}
+	// #2461 round 2: this becomes a PERMANENT audit-trail record (same reasoning
+	// as minBreakGlassReviewNoteLen above); cap it so a reviewer cannot pack an
+	// arbitrarily large payload into the audit log via a review note.
+	if len(note) > maxBreakGlassReviewNoteLen {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil),
+			fmt.Sprintf("review note must be at most %d characters", maxBreakGlassReviewNoteLen))
 	}
 	activation, err := c.storage.GetBreakGlassActivation(ctx, activationID)
 	if err != nil {
@@ -574,17 +599,17 @@ func (c *KeyorixCore) ReviewBreakGlass(ctx context.Context, actorID, projectID, 
 		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
 	}
 	if actorID == activation.UserID {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+		return fmt.Errorf("%w: %s: %s", ErrBreakGlassSelfReview, i18n.T("ErrorPermissionDenied", nil),
 			"you cannot review your own break-glass activation; an independent reviewer is required")
 	}
 	if activation.State == BreakGlassActive {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil),
+		return fmt.Errorf("%w: %s: %s", ErrBreakGlassStillActive, i18n.T("ErrorValidation", nil),
 			"activation is still active; revoke it or wait for it to expire before reviewing")
 	}
 	now := c.now()
 	if err := c.storage.ReviewBreakGlassActivation(ctx, activationID, actorID, note, now); err != nil {
 		if errors.Is(err, storage.ErrBreakGlassAlreadyReviewed) {
-			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "activation has already been reviewed")
+			return fmt.Errorf("%w: %s: %s", storage.ErrBreakGlassAlreadyReviewed, i18n.T("ErrorValidation", nil), "activation has already been reviewed")
 		}
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -611,19 +636,18 @@ func (c *KeyorixCore) ListUnreviewedBreakGlassActivations(ctx context.Context, w
 // has gone unreviewed past the configured review window and makes that
 // visible, returning how many it found.
 //
-// What "enforced" means here is exactly what ADR-112 says and nothing more.
-// The ADR's words are "every activation must be reviewed afterwards: an open
-// activation without a recorded review shows as a POSTURE DEVIATION", and
-// separately "Break-glass remains single-person, with mandatory alert, audit
-// event and post-activation review. Two-person break-glass is rejected: an
-// emergency path that needs a second person fails exactly when it's needed."
-// So the enforcement is visibility -- the posture report (item 4), this
-// recurring warning, and a permanent audit event -- NOT a lockout. Nothing
-// here blocks an activation, blocks a user, or expires a grant early, and no
-// such lockout should be added without an explicit product decision: an
-// emergency path that can be disabled by an un-filed piece of paperwork fails
-// exactly when it is needed, which is the failure mode the ADR already
-// rejected for two-person approval.
+// What "enforced" means here is exactly what ADR-112 says and nothing more --
+// see ReviewBreakGlass's doc comment above for why activation stays
+// single-person and a self-review is refused; that reasoning is not repeated
+// here. A pending review never blocks break-glass ACTIVATION itself
+// (INV-CORE-48, narrowed #2461 round 2 -- Andrei's decision): nothing here
+// blocks an activation, blocks a user, or expires a grant early, and no such
+// lockout should be added without a fresh, explicit product decision. What IS
+// enforced, and made hard to ignore (round 2): the "emergency-access"
+// compliance control going to Gap (EvaluateControls, not merely
+// informational), this recurring SECURITY: log line, a repeating
+// notification to each affected project's admins (below), and a permanent
+// audit event.
 //
 // Emits ONE audit event per pass when the count is non-zero, not one per
 // activation: the per-activation detail is already in the posture report and
@@ -648,7 +672,51 @@ func (c *KeyorixCore) RunBreakGlassReviewReminder(ctx context.Context) (int, err
 	c.writeAuditEvent(auditCtx, EventBreakGlassReviewOverdue, userID, nil,
 		fmt.Sprintf("break-glass: %d activation(s) unreviewed past the %s review window (oldest: activation %d, %s ago)",
 			len(rows), window, rows[0].ID, oldest.Round(time.Hour)))
+	c.notifyOverdueBreakGlassReviewers(ctx, rows, window)
 	return len(rows), nil
+}
+
+// notifyOverdueBreakGlassReviewers fans out a repeating reminder to each
+// affected project's approver-role members (#2461 round 2, Andrei's decision
+// item (b)): "repeating overdue reminders to all admins" -- a log line and an
+// audit event are visible to whoever goes looking, but neither actively
+// surfaces to anyone the way notifyBreakGlassAdmins' activation alert does, so
+// before this an overdue review could go unnoticed indefinitely by anyone who
+// doesn't happen to read logs or query the posture API. Grouped by project
+// (rows span every project, same as ListUnreviewedBreakGlassActivations
+// itself) so each notification names the activations that project's admins
+// can actually act on, not a deployment-wide count unrelated to their access.
+//
+// Best-effort and panic-recovered for the same reason notifyBreakGlassAdmins
+// is: this runs on every periodic pass, already after the audit event above
+// is durably written, so a notification-delivery hiccup must never fail (or
+// repeatedly retry) the reminder job itself.
+func (c *KeyorixCore) notifyOverdueBreakGlassReviewers(ctx context.Context, rows []*models.BreakGlassActivation, window time.Duration) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: notifyOverdueBreakGlassReviewers panicked: %v\n%s", r, debug.Stack())
+		}
+	}()
+	byProject := map[uint][]*models.BreakGlassActivation{}
+	for _, a := range rows {
+		byProject[a.ProjectID] = append(byProject[a.ProjectID], a)
+	}
+	for pid, acts := range byProject {
+		members, err := c.storage.ListProjectMembers(ctx, pid)
+		if err != nil {
+			log.Printf("SECURITY: notifyOverdueBreakGlassReviewers: failed to list project %d members, admins not notified for %d overdue activation(s): %v", pid, len(acts), err)
+			continue
+		}
+		title := "Break-glass review overdue"
+		msg := fmt.Sprintf("%d break-glass activation(s) in this project have gone unreviewed for longer than %s. ADR-112 requires an independent post-activation review of every activation.", len(acts), window)
+		link := fmt.Sprintf("/projects/%d/access-review", pid)
+		for _, m := range members {
+			if !isApproverRole(m.RoleName) {
+				continue
+			}
+			c.notify(ctx, m.UserID, EventBreakGlassReviewOverdue, title, msg, &pid, link)
+		}
+	}
 }
 
 // notifyBreakGlassAdmins alerts the project's approver-role members that emergency

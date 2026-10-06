@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -93,6 +94,36 @@ func TestAccumulateBreakGlassPosture_CountsUnreviewedPastTheWindow(t *testing.T)
 		"the threshold must travel with the counts, or the report is uninterpretable without the deployment's config")
 }
 
+// TestAccumulateBreakGlassPosture_SingleAdminDeploymentFlagsIndependentReviewImpossible
+// is INV-CORE-49's proving test (#2461 round 2, Andrei's decision item (c)):
+// a deployment with exactly one active global admin-tier holder must flag
+// IndependentReviewImpossible, and a second admin must clear it. Uses a real
+// LocalStorage (newSCIMGuardCore) rather than MockStorage because the
+// underlying check (resolveGlobalAdminHolders) walks real role-assignment and
+// user rows, the same mechanism guardLastGlobalAdmin* already relies on.
+func TestAccumulateBreakGlassPosture_SingleAdminDeploymentFlagsIndependentReviewImpossible(t *testing.T) {
+	t.Parallel()
+	c, db := newSCIMGuardCore(t)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin", BypassesPermissionChecks: true}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 10}).Error)
+
+	p := &CompliancePosture{}
+	c.accessGovernancePostureFromSnapshot(ctx, p, &complianceSnapshot{})
+	assert.True(t, p.EmergencyAccess.IndependentReviewImpossible,
+		"the install's only admin-tier holder could never independently review their own activation")
+
+	// A second admin joins -- independent review becomes possible.
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "second", IsActive: true, AccountState: AccountActive}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 10}).Error)
+
+	p2 := &CompliancePosture{}
+	c.accessGovernancePostureFromSnapshot(ctx, p2, &complianceSnapshot{})
+	assert.False(t, p2.EmergencyAccess.IndependentReviewImpossible,
+		"a second admin-tier holder means independent review is no longer structurally impossible")
+}
+
 // TestRunBreakGlassReviewReminder_WarnsAndAuditsOncePerPass pins the periodic
 // half: it reports the count, and emits exactly ONE audit event per pass rather
 // than one per activation (a long-ignored review would otherwise spam the audit
@@ -157,4 +188,63 @@ func TestRunBreakGlassReviewReminder_StorageErrorIsReported(t *testing.T) {
 	_, err := c.RunBreakGlassReviewReminder(context.Background())
 	require.Error(t, err)
 	ms.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
+}
+
+// reviewReminderNotifySpy backs TestRunBreakGlassReviewReminder_NotifiesAdmins.
+// Embeds storage.Storage as nil like breakGlassNotifyPanicSpy above — any
+// unstubbed method panics on a nil pointer dereference if reached.
+type reviewReminderNotifySpy struct {
+	storage.Storage
+	unreviewed  []*models.BreakGlassActivation
+	membersByID map[uint][]storage.ProjectMember
+	notified    []uint
+	notifiedPID []*uint
+}
+
+func (s *reviewReminderNotifySpy) ListUnreviewedBreakGlassActivationsBefore(_ context.Context, _ time.Time) ([]*models.BreakGlassActivation, error) {
+	return s.unreviewed, nil
+}
+
+func (s *reviewReminderNotifySpy) ListProjectMembers(_ context.Context, projectID uint) ([]storage.ProjectMember, error) {
+	return s.membersByID[projectID], nil
+}
+
+func (s *reviewReminderNotifySpy) CreateNotification(_ context.Context, n *models.Notification) (*models.Notification, error) {
+	s.notified = append(s.notified, n.UserID)
+	s.notifiedPID = append(s.notifiedPID, n.ProjectID)
+	return n, nil
+}
+
+func (s *reviewReminderNotifySpy) LogAuditEvent(_ context.Context, _ *models.AuditEvent) error {
+	return nil
+}
+
+// TestRunBreakGlassReviewReminder_NotifiesAdmins is #2461 round 2's proving
+// test for Andrei's decision item (b): an overdue review must actively reach
+// each affected project's admins, not just a log line and an audit event
+// nobody is looking at. Two projects, each with one approver-role member and
+// one non-approver member — only the approver in each must be notified, and
+// a project with no overdue rows must get no notification at all.
+func TestRunBreakGlassReviewReminder_NotifiesAdmins(t *testing.T) {
+	fixed := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	spy := &reviewReminderNotifySpy{
+		unreviewed: []*models.BreakGlassActivation{
+			{ID: 1, ProjectID: 1, UserID: 10, CreatedAt: fixed.Add(-200 * time.Hour)},
+			{ID: 2, ProjectID: 2, UserID: 11, CreatedAt: fixed.Add(-100 * time.Hour)},
+		},
+		membersByID: map[uint][]storage.ProjectMember{
+			1: {{UserID: 100, RoleName: "project_admin"}, {UserID: 101, RoleName: "project_developer"}},
+			2: {{UserID: 200, RoleName: "admin"}},
+			3: {{UserID: 300, RoleName: "project_admin"}}, // no overdue rows -- never notified
+		},
+	}
+	c := &KeyorixCore{storage: spy, now: func() time.Time { return fixed }}
+	c.SetBreakGlassPolicy(BreakGlassPolicy{ReviewWindow: 48 * time.Hour})
+
+	n, err := c.RunBreakGlassReviewReminder(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+
+	assert.ElementsMatch(t, []uint{100, 200}, spy.notified,
+		"only the approver-role member of each AFFECTED project is notified; the non-approver and the unaffected project's admin are not")
 }
