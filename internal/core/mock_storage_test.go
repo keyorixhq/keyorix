@@ -60,6 +60,19 @@ func (m *MockStorage) WithTransaction(_ context.Context, fn func(storage.Storage
 	return fn(m)
 }
 
+// LockLiveProject answers "live" (#2702/#2710/#2711/#2712). This mock has no
+// projects at all, and every test using it exercises a path where the project's
+// existence is not the subject — answering false would make the create paths
+// that now re-check it fail for a reason none of those tests is about.
+//
+// Note what this costs: a mock-backed test can never observe the deleted-parent
+// rollback. That is deliberate, and it is why the proof for this fix is the four
+// cross-replica Postgres tests in
+// concurrency_child_under_deleted_project_postgres_test.go against real storage
+// and a real row lock, not anything here — a mock cannot model a row lock, and a
+// mock that returned a canned false would test the error message, not the race.
+func (m *MockStorage) LockLiveProject(_ context.Context, _ uint) (bool, error) { return true, nil }
+
 // Login rate-limiting stubs (core rate-limit logic is tested against real SQLite).
 func (m *MockStorage) RecordLoginAttempt(_ context.Context, _ string, _ time.Time) error { return nil }
 func (m *MockStorage) CountRecentLoginAttempts(_ context.Context, _ string, _ time.Time) (int64, error) {

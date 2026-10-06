@@ -146,6 +146,32 @@ type Storage interface {
 	// suspend + delete pair).
 	WithTransaction(ctx context.Context, fn func(Storage) error) error
 
+	// LockLiveProject re-reads project projectID and reports whether it is still
+	// live (not soft-deleted). On Postgres it takes SELECT ... FOR SHARE on that
+	// row, so it serializes against DeleteProject's cascade, which row-locks the
+	// project FOR UPDATE before it sweeps any child (#2656).
+	//
+	// It is ONLY meaningful on a transaction-scoped Storage — the handle
+	// WithTransaction hands fn — and only when called AFTER the child write it
+	// guards, rolling the transaction back when it returns false. That ordering is
+	// the whole mechanism, and it is not interchangeable with checking first: a
+	// cascade that runs entirely between a pre-write check and the write never
+	// sees the child, and the child commits under a deleted project. Called on a
+	// non-transactional Storage it still answers the question correctly, but
+	// guarantees nothing, because the row lock is released the instant that
+	// single autocommit statement completes.
+	//
+	// #2702/#2710/#2711/#2712: core.CreateSecret, core.CreateFolder,
+	// core.CreateEnvironment and LocalStorage.RestoreSecret each checked the
+	// ENVIRONMENT's liveness (via the EnvironmentSecretGuardLockKey named lock)
+	// but never the project's, and deleteProjectCascade takes no such named lock —
+	// so a child committed under a project deleted in the window. The store-internal
+	// lockLiveParent helper this exposes already backed RestoreEnvironment's
+	// identical fix (#2656); the method exists so a core-layer caller already
+	// inside WithTransaction can use it without the full-row write
+	// internal/storage/store would otherwise have to grow a bespoke method for.
+	LockLiveProject(ctx context.Context, projectID uint) (bool, error)
+
 	// Project / Environment management
 	CreateProject(ctx context.Context, project *models.Project) (*models.Project, error)
 	GetProject(ctx context.Context, id uint) (*models.Project, error)

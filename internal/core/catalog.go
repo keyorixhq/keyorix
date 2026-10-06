@@ -549,7 +549,42 @@ func (c *KeyorixCore) CreateEnvironment(ctx context.Context, projectID uint, nam
 	if _, err := c.storage.GetProject(ctx, projectID); err != nil {
 		return nil, fmt.Errorf("%s: project not found", i18n.T("ErrorNotFound", nil))
 	}
-	return c.storage.CreateEnvironment(ctx, &models.Environment{ProjectID: projectID, Name: name})
+	// #2710: the GetProject above is an unlocked read outside any transaction, so
+	// DeleteProject's cascade can commit in the window between it and the insert.
+	// The cascade row-locks the project and sweeps its environments, so the
+	// legitimate order "delete wins, sweeps the environments that exist, commits;
+	// create then inserts anyway" left a LIVE environment under a deleted project
+	// — never purged (PurgeDeletedEnvironmentsBefore takes only deleted rows), so
+	// it outlives the project purge, and core.CreateSecret checks only that the
+	// environment is live, so a global-scope principal can then create secrets in
+	// it. Same end state as #2656, which was fixed for RestoreEnvironment only.
+	//
+	// Insert then re-check, in one transaction. The GetProject above is kept as a
+	// cheap early rejection with a better message; it is no longer what makes this
+	// safe. Note the seed path (seedProjectEnvironment, called from
+	// CreateProject/CreateProjectWithEnvs) does NOT come through here — it calls
+	// tx.CreateEnvironment directly inside a transaction that just created the
+	// project, so there is no deleted-parent window to close there.
+	var env *models.Environment
+	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		var cerr error
+		env, cerr = tx.CreateEnvironment(ctx, &models.Environment{ProjectID: projectID, Name: name})
+		if cerr != nil {
+			return cerr
+		}
+		live, lerr := tx.LockLiveProject(ctx, projectID)
+		if lerr != nil {
+			return lerr
+		}
+		if !live {
+			return fmt.Errorf("%s: project %d was deleted while this environment was being created",
+				i18n.T("ErrorNotFound", nil), projectID)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return env, nil
 }
 
 // CreateProjectWithEnvs creates a new project seeded with the specified environment names.
