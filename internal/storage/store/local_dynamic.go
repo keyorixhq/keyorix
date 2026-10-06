@@ -85,6 +85,8 @@ func (ls *LocalStorage) SetDynamicSecretConfigAdminDSN(ctx context.Context, id u
 		return fmt.Errorf("dynamic-secret config not found")
 	}
 	return nil
+}
+
 // SetDynamicSecretConfigClassification persists ONLY the classification column
 // (plus updated_at), conditional on the row's current classification still being
 // fromClassification — see the storage.Storage interface doc for why
