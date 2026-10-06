@@ -32,7 +32,6 @@ import (
 var pendingSeedFix = map[string]int{
 	"2659": 0,    // open-mode InviteMember vs revoke: #2669 merged but the seed still fails ~2 in 7 runs on Postgres; no fix PR yet
 	"2650": 2668, // SetSecretAutoRotate vs DeleteSecret
-	"2651": 2675, // CreateDynamicSecretConfig vs DeleteProject
 }
 
 func TestPendingSeedsPromotedAfterFix(t *testing.T) {
