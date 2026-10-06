@@ -15,7 +15,7 @@
 # CI job's own instance, or a demo you already brought up yourself).
 #
 # Usage: scripts/demo/check.sh [--url URL] [--sqlite|--postgres] [--keep]
-#                              [--ui] [--offline]
+#                              [--ui|--no-ui] [--offline]
 #   --url URL     check an already-running, already-seeded instance instead
 #                 of bringing one up (and never tears it down).
 #   --sqlite      bring up via scripts/demo/up.sh (default).
@@ -24,9 +24,13 @@
 #   --keep        leave the demo running afterward (for the actual demo).
 #                 Ignored with --url (nothing of ours to tear down).
 #   --ui          force the Playwright real-backend UI walk (web/e2e/real).
-#                 Runs by default if Playwright + its chromium build are
-#                 already installed; pass this to make it a hard failure
-#                 instead of a skip when they aren't.
+#                 Runs by default if the playwright CLI resolves; pass this
+#                 to make a missing/broken install a hard failure instead of
+#                 a skip (the default heuristic checks the CLI, not whether
+#                 a browser binary is actually downloaded -- a CLI-present/
+#                 browser-absent install still fails the real run).
+#   --no-ui       never run the UI walk, not even the default auto-detect
+#                 (the fast CI path uses this -- no Playwright setup there).
 #   --offline     also run the offline-guarantee leg (scripts/airgap-e2e.sh
 #                 --network none against the same locally-built image).
 #                 Skipped by default -- it's slow and SQLite-image-specific.
@@ -46,6 +50,7 @@ while [ $# -gt 0 ]; do
     --postgres) BACKEND="postgres"; shift ;;
     --keep) KEEP=true; shift ;;
     --ui) UI_MODE="force"; shift ;;
+    --no-ui) UI_MODE="skip"; shift ;;
     --offline) OFFLINE=true; shift ;;
     -h|--help) grep '^#' "$0" | sed 's/^# \?//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 1 ;;
