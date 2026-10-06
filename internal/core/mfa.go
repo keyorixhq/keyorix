@@ -116,6 +116,24 @@ func (c *KeyorixCore) BeginMFAEnrollment(ctx context.Context, userID uint) (otpa
 // factor and so accept a current TOTP code OR the password), activation happens
 // before MFA is enabled, so there is no pre-existing TOTP factor to check against —
 // the password is the only trustworthy re-proof available at this step.
+//
+// atomicity: consume-first by design (ORACLE-A-1, 2026-10-05) — this function's
+// OWN MarkTOTPStepUsed below burns the matched enrolment-code time-step BEFORE
+// the activation transaction runs, and a failure inside that transaction must
+// NOT un-burn it: the submitted code has been seen and accepted once, so
+// accepting it a second time inside its ±1-step window would make a stolen
+// enrolment code replayable. Verified by
+// TestActivateMFA_ActivationFailureAfterConsume_FailsClosed
+// (consume_first_fails_closed_test.go), whose red proof folds the consume into
+// the transaction and shows the replay then succeeds.
+//
+// Note that requireReauth, called just below, performs NO consumption on this
+// path, despite being a class-B row in its own right: activation happens with
+// user.MFAEnabled still false, so secondFactorEnrolled is false, requireReauth
+// takes its bare-password branch, and neither MarkTOTPStepUsed nor
+// ConsumeMFAStepUpGrant runs. This function's own MarkTOTPStepUsed is the only
+// consume on the ActivateMFA path — spelled out because PR #2840 originally
+// attributed it to requireReauth and was wrong (coordinator review).
 func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, password, keepSessionToken string) ([]string, error) {
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {

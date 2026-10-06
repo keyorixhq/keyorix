@@ -114,9 +114,11 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 		expectedPurpose: "",
 		reason:          "see internal/faultstorage/faulty_storage_generated.go:2233 — the second (KindEffectThenError) call to the real GetActiveMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
 	},
-	"internal/core/mfa.go:600": {
+	"internal/core/mfa.go:618": {
 		expectedPurpose: "MFAStepUpPurposeReauth",
-		reason: "(Line shifted to :600 by #2667 (ErrMFAEnrollmentChanged + pinned activation) after merging main's #2465 doc-comment additions on requireReauth together with this PR's own CR3 fix -- same ConsumeMFAStepUpGrant call, same purpose, not a new site.) requireReauth's account-security-factor-change gate (DisableMFA, " +
+		reason: "(Line shifted :600 -> :618 by ORACLE-A-1 (2026-10-05), which added ActivateMFA's `// atomicity: consume-first by design` marker comment 500 lines ABOVE this call -- same ConsumeMFAStepUpGrant call inside requireReauth, same MFAStepUpPurposeReauth, not a new site; verified by reading the call at the new line, not by assuming the delta. " +
+			"Second recorded shift for this one entry, after #2667's -- a line-keyed allowlist re-breaks on any edit anywhere earlier in the file, including a pure comment addition. #2716 re-keys this list by function+callee and would have made both shifts non-events; worth merging ahead of further edits to mfa.go. " +
+			"Previously: line shifted to :600 by #2667 (ErrMFAEnrollmentChanged + pinned activation) after merging main's #2465 doc-comment additions on requireReauth together with that PR's own CR3 fix.) requireReauth's account-security-factor-change gate (DisableMFA, " +
 			"RegenerateMFARecoveryCodes, ActivateMFA, WebAuthn credential register/delete, email change). " +
 			"Must reject the ambient MFAStepUpPurposeRestrictedSecretRead grant a plain login mints -- " +
 			"accepting it here is the exact confused-deputy shape this fix closed (a leaked bearer token " +
