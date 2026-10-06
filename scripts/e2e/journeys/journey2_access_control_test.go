@@ -166,16 +166,35 @@ func accessControl(t *testing.T, s *harness.Server, cliBin, adminUser, adminPass
 		assertSecretUnchanged(t, s, adminToken, secretBID, n2ValueB)
 	})
 
-	// ── Outsider: project list denied outright (not even names); direct
-	// access to a known secret ID in A denied too. ─────────────────────────
+	// ── Outsider: project list names neither project; direct access to a known
+	// secret ID in A denied too.
+	//
+	// Since #2780 the listing is least-privilege rather than admin-only: it
+	// answers 200 with only the caller's visible projects instead of 403 for
+	// anyone short of a global admin. For an outsider that set is EMPTY, so the
+	// secrecy property this journey guards is unchanged -- neither project is
+	// named -- and only the shape of the refusal moved. Asserting the empty set
+	// rather than the status code is also the stronger assertion: a regression
+	// that started serving projects to a non-member would now fail here, where
+	// before #2780 the 403 said nothing about what the filter does. ───────────
 
 	t.Run("outsider sees neither project, denied direct access too", func(t *testing.T) {
 		restEnv := restCall(t, s, outsiderToken, http.MethodGet, "/api/v1/projects", nil)
-		if restEnv.StatusCode != http.StatusForbidden {
-			t.Errorf("outsider GET /api/v1/projects: want HTTP %d, got %d: %s", http.StatusForbidden, restEnv.StatusCode, string(restEnv.Raw))
+		if restEnv.StatusCode != http.StatusOK {
+			t.Errorf("outsider GET /api/v1/projects: want HTTP %d, got %d: %s", http.StatusOK, restEnv.StatusCode, string(restEnv.Raw))
 		}
-		assertDenialLeaksNothing(t, restEnv, n2ProjectA, n2ProjectB)
-		runCLIExpectErr(t, cliBin, outsiderEnv, "project", "list")
+		if names := listedProjectNames(t, restEnv); len(names) != 0 {
+			t.Errorf("outsider GET /api/v1/projects: want an empty listing, got %v: %s", names, string(restEnv.Raw))
+		}
+		assertRawLeaksNothing(t, restEnv, n2ProjectA, n2ProjectB)
+		// The CLI follows the server: it now exits 0 with an empty list instead
+		// of erroring. It must still name neither project.
+		listOut := runCLI(t, cliBin, outsiderEnv, "project", "list")
+		for _, name := range []string{n2ProjectA, n2ProjectB} {
+			if strings.Contains(listOut, name) {
+				t.Errorf("keyorix project list leaked %q to an outsider:\n%s", name, listOut)
+			}
+		}
 
 		restEnv2 := restCall(t, s, outsiderToken, http.MethodGet,
 			"/api/v1/secrets/value?ref="+url.QueryEscape(refA), nil)
@@ -319,10 +338,20 @@ func assertDenialLeaksNothing(t *testing.T, env restEnvelope, forbidden ...strin
 	if len(env.Data) != 0 && string(env.Data) != "null" {
 		t.Errorf("denied response carries a Data payload: %s", env.Data)
 	}
+	assertRawLeaksNothing(t, env, forbidden...)
+}
+
+// assertRawLeaksNothing is assertDenialLeaksNothing's substring half on its
+// own: the full raw body contains none of forbidden. Used where the response
+// is legitimately a 200 carrying a Data payload but still must not name
+// something -- an empty least-privilege listing (#2780), where "carries no
+// payload" is the wrong assertion but "names no project" is the right one.
+func assertRawLeaksNothing(t *testing.T, env restEnvelope, forbidden ...string) {
+	t.Helper()
 	raw := string(env.Raw)
 	for _, s := range forbidden {
 		if strings.Contains(raw, s) {
-			t.Errorf("denied response body leaks %q: %s", s, raw)
+			t.Errorf("response body leaks %q: %s", s, raw)
 		}
 	}
 }
