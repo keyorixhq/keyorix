@@ -109,12 +109,20 @@ var fullRowOverwriteMethods = map[string]bool{
 	"UpdateWebAuthnCredential":   true,
 	"UpdateSecretTemplate":       true,
 	"UpdateRotationPolicy":       true,
-	"UpdateLegalHold":            true,
-	"UpdateDynamicSecretConfig":  true,
-	"UpdateDynamicSecretLease":   true,
-	"UpdateSecret":               true,
-	"UpdateUser":                 true,
-	"SaveAnomalyConfig":          true,
+	// UpdateRotationPolicy, UpdateSecretTemplate and UpdateWebAuthnCredential
+	// went the same way in #2700, replaced by column-scoped,
+	// RowsAffected-checked writers (UpdateRotationPolicyFields,
+	// UpdateSecretTemplateFields, DisableWebAuthnCredential /
+	// SetWebAuthnCredentialCounterState). Same reasoning, and the
+	// replacements take an id plus scalars or a field struct, never a
+	// caller-built *models.X.
+	"UpdateProject":             true,
+	"UpdateLegalHold":           true,
+	"UpdateDynamicSecretConfig": true,
+	"UpdateDynamicSecretLease":  true,
+	"UpdateSecret":              true,
+	"UpdateUser":                true,
+	"SaveAnomalyConfig":         true,
 }
 
 // fullRowOverwriteAllowlist is the exhaustive, reasoned inventory of every

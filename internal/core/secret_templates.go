@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -177,17 +178,31 @@ func (c *KeyorixCore) UpdateSecretTemplate(ctx context.Context, id uint, req *Up
 		}
 	}
 
+	// #2700: column-scoped, and matched=false rather than an upsert when the
+	// template is gone — SecretTemplate is hard-deleted, so the previous
+	// full-row Save re-INSERTED a concurrently deleted template with its old id.
+	now := time.Now()
+	matched, uerr := c.storage.UpdateSecretTemplateFields(ctx, tmpl.ID, storage.SecretTemplateFieldUpdate{
+		Name:                  req.Name,
+		Description:           req.Description,
+		DefaultClassification: req.DefaultClassification,
+		DefaultTags:           req.DefaultTags,
+		DescriptionPattern:    req.DescriptionPattern,
+		RotationHintDays:      req.RotationHintDays,
+	}, now)
+	if uerr != nil {
+		return nil, fmt.Errorf("failed to update secret template: %w", uerr)
+	}
+	if !matched {
+		return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+	}
 	tmpl.Name = req.Name
 	tmpl.Description = req.Description
 	tmpl.DefaultClassification = req.DefaultClassification
 	tmpl.DefaultTags = req.DefaultTags
 	tmpl.DescriptionPattern = req.DescriptionPattern
 	tmpl.RotationHintDays = req.RotationHintDays
-	tmpl.UpdatedAt = time.Now()
-
-	if err := c.storage.UpdateSecretTemplate(ctx, tmpl); err != nil {
-		return nil, fmt.Errorf("failed to update secret template: %w", err)
-	}
+	tmpl.UpdatedAt = now
 	return tmpl, nil
 }
 

@@ -831,12 +831,14 @@ func TestWebAuthn_Credential_CRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
 
-	// UpdateWebAuthnCredential.
-	cred.Name = "YubiKey"
-	require.NoError(t, ls.UpdateWebAuthnCredential(ctx, cred))
+	// #2700: DisableWebAuthnCredential replaces the full-row writer for this
+	// path. It must also report no-match (not re-insert) once the row is gone.
+	matched, err := ls.DisableWebAuthnCredential(ctx, cred.ID)
+	require.NoError(t, err)
+	require.True(t, matched)
 	list2, err := ls.ListWebAuthnCredentials(ctx, u.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "YubiKey", list2[0].Name)
+	assert.True(t, list2[0].Disabled)
 
 	// SetUserWebAuthnEnabled.
 	require.NoError(t, ls.SetUserWebAuthnEnabled(ctx, u.ID, true))

@@ -1770,7 +1770,20 @@ type Storage interface {
 	// separate remote calls would have reopened the exact TOCTOU race the
 	// transaction was built to prevent.
 	LockWebAuthnCredentialForUpdate(ctx context.Context, credentialID []byte, userID uint) (*models.WebAuthnCredential, error)
-	UpdateWebAuthnCredential(ctx context.Context, c *models.WebAuthnCredential) error
+	// DisableWebAuthnCredential sets ONLY `disabled = true` on an EXISTING
+	// credential row, returning matched=false when the row is gone.
+	// SetWebAuthnCredentialCounterState persists ONLY the signature-counter blob
+	// and last_used_at.
+	//
+	// Together they REPLACE the former UpdateWebAuthnCredential, a bare GORM Save
+	// (#2700). WebAuthnCredential is HARD-deleted (no DeletedAt), so Save's
+	// 0-rows fallback — `INSERT ... ON CONFLICT (id) DO UPDATE` — re-inserted a
+	// passkey the user had just deleted. It came back with Disabled=true, so it
+	// fails closed for authentication; what it corrupts is the credential count
+	// and the webauthn_enabled bookkeeping derived from it. Low severity, and
+	// deliberately described as such.
+	DisableWebAuthnCredential(ctx context.Context, id uint) (matched bool, err error)
+	SetWebAuthnCredentialCounterState(ctx context.Context, id uint, blob []byte, lastUsedAt time.Time) (matched bool, err error)
 	// AdvanceWebAuthnCredentialCounter conditionally persists an advanced signature
 	// counter (newBlob/newSignCount) and lastUsedAt for the credential identified by
 	// (credentialID, userID), IFF newSignCount is not stale relative to whatever
@@ -1868,7 +1881,19 @@ type Storage interface {
 	// ErrNotFound (via the store package) when no policy exists for the secret.
 	GetRotationPolicyBySecret(ctx context.Context, secretID uint) (*models.RotationPolicy, error)
 	ListRotationPolicies(ctx context.Context, projectID *uint, environmentID *uint) ([]*models.RotationPolicy, error)
-	UpdateRotationPolicy(ctx context.Context, p *models.RotationPolicy) error
+	// UpdateRotationPolicyFields persists ONLY the six operator-editable columns
+	// named by f (plus updated_at), onto a LIVE policy row. matched=false (no
+	// error) means the policy is gone; the caller must not report success.
+	//
+	// This REPLACES the former UpdateRotationPolicy, a bare GORM Save (#2700),
+	// which got two things wrong at once. RotationPolicy IS soft-deletable, so
+	// the 0-rows upsert fallback wrote deleted_at = NULL and a stale edit brought
+	// a deleted policy back ACTIVE — resuming rotation and breach alerts although
+	// the delete had reported success. And the full-row write reverted
+	// rotation_state / last_rotation_error / last_state_at, which belong to
+	// UpdateRotationState (the executor), hiding a failed rotation; those three
+	// columns are deliberately absent from this method.
+	UpdateRotationPolicyFields(ctx context.Context, id uint, f RotationPolicyFieldUpdate, updatedAt time.Time) (matched bool, err error)
 	DeleteRotationPolicy(ctx context.Context, id uint) error
 	// UpdateRotationState stamps the execution state on a RotationPolicy row.
 	// state must be one of: idle, pending, rotating, succeeded, failed.
@@ -1926,7 +1951,16 @@ type Storage interface {
 	GetSecretTemplate(ctx context.Context, id uint) (*models.SecretTemplate, error)
 	GetSecretTemplateByName(ctx context.Context, name string) (*models.SecretTemplate, error)
 	ListSecretTemplates(ctx context.Context) ([]*models.SecretTemplate, error)
-	UpdateSecretTemplate(ctx context.Context, t *models.SecretTemplate) error
+	// UpdateSecretTemplateFields persists ONLY the six editable columns named by
+	// f (plus updated_at) of an EXISTING template row. matched=false means the
+	// template is gone.
+	//
+	// This REPLACES the former UpdateSecretTemplate, a bare GORM Save (#2700).
+	// SecretTemplate is HARD-deleted (no DeletedAt), so Save's 0-rows fallback
+	// re-INSERTED a template a concurrent delete had removed, with its old id.
+	// Integrity only — a template mints nothing by itself — and low severity,
+	// stated as such.
+	UpdateSecretTemplateFields(ctx context.Context, id uint, f SecretTemplateFieldUpdate, updatedAt time.Time) (matched bool, err error)
 	DeleteSecretTemplate(ctx context.Context, id uint) error
 
 	// AlertEscalationPolicy CRUD
@@ -1939,6 +1973,33 @@ type Storage interface {
 	// ListUnacknowledgedAnomalyAlertsBefore returns unacknowledged anomaly alerts
 	// whose created_at (detected_at) is older than the given threshold.
 	ListUnacknowledgedAnomalyAlertsBefore(ctx context.Context, threshold time.Time) ([]models.AnomalyAlert, error)
+}
+
+// RotationPolicyFieldUpdate is the set of columns an operator edit of a rotation
+// policy owns (#2700). Every field is written, because core.UpdateRotationPolicy
+// requires all six on its request — unlike SecretFieldUpdate there is no
+// "leave this one alone" case to express. What matters is which columns are NOT
+// here: rotation_state, last_rotation_error and last_state_at belong to the
+// executor (UpdateRotationState), and a policy edit used to revert them.
+type RotationPolicyFieldUpdate struct {
+	Name            string
+	Description     string
+	IntervalDays    int
+	AlertDaysBefore int
+	NotifyOnBreach  bool
+	IsActive        bool
+}
+
+// SecretTemplateFieldUpdate is the set of columns an edit of a secret template
+// owns (#2700). Same reasoning as RotationPolicyFieldUpdate: all six come from
+// the request, and the point is the exclusion of created_by/created_at.
+type SecretTemplateFieldUpdate struct {
+	Name                  string
+	Description           string
+	DefaultClassification string
+	DefaultTags           string
+	DescriptionPattern    string
+	RotationHintDays      int
 }
 
 // SecretFilter defines filtering options for secret queries

@@ -11,12 +11,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -712,7 +714,16 @@ func (c *KeyorixCore) rejectIfCloned(ctx context.Context, userID uint, cred *web
 	// row.UserID check is needed here.
 	if row, err := c.storage.GetWebAuthnCredentialByCredID(ctx, cred.ID, userID); err == nil {
 		// Mutation + audit as one unit (#1714) — see markWebAuthnCredentialClonedDisabled.
-		_ = c.markWebAuthnCredentialClonedDisabled(ctx, row, ip)
+		//
+		// #2836: the discard is safe BY CONSTRUCTION now, not by luck — that
+		// function audits the clone signal before any branch can return, so
+		// dropping this error cannot lose the incident; it only drops the
+		// "what happened to the row" detail, which the audit already carries.
+		// Logged anyway so an operator sees a disable that did not take effect
+		// without having to read the audit trail.
+		if derr := c.markWebAuthnCredentialClonedDisabled(ctx, row, ip); derr != nil {
+			log.Printf("webauthn: clone-disable for user %d credential %d did not take effect: %v", userID, row.ID, derr)
+		}
 	} else {
 		// Row lookup failed (rare — e.g. a race with the credential being deleted
 		// between assertion verification and this call). Nothing to disable, but
@@ -737,13 +748,52 @@ func (c *KeyorixCore) rejectIfCloned(ctx context.Context, userID uint, cred *web
 // call scopes ownership by construction; MarkWebAuthnCredentialClonedByLookup
 // below does the same for a caller that only has (credentialID, userID)).
 func (c *KeyorixCore) markWebAuthnCredentialClonedDisabled(ctx context.Context, row *models.WebAuthnCredential, ip string) error {
-	row.Disabled = true
-	if err := c.storage.UpdateWebAuthnCredential(ctx, row); err != nil {
-		return err
+	// #2700: write `disabled` alone. The previous full-row Save re-INSERTED a
+	// passkey the user had concurrently deleted (WebAuthnCredential is hard-
+	// deleted, so Save's 0-rows fallback upserts it back).
+	matched, err := c.storage.DisableWebAuthnCredential(ctx, row.ID)
+
+	// #2836: the clone-detected audit is written UNCONDITIONALLY, before any
+	// branch can return. The signature-counter regression is a fact about this
+	// LOGIN ATTEMPT, established before this function was called; whether the
+	// row could then be disabled is a separate fact, and belongs in the detail
+	// rather than deciding whether the incident is recorded at all.
+	//
+	// #2700's first version returned early on both !matched and err != nil,
+	// skipping the audit — so a passkey deleted (or a database briefly
+	// unavailable) in the window between the assertion check and this write
+	// turned a clone signal into silence. That was a REGRESSION this branch
+	// introduced: the full-row Save it replaced upserted the row back and
+	// therefore always reached the audit. Worse, the comment that replaced it
+	// claimed "the caller's rejectIfCloned path already audits the clone signal
+	// separately for the credential-missing case" — rejectIfCloned's else branch
+	// covers only a failed LOOKUP, not a lookup that succeeded and an UPDATE
+	// that then matched nothing. The cover was asserted, not checked, and did
+	// not exist.
+	//
+	// Not split into a second webauthn.error event: a storage failure here does
+	// not leave the clone verdict unreached (CloneWarning was already true), so
+	// there is exactly one incident to record — emitting two events would let an
+	// incident count double. The mfa.error/mfa.failed split exists for the
+	// opposite case, where no verdict was reached at all.
+	outcome := "credential disabled pending re-registration"
+	switch {
+	case err != nil:
+		outcome = fmt.Sprintf("credential could NOT be disabled (storage error: %v) — it may still be usable, treat as unmitigated", err)
+	case !matched:
+		outcome = "credential was already deleted — nothing left to disable"
 	}
 	uid := row.UserID
 	c.writeAuditEventFull(ctx, EventWebAuthnCloneDetected, &uid, nil, nil, ip,
-		fmt.Sprintf("authentication refused for user %d: signature-counter regression (possible cloned authenticator) — credential disabled pending re-registration", row.UserID))
+		fmt.Sprintf("authentication refused for user %d: signature-counter regression (possible cloned authenticator) — %s", row.UserID, outcome))
+
+	if err != nil {
+		return err
+	}
+	if !matched {
+		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+	}
+	row.Disabled = true
 	return nil
 }
 
