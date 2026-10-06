@@ -813,8 +813,17 @@ func TestUserService_ListUsers_ProjectCountsPopulated(t *testing.T) {
 	h.CreateTestUser(t, "admin", 1)
 	h.AssignUserRole(t, 1, 1, nil)
 	require.NoError(t, h.DB.AutoMigrate(&models.ProjectMembership{}))
+	// #2781: a project MEMBERSHIP is a project-scoped role grant, not a
+	// project_memberships row (internal/core/project_membership_definition.go) —
+	// seeding only the journal row, as this test used to, now yields
+	// ActiveProjectCount 0, because nothing had actually granted the user access to
+	// project 2. Grant the project-scoped role as well, which is what the real
+	// POST /projects/{id}/members path writes, so both figures are populated and
+	// projectCounts' success branch is still the one exercised.
+	projectID := uint(2)
+	h.AssignUserRole(t, 1, 1, &projectID)
 	require.NoError(t, h.DB.Create(&models.ProjectMembership{
-		ProjectID: 1, UserID: 1, State: "active", InvitedAt: time.Now(), UpdatedAt: time.Now(),
+		ProjectID: projectID, UserID: 1, State: "active", InvitedAt: time.Now(), UpdatedAt: time.Now(),
 	}).Error)
 	svc := NewUserService(h.CoreService)
 

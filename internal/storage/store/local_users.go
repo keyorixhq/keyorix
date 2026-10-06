@@ -3,7 +3,7 @@
 // Covers: CreateUser, GetUser, GetUserByEmail, GetUserByUsername, UpdateUser,
 //
 //	DeleteUser, RestoreUser, ListUsers, GetUserGroups,
-//	CreateGroup, GetGroup, UpdateGroup, DeleteGroup, ListGroups,
+//	CreateGroup, GetGroup, UpdateGroupFields, DeleteGroup, ListGroups,
 //	AddUserToGroup, RemoveUserFromGroup, ListGroupMembers.
 //
 // All operations use direct GORM queries.
@@ -304,6 +304,25 @@ func (ls *LocalStorage) SetAccountStateIfMatches(ctx context.Context, id uint, f
 	return res.RowsAffected == 1, nil
 }
 
+// ClaimUserExternalIDIfUnset persists ONLY external_id (plus updated_at), and
+// only onto a live row whose external_id is still unset — see the
+// storage.Storage interface doc for why resolveSSOUser's first-federation write
+// cannot be the generic full-row UpdateUser (#2699).
+//
+// GORM adds `deleted_at IS NULL` for this soft-delete model, which is the
+// clause that actually stops the resurrection; `COALESCE(external_id,”) = ”`
+// is the CAS on the value the caller read. COALESCE because the column is NULL
+// on rows written before it existed, which GORM reads back as "".
+func (ls *LocalStorage) ClaimUserExternalIDIfUnset(ctx context.Context, id uint, externalID string, updatedAt time.Time) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.User{}).
+		Where("id = ? AND COALESCE(external_id, '') = ''", id).
+		Updates(map[string]interface{}{"external_id": externalID, "updated_at": updatedAt})
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}
+
 // SetPasswordHash persists ONLY password_hash and password_changed_at (plus
 // updated_at) via a direct column update — see the storage.Storage interface doc
 // comment (#484/#454) for why this narrower primitive exists alongside the generic
@@ -534,11 +553,33 @@ func (ls *LocalStorage) GetGroup(ctx context.Context, id uint) (*models.Group, e
 	return &group, nil
 }
 
-func (ls *LocalStorage) UpdateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {
-	if err := ls.db.WithContext(ctx).Save(group).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+// UpdateGroupFields persists only the non-nil fields, and only onto a live row
+// — see the storage.Storage interface doc for why the full-row UpdateGroup this
+// replaced (a bare Save) resurrected a deleted group together with its retained
+// role grants and memberships (#2697).
+//
+// GORM adds `deleted_at IS NULL` for this soft-delete model, which is the clause
+// that stops the resurrection. A nil field is simply absent from the SET list,
+// so a SCIM rename cannot revert a description another replica changed.
+func (ls *LocalStorage) UpdateGroupFields(ctx context.Context, id uint, name, nameFolded, description *string, updatedAt time.Time) (bool, error) {
+	// updated_at is passed in rather than left to GORM's implicit stamp, matching
+	// SetAccountState/SetPasswordHash/UpdateUserIfActiveStateMatches in this file:
+	// the caller's clock source is the one the rest of core compares against.
+	cols := map[string]interface{}{"updated_at": updatedAt}
+	if name != nil {
+		cols["name"] = *name
 	}
-	return group, nil
+	if nameFolded != nil {
+		cols["name_folded"] = *nameFolded
+	}
+	if description != nil {
+		cols["description"] = *description
+	}
+	res := ls.db.WithContext(ctx).Model(&models.Group{}).Where(sqlWhereID, id).Updates(cols)
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
 }
 
 // DeleteGroup cascades: removes GroupRole and UserGroup join rows before deleting the group.

@@ -224,6 +224,7 @@ func TestListNotifications_S23_NegativeLimitClamped(t *testing.T) {
 // an attacker to exceed MaxActiveLeases by keeping leases in revoke_failed state.
 func TestCountActiveLeases_S23_RevokeFailed(t *testing.T) {
 	ls := newS23Store(t, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{})
+	seedDynamicConfigProjects(t, ls.db)
 	ctx := context.Background()
 
 	now := time.Now()

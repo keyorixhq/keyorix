@@ -101,9 +101,12 @@ func webauthnFinishLoginAttempts(t *testing.T, db *gorm.DB) int64 {
 
 // TestFinishWebAuthnLogin_StorageErrorBeforeVerdict_IsNotAFailedAttempt
 // injects a storage error into each storage call FinishWebAuthnLogin makes
-// before the assertion is evaluated. Each must deny the login (401) and leave
-// no LoginAttempt row and no per-account failure behind. It asserts the
-// effect (rows in the DB), not the status code, which is 401 either way.
+// before the assertion is evaluated. Each must deny the login and leave no
+// LoginAttempt row and no per-account failure behind. FIX-1 (#2548,
+// consistency with VerifyMFA/MFAStepUp): the status code is now a distinct
+// 5xx, not the same 401 a genuinely failed assertion gets (previously this
+// asserted only the DB effect and left the status code at 401 "either way" —
+// that status-code distinction didn't exist yet).
 func TestFinishWebAuthnLogin_StorageErrorBeforeVerdict_IsNotAFailedAttempt(t *testing.T) {
 	for _, method := range []string{"ConsumeMFAChallenge", "ConsumeWebAuthnSession", "GetUser", "ListWebAuthnCredentials"} {
 		t.Run(method, func(t *testing.T) {
@@ -113,7 +116,7 @@ func TestFinishWebAuthnLogin_StorageErrorBeforeVerdict_IsNotAFailedAttempt(t *te
 				challenge, token := seedWebAuthnLoginCeremony(t, h, db)
 				fs.Arm(&faultstorage.FaultSpec{Method: method, NthCall: 1, Kind: faultstorage.KindError, Err: assert.AnError})
 				code := finishWebAuthnLoginHTTP(t, h, challenge, token)
-				assert.Equal(t, http.StatusUnauthorized, code, "attempt %d: a storage error must still deny the login", i)
+				assert.Equal(t, http.StatusServiceUnavailable, code, "attempt %d: a storage error must be a 5xx, not a failed-assertion 401", i)
 				require.True(t, fs.Fired(), "attempt %d: the armed %s fault must actually have fired", i, method)
 			}
 			fs.Arm(nil)

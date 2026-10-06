@@ -802,13 +802,27 @@ paths:
     get:
       tags: [Projects]
       summary: List projects with secret and environment counts
-      description: List all projects accessible to the caller, including secret and environment counts.
+      description: >-
+        List the projects the CALLER CAN READ, including secret and environment
+        counts. A caller holding secrets.read at the global scope gets every
+        project; a caller whose grants are project-scoped gets exactly the projects
+        they are authorized to read at the project scope — the same check
+        GET /api/v1/projects/{id} applies, so every project listed here is one the
+        caller can also fetch by id. A caller with no such grant gets 200 with an
+        empty array, not 403.
       operationId: listProjects
       security: [{bearerAuth: []}]
       parameters:
         - name: include_deleted
           in: query
-          description: When 'true', also returns soft-deleted projects (each flagged via deleted/deleted_at) for the restore UI.
+          description: >-
+            When 'true', also returns soft-deleted projects (each flagged via
+            deleted/deleted_at) for the restore UI. This form requires secrets.read at
+            the GLOBAL scope: project-scoped role grants deliberately survive a
+            soft-delete (so RestoreProject can work) while GET /api/v1/projects/{id}
+            returns 404 for a deleted project, so a project-scoped reader cannot read a
+            soft-deleted project through any path and must not see one listed. A caller
+            without the global grant gets 403 for this form, and 200 for the default one.
           schema: {type: string, enum: ['true', 'false']}
       responses:
         '200':
@@ -1591,7 +1605,12 @@ paths:
     get:
       tags: [Environments]
       summary: List all environments (global, backward-compat)
-      description: Return all environments across all projects accessible to the authenticated user.
+      description: >-
+        Return the environments belonging to projects the CALLER CAN READ, across
+        all of them. Scoped exactly like GET /api/v1/projects: a global secrets.read
+        holder gets every environment, a project-scoped reader gets only their
+        projects', and a caller with no such grant gets 200 with an empty array
+        rather than 403.
       operationId: listEnvironments
       security: [{bearerAuth: []}]
       responses:
@@ -5311,12 +5330,49 @@ paths:
     get:
       tags: [Users]
       summary: List user project memberships
-      description: Return all project memberships for the specified user with their role and state in each project.
+      description: >-
+        Return every project the specified user is a member of, with their role(s)
+        and the membership's onboarding state. "Member of a project" means the user
+        holds a live role grant scoped to that project, directly or through a group —
+        the same definition GET /api/v1/projects/{id}/members reports, so the two
+        views agree. An install-wide grant (project 0) is not membership of any
+        project and is never listed here, nor is an expired time-bound grant.
+        `state` is the ADR-022 onboarding lifecycle state where an invite produced
+        the membership, and `active` for a grant added directly via
+        POST /api/v1/projects/{id}/members. `via_group` marks a membership held only
+        through a group, which the project's own members list cannot remove.
       operationId: getUserMembershipsForUser
       security: [{bearerAuth: []}]
       responses:
         '200':
-          description: "Envelope `data.memberships[]` with project_id, project_name, role, state."
+          description: "Envelope {data, message}. data.memberships is an array of {project_id, project_name, role, roles[], state, via_group}."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      memberships:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            project_id: {type: integer}
+                            project_name: {type: string}
+                            role: {type: string, description: "The highest-privilege role the user holds at this project's scope."}
+                            roles:
+                              type: array
+                              description: "Every role the user holds at this project's scope, sorted."
+                              items: {type: string}
+                            state:
+                              type: string
+                              description: "ADR-022 onboarding state; 'active' when the grant was added directly."
+                              enum: [invited, identity_verified, provisioned, active, revoked]
+                            via_group:
+                              type: boolean
+                              description: "True when the membership comes only from a group grant."
         '401': {$ref: '#/components/responses/Error'}
 
   /api/v1/users/{id}/shared-secrets:

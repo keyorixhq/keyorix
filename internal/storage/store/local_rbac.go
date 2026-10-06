@@ -585,7 +585,7 @@ func (ls *LocalStorage) RemoveGlobalAdminRoleGuarded(ctx context.Context, userID
 			}
 		}
 		if !survives {
-			return fmt.Errorf("%w: the install would be left with no super_admin/admin/system_admin at the global scope and no one able to manage users, roles, or settings", storage.ErrWouldStrandLastAdmin)
+			return fmt.Errorf("%w: the install would be left with no install administrator at the global scope and no one able to manage users, roles, or settings", storage.ErrWouldStrandLastAdmin)
 		}
 		return txStorage.RemoveRole(ctx, userID, roleID, storage.Scope{})
 	})
@@ -834,6 +834,26 @@ func (ls *LocalStorage) RoleSetBypassesPermissionChecks(ctx context.Context, rol
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
 	}
 	return count > 0, nil
+}
+
+// ListAdminBypassRoleIDs enumerates every role ID with
+// BypassesPermissionChecks = true (ADR-084) -- see the interface doc comment for
+// why the enumeration exists alongside the membership test. Deliberately selects
+// on the FLAG and nothing else: no name predicate, so a role acquires or loses
+// admin-conferring status only by the flag moving, which is written in exactly
+// two places (the one-time backfill in internal/storage/factory.go and role
+// seeding in internal/core/auth_bootstrap.go).
+//
+// An empty result is a legitimate answer (a pre-bootstrap install has no roles
+// at all); only a query failure is an error.
+func (ls *LocalStorage) ListAdminBypassRoleIDs(ctx context.Context) ([]uint, error) {
+	var ids []uint
+	if err := ls.db.WithContext(ctx).Model(&models.Role{}).
+		Where("bypasses_permission_checks = ?", true).
+		Pluck("id", &ids).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
+	}
+	return ids, nil
 }
 
 // ListPermissions returns all permissions.

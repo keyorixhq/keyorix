@@ -459,7 +459,7 @@ func TestMachineTokenHygiene_InvalidDays_S7(t *testing.T) {
 // TestCatalogHandler_ListEnvironments_HappyPath_S7 exercises the happy path.
 func TestCatalogHandler_ListEnvironments_HappyPath_S7(t *testing.T) {
 	h := newCatalogHandlerS7(t)
-	req := httptest.NewRequest(http.MethodGet, "/environments", nil)
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/environments", nil)) // #2780: authorizes in-handler
 	w := httptest.NewRecorder()
 	h.ListEnvironments(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
