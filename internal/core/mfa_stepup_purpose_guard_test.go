@@ -120,6 +120,7 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 	"internal/faultstorage/faulty_storage_generated.go:(*FaultyStorage).GetActiveMFAStepUpGrant:w.real.GetActiveMFAStepUpGrant#2": {
 		expectedPurpose: "",
 		reason:          "see the (*FaultyStorage).GetActiveMFAStepUpGrant entry above — the second (KindEffectThenError) call to the real GetActiveMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
+	},
 	"internal/faultstorage/faulty_storage_generated.go:2250": {
 		expectedPurpose: "",
 		reason: "generated, mechanical pass-through (w.real.GetActiveMFAStepUpGrant(...)) inside the same " +

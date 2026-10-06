@@ -2333,6 +2333,7 @@ func (m *MockStorage) UpdateDynamicSecretConfig(_ context.Context, _ *models.Dyn
 }
 func (m *MockStorage) SetDynamicSecretConfigAdminDSN(_ context.Context, _ uint, _, _ []byte) error {
 	return nil
+}
 func (m *MockStorage) SetDynamicSecretConfigClassification(_ context.Context, _ uint, _, _ string, _ time.Time) (bool, error) {
 	return true, nil
 }
