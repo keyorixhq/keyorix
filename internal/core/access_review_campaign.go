@@ -13,7 +13,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"log"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -237,20 +236,12 @@ func targetDecisionForAction(action string) (string, error) {
 	}
 }
 
-// applyAccessDecision executes the grant action (attest or revoke) that the item's
-// Decision has ALREADY been atomically claimed for (see DecideAccessReviewItem's
-// claim-before-act ordering, #1646). Extracted from DecideAccessReviewItem to reduce
-// its complexity.
-func (c *KeyorixCore) applyAccessDecision(ctx context.Context, actorID, projectID uint, action string, decision AccessReviewDecision) error {
-	switch action {
-	case "attest":
-		return c.AttestAccessReviewGrant(ctx, actorID, projectID, decision)
-	case "revoke":
-		return c.RevokeAccessReviewGrant(ctx, actorID, projectID, decision)
-	default:
-		return fmt.Errorf("%s: action must be attest or revoke", i18n.T("ErrorValidation", nil))
-	}
-}
+// applyAccessDecision was DELETED in #2676. It dispatched the already-claimed
+// decision to AttestAccessReviewGrant / RevokeAccessReviewGrant, which no
+// longer matches how either half works: attest runs its checks before the claim
+// (#2570) and records the event itself, and revoke now claims, removes and
+// audits inside one transaction (access_review_decide_tx.go) rather than
+// calling the standalone entry point after the fact.
 
 // claimItemDecision atomically transitions item from pending to targetDecision via a
 // conditional UPDATE (WHERE decision='pending'), BEFORE the real attest/revoke action
@@ -267,17 +258,40 @@ func (c *KeyorixCore) applyAccessDecision(ctx context.Context, actorID, projectI
 // race (or the campaign closed underneath it); the re-read is cosmetic only — the
 // decision was already made atomically by the UPDATE, win or lose.
 func (c *KeyorixCore) claimItemDecision(ctx context.Context, item *models.AccessReviewItem, itemID, actorID uint, targetDecision, reason string) error {
+	return c.claimItemDecisionOn(ctx, c.storage, item, itemID, actorID, targetDecision, reason)
+}
+
+// claimItemDecisionOn is claimItemDecision through an explicit storage handle, so
+// the revoke path can claim INSIDE the transaction that also performs the removal
+// (#2676, access_review_decide_tx.go). ONE body, two entry points.
+//
+// Running the conditional UPDATE inside a transaction does not weaken its
+// cross-replica guarantee: the UPDATE still decides the race, and the row stays
+// locked until commit or rollback, so a concurrent claimant blocks and then
+// observes the committed outcome rather than racing a claim whose action has not
+// run yet.
+func (c *KeyorixCore) claimItemDecisionOn(ctx context.Context, st storage.Storage, item *models.AccessReviewItem, itemID, actorID uint, targetDecision, reason string) error {
 	now := c.now()
 	item.Decision = targetDecision
 	item.Reason = reason
 	item.DecidedBy = actorID
 	item.DecidedAt = &now
-	ok, err := c.storage.UpdateAccessReviewItem(ctx, item)
+	ok, err := st.UpdateAccessReviewItem(ctx, item)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	if !ok {
-		if reloaded, rerr := c.storage.GetAccessReviewItem(ctx, itemID); rerr == nil && reloaded.Decision != ReviewItemPending {
+		// st, NOT c.storage: when st is transaction-scoped, reading through
+		// c.storage here would ask the connection POOL for a connection while
+		// this call chain already holds two (the named lock's, and the
+		// transaction's) — and deadlock outright under a pool of two, which is
+		// what internal/core's Postgres contention helpers use (pgOpen sets
+		// MaxOpenConns(2)) and what internal/config does not enforce a minimum
+		// above. Found exactly that way: a 120s hang whose goroutine dump
+		// showed this line inside WithTransaction inside WithNamedLock, parked
+		// in database/sql.(*DB).conn. See access_review_decide_tx.go's
+		// "connection budget" note.
+		if reloaded, rerr := st.GetAccessReviewItem(ctx, itemID); rerr == nil && reloaded.Decision != ReviewItemPending {
 			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this item has already been decided")
 		}
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "campaign is closed; decisions can only be made on an open campaign")
@@ -364,24 +378,22 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 			return err
 		}
 	}
-	if err := c.claimItemDecision(ctx, item, itemID, actorID, targetDecision, reason); err != nil {
-		return err
-	}
 	if action == "attest" {
+		if err := c.claimItemDecision(ctx, item, itemID, actorID, targetDecision, reason); err != nil {
+			return err
+		}
 		c.logAccessReviewDecision(ctx, EventAccessReviewAttested, "attested", actorID, projectID, decision)
 		return nil
 	}
-	if err := c.applyAccessDecision(ctx, actorID, projectID, action, decision); err != nil {
-		// The claim already committed (item now shows targetDecision) but the real
-		// action failed -- a rare, single-threaded failure distinct from the
-		// concurrency race claimItemDecision's ordering closes. Surface it loudly
-		// rather than silently leaving a stamp the underlying action never actually
-		// performed: manual reconciliation (re-run the decision, or correct the
-		// item) is required. #1646.
-		log.Printf("SECURITY: access review item %d claimed as %q but the underlying %s action failed: %v -- manual reconciliation required", itemID, targetDecision, action, err)
-		return err
-	}
-	return nil
+	// #2676: a revoke claims, removes the grant and records its evidence in ONE
+	// transaction. The claim-after-nothing-can-fail trick #2570 used for attest
+	// is unavailable here — claim-before-act is what closes #1646's
+	// attest-vs-revoke race, so the removal has to follow the claim — and the
+	// consequence used to be a claim committed as `revoked` for a removal that
+	// then failed (or that a last-admin guard deliberately refused): false
+	// compliance evidence, and an item the reviewer could no longer retry. See
+	// access_review_decide_tx.go.
+	return c.decideReviewItemRevokeAtomically(ctx, actorID, projectID, item, itemID, reason, decision)
 }
 
 // requireHumanReviewer rejects a recertification action by a non-human / unattributable

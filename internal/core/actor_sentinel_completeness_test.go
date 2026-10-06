@@ -89,17 +89,23 @@ var actorSentinelAllowlist = map[string]actorSentinelEntry{
 		class: classPerActorCeiling, status: statusEnforced,
 		note: "rejects actorID==0 outright: 'a machine identity ... is not an attributable, independent human reviewer.'",
 	},
-	"access_review_revoke.go:logAccessReviewDecision": {
+	"access_review_revoke.go:logAccessReviewDecisionOn": {
 		class: classAuditOnly,
-		note:  "attribution-only: whether to attach a non-nil actor pointer to the audit record.",
+		note: "attribution-only: whether to attach a non-nil actor pointer to the audit record. Renamed " +
+			"from logAccessReviewDecision in #2676, which gave it an explicit audit target so the campaign " +
+			"revoke path can write this event inside the same transaction as the removal it describes; the " +
+			"comparison itself is unchanged, and logAccessReviewDecision is now a one-line delegate with no " +
+			"comparison of its own.",
 	},
 	"anomaly_alerting.go:AcknowledgeAnomalyAlert": {
 		class: classAuditOnly,
 		note:  "attribution-only audit pointer; the write-permission gate at the transport already authorized the call.",
 	},
-	"audit.go:writeRBACAudit": {
+	"audit.go:writeRBACAuditOn": {
 		class: classAuditOnly,
-		note:  "attribution-only audit pointer, shared writer for RBAC audit events.",
+		note: "attribution-only audit pointer, shared writer for RBAC audit events. Renamed from " +
+			"writeRBACAudit in #2676 for the same reason as logAccessReviewDecisionOn above (an explicit " +
+			"audit target); writeRBACAudit is now a one-line delegate with no comparison of its own.",
 	},
 	"authz.go:requireGranterHoldsRolePermissions": {
 		class: classPerActorCeiling, status: statusEnforced,

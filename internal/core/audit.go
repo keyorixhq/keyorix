@@ -98,7 +98,14 @@ func (c *KeyorixCore) LogRoleAssigned(ctx context.Context, actorID, targetUserID
 }
 
 func (c *KeyorixCore) LogRoleRemoved(ctx context.Context, actorID, targetUserID, roleID uint, scope Scope) {
-	c.logRoleChange(ctx, EventRoleRemoved, "removed from", actorID, targetUserID, roleID, scope, false)
+	c.LogRoleRemovedOn(ctx, c.auditNow(), actorID, targetUserID, roleID, scope)
+}
+
+// LogRoleRemovedOn is LogRoleRemoved against an explicit audit target
+// (audit_target.go) — used by the access-review revoke path, which writes this
+// event inside the same transaction as the removal it describes.
+func (c *KeyorixCore) LogRoleRemovedOn(ctx context.Context, tgt auditTarget, actorID, targetUserID, roleID uint, scope Scope) {
+	c.logRoleChangeOn(ctx, tgt, EventRoleRemoved, "removed from", actorID, targetUserID, roleID, scope, false)
 }
 
 // LogRoleAssignedBackfill records a role grant issued by the startup baseline-
@@ -112,11 +119,17 @@ func (c *KeyorixCore) LogRoleAssignedBackfill(ctx context.Context, actorID, targ
 }
 
 func (c *KeyorixCore) logRoleChange(ctx context.Context, eventType, verb string, actorID, targetUserID, roleID uint, scope Scope, baselineBackfill bool) {
+	c.logRoleChangeOn(ctx, c.auditNow(), eventType, verb, actorID, targetUserID, roleID, scope, baselineBackfill)
+}
+
+// logRoleChangeOn is logRoleChange against an explicit audit target. ONE body,
+// two entry points.
+func (c *KeyorixCore) logRoleChangeOn(ctx context.Context, tgt auditTarget, eventType, verb string, actorID, targetUserID, roleID uint, scope Scope, baselineBackfill bool) {
 	desc := fmt.Sprintf("role %d %s user %d", roleID, verb, targetUserID)
 	if baselineBackfill {
 		desc = fmt.Sprintf("%s reason=%s", desc, reasonBaselineRoleBackfill)
 	}
-	c.writeRBACAudit(ctx, eventType, desc, actorID, scope, rbacAuditDetail{
+	c.writeRBACAuditOn(ctx, tgt, eventType, desc, actorID, scope, rbacAuditDetail{
 		TargetUserID:         targetUserID,
 		RoleID:               roleID,
 		BaselineRoleBackfill: baselineBackfill,
@@ -132,12 +145,24 @@ func (c *KeyorixCore) LogGroupRoleAssigned(ctx context.Context, actorID, groupID
 }
 
 func (c *KeyorixCore) LogGroupRoleRemoved(ctx context.Context, actorID, groupID, roleID uint, scope Scope) {
-	c.logGroupRoleChange(ctx, EventRoleGroupRemoved, "removed from group", actorID, groupID, roleID, scope)
+	c.LogGroupRoleRemovedOn(ctx, c.auditNow(), actorID, groupID, roleID, scope)
+}
+
+// LogGroupRoleRemovedOn is LogGroupRoleRemoved against an explicit audit target
+// (audit_target.go) — the group-grant counterpart of LogRoleRemovedOn.
+func (c *KeyorixCore) LogGroupRoleRemovedOn(ctx context.Context, tgt auditTarget, actorID, groupID, roleID uint, scope Scope) {
+	c.logGroupRoleChangeOn(ctx, tgt, EventRoleGroupRemoved, "removed from group", actorID, groupID, roleID, scope)
 }
 
 func (c *KeyorixCore) logGroupRoleChange(ctx context.Context, eventType, verb string, actorID, groupID, roleID uint, scope Scope) {
+	c.logGroupRoleChangeOn(ctx, c.auditNow(), eventType, verb, actorID, groupID, roleID, scope)
+}
+
+// logGroupRoleChangeOn is logGroupRoleChange against an explicit audit target.
+// ONE body, two entry points.
+func (c *KeyorixCore) logGroupRoleChangeOn(ctx context.Context, tgt auditTarget, eventType, verb string, actorID, groupID, roleID uint, scope Scope) {
 	desc := fmt.Sprintf("role %d %s %d", roleID, verb, groupID)
-	c.writeRBACAudit(ctx, eventType, desc, actorID, scope, rbacAuditDetail{
+	c.writeRBACAuditOn(ctx, tgt, eventType, desc, actorID, scope, rbacAuditDetail{
 		GroupID:       groupID,
 		RoleID:        roleID,
 		ProjectID:     scope.ProjectID,
@@ -243,6 +268,13 @@ func (c *KeyorixCore) logRoleDefinitionChange(ctx context.Context, eventType, ve
 // writeRBACAudit is the shared writer for RBAC audit events: actor as UserID,
 // scope's project as ProjectID, and the structured detail in the diff.
 func (c *KeyorixCore) writeRBACAudit(ctx context.Context, eventType, desc string, actorID uint, scope Scope, detail rbacAuditDetail) {
+	c.writeRBACAuditOn(ctx, c.auditNow(), eventType, desc, actorID, scope, detail)
+}
+
+// writeRBACAuditOn is writeRBACAudit against an explicit audit target — see
+// audit_target.go for why a transaction-scoped caller needs one. ONE body, two
+// entry points: writeRBACAudit is the auditNow() case.
+func (c *KeyorixCore) writeRBACAuditOn(ctx context.Context, tgt auditTarget, eventType, desc string, actorID uint, scope Scope, detail rbacAuditDetail) {
 	encoded, _ := json.Marshal(detail)
 	var actor *uint
 	if actorID != 0 {
@@ -254,7 +286,7 @@ func (c *KeyorixCore) writeRBACAudit(ctx context.Context, eventType, desc string
 		p := scope.ProjectID
 		projectID = &p
 	}
-	c.writeAuditEventDiff(ctx, eventType, actor, nil, projectID, "", desc, string(encoded))
+	c.writeAuditEventDiffOn(ctx, tgt, eventType, actor, nil, projectID, "", desc, string(encoded))
 }
 
 // writeAuditEvent persists an audit_events row (basic — no project/IP context).
@@ -266,7 +298,13 @@ func (c *KeyorixCore) writeAuditEvent(ctx context.Context, eventType string, use
 // Returns whether it actually persisted (see emitAudit's own doc comment) --
 // every pre-#2406 caller ignores it, source-compatible and behavior-unchanged.
 func (c *KeyorixCore) writeAuditEventFull(ctx context.Context, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string) bool {
-	return c.writeAuditEventDiff(ctx, eventType, userID, secretID, projectID, ip, description, "")
+	return c.writeAuditEventFullOn(ctx, c.auditNow(), eventType, userID, secretID, projectID, ip, description)
+}
+
+// writeAuditEventFullOn is writeAuditEventFull against an explicit audit target
+// (audit_target.go). ONE body, two entry points.
+func (c *KeyorixCore) writeAuditEventFullOn(ctx context.Context, tgt auditTarget, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string) bool {
+	return c.writeAuditEventDiffOn(ctx, tgt, eventType, userID, secretID, projectID, ip, description, "")
 }
 
 // writeAuditEventDiff is writeAuditEventFull plus a structured before/after diff.
@@ -274,6 +312,12 @@ func (c *KeyorixCore) writeAuditEventFull(ctx context.Context, eventType string,
 // impersonation tag (set by the auth middleware), so every action taken inside
 // an impersonation session is consistently marked with impersonation=true.
 func (c *KeyorixCore) writeAuditEventDiff(ctx context.Context, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string, diff string) bool { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
+	return c.writeAuditEventDiffOn(ctx, c.auditNow(), eventType, userID, secretID, projectID, ip, description, diff)
+}
+
+// writeAuditEventDiffOn is writeAuditEventDiff against an explicit audit target
+// (audit_target.go). ONE body, two entry points.
+func (c *KeyorixCore) writeAuditEventDiffOn(ctx context.Context, tgt auditTarget, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string, diff string) bool { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
 	t := true
 	event := &models.AuditEvent{
 		EventType:    eventType,
@@ -293,7 +337,7 @@ func (c *KeyorixCore) writeAuditEventDiff(ctx context.Context, eventType string,
 		event.ActingAs = userID
 		event.Impersonation = true
 	}
-	return c.emitAudit(ctx, event)
+	return c.emitAuditOn(ctx, tgt, event)
 }
 
 // writeAuditEventFailed persists a failed audit event (Success=false), with
