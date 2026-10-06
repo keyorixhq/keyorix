@@ -120,20 +120,6 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 	"internal/faultstorage/faulty_storage_generated.go:(*FaultyStorage).GetActiveMFAStepUpGrant:w.real.GetActiveMFAStepUpGrant#2": {
 		expectedPurpose: "",
 		reason:          "see the (*FaultyStorage).GetActiveMFAStepUpGrant entry above — the second (KindEffectThenError) call to the real GetActiveMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
-	"internal/faultstorage/faulty_storage_generated.go:2250": {
-		expectedPurpose: "",
-		reason: "generated, mechanical pass-through (w.real.GetActiveMFAStepUpGrant(...)) inside the same " +
-			"test/fuzz-harness-only wrapper — see internal/faultstorage/faulty_storage_generated.go:354's " +
-			"reasoning; this is the read-only sibling call, same forwarding shape. (Line shifted from :2231 " +
-			"by PR #2357's unrelated DeleteRole signature change, then again by #2700 adding " +
-			"DisableWebAuthnCredential to storage.Storage — it sorts before GetActiveMFAStepUpGrant, so " +
-			"regeneration pushed this wrapper down. Same call site, not a new one. Keying this allowlist " +
-			"by line number into a GENERATED file makes every interface addition anywhere in the repo " +
-			"break this guard; #2716 re-keys it by function+callee and removes the class.)",
-	},
-	"internal/faultstorage/faulty_storage_generated.go:2254": {
-		expectedPurpose: "",
-		reason:          "see internal/faultstorage/faulty_storage_generated.go:2250 — the second (KindEffectThenError) call to the real GetActiveMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
 	},
 	"internal/core/mfa.go:(*KeyorixCore).requireReauth:c.storage.ConsumeMFAStepUpGrant": {
 		expectedPurpose: "MFAStepUpPurposeReauth",
