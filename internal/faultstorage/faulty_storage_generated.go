@@ -6030,6 +6030,23 @@ func (w *FaultyStorage) RestoreUser(ctx context.Context, id uint) error {
 	return w.real.RestoreUser(ctx, id)
 }
 
+func (w *FaultyStorage) RevertAccessReviewItemClaim(ctx context.Context, itemID uint, fromDecision string, actorID uint) (bool, error) {
+	fire, kind, injected := w.check("RevertAccessReviewItemClaim")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.RevertAccessReviewItemClaim(ctx, itemID, fromDecision, actorID)
+			return rv1, injected
+		}
+	}
+	return w.real.RevertAccessReviewItemClaim(ctx, itemID, fromDecision, actorID)
+}
+
 func (w *FaultyStorage) RevokeAllPersonalAccessTokensForUser(ctx context.Context, userID uint) ([]string, error) {
 	fire, kind, injected := w.check("RevokeAllPersonalAccessTokensForUser")
 	if fire {
