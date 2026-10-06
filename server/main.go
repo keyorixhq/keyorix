@@ -516,6 +516,29 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		warnIfRecoveryKeyMissing(store)
 	}
 
+	// Fast audit mode (ADR-112 Amendment 1, docs/specs/fast-audit-mode.md):
+	// flagged in the same four places keyless_mode is, for the same reason --
+	// a startup warning EVERY boot, an audit event EVERY boot (so the
+	// tamper-evident chain itself records the window this install ran
+	// weakened, rather than an auditor having to trust a point-in-time config
+	// dump), a line in the posture surface (internal/startup.ValidateStartup,
+	// printed by `keyorix-server admin validate`), and a boolean in
+	// /system/info (server/http/handlers/system.go) so a buyer's auditor can
+	// see it over the API without host access.
+	if st := cfg.Storage.Database.AuditDurableSyncStatus(cfg.Storage.Type); st.Configured {
+		log.Printf("WARNING: %s", auditDurableSyncWarning(st))
+		// The audit event fires ONLY when the mode is actually in effect. Its
+		// whole purpose is to put a durable record of the WEAKENED WINDOW into
+		// the tamper-evident chain itself; a config line that is being ignored
+		// weakened no window, so writing the event would plant a false claim in
+		// the one place an auditor is told to trust literally. The ignored case
+		// is still loud -- the startup warning above, the posture report, and
+		// /system/info all carry it with its reason.
+		if st.InEffect {
+			auditDurableSyncSkippedStartup(store)
+		}
+	}
+
 	// Top up the canonical RBAC permission catalog (ADR-044): adds any permission
 	// introduced in a later release to an already-initialised install, granting it to
 	// its baseline roles. No-op pre-bootstrap and best-effort (never blocks startup).
@@ -2859,5 +2882,59 @@ func auditKeylessModeStartup(store corestorage.Storage) {
 		EventTime:   time.Now(),
 	}); err != nil {
 		log.Printf("note: could not record the keyless-mode startup event to the audit chain (%v)", err)
+	}
+}
+
+// auditDurableSyncWarning is the operator-facing start-up text for
+// storage.database.insecure_audit_skip_durable_sync (ADR-112 Amendment 1,
+// docs/specs/fast-audit-mode.md). Takes the already-computed status so the
+// log, the posture report and /system/info can never disagree about whether
+// the setting is doing anything.
+//
+// Two wordings, and the distinction is load-bearing rather than cosmetic:
+//
+//   - IN EFFECT: say the durability was weakened, name what is lost, and say
+//     plainly that this is Vault's guarantee and not a safe one.
+//   - CONFIGURED BUT NOT IN EFFECT: say IGNORED and give the reason. Never
+//     imply durability was weakened (Andrei's decision, 2026-10-05) -- it was
+//     not, and a line that implied otherwise would send an operator chasing a
+//     durability problem they do not have. One warning still prints, because a
+//     config line that does nothing is itself worth telling them about.
+func auditDurableSyncWarning(st config.AuditDurableSyncStatus) string {
+	if !st.InEffect {
+		return "storage.database.insecure_audit_skip_durable_sync is set but IGNORED -- not in effect: " +
+			st.NotInEffectReason + ". Audit durability is UNCHANGED (the audit record is still durably " +
+			"committed before a secret value is returned). Remove the setting to silence this."
+	}
+	return "storage.database.insecure_audit_skip_durable_sync is ENABLED -- the audit record is still written " +
+		"and committed before a secret value is returned, and a failed audit write still fails the request, but " +
+		"the commit NO LONGER WAITS for a disk sync. An OS or database-server crash can lose the last fraction " +
+		"of a second of audit entries (up to ~3x wal_writer_delay). This is HashiCorp Vault's guarantee, not a " +
+		"safe one. Only appropriate where power is guaranteed (UPS, battery-backed write cache, replicated " +
+		"cloud block storage); disable it otherwise."
+}
+
+// auditDurableSyncSkippedStartup records, at every boot while
+// storage.database.insecure_audit_skip_durable_sync is enabled, a system-actor
+// audit event (no UserID, never machine-identity-typed) -- the same shape and
+// the same reasoning as auditKeylessModeStartup above, so the tamper-evident
+// chain carries its own repeated record of the weaker mode.
+//
+// Note the self-reference this deliberately accepts: this event is itself
+// written through the very audit path whose durability the setting relaxes, so
+// an OS crash moments after startup could lose it. That is not a defect to
+// engineer around -- the event's purpose is to mark a WINDOW (every subsequent
+// boot re-marks it, and the setting is also reported live by /system/info and
+// `admin validate`), not to be the single unforgeable record of one instant.
+func auditDurableSyncSkippedStartup(store corestorage.Storage) {
+	ok := true
+	if err := store.LogAuditEvent(context.Background(), &models.AuditEvent{
+		EventType:   "admin.audit_durable_sync_skipped_at_startup",
+		Description: "server started with storage.database.insecure_audit_skip_durable_sync enabled -- audit commits no longer wait for a disk sync, so an OS crash or power loss can lose the most recent audit entries",
+		Success:     &ok,
+		ActorType:   core.ActorTypeSystem,
+		EventTime:   time.Now(),
+	}); err != nil {
+		log.Printf("note: could not record the audit-durable-sync-skipped startup event to the audit chain (%v)", err)
 	}
 }

@@ -53,6 +53,58 @@ const (
 	auditBusyRetryMaxDelay  = 500 * time.Millisecond
 )
 
+// applyAuditCommitDurability is the ONE place the ADR-112 Amendment 1 fast
+// audit mode (FASTAUDIT-1, docs/specs/fast-audit-mode.md) touches the
+// audit-commit path, and the ONLY implementation of the mode anywhere.
+//
+// POSTGRES ONLY. Callers must already have established that tx's dialect is
+// postgres. There is NO SQLite counterpart, and deliberately never was in a
+// shipped build: the mode is PostgreSQL-only (Andrei's decision, 2026-10-05)
+// and config validation REFUSES TO START a SQLite backend that sets the key
+// (internal/config's auditSkipDurableSyncSQLiteUnsupportedError), so a
+// SQLite-backed LocalStorage can never reach this function with skip == true.
+// SQLite's own DSN says `_synchronous=FULL` unconditionally and has no other
+// branch. See config.DatabaseConfig.InsecureAuditSkipDurableSync for the two
+// reasons SQLite was rejected (a per-connection pragma would relax every
+// table, not just audit; and the measured p99 got worse under concurrency).
+//
+// skip == false (the default, and the secure baseline) is a strict NO-OP: no
+// statement is issued at all, so the default path is byte-identical to what it
+// was before this setting existed — no extra round trip, nothing to regress,
+// and nothing that could accidentally override a cluster- or role-level
+// synchronous_commit an operator set deliberately.
+//
+// skip == true issues `SET LOCAL synchronous_commit = off`. Three properties
+// make this the right mechanism rather than a bigger one:
+//
+//   - SET LOCAL is TRANSACTION-scoped: it reverts at COMMIT/ROLLBACK, so it
+//     can never leak to the next transaction that borrows this pooled
+//     connection. That is what confines the relaxation to the audit
+//     transaction and leaves a concurrent secret WRITE committing durably.
+//   - synchronous_commit is evaluated AT COMMIT TIME, so setting it from
+//     inside the transaction is what actually takes effect for this
+//     transaction's commit (it is not a connect-time-only GUC).
+//   - The WAL record is still written, in order. Async commit removes the WAIT
+//     for the flush, not the write and not the ordering — which is exactly why
+//     a crash can only truncate the audit chain's TAIL and can never gap or
+//     fork it: recovery replays a valid PREFIX of a single totally-ordered WAL
+//     stream, so a surviving row's prev_hash always points at a row that also
+//     survived. A synchronous commit elsewhere flushes WAL up to its own LSN
+//     and therefore makes every EARLIER async commit durable too, so the
+//     inversion ("a later audit row survives while an earlier one is lost")
+//     has no mechanism by which to happen. See the spec §5 and
+//     TestFastAuditMode_PostgresCrashLosesOnlyATail.
+//
+// Not parameterised: the value is a fixed literal, never interpolated from
+// config or any request, so there is no injection surface here (SET does not
+// accept bind parameters in any case).
+func applyAuditCommitDurability(tx *gorm.DB, skip bool) error {
+	if !skip {
+		return nil
+	}
+	return tx.Exec("SET LOCAL synchronous_commit = off").Error
+}
+
 // isSQLiteBusyErr reports whether err looks like a SQLite writer-lock
 // contention error (SQLITE_BUSY / "database is locked"). Matches the
 // driver-native message text, the same approach isUniqueViolation already
@@ -261,6 +313,9 @@ func (ls *LocalStorage) logAuditEventDirect(ctx context.Context, event *models.A
 			// Cross-process serialization for multi-instance Postgres; no-op on SQLite.
 			if tx.Dialector.Name() == "postgres" {
 				if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(auditAdvisoryLockKey)).Error; err != nil {
+					return err
+				}
+				if err := applyAuditCommitDurability(tx, ls.auditSkipDurableSync); err != nil {
 					return err
 				}
 			}
@@ -500,6 +555,9 @@ func (ls *LocalStorage) commitBatchAttempt(ctx context.Context, batch []*auditBa
 	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if tx.Dialector.Name() == "postgres" {
 			if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(auditAdvisoryLockKey)).Error; err != nil {
+				return err
+			}
+			if err := applyAuditCommitDurability(tx, ls.auditSkipDurableSync); err != nil {
 				return err
 			}
 		}
