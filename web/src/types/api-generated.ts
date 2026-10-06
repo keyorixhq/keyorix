@@ -3612,7 +3612,7 @@ export interface paths {
         };
         /**
          * List user project memberships
-         * @description Return all project memberships for the specified user with their role and state in each project.
+         * @description Return every project the specified user is a member of, with their role(s) and the membership's onboarding state. "Member of a project" means the user holds a live role grant scoped to that project, directly or through a group — the same definition GET /api/v1/projects/{id}/members reports, so the two views agree. An install-wide grant (project 0) is not membership of any project and is never listed here, nor is an expired time-bound grant. `state` is the ADR-022 onboarding lifecycle state where an invite produced the membership, and `active` for a grant added directly via POST /api/v1/projects/{id}/members. `via_group` marks a membership held only through a group, which the project's own members list cannot remove.
          */
         get: operations["getUserMembershipsForUser"];
         put?: never;
@@ -12179,12 +12179,32 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope `data.memberships[]` with project_id, project_name, role, state. */
+            /** @description Envelope {data, message}. data.memberships is an array of {project_id, project_name, role, roles[], state, via_group}. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        data?: {
+                            memberships?: {
+                                project_id?: number;
+                                project_name?: string;
+                                /** @description The highest-privilege role the user holds at this project's scope. */
+                                role?: string;
+                                /** @description Every role the user holds at this project's scope, sorted. */
+                                roles?: string[];
+                                /**
+                                 * @description ADR-022 onboarding state; 'active' when the grant was added directly.
+                                 * @enum {string}
+                                 */
+                                state?: "invited" | "identity_verified" | "provisioned" | "active" | "revoked";
+                                /** @description True when the membership comes only from a group grant. */
+                                via_group?: boolean;
+                            }[];
+                        };
+                    };
+                };
             };
             401: components["responses"]["Error"];
         };
