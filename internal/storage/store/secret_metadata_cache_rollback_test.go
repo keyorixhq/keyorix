@@ -82,6 +82,8 @@ func TestGetLatestSecretVersion_RolledBackVersionIsNotServed(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []byte("COMMITTED"), got.EncryptedValue,
 		"a version row from a ROLLED-BACK transaction is being served: it was cached under the transaction's uncommitted aggregate, which the next committed version reproduced exactly")
+
+	requireRootStoreFillsAndHits(t, ctx, ls, created.ID, false, true, false)
 }
 
 // TestGetSecret_RolledBackUpdateIsNotServed is the node cache's form. The
@@ -124,6 +126,8 @@ func TestGetSecret_RolledBackUpdateIsNotServed(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "COMMITTED", got.Description,
 		"a secret row from a ROLLED-BACK transaction is being served under a tied updated_at")
+
+	requireRootStoreFillsAndHits(t, ctx, ls, created.ID, true, false, false)
 }
 
 // TestSecretMetadataCache_TransactionScopedStoreNeverTouchesTheSharedCache
@@ -166,6 +170,12 @@ func TestSecretMetadataCache_TransactionScopedStoreNeverTouchesTheSharedCache(t 
 	require.False(t, node, "GetSecret inside a transaction populated the shared node cache")
 	require.False(t, version, "GetLatestSecretVersion inside a transaction populated the shared version cache")
 	require.False(t, schedule, "GetSecretAccessSchedule inside a transaction populated the shared schedule cache")
+
+	// The three assertions above are all negative, and all three would hold if
+	// the cache simply did not work. Same three reads from the ROOT store must
+	// fill AND hit, which is what makes "the tx-scoped store did not" a fact
+	// about the transaction rather than about the feature.
+	requireRootStoreFillsAndHits(t, ctx, ls, created.ID, true, true, true)
 }
 
 // TestGetSecret_TwoUpdatesOnOneTimestampTickAreNotTied is the pure tie case
@@ -236,4 +246,50 @@ func TestGetSecretAccessSchedule_TwoWritesOnOneTimestampTickAreNotTied(t *testin
 	require.Equal(t, 10, got.EndHour,
 		"a closed read window is still serving the previous wide-open schedule: two schedule writes tied on updated_at")
 	require.Equal(t, "1", got.AllowedDays)
+}
+
+// requireRootStoreFillsAndHits is the anti-vacuity control for every test in
+// this file (coordinator review of #2764, item 5).
+//
+// All of these tests assert that something is NOT served from cache. Every one
+// of them therefore passes trivially if the cache is off — if cacheEnabled were
+// dropped, if the trigger probe went permanently false, if the whole feature
+// were reverted. A test that cannot distinguish "the bug is fixed" from "the
+// feature is gone" is not evidence for the fix.
+//
+// So each test also pins the positive direction on the SAME read: the root
+// store must FILL its cache and then HIT it. The hit is asserted through the
+// real read-path predicate (getCachedSecret/getCachedLatestVersion/
+// getCachedSchedule), not inferred from an entry existing — an entry whose
+// generation check fails is present and useless, which is precisely the state a
+// broken stamp would leave behind.
+func requireRootStoreFillsAndHits(t *testing.T, ctx context.Context, ls *LocalStorage, secretID uint, node, version, schedule bool) {
+	t.Helper()
+	if node {
+		if _, err := ls.GetSecret(ctx, secretID); err != nil {
+			t.Fatalf("root GetSecret: %v", err)
+		}
+		_, filled := ls.secretMetaCache.getNode(secretID)
+		require.True(t, filled, "the root store did not FILL the node cache — every not-served assertion in this test would pass with caching off")
+		_, hit := ls.getCachedSecret(ctx, secretID)
+		require.True(t, hit, "the root store filled the node cache but cannot HIT it: the stamp written on store does not validate on read, so the cache is dead weight and this test's negative assertions prove nothing")
+	}
+	if version {
+		if _, err := ls.GetLatestSecretVersion(ctx, secretID); err != nil {
+			t.Fatalf("root GetLatestSecretVersion: %v", err)
+		}
+		_, filled := ls.secretMetaCache.getVersion(secretID)
+		require.True(t, filled, "the root store did not FILL the version cache")
+		_, hit := ls.getCachedLatestVersion(ctx, secretID)
+		require.True(t, hit, "the root store filled the version cache but cannot HIT it")
+	}
+	if schedule {
+		if _, err := ls.GetSecretAccessSchedule(ctx, secretID); err != nil {
+			t.Fatalf("root GetSecretAccessSchedule: %v", err)
+		}
+		_, filled := ls.secretMetaCache.getSchedule(secretID)
+		require.True(t, filled, "the root store did not FILL the schedule cache")
+		_, hit := ls.getCachedSchedule(ctx, secretID)
+		require.True(t, hit, "the root store filled the schedule cache but cannot HIT it")
+	}
 }

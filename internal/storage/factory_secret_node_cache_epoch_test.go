@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -28,6 +30,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 )
 
 // cacheEpochOf reads the stamp directly, the same single-column PK lookup the
@@ -134,7 +137,13 @@ func TestSecretNodeCacheEpoch_FreshInstallAndUpgrade_Postgres(t *testing.T) {
 	require.NoError(t, admin.Exec("CREATE SCHEMA "+schema).Error)
 	t.Cleanup(func() { _ = admin.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE").Error })
 
-	db, err := gorm.Open(postgres.Open(dsn+" search_path="+schema), gormConfig())
+	// PGSearchPathDSN, not string concatenation: KEYORIX_TEST_PG_DSN is
+	// accepted in BOTH keyword ("host=... dbname=...") and URL
+	// ("postgres://...?sslmode=disable") form, and appending " search_path=x"
+	// to the URL form produces a DSN pgx refuses to parse (#1973). CI happens
+	// to set the keyword form, so concatenation passed there and failed the
+	// moment it met a URL-form DSN locally.
+	db, err := gorm.Open(postgres.Open(pgdsn.PGSearchPathDSN(dsn, schema)), gormConfig())
 	require.NoError(t, err)
 	f := &DefaultStorageFactory{}
 
@@ -249,4 +258,92 @@ func TestSecretNodeCacheEpoch_CreateStorageEntryPointCreatesIt(t *testing.T) {
 	db, err := gormOpenForTest(t, cfg.Storage.Database.Path)
 	require.NoError(t, err)
 	assertCacheEpochConverged(t, db, "CreateStorage entry point")
+}
+
+// TestSecretNodeCacheEpoch_ConcurrentEnsureOnPostgres is the Postgres half of
+// the lifecycle guarantee (coordinator review of #2764, item 1): the migration
+// must never expose a trigger-less window, and must never fail when two callers
+// run it at once.
+//
+// Postgres gets its own test rather than relying on the SQLite one because the
+// two dialects take genuinely different paths — Postgres replaces the FUNCTION
+// body with CREATE OR REPLACE and creates the trigger only when absent, SQLite
+// compares the stored CREATE text. A proof for one says nothing about the other.
+//
+// The window is what matters here: a replica SERVING traffic while another
+// replica boots is not serialised by withMigrationLock, so a write landing in a
+// trigger-less window does not bump cache_epoch and every warm entry for that
+// row is served stale forever.
+func TestSecretNodeCacheEpoch_ConcurrentEnsureOnPostgres(t *testing.T) {
+	dsn := os.Getenv("KEYORIX_TEST_PG_DSN")
+	if dsn == "" {
+		t.Skip("KEYORIX_TEST_PG_DSN not set — the Postgres trigger lifecycle is unverified in this run")
+	}
+	schema := fmt.Sprintf("cache_epoch_conc_%d", os.Getpid())
+	admin, err := gorm.Open(postgres.Open(dsn), gormConfig())
+	require.NoError(t, err)
+	require.NoError(t, admin.Exec("DROP SCHEMA IF EXISTS "+schema+" CASCADE").Error)
+	require.NoError(t, admin.Exec("CREATE SCHEMA "+schema).Error)
+	t.Cleanup(func() { _ = admin.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE").Error })
+
+	db, err := gorm.Open(postgres.Open(pgdsn.PGSearchPathDSN(dsn, schema)), gormConfig())
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}))
+	require.NoError(t, store.EnsureSecretNodeCacheEpoch(db))
+
+	const runners = 6
+	const observers = 3
+	var absent atomic.Int64
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	errs := make(chan error, runners)
+
+	for range observers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if !store.SecretNodeCacheEpochTriggerPresent(db) {
+					absent.Add(1)
+				}
+			}
+		}()
+	}
+	var runnerWG sync.WaitGroup
+	for range runners {
+		runnerWG.Add(1)
+		go func() {
+			defer runnerWG.Done()
+			if err := store.EnsureSecretNodeCacheEpoch(db); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	runnerWG.Wait()
+	close(stop)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err, "a concurrent EnsureSecretNodeCacheEpoch failed — the DROP+CREATE form failed here with \"trigger already exists\" when one runner's CREATE landed between another's DROP and CREATE")
+	}
+
+	require.Zero(t, absent.Load(),
+		"an observer saw secret_nodes with NO cache_epoch trigger on Postgres while the migration ran: in that window another replica's write does not bump the epoch, so every warm entry for that row is served stale forever")
+	require.True(t, store.SecretNodeCacheEpochTriggerPresent(db))
+
+	// And the trigger still works afterwards — "present" is not the same claim
+	// as "functioning", and a CREATE OR REPLACE of the function body could in
+	// principle leave a trigger pointing at something wrong.
+	s := &models.SecretNode{Name: "pg-conc", ProjectID: 1, EnvironmentID: 1}
+	require.NoError(t, db.Create(s).Error)
+	var before, after int64
+	require.NoError(t, db.Model(&models.SecretNode{}).Select("cache_epoch").Where("id = ?", s.ID).Row().Scan(&before))
+	require.NoError(t, db.Model(&models.SecretNode{}).Where("id = ?", s.ID).UpdateColumn("status", "suspended").Error)
+	require.NoError(t, db.Model(&models.SecretNode{}).Select("cache_epoch").Where("id = ?", s.ID).Row().Scan(&after))
+	require.Greater(t, after, before, "the trigger survived the concurrent migration but no longer bumps the epoch")
 }

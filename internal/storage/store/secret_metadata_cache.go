@@ -175,6 +175,17 @@ type secretScheduleCacheEntry struct {
 
 // secretMetadataCache is the whole cache: three independently
 // generation-checked maps, one per generation signal.
+//
+// EVERY method tolerates a nil receiver, and every one of them fails CLOSED
+// when it is nil: readers report a miss, writers and evictors no-op. A
+// transaction-derived store is built as a bare &LocalStorage{db: tx} literal in
+// several places (local_rbac.go's clone among them), which leaves this field
+// nil, and the evictors are reached from shared write paths regardless of
+// whether the store caches. Nil-safety here is the panic backstop only — the
+// POLICY that a tx-derived store must not read or write the cache is enforced
+// separately and structurally by TestCacheEnabled* in
+// secret_metadata_cache_guard_test.go, because a silent no-op is not a
+// substitute for a missing cacheEnabled check.
 type secretMetadataCache struct {
 	mu        sync.Mutex
 	nodes     map[uint]secretNodeCacheEntry
@@ -191,6 +202,9 @@ func newSecretMetadataCache() *secretMetadataCache {
 }
 
 func (c *secretMetadataCache) getNode(id uint) (secretNodeCacheEntry, bool) {
+	if c == nil {
+		return secretNodeCacheEntry{}, false
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.nodes[id]
@@ -198,12 +212,25 @@ func (c *secretMetadataCache) getNode(id uint) (secretNodeCacheEntry, bool) {
 }
 
 func (c *secretMetadataCache) setNode(id uint, generation nodeGeneration, node *models.SecretNode) {
+	if c == nil {
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.nodes[id] = secretNodeCacheEntry{generation: generation, node: node}
 }
 
+// evictNode and evictSchedule tolerate a nil receiver on purpose. A
+// transaction-derived store is built as a bare &LocalStorage{db: tx} literal in
+// several places (local_rbac.go's WithTransaction clone among them), which
+// leaves secretMetaCache nil — and those stores DO reach eviction, because
+// eviction is called from the shared write paths. Returning instead of
+// panicking is also the correct semantic, not just the safe one: a store with
+// no cache has nothing to evict.
 func (c *secretMetadataCache) evictNode(id uint) {
+	if c == nil {
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.nodes, id)
@@ -211,6 +238,9 @@ func (c *secretMetadataCache) evictNode(id uint) {
 }
 
 func (c *secretMetadataCache) getVersion(secretNodeID uint) (secretVersionCacheEntry, bool) {
+	if c == nil {
+		return secretVersionCacheEntry{}, false
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.versions[secretNodeID]
@@ -218,12 +248,18 @@ func (c *secretMetadataCache) getVersion(secretNodeID uint) (secretVersionCacheE
 }
 
 func (c *secretMetadataCache) setVersion(secretNodeID uint, generation versionsGeneration, version *models.SecretVersion) {
+	if c == nil {
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.versions[secretNodeID] = secretVersionCacheEntry{generation: generation, hasVersion: true, latestVersion: version}
 }
 
 func (c *secretMetadataCache) getSchedule(secretNodeID uint) (secretScheduleCacheEntry, bool) {
+	if c == nil {
+		return secretScheduleCacheEntry{}, false
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.schedules[secretNodeID]
@@ -231,42 +267,21 @@ func (c *secretMetadataCache) getSchedule(secretNodeID uint) (secretScheduleCach
 }
 
 func (c *secretMetadataCache) setSchedule(secretNodeID uint, e secretScheduleCacheEntry) {
+	if c == nil {
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.schedules[secretNodeID] = e
 }
 
 func (c *secretMetadataCache) evictSchedule(secretNodeID uint) {
+	if c == nil {
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.schedules, secretNodeID)
-}
-
-// liveNodeGeneration reads ONE column — secret_nodes.cache_epoch — for id,
-// applying the same soft-delete scope GetSecret itself relies on
-// (Model(&SecretNode{}) auto-scopes deleted_at IS NULL), so the whole stamp
-// check is a single indexed primary-key lookup of a single int64.
-//
-// Returns (zero, false, nil) when the row doesn't exist or is soft-deleted —
-// the caller treats that identically to a cache miss, which correctly falls
-// through to the live GetSecret call that will itself return
-// ErrRecordNotFound. Returns (zero, false, err) on any other DB error — the
-// fail-closed path: the caller must treat a generation-check error exactly
-// like a miss, never like "assume unchanged."
-//
-// Scanned into an anonymous struct, not models.SecretNode, because cache_epoch
-// is deliberately not a field on that model (see nodeGeneration).
-func liveNodeGeneration(ctx context.Context, db *gorm.DB, id uint) (nodeGeneration, bool, error) {
-	var row struct{ CacheEpoch int64 }
-	err := db.WithContext(ctx).Model(&models.SecretNode{}).
-		Select("cache_epoch").Where(sqlWhereID, id).Take(&row).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nodeGeneration{}, false, nil
-		}
-		return nodeGeneration{}, false, err
-	}
-	return nodeGeneration{cacheEpoch: row.CacheEpoch}, true, nil
 }
 
 // liveVersionsGeneration reads the aggregate generation of secretNodeID's

@@ -17,8 +17,10 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -31,10 +33,27 @@ const (
 	secretNodeCacheEpochFunc    = "keyorix_secret_nodes_bump_cache_epoch"
 )
 
+// postgresCacheEpochLockKey is this migration's own advisory-lock key. Distinct
+// from internal/storage's postgresMigrationLockKey (872341) on purpose — see
+// ensurePostgresCacheEpochTrigger.
+const postgresCacheEpochLockKey = 872342
+
+// sqliteCacheEpochTriggerSQL is the EXACT text of the SQLite trigger, kept as
+// one constant so the convergence check below can compare it byte-for-byte
+// against what sqlite_master recorded. SQLite stores a trigger's CREATE
+// statement verbatim, so an exact compare answers "is the installed body the
+// one this binary wants" with no SQL normalisation guesswork.
+const sqliteCacheEpochTriggerSQL = `CREATE TRIGGER ` + SecretNodeCacheEpochTrigger + `
+AFTER UPDATE ON secret_nodes FOR EACH ROW
+WHEN NEW.cache_epoch = OLD.cache_epoch
+BEGIN
+  UPDATE secret_nodes SET cache_epoch = OLD.cache_epoch + 1 WHERE id = NEW.id;
+END`
+
 // EnsureSecretNodeCacheEpoch adds secret_nodes.cache_epoch and the trigger that
-// bumps it on EVERY update to the row, on both backends. Idempotent: safe on a
-// fresh database and on one that already has both. A no-op if secret_nodes does
-// not exist yet.
+// bumps it on EVERY update to the row, on both backends. Idempotent, and —
+// load-bearing — it **never drops a trigger that is already correct**, and never
+// leaves the table trigger-less if anything fails.
 //
 // # Why a database trigger, and why no Go code owns this column
 //
@@ -53,79 +72,162 @@ const (
 //
 // A trigger has none of those holes: the database does it, so Save(),
 // Updates(), UpdateColumn() and raw SQL are covered identically, with no Go
-// code to forget and nothing for a new writer to opt into. Keeping the column
-// off models.SecretNode means no Go write can set it even by accident — and on
-// Postgres the BEFORE trigger overwrites whatever a client sent anyway.
+// code to forget and nothing for a new writer to opt into. The column is
+// read-only to GORM (models.SecretNode's `gorm:"<-:false"`) so no Go write can
+// set it even by accident — and on Postgres the BEFORE trigger overwrites
+// whatever a client sent anyway.
 //
-// # The two dialect forms, both load-bearing
+// # The lifecycle rule, and the bug that produced it
 //
-// Postgres: a BEFORE UPDATE trigger assigning NEW.cache_epoch directly.
+// This function originally did DROP TRIGGER IF EXISTS then CREATE TRIGGER, on
+// every boot, each as its own statement. That is wrong in two ways that only
+// show up in a replicated deployment, because a booting replica is not the only
+// replica:
 //
-// SQLite CANNOT do that — a SQLite trigger body may only run
-// INSERT/UPDATE/DELETE/SELECT, it cannot assign to NEW — so there it is an
-// AFTER UPDATE trigger issuing a nested single-row UPDATE. The
-// `WHEN NEW.cache_epoch = OLD.cache_epoch` guard is what stops that nested
-// write re-firing the trigger: the nested write changes cache_epoch, so the
-// guard is false for it. Deliberately NOT left to SQLite's recursive_triggers
-// pragma (off by default, but a pragma is not something a migration should
-// depend on).
+//   - Between the DROP and the CREATE there is a live window in which the table
+//     has NO trigger. Another replica serving traffic in that window updates a
+//     row without bumping cache_epoch, so every warm entry for that row stays
+//     "current" forever and serves pre-change data. The boot is serialised
+//     against other BOOTS (both call sites run inside withMigrationLock's
+//     advisory lock) but not against other replicas SERVING, which is the case
+//     that matters.
+//   - If the CREATE then fails — a permissions change, a disk error, a
+//     cancelled context — the table is left with no trigger at all while every
+//     warm replica carries on trusting its stamp.
 //
-// DROP then CREATE rather than CREATE IF NOT EXISTS: Postgres has no
-// CREATE TRIGGER IF NOT EXISTS before 14, and DROP+CREATE additionally
-// CONVERGES an install whose trigger body predates a change to it instead of
-// leaving the old body in place forever. Each statement is its own Exec because
-// neither driver is guaranteed to accept a multi-statement string.
+// So: all of it runs in ONE transaction (DDL is transactional on both backends),
+// and the normal path creates without dropping.
+//
+//   - Postgres: CREATE OR REPLACE FUNCTION updates the body atomically with no
+//     window at all, and because the body lives in the function the TRIGGER
+//     itself never needs replacing — it is created only when absent.
+//   - SQLite cannot put the body in a function, so convergence needs a compare:
+//     the installed CREATE text is read from sqlite_master and compared exactly
+//     against sqliteCacheEpochTriggerSQL. Equal means correct, and a correct
+//     trigger is left strictly alone. Only a DIFFERING body is replaced, and
+//     because that drop+create is inside the transaction, a failed create rolls
+//     the drop back — the old trigger survives rather than nothing surviving.
+//
+// SQLite's trigger body also cannot assign to NEW (a SQLite trigger body may
+// only run INSERT/UPDATE/DELETE/SELECT), hence the AFTER UPDATE form with a
+// nested single-row UPDATE. `WHEN NEW.cache_epoch = OLD.cache_epoch` is what
+// stops that nested write re-firing the trigger: the nested write changes
+// cache_epoch, so the guard is false for it. Deliberately NOT left to SQLite's
+// recursive_triggers pragma (off by default, but a pragma is not something a
+// migration should depend on).
+//
+// None of this makes the stamp trustworthy on its own — a database can lose its
+// trigger by means this function never sees (pg_restore --disable-triggers, a
+// schema-only restore, a bare AutoMigrate test fixture). That is why the READ
+// path re-proves the trigger's existence in the same query as the stamp; see
+// readLiveNodeStamp.
 func EnsureSecretNodeCacheEpoch(db *gorm.DB) error {
 	if !secretNodesTableExists(db) {
 		return nil
 	}
-	if !secretNodeCacheEpochColumnExists(db) {
-		// NOT NULL DEFAULT 0 so existing rows get a usable stamp immediately and
-		// no backfill pass is needed: a row reads as epoch 0 until its first
-		// update, which is a perfectly valid stamp — it only ever has to CHANGE
-		// when the row does.
-		if err := db.Exec("ALTER TABLE secret_nodes ADD COLUMN cache_epoch BIGINT NOT NULL DEFAULT 0").Error; err != nil {
-			return fmt.Errorf("failed to add secret_nodes.cache_epoch: %w", err)
+	isPostgres := db.Dialector.Name() == "postgres"
+	return db.Transaction(func(tx *gorm.DB) error {
+		if !secretNodeCacheEpochColumnExists(tx) {
+			// NOT NULL DEFAULT 0 so existing rows get a usable stamp immediately
+			// and no backfill pass is needed: a row reads as epoch 0 until its
+			// first update, which is a perfectly valid stamp — it only ever has to
+			// CHANGE when the row does.
+			if err := tx.Exec("ALTER TABLE secret_nodes ADD COLUMN cache_epoch BIGINT NOT NULL DEFAULT 0").Error; err != nil {
+				return fmt.Errorf("failed to add secret_nodes.cache_epoch: %w", err)
+			}
 		}
-	}
+		if isPostgres {
+			return ensurePostgresCacheEpochTrigger(tx)
+		}
+		return ensureSQLiteCacheEpochTrigger(tx)
+	})
+}
 
-	if db.Dialector.Name() == "postgres" {
-		// Dollar-quoted with a NAMED tag rather than bare $$, so the body can
-		// never be mistaken for a pgx $N placeholder.
-		if err := db.Exec(`CREATE OR REPLACE FUNCTION ` + secretNodeCacheEpochFunc + `() RETURNS trigger
+// ensurePostgresCacheEpochTrigger replaces the FUNCTION body atomically and
+// creates the TRIGGER only when it is absent, so a correct trigger is never
+// dropped and no trigger-less window exists.
+func ensurePostgresCacheEpochTrigger(tx *gorm.DB) error {
+	// Serialise concurrent callers before touching pg_proc.
+	//
+	// CREATE OR REPLACE FUNCTION is atomic with respect to READERS — there is no
+	// window in which the function is missing — but it is NOT safe against a
+	// concurrent replace of the same row: two of them race on the pg_proc tuple
+	// and one fails with "tuple concurrently updated" (SQLSTATE XX000), which
+	// aborts that replica's boot. Found by this fix's own Postgres concurrency
+	// test rather than reasoned about in advance; the SQLite path never showed
+	// it because its convergence compare short-circuits once the body matches.
+	//
+	// xact-scoped, so it releases on COMMIT or ROLLBACK with nothing to unlock
+	// by hand and no way to leak a lock onto a pooled connection. Its own key,
+	// distinct from internal/storage's postgresMigrationLockKey, because this
+	// runs INSIDE that lock at both production call sites and must not look like
+	// a re-entrant acquisition of it.
+	if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", postgresCacheEpochLockKey).Error; err != nil {
+		return fmt.Errorf("acquire cache_epoch migration advisory lock: %w", err)
+	}
+	// Dollar-quoted with a NAMED tag rather than bare $$, so the body can never
+	// be mistaken for a pgx $N placeholder.
+	if err := tx.Exec(`CREATE OR REPLACE FUNCTION ` + secretNodeCacheEpochFunc + `() RETURNS trigger
 LANGUAGE plpgsql AS $keyorix$
 BEGIN
   NEW.cache_epoch := OLD.cache_epoch + 1;
   RETURN NEW;
 END;
 $keyorix$`).Error; err != nil {
-			return fmt.Errorf("failed to create %s(): %w", secretNodeCacheEpochFunc, err)
-		}
-		if err := db.Exec("DROP TRIGGER IF EXISTS " + SecretNodeCacheEpochTrigger + " ON secret_nodes").Error; err != nil {
-			return fmt.Errorf("failed to drop %s: %w", SecretNodeCacheEpochTrigger, err)
-		}
-		// EXECUTE PROCEDURE, not EXECUTE FUNCTION: the latter is Postgres 11+
-		// only, while the former is still accepted (a documented synonym) by
-		// every version including 16 — so this works across the whole range.
-		if err := db.Exec("CREATE TRIGGER " + SecretNodeCacheEpochTrigger +
-			" BEFORE UPDATE ON secret_nodes FOR EACH ROW EXECUTE PROCEDURE " + secretNodeCacheEpochFunc + "()").Error; err != nil {
-			return fmt.Errorf("failed to create %s: %w", SecretNodeCacheEpochTrigger, err)
-		}
+		return fmt.Errorf("failed to create %s(): %w", secretNodeCacheEpochFunc, err)
+	}
+	if SecretNodeCacheEpochTriggerPresent(tx) {
+		// Already there, and its body is whatever the function now says. Nothing
+		// to drop, so no window and no risk.
 		return nil
 	}
-
-	if err := db.Exec("DROP TRIGGER IF EXISTS " + SecretNodeCacheEpochTrigger).Error; err != nil {
-		return fmt.Errorf("failed to drop %s: %w", SecretNodeCacheEpochTrigger, err)
-	}
-	if err := db.Exec(`CREATE TRIGGER ` + SecretNodeCacheEpochTrigger + `
-AFTER UPDATE ON secret_nodes FOR EACH ROW
-WHEN NEW.cache_epoch = OLD.cache_epoch
-BEGIN
-  UPDATE secret_nodes SET cache_epoch = OLD.cache_epoch + 1 WHERE id = NEW.id;
-END`).Error; err != nil {
+	// EXECUTE PROCEDURE, not EXECUTE FUNCTION: the latter is Postgres 11+ only,
+	// while the former is still accepted (a documented synonym) by every version
+	// including 16 — so this works across the whole range.
+	if err := tx.Exec("CREATE TRIGGER " + SecretNodeCacheEpochTrigger +
+		" BEFORE UPDATE ON secret_nodes FOR EACH ROW EXECUTE PROCEDURE " + secretNodeCacheEpochFunc + "()").Error; err != nil {
 		return fmt.Errorf("failed to create %s: %w", SecretNodeCacheEpochTrigger, err)
 	}
 	return nil
+}
+
+// ensureSQLiteCacheEpochTrigger leaves a byte-identical trigger untouched and
+// replaces a differing one inside the caller's transaction.
+func ensureSQLiteCacheEpochTrigger(tx *gorm.DB) error {
+	installed, present, err := sqliteCacheEpochTriggerBody(tx)
+	if err != nil {
+		return err
+	}
+	if present && installed == sqliteCacheEpochTriggerSQL {
+		return nil
+	}
+	if present {
+		// The body differs from what this binary wants, so it has to go — but
+		// only now that we know that, and only inside the transaction, so a
+		// failing CREATE below rolls this back and the old trigger survives.
+		if err := tx.Exec("DROP TRIGGER " + SecretNodeCacheEpochTrigger).Error; err != nil {
+			return fmt.Errorf("failed to drop outdated %s: %w", SecretNodeCacheEpochTrigger, err)
+		}
+	}
+	if err := tx.Exec(sqliteCacheEpochTriggerSQL).Error; err != nil {
+		return fmt.Errorf("failed to create %s: %w", SecretNodeCacheEpochTrigger, err)
+	}
+	return nil
+}
+
+// sqliteCacheEpochTriggerBody returns the CREATE text sqlite_master recorded for
+// the trigger, and whether it exists at all.
+func sqliteCacheEpochTriggerBody(tx *gorm.DB) (string, bool, error) {
+	var rows []string
+	if err := tx.Raw(
+		"SELECT COALESCE(sql, '') FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+		SecretNodeCacheEpochTrigger).Scan(&rows).Error; err != nil {
+		return "", false, fmt.Errorf("failed to read %s definition: %w", SecretNodeCacheEpochTrigger, err)
+	}
+	if len(rows) == 0 {
+		return "", false, nil
+	}
+	return rows[0], true, nil
 }
 
 // SecretNodeCacheEpochTriggerPresent reports whether the cache_epoch trigger
@@ -216,20 +318,120 @@ func secretNodeCacheEpochColumnExists(db *gorm.DB) bool {
 
 // nodeStampProbe caches the one-shot answer to "does this database maintain
 // cache_epoch". One query per LocalStorage, resolved on first use.
+// nodeStampReprobeInterval bounds how long a store will keep STORING entries
+// after the trigger has gone away. It deliberately does not bound how long a
+// stale entry can be SERVED — that is zero, because the read path re-proves the
+// trigger in the same query as the stamp (readLiveNodeStamp). See
+// nodeStampTrusted.
+const nodeStampReprobeInterval = 30 * time.Second
+
+// nodeStampProbe is the WRITE-side trust cache: one catalog query per store per
+// nodeStampReprobeInterval, rather than one per read.
+//
+// It was a sync.Once, and that was the bug the coordinator caught: a store that
+// probed once at boot kept trusting the stamp for its whole lifetime, so a
+// trigger that disappeared afterwards (another replica's migration, a restore,
+// a manual DROP) left every warm replica serving pre-change rows indefinitely.
+// A time-bounded re-probe closes the write side; the read side is closed
+// outright, per-read, with no window at all.
 type nodeStampProbe struct {
-	once    sync.Once
-	trusted bool
+	mu        sync.Mutex
+	checkedAt time.Time
+	checked   bool
+	trusted   bool
 }
 
-// nodeStampTrusted reports whether this store may use the node read-path cache.
+// nodeStampTrusted reports whether this store may STORE node cache entries.
 // Fail-closed on every uncertainty: a derived store (nil probe) never trusts
 // it, and a database with no trigger never does either.
+//
+// # What this is NOT load-bearing for
+//
+// Correctness does not rest on this answer being fresh, and saying so is the
+// point: a stale `true` can only cause a pointless store — never a stale HIT —
+// because every read re-proves the trigger's existence in the same query that
+// reads the stamp, and refuses to hit when it is absent (readLiveNodeStamp,
+// and getCachedSecret's use of its `trusted` result). A stale `false` only
+// costs a window of not caching. So the re-probe interval is a cost knob, not
+// a safety one, which is why 30s is a number and not an argument.
 func (ls *LocalStorage) nodeStampTrusted() bool {
 	if ls.nodeStampProbe == nil {
 		return false
 	}
-	ls.nodeStampProbe.once.Do(func() {
-		ls.nodeStampProbe.trusted = SecretNodeCacheEpochTriggerPresent(ls.db)
-	})
-	return ls.nodeStampProbe.trusted
+	p := ls.nodeStampProbe
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.checked && time.Since(p.checkedAt) < nodeStampReprobeInterval {
+		return p.trusted
+	}
+	p.trusted = SecretNodeCacheEpochTriggerPresent(ls.db)
+	p.checkedAt = time.Now()
+	p.checked = true
+	return p.trusted
+}
+
+// nodeStampRead is one read of the node generation signal: the stamp, whether
+// the row exists at all, and — in the SAME query — whether the trigger that
+// maintains the stamp still exists.
+type nodeStampRead struct {
+	generation nodeGeneration
+	found      bool
+	// trusted is false when the cache_epoch trigger is absent, which makes the
+	// stamp a frozen constant and therefore meaningless. A caller seeing
+	// trusted=false must treat the read as a permanent miss: never hit, never
+	// store.
+	trusted bool
+}
+
+// readLiveNodeStamp reads secret_nodes.cache_epoch for id AND proves the trigger
+// still exists, in ONE query and therefore at ONE snapshot.
+//
+// # Why the trigger check lives here and not in a separate probe
+//
+// A generation stamp is only a stamp because something moves it. A database
+// with the COLUMN but no TRIGGER has a stamp frozen at 0 forever, so every
+// cache hit serves the row as it was when first read — indefinitely, with no
+// error and no symptom. Three ways that happens for real:
+//
+//   - A Postgres restore that omits triggers: pg_restore --disable-triggers, a
+//     schema-only restore, or a dump loaded into a database whose migration has
+//     not run yet all leave the column (it is a plain column) without the
+//     trigger.
+//   - Any test schema built with a bare db.AutoMigrate(). The column is a model
+//     field so AutoMigrate creates it; the trigger is not, so it does not.
+//   - An operator or a migration dropping it while replicas are warm.
+//
+// Checking it once per store cannot cover the third case, and covers the first
+// two only if the trigger was already missing at boot. Asking in the same query
+// as the stamp covers all three with no window: the answer is as of the same
+// snapshot as the epoch it is validating, and it costs no extra round trip.
+//
+// The soft-delete scope is written out explicitly (deleted_at IS NULL) because
+// this is raw SQL and therefore does not get GORM's Model() auto-scope — the
+// same scope GetSecret itself relies on, so a soft-deleted row reads as
+// not-found here exactly as it does there.
+func readLiveNodeStamp(ctx context.Context, db *gorm.DB, id uint) (nodeStampRead, error) {
+	triggerExists := "EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?)"
+	if db.Dialector.Name() == "postgres" {
+		triggerExists = "EXISTS (SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgname = ?)"
+	}
+	var rows []struct {
+		CacheEpoch     int64
+		TriggerPresent bool
+	}
+	q := "SELECT n.cache_epoch AS cache_epoch, " + triggerExists +
+		" AS trigger_present FROM secret_nodes n WHERE n.id = ? AND n.deleted_at IS NULL"
+	if err := db.WithContext(ctx).Raw(q, SecretNodeCacheEpochTrigger, id).Scan(&rows).Error; err != nil {
+		return nodeStampRead{}, err
+	}
+	if len(rows) == 0 {
+		// No row (or soft-deleted). Treated as a miss by every caller, so the
+		// trigger's state is irrelevant and deliberately not reported.
+		return nodeStampRead{}, nil
+	}
+	return nodeStampRead{
+		generation: nodeGeneration{cacheEpoch: rows[0].CacheEpoch},
+		found:      true,
+		trusted:    rows[0].TriggerPresent,
+	}, nil
 }

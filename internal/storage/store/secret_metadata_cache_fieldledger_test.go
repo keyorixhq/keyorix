@@ -25,6 +25,8 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -406,4 +408,192 @@ func TestSecretNodeCacheEpoch_AbsentTriggerDisablesTheNodeCache(t *testing.T) {
 	require.NoError(t, err)
 	_, cached = trusted.secretMetaCache.getNode(created.ID)
 	require.True(t, cached, "with the trigger in place the node cache must be used again")
+}
+
+// TestSecretNodeCacheEpoch_TriggerDroppedWhileWarmIsAMissNotAStaleHit is the
+// blocker's behavioural proof (coordinator review of #2764, item 1).
+//
+// The original design probed for the trigger ONCE per store. That is fine for a
+// database that never had one, and useless for the case that actually bites: a
+// warm replica whose trigger disappears underneath it — another replica's
+// migration dropping and re-creating it, a restore, an operator's DROP. With a
+// one-shot probe that store keeps trusting a stamp that can no longer move, so
+// every entry it already holds is served forever, with no error.
+//
+// So the assertion is specifically "the next read is a MISS", not "the probe
+// returns false": a stale hit is the symptom, and it is the only thing that
+// distinguishes a fail-closed read path from a probe that merely looks right.
+func TestSecretNodeCacheEpoch_TriggerDroppedWhileWarmIsAMissNotAStaleHit(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{},
+		&models.SecretAccessSchedule{}, &models.ShareRecord{}, &models.SecretACL{}))
+	require.NoError(t, EnsureSecretNodeCacheEpoch(db))
+
+	ls := NewLocalStorage(db)
+	created, err := ls.CreateSecret(ctx, &models.SecretNode{
+		Name: "warm-then-trigger-dropped", ProjectID: 1, EnvironmentID: 1, Status: "active",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+
+	// Warm the entry while the trigger is healthy, and confirm it really is warm
+	// — otherwise the "miss" asserted below would be a miss for the wrong reason.
+	warm, err := ls.GetSecret(ctx, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, "active", warm.Status)
+	_, cached := ls.secretMetaCache.getNode(created.ID)
+	require.True(t, cached, "the entry must be warm, or this test proves nothing about a stale HIT")
+
+	// The trigger vanishes underneath the warm store. Note the store is NOT
+	// rebuilt: this is the same long-lived *LocalStorage a replica serves from.
+	require.NoError(t, db.Exec("DROP TRIGGER "+SecretNodeCacheEpochTrigger).Error)
+	require.False(t, SecretNodeCacheEpochTriggerPresent(db))
+
+	// A hook-bypassing write that the (now absent) trigger would have stamped.
+	// cache_epoch therefore does NOT move, so the warm entry's stamp still
+	// matches and a stamp-only check would hit and serve the stale row.
+	require.NoError(t, db.Model(&models.SecretNode{}).Where("id = ?", created.ID).
+		UpdateColumn("status", "suspended").Error)
+
+	var epoch int64
+	require.NoError(t, db.Model(&models.SecretNode{}).Select("cache_epoch").
+		Where("id = ?", created.ID).Row().Scan(&epoch))
+	require.Equal(t, warm.CacheEpoch, epoch,
+		"precondition: with the trigger gone the epoch must be FROZEN — if it moved, the stamp alone would have caught this and the test would not be about fail-closed behaviour")
+
+	got, err := ls.GetSecret(ctx, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, "suspended", got.Status,
+		"a warm entry was served after its trigger was dropped: the read path trusted a frozen stamp")
+}
+
+// TestSecretNodeCacheEpoch_ConcurrentEnsureNeverLeavesTheTableTriggerless is the
+// other half of item 1: the migration must be safe to run while other callers
+// run it too, and must never pass through a trigger-less state.
+//
+// The DROP-then-CREATE version could fail this in two ways — an observer
+// catching the window between the two statements, and two concurrent runs where
+// one's DROP lands between the other's DROP and CREATE. Both call sites in
+// production hold withMigrationLock's advisory lock, so this is defence in
+// depth rather than the primary protection; it exists because the lock is not
+// what makes the function correct, and a reader of the function should not have
+// to know about the lock to trust it.
+func TestSecretNodeCacheEpoch_ConcurrentEnsureNeverLeavesTheTableTriggerless(t *testing.T) {
+	t.Parallel()
+	db := concurrentDB(t)
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}))
+	require.NoError(t, EnsureSecretNodeCacheEpoch(db))
+
+	const runners = 8
+	const observers = 4
+	var absent atomic.Int64
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	errs := make(chan error, runners)
+
+	for range observers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if !SecretNodeCacheEpochTriggerPresent(db) {
+					absent.Add(1)
+				}
+			}
+		}()
+	}
+	for range runners {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := EnsureSecretNodeCacheEpoch(db); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	// The runners finish on their own; the observers run until told to stop.
+	wgRunnersDone := make(chan struct{})
+	go func() { wg.Wait(); close(wgRunnersDone) }()
+	time.Sleep(150 * time.Millisecond)
+	close(stop)
+	<-wgRunnersDone
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	require.Zero(t, absent.Load(),
+		"an observer saw secret_nodes with NO cache_epoch trigger while EnsureSecretNodeCacheEpoch ran: that is the window in which another replica's write does not bump the epoch, so every warm entry for that row is served stale forever")
+	require.True(t, SecretNodeCacheEpochTriggerPresent(db))
+}
+
+// TestSecretNodeCacheEpoch_EnsureLeavesACorrectTriggerUntouched pins the
+// "never drop a correct trigger" half directly, rather than inferring it from
+// the absence of a window: re-running the migration must not even touch a
+// trigger whose body already matches.
+func TestSecretNodeCacheEpoch_EnsureLeavesACorrectTriggerUntouched(t *testing.T) {
+	t.Parallel()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}))
+	require.NoError(t, EnsureSecretNodeCacheEpoch(db))
+
+	before, present, err := sqliteCacheEpochTriggerBody(db)
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Equal(t, sqliteCacheEpochTriggerSQL, before,
+		"the installed body must be byte-identical to the constant, or the convergence compare can never say 'already correct' and every boot would replace the trigger")
+
+	require.NoError(t, EnsureSecretNodeCacheEpoch(db))
+	after, present, err := sqliteCacheEpochTriggerBody(db)
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Equal(t, before, after)
+}
+
+// TestSecretNodeCacheEpoch_EnsureConvergesAnOutdatedTriggerBody is the other
+// direction of the same compare: a trigger whose body does NOT match must be
+// replaced, or an install that predates a change to the body keeps the old one
+// forever. Without this, "never drop a correct trigger" would have been
+// satisfiable by never dropping anything at all.
+func TestSecretNodeCacheEpoch_EnsureConvergesAnOutdatedTriggerBody(t *testing.T) {
+	t.Parallel()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}))
+
+	// An "old" trigger under the right name with a body that does nothing useful.
+	require.NoError(t, db.Exec(`CREATE TRIGGER `+SecretNodeCacheEpochTrigger+`
+AFTER UPDATE ON secret_nodes FOR EACH ROW
+BEGIN
+  SELECT 1;
+END`).Error)
+	stale, present, err := sqliteCacheEpochTriggerBody(db)
+	require.NoError(t, err)
+	require.True(t, present)
+	require.NotEqual(t, sqliteCacheEpochTriggerSQL, stale)
+
+	require.NoError(t, EnsureSecretNodeCacheEpoch(db))
+	got, present, err := sqliteCacheEpochTriggerBody(db)
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Equal(t, sqliteCacheEpochTriggerSQL, got,
+		"an outdated trigger body was left in place: the convergence compare is not replacing a WRONG trigger, only refusing to replace a right one")
+
+	// And it must actually work now.
+	s := &models.SecretNode{Name: "converged", ProjectID: 1, EnvironmentID: 1}
+	require.NoError(t, db.Create(s).Error)
+	var before, after int64
+	require.NoError(t, db.Model(&models.SecretNode{}).Select("cache_epoch").Where("id = ?", s.ID).Row().Scan(&before))
+	require.NoError(t, db.Model(&models.SecretNode{}).Where("id = ?", s.ID).UpdateColumn("status", "suspended").Error)
+	require.NoError(t, db.Model(&models.SecretNode{}).Select("cache_epoch").Where("id = ?", s.ID).Row().Scan(&after))
+	require.Greater(t, after, before)
 }

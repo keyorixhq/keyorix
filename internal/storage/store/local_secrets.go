@@ -528,6 +528,8 @@ func (ls *LocalStorage) GetSecret(ctx context.Context, id uint) (*models.SecretN
 	var secret models.SecretNode
 	if err := ls.db.WithContext(ctx).First(&secret, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// Nil-safe by construction: a tx-derived store (&LocalStorage{db: tx})
+			// has no cache, and eviction on one is a no-op, not a panic.
 			ls.secretMetaCache.evictNode(id)
 			return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
 		}
@@ -554,15 +556,22 @@ func (ls *LocalStorage) GetSecret(ctx context.Context, id uint) (*models.SecretN
 // miss. Callers must treat false exactly like a cold cache — do the full live
 // read.
 func (ls *LocalStorage) getCachedSecret(ctx context.Context, id uint) (*models.SecretNode, bool) {
-	if !ls.cacheEnabled || !ls.nodeStampTrusted() {
+	if !ls.cacheEnabled {
 		return nil, false
 	}
 	cached, ok := ls.secretMetaCache.getNode(id)
 	if !ok || cached.node == nil {
 		return nil, false
 	}
-	liveGen, found, err := liveNodeGeneration(ctx, ls.db, id)
-	if err != nil || !found || liveGen != cached.generation {
+	// stamp.trusted is the fail-closed half, and it is read in the SAME query as
+	// the epoch: if the cache_epoch trigger has gone away since this entry was
+	// stored, the epoch is a frozen constant and would compare equal forever, so
+	// an untrusted read is a miss no matter what the numbers say. Deliberately
+	// NOT ls.nodeStampTrusted() here — that answer is per-store and
+	// time-bounded, which is fine for deciding whether to STORE but would leave
+	// a window on the serving path.
+	stamp, err := readLiveNodeStamp(ctx, ls.db, id)
+	if err != nil || !stamp.found || !stamp.trusted || stamp.generation != cached.generation {
 		return nil, false
 	}
 	cp := *cached.node
