@@ -116,15 +116,13 @@ var fullRowOverwriteMethods = map[string]bool{
 	// SetWebAuthnCredentialCounterState). Same reasoning, and the
 	// replacements take an id plus scalars or a field struct, never a
 	// caller-built *models.X.
-	"UpdateRole":                 true,
-	"UpdateBreakGlassActivation": true,
-	"UpdateProject":              true,
-	"UpdateLegalHold":            true,
-	"UpdateDynamicSecretConfig":  true,
-	"UpdateDynamicSecretLease":   true,
-	"UpdateSecret":               true,
-	"UpdateUser":                 true,
-	"SaveAnomalyConfig":          true,
+	"UpdateProject":             true,
+	"UpdateLegalHold":           true,
+	"UpdateDynamicSecretConfig": true,
+	"UpdateDynamicSecretLease":  true,
+	"UpdateSecret":              true,
+	"UpdateUser":                true,
+	"SaveAnomalyConfig":         true,
 }
 
 // fullRowOverwriteAllowlist is the exhaustive, reasoned inventory of every
