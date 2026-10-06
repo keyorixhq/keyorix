@@ -263,7 +263,21 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 		// what the middleware is trusted to have done.
 		secret = middleware.GetResolvedSecretFromContext(r.Context())
 		if secret == nil || secret.ID != uint(id) {
+			// Fail closed: the scoped-permission middleware did not authorize
+			// THIS path id (it resolved nothing, or a different secret), so
+			// re-authorize the machine principal against the path secret's own
+			// scope before serving anything. core.GetSecret itself performs no
+			// authorization; the previous fallback served the path secret
+			// unchecked.
 			secret, err = h.coreService.GetSecret(r.Context(), uint(id))
+			if err == nil {
+				allowed, aerr := h.coreService.AuthorizeSecretPrincipalForSecret(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), secret, permSecretsRead)
+				if aerr != nil || !allowed {
+					log.Printf("SECURITY: GetSecret machine branch: path secret %d not authorized for principal %d after resolved-secret mismatch", id, userCtx.PrincipalID())
+					h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
+					return
+				}
+			}
 		}
 	} else {
 		secret, err = h.coreService.GetSecretWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
