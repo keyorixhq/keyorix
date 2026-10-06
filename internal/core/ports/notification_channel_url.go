@@ -50,10 +50,14 @@ const (
 // Absent is never written (an absent URL is an empty column, so that an
 // upgrading install's NULL and a deliberately-empty value read back
 // identically).
+// Written as a single append onto a one-byte literal rather than
+// make([]byte, 0, len(payload)+1): the explicit capacity arithmetic tripped
+// CodeQL's go/allocation-size-overflow (high) on this PR. The overflow is not
+// actually reachable — len() of a real slice cannot be within one of MaxInt —
+// but the arithmetic bought nothing, so removing it is simpler code AND a
+// genuinely closed finding rather than a dismissed one.
 func WrapNotificationChannelURL(tag byte, payload []byte) []byte {
-	out := make([]byte, 0, len(payload)+1)
-	out = append(out, tag)
-	return append(out, payload...)
+	return append([]byte{tag}, payload...)
 }
 
 // UnwrapNotificationChannelURL splits a stored url_enc value into its format
