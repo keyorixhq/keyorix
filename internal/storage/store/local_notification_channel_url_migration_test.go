@@ -82,8 +82,11 @@ func TestMigrateNotificationChannelURLsToEncrypted_NoEncryptor_CopiesThrough(t *
 
 	got, err := ls.GetNotificationChannel(ctx, id)
 	require.NoError(t, err)
-	assert.Equal(t, []byte("https://hooks.example.com/legacy-1"), got.URLEnc,
-		"with no encryptor wired, the legacy plaintext is copied through as-is -- the same passthrough encryptAuthSecret itself uses")
+	tag, payload, err := ports.UnwrapNotificationChannelURL(got.URLEnc)
+	require.NoError(t, err)
+	assert.Equal(t, ports.NotificationChannelURLTagPlaintext, tag,
+		"with no encryptor wired the legacy plaintext is passed through -- but TAGGED as plaintext (#2468), so the read path and the rotation sweep never have to guess whether these bytes are an envelope")
+	assert.Equal(t, "https://hooks.example.com/legacy-1", string(payload))
 	assert.Empty(t, got.URLMeta)
 
 	var legacyURL string
@@ -107,11 +110,14 @@ func TestMigrateNotificationChannelURLsToEncrypted_WithEncryptor_EncryptsAndRoun
 
 	got, err := ls.GetNotificationChannel(ctx, id)
 	require.NoError(t, err)
-	assert.NotEqual(t, []byte("https://hooks.example.com/legacy-2"), got.URLEnc,
+	tag, payload, err := ports.UnwrapNotificationChannelURL(got.URLEnc)
+	require.NoError(t, err)
+	require.Equal(t, ports.NotificationChannelURLTagEncrypted, tag)
+	assert.NotContains(t, string(payload), "hooks.example.com",
 		"with a real encryptor wired, url_enc must hold ciphertext, not the plaintext bytes verbatim")
 	assert.NotEmpty(t, got.URLMeta)
 
-	plain, err := enc.DecryptSecretWithAAD(got.URLEnc, ports.NotificationChannelURLAAD(id))
+	plain, err := enc.DecryptSecretWithAAD(payload, ports.NotificationChannelURLAAD(id))
 	require.NoError(t, err)
 	assert.Equal(t, "https://hooks.example.com/legacy-2", string(plain),
 		"the migrated ciphertext must decrypt back to the original legacy URL under the channel's own AAD")
@@ -141,18 +147,22 @@ func TestMigrateNotificationChannelURLsToEncrypted_Idempotent(t *testing.T) {
 
 	got, err := ls.GetNotificationChannel(ctx, id)
 	require.NoError(t, err)
-	assert.Equal(t, []byte("https://hooks.example.com/legacy-3"), got.URLEnc)
-	_ = id
+	tag, payload, err := ports.UnwrapNotificationChannelURL(got.URLEnc)
+	require.NoError(t, err)
+	assert.Equal(t, ports.NotificationChannelURLTagPlaintext, tag)
+	assert.Equal(t, "https://hooks.example.com/legacy-3", string(payload))
 }
 
 func TestMigrateNotificationChannelURLsToEncrypted_SkipsAlreadyEncryptedRow(t *testing.T) {
 	ls := newNotificationChannelTestStore(t)
 	ctx := context.Background()
 
-	// A channel created the normal way post-#2433 already has url_enc set and
-	// no legacy plaintext at all -- the migration's selection query must not
-	// touch it.
-	ch := &models.NotificationChannel{Name: "already-encrypted", Type: "webhook", Enabled: true, URLEnc: []byte("ciphertext-bytes")}
+	// A channel created the normal way post-#2433 already carries an
+	// envelope-tagged url_enc and no legacy plaintext at all -- the migration
+	// must leave it alone. Re-keying an envelope is the DEK-rotation sweep's
+	// job, not this backfill's.
+	stored := ports.WrapNotificationChannelURL(ports.NotificationChannelURLTagEncrypted, []byte("ciphertext-bytes"))
+	ch := &models.NotificationChannel{Name: "already-encrypted", Type: "webhook", Enabled: true, URLEnc: stored}
 	require.NoError(t, ls.CreateNotificationChannel(ctx, ch))
 
 	n, err := ls.MigrateNotificationChannelURLsToEncrypted(ctx, nil)
@@ -161,7 +171,24 @@ func TestMigrateNotificationChannelURLsToEncrypted_SkipsAlreadyEncryptedRow(t *t
 
 	got, err := ls.GetNotificationChannel(ctx, ch.ID)
 	require.NoError(t, err)
-	assert.Equal(t, []byte("ciphertext-bytes"), got.URLEnc, "an already-migrated row must be left untouched")
+	assert.Equal(t, stored, got.URLEnc, "an already-migrated row must be left untouched")
+}
+
+// TestMigrateNotificationChannelURLsToEncrypted_UnknownFormatTagFailsLoudly
+// pins the codec's fail-closed contract at the migration boundary: a row whose
+// url_enc carries a format byte this binary does not know is an error, not a
+// row to quietly skip. Skipping would leave a row the read path ALSO refuses,
+// with nothing anywhere recording that the backfill saw it and gave up.
+func TestMigrateNotificationChannelURLsToEncrypted_UnknownFormatTagFailsLoudly(t *testing.T) {
+	ls := newNotificationChannelTestStore(t)
+	ctx := context.Background()
+
+	ch := &models.NotificationChannel{Name: "from-the-future", Type: "webhook", Enabled: true, URLEnc: []byte{0x7f, 'x'}}
+	require.NoError(t, ls.CreateNotificationChannel(ctx, ch))
+
+	_, err := ls.MigrateNotificationChannelURLsToEncrypted(ctx, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unrecognised at-rest format tag")
 }
 
 func TestMigrateNotificationChannelURLsToEncrypted_NoLegacyRows_NoOp(t *testing.T) {

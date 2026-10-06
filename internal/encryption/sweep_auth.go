@@ -345,23 +345,47 @@ func sweepNotificationChannels(tx *gorm.DB, oldSvc *EncryptionService, newSvc *E
 	}
 	swept, legacyUpgraded := 0, 0
 	for _, row := range rows {
-		if len(row.URLEnc) == 0 {
-			continue
-		}
-		encrypted, err := DeserializeEncryptedData(row.URLEnc)
+		// url_enc is self-describing (#2468). Unlike the sibling sweeps above,
+		// this column can legitimately hold a PLAINTEXT passthrough value --
+		// notification channels, alone among the encrypted auth-secret columns,
+		// have no write path that refuses when encryption is off, because they
+		// predate encryption here. The format tag is what tells the two apart;
+		// before it existed, this loop handed those plaintext bytes to
+		// DeserializeEncryptedData and returned an error, which SweepAllTables
+		// propagates -- hard-failing the DEK rotation for every table, not just
+		// this one, on an install that had ever run with encryption off.
+		tag, payload, err := NotificationChannelURLUnwrap(row.URLEnc)
 		if err != nil {
-			return swept, legacyUpgraded, fmt.Errorf("failed to deserialize notification_channel id=%d: %w", row.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("notification_channel id=%d: %w", row.ID, err)
 		}
 		aad := NotificationChannelURLAAD(row.ID)
-		isLegacy := encrypted.Metadata.AADVersion == ""
 		var plaintext []byte
-		if isLegacy {
-			plaintext, err = oldSvc.Decrypt(encrypted)
-		} else {
-			plaintext, err = oldSvc.DecryptWithAAD(encrypted, aad)
-		}
-		if err != nil {
-			return swept, legacyUpgraded, fmt.Errorf("failed to decrypt notification_channel id=%d: %w", row.ID, err)
+		isLegacy := false
+		switch tag {
+		case NotificationChannelURLTagAbsent:
+			continue
+		case NotificationChannelURLTagPlaintext:
+			// A row still awaiting the startup backfill's off->on upgrade. A
+			// rotation only happens with encryption ON, so encrypting it here
+			// under the NEW key is both correct and the stronger outcome: the
+			// sweep's contract is that every row is under newKeyVersion
+			// afterwards, and leaving this one in plaintext would break that
+			// silently.
+			plaintext = append([]byte(nil), payload...)
+		default: // NotificationChannelURLTagEncrypted
+			encrypted, derr := DeserializeEncryptedData(payload)
+			if derr != nil {
+				return swept, legacyUpgraded, fmt.Errorf("failed to deserialize notification_channel id=%d: %w", row.ID, derr)
+			}
+			isLegacy = encrypted.Metadata.AADVersion == ""
+			if isLegacy {
+				plaintext, derr = oldSvc.Decrypt(encrypted)
+			} else {
+				plaintext, derr = oldSvc.DecryptWithAAD(encrypted, aad)
+			}
+			if derr != nil {
+				return swept, legacyUpgraded, fmt.Errorf("failed to decrypt notification_channel id=%d: %w", row.ID, derr)
+			}
 		}
 		newEncrypted, err := newSvc.EncryptWithAAD(plaintext, newKeyVersion, aad)
 		wipeBytes(plaintext)
@@ -378,7 +402,7 @@ func sweepNotificationChannels(tx *gorm.DB, oldSvc *EncryptionService, newSvc *E
 		}
 		if !dryRun {
 			if err := tx.Model(&models.NotificationChannel{}).Where(sqlWhereID, row.ID).Updates(map[string]interface{}{
-				"url_enc":  newBytes,
+				"url_enc":  NotificationChannelURLWrap(NotificationChannelURLTagEncrypted, newBytes),
 				"url_meta": metaBytes,
 			}).Error; err != nil {
 				return swept, legacyUpgraded, fmt.Errorf("failed to update notification_channel id=%d: %w", row.ID, err)

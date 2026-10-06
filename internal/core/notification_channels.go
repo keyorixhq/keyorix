@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/ports"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -33,17 +34,6 @@ const (
 	EventNotificationChannelUpdated = "notification_channel.updated"
 	EventNotificationChannelDeleted = "notification_channel.deleted"
 )
-
-// insertNotificationChannelRow performs CreateNotificationChannel's raw
-// storage insert. Factored out so the atomicity guard's per-function literal
-// call-site count doesn't see this write AND the later encrypt-and-persist
-// UpdateNotificationChannel write in the SAME function body (#2433) -- see
-// CreateNotificationChannel's own comment for why these two writes are safe
-// despite not sharing one transaction (the gap is invisible to any other
-// caller, mirroring CreateDynamicSecretConfig's insertDynamicSecretConfigRow).
-func (c *KeyorixCore) insertNotificationChannelRow(ctx context.Context, ch *models.NotificationChannel) error {
-	return c.storage.CreateNotificationChannel(ctx, ch)
-}
 
 // ListNotificationChannels returns all configured notification channels, with
 // each channel's URL decrypted (#2433) so every existing caller (the HTTP
@@ -80,13 +70,62 @@ func (c *KeyorixCore) GetNotificationChannel(ctx context.Context, id uint) (*mod
 // decryptNotificationChannelURL populates ch.URL from ch.URLEnc/ch.URLMeta,
 // fail-closed: an undecryptable row is returned as an error, never as if
 // ch.URLEnc's raw bytes were themselves a usable URL.
+//
+// url_enc is self-describing (ports.UnwrapNotificationChannelURL), so this
+// never has to guess which form the stored bytes are in — the three cases are
+// the three defects #2468's coordinator review found, each now explicit:
+//
+//   - Absent (empty/NULL column): the row has NO URL. Legitimate for an
+//     `email` channel, and for any row an upgrading install's backfill has not
+//     reached yet. Reads back as the empty string. Feeding those zero bytes to
+//     the decryptor is what used to fail the entire fail-closed list over one
+//     URL-less email channel.
+//   - Plaintext: written while encryption was off, or still awaiting the
+//     backfill that enables it. Returned as-is, no decrypt attempted.
+//   - Encrypted: a real envelope. Refused outright when no encryptor is wired,
+//     rather than letting decryptAuthSecret's passthrough branch hand the
+//     caller the envelope JSON AS the URL for alert dispatch to then dial.
 func (c *KeyorixCore) decryptNotificationChannelURL(ch *models.NotificationChannel) error {
-	plain, err := c.decryptAuthSecret(ch.URLEnc, ch.URLMeta, ports.NotificationChannelURLAAD(ch.ID))
+	tag, payload, err := ports.UnwrapNotificationChannelURL(ch.URLEnc)
 	if err != nil {
-		return fmt.Errorf("failed to decrypt notification channel %d URL: %w", ch.ID, err)
+		return fmt.Errorf("notification channel %d: %w", ch.ID, err)
 	}
-	ch.URL = plain
-	return nil
+	switch tag {
+	case ports.NotificationChannelURLTagAbsent:
+		ch.URL = ""
+		return nil
+	case ports.NotificationChannelURLTagPlaintext:
+		ch.URL = string(payload)
+		return nil
+	default: // ports.NotificationChannelURLTagEncrypted -- Unwrap admits no other value
+		if !c.AuthEncryptionActive() {
+			return fmt.Errorf("notification channel %d URL is encrypted at rest but encryption is disabled: refusing to return the stored envelope as a URL", ch.ID)
+		}
+		plain, derr := c.decryptAuthSecret(payload, ch.URLMeta, ports.NotificationChannelURLAAD(ch.ID))
+		if derr != nil {
+			return fmt.Errorf("failed to decrypt notification channel %d URL: %w", ch.ID, derr)
+		}
+		ch.URL = plain
+		return nil
+	}
+}
+
+// encryptNotificationChannelURL produces the url_enc/url_meta pair to store
+// for plain, tagged with the format it is actually in (see
+// ports.UnwrapNotificationChannelURL): a real envelope when an encryptor is
+// wired and enabled, an explicitly-labelled plaintext passthrough otherwise.
+// Always returns a non-empty url_enc, even for an empty URL — so "this row's
+// format is known and its URL is empty" stays distinguishable from "this row
+// has never been written" (which only an upgrading install produces).
+func (c *KeyorixCore) encryptNotificationChannelURL(plain string, channelID uint) (urlEnc, urlMeta []byte, err error) {
+	if !c.AuthEncryptionActive() {
+		return ports.WrapNotificationChannelURL(ports.NotificationChannelURLTagPlaintext, []byte(plain)), nil, nil
+	}
+	envelope, meta, err := c.encryptAuthSecret(plain, ports.NotificationChannelURLAAD(channelID))
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to encrypt notification channel URL: %w", err)
+	}
+	return ports.WrapNotificationChannelURL(ports.NotificationChannelURLTagEncrypted, envelope), meta, nil
 }
 
 // redactedNotificationChannelForAudit returns a copy of ch with the URL (the
@@ -128,25 +167,37 @@ func (c *KeyorixCore) CreateNotificationChannel(ctx context.Context, ch *models.
 	ch.CreatedAt = time.Now().UTC()
 	ch.UpdatedAt = ch.CreatedAt
 	// #2433: the URL's AAD binds to ch.ID, an auto-increment PK not known before
-	// insert -- insert first with URLEnc/URLMeta empty (ch.URL is gorm:"-", so this
-	// never writes it in plaintext either), then encrypt and persist them in a
-	// second write. Mirrors CreateDynamicSecretConfig's identical AdminDSNEnc
-	// two-step for the exact same reason (dynamic_secrets.go). The insert itself
-	// is factored into insertNotificationChannelRow, a separate function, so
-	// TestAtomicityGuard_UnclassifiedMultiWriteFunction's per-function literal
-	// call-site count sees only the ONE storage write below in THIS function's
-	// own body -- same technique #2413's MigrateUserToMachine fix used.
-	if err := c.insertNotificationChannelRow(ctx, ch); err != nil {
+	// insert -- so this genuinely needs two writes: insert with URLEnc/URLMeta
+	// empty (ch.URL is gorm:"-", so the insert never writes plaintext into a
+	// column either), then encrypt bound to the now-known ID and persist.
+	//
+	// #2468: both writes share ONE transaction. They did not originally, and a
+	// failure between them left a durable row with an empty url_enc -- which,
+	// with encryption on, is the exact shape that then failed EVERY subsequent
+	// ListNotificationChannels, because that list is deliberately fail-closed.
+	// The window was not theoretical: encryptAuthSecret reaches a KMS-backed
+	// encryptor, and UpdateNotificationChannel is an ordinary DB write. One
+	// transaction also means this function no longer needs the
+	// insertNotificationChannelRow indirection that hid its second write from
+	// TestAtomicityGuard_UnclassifiedMultiWriteFunction (INV-CORE-35): the
+	// guard is satisfied for the real reason now, not by splitting the count
+	// across two function bodies.
+	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		if terr := tx.CreateNotificationChannel(ctx, ch); terr != nil {
+			return terr
+		}
+		urlEnc, urlMeta, terr := c.encryptNotificationChannelURL(plainURL, ch.ID)
+		if terr != nil {
+			return terr
+		}
+		ch.URLEnc = urlEnc
+		ch.URLMeta = urlMeta
+		if terr := tx.UpdateNotificationChannel(ctx, ch); terr != nil {
+			return fmt.Errorf("failed to persist encrypted notification channel URL: %w", terr)
+		}
+		return nil
+	}); err != nil {
 		return nil, err
-	}
-	urlEnc, urlMeta, err := c.encryptAuthSecret(plainURL, ports.NotificationChannelURLAAD(ch.ID))
-	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt notification channel URL: %w", err)
-	}
-	ch.URLEnc = urlEnc
-	ch.URLMeta = urlMeta
-	if err := c.storage.UpdateNotificationChannel(ctx, ch); err != nil {
-		return nil, fmt.Errorf("failed to persist encrypted notification channel URL: %w", err)
 	}
 	ch.URL = plainURL
 	c.writeConfigChangeAuditEvent(ctx, EventNotificationChannelCreated, actorID,
@@ -205,9 +256,9 @@ func (c *KeyorixCore) UpdateNotificationChannel(ctx context.Context, id uint, up
 		// decrypted plaintext, harmless in effect but needless churn, and
 		// outright wrong if decryptNotificationChannelURL ever returned a
 		// placeholder instead of the real plaintext on some future error path.
-		urlEnc, urlMeta, err := c.encryptAuthSecret(ch.URL, ports.NotificationChannelURLAAD(ch.ID))
+		urlEnc, urlMeta, err := c.encryptNotificationChannelURL(ch.URL, ch.ID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to encrypt notification channel URL: %w", err)
+			return nil, err
 		}
 		ch.URLEnc = urlEnc
 		ch.URLMeta = urlMeta
