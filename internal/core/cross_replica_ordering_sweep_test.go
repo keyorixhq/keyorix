@@ -191,35 +191,18 @@ func g5EnumerateConflictPairs() []g5ConflictPair {
 //
 // Populated from an actual full sweep run on main, not from reading the
 // issues: every row here was observed. See the PR body for the raw output.
+// #2831 landed the fixes for 2646, 2647, 2649, 2652, 2653, 2654, 2655, 2656
+// and 2657 and promoted their seeds into the live corpus, so their rows are
+// deleted here per the rule above: a row kept past its fix would excuse a
+// regression of that ordering forever. The sweep is now expected to find
+// those orderings clean, and will report them loudly if it does not.
 var g5KnownOrderingViolations = map[string]string{
-	"secret-lifecycle/DeleteSecret||ShareSecret:A-check,B-check,A-act,B-act":                              "2646",
-	"secret-lifecycle/DeleteSecret||ShareSecret:B-check,A-check,A-act,B-act":                              "2646",
-	"secret-lifecycle/DeleteSecret||ShareSecretWithGroup:A-check,B-check,A-act,B-act":                     "2647",
-	"secret-lifecycle/DeleteSecret||ShareSecretWithGroup:B-check,A-check,A-act,B-act":                     "2647",
-	"secret-lifecycle/DeleteSecret||GrantSecretACL:A-check,B-check,A-act,B-act":                           "2649",
-	"secret-lifecycle/DeleteSecret||GrantSecretACL:B-check,A-check,A-act,B-act":                           "2649",
-	"secret-lifecycle/DeleteSecret||SetSecretAutoRotate:A-check,B-check,A-act,B-act":                      "2650",
-	"secret-lifecycle/DeleteSecret||SetSecretAutoRotate:B-check,A-check,A-act,B-act":                      "2650",
-	"project-lifecycle/DeleteProject||CreateDynamicSecretConfig:B-check,A-check,A-act,B-act":              "2651",
-	"project-lifecycle/DeleteProject||CreateDynamicSecretConfig:B-check,A-check,B-act,A-act":              "2651",
-	"project-lifecycle/DeleteProject||IssueLease:B-check,A-check,A-act,B-act":                             "2652",
-	"project-lifecycle/DeleteProject||IssueLease:B-check,A-check,B-act,A-act":                             "2652",
-	"project-lifecycle/DeleteProject||RestoreEnvironment:B-check,A-check,A-act,B-act":                     "2656",
-	"project-lifecycle/DeleteProject||RestoreEnvironment:B-check,A-check,B-act,A-act":                     "2656",
-	"user-account-state/SuspendUser||UpdateUser:A-check,B-check,A-act,B-act":                              "2653",
-	"user-account-state/SuspendUser||UpdateUser:A-check,B-check,B-act,A-act":                              "2653",
-	"user-account-state/SuspendUser||UpdateUser:B-check,A-check,A-act,B-act":                              "2653",
-	"user-account-state/SuspendUser||UpdateUser:B-check,A-check,B-act,A-act":                              "2653",
-	"user-account-state/SuspendUser||UpdateOwnProfile:A-check,B-check,A-act,B-act":                        "2654",
-	"user-account-state/SuspendUser||UpdateOwnProfile:A-check,B-check,B-act,A-act":                        "2654",
-	"user-account-state/SuspendUser||UpdateOwnProfile:B-check,A-check,A-act,B-act":                        "2654",
-	"user-account-state/SuspendUser||UpdateOwnProfile:B-check,A-check,B-act,A-act":                        "2654",
-	"mfa-enrolment/BeginMFAEnrollment||ActivateMFA:B-check,A-check,A-act,B-act":                           "2655",
-	"mfa-enrolment/BeginMFAEnrollment||ActivateMFA:B-check,A-check,B-act,A-act":                           "2655",
-	"membership/TransitionMembership(revoke)||TransitionMembership(activate):B-check,A-check,A-act,B-act": "2657",
-	"membership/TransitionMembership(revoke)||TransitionMembership(activate):B-check,A-check,B-act,A-act": "2657",
-	"membership/TransitionMembership(revoke)||InviteMember:B-check,A-check,A-act,B-act":                   "2659",
-	"membership/TransitionMembership(revoke)||InviteMember:B-check,A-check,B-act,A-act":                   "2659",
+	"secret-lifecycle/DeleteSecret||SetSecretAutoRotate:A-check,B-check,A-act,B-act":         "2650",
+	"secret-lifecycle/DeleteSecret||SetSecretAutoRotate:B-check,A-check,A-act,B-act":         "2650",
+	"project-lifecycle/DeleteProject||CreateDynamicSecretConfig:B-check,A-check,A-act,B-act": "2651",
+	"project-lifecycle/DeleteProject||CreateDynamicSecretConfig:B-check,A-check,B-act,A-act": "2651",
+	"membership/TransitionMembership(revoke)||InviteMember:B-check,A-check,A-act,B-act":      "2659",
+	"membership/TransitionMembership(revoke)||InviteMember:B-check,A-check,B-act,A-act":      "2659",
 }
 
 // g5LedgerIssuesWithoutASeed documents every g5KnownOrderingViolations issue
