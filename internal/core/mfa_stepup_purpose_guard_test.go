@@ -121,11 +121,6 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 		expectedPurpose: "",
 		reason:          "see the (*FaultyStorage).GetActiveMFAStepUpGrant entry above — the second (KindEffectThenError) call to the real GetActiveMFAStepUpGrant inside the same generated wrapper method, same pass-through reasoning.",
 	},
-	"internal/core/mfa.go:618": {
-		expectedPurpose: "MFAStepUpPurposeReauth",
-		reason: "(Line shifted :600 -> :618 by ORACLE-A-1 (2026-10-05), which added ActivateMFA's `// atomicity: consume-first by design` marker comment 500 lines ABOVE this call -- same ConsumeMFAStepUpGrant call inside requireReauth, same MFAStepUpPurposeReauth, not a new site; verified by reading the call at the new line, not by assuming the delta. " +
-			"Second recorded shift for this one entry, after #2667's -- a line-keyed allowlist re-breaks on any edit anywhere earlier in the file, including a pure comment addition. #2716 re-keys this list by function+callee and would have made both shifts non-events; worth merging ahead of further edits to mfa.go. " +
-			"Previously: line shifted to :600 by #2667 (ErrMFAEnrollmentChanged + pinned activation) after merging main's #2465 doc-comment additions on requireReauth together with that PR's own CR3 fix.) requireReauth's account-security-factor-change gate (DisableMFA, " +
 	"internal/core/mfa.go:(*KeyorixCore).requireReauth:c.storage.ConsumeMFAStepUpGrant": {
 		expectedPurpose: "MFAStepUpPurposeReauth",
 		reason: "requireReauth's account-security-factor-change gate (DisableMFA, " +
