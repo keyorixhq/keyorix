@@ -188,7 +188,7 @@ invalidation works at all.
 ```go
 type cacheGeneration interface {
 	comparable
-	generationMarker()
+	isCacheGeneration()
 }
 ```
 
@@ -202,22 +202,37 @@ which is exactly the kind of thing that survives for a year. The marker method m
 constraint interface embedding `comparable` plus a marker method compiles, and a struct with a
 value-receiver marker satisfies it.
 
-Each site declares its own generation type, carrying the stamp §1.1 says it needs. Timestamps
-are canonicalised to `int64` nanoseconds on the way in (Postgres stores `timestamptz` at
-microsecond precision, so the read-back value is stable, and this loses nothing the column did
-not already lose) — which is also what makes these types `comparable` at all:
+Each site declares its own generation type, carrying the stamp §1.1 says it needs. Where a
+timestamp still appears it is canonicalised to `int64` nanoseconds on the way in (Postgres
+stores `timestamptz` at microsecond precision, so the read-back value is stable, and this loses
+nothing the column did not already lose) — which is also what makes these types `comparable` at
+all. **These are the four types as they exist in the code**, not an illustration:
 
 ```go
-type nodeGeneration    struct{ updatedAtUnixNano int64; readCount int }   // secret_nodes
+type nodeGeneration struct{ cacheEpoch int64 } // secret_nodes — the trigger counter, §1.1.1
+
 type versionsGeneration struct{ count, maxVersionNumber, sumReadCount int64 } // secret_versions
-type scheduleGeneration struct{ updatedAtUnixNano int64 }                 // secret_access_schedules
-type rolePermGeneration struct{ counter string }                          // system_metadata
+
+type scheduleGeneration struct { // secret_access_schedules — updated_at AND the whole policy
+	updatedAtUnixNano int64
+	allowedDays       string
+	startHour, endHour int
+	timezone          string
+}
+
+type rolePermGeneration struct{ counter string } // system_metadata, a monotonic integer as text
 ```
 
-`nodeGeneration` landing as `int64` rather than `time.Time` is a small behaviour-preserving
-change to what #2764 shipped (`4b31a9d6` compares with a hand-written `equal` method because
-it holds a `time.Time`); folding it into the constraint removes the method and the chance of
-someone writing `==` against it by hand.
+Two of them are deliberately not what an earlier draft of this document described, and the
+differences are the point rather than tidying:
+
+- `nodeGeneration` is `cacheEpoch` **alone** — not `(updated_at, read_count)`. `updated_at` is
+  not a stamp for a writer that bypasses GORM's auto-timestamp callback, and widening it to
+  cover every column measured *slower than not caching at all*; see §1.1.1.
+- `scheduleGeneration` carries the **whole access policy**, not `updated_at` alone, so two
+  schedule writes landing in one stored timestamp tick cannot tie unless they are the same
+  policy — in which case serving the cached one is correct. That is what makes this signal have
+  no residual gap, and it is affordable only because the row is small.
 
 ### 2.3 `cachedRead` — the cross-row case
 
@@ -251,6 +266,22 @@ Contract, in order, with no path that can reorder it:
 ("this generation has no latest version"), preserving PERF-3's existing `hasVersion` behaviour
 without a second mechanism.
 
+**`found` is about the GENERATION, not about the data** — worth stating, because steps 2 and 4
+otherwise read as forbidding exactly that negative. The two are independent:
+
+| | `gen` returns | `load` returns | result |
+|---|---|---|---|
+| secret has no versions | `found == true`, the zero aggregate | `nil`, no error | **cached negative** |
+| secret row is gone / soft-deleted | `found == false` | not reached | **miss, nothing stored** |
+
+`liveVersionsGeneration` has no not-found notion at all: a secret with no version rows
+legitimately aggregates to `(0, 0, 0)`, and that zero is a perfectly good stamp — the first
+`CreateSecretVersion` moves `count` and `max(version_number)` off it. So steps 2 and 4 never
+fire for the empty-versions case, and the cached negative is stored under a real stamp like any
+other value. `found == false` is reserved for signals that genuinely have a row to miss
+(`readLiveNodeStamp`, `liveScheduleGeneration`), where it means the thing being stamped no
+longer exists and nothing may be served or stored for it.
+
 ### 2.4 `cachedReadSameRow` — the exception, made explicit
 
 ```go
@@ -273,17 +304,36 @@ produce.
 
 | Method | Variant | Key | Generation | Data |
 |---|---|---|---|---|
-| `GetSecret` | `cachedReadSameRow` | secret id | `(secret_nodes.updated_at, read_count)` | the `secret_nodes` row |
+| `GetSecret` | `cachedReadSameRow` | secret id | `secret_nodes.cache_epoch` (trigger-maintained, §1.1.1) | the `secret_nodes` row |
 | `GetLatestSecretVersion` | `cachedRead` | secret id | `(count, max(version_number), sum(read_count))` over `secret_versions` | newest `secret_versions` row |
-| `GetSecretAccessSchedule` | `cachedReadSameRow` | secret node id | `secret_access_schedules.updated_at` | the schedule row |
-| `RoleSetHasPermission` | `cachedRead` | `(sorted(roleIDs), permission)` | `system_metadata['role_permissions_generation']` counter | the `role_permissions` join |
+| `GetSecretAccessSchedule` | `cachedReadSameRow` | secret node id | `secret_access_schedules.updated_at` **plus the whole access policy** | the schedule row |
+| `RoleSetHasPermission` | `cachedRead` | `(sorted(roleIDs), permission)` | `system_metadata['role_permissions_generation']`, a monotonic integer the database increments in one `UPDATE` | the `role_permissions` join |
+
+`GetSecret`'s stamp read additionally re-proves, **in the same query**, that the `cache_epoch`
+trigger still exists, and treats its absence as a miss. Without that, a database that loses the
+trigger has a stamp frozen at a constant, which compares equal forever — the cache would serve
+every warm row as of first read, indefinitely, with no error. See §1.1.1.
 
 **Acceptance criterion: behaviour is identical.** PERF-3's existing cache test files
 (`secret_metadata_cache_test.go`, `role_permission_cache_test.go`, both `*_cross_replica_postgres_test.go`,
 both `*_bench_test.go`) run **unchanged**, including the accessors they reach into
 (`ls.secretMetaCache.getNode`, `ls.getCachedSecret`, `ls.rolePermCache.get`,
-`ls.getCachedRolePermission`, `rolePermKey`). Those stay as thin, read-only wrappers over
-`genCache`. A refactor that needed its own tests edited to pass would not be a refactor.
+`ls.getCachedRolePermission`, `rolePermKey`). A refactor that needed its own tests edited to
+pass would not be a refactor.
+
+Two honest qualifications on that criterion, because it is otherwise stated more strongly than
+the code supports:
+
+- Those accessors survive, but they do **not** touch a `genCache` directly — that is precisely
+  what §3's rule B forbids, and a "thin read-only wrapper over `genCache`" would violate it.
+  They route through the sanctioned read-only API (`peekCachedEntry`, `cachedHit`,
+  `cachedEntryCount`), which is what keeps the `cacheEnabled` check on the single path through
+  `probe`.
+- "Unchanged" covers the *refactor*. It does not cover test files that changed for reasons of
+  their own in the same series — the rollback tests gained positive controls (they asserted only
+  that something is NOT served, so every one of them passed with the cache switched off), and the
+  stamp-coverage tests were repointed at the trigger when the node stamp became `cache_epoch`.
+  Those are changes to what the tests *prove*, not changes made to keep them passing.
 
 Two incidental simplifications fall out and are called out because they are behaviour-adjacent:
 
@@ -386,23 +436,34 @@ quietly omitted.
 ## 5. Item 4 — invalidation coverage: every writer, enumerated
 
 A generation-validated cache is correct only if *every* writer of a cached row advances that
-row's generation in the same transaction — §1.1's first rule. **The secret half of this is
-already done and landed in #2764** (`4b31a9d6`): the full enumeration of every
-`UpdateColumn`/raw write to `secret_nodes` and `secret_versions`, each shown covered or named
-as the one stopped-server exception (`internal/encryption/sweep.go`'s DEK rewrap, exclusive
-key lock, ADR-010), plus the machine-check that keeps it complete —
-`TestSecretCacheGeneration_CoversEveryUpdateColumnWriter`, an AST scan that fails on a
-hook-bypassing write to either table touching a column no generation observes, and that
-refuses to pass vacuously. What remains for this item:
+row's generation in the same transaction — §1.1's first rule.
+
+**For `secret_nodes` this item is now answered by construction rather than by enumeration, and
+that is a change of kind, not of degree.** The original plan — and `#2764`'s first attempt —
+was to enumerate every `UpdateColumn`/raw write to the table and machine-check the list with an
+AST scan (`TestSecretCacheGeneration_CoversEveryUpdateColumnWriter`). That approach is only ever
+as complete as the idioms the scanner knows about, which is this codebase's most-repeated defect
+shape. A trigger removes the question: the database bumps `cache_epoch` for `Save()`,
+`Updates()`, `UpdateColumn()` and raw SQL identically, so there is no writer set to enumerate
+and nothing for a future writer to opt into. The obligation moves instead to **proving the
+trigger exists and fires** — `TestCacheEpochTrigger_FiresForEveryPersistedColumn` (every
+persisted column, both backends, red with the trigger dropped) plus the read path's per-read
+presence check.
+
+What remains for this item:
 
 1. The same treatment for `role_permissions`, where the generation is an explicit bump rather
    than a derived stamp, so the check is different in kind: every writer of that table must
    call `bumpRolePermissionsGenerationTx` **in its own transaction**. Derive the writer set
    from the AST (every `Create`/`Delete` whose model is `models.RolePermission`) and fail on
-   one that does not.
-2. Generalise the #2764 scanner from "the two secret tables" to "every table any `genCache`
-   caches", so a new cache gets writer coverage without a new scanner.
-3. The table rows in item 3, one per writer type.
+   one that does not. This one cannot be answered by a trigger the way `secret_nodes` is: the
+   signal is global rather than per-row, so there is no row whose update could carry it.
+2. `secret_versions` and `secret_access_schedules` keep content-derived stamps and therefore
+   keep owing an enumeration — see §1.1.1 for why a trigger is not worth its migration surface
+   for those two, and for the one named residual gap on `secret_versions` (the stopped-server
+   DEK rewrap).
+3. The table rows in item 3, one per writer type — including a row whose only observable effect
+   is the trigger's own bump, driven by raw SQL so that no GORM callback can account for it.
 
 The method, for the record and for the `role_permissions` half:
 
@@ -422,18 +483,26 @@ The method, for the record and for the `role_permissions` half:
    rotation sweep and friends), are acceptable without a bump — **but they get named in the
    doc**, with the reason, so "we checked and decided" is distinguishable from "we missed it".
 
-Two specific things this enumeration is expected to have an answer for, flagged here so the
-answer is on the record either way:
+Two specific things this enumeration was expected to have an answer for. Both now have one, on
+the record:
 
 - `IncrementSecretReadCount` / `TryIncrementSecretReadCount` mutate `read_count` on a
-  `secret_versions` row that the latest-version cache holds. `read-path-caching.md` says
-  max-reads enforcement stays a live conditional `UPDATE` and is never read from cache. That is
-  a claim about callers, and it needs checking: if anything gates on `ReadCount`/`MaxReads`
-  read back through `GetLatestSecretVersion`, a cached version object is a stale counter, and a
-  stale counter at a limit check is a bypass.
-- `local_purge.go` deletes `secret_versions` rows for soft-deleted secrets. If the node row
-  goes in the same transaction the stamp read returns not-found and the cache misses correctly;
-  if it does not, a cached latest version can outlive its row. Confirm which.
+  `secret_versions` row that the latest-version cache holds. **Answered, and it found a real
+  bug — but on the write side, not the read side.** Enforcement is indeed a live conditional
+  `UPDATE` (`read_count < max_reads` evaluated inside the statement, against the stored value),
+  so no limit check reads a cached counter. The defect was the opposite direction: `UpdateSecret`
+  and `TransitionSecretStatus` wrote the counter back from a caller's in-memory struct, so an
+  unrelated metadata edit *refunded* reads against the cap (#2843, fixed in #2871 by omitting
+  the column at both full-struct writers and enforcing it with a type-checked invariant). Worth
+  separating clearly from the cache work: that was a stale **write** of the column, while
+  `cache_epoch` addresses a stale **read** of it. Neither fix addresses the other.
+- `local_purge.go` deletes `secret_versions` rows for soft-deleted secrets. **Answered by the
+  version stamp's shape rather than by the transaction boundary**: deleting version rows moves
+  `count` and `max(version_number)`, so the aggregate changes and the cached entry fails its
+  check on the next read whether or not the node row went in the same transaction. The node
+  cache is covered independently — a soft-delete is an UPDATE, so the trigger bumps
+  `cache_epoch`, and `readLiveNodeStamp` scopes `deleted_at IS NULL` so the stamp read reports
+  not-found anyway.
 
 Anything found here is a real bug and becomes its own `fix(security)` PR with a regression
 test, not a footnote in this one.
@@ -462,11 +531,17 @@ is least optional.
 
 - Every one of the four cached reads goes through the helper; no file other than
   `read_path_cache.go` writes a cache entry, and the guard fails if one does.
-- PERF-3's cache tests pass unedited.
+- PERF-3's cache tests pass unedited **by the refactor** — see §2.5's qualification for the
+  tests that changed in this series for reasons of their own.
 - The item-3 table has a row for every helper call site (enforced) and for every writer type,
   and each row is shown red against the corresponding pre-fix commit — or explicitly recorded
-  as a known-good green case.
-- Every writer of a cached row is enumerated with its generation bump identified, or named as a
-  documented stopped-server exception.
-- `timeGeneration`/`stringGeneration` are the only generation types; raw `time.Time` does not
-  satisfy the constraint.
+  as a known-good green case. Every row must also be shown to run **with the cache actually
+  on**: a row whose fixture lacks the `cache_epoch` trigger exercises an uncached path and
+  proves nothing, which is a mistake this table has already made once.
+- Every writer of a cached row either advances that row's generation, or is covered by a
+  database trigger that advances it unconditionally (§1.1.1 — in which case the obligation
+  becomes proving the trigger exists and fires, since there is no writer set left to
+  enumerate), or is named as a documented stopped-server exception.
+- `nodeGeneration`, `versionsGeneration`, `scheduleGeneration` and `rolePermGeneration` are the
+  only generation types, each satisfying `cacheGeneration`; raw `time.Time` does not satisfy the
+  constraint and so cannot be used as a stamp by accident.
