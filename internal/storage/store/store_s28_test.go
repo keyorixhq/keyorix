@@ -5,7 +5,7 @@
 //	local_secrets.go
 //	  CreateProject          — DB error (non-duplicate)
 //	  GetProject             — not-found + DB error
-//	  UpdateProject          — DB error
+//	  UpdateProjectFields    — DB error
 //	  GetSecretsByIDs        — DB error
 //	  GetSecretByName        — DB error
 //	  UpdateSecret           — DB error
@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
@@ -107,10 +108,14 @@ func TestLocalStorage_S28_GetProject_DBError(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestLocalStorage_S28_UpdateProject_DBError(t *testing.T) {
+func TestLocalStorage_S28_UpdateProjectFields_DBError(t *testing.T) {
 	ls := brokenS28Store(t)
-	_, err := ls.UpdateProject(context.Background(), &models.Project{ID: 1, Name: "x"})
+	// A storage error must surface as an error, never be collapsed into a clean
+	// matched=false (#2697 — a no-match means "the project is gone", which a
+	// caller is entitled to report as not-found; a broken DB is not that).
+	matched, err := ls.UpdateProjectFields(context.Background(), 1, "x", "", nil, time.Now())
 	require.Error(t, err)
+	require.False(t, matched)
 }
 
 func TestLocalStorage_S28_GetSecretsByIDs_DBError(t *testing.T) {

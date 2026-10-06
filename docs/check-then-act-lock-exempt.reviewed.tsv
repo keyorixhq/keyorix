@@ -1,0 +1,41 @@
+# Review ledger (sidecar) for docs/check-then-act-lock-exempt.tsv, keyed by its
+# first column. Checked by internal/core/exempt_ledger_review_test.go
+# (TestExemptLedgers_EveryRowIndependentlyReviewed): every row of the ledger needs a
+# row here, and reviewed_by must be non-empty and differ from added_by. Kept as a
+# sidecar, not a new ledger column, so the ledger itself stays as the race-fix PRs
+# (#2664-#2678) edit it. The original 31 rows were added by GUARD-2 (#2564) and
+# re-read against the code by the independent review C-GUARD2-EXEMPT-REVIEW (#2662);
+# each ledger row's own review column records that verdict.
+#
+# Columns: function <TAB> added_by <TAB> reviewed_by
+(*KeyorixCore).ActivateMFA	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).AddSecretDependency	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).ApproveSecretAccessRequest	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).CreateDynamicSecretConfig	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).CreateOIDCBinding	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).CreateUserWithAssignments	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).DeleteSessionsForUserExcept	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).FinishWebAuthnRegistration	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).GrantSecretACL	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).InviteGlobal	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).InviteToProject	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).IssueLease	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).RejectSecretAccessRequest	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).RemoveSecretDependency	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).RemoveUserFromGroup	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).RenewLease	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).RestoreEnvironment	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).RestoreGroup	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).RestoreProject	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).RevokeAllPersonalAccessTokensForUser	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).RevokeUserSessions	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).SetSecretAutoRotate	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).ShareSecret	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).ShareSecretWithGroup	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).StartImpersonation	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).TransitionMembership	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).UpdateOwnProfile	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).UpdateSharePermission	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).UpdateUser	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).deleteGroupGuarded	GUARD-2	C-GUARD2-EXEMPT-REVIEW
+(*KeyorixCore).inviteMemberWithMode	GUARD-2	C-GUARD2-EXEMPT-REVIEW

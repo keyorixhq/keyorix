@@ -166,16 +166,34 @@ func (ls *LocalStorage) GetProjectByName(ctx context.Context, name string) (*mod
 	return &project, nil
 }
 
-func (ls *LocalStorage) UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error) {
-	if err := ls.db.WithContext(ctx).Save(project).Error; err != nil {
-		if isDuplicateProjectNameViolation(err) {
+// UpdateProjectFields persists name, description and updated_at — plus
+// require_mfa only when requireMFA is non-nil — onto a live project row. See
+// the storage.Storage interface doc for the two things the full-row
+// UpdateProject this replaced (a bare Save) got wrong: resurrecting a
+// concurrently deleted project, and reverting a concurrently enabled ADR-037
+// require_mfa the caller never asked to touch (#2697).
+//
+// GORM adds `deleted_at IS NULL` for this soft-delete model, which is the clause
+// that stops the resurrection.
+func (ls *LocalStorage) UpdateProjectFields(ctx context.Context, id uint, name, description string, requireMFA *bool, updatedAt time.Time) (bool, error) {
+	cols := map[string]interface{}{
+		"name":        name,
+		"description": description,
+		"updated_at":  updatedAt,
+	}
+	if requireMFA != nil {
+		cols["require_mfa"] = *requireMFA
+	}
+	res := ls.db.WithContext(ctx).Model(&models.Project{}).Where("id = ?", id).Updates(cols)
+	if res.Error != nil {
+		if isDuplicateProjectNameViolation(res.Error) {
 			// See CreateProject's comment: a rename collided with the partial
 			// case-insensitive unique index (#385).
-			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateProjectName, err)
+			return false, fmt.Errorf("%w: %v", storage.ErrDuplicateProjectName, res.Error)
 		}
-		return nil, fmt.Errorf("failed to update project: %w", err)
+		return false, fmt.Errorf("failed to update project: %w", res.Error)
 	}
-	return project, nil
+	return res.RowsAffected == 1, nil
 }
 
 // deleteProjectCascade performs DeleteProject's soft-delete cascade (secrets, their

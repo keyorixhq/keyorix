@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -133,7 +132,7 @@ func TestGetGroup_DBError_S35(t *testing.T) {
 func TestUpdateGroup_DBError_S35(t *testing.T) {
 	t.Parallel()
 	ls := newBrokenDB(t)
-	_, err := ls.UpdateGroup(context.Background(), &models.Group{})
+	_, err := ls.UpdateGroupFields(context.Background(), 1, nil, nil, nil, time.Now())
 	require.Error(t, err)
 }
 

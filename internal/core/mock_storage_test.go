@@ -120,8 +120,8 @@ func (m *MockStorage) GetProject(ctx context.Context, id uint) (*models.Project,
 	return &models.Project{}, nil
 }
 
-func (m *MockStorage) UpdateProject(_ context.Context, project *models.Project) (*models.Project, error) {
-	return project, nil
+func (m *MockStorage) UpdateProjectFields(_ context.Context, _ uint, _, _ string, _ *bool, _ time.Time) (bool, error) {
+	return true, nil
 }
 
 func (m *MockStorage) DeleteProject(_ context.Context, _ uint) error {
@@ -1102,10 +1102,9 @@ func (m *MockStorage) GetGroup(ctx context.Context, id uint) (*models.Group, err
 	return args.Get(0).(*models.Group), args.Error(1)
 }
 
-func (m *MockStorage) UpdateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {
-	a := m.Called(ctx, group)
-	v, _ := a.Get(0).(*models.Group)
-	return v, a.Error(1)
+func (m *MockStorage) UpdateGroupFields(ctx context.Context, id uint, name, nameFolded, description *string, updatedAt time.Time) (bool, error) {
+	a := m.Called(ctx, id, name, nameFolded, description, updatedAt)
+	return a.Bool(0), a.Error(1)
 }
 
 func (m *MockStorage) DeleteGroup(ctx context.Context, id uint) error {

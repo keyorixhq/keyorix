@@ -77,14 +77,20 @@ func TestJourney_GoldenPath(t *testing.T) {
 	aliceToken := adminLogin(t, s, n16LeastPrivUser, n16LeastPrivPass)
 	// She can read the ONE project she was granted...
 	restExpect(t, s, aliceToken, http.MethodGet, "/api/v1/projects/"+strconv.Itoa(projID), nil, http.StatusOK)
-	// ...but holding a single project-scoped role is not the global admin role:
-	// the all-projects list stays admin-only. This is the exact server-side
-	// boundary DEMO-1 (#2562) found the CLI itself cannot reach for a
-	// least-privilege user — guarding the boundary here protects the fix.
-	deniedEnv := restCall(t, s, aliceToken, http.MethodGet, "/api/v1/projects", nil)
-	if deniedEnv.StatusCode != http.StatusForbidden {
-		t.Fatalf("GET /api/v1/projects as a project-scoped viewer: want 403, got %d: %s",
-			deniedEnv.StatusCode, deniedEnv.Raw)
+	// ...and since #2780 the all-projects list is least-privilege rather than
+	// admin-only: it answers 200 with exactly the projects this persona can
+	// already read one-by-one, instead of the 403 that used to empty the web
+	// project switcher for them. The boundary DEMO-1 (#2562) found is still the
+	// thing under test, it just moved from the status code into the filter — so
+	// assert the SET: her one granted project is served, and nothing else is.
+	scopedEnv := restCall(t, s, aliceToken, http.MethodGet, "/api/v1/projects", nil)
+	if scopedEnv.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/v1/projects as a project-scoped viewer: want 200, got %d: %s",
+			scopedEnv.StatusCode, scopedEnv.Raw)
+	}
+	if got := listedProjectNames(t, scopedEnv); len(got) != 1 || got[0] != n16ProjectName {
+		t.Fatalf("GET /api/v1/projects as a project-scoped viewer: want exactly [%s], got %v: %s",
+			n16ProjectName, got, scopedEnv.Raw)
 	}
 
 	// ── Secret lifecycle: create, reveal, rotate, soft-delete, restore ──────────
