@@ -9,7 +9,7 @@ fails when someone does.
 
 A generation-validated read cache has three moving parts:
 
-- **G** — a cheap, indexed *generation* (stamp) read: `secret_nodes.updated_at`,
+- **G** — a cheap, indexed *generation* (stamp) read: `secret_nodes.cache_epoch`,
   `system_metadata['role_permissions_generation']`.
 - **V** — the expensive *data* load: the row, the latest version, the `role_permissions` join.
 - the cache itself, mapping a key to `(G, V)`.
@@ -125,13 +125,27 @@ Two dialect forms, both load-bearing: Postgres gets a BEFORE UPDATE trigger assi
 INSERT/UPDATE/DELETE/SELECT, never assign to `NEW`), so it gets an AFTER UPDATE trigger issuing
 a nested single-row UPDATE with `WHEN NEW.cache_epoch = OLD.cache_epoch` as the recursion guard.
 
-**A stamp a trigger maintains must be probed for, and its absence must disable the cache.** A
+**A stamp a trigger maintains must be re-proven on every read, not probed once and trusted.** A
 database with the *column* but not the *trigger* has a stamp frozen at 0 forever, so every hit
 serves the row as first read — indefinitely, with no error and no symptom. That is not
 hypothetical: it is what every bare-`AutoMigrate` test schema looks like, and
-`pg_restore --disable-triggers` or a schema-only restore produces it in production.
-`SecretNodeCacheEpochTriggerPresent` checks for it and the cache is **disabled** when it is
-absent. Any new trigger-stamped cache owes the same fail-closed probe, and any test fixture
+`pg_restore --disable-triggers` or a schema-only restore produces it in production — and a warm
+replica can lose its trigger *while serving*, from a cause this process never sees (another
+replica's migration, an operator's `DROP`). A probe taken once at boot cannot catch that case: it
+would keep trusting a stamp that can no longer move for the store's whole lifetime.
+
+So the trigger's existence is re-proved **in the same query as the stamp itself**
+(`readLiveNodeStamp`): one `SELECT` returns both `cache_epoch` and an `EXISTS` subselect against
+`pg_trigger`/`sqlite_master`, as of the same snapshot, with no extra round trip and therefore no
+window at all. A miss on either half — row not found, or trigger not found — is a permanent
+cache miss, never a stale hit. The Postgres form matches on `tgrelid = 'secret_nodes'::regclass`
+(not `tgname` alone, which is not schema- or table-scoped and can match a same-named trigger on
+an unrelated table) and `tgenabled <> 'D'` (a trigger `ALTER TABLE ... DISABLE TRIGGER`d, or
+restored via `pg_restore --disable-triggers`, still appears in `pg_trigger` under its own name).
+A separate, store-scoped probe (`SecretNodeCacheEpochTriggerPresent`, re-checked every 30s) exists
+only to decide whether a store bothers *storing* new entries at all — it is a write-side cost
+knob, not a correctness mechanism, and a stale answer there can cost a pointless store but never
+a stale hit. Any new trigger-stamped cache owes the same per-read re-proof, and any test fixture
 building its own schema owes the `EnsureSecretNodeCacheEpoch` call — a cache test against a
 triggerless schema passes against an *uncached* path, which is a vacuous pass, not a green one.
 That exact vacuity was found in this spec's own race harness (§4): 13 rows were passing with no
