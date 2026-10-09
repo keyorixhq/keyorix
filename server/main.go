@@ -212,9 +212,12 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		log.Fatalf("key file security: %v", err)
 	}
 
-	// Refuse to start if the installed key files are a partial or mixed-generation
-	// set (ADR-112, follow-up from #2400). Unconditional, like the permission check
-	// above: a broken key set is not a "weaker but working" state to warn about.
+	// Refuse to start if the installed key files are a PARTIAL set (ADR-112,
+	// follow-up from #2400). Unconditional, like the permission check above: a
+	// broken key set is not a "weaker but working" state to warn about. The
+	// same call also applies a best-effort same-group mtime heuristic, which is
+	// deliberately not claimed as a mixed-generation guarantee — see
+	// keyfiles.VerifyKeySetConsistency and #2900.
 	if err := verifyKeyFileSetConsistency(cfg); err != nil {
 		log.Fatalf("key file consistency: %v", err)
 	}
