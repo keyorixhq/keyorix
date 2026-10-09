@@ -122,11 +122,11 @@ var fullRowOverwriteMethods = map[string]bool{
 	"UpdateSecret":              true,
 	"UpdateUser":                true,
 	"SaveAnomalyConfig":         true,
-	"UpdateLegalHold":            true,
-	"UpdateDynamicSecretConfig":  true,
-	"UpdateDynamicSecretLease":   true,
-	"UpdateUser":                 true,
-	"SaveAnomalyConfig":          true,
+	"UpdateLegalHold":           true,
+	"UpdateDynamicSecretConfig": true,
+	"UpdateDynamicSecretLease":  true,
+	"UpdateUser":                true,
+	"SaveAnomalyConfig":         true,
 	// UpdateSecret was here until #2695 replaced it with UpdateSecretFields (a
 	// per-field-pointer conditional UPDATE); TransitionSecretStatus was in the
 	// Select("*") group above until the same PR whitelisted it to Status and
