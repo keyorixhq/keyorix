@@ -24,6 +24,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # The check reads each cited issue's state through the API; without
+      # this the token is refused and the job fails closed every night.
+      issues: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
