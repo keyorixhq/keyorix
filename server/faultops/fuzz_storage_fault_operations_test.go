@@ -118,7 +118,25 @@ type nonLoadBearingException struct {
 	nth        int
 }
 
-var nonLoadBearingAuthzReadExceptions = []nonLoadBearingException{}
+// REST PUT /api/v1/auth/profile, GetUserPermissions, NthCall=1 (#2839): UpdateProfile
+// is a self-service route gated ONLY by session identity (router.go's own comment:
+// "Authenticated but not permission-gated — every user manages their own profile...
+// ADR-021 / ADR-027") -- no RequireScopedPermission or any RBAC check is attached.
+// The handler authorizes via middleware.GetUserFromContext + UpdateOwnProfile (self-
+// scoped), and only calls GetUserPermissions (via userIdentity -> GetUserIdentity)
+// AFTER the update has already succeeded, purely to decorate the response with the
+// caller's own roles/permissions. UserIdentity's own doc comment states this
+// directly: "The backend still enforces real, scope-aware checks on every request
+// via Authorize — this summary is for UI convenience, not a security boundary."
+// userIdentity's own doc comment: "Best-effort: on error it returns an empty
+// identity so the profile still renders" -- the empty permissions/roles the fuzzer
+// observed is this designed fallback, not a bypass artefact. Found live by the
+// ORACLE-A-1 derived sweep (session ORACLE-A-1, item 4) as the sweep's only oracle
+// (c) hit; confirmed by tracing router.go's route registration and UpdateProfile's
+// own authorization path rather than from the diff shape alone.
+var nonLoadBearingAuthzReadExceptions = []nonLoadBearingException{
+	{op: "REST PUT /api/v1/auth/profile", method: "GetUserPermissions", nth: 1},
+}
 
 // multiStepAmbiguousCommitExceptions narrowly flags a traced instance of
 // oracle (d) firing on the FIRST storage call of a multi-step create, NOT
@@ -442,6 +460,23 @@ func multiStepFirstCallAmbiguousCommit(op, method string, nth int) bool {
 		}
 	}
 	return false
+}
+
+// TestNonLoadBearingAuthzRead_ProfileUpdateGetUserPermissions (#2839) proves the
+// new entry matches exactly the traced triple and nothing else — an authz-read
+// exception is scoped per (op, method, nth) precisely so it cannot silently widen
+// to mask a fail-open bug on an unrelated op, method, or call number.
+func TestNonLoadBearingAuthzRead_ProfileUpdateGetUserPermissions(t *testing.T) {
+	const op = "REST PUT /api/v1/auth/profile"
+	const method = "GetUserPermissions"
+	assert.True(t, nonLoadBearingAuthzRead(op, method, 1),
+		"the traced (op, method, NthCall=1) triple must be exempted")
+	assert.False(t, nonLoadBearingAuthzRead(op, method, 2),
+		"a DIFFERENT call number must not be exempted -- GetUserIdentity calls GetUserPermissions exactly once per request, so a second call is unexplained and must stay a violation")
+	assert.False(t, nonLoadBearingAuthzRead(op, "GetUserRolesByID", 1),
+		"a DIFFERENT method on the same op must not be exempted")
+	assert.False(t, nonLoadBearingAuthzRead("REST GET /api/v1/auth/profile", method, 1),
+		"a DIFFERENT op must not be exempted -- this entry's trace is specific to UpdateProfile's post-success decoration, not the GET profile route")
 }
 
 func nonLoadBearingAuthzRead(op, method string, nth int) bool {
