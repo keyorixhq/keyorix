@@ -550,16 +550,35 @@ func (c *KeyorixCore) RemoveMachineRole(ctx context.Context, machineID, roleID u
 	if err != nil {
 		return err
 	}
+	return c.withMachineRoleRemovalGuards(ctx, machineID, scope, func(ctx context.Context) error {
+		return c.removeMachineRoleWriteOn(ctx, c.storage, c.auditNow(), m, roleID, scope, actorID)
+	})
+}
+
+// withMachineRoleRemovalGuards runs write under exactly the named lock and
+// scope validation a machine-role removal requires — hoisted out of
+// RemoveMachineRole so the access-review revoke transaction (#2676) reuses this
+// decision rather than restating it, the same arrangement
+// withUserRoleRemovalGuards / withGroupRoleRemovalGuards use for their
+// respective principals.
+func (c *KeyorixCore) withMachineRoleRemovalGuards(ctx context.Context, machineID uint, scope Scope, write func(ctx context.Context) error) error {
 	return c.storage.WithNamedLock(ctx, sodGrantLockKey("machine", machineID), func(ctx context.Context) error {
 		if err := c.requireEnvironmentInProject(ctx, scope); err != nil {
 			return err
 		}
-		if err := c.storage.RemoveMachineRole(ctx, machineID, roleID, scope); err != nil {
-			return err
-		}
-		c.logMachineEvent(ctx, "machine_identity.role_removed", m, actorID)
-		return nil
+		return write(ctx)
 	})
+}
+
+// removeMachineRoleWriteOn is the machine-role removal's persistent effect
+// through an explicit storage handle and audit target — the machine counterpart
+// of removeUserRoleWriteOn.
+func (c *KeyorixCore) removeMachineRoleWriteOn(ctx context.Context, st storage.Storage, tgt auditTarget, m *models.MachineIdentity, roleID uint, scope Scope, actorID uint) error {
+	if err := st.RemoveMachineRole(ctx, m.ID, roleID, scope); err != nil {
+		return err
+	}
+	c.logMachineEventOn(ctx, tgt, "machine_identity.role_removed", m, actorID)
+	return nil
 }
 
 // ListMachineRoles returns every role granted to a machine identity in the

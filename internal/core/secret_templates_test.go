@@ -160,7 +160,7 @@ func TestUpdateSecretTemplate_Success(t *testing.T) {
 	c, m := newCoreWithMock()
 	existing := &models.SecretTemplate{ID: 5, Name: "old-name"}
 	m.On("GetSecretTemplate", context.Background(), uint(5)).Return(existing, nil)
-	m.On("UpdateSecretTemplate", context.Background(), mock.MatchedBy(func(t *models.SecretTemplate) bool { return true })).Return(nil)
+	m.On("UpdateSecretTemplateFields", context.Background(), mock.Anything, mock.Anything, mock.Anything).Return(true, nil)
 
 	updated, err := c.UpdateSecretTemplate(context.Background(), 5, &UpdateSecretTemplateRequest{
 		Name:                  "new-name",
@@ -211,7 +211,7 @@ func TestUpdateSecretTemplate_StorageError(t *testing.T) {
 	c, m := newCoreWithMock()
 	existing := &models.SecretTemplate{ID: 5, Name: "tpl"}
 	m.On("GetSecretTemplate", context.Background(), uint(5)).Return(existing, nil)
-	m.On("UpdateSecretTemplate", context.Background(), mock.MatchedBy(func(t *models.SecretTemplate) bool { return true })).Return(errors.New("write error"))
+	m.On("UpdateSecretTemplateFields", context.Background(), mock.Anything, mock.Anything, mock.Anything).Return(false, errors.New("write error"))
 
 	_, err := c.UpdateSecretTemplate(context.Background(), 5, &UpdateSecretTemplateRequest{Name: "tpl"})
 	require.Error(t, err)

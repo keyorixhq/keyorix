@@ -50,13 +50,17 @@ import (
 // (global admin, ID adminID), one project with one environment, and two
 // independent replicas A and B on their own connections into the same schema.
 type ctaReview struct {
-	t         *testing.T
-	ctx       context.Context
-	setupDB   *gorm.DB
-	setup     *KeyorixCore
-	dbA       *gorm.DB
+	t       *testing.T
+	ctx     context.Context
+	setupDB *gorm.DB
+	setup   *KeyorixCore
+	dbA     *gorm.DB
+	coreA   *KeyorixCore
+	// dbB is replica B's own connection pool, exposed for GUARD-5's
+	// interleaving driver (interleave_sync_points_test.go), which needs a
+	// sync point on BOTH replicas to force the orderings where A's write
+	// lands before B's. beforeA below only ever needed A's.
 	dbB       *gorm.DB
-	coreA     *KeyorixCore
 	coreB     *KeyorixCore
 	enc       ports.EncryptionProvider
 	adminID   uint
@@ -96,10 +100,11 @@ func newCTAReview(t *testing.T) *ctaReview {
 	env, err := setup.CreateEnvironment(ctx, proj.ID, "cta-review-env")
 	require.NoError(t, err)
 
-	dbA, dbB := pgOpen(t, dsn), pgOpen(t, dsn)
+	dbA := pgOpen(t, dsn)
+	dbB := pgOpen(t, dsn)
 	return &ctaReview{
 		t: t, ctx: ctx, setupDB: setupDB, setup: setup,
-		dbA: dbA, dbB: dbB, coreA: newCore(dbA), coreB: newCore(dbB),
+		dbA: dbA, coreA: newCore(dbA), dbB: dbB, coreB: newCore(dbB),
 		enc: enc, adminID: boot.User.ID, projectID: proj.ID, envID: env.ID,
 	}
 }
@@ -386,8 +391,18 @@ func TestCTAReview_GrantSecretACL_DeleteSecretAfterUpsert_CrossReplicaPostgres(t
 // event, and no RestoreSecret parent-liveness check. (The same stale Save
 // also overwrites a concurrent admin's rotation-backend binding and a
 // concurrent ClearProjectSecretOwnership — see the issue.)
+//
+// Bug origin (#2650):
+//
+//	Introduced-by: SetSecretAutoRotate persisting its snapshot via UpdateSecret's Save
+//	Detected-by:   C-GUARD2-EXEMPT-REVIEW #2662
+//	Class:         cross-replica check-then-act
+//	Severity:      high (a deleted secret is live again without RestoreSecret)
+//	Guard:         this test (pg-gated) + TestSetSecretAutoRotate_IsColumnScoped
+//	Fix:           UpdateSecretRotationConfig — rotation columns only, WHERE the
+//	               row is live, in the same project, and still bound to the
+//	               pre-read backend; matching no row fails closed
 func TestCTAReview_SetSecretAutoRotate_vs_DeleteSecret_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2650: SetSecretAutoRotate's stale full-row Save undeletes/overwrites concurrent secret changes; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	s := f.secret("cta-rotate-secret", f.adminID)
@@ -411,7 +426,6 @@ func TestCTAReview_SetSecretAutoRotate_vs_DeleteSecret_CrossReplicaPostgres(t *t
 // deliberately does not re-enable configs (#369), so this leaves a config
 // that can mint credentials as soon as the project is restored.
 func TestCTAReview_CreateDynamicSecretConfig_vs_DeleteProject_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("open gap #2651: CreateDynamicSecretConfig's second Save re-enables a config disabled by a concurrent DeleteProject; un-skip in the fixing PR")
 	t.Parallel()
 	f := newCTAReview(t)
 	fake := &dynamictest.FakeEngine{NativeExpiry: true}
@@ -434,6 +448,48 @@ func TestCTAReview_CreateDynamicSecretConfig_vs_DeleteProject_CrossReplicaPostgr
 	var got models.DynamicSecretConfig
 	require.NoError(t, f.setupDB.First(&got, cfg.ID).Error)
 	assert.True(t, got.Disabled, "#369 violated: a config in a deleted project is enabled (it mints again the moment the project is restored)")
+}
+
+// TestCTAReview_CreateDynamicSecretConfig_DeleteProjectAfterInsert_CrossReplicaPostgres:
+// B's DeleteProject commits after A's config INSERT ran but before A's insert
+// transaction commits. B's #369 disable cannot see A's uncommitted row, so without the
+// insert's own project re-check the config would commit enabled under the deleted
+// project, the same end state as the stale Save above, reached through the insert.
+//
+// Bug origin (#2651):
+//
+//	Introduced-by: #94's insert-then-encrypt-then-Save split in
+//	  CreateDynamicSecretConfig: the second write was a full-row Save, and the insert
+//	  never re-checked its project against #369's cascade.
+//	Detected-by: C-GUARD2-EXEMPT-REVIEW #2662
+//	Class: cross-replica check-then-act
+//	Severity: MEDIUM (an enabled config in a deleted project mints again on restore,
+//	  with no explicit re-enable)
+//	Guard: this test, the one above, SetDynamicSecretConfigAdminDSN's targeted write,
+//	  and lockLiveParent's write-then-FOR-SHARE project re-check in
+//	  LocalStorage.CreateDynamicSecretConfig (INV-STORE-21).
+func TestCTAReview_CreateDynamicSecretConfig_DeleteProjectAfterInsert_CrossReplicaPostgres(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	fake := &dynamictest.FakeEngine{NativeExpiry: true}
+	f.coreA.SetDynamicEngineFactory(func(string) (dynamic.CredentialEngine, error) { return fake, nil })
+	f.coreB.SetDynamicEngineFactory(func(string) (dynamic.CredentialEngine, error) { return fake, nil })
+
+	var errB error
+	fired := f.afterA("create", "dynamic_secret_configs", func() { errB = f.coreB.DeleteProject(f.ctx, f.projectID, true) })
+	_, errA := f.coreA.CreateDynamicSecretConfig(f.ctx, &CreateDynamicSecretConfigRequest{
+		Name: "cta-dyn-after", ProjectID: f.projectID, EnvironmentID: f.envID, BackendType: "postgres",
+		AdminDSN:          "postgres://admin:s3cr3t@db.internal:5432/app",
+		CreationTemplate:  "GRANT SELECT ON ALL TABLES IN SCHEMA public TO {{name}};",
+		DefaultTTLSeconds: 3600, CreatedBy: "admin", ActorID: f.adminID,
+	})
+	t.Logf("CreateDynamicSecretConfig (A) err=%v, DeleteProject (B) err=%v", errA, errB)
+	require.True(t, fired(), "the hook must have run B's DeleteProject after A's config INSERT")
+	require.NoError(t, errB)
+
+	assert.Error(t, errA, "A must fail closed: its project was deleted before its insert committed")
+	assert.Zero(t, f.countLive(&models.DynamicSecretConfig{}, "project_id = ? AND disabled = ?", f.projectID, false),
+		"#369 violated: an enabled dynamic-secret config exists in a deleted project")
 }
 
 // TestCTAReview_IssueLease_vs_DeleteProject_CrossReplicaPostgres: a lease

@@ -124,6 +124,28 @@ func restExpect(t *testing.T, s *harness.Server, token, method, path string, bod
 	return env
 }
 
+// listedProjectNames decodes the `{"projects":[{"name":…}]}` payload of a 200
+// GET /api/v1/projects and returns the project names it served. Since #2780
+// that listing is least-privilege rather than admin-only -- it answers 200 with
+// only the caller's visible projects instead of 403 -- so the assertion a
+// journey wants is about WHICH projects came back, not the status code alone.
+func listedProjectNames(t *testing.T, env restEnvelope) []string {
+	t.Helper()
+	var data struct {
+		Projects []struct {
+			Name string `json:"name"`
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal(env.Data, &data); err != nil {
+		t.Fatalf("decode GET /api/v1/projects: %v\nraw: %s", err, env.Data)
+	}
+	names := make([]string, 0, len(data.Projects))
+	for _, p := range data.Projects {
+		names = append(names, p.Name)
+	}
+	return names
+}
+
 // runCLI runs the built keyorix CLI binary with args against server s,
 // using env (which must carry KEYORIX_SERVER and KEYORIX_TOKEN on top of
 // s.CLIEnv()'s isolated HOME/PATH). Fails the test with the combined

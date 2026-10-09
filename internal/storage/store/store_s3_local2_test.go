@@ -574,14 +574,28 @@ func TestRotationPolicies_CRUD(t *testing.T) {
 	assert.Len(t, list3, 1)
 
 	// Update.
-	all[0].IntervalDays = 45
-	require.NoError(t, ls.UpdateRotationPolicy(ctx, all[0]))
+	matched, err := ls.UpdateRotationPolicyFields(ctx, all[0].ID, coreStorage.RotationPolicyFieldUpdate{
+		Name: all[0].Name, IntervalDays: 45, AlertDaysBefore: all[0].AlertDaysBefore, IsActive: true,
+	}, time.Now())
+	require.NoError(t, err)
+	require.True(t, matched)
 	got2, err := ls.GetRotationPolicy(ctx, all[0].ID)
 	require.NoError(t, err)
 	assert.Equal(t, 45, got2.IntervalDays)
 
 	// Delete.
 	require.NoError(t, ls.DeleteRotationPolicy(ctx, all[0].ID))
+	_, err = ls.GetRotationPolicy(ctx, all[0].ID)
+	require.Error(t, err)
+
+	// #2700: the policy is SOFT-deleted, so an update must not clear deleted_at
+	// and bring it back active — the former Save's upsert fallback did exactly
+	// that.
+	matched, err = ls.UpdateRotationPolicyFields(ctx, all[0].ID, coreStorage.RotationPolicyFieldUpdate{
+		Name: "zombie", IntervalDays: 45, IsActive: true,
+	}, time.Now())
+	require.NoError(t, err)
+	require.False(t, matched, "a soft-deleted policy must not be resurrected by an update")
 	_, err = ls.GetRotationPolicy(ctx, all[0].ID)
 	require.Error(t, err)
 }

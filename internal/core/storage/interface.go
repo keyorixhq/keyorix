@@ -146,10 +146,56 @@ type Storage interface {
 	// suspend + delete pair).
 	WithTransaction(ctx context.Context, fn func(Storage) error) error
 
+	// LockLiveProject re-reads project projectID and reports whether it is still
+	// live (not soft-deleted). On Postgres it takes SELECT ... FOR SHARE on that
+	// row, so it serializes against DeleteProject's cascade, which row-locks the
+	// project FOR UPDATE before it sweeps any child (#2656).
+	//
+	// It is ONLY meaningful on a transaction-scoped Storage — the handle
+	// WithTransaction hands fn — and only when called AFTER the child write it
+	// guards, rolling the transaction back when it returns false. That ordering is
+	// the whole mechanism, and it is not interchangeable with checking first: a
+	// cascade that runs entirely between a pre-write check and the write never
+	// sees the child, and the child commits under a deleted project. Called on a
+	// non-transactional Storage it still answers the question correctly, but
+	// guarantees nothing, because the row lock is released the instant that
+	// single autocommit statement completes.
+	//
+	// #2702/#2710/#2711/#2712: core.CreateSecret, core.CreateFolder,
+	// core.CreateEnvironment and LocalStorage.RestoreSecret each checked the
+	// ENVIRONMENT's liveness (via the EnvironmentSecretGuardLockKey named lock)
+	// but never the project's, and deleteProjectCascade takes no such named lock —
+	// so a child committed under a project deleted in the window. The store-internal
+	// lockLiveParent helper this exposes already backed RestoreEnvironment's
+	// identical fix (#2656); the method exists so a core-layer caller already
+	// inside WithTransaction can use it without the full-row write
+	// internal/storage/store would otherwise have to grow a bespoke method for.
+	LockLiveProject(ctx context.Context, projectID uint) (bool, error)
+
 	// Project / Environment management
 	CreateProject(ctx context.Context, project *models.Project) (*models.Project, error)
 	GetProject(ctx context.Context, id uint) (*models.Project, error)
-	UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error)
+	// UpdateProjectFields persists ONLY name, description and updated_at — plus
+	// require_mfa when (and only when) requireMFA is non-nil — onto a LIVE
+	// project row: "UPDATE projects SET ... WHERE id = ? AND deleted_at IS
+	// NULL". matched=false (no error) means the project is gone; the caller must
+	// not report success.
+	//
+	// This REPLACES the former UpdateProject, a bare GORM Save of a struct the
+	// caller read earlier (#2697). Two consequences, both closed by the shape
+	// above rather than by the caller being careful:
+	//   - Save's 0-rows fallback is an upsert that writes deleted_at = NULL, so
+	//     a rename landing after DeleteProject resurrected the project row
+	//     alone (its secrets and environments stayed deleted), after which
+	//     requireLiveProject and the RestoreSecret/RestoreEnvironment liveness
+	//     checks passed again for project-scoped grant holders;
+	//   - Save wrote every column, so a plain rename whose read predated an
+	//     admin enabling ADR-037's per-project require_mfa wrote `false` back
+	//     over it — no roles.assign needed, and no audit event, because
+	//     core.UpdateProject only audits when ITS OWN argument changes the
+	//     value it read. requireMFA is a pointer here so "I am not changing
+	//     this flag" is expressible, and a nil one never reaches the UPDATE.
+	UpdateProjectFields(ctx context.Context, id uint, name, description string, requireMFA *bool, updatedAt time.Time) (matched bool, err error)
 	DeleteProject(ctx context.Context, id uint) error
 	// DeleteProjectIfEmpty atomically enforces DeleteProject(force=false)'s guard —
 	// reject the delete if the project still has any live secret — and, only when the
@@ -341,6 +387,15 @@ type Storage interface {
 	// already decided or the parent campaign was closed (by a prior or racing call)
 	// and this write was rejected, not silently applied.
 	UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) (bool, error)
+	// RevertAccessReviewItemClaim compensates a claim whose real action then failed
+	// to apply (revoke's post-claim failure window — see claimItemDecision's doc
+	// comment for why revoke must claim before acting). Conditional UPDATE, same
+	// atomic-compare-and-swap shape as UpdateAccessReviewItem's own claim, run in
+	// reverse (WHERE id = ? AND decision = fromDecision AND decided_by = actorID).
+	// The bool reports whether the row matched and was reverted; false means
+	// someone else already changed it since this caller's own claim, and the
+	// caller must fail closed (leave it alone), not overwrite that other change.
+	RevertAccessReviewItemClaim(ctx context.Context, itemID uint, fromDecision string, actorID uint) (bool, error)
 
 	// Separation-of-duties policies (ISO 27001 A.5.3 / SOX) — toxic permission pairs.
 	CreateSoDPolicy(ctx context.Context, p *models.SoDPolicy) (*models.SoDPolicy, error)
@@ -746,6 +801,21 @@ type Storage interface {
 	// result must be treated exactly like a lost race — surfaced as an error to
 	// the caller — not retried or silently overwritten.
 	TransitionSecretStatus(ctx context.Context, secret *models.SecretNode, fromStatus string) (bool, error)
+	// UpdateSecretRotationConfig persists ONLY secret's auto-rotation columns
+	// (auto_rotate, rotation_length, rotation_charset, rotation_backend,
+	// rotation_ref) plus updated_at, via one conditional "UPDATE ... WHERE id = ?
+	// AND project_id = ? AND rotation_backend = ? AND deleted_at IS NULL". It
+	// succeeds only if the secret is still live, still in the project the caller
+	// authorized against, and its CURRENT rotation_backend still equals
+	// fromBackend — the pre-read value core.SetSecretAutoRotate's admin gate
+	// (#90) was decided on. Returns whether the write matched a row; a false
+	// result is a lost race and must fail closed, never be retried blind.
+	//
+	// It exists because SetSecretAutoRotate used to persist its pre-read
+	// snapshot with UpdateSecret's full-row Save, which undeleted a concurrently
+	// deleted secret (Save's upsert fallback writes deleted_at = NULL), reverted
+	// a concurrent admin's backend binding and restored cleared ownership (#2650).
+	UpdateSecretRotationConfig(ctx context.Context, secret *models.SecretNode, fromBackend string) (bool, error)
 	DeleteSecret(ctx context.Context, id uint) error
 	// RestoreSecret clears a soft-deleted secret's deleted_at (ADR-033).
 	RestoreSecret(ctx context.Context, id uint) error
@@ -1031,7 +1101,24 @@ type Storage interface {
 	// Group Management
 	CreateGroup(ctx context.Context, group *models.Group) (*models.Group, error)
 	GetGroup(ctx context.Context, id uint) (*models.Group, error)
-	UpdateGroup(ctx context.Context, group *models.Group) (*models.Group, error)
+	// UpdateGroupFields persists ONLY the non-nil fields among name,
+	// nameFolded and description (plus updated_at) onto a LIVE group row:
+	// "UPDATE groups SET ... WHERE id = ? AND deleted_at IS NULL".
+	// matched=false (no error) means the group is gone; the caller must not
+	// report success. name and nameFolded must be passed together — they are
+	// one value in two columns (#1642) and a stale nameFolded would leave the
+	// uniqueness index checking a name the group no longer has.
+	//
+	// This REPLACES the former UpdateGroup, a bare GORM Save (#2697). Save's
+	// 0-rows fallback is an upsert that writes deleted_at = NULL, and DeleteGroup
+	// deliberately KEEPS a deleted group's GroupRole and UserGroup rows so
+	// RestoreGroup can work — so a rename landing after a delete or SCIM
+	// deprovision brought the group back with every role grant and membership
+	// live, with no restore audit event and without going through RestoreGroup.
+	// An IdP DELETE closely followed by a PUT is enough: ReplaceSCIMGroup and
+	// PatchSCIMGroup rename through this same primitive, outside the
+	// withGroupProjectAdminGuardLocks that deleteGroupGuarded holds.
+	UpdateGroupFields(ctx context.Context, id uint, name, nameFolded, description *string, updatedAt time.Time) (matched bool, err error)
 	DeleteGroup(ctx context.Context, id uint) error
 	// RestoreGroup clears a soft-deleted group's deleted_at (with its grants/members).
 	RestoreGroup(ctx context.Context, id uint) error
@@ -1556,6 +1643,12 @@ type Storage interface {
 	GetDynamicSecretConfig(ctx context.Context, id uint) (*models.DynamicSecretConfig, error)
 	ListDynamicSecretConfigs(ctx context.Context, projectID, environmentID uint) ([]*models.DynamicSecretConfig, error)
 	UpdateDynamicSecretConfig(ctx context.Context, c *models.DynamicSecretConfig) error
+	// SetDynamicSecretConfigAdminDSN writes ONLY a config's encrypted admin DSN
+	// (admin_dsn_enc, admin_dsn_meta) and updated_at, never the rest of the row
+	// (#2651). CreateDynamicSecretConfig's second write used UpdateDynamicSecretConfig
+	// (a full-row Save) and wrote disabled=false back over a concurrent DeleteProject's
+	// #369 disable. Returns an error when no row matched.
+	SetDynamicSecretConfigAdminDSN(ctx context.Context, id uint, enc, meta []byte) error
 	// TransitionDynamicSecretConfigDisabled persists cfg's full row via a single
 	// conditional write — "UPDATE ... WHERE id = ? AND disabled = ?" — succeeding
 	// only if the row's CURRENT persisted disabled value still equals fromDisabled
@@ -1677,7 +1770,20 @@ type Storage interface {
 	// separate remote calls would have reopened the exact TOCTOU race the
 	// transaction was built to prevent.
 	LockWebAuthnCredentialForUpdate(ctx context.Context, credentialID []byte, userID uint) (*models.WebAuthnCredential, error)
-	UpdateWebAuthnCredential(ctx context.Context, c *models.WebAuthnCredential) error
+	// DisableWebAuthnCredential sets ONLY `disabled = true` on an EXISTING
+	// credential row, returning matched=false when the row is gone.
+	// SetWebAuthnCredentialCounterState persists ONLY the signature-counter blob
+	// and last_used_at.
+	//
+	// Together they REPLACE the former UpdateWebAuthnCredential, a bare GORM Save
+	// (#2700). WebAuthnCredential is HARD-deleted (no DeletedAt), so Save's
+	// 0-rows fallback — `INSERT ... ON CONFLICT (id) DO UPDATE` — re-inserted a
+	// passkey the user had just deleted. It came back with Disabled=true, so it
+	// fails closed for authentication; what it corrupts is the credential count
+	// and the webauthn_enabled bookkeeping derived from it. Low severity, and
+	// deliberately described as such.
+	DisableWebAuthnCredential(ctx context.Context, id uint) (matched bool, err error)
+	SetWebAuthnCredentialCounterState(ctx context.Context, id uint, blob []byte, lastUsedAt time.Time) (matched bool, err error)
 	// AdvanceWebAuthnCredentialCounter conditionally persists an advanced signature
 	// counter (newBlob/newSignCount) and lastUsedAt for the credential identified by
 	// (credentialID, userID), IFF newSignCount is not stale relative to whatever
@@ -1775,7 +1881,19 @@ type Storage interface {
 	// ErrNotFound (via the store package) when no policy exists for the secret.
 	GetRotationPolicyBySecret(ctx context.Context, secretID uint) (*models.RotationPolicy, error)
 	ListRotationPolicies(ctx context.Context, projectID *uint, environmentID *uint) ([]*models.RotationPolicy, error)
-	UpdateRotationPolicy(ctx context.Context, p *models.RotationPolicy) error
+	// UpdateRotationPolicyFields persists ONLY the six operator-editable columns
+	// named by f (plus updated_at), onto a LIVE policy row. matched=false (no
+	// error) means the policy is gone; the caller must not report success.
+	//
+	// This REPLACES the former UpdateRotationPolicy, a bare GORM Save (#2700),
+	// which got two things wrong at once. RotationPolicy IS soft-deletable, so
+	// the 0-rows upsert fallback wrote deleted_at = NULL and a stale edit brought
+	// a deleted policy back ACTIVE — resuming rotation and breach alerts although
+	// the delete had reported success. And the full-row write reverted
+	// rotation_state / last_rotation_error / last_state_at, which belong to
+	// UpdateRotationState (the executor), hiding a failed rotation; those three
+	// columns are deliberately absent from this method.
+	UpdateRotationPolicyFields(ctx context.Context, id uint, f RotationPolicyFieldUpdate, updatedAt time.Time) (matched bool, err error)
 	DeleteRotationPolicy(ctx context.Context, id uint) error
 	// UpdateRotationState stamps the execution state on a RotationPolicy row.
 	// state must be one of: idle, pending, rotating, succeeded, failed.
@@ -1833,7 +1951,16 @@ type Storage interface {
 	GetSecretTemplate(ctx context.Context, id uint) (*models.SecretTemplate, error)
 	GetSecretTemplateByName(ctx context.Context, name string) (*models.SecretTemplate, error)
 	ListSecretTemplates(ctx context.Context) ([]*models.SecretTemplate, error)
-	UpdateSecretTemplate(ctx context.Context, t *models.SecretTemplate) error
+	// UpdateSecretTemplateFields persists ONLY the six editable columns named by
+	// f (plus updated_at) of an EXISTING template row. matched=false means the
+	// template is gone.
+	//
+	// This REPLACES the former UpdateSecretTemplate, a bare GORM Save (#2700).
+	// SecretTemplate is HARD-deleted (no DeletedAt), so Save's 0-rows fallback
+	// re-INSERTED a template a concurrent delete had removed, with its old id.
+	// Integrity only — a template mints nothing by itself — and low severity,
+	// stated as such.
+	UpdateSecretTemplateFields(ctx context.Context, id uint, f SecretTemplateFieldUpdate, updatedAt time.Time) (matched bool, err error)
 	DeleteSecretTemplate(ctx context.Context, id uint) error
 
 	// AlertEscalationPolicy CRUD
@@ -1846,6 +1973,33 @@ type Storage interface {
 	// ListUnacknowledgedAnomalyAlertsBefore returns unacknowledged anomaly alerts
 	// whose created_at (detected_at) is older than the given threshold.
 	ListUnacknowledgedAnomalyAlertsBefore(ctx context.Context, threshold time.Time) ([]models.AnomalyAlert, error)
+}
+
+// RotationPolicyFieldUpdate is the set of columns an operator edit of a rotation
+// policy owns (#2700). Every field is written, because core.UpdateRotationPolicy
+// requires all six on its request — unlike SecretFieldUpdate there is no
+// "leave this one alone" case to express. What matters is which columns are NOT
+// here: rotation_state, last_rotation_error and last_state_at belong to the
+// executor (UpdateRotationState), and a policy edit used to revert them.
+type RotationPolicyFieldUpdate struct {
+	Name            string
+	Description     string
+	IntervalDays    int
+	AlertDaysBefore int
+	NotifyOnBreach  bool
+	IsActive        bool
+}
+
+// SecretTemplateFieldUpdate is the set of columns an edit of a secret template
+// owns (#2700). Same reasoning as RotationPolicyFieldUpdate: all six come from
+// the request, and the point is the exclusion of created_by/created_at.
+type SecretTemplateFieldUpdate struct {
+	Name                  string
+	Description           string
+	DefaultClassification string
+	DefaultTags           string
+	DescriptionPattern    string
+	RotationHintDays      int
 }
 
 // SecretFilter defines filtering options for secret queries

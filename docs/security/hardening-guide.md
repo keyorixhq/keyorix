@@ -72,6 +72,136 @@ actually kept separately:
 | SIEM forwarding | `audit.siem.{enabled,provider,endpoint,token or KEYORIX_SIEM_TOKEN,spool_dir}` | Enable for any regulated deployment — `spool_dir` gives a durable on-disk backlog so a SIEM outage doesn't silently lose the off-box audit copy. Use `KEYORIX_SIEM_TOKEN` rather than the inline `token` key so the credential isn't checked into a config file. |
 | SIEM endpoint transport | `audit.siem.{allow_private_network_target,allow_insecure_transport}` | Leave both `false` (the default) unless the SIEM collector is genuinely on a private network / self-signed — each opt-out is independently logged; don't flip one to work around the other's check. |
 | What to monitor | anomaly-detection alerts, `GET /api/v1/audit/retention` | Watch built-in brute-force/unusual-access alerts, and periodically check `meets_nis2_12_month` / `coverage_days` on the retention endpoint as a durable evidence figure for an auditor, not just an internal metric. |
+| Audit commit durability | `storage.database.insecure_audit_skip_durable_sync` | **Leave `false` (the default).** PostgreSQL only — a SQLite install that sets it refuses to start. Setting it buys Vault-equivalent read latency by giving up durability of the most recent audit entries. Read §5a before considering it. |
+
+### 5a. Fast audit mode — what you give up
+
+`storage.database.insecure_audit_skip_durable_sync: true` is an opt-out from
+Keyorix's audit-before-disclosure guarantee (ADR-112 §3, Amendment 1; full spec
+in [`../specs/fast-audit-mode.md`](../specs/fast-audit-mode.md)). It is off by
+default and can only be set in the config file — no API, CLI flag or
+environment variable can turn it on.
+
+**PostgreSQL only.** On a PostgreSQL backend the audit-commit transaction, and
+only that transaction, issues `SET LOCAL synchronous_commit = off`.
+
+| `storage.type` | Behaviour |
+|---|---|
+| `postgres` / `postgresql` | **Supported.** In effect when `true`. |
+| `local` / `sqlite` | **Refuses to start**, with `storage.database.insecure_audit_skip_durable_sync is only supported with PostgreSQL; remove it or switch storage to postgres`. Not ignored silently — see "why not SQLite" below. |
+| `remote` | Not applicable: a server cannot run with remote storage at all (ADR-083). |
+
+**Why not SQLite.** Two reasons, one structural and one measured:
+
+1. `PRAGMA synchronous` is a **per-connection** property and Keyorix shares one
+   connection pool across every query, so relaxing it would relax commit
+   durability for *every table*. A power loss could then undo a just-committed
+   secret rotation or revocation — not merely lose audit entries. That is a far
+   bigger promise to break than the one this setting is meant to trade away.
+2. It was not even a clean latency win. Measured on pve01 (W1 hot secret read,
+   median of 3, interleaved arms, same host and binary), the median improved but
+   the **p99 got worse** under concurrency:
+
+   | clients | SQLite p99, durable | SQLite p99, relaxed |
+   |---|---|---|
+   | 1 | 125.5 ms | 53.3 ms |
+   | 10 | 328.8 ms | **518.0 ms** |
+   | 50 | 703.7 ms | **919.0 ms** |
+
+   Likely mechanism (a hypothesis, not a measured attribution): at `FULL` every
+   commit fsyncs, which paces the writer and keeps the WAL short; at `NORMAL`
+   commits are cheap, so the WAL grows much faster between checkpoints and the
+   checkpoint that eventually fires has far more to sync — a rarer but much
+   bigger stall, which SQLite's single-writer lock then imposes on every waiting
+   writer.
+
+   These numbers are the **reason the SQLite path was removed**, not a feature
+   you can opt into.
+
+**What it does not change** when in effect. The audit row is still written and
+committed, in the same transaction as before, *before* the secret value is
+returned. If the audit row cannot be written, the request still fails. The hash
+chain can lose a tail of entries but can never gap or fork, and `verify-audit`
+passes after a crash — proven by a real postmaster `SIGKILL` under load.
+
+**What you give up** on PostgreSQL.
+
+| | Default (`false`) | Fast mode (`true`) |
+|---|---|---|
+| Keyorix process crash (`kill -9`, OOM, panic) | loses nothing | loses nothing |
+| Database **server** crash | loses nothing | loses up to ~3 × `wal_writer_delay` of audit entries (~600 ms at the default) |
+| OS crash / power loss | loses nothing | as above |
+| Scope of the relaxation | — | the audit transaction only; a secret **write** still commits durably |
+
+**What it buys, measured.** pve01, W1 hot secret read, median of 3, the two arms
+interleaved on the same host from the same binary
+(`~/proj/bench-footprint/results/2026-10-05-fastaudit-1/`):
+
+| clients | default | fast mode | vs Vault (audit on) before | after |
+|---|---|---|---|---|
+| 1 | 16.6 ms / 51.7 rps | **3.7 ms / 243.0 rps** | 11.8x | **2.7x** |
+| 10 | 83.3 ms / 115.1 rps | **24.9 ms / 384.8 rps** | 7.1x | **2.1x** |
+| 50 | 150.8 ms / 320.4 rps | **65.8 ms / 726.5 rps** | 3.8x | **1.7x** |
+
+Both p50 and p99 improve at every concurrency on PostgreSQL (p99: 64.6→9.3,
+157.9→51.5, 227.5→115.9 ms). Throughput still trails Vault by ~1.5–2.5x even
+where latency is close.
+
+**When this is reasonable.** Only where loss of the host's volatile write cache
+is not a realistic event:
+
+- a UPS sized to survive the outage and configured to shut the host down
+  cleanly;
+- a RAID controller with a battery- or flash-backed write cache (and a
+  **healthy** battery — a BBWC in write-through fallback gives you none of
+  this);
+- replicated cloud block storage (EBS, GCP PD, Azure managed disks), where an
+  acknowledged write is already on several devices before the guest's page cache
+  is involved.
+
+It is not reasonable on a laptop, a bare consumer SSD, a desktop VM, or any host
+whose power you do not control.
+
+**Why the option exists.** PERF-2 measured Keyorix at roughly 10× HashiCorp
+Vault's single-client read latency — and that was with Vault's *own* file audit
+device enabled. A source-verified read of each competitor's audit write path
+found that none of them wait for a disk sync before answering: Vault and OpenBao
+do one `write()` to an append-only file with no `fsync` anywhere, Conjur fires
+into syslog, Infisical queues to Redis and swallows request-path errors.
+Keyorix's default is strictly stronger than all four, and it stays the default.
+This setting exists so an operator who has genuinely engineered their power can
+choose Vault's guarantee deliberately, name it in their config, and have it
+appear in their own audit trail — rather than being told the trade-off is
+unavailable.
+
+**This is not a "safe" setting.** It is Vault's guarantee. If your compliance
+position rests on "every disclosed secret has a durable audit record" (DORA,
+NIS2, ENS evidence of access), do not enable it: after an unclean host shutdown
+you cannot show that the last fraction of a second of reads were recorded.
+
+**How you can tell it is on.** Four places, all of which an auditor can check:
+
+- a `WARNING:` line in the server log at **every** start, naming the setting;
+- an `admin.audit_durable_sync_skipped_at_startup` event in the hash chain at
+  every start, so the tamper-evident log itself records the window the install
+  ran weakened. Written only when the setting is actually *in effect* — a
+  configured-but-ignored setting weakened no window, and the event must not
+  claim otherwise. **Note that this event is written through the very path whose
+  durability the setting relaxes**, so it is async-committed like every other
+  audit entry: a crash within ~600 ms of boot can lose it. That is accepted
+  rather than engineered around, because the event marks a *window* and not a
+  single instant — the next boot re-records it, and the live setting is also
+  reported by `admin validate` and `GET /system/info`, neither of which depends
+  on the chain. Do not treat a missing event as evidence the mode was off;
+- read the live setting from the posture report or the API, not from the
+  absence of a chain entry;
+- `keyorix-server admin validate` lists it as a posture deviation;
+- `GET /api/v1/system/info` reports `security.audit_durable_sync_skipped: true`
+  — the one that needs no host access. That field reports **in effect**, not
+  merely "configured"; if the setting is present but doing nothing, the response
+  carries `audit_durable_sync_skip_not_in_effect_reason` explaining why instead.
+
+To turn it off, remove the line and restart.
 
 ## 6. Backup and key-material custody
 

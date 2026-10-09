@@ -176,6 +176,73 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 
+	// #2722: the record insert and the role grant are serialized against a
+	// concurrent revoke by the SAME named lock RevokeBreakGlassActivationAtomic
+	// takes, projectAdminGuardLockKey(projectID). They are two separate storage
+	// operations with no shared transaction, and the revoke tolerates
+	// ErrRoleNotAssigned ("already gone — proceed to reconcile the record"), so a
+	// revoke landing between them removed nothing, transitioned the record to
+	// `revoked`, audited success, and then the activation granted the emergency
+	// role anyway. End state: a self-granted, SoD-bypassing role live for its full
+	// TTL while the record every reviewer and the UI reads says revoked — and
+	// because the admin's revoke reported success, nobody revisits it.
+	// ReconcileExpired only touches `active` rows, so it never cleans it up, and
+	// the freed unique-index slot lets the user activate a second time.
+	//
+	// Why the lock and NOT lockLiveParent, which is how every other fix in this
+	// class is built: lockLiveParent requires the delete side to row-lock the
+	// PARENT before it touches the children (its own doc comment says so
+	// explicitly, and names this exact exclusion). The revoke does the opposite —
+	// tx.RemoveRole runs BEFORE tx.RevokeBreakGlassActivation — so a FOR SHARE on
+	// the activation row would be read AFTER the revoke had already looked for and
+	// not found the grant, and the race would survive the fix. #2722's own
+	// suggested "lockLiveParent-style" direction is unsound for that reason;
+	// serializing on the lock the revoke already holds is not.
+	//
+	// Lock-order safety: this is a single acquisition of family rank 3
+	// (project-admin-guard) with nothing nested inside it —
+	// assignUserRoleWithExpirySkipSoD calls storage.AssignRoleWithExpiry directly
+	// and takes no named lock, deliberately (see its doc comment on skipping the
+	// SoD gate). No inversion against storage.NamedLockOrder.
+	var activation *models.BreakGlassActivation
+	if lockErr := c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(projectID), func(ctx context.Context) error {
+		var err error
+		activation, err = c.activateBreakGlassLocked(ctx, userID, projectID, role, justification, now, expiresAt, scope)
+		return err
+	}); lockErr != nil {
+		return nil, lockErr
+	}
+
+	c.auditProjectScoped(ctx, EventBreakGlassActivated, userID, projectID,
+		fmt.Sprintf("break-glass: user %d self-granted %q until %s — %s",
+			userID, role.Name, expiresAt.UTC().Format(time.RFC3339), justification))
+	// The grant is already committed and audited above, so a notification failure here
+	// is a DETECTION-LATENCY gap, not a control failure — don't fail the activation on
+	// it. But silently swallowing it would defeat break-glass's "loud by design" intent
+	// if the notification pipeline itself is down, so surface it loudly (#166): a
+	// SECURITY-prefixed log line, matching the convention emitAudit already uses for a
+	// failed audit write, so an operational alerting pipeline watching logs still pages.
+	if nerr := c.notifyBreakGlassAdmins(ctx, userID, projectID, role.Name, expiresAt); nerr != nil {
+		log.Printf("SECURITY: break-glass activation %d (project %d, user %d): admin notification failed: %v",
+			activation.ID, projectID, userID, nerr)
+	}
+	return activation, nil
+}
+
+// activateBreakGlassLocked is ActivateBreakGlass's insert-then-grant pair, split
+// out so the whole pair runs under one projectAdminGuardLockKey acquisition
+// (#2722). The audit and the admin notification deliberately stay OUTSIDE the
+// lock in the caller: both happen after the grant is committed, and holding a
+// cross-replica advisory lock across a notification fan-out would widen the
+// window every other project-admin operation waits on, for no safety gain.
+func (c *KeyorixCore) activateBreakGlassLocked(
+	ctx context.Context,
+	userID, projectID uint,
+	role *models.Role,
+	justification string,
+	now, expiresAt time.Time,
+	scope storage.Scope,
+) (*models.BreakGlassActivation, error) {
 	// Create the activation record FIRST, before granting anything. This is the
 	// actual race gate: a partial unique index on (project_id, user_id) WHERE
 	// state='active' (ensureBreakGlassActiveIndex) makes the insert itself the source
@@ -227,20 +294,6 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 				fmt.Sprintf("break-glass activation %d for user %d in project %d could not be reconciled to revoked after a role-grant failure: %v — MANUAL CLEANUP REQUIRED (the user cannot retry until this row is fixed)", activation.ID, userID, projectID, rerr))
 		}
 		return nil, fmt.Errorf("failed to grant emergency role: %w", err)
-	}
-
-	c.auditProjectScoped(ctx, EventBreakGlassActivated, userID, projectID,
-		fmt.Sprintf("break-glass: user %d self-granted %q until %s — %s",
-			userID, role.Name, expiresAt.UTC().Format(time.RFC3339), justification))
-	// The grant is already committed and audited above, so a notification failure here
-	// is a DETECTION-LATENCY gap, not a control failure — don't fail the activation on
-	// it. But silently swallowing it would defeat break-glass's "loud by design" intent
-	// if the notification pipeline itself is down, so surface it loudly (#166): a
-	// SECURITY-prefixed log line, matching the convention emitAudit already uses for a
-	// failed audit write, so an operational alerting pipeline watching logs still pages.
-	if nerr := c.notifyBreakGlassAdmins(ctx, userID, projectID, role.Name, expiresAt); nerr != nil {
-		log.Printf("SECURITY: break-glass activation %d (project %d, user %d): admin notification failed: %v",
-			activation.ID, projectID, userID, nerr)
 	}
 	return activation, nil
 }

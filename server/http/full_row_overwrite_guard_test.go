@@ -99,19 +99,30 @@ var fullRowOverwriteMethods = map[string]bool{
 	// the deleted TransitionMachineIdentityStateProxy got in the allowlist
 	// below. The replacement is deliberately NOT added: it takes scalars, not
 	// a struct, so there is no unfetched-struct shape for this guard to catch.
+	// UpdateProject and UpdateGroup went the same way in #2697, replaced by
+	// UpdateProjectFields / UpdateGroupFields (conditional column-scoped
+	// UPDATEs). Same reasoning; their replacements take scalars and pointers,
+	// not a caller-built *models.X, so there is no unfetched-struct shape here
+	// either.
 	"UpdateRole":                 true,
 	"UpdateBreakGlassActivation": true,
-	"UpdateProject":              true,
 	"UpdateWebAuthnCredential":   true,
 	"UpdateSecretTemplate":       true,
 	"UpdateRotationPolicy":       true,
-	"UpdateLegalHold":            true,
-	"UpdateDynamicSecretConfig":  true,
-	"UpdateDynamicSecretLease":   true,
-	"UpdateSecret":               true,
-	"UpdateUser":                 true,
-	"UpdateGroup":                true,
-	"SaveAnomalyConfig":          true,
+	// UpdateRotationPolicy, UpdateSecretTemplate and UpdateWebAuthnCredential
+	// went the same way in #2700, replaced by column-scoped,
+	// RowsAffected-checked writers (UpdateRotationPolicyFields,
+	// UpdateSecretTemplateFields, DisableWebAuthnCredential /
+	// SetWebAuthnCredentialCounterState). Same reasoning, and the
+	// replacements take an id plus scalars or a field struct, never a
+	// caller-built *models.X.
+	"UpdateProject":             true,
+	"UpdateLegalHold":           true,
+	"UpdateDynamicSecretConfig": true,
+	"UpdateDynamicSecretLease":  true,
+	"UpdateSecret":              true,
+	"UpdateUser":                true,
+	"SaveAnomalyConfig":         true,
 }
 
 // fullRowOverwriteAllowlist is the exhaustive, reasoned inventory of every

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
@@ -28,7 +29,19 @@ func newDynamicConfigTestStore(t *testing.T) *LocalStorage {
 	require.NoError(t, db.AutoMigrate(&models.DynamicSecretConfig{}))
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_dynamic_secret_configs_project_env_name "+
 		"ON dynamic_secret_configs (project_id, environment_id, name)").Error)
+	seedDynamicConfigProjects(t, db)
 	return NewLocalStorage(db)
+}
+
+// seedDynamicConfigProjects creates live projects 1 and 2, the projects the dynamic
+// config tests in this package create configs in: CreateDynamicSecretConfig refuses a
+// config whose project is missing or soft-deleted (#2651, INV-STORE-21).
+func seedDynamicConfigProjects(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	require.NoError(t, db.AutoMigrate(&models.Project{}))
+	for _, id := range []uint{1, 2} {
+		require.NoError(t, db.Create(&models.Project{ID: id, Name: fmt.Sprintf("dyn-project-%d", id)}).Error)
+	}
 }
 
 // TestCreateDynamicSecretConfig_DuplicateNameRejected is the (#462) regression:
@@ -121,4 +134,43 @@ func TestCreateDynamicSecretLease_ActiveRefusedOnDisabledConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, leases, 1)
 	assert.Equal(t, "lease-orphan", leases[0].LeaseID, "the refused active lease must have been rolled back")
+}
+
+// TestSetDynamicSecretConfigAdminDSN_LeavesDisabledAlone (#2651): the DSN write after
+// insert touches only the DSN columns, so a concurrent #369 disable that landed between
+// the insert and this write survives it (a full-row Save wrote disabled=false back).
+func TestSetDynamicSecretConfigAdminDSN_LeavesDisabledAlone(t *testing.T) {
+	ctx := context.Background()
+	ls := newDynamicConfigTestStore(t)
+	cfg, err := ls.CreateDynamicSecretConfig(ctx, &models.DynamicSecretConfig{
+		Name: "app-db", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres",
+	})
+	require.NoError(t, err)
+	require.NoError(t, ls.db.Model(&models.DynamicSecretConfig{}).Where("id = ?", cfg.ID).Update("disabled", true).Error)
+
+	require.NoError(t, ls.SetDynamicSecretConfigAdminDSN(ctx, cfg.ID, []byte("enc"), []byte("meta")))
+
+	got, err := ls.GetDynamicSecretConfig(ctx, cfg.ID)
+	require.NoError(t, err)
+	assert.True(t, got.Disabled, "the DSN write must not re-enable a disabled config")
+	assert.Equal(t, []byte("enc"), got.AdminDSNEnc)
+	assert.Equal(t, []byte("meta"), got.AdminDSNMeta)
+	assert.Error(t, ls.SetDynamicSecretConfigAdminDSN(ctx, cfg.ID+1000, nil, nil), "no matching row is an error")
+}
+
+// TestCreateDynamicSecretConfig_RefusesSoftDeletedProject: the single-process half of
+// INV-STORE-21 for configs (#2651). A config in a soft-deleted project is refused and
+// leaves no row: DeleteProject's #369 disable already ran, so it would stay enabled.
+func TestCreateDynamicSecretConfig_RefusesSoftDeletedProject(t *testing.T) {
+	ctx := context.Background()
+	ls := newDynamicConfigTestStore(t)
+	require.NoError(t, ls.db.Delete(&models.Project{}, 2).Error)
+
+	_, err := ls.CreateDynamicSecretConfig(ctx, &models.DynamicSecretConfig{
+		Name: "app-db", ProjectID: 2, EnvironmentID: 2, BackendType: "postgres",
+	})
+	require.Error(t, err)
+	var n int64
+	require.NoError(t, ls.db.Model(&models.DynamicSecretConfig{}).Where("project_id = ?", 2).Count(&n).Error)
+	assert.Zero(t, n, "the refused config must have been rolled back")
 }

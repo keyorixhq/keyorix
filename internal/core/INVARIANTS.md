@@ -291,13 +291,48 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
 - **INV-CORE-37** A SUCCESS audit event never textually precedes the storage write it reports
   on, in the same function; denial/failure events are exempt by construction, anything else
   needs a reviewed `AUDIT:<fn>` exemption. Guard: `atomicity_guard_test.go:TestAtomicityGuard_AuditBeforeWrite`.
+- **INV-CORE-41** A failed `DecideAccessReviewItem` leaves the item PENDING and the grant
+  untouched — for BOTH decisions, so a reported error always means "nothing happened, retry",
+  never "the evidence says one thing and the access says another". The two halves get there
+  differently because they must:
+  - **attest** does every fallible read (reviewer controls, the live grant re-verification)
+    BEFORE the conditional claim, and nothing that can fail after it. Why: #2570, found by
+    `FuzzStorageFaultOperations`. Guard:
+    `access_review_decide_read_before_write_test.go:TestDecideAccessReviewItem_AttestGrantLookupErrorLeavesItemPending`,
+    corpus seed `2570_decideaccessreviewitem_listprojectroleassignments_error`.
+  - **revoke** cannot use that ordering — claim-before-act is what closes #1646's
+    cross-replica attest/revoke race — so it runs claim + removal + both audit events in ONE
+    transaction (`access_review_decide_tx.go`), named lock OUTSIDE and transaction INSIDE.
+    Closed 2026-10-05 (#2676); before it, a failed removal left the item stamped `revoked`
+    while the grant was still live (false ISO 27001 A.5.18 / SOC 2 CC6.2-6.3 evidence) and
+    un-retryable, logged as `SECURITY: ... manual reconciliation required`. Reachable with no
+    fault injection at all: a last-project-admin guard REFUSAL took the same path. Guards:
+    `access_review_decide_atomicity_test.go` (faultstorage, plus the guard-refusal and
+    audit-write-failure calibration cases),
+    `concurrency_access_review_revoke_tx_postgres_test.go` (pg-gated: the lock-ordering and
+    two-connection budget the nesting costs, which is also what pins no third pooled
+    connection is taken inside the transaction).
+
+    The revoke path and the standalone `RevokeAccessReviewGrant` endpoint share ONE
+    validation + principal-kind dispatch (`planReviewRevoke`) and ONE lock-and-guard decision
+    per removal shape (`with{User,Group,Machine}RoleRemovalGuards`, also used by the public
+    `RemoveUserRole`/`RemoveRoleFromGroup`/`RemoveMachineRole`). Guard that the sharing is
+    real, not claimed:
+    `access_review_decide_atomicity_test.go:TestDecideAccessReviewItem_RevokeStillRefusedByLastProjectAdminGuard`
+    — if the access-review path ever re-implemented the removal, that is the assertion that
+    would go red.
 - **INV-CORE-41** `DecideAccessReviewItem`'s attest path does every fallible read
   (reviewer controls, the live grant re-verification) BEFORE the conditional claim that commits
   the item's decision, and nothing that can fail after it — so a reported error means the item
-  is still pending. (The revoke path must act after its claim to keep the #1646 race closed; its
-  post-claim failure window is logged as `SECURITY: ... manual reconciliation required`.) Why:
-  #2570, found by `FuzzStorageFaultOperations`. Guard:
+  is still pending. The revoke path still must act AFTER its claim to keep the #1646 race closed;
+  if that real action then fails, a compensating conditional UPDATE reverts the claim back to
+  pending (fail-closed: a non-match, e.g. a concurrent re-decide, is left alone and still logged
+  as `SECURITY: ... manual reconciliation required`) — safe because every RevokeAccessReviewGrant
+  branch returns its error from the same call that would have performed the removal, never after
+  a successful one, so revoke is idempotent on retry. Why: #2570, found by
+  `FuzzStorageFaultOperations`. Guard:
   `access_review_decide_read_before_write_test.go:TestDecideAccessReviewItem_AttestGrantLookupErrorLeavesItemPending`,
+  `access_review_revoke_compensate_test.go:TestDecideAccessReviewItem_RevokeActionFailureRevertsClaim`,
   corpus seed `2570_decideaccessreviewitem_listprojectroleassignments_error`.
 
 ## Check-then-act across replicas (GUARD-2)
@@ -310,6 +345,7 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   Guard: `check_then_act_lock_guard_test.go:TestCheckThenActLockGuard_UnlockedSecurityCheck`
   (AST walk; no control-flow, interprocedural, or `tx.<Write>` awareness — and it does not
   detect stale rows, see the TSV's `STALE` class). Open: #2646 #2647 #2649 #2650 #2651
+  detect stale rows, see the TSV's `STALE` class). Open: #2646 #2647 #2648 #2649 #2651
   #2652 #2653 #2654 #2655 #2656 #2657 #2659.
   detect stale rows, see the TSV's `STALE` class). Open: #2646 #2647 #2648 #2649 #2650 #2651
   #2652 #2653 #2654 #2656 #2657 #2659.
@@ -325,20 +361,54 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   detect stale rows, see the TSV's `STALE` class). Open: #2648 #2649 #2650 #2651
   detect stale rows, see the TSV's `STALE` class). Open: #2648 #2650 #2651
   #2653 #2654 #2655 #2657 #2659. Closed rows move to class `PARENT-LOCKED`
+  detect stale rows, see the TSV's `STALE` class). Open: #2648 #2649 #2650 #2651
+  detect stale rows, see the TSV's `STALE` class). Open: #2648 #2650 #2651
+  detect stale rows, see the TSV's `STALE` class). Open: #2648 #2650
+  #2653 #2654 #2655 #2657 #2659. Closed rows move to class `PARENT-LOCKED`
   (INV-STORE-21) or are removed when a `WithNamedLock` now covers them.
+  detect stale rows, see the TSV's `STALE` class). Closed rows move to class
+  `PARENT-LOCKED` (INV-STORE-21), or to `STALE` once a `WithNamedLock` covers them so the
+  guard stops flagging the function at all (#2657/#2659, closed by #2669 — see INV-CORE-44).
+  The set of still-open races is NOT transcribed here. It is whatever the TSV's
+  `UNSAFE-OPEN` rows say, read straight out of the file:
+  `awk 'BEGIN{FS="\t"} !/^#/ && $2=="UNSAFE-OPEN" {print $1"\t"$3}' docs/check-then-act-lock-exempt.tsv | sort -u`
+  (11 rows as of 2026-10-05). An earlier version of this entry did transcribe the issue
+  list, and repeated appends left ten divergent, partly-truncated copies of it in place —
+  a list nobody could use and that contradicted the TSV. Keep the pointer, not the copy.
+  Note the TSV's own labels lag too: the guard cannot detect a stale row, so some
+  `UNSAFE-OPEN` rows name issues that have since been fixed. The TSV is the source of
+  truth for which ROWS exist; the issue is the source of truth for whether it is open.
 - **INV-CORE-42** A write that persists a pre-read snapshot must not overwrite columns the
   operation did not change, and must not resurrect a soft-deleted row. GORM `Save(struct)` on
   a soft-delete model is a resurrection primitive under concurrency: its `UPDATE ... WHERE
   deleted_at IS NULL` matches 0 rows and it falls back to `INSERT ... ON CONFLICT (id) DO
   UPDATE SET <all columns>` including `deleted_at = NULL`; `Select("*").Updates(...)` reverts
   every column a narrower concurrent writer (`SetAccountState`, `SetPasswordHash`, …) changed.
-  Why: C-GUARD2-EXEMPT-REVIEW. Guard: share permission update (#2648, fixed):
+  Why: C-GUARD2-EXEMPT-REVIEW. Guards:
+  share permission update (#2648, fixed):
   `share_permission_column_scoped_guard_test.go:TestUpdateSharePermission_IsColumnScoped` +
   `TestCTAReview_UpdateSharePermission_vs_RevokeShare_CrossReplicaPostgres` (pg-gated).
   UNGUARDED: #2650 secret undelete, #2651 dynamic config re-enable, #2653/#2654 user
+  Why: C-GUARD2-EXEMPT-REVIEW. Guard: secret auto-rotate config (#2650, fixed):
+  `secret_autorotate_column_scoped_guard_test.go:TestSetSecretAutoRotate_IsColumnScoped` +
+  `TestCTAReview_SetSecretAutoRotate_vs_DeleteSecret_CrossReplicaPostgres` (pg-gated).
+  UNGUARDED: #2648 share revoke, #2651 dynamic config re-enable, #2653/#2654 user
   suspension/password revert.
   Why: C-GUARD2-EXEMPT-REVIEW. Guard: UNGUARDED (#2648 share revoke, #2650 secret undelete,
   #2651 dynamic config re-enable, #2653/#2654 user suspension/password revert).
+  `TestCTAReview_UpdateSharePermission_vs_RevokeShare_CrossReplicaPostgres` (pg-gated);
+  user profile writes (#2653/#2654, fixed):
+  `user_profile_column_scoped_guard_test.go:TestUserProfileWrites_AreColumnScoped` +
+  `TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres` /
+  `TestCTAReview_UpdateOwnProfile_vs_ChangePassword_CrossReplicaPostgres` (pg-gated).
+  An operation whose NEW `account_state` is derived from the one it read (the SCIM lifecycle
+  paths: `scimUpdateUserTx`, `DeprovisionSCIMUser`) writes it only through
+  `SetAccountStateIfMatches` conditioned on that read value, never the blind
+  `SetAccountState`, and fails closed with `ErrUserAccountStateConflict` on a miss
+  (C-RACE-FIX-B2): `scim_account_state_conditional_guard_test.go:TestSCIMAccountStateWrites_AreConditional`,
+  `scim_account_state_persisted_test.go`, and
+  `TestCTAReview_SCIM_vs_SuspendUser_WithoutRowLock_CrossReplicaPostgres` (pg-gated).
+  UNGUARDED: #2650 secret undelete, #2651 dynamic config re-enable.
 - **INV-CORE-43** `ActivateMFA` only ever activates the TOTP secret the submitted code was
   validated against: `ActivateMFASecret` is a conditional write pinned to that row's
   ciphertext, and a mismatch (a concurrent `BeginMFAEnrollment` swapped the secret) fails the
@@ -370,6 +440,59 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   all red/green-proved against a planted second definition);
   behaviour: `project_membership_definition_test.go`,
   `server/http/handlers/users_memberships_2781_test.go`.
+- **INV-CORE-46** Every surface that answers "what can this caller READ" answers it from one
+  place, and the number agrees with the list: `VisibleProjects` (project_visibility.go) is the
+  single source for project/environment visibility (`GET /api/v1/projects`,
+  `GET /api/v1/environments`, gRPC `ProjectService.ListProjects`), and
+  `ListReadableSecrets`/`CountReadableSecrets` (secret_readable_listing.go) is the single
+  source for secret visibility (`GET /api/v1/secrets` and the dashboard's TOTAL SECRETS,
+  whose value is that function's own `Total`). Every project a listing returns is one the
+  caller is authorized to read at the PROJECT scope — the same check `GET /projects/{id}`
+  applies — so a listing can never disclose a project its caller could not already fetch by
+  id. Why: #2780 — the listings were gated on GLOBAL `secrets.read` and then returned
+  everything unfiltered, so a project-scoped member got 403 and the UI reported "you have
+  nothing"; separately the dashboard counted secrets the caller had AUTHORED, so the number
+  was 0 for anyone who had created none. Guard: `project_visibility_test.go`,
+  `secret_readable_listing_test.go`,
+  `server/http/handlers/catalog_list_scoped_2780_test.go`,
+  `server/http/project_listing_least_privilege_2780_test.go` (real router, so re-adding a
+  route-level global gate fails it — the handler-level tests by construction cannot),
+  `server/http/dashboard_readable_count_2780_test.go` (asserts
+  `dashboard.totalSecrets == GET /api/v1/secrets total`, not a hard-coded number),
+  `server/grpc/services/project_service_list_scoped_2780_test.go`; structurally,
+  `server/http/permission_sweep_test.go`'s `noPermissionGateAllowlist` +
+  `TestNoUngatedRoutes` and `scripts/e2e/routes.json`. All default-ci.
+  `TestCTAReview_InviteMemberOpenMode_vs_Revoke_CrossReplicaPostgres` (pg-gated),
+  plus `FuzzCrossReplicaInvariants`' invariant 6 (`g4OrphanedMembershipGrants`,
+  pg-gated). That oracle fires on a (project, user) pair that has a `revoked`
+  membership row and NO `active` one, while a project-scope grant is still live.
+  Both conditions are load-bearing. It deliberately does NOT treat a revoked row
+  coexisting with an `active` row as a violation, because
+  `invite(open) → revoke → re-invite` reaches exactly that state serially — the
+  earlier cross-row-join form of the check did, and reported a violation on a
+  correct state. It DOES fire when the surviving row is merely PENDING
+  (`invited`/`identity_verified`/`provisioned`, e.g. a non-open-mode re-invite),
+  because a pending membership confers no grant and so cannot be the live grant's
+  owner. `active` is the only grant-conferring state: both `AddProjectMember` call
+  sites in the lifecycle are gated on it, and that premise is derived
+  behaviourally — over every validation mode and every state in
+  `membershipTransitions`, with a completeness check against that map's key set —
+  by `TestOnlyActiveMembershipStateConfersProjectGrant`, so adding a
+  grant-conferring state fails a test instead of silently blinding the oracle.
+  Both directions of the oracle are calibrated in
+  `cross_replica_invariant6_calibration_postgres_test.go`
+  (`TestInvariant6_SoundOnSerialReinvite` for soundness;
+  `TestInvariant6_FiresOnOrphanedGrantEndState`,
+  `TestInvariant6_FiresOnOrphanedGrantUnderPendingReinvite` and the two
+  `TestInvariant6_MembershipLockIsLoadBearing_*` mutation tests, which strip the
+  named lock from one replica, for sensitivity).
+  The three write sites that move a membership's state — `inviteMemberWithMode`'s
+  `CreateProjectMembership`, `TransitionMembership`'s
+  `TransitionProjectMembershipState`, and `revertFailedActivation`'s — are the
+  complete set (enumerated by caller, 2026-10-05) and all three are inside a
+  `membershipLockKey` closure; `revoked` has no outgoing transition, so a new
+  invite is the only way back, which is why the serial re-invite shape above is
+  reachable at all.
   Why: C-GUARD2-EXEMPT-REVIEW. Guard: user profile writes (#2653/#2654, fixed):
   `user_profile_column_scoped_guard_test.go:TestUserProfileWrites_AreColumnScoped` +
   `TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres` /
@@ -382,6 +505,11 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `scim_account_state_persisted_test.go`, and
   `TestCTAReview_SCIM_vs_SuspendUser_WithoutRowLock_CrossReplicaPostgres` (pg-gated).
   UNGUARDED: #2648 share revoke, #2650 secret undelete, #2651 dynamic config re-enable.
+  Why: C-GUARD2-EXEMPT-REVIEW. Guard: #2651 dynamic config re-enable is closed by a targeted
+  write (`SetDynamicSecretConfigAdminDSN`), guarded by
+  `TestCTAReview_CreateDynamicSecretConfig_vs_DeleteProject_CrossReplicaPostgres` (pg-gated)
+  and `TestSetDynamicSecretConfigAdminDSN_LeavesDisabledAlone`. UNGUARDED: #2648 share
+  revoke, #2650 secret undelete, #2653/#2654 user suspension/password revert.
 
 ## Account-state / exhaustiveness
 

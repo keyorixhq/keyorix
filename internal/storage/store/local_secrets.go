@@ -166,16 +166,34 @@ func (ls *LocalStorage) GetProjectByName(ctx context.Context, name string) (*mod
 	return &project, nil
 }
 
-func (ls *LocalStorage) UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error) {
-	if err := ls.db.WithContext(ctx).Save(project).Error; err != nil {
-		if isDuplicateProjectNameViolation(err) {
+// UpdateProjectFields persists name, description and updated_at — plus
+// require_mfa only when requireMFA is non-nil — onto a live project row. See
+// the storage.Storage interface doc for the two things the full-row
+// UpdateProject this replaced (a bare Save) got wrong: resurrecting a
+// concurrently deleted project, and reverting a concurrently enabled ADR-037
+// require_mfa the caller never asked to touch (#2697).
+//
+// GORM adds `deleted_at IS NULL` for this soft-delete model, which is the clause
+// that stops the resurrection.
+func (ls *LocalStorage) UpdateProjectFields(ctx context.Context, id uint, name, description string, requireMFA *bool, updatedAt time.Time) (bool, error) {
+	cols := map[string]interface{}{
+		"name":        name,
+		"description": description,
+		"updated_at":  updatedAt,
+	}
+	if requireMFA != nil {
+		cols["require_mfa"] = *requireMFA
+	}
+	res := ls.db.WithContext(ctx).Model(&models.Project{}).Where("id = ?", id).Updates(cols)
+	if res.Error != nil {
+		if isDuplicateProjectNameViolation(res.Error) {
 			// See CreateProject's comment: a rename collided with the partial
 			// case-insensitive unique index (#385).
-			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateProjectName, err)
+			return false, fmt.Errorf("%w: %v", storage.ErrDuplicateProjectName, res.Error)
 		}
-		return nil, fmt.Errorf("failed to update project: %w", err)
+		return false, fmt.Errorf("failed to update project: %w", res.Error)
 	}
-	return project, nil
+	return res.RowsAffected == 1, nil
 }
 
 // deleteProjectCascade performs DeleteProject's soft-delete cascade (secrets, their
@@ -646,6 +664,39 @@ func (ls *LocalStorage) TransitionSecretStatus(ctx context.Context, secret *mode
 	return res.RowsAffected == 1, nil
 }
 
+// UpdateSecretRotationConfig writes only the auto-rotation columns of secret,
+// conditional on the row still being live (GORM scopes the soft-delete model to
+// deleted_at IS NULL), in secret.ProjectID, and bound to fromBackend — see the
+// interface doc in internal/core/storage/interface.go.
+//
+// Bug origin (#2650):
+//
+//	Introduced-by: core.SetSecretAutoRotate persisting its pre-read snapshot
+//	               through UpdateSecret's full-row Save
+//	Detected-by:   C-GUARD2-EXEMPT-REVIEW #2662
+//	Class:         cross-replica check-then-act (stale Save upsert)
+//	Severity:      high (a deleted secret is live again with no RestoreSecret,
+//	               no secret.restored audit event; an admin backend binding or a
+//	               cleared ownership is silently reverted)
+//	Guard:         TestCTAReview_SetSecretAutoRotate_vs_DeleteSecret_CrossReplicaPostgres,
+//	               TestSetSecretAutoRotate_IsColumnScoped
+func (ls *LocalStorage) UpdateSecretRotationConfig(ctx context.Context, secret *models.SecretNode, fromBackend string) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
+		Where("id = ? AND project_id = ? AND rotation_backend = ?", secret.ID, secret.ProjectID, fromBackend).
+		Updates(map[string]interface{}{
+			"auto_rotate":      secret.AutoRotate,
+			"rotation_length":  secret.RotationLength,
+			"rotation_charset": secret.RotationCharset,
+			"rotation_backend": secret.RotationBackend,
+			"rotation_ref":     secret.RotationRef,
+			"updated_at":       secret.UpdatedAt,
+		})
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}
+
 // SetSecretCertNotAfter caches a certificate-typed secret's parsed leaf expiry — a
 // targeted single-column update that touches nothing else (ADR-056).
 func (ls *LocalStorage) SetSecretCertNotAfter(ctx context.Context, secretID uint, notAfter *time.Time) error {
@@ -733,16 +784,37 @@ func (ls *LocalStorage) RestoreSecret(ctx context.Context, id uint) error {
 		return err
 	}
 
+	// #2702/#2712: the restore and the project re-check share one transaction,
+	// write-then-check, exactly as RestoreEnvironment does (#2656). The
+	// requireLiveProject call above runs BEFORE this and outside any transaction,
+	// so DeleteProject's cascade could commit in the window between it and the
+	// UPDATE — and the cascade skips an already-deleted secret (GORM scopes its
+	// sweep to deleted_at IS NULL), so nothing swept this row and the restore then
+	// cleared deleted_at underneath a deleted project. That is precisely the end
+	// state RestoreSecret's own error message says it prevents. The named
+	// environment lock does not help: deleteProjectCascade never takes it.
+	//
+	// requireLiveProject is kept as a cheap early rejection with a better message;
+	// it is no longer what makes this safe.
 	restore := func(ctx context.Context) error {
-		result := ls.db.WithContext(ctx).Unscoped().Model(&models.SecretNode{}).
-			Where("id = ? AND deleted_at IS NOT NULL", id).Update("deleted_at", nil)
-		if result.Error != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
-		}
-		if result.RowsAffected == 0 {
-			return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
-		}
-		return nil
+		return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			result := tx.Unscoped().Model(&models.SecretNode{}).
+				Where("id = ? AND deleted_at IS NOT NULL", id).Update("deleted_at", nil)
+			if result.Error != nil {
+				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+			}
+			if result.RowsAffected == 0 {
+				return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+			}
+			live, lerr := lockLiveParent(tx, &models.Project{}, sqlWhereID, secret.ProjectID)
+			if lerr != nil {
+				return lerr
+			}
+			if !live {
+				return fmt.Errorf("cannot restore: the parent project is deleted — restore the project first")
+			}
+			return nil
+		})
 	}
 
 	if secret.EnvironmentID == 0 {

@@ -184,14 +184,25 @@ func (c *KeyorixCore) UpdateProject(ctx context.Context, id uint, name, descript
 		return nil, err
 	}
 	mfaChanged := requireMFA != nil && *requireMFA != project.RequireMFA
-	project.Name = name
-	project.Description = description
-	if requireMFA != nil {
-		project.RequireMFA = *requireMFA
-	}
-	updated, err := c.storage.UpdateProject(ctx, project)
+	// #2697: a column-scoped write of the fields this call actually owns, onto a
+	// row that is still live. The previous full-row Save carried the whole
+	// pre-read struct back: its upsert fallback resurrected a project deleted
+	// after the GetProject above, and it rewrote require_mfa even when requireMFA
+	// was nil — silently disabling an ADR-037 per-project MFA requirement an
+	// admin had just enabled, with no audit event, since mfaChanged is false in
+	// exactly that case. requireMFA stays a pointer all the way down so a nil one
+	// never reaches the UPDATE's SET list.
+	matched, err := c.storage.UpdateProjectFields(ctx, id, name, description, requireMFA, c.now())
 	if err != nil {
 		return nil, translateProjectNameError(err)
+	}
+	if !matched {
+		return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+	}
+	// Return the committed row, not the struct read before the write.
+	updated, err := c.storage.GetProject(ctx, id)
+	if err != nil {
+		return nil, err
 	}
 	if mfaChanged {
 		pid := id
@@ -549,7 +560,42 @@ func (c *KeyorixCore) CreateEnvironment(ctx context.Context, projectID uint, nam
 	if _, err := c.storage.GetProject(ctx, projectID); err != nil {
 		return nil, fmt.Errorf("%s: project not found", i18n.T("ErrorNotFound", nil))
 	}
-	return c.storage.CreateEnvironment(ctx, &models.Environment{ProjectID: projectID, Name: name})
+	// #2710: the GetProject above is an unlocked read outside any transaction, so
+	// DeleteProject's cascade can commit in the window between it and the insert.
+	// The cascade row-locks the project and sweeps its environments, so the
+	// legitimate order "delete wins, sweeps the environments that exist, commits;
+	// create then inserts anyway" left a LIVE environment under a deleted project
+	// — never purged (PurgeDeletedEnvironmentsBefore takes only deleted rows), so
+	// it outlives the project purge, and core.CreateSecret checks only that the
+	// environment is live, so a global-scope principal can then create secrets in
+	// it. Same end state as #2656, which was fixed for RestoreEnvironment only.
+	//
+	// Insert then re-check, in one transaction. The GetProject above is kept as a
+	// cheap early rejection with a better message; it is no longer what makes this
+	// safe. Note the seed path (seedProjectEnvironment, called from
+	// CreateProject/CreateProjectWithEnvs) does NOT come through here — it calls
+	// tx.CreateEnvironment directly inside a transaction that just created the
+	// project, so there is no deleted-parent window to close there.
+	var env *models.Environment
+	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		var cerr error
+		env, cerr = tx.CreateEnvironment(ctx, &models.Environment{ProjectID: projectID, Name: name})
+		if cerr != nil {
+			return cerr
+		}
+		live, lerr := tx.LockLiveProject(ctx, projectID)
+		if lerr != nil {
+			return lerr
+		}
+		if !live {
+			return fmt.Errorf("%s: project %d was deleted while this environment was being created",
+				i18n.T("ErrorNotFound", nil), projectID)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return env, nil
 }
 
 // CreateProjectWithEnvs creates a new project seeded with the specified environment names.

@@ -288,6 +288,34 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 					return err
 				}
 			}
+			// #2702/#2711: and now the PROJECT, after both writes, in this same
+			// transaction. Everything above serializes against a concurrent
+			// DeleteEnvironment (the named lock plus the in-lock existence check)
+			// and nothing serialized against a concurrent DeleteProject, whose
+			// cascade takes no such named lock — it row-locks the project and
+			// sweeps the project's secrets directly. So the legitimate order
+			// "delete wins, sweeps a secret that is not inserted yet, commits;
+			// create then inserts anyway" left a LIVE secret, with a live
+			// version 1, under a deleted project and a deleted environment.
+			//
+			// That end state is reachable, not merely untidy: GetSecret and
+			// AuthorizeSecret do not check project liveness, so a global-scope
+			// role or an ACL grant still reaches the value, the owner
+			// short-circuit still applies (IsProjectMember has no liveness
+			// join), new shares can still be created on it — and it is never
+			// purged, because the purge only collects soft-deleted rows.
+			//
+			// AFTER the writes, not before: a cascade that runs entirely between
+			// a pre-write check and the insert never sees this secret. See
+			// lockLiveParent's doc comment.
+			live, lerr := tx.LockLiveProject(ctx, secret.ProjectID)
+			if lerr != nil {
+				return lerr
+			}
+			if !live {
+				return fmt.Errorf("%s: project %d was deleted while this secret was being created",
+					i18n.T("ErrorNotFound", nil), secret.ProjectID)
+			}
 			return nil
 		})
 	}); err != nil {
@@ -741,9 +769,29 @@ func (c *KeyorixCore) CreateFolder(
 	// see CreateSecret's own doc comment on this pattern.
 	var created *models.SecretNode
 	if err := c.withEnvironmentSecretGuard(ctx, envID, func(ctx context.Context) error {
-		var cerr error
-		created, cerr = c.storage.CreateSecret(ctx, node, "")
-		return cerr
+		// #2711: wrapped in a transaction purely so the project re-check below
+		// can share one with the insert — the insert alone needed none. Same
+		// write-then-check as CreateSecret above; see its comment for why the
+		// environment guard does not cover a concurrent DeleteProject, and why
+		// a folder is affected exactly like a secret (it is a SecretNode row,
+		// counts toward DeleteEnvironment's active-secret guard, and ends up
+		// live under a deleted project the same way).
+		return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+			var cerr error
+			created, cerr = tx.CreateSecret(ctx, node, "")
+			if cerr != nil {
+				return cerr
+			}
+			live, lerr := tx.LockLiveProject(ctx, projectID)
+			if lerr != nil {
+				return lerr
+			}
+			if !live {
+				return fmt.Errorf("%s: project %d was deleted while this folder was being created",
+					i18n.T("ErrorNotFound", nil), projectID)
+			}
+			return nil
+		})
 	}); err != nil {
 		return nil, err
 	}

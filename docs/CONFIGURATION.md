@@ -154,6 +154,14 @@ storage:
     #   safe default; only set this if production
     #   keyorix_audit_flusher_batch_size/_flushes_total metrics (exposed on
     #   the server's /metrics endpoint) justify it for your own load shape.
+    # insecure_audit_skip_durable_sync: false   # default: false. POSTGRES ONLY
+    #   -- a SQLite install that sets this REFUSES TO START. DO NOT ENABLE
+    #   without reading docs/security/hardening-guide.md §5a. Drops the audit
+    #   commit's WAIT for a disk sync (the row is still written and committed
+    #   before the secret is returned, and a failed audit write still fails the
+    #   request). Buys Vault-equivalent read latency; costs the durability of
+    #   the most recent audit entries on an OS or database-server crash.
+    #   Config file only -- no API, CLI flag or env var can set it.
 ```
 
 ### Refusing to vivify a missing database
@@ -186,62 +194,29 @@ pre-exist. The Postgres backend is unaffected too.
 on by default would break every first boot that does not run `keyorix system init --database`
 first. Turn it on once your deployment creates the file explicitly — which is exactly the point:
 after that, a missing file can only mean something went wrong.
+### Audit commit durability (`insecure_audit_skip_durable_sync`)
 
-### Connection pool
+By default Keyorix will not return a secret value until that read's audit
+record is **durably** committed (ADR-112 §3). That is stricter than Vault,
+OpenBao, Conjur and Infisical, none of which wait for a disk sync before
+answering — and it is most of why a single-client read costs ~17ms on a busy
+spinning disk rather than ~1ms.
 
-| Key | Default | What it does |
-|---|---|---|
-| `max_open_conns` | **8** on SQLite, **25** on Postgres | Upper bound on open database connections. A request that needs one while all are busy waits in Go's pool. |
-| `max_idle_conns` | the effective `max_open_conns` | How many connections stay open and warm when idle. A lower value closes connections after each burst and re-opens them (on Postgres, a full TCP + SCRAM handshake each time). |
-| `conn_max_lifetime_minutes` | 0 (never recycle) when unset; the generated config sets 30 | Recycles connections after this age. Useful behind a load balancer or connection proxy, or across a Postgres failover; it has no effect on throughput. |
+`insecure_audit_skip_durable_sync: true` (ADR-112 Amendment 1) removes only
+that wait, and **only on PostgreSQL**:
 
-The defaults were picked from measurements (#2631, PERF-2 follow-up, 4 vCPU host, Postgres 16 on
-the same host). Two harnesses were used: the real server over HTTP (30s runs, 10s client
-timeout), and `BenchmarkPoolSize` in `internal/storage`, which drives the same workload through
-`core`.
+| `storage.type` | Behaviour |
+|---|---|
+| `postgres` / `postgresql` | Supported. `SET LOCAL synchronous_commit = off` on the audit transaction only. |
+| `local` / `sqlite` | **Refuses to start.** `PRAGMA synchronous` is per-connection and the pool is shared, so relaxing it would relax *every* table — a power loss could undo a just-committed secret rotation. The measured p99 also got worse under concurrency. |
+| `remote` | Not applicable; a server cannot run with remote storage (ADR-083). |
 
-**SQLite: 8.** SQLite has one writer at a time, and the embedded driver is pure Go, so every
-connection's queries compete for the same CPUs. Past about twice the core count, more
-connections only add contention.
-
-| `max_open_conns` | `BenchmarkPoolSize` ms/op | read p99 | HTTP, 5 writers + 50 readers: writes/s, reads/s (with #2420 + #2637) |
-|---|---|---|---|
-| 4 | 1.23–1.26 | 356–411 ms | 57, 630 |
-| **8** | 1.25–1.40 | 469–654 ms | 51–52, 701–721 |
-| 25 (old default) | 1.46–1.49 | 912–948 ms | 30–31, 724–725 |
-
-On current `main` (before #2420 and #2637) the HTTP runs point the same way: 8 vs 25 gave
-+38% writes / −10% reads with 5 writers + 50 readers, and +63% writes / −27% reads with
-50 writers + 20 readers, plus a third fewer audit appends lost to the pre-#2420 backlog.
-
-**Postgres: 25.** Between 10 and 50 connections, reads were flat within run-to-run noise, and 25
-was best for writes (`BenchmarkPoolSize`: 0.67 ms/op at 25 vs 0.74 at 10 and 0.68 at 50). At
-**100**, 150 concurrent readers made **1.6% of reads and 0.3% of writes fail** with
-`SQLSTATE 53300 "sorry, too many clients already"`: Postgres's own `max_connections` defaults
-to 100, and every replica brings its own pool. Keep `replicas × max_open_conns` below
-`max_connections − superuser_reserved_connections`. At startup, the server logs a warning when
-a single pool already exceeds that.
-
-Raising `max_open_conns` does not make a database-bound workload faster: the wait moves from
-Go's pool into the database. If profiles show goroutines waiting for a pool connection, check
-the database's own latency first.
-
-`type: remote` points the CLI at a Keyorix server over the API; see the remote
-section of the client config. **It is work in progress:** 202 of 428
-`RemoteStorage` methods (47%) return `ErrRemoteUnsupported`, and audit retrieval
-in particular is 2-of-27 implemented. Use `type: local` for anything that
-matters — see `docs/REMOTE_CLI_SETUP.md` for the per-area status. Remote TLS verification is **on by default** —
-an omitted `tls_verify` does not disable certificate checks.
-
-**`type: remote` is a CLI/client mode only.** It cannot back a running Keyorix
-server: `Config.Validate()` refuses to boot when `storage.type: remote` is
-combined with `server.http.enabled` or `server.grpc.enabled` (ADR-083) — none
-of RemoteStorage's RBAC primitives are implemented, so every permission check
-on every route would fail closed for every caller. Use `type: local` or
-`type: postgres` for a deployed server.
-
----
-
+It is appropriate **only** where power is genuinely guaranteed — a UPS, a
+healthy battery-backed RAID write cache, or replicated cloud block storage.
+[`security/hardening-guide.md` §5a](security/hardening-guide.md) states exactly
+what you give up, the measured before/after, and the four places the setting is
+surfaced once it is on (startup warning, an audit event in the hash chain at
+every boot, `admin validate`, and `GET /api/v1/system/info`).
 ## Encryption & KEK providers
 
 Envelope encryption (ADR-004): a per-process **DEK** encrypts secrets/tokens and
@@ -778,6 +753,29 @@ token, so set it via the env var.
 > Secrets are read from `KEYORIX_NOTIFY_WEBHOOK_TOKEN` / `KEYORIX_NOTIFY_SMTP_PASSWORD`
 > / `KEYORIX_NOTIFY_SLACK_WEBHOOK` / `KEYORIX_NOTIFY_TEAMS_WEBHOOK` when set, falling
 > back to the YAML value — keep secrets out of the config file.
+
+### Runtime-managed channels: URL encryption at rest, and one upgrade caveat
+
+A notification channel created at runtime (the channel CRUD API, as opposed to
+the `notifications:` block above) stores its destination URL **encrypted** when
+`storage.encryption.enabled` is set — the URL embeds the platform's bearer
+token, so it is treated as a credential. The ciphertext is bound to the
+channel's own id, so it cannot be moved to another channel's row, and the URL
+never appears in an audit diff.
+
+**If you are upgrading an install that already had runtime channels**, the first
+boot after the upgrade migrates each row's URL into the encrypted column and
+clears the old plaintext one. That clears it from anything that *reads* the
+database — but not from its storage: the old bytes survive in SQLite free pages
+and the WAL, and in PostgreSQL dead tuples, until reclaimed. If you treat those
+webhook URLs as credentials, run a `VACUUM` (PostgreSQL: `VACUUM FULL` or
+`pg_repack` on `notification_channels`) after that first boot. Keyorix does not
+do this for you: `VACUUM` is a long, exclusive, whole-database operation and
+must not fire implicitly from a startup path.
+
+If the migration cannot complete, the server **refuses to start** rather than
+serve with webhook credentials still in plaintext on an install that asked for
+encryption. The error names the channel to investigate.
 
 ## compliance_digest
 

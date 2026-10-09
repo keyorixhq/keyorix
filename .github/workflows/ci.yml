@@ -57,7 +57,23 @@ env:
   # surface. govulncheck deliberately floats — Google x/ tool, vuln DB is
   # fetched live regardless of binary version.
   GOSEC_VERSION: v2.29.0
-  GOLANGCI_LINT_VERSION: v2.13.2
+  # gosec v2.29.0 (latest as of 2026-10) still links golang.org/x/tools
+  # v0.49.0, which can only decode export-data format version <=4. Go
+  # 1.27.2 writes format version 5 (see GOLANGCI_LINT_VERSION's comment
+  # below for the same root cause) -- a vanilla `go install gosec@...`
+  # binary type-errors on every package and skips all SSA-based rules.
+  # scripts/ci/install-gosec.sh builds gosec in a throwaway module that
+  # also requires this x/tools version, so MVS picks it over gosec's own
+  # older requirement. Bump this whenever x/tools' own export-data reader
+  # falls behind the Go toolchain again.
+  GOSEC_TOOLS_VERSION: v0.51.0
+  # v2.13.2 links golang.org/x/tools v0.49.0, whose gcimporter only reads
+  # export-data format version <=4; Go 1.27.2 (GO-2026-6610..6617 fix)
+  # writes version 5, so golangci-lint on this toolchain type-errors on
+  # every single-file typecheck ("export data version 5 is greater than
+  # maximum supported version 4"). v2.14.0 links x/tools v0.50.0, which
+  # added the v5 decoder.
+  GOLANGCI_LINT_VERSION: v2.14.0
   GO_LICENSES_VERSION: v1.6.0
   GITLEAKS_VERSION: 8.30.1
   GITLEAKS_LINUX_X64_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
@@ -564,7 +580,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
 
       - name: Check for invalid UTF-8 (U+FFFD replacement characters)
         run: |
@@ -610,7 +626,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
 
       - name: Select affected root-module packages and run go test -short
         env:
@@ -669,7 +685,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
 
       - name: Select affected cli-module packages and run go test -short
         env:
@@ -936,7 +952,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
 
       - name: go test (${{ matrix.leg }})
         run: |
@@ -1097,7 +1113,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
 
       - name: Assert every package is covered by exactly the CI matrix or an enumerated exclusion
         run: |
@@ -1122,17 +1138,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
+        id: setup-go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
 
+      # Keyed on the resolved Go version too (not just GOSEC_VERSION): a
+      # govulncheck/gosec binary built under one Go toolchain and reused as-is
+      # under a newer one can fail outright -- see go-licenses's own cache
+      # step below for the general mechanism. A version-scoped key forces a
+      # fresh install (via install-gosec.sh, which also re-pins x/tools) on
+      # every Go bump, not just every GOSEC_VERSION bump.
       - name: Cache govulncheck/gosec binaries
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/go/bin/govulncheck
             ~/go/bin/gosec
-          key: static-analysis-tools-v1.8.0-${{ env.GOSEC_VERSION }}-${{ runner.os }}
+          key: static-analysis-tools-v1.8.0-${{ env.GOSEC_VERSION }}-xtools${{ env.GOSEC_TOOLS_VERSION }}-go${{ steps.setup-go.outputs.go-version }}-${{ runner.os }}
 
       - name: govulncheck
         run: |
@@ -1141,7 +1164,7 @@ jobs:
 
       - name: gosec
         run: |
-          [ -x ~/go/bin/gosec ] || go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}" # NOSONAR githubactions:S8545 -- version is pinned via GOSEC_VERSION env var
+          [ -x ~/go/bin/gosec ] || scripts/ci/install-gosec.sh ~/go/bin/gosec
           # -exclude-generated skips files with the "DO NOT EDIT" header
           # (generated protobuf code), whose *_FullMethodName string constants
           # otherwise trip G101 (hardcoded-credential) false positives.
@@ -1236,7 +1259,7 @@ jobs:
         if: steps.gate.outputs.full_tier == 'true'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
 
       - name: Download coverage artifacts
         if: steps.gate.outputs.full_tier == 'true'
@@ -1299,7 +1322,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
       - name: Fresh-install API smoke (SQLite)
         run: make e2e-smoke
       # Customer journeys N1-N3 + N6 (SQLite, no Docker, ~40s): assert end
@@ -1347,7 +1370,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 11
@@ -1412,7 +1435,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
 
       - name: Run repo-wide guard tests
         run: |
@@ -1433,7 +1456,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
 
       # The operator job below has always had its own gofmt step, scoped to
       # operator/ — the root module (internal/, server/, cmd/, ...) never
@@ -1488,7 +1511,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
 
       - name: Smoke test (executes QUICK_START.md's flow end to end, the shipped binary)
         run: make smoke
@@ -1784,9 +1807,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
+        id: setup-go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
 
       - name: go vet + build
         run: |
@@ -1813,12 +1837,16 @@ jobs:
           # govulncheck+gosec cache -- sharing one key across a job that caches
           # 2 binaries and one that caches 1 would let whichever job's save
           # step wins the race archive only its own (narrower) path set,
-          # silently dropping govulncheck from the other job's restore.
-          key: operator-gosec-${{ env.GOSEC_VERSION }}-${{ runner.os }}
+          # silently dropping govulncheck from the other job's restore. Also
+          # keyed on the resolved Go version (see go-licenses's cache step
+          # below for why) so a toolchain bump forces install-gosec.sh to
+          # re-pin x/tools instead of reusing a binary built for an older Go.
+          key: operator-gosec-${{ env.GOSEC_VERSION }}-xtools${{ env.GOSEC_TOOLS_VERSION }}-go${{ steps.setup-go.outputs.go-version }}-${{ runner.os }}
 
       - name: gosec
+        # working-directory defaults to operator/ -- install-gosec.sh lives at the repo root.
         run: |
-          [ -x ~/go/bin/gosec ] || go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}" # NOSONAR githubactions:S8545 -- version is pinned via GOSEC_VERSION env var
+          [ -x ~/go/bin/gosec ] || ../scripts/ci/install-gosec.sh ~/go/bin/gosec
           gosec -severity medium -exclude-generated ./...
 
   # The thin CLI (ADR-108) is a separate Go module (cli/), same pattern as operator/ above:
@@ -1843,9 +1871,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
+        id: setup-go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
 
       - name: go vet + build
         run: |
@@ -1869,12 +1898,14 @@ jobs:
         with:
           path: ~/go/bin/gosec
           # Distinct key from operator's and static-analysis's own gosec caches -- same
-          # save-race reasoning as operator's own comment on this same step.
-          key: cli-gosec-${{ env.GOSEC_VERSION }}-${{ runner.os }}
+          # save-race reasoning as operator's own comment on this same step. Also keyed
+          # on the resolved Go version -- see go-licenses's cache step below for why.
+          key: cli-gosec-${{ env.GOSEC_VERSION }}-xtools${{ env.GOSEC_TOOLS_VERSION }}-go${{ steps.setup-go.outputs.go-version }}-${{ runner.os }}
 
       - name: gosec
+        # working-directory defaults to cli/ -- install-gosec.sh lives at the repo root.
         run: |
-          [ -x ~/go/bin/gosec ] || go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}" # NOSONAR githubactions:S8545 -- version is pinned via GOSEC_VERSION env var
+          [ -x ~/go/bin/gosec ] || ../scripts/ci/install-gosec.sh ~/go/bin/gosec
           gosec -severity medium -exclude-generated ./...
 
   # keyorix-migrate (docs/design-keyorix-migrate.md): a third sibling module alongside cli/ and
@@ -1932,9 +1963,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
+        id: setup-go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
 
       - name: go vet + build
         run: |
@@ -1957,11 +1989,14 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/go/bin/gosec
-          key: migrate-gosec-${{ env.GOSEC_VERSION }}-${{ runner.os }}
+          # Keyed on the resolved Go version too -- see go-licenses's cache
+          # step below for why.
+          key: migrate-gosec-${{ env.GOSEC_VERSION }}-xtools${{ env.GOSEC_TOOLS_VERSION }}-go${{ steps.setup-go.outputs.go-version }}-${{ runner.os }}
 
       - name: gosec
+        # working-directory defaults to migrate/ -- install-gosec.sh lives at the repo root.
         run: |
-          [ -x ~/go/bin/gosec ] || go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}" # NOSONAR githubactions:S8545 -- version is pinned via GOSEC_VERSION env var
+          [ -x ~/go/bin/gosec ] || ../scripts/ci/install-gosec.sh ~/go/bin/gosec
           gosec -severity medium -exclude-generated ./...
 
   # scripts/fuzzing/targets.d/*.conf (one file per target -- see
@@ -2002,7 +2037,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
 
       - name: Verify targets.conf is generated from targets.d/*.conf
         run: scripts/fuzzing/gen-targets-conf.sh --check
@@ -2106,7 +2141,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
 
       - name: Reach-check in-wall fuzz harnesses (seed corpus, floor gate)
         run: bash scripts/fuzzing/harness-acceptance.sh
@@ -2147,7 +2182,7 @@ jobs:
         id: setup-go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
 
       # Keyed on the resolved Go version too (not just GO_LICENSES_VERSION): a
       # go-licenses binary built under one Go toolchain and then reused as-is

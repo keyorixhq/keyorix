@@ -80,11 +80,23 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, sub, trend, prevValue
     const numericValue = typeof value === 'number' ? value : 0;
     const delta = trend && prevValue != null ? Math.round(numericValue - prevValue) : null;
     const cardClass = buildStatCardClassName(onClick);
+    // Derived from the label so every card gets one without a second list to keep
+    // in sync: "Total Secrets" -> stat-card-total-secrets-value. Added for #2780's
+    // real-backend spec, which has to read this number rather than assert on screen
+    // text — the label renders uppercase via CSS while the DOM text is title case,
+    // and the value is a sibling span with no distinguishing class of its own.
+    const testID = `stat-card-${label
+        .toLowerCase()
+        .replace(/\s+/g, '-')
+        .replace(/[^a-z0-9-]/g, '')}`;
     const cardContent = (
         <>
             <div className={`absolute left-0 top-4 bottom-4 w-1 rounded-r-full ${accent}`} />
             <span className="text-xs font-semibold text-base-muted uppercase tracking-widest pl-3">{label}</span>
-            <span className="text-4xl font-bold text-base-primary pl-3 tabular-nums leading-none">
+            <span
+                data-testid={`${testID}-value`}
+                className="text-4xl font-bold text-base-primary pl-3 tabular-nums leading-none"
+            >
                 {typeof value === 'number' ? fmt(value) : value}
             </span>
             <div className="pl-3 flex items-center gap-2 flex-wrap">
@@ -359,9 +371,18 @@ const OperationalSignalsSection: React.FC<OperationalSignalsSectionProps> = ({
 interface RecentActivitySectionProps {
     navigate: (path: string) => void;
     activityData: ActivityData;
+    // hasSecrets picks the empty-state copy. "Create your first secret to get
+    // started" is only true for a genuinely new user; for a project member who can
+    // read secrets but has generated no visible audit events — the ordinary case for
+    // a read-only persona, since this feed is scoped to the caller's own events
+    // without audit.read — it is wrong, and it invites an action they may not be
+    // permitted to take. Part of #2780's demo-visible symptom: the misleading copy
+    // sat under a count that was also wrong, and fixing only the number would have
+    // left the sentence.
+    hasSecrets: boolean;
 }
 
-const RecentActivitySection: React.FC<RecentActivitySectionProps> = ({ navigate, activityData }) => (
+const RecentActivitySection: React.FC<RecentActivitySectionProps> = ({ navigate, activityData, hasSecrets }) => (
     <div className="lg:col-span-2 bg-surface border border-base rounded-xl shadow-xs">
         <div className="flex items-center justify-between px-6 py-4 border-b border-base">
             <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">Recent Activity</h2>
@@ -376,7 +397,11 @@ const RecentActivitySection: React.FC<RecentActivitySectionProps> = ({ navigate,
         <div className="px-6 py-2">
             {!activityData?.data?.length ? (
                 <div className="py-12 text-center">
-                    <p className="text-sm text-base-muted">No activity yet. Create your first secret to get started.</p>
+                    <p className="text-sm text-base-muted">
+                        {hasSecrets
+                            ? 'No recent activity to show.'
+                            : 'No activity yet. Create your first secret to get started.'}
+                    </p>
                 </div>
             ) : (
                 activityData.data.slice(0, 8).map((item: ActivityItem) => <ActivityRow key={item.id} item={item} />)
@@ -753,7 +778,11 @@ export const DashboardPage: React.FC = () => {
 
                 {/* ── Main Grid ──────────────────────────────────────────── */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <RecentActivitySection navigate={navigate} activityData={activityData} />
+                    <RecentActivitySection
+                        navigate={navigate}
+                        activityData={activityData}
+                        hasSecrets={(stats?.totalSecrets ?? 0) > 0}
+                    />
 
                     {/* Right column */}
                     <div className="space-y-4">

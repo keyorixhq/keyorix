@@ -625,6 +625,27 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 			if err := tx.DeleteSessionsForUserExcept(ctx, id, 0); err != nil {
 				return err
 			}
+			// #2855: revoke the user's PATs too. This path swept sessions only,
+			// unlike every other deprovisioning path (setAccountState's
+			// blocked-state branch, DeleteUser, RevokeUserCredentialsForDeactivation),
+			// all of which revoke both. A surviving PAT is inert while the account
+			// is deprovisioned — ValidatePATToken re-checks is_active and the
+			// account state — but nothing on the way back revokes it:
+			// ReactivateUser and RestoreUser deliberately revoke nothing, on the
+			// assumption the deprovision already did. So an IdP offboard followed
+			// by a restore handed every PAT back, possibly with no expiry, after an
+			// audit trail that recorded a completed deprovision.
+			//
+			// In the same transaction as the rest, so a SCIM DELETE stays
+			// all-or-nothing (see this function's own doc comment); the hashes are
+			// folded into sessionHashes for the post-commit cache eviction below,
+			// so a cached PAT stops authenticating immediately rather than
+			// lingering for the auth-cache TTL.
+			patHashes, err := tx.RevokeAllPersonalAccessTokensForUser(ctx, id)
+			if err != nil {
+				return err
+			}
+			sessionHashes = append(sessionHashes, patHashes...)
 			return tx.DeleteUser(ctx, id)
 		})
 	})
