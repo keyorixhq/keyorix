@@ -113,7 +113,7 @@ risk-weighted findings, a findings table, per-check detail, the "Not checked" li
 policy line that would enable each, a "Migration readiness" section (below), and a neutral
 footer naming the tool version. No marketing tone anywhere in a finding's own text.
 
-**JSON** is for machines, with a `schema_version` field on the envelope (currently `2`) so a
+**JSON** is for machines, with a `schema_version` field on the envelope (currently `3`) so a
 consumer can tell which shape it's reading before parsing the rest.
 
 ### Sample excerpt (from a real, deliberately-misconfigured dev Vault)

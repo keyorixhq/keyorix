@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -159,16 +160,15 @@ func (h *UserHandler) attachProjectCounts(ctx context.Context, resp []map[string
 // siblings" note) — lower severity here (a read-only list, nothing committed
 // to misreport as failed), but the same gap, so fixed alongside it.
 func (h *UserHandler) projectCountsRecovered(ctx context.Context, ids []uint) map[uint]storage.MembershipCounts {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("SECURITY: attachProjectCounts panicked resolving membership counts for %d user(s) (best-effort, primary list query already succeeded): %v", len(ids), r)
+	var counts map[uint]storage.MembershipCounts
+	besteffort.Run(ctx, "http.UserHandler.projectCountsRecovered", func() error {
+		c, err := h.coreService.ProjectMembershipCounts(ctx, ids)
+		if err != nil {
+			return err
 		}
-	}()
-	counts, err := h.coreService.ProjectMembershipCounts(ctx, ids)
-	if err != nil {
-		log.Printf("Error counting project memberships: %v", err)
+		counts = c
 		return nil
-	}
+	})
 	return counts
 }
 

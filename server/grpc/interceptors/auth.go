@@ -396,6 +396,15 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 func validateGRPCMachineToken(ctx context.Context, coreService *core.KeyorixCore, token string) (*UserContext, *core.PATRestriction, error) {
 	machine, roles, restriction, credID, err := coreService.ValidateMachineToken(ctx, token)
 	if err != nil {
+		// #2748: a storage failure resolving the (otherwise valid) machine
+		// identity's roles is retryable, not a bad token — answer Unavailable
+		// and don't count it against the peer's brute-force budget, exactly as
+		// the user-credential path above does for the same sentinel (#1944).
+		// Without this the machine path would turn a role-lookup blip into a
+		// permanent-looking 401 plus a strike against the caller's egress IP.
+		if errors.Is(err, core.ErrRoleResolutionUnavailable) {
+			return nil, nil, status.Error(codes.Unavailable, "authentication temporarily unavailable, please retry")
+		}
 		return nil, nil, grpcAuthFailure(ctx)
 	}
 	uc := &UserContext{

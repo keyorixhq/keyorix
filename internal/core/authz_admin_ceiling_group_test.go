@@ -249,11 +249,15 @@ func TestRemoveRoleFromGroup_LastGlobalAdminBlocked(t *testing.T) {
 	group, err := c.CreateGroup(ctx, 0, &CreateGroupRequest{Name: "sole-admins"})
 	require.NoError(t, err)
 	require.NoError(t, c.AssignRoleToGroup(ctx, bootstrapAdmin.ID, group.ID, adminRole.ID, Scope{}, false))
+	// #2658: the group must have a live member to be a real admin source;
+	// with no members, stripping the direct grant would already leave zero
+	// admins and is (correctly) refused.
+	require.NoError(t, c.AddUserToGroup(ctx, bootstrapAdmin.ID, false, bootstrapAdmin.ID, group.ID, 0))
 	require.NoError(t, c.RemoveUserRole(ctx, bootstrapAdmin.ID, bootstrapAdmin.ID, adminRole.ID, Scope{}))
 
 	err = c.RemoveRoleFromGroup(ctx, bootstrapAdmin.ID, group.ID, adminRole.ID, Scope{})
 	require.Error(t, err, "removing the group's grant would leave the install with no global admin")
-	assert.Contains(t, err.Error(), "no super_admin/admin/system_admin")
+	assert.Contains(t, err.Error(), "no install administrator")
 }
 
 // #107: DeleteGroup must refuse to delete a group that is the install's last
@@ -271,6 +275,10 @@ func TestDeleteGroup_LastGlobalAdminBlocked(t *testing.T) {
 	group, err := c.CreateGroup(ctx, 0, &CreateGroupRequest{Name: "sole-admins2"})
 	require.NoError(t, err)
 	require.NoError(t, c.AssignRoleToGroup(ctx, bootstrapAdmin.ID, group.ID, adminRole.ID, Scope{}, false))
+	// #2658: the group must have a live member to be a real admin source;
+	// with no members, stripping the direct grant would already leave zero
+	// admins and is (correctly) refused.
+	require.NoError(t, c.AddUserToGroup(ctx, bootstrapAdmin.ID, false, bootstrapAdmin.ID, group.ID, 0))
 	require.NoError(t, c.RemoveUserRole(ctx, bootstrapAdmin.ID, bootstrapAdmin.ID, adminRole.ID, Scope{}))
 
 	err = c.DeleteGroup(ctx, bootstrapAdmin.ID, group.ID)

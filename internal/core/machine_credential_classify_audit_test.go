@@ -39,9 +39,7 @@ func TestClassifyMachineTokenByID_RealChange_WritesOneAuditEvent(t *testing.T) {
 
 	ms.On("GetMachineIdentityCredentialByID", ctx, cred.ID).Return(cred, nil)
 	ms.On("GetMachineIdentity", ctx, machineID).Return(machine, nil)
-	ms.On("UpdateMachineIdentityCredential", ctx, mock.MatchedBy(func(c *models.MachineIdentityCredential) bool {
-		return c.Classification == "confidential"
-	})).Return(nil)
+	ms.On("SetMachineIdentityCredentialClassification", ctx, cred.ID, "internal", "confidential").Return(true, nil)
 
 	var captured *models.AuditEvent
 	ms.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).
@@ -50,7 +48,7 @@ func TestClassifyMachineTokenByID_RealChange_WritesOneAuditEvent(t *testing.T) {
 
 	require.NoError(t, c.ClassifyMachineTokenByID(ctx, cred.ID, "confidential"))
 
-	ms.AssertNumberOfCalls(t, "UpdateMachineIdentityCredential", 1)
+	ms.AssertNumberOfCalls(t, "SetMachineIdentityCredentialClassification", 1)
 	ms.AssertNumberOfCalls(t, "LogAuditEvent", 1)
 	require.NotNil(t, captured, "reclassifying a machine credential must write an audit event")
 	assert.Equal(t, "machine_identity.token_classified", captured.EventType)
@@ -69,7 +67,7 @@ func TestClassifyMachineTokenByID_NoOp_WritesNoAuditEvent(t *testing.T) {
 
 	require.NoError(t, c.ClassifyMachineTokenByID(ctx, cred.ID, "internal"))
 
-	ms.AssertNumberOfCalls(t, "UpdateMachineIdentityCredential", 0)
+	ms.AssertNumberOfCalls(t, "SetMachineIdentityCredentialClassification", 0)
 	ms.AssertNumberOfCalls(t, "LogAuditEvent", 0)
 }
 

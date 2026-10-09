@@ -235,3 +235,8 @@ certs/
 # builds a same-named binary directly into its source directory by default.
 /devtools/asymanalyzer/asymanalyzer
 /devtools/familycheck/familycheck
+
+# scripts/demo/up.sh's own local state (demo credentials + isolated CLI
+# credential store) -- never shipped, written fresh per host.
+/.demo-2-state
+/.demo-2-cli-home/

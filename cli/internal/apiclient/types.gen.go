@@ -61,6 +61,11 @@ const (
 	DynamicSecretLeaseStatusRevoked      DynamicSecretLeaseStatus = "revoked"
 )
 
+// Defines values for MFAChallengeDataMfaRequired.
+const (
+	MFAChallengeDataMfaRequiredTrue MFAChallengeDataMfaRequired = true
+)
+
 // Defines values for MachineIdentityState.
 const (
 	MachineIdentityStateActive    MachineIdentityState = "active"
@@ -194,8 +199,8 @@ const (
 
 // Defines values for ListProjectEnvironmentsParamsIncludeDeleted.
 const (
-	False ListProjectEnvironmentsParamsIncludeDeleted = "false"
-	True  ListProjectEnvironmentsParamsIncludeDeleted = "true"
+	ListProjectEnvironmentsParamsIncludeDeletedFalse ListProjectEnvironmentsParamsIncludeDeleted = "false"
+	ListProjectEnvironmentsParamsIncludeDeletedTrue  ListProjectEnvironmentsParamsIncludeDeleted = "true"
 )
 
 // Defines values for TransitionMachineIdentityJSONBodyAction.
@@ -526,11 +531,48 @@ type Group struct {
 
 // GroupRoleGrant One role a group holds, with its time-bound expiry if any (internal/core/storage.GroupRoleGrant).
 type GroupRoleGrant struct {
-	Description *string    `json:"description,omitempty"`
-	ExpiresAt   *time.Time `json:"expires_at"`
-	Id          *int       `json:"id,omitempty"`
-	Name        *string    `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+
+	// ExpiresAt Omitted (never null) for a permanent grant.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Id        *int       `json:"id,omitempty"`
+	Name      *string    `json:"name,omitempty"`
 }
+
+// LoginSuccessData defines model for LoginSuccessData.
+type LoginSuccessData struct {
+	// AbsoluteExpiresAt Hard ceiling past which refresh is refused
+	AbsoluteExpiresAt      *time.Time `json:"absolute_expires_at,omitempty"`
+	AccountState           *string    `json:"account_state,omitempty"`
+	DisplayName            *string    `json:"display_name,omitempty"`
+	Email                  *string    `json:"email,omitempty"`
+	ExpiresAt              *time.Time `json:"expires_at,omitempty"`
+	PasswordChangeRequired *bool      `json:"password_change_required,omitempty"`
+	Permissions            *[]string  `json:"permissions,omitempty"`
+	Role                   *string    `json:"role,omitempty"`
+	Roles                  *[]string  `json:"roles,omitempty"`
+
+	// Token Session bearer token
+	Token    string  `json:"token"`
+	UserId   *int    `json:"user_id,omitempty"`
+	Username *string `json:"username,omitempty"`
+}
+
+// MFAChallengeData The password (or setup token) was correct, but a second factor is required -- core.ErrMFARequired. The client must complete POST /auth/mfa/verify (TOTP/recovery code) with this challenge, or the WebAuthn login ceremony, to get a real session.
+type MFAChallengeData struct {
+	// MfaChallenge Single-use challenge token to pass to /auth/mfa/verify
+	MfaChallenge string                      `json:"mfa_challenge"`
+	MfaRequired  MFAChallengeDataMfaRequired `json:"mfa_required"`
+
+	// TotpAvailable Whether this account can complete the challenge with a TOTP/recovery code
+	TotpAvailable bool `json:"totp_available"`
+
+	// WebauthnAvailable Whether this account can complete the challenge via a WebAuthn passkey
+	WebauthnAvailable bool `json:"webauthn_available"`
+}
+
+// MFAChallengeDataMfaRequired defines model for MFAChallengeData.MfaRequired.
+type MFAChallengeDataMfaRequired bool
 
 // MachineAuditReport Deployment-wide machine identity audit report (GET /machine-identities/audit).
 type MachineAuditReport struct {
@@ -850,6 +892,7 @@ type RotationPlanWave struct {
 // RotationPolicy A secret-rotation policy (ADR-108 PR 1 addition). Snake_case, matching this spec's usual convention and the model's real wire format: models.RotationPolicy (internal/storage/models/models.go) previously had no `json:` tags on most fields, so encoding/json's default marshaling emitted the bare Go field names verbatim (ID, Name, ProjectID, IntervalDays, ...) instead -- a PascalCase wire format silently decoded by any snake_case-tagged consumer (Go's case-insensitive JSON fallback matches "ID"~"id" but not "ProjectID"~"project_id", an extra underscore is not a case difference) as the zero value for every multi-word field. Fixed at the source (the model itself now carries these exact tags) rather than documented here as a PascalCase exception -- see the model's own doc comment for the full writeup, and docs/cli-split-inventory.md §7 PR 1's closure note for how this was found.
 type RotationPolicy struct {
 	AlertDaysBefore *int                 `json:"alert_days_before,omitempty"`
+	CreatedAt       *time.Time           `json:"created_at,omitempty"`
 	CreatedBy       *string              `json:"created_by,omitempty"`
 	Description     *string              `json:"description,omitempty"`
 	EnvironmentId   *uint32              `json:"environment_id"`
@@ -860,6 +903,7 @@ type RotationPolicy struct {
 	NotifyOnBreach  *bool                `json:"notify_on_breach,omitempty"`
 	ProjectId       *uint32              `json:"project_id"`
 	Scope           *RotationPolicyScope `json:"scope,omitempty"`
+	UpdatedAt       *time.Time           `json:"updated_at,omitempty"`
 }
 
 // RotationPolicyScope defines model for RotationPolicy.Scope.
@@ -867,13 +911,15 @@ type RotationPolicyScope string
 
 // RotationPolicyEvaluation One policy-covered secret's rotation posture, as returned by GET /api/v1/rotation-policies/evaluate (ADR-108 PR 1 addition).
 type RotationPolicyEvaluation struct {
-	DaysOverdue   *int    `json:"days_overdue,omitempty"`
-	IsApproaching *bool   `json:"is_approaching,omitempty"`
-	IsOverdue     *bool   `json:"is_overdue,omitempty"`
-	PolicyName    *string `json:"policy_name,omitempty"`
-	ProjectId     *uint32 `json:"project_id,omitempty"`
-	SecretId      *uint32 `json:"secret_id,omitempty"`
-	SecretName    *string `json:"secret_name,omitempty"`
+	DaysOverdue   *int       `json:"days_overdue,omitempty"`
+	IsApproaching *bool      `json:"is_approaching,omitempty"`
+	IsOverdue     *bool      `json:"is_overdue,omitempty"`
+	LastRotatedAt *time.Time `json:"last_rotated_at"`
+	PolicyId      *uint32    `json:"policy_id,omitempty"`
+	PolicyName    *string    `json:"policy_name,omitempty"`
+	ProjectId     *uint32    `json:"project_id,omitempty"`
+	SecretId      *uint32    `json:"secret_id,omitempty"`
+	SecretName    *string    `json:"secret_name,omitempty"`
 }
 
 // Secret A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
@@ -951,20 +997,27 @@ type SecretAccessor struct {
 
 	// Source How access was granted: owner, direct share, or group share.
 	Source   *string `json:"source,omitempty"`
+	UserId   *int    `json:"user_id,omitempty"`
 	Username *string `json:"username,omitempty"`
 }
 
 // SecretAuditEntry One lifecycle event of a secret. Never carries a plaintext value.
 type SecretAuditEntry struct {
-	ActorType     *string                 `json:"actor_type,omitempty"`
-	Description   *string                 `json:"description,omitempty"`
-	Diff          *map[string]interface{} `json:"diff"`
-	EventType     *string                 `json:"event_type,omitempty"`
-	Id            *int                    `json:"id,omitempty"`
-	Impersonation *bool                   `json:"impersonation,omitempty"`
-	Success       *bool                   `json:"success,omitempty"`
-	Timestamp     *string                 `json:"timestamp,omitempty"`
-	UserId        *int                    `json:"user_id"`
+	ActorType   *string `json:"actor_type,omitempty"`
+	Description *string `json:"description,omitempty"`
+
+	// Diff Omitted (never null) when the event recorded no diff.
+	Diff      *map[string]interface{} `json:"diff,omitempty"`
+	EventType *string                 `json:"event_type,omitempty"`
+	Id        *int                    `json:"id,omitempty"`
+
+	// Impersonation Omitted when false.
+	Impersonation *bool   `json:"impersonation,omitempty"`
+	Success       *bool   `json:"success,omitempty"`
+	Timestamp     *string `json:"timestamp,omitempty"`
+
+	// UserId Omitted (never null) when the event has no acting user.
+	UserId *int `json:"user_id,omitempty"`
 }
 
 // SecretDependencies defines model for SecretDependencies.
@@ -1625,7 +1678,7 @@ type PatHygieneParams struct {
 
 // ListProjectsParams defines parameters for ListProjects.
 type ListProjectsParams struct {
-	// IncludeDeleted When 'true', also returns soft-deleted projects (each flagged via deleted/deleted_at) for the restore UI.
+	// IncludeDeleted When 'true', also returns soft-deleted projects (each flagged via deleted/deleted_at) for the restore UI. This form requires secrets.read at the GLOBAL scope: project-scoped role grants deliberately survive a soft-delete (so RestoreProject can work) while GET /api/v1/projects/{id} returns 404 for a deleted project, so a project-scoped reader cannot read a soft-deleted project through any path and must not see one listed. A caller without the global grant gets 403 for this form, and 200 for the default one.
 	IncludeDeleted *ListProjectsParamsIncludeDeleted `form:"include_deleted,omitempty" json:"include_deleted,omitempty"`
 }
 
@@ -1653,7 +1706,10 @@ type DeleteProjectParamsForce string
 // UpdateProjectJSONBody defines parameters for UpdateProject.
 type UpdateProjectJSONBody struct {
 	Description *string `json:"description,omitempty"`
-	Name        *string `json:"name,omitempty"`
+	Name        string  `json:"name"`
+
+	// RequireMfa ADR-037 per-project security-policy control. Omit (or null) to leave unchanged. Changing it additionally requires roles.assign at the project, not just secrets.write.
+	RequireMfa *bool `json:"require_mfa"`
 }
 
 // CreateAccessRequestJSONBody defines parameters for CreateAccessRequest.
@@ -1789,7 +1845,15 @@ type CreateOIDCBindingJSONBody struct {
 
 // GrantMachineRoleJSONBody defines parameters for GrantMachineRole.
 type GrantMachineRoleJSONBody struct {
-	RoleId int `json:"role_id"`
+	// EnvironmentId Scope the grant to one environment in this project; 0 or omitted = global (every environment).
+	EnvironmentId *int `json:"environment_id,omitempty"`
+	RoleId        int  `json:"role_id"`
+}
+
+// RemoveMachineRoleParams defines parameters for RemoveMachineRole.
+type RemoveMachineRoleParams struct {
+	// EnvironmentId Remove the grant scoped to this one environment (must belong to the project; 400 otherwise). Omitted or 0 removes the project-wide grant only.
+	EnvironmentId *int `form:"environment_id,omitempty" json:"environment_id,omitempty"`
 }
 
 // IssueMachineTokenJSONBody defines parameters for IssueMachineToken.
@@ -2265,6 +2329,15 @@ type AuthLoginJSONBody struct {
 	Username string `json:"username"`
 }
 
+// VerifyMFALoginJSONBody defines parameters for VerifyMFALogin.
+type VerifyMFALoginJSONBody struct {
+	// Code A current TOTP code, or an unused recovery code
+	Code string `json:"code"`
+
+	// MfaChallenge The challenge token from /auth/login's mfa_required response
+	MfaChallenge string `json:"mfa_challenge"`
+}
+
 // SystemInitJSONBody defines parameters for SystemInit.
 type SystemInitJSONBody struct {
 	// BootstrapToken Prefer the X-Keyorix-Bootstrap-Token header; this field is the fallback for clients that cannot set headers.
@@ -2517,6 +2590,9 @@ type UpdateUserRolesJSONRequestBody UpdateUserRolesJSONBody
 
 // AuthLoginJSONRequestBody defines body for AuthLogin for application/json ContentType.
 type AuthLoginJSONRequestBody AuthLoginJSONBody
+
+// VerifyMFALoginJSONRequestBody defines body for VerifyMFALogin for application/json ContentType.
+type VerifyMFALoginJSONRequestBody VerifyMFALoginJSONBody
 
 // SystemInitJSONRequestBody defines body for SystemInit for application/json ContentType.
 type SystemInitJSONRequestBody SystemInitJSONBody

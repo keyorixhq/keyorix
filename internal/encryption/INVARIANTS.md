@@ -29,6 +29,17 @@ Format: `INV-ENCRYPTION-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#is
   operation "wins" the race. Why: #195. Guard: `keymanager_lock_test.go`
   (`TestAcquireExclusiveKeyLock_MutualExclusion`,
   `TestRewrapAndRotate_ConcurrentRace_FinalDEKMatchesDB`).
+- **INV-ENCRYPTION-28** Every key-file rewriter (`RotateDEKWithSweep` including its
+  re-encryption sweep commit, `RotateKEKPassphrase`, `RewrapDEK*`) holds the key-file rewrite
+  lock (`<dek_path>.lock`) EXCLUSIVELY for its whole write, so a holder of that lock in
+  SHARED mode (`Service.AcquireKeyFileReadLock`) observes neither a key-file change nor a
+  sweep commit. That lock is distinct from the server's `dek.lock` and does not conflict with
+  a live server — the property `admin backup`'s live-server path relies on to archive a key
+  set consistent with its database snapshot. Why: #2602. Guard:
+  `key_file_read_lock_test.go` (`TestAcquireKeyFileReadLock_ExcludesKeyFileRewriters`,
+  `TestAcquireKeyFileReadLock_CoexistsWithLiveServerLock`), end to end
+  `server/admin/backup_restore_live_test.go:TestAdminBackup_Postgres_LiveServer_RefusesDuringKeyRotation`
+  (pg-gated).
 
 ## Crash consistency (write-pending → rename → fsync)
 
@@ -141,11 +152,16 @@ Format: `INV-ENCRYPTION-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#is
   — memory-scan-style tests proving no DEK bytes remain afterward).
 - **INV-ENCRYPTION-25** Every KEK/DEK/evidence-sign/audit-checkpoint/backup-manifest key
   variable passed through a `defer wipeBytes(...)` or explicit `wipeBytes(...)` call at the end
-  of its rotation/use site — confirmed call sites in `keymanager_rotation.go` and
-  `keymanager_kek_rotation.go`. UNGUARDED as a repo-wide completeness sweep (#issue: no AST scan
-  enumerates every key-shaped `[]byte` local in this package and asserts a `wipeBytes` call on
-  every exit path, analogous to `internal/core`'s `atomicity_guard_test.go`; today's coverage is
-  point-fixes per historical finding, same shape as `internal/core`'s best-effort-panic gap).
+  of its rotation/use site. Guard: `wipebytes_sweep_test.go:TestWipeBytesSweep_EveryKeyLocalIsWipedOnEveryReturn`
+  — an AST sweep over every non-test file in this package: every local bound from a
+  key-material call (`keyMaterialSources`) must be wiped, deferred-wiped, handed off
+  (`x.field = v`, a `retainingCallees` call, or returned) on every lexical path to a return;
+  every key-shaped callee and every key-shaped `[]byte`-returning function must be classified,
+  so a new source cannot go unrecognised. Known gaps on main (3, all error paths) are listed in
+  `knownWipeGaps` and reported by the skipped `TestWipeBytesSweep_KnownGaps`; the sweep fails
+  if one stops reproducing. Not covered (see the file header): control flow beyond lexical
+  nesting, wipe helpers other than `wipeBytes`, key bytes that reach a variable without a
+  call, and struct-field wipe-on-overwrite (#2512).
 
 ## Shamir / TPM key custody (ADR-038)
 
@@ -161,5 +177,18 @@ Format: `INV-ENCRYPTION-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#is
   secret), only that they do not reconstruct it (#2513).
 - **INV-ENCRYPTION-27** The TPM 2.0 KEK provider (tier 2) seals the KEK to the specific TPM —
   it must not unseal on different hardware. Why: ADR-038 tier-2,
-  `internal/crypto/tpm_provider.go`. UNGUARDED pending a located test in this pass (#issue:
-  confirm/cite coverage of the seal-is-hardware-bound property).
+  `internal/crypto/tpm_provider.go`. Guard (all in `internal/crypto`, against the go-tpm-tools
+  in-process simulator, where "different hardware" is a simulator with a different seed):
+  `tpm_provider_test.go:TestTPMKeyProvider_DifferentTPMCannotUnseal`, and
+  `tpm_binding_test.go` — `TestTPMBinding_BlobCopiedToOtherHostDoesNotUnseal` (a copied blob
+  fails on six other TPMs, never silently re-seals, still unseals on the sealing TPM),
+  `TestTPMBinding_DiskBlobDoesNotContainKEK` (no raw/base64/hex KEK in the file),
+  `TestTPMBinding_TamperedPrivateDoesNotUnseal`, and `TestTPMSeal_ObjectIsFixedToTPMAndParent`
+  (the sealed object carries `FixedTPM`+`FixedParent`, so a real TPM refuses to duplicate it to
+  other hardware). **Gap, not automatable in CI today:** CI has no physical TPM, so the
+  device-open path (`transport.OpenTPM`) and a real chip's enforcement of `FixedTPM`/
+  `FixedParent` are not exercised; the tests check that the provider requests that enforcement,
+  not that a chip performs it. Manual check on TPM hardware: seal on host A, copy the blob to
+  host B, confirm `KEK()` fails with "unseal failed" and the blob is unchanged. Also not
+  covered by design: no PCR policy is enforced (see the `tpm_provider.go` package doc), so the
+  seal is bound to the chip, not to a boot state (#2514).

@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -264,13 +265,30 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 	// budget slot a genuine failed assertion does. An invalid/expired
 	// challenge or session, or a failed assertion, stays counted.
 	attemptID, reserved := h.coreService.ReserveLoginAttempt(r.Context(), ip)
-	session, user, err := h.coreService.FinishWebAuthnLogin(r.Context(), body.Challenge, body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed)
+	// #2619 release-on-error only covers a RETURNED storage error; a PANIC inside
+	// FinishWebAuthnLogin (e.g. ConsumeMFAChallenge#1/panic, FuzzStorageFaultOperations)
+	// skips the err!=nil branch below entirely, bypassing ReleaseLoginAttempt the exact
+	// same way the #2619 finding did — the outer Recovery middleware still turns the
+	// panic into a 500, but the reserved slot stays orphaned-consumed. Recover here,
+	// release, then re-panic unchanged so Recovery's own logging/response behavior is
+	// untouched; a panic AFTER this call (e.g. during completeLogin, post-verdict) is
+	// deliberately NOT covered by this recover — the assertion was already evaluated by
+	// then, so the slot must stay counted exactly like a successful or failed evaluation
+	// would (same release-only-pre-verdict rule #2619 established for the error path).
+	session, user, err := h.finishWebAuthnLoginReleasingOnPanic(r.Context(), body.Challenge, body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed, reserved, attemptID)
 	if err != nil {
 		if errors.Is(err, core.ErrWebAuthnLoginNotEvaluated) {
 			log.Printf("FinishWebAuthnLogin: %v", err)
 			if reserved {
 				h.coreService.ReleaseLoginAttempt(r.Context(), attemptID)
 			}
+			// FIX-1 (#2548 sibling, consistency with VerifyMFA/MFAStepUp): a storage
+			// error never reached a verdict on the assertion — see
+			// errMFAVerificationUnavailable's doc (mfa.go). Reused here rather than
+			// a separate constant: the message is about retrying a second-factor
+			// check generically, not specific to TOTP.
+			sendError(w, "ServiceUnavailable", errMFAVerificationUnavailable, http.StatusServiceUnavailable, nil)
+			return
 		}
 		sendError(w, "Unauthorized", "Assertion failed or challenge expired", http.StatusUnauthorized, nil)
 		return
@@ -284,6 +302,21 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 	}) // #nosec G118
 	goSafe(func() { _ = h.coreService.RecordLogin(context.Background(), user.ID) }) // #nosec G118
 	sendSuccess(w, resp, "Login successful")
+}
+
+// finishWebAuthnLoginReleasingOnPanic calls core.FinishWebAuthnLogin, releasing the
+// reserved login-attempt slot and re-panicking unchanged if the call panics instead of
+// returning — see FinishWebAuthnLogin's call-site comment for why this exists.
+func (h *AuthHandler) finishWebAuthnLoginReleasingOnPanic(ctx context.Context, challenge, webAuthnSession, userAgent, ip string, parsed *protocol.ParsedCredentialAssertionData, reserved bool, attemptID uint) (session *models.Session, user *models.User, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			if reserved {
+				h.coreService.ReleaseLoginAttempt(ctx, attemptID)
+			}
+			panic(rec)
+		}
+	}()
+	return h.coreService.FinishWebAuthnLogin(ctx, challenge, webAuthnSession, userAgent, ip, parsed)
 }
 
 // BeginWebAuthnPasswordlessLogin starts a usernameless passkey login. Public, no

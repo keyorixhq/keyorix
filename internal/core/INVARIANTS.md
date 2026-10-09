@@ -65,11 +65,31 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
 - **INV-CORE-13** An `/system` proxy relay granter refuses admin-tier role grants — no
   delegation of admin-tier grants through the relay path. Why: ADR-087/088/093. Guard:
   `authz_system_proxy_relay_ceiling_test.go:TestSystemProxyRelayGranter_RefusesAdminTierRoles`.
-- **INV-CORE-14** `requireGranterHoldsRolePermissions`'s other callers (`AddProjectMember`'s
-  own callers, the `AssignRole` endpoint, access-request approval) pass `actorIsMachine=false`
-  unconditionally — a sibling gap to the fixed `AssignRoleWithExpiryProxy` path, left open per
-  the allowlist note. Why: `actor_sentinel_completeness_test.go` note. UNGUARDED (#issue: audit
-  whether these call sites can be reached by a genuine machine actor and close if so).
+- **INV-CORE-14** Every request-reachable call site of a core entry point carrying an
+  actor-kind companion parameter (`actorIsMachine bool`, or a `…MachineID uint`
+  attribution companion) DERIVES it from the real authenticated actor, never a hardcoded
+  `false`/`0`. The split exists because a machine identity has no UserID (ADR-030), so every
+  machine caller arrives with `actorID==0` — the same value as the unauthenticated
+  local-CLI/system pseudo-actor that `requireGranterHoldsRolePermissions` and the #169
+  self-permission-bundling check deliberately exempt from their per-actor ceilings. A
+  hardcoded companion on a reachable path therefore reports the calling machine AS the
+  trusted system, skipping the ceiling.
+  Audited 2026-10-05 (#2495): the `AddProjectMember`/`AssignRole`/`SetUserRoles`/
+  `AddUserToGroup` call sites the earlier allowlist note named were all already closed by
+  #1542/#1545; that note was stale. One live gap remained — bulk access-request
+  approve/reject, which called a 4-argument `ApproveAccessRequest` convenience wrapper that
+  hardcoded `approverMachineID=0`. Its ceiling skip was unreachable only because the same
+  function resolved the per-item authorization through the user-only `Authorize` against
+  `approverID=0`, which denied every item — simultaneously a functional bug (machine
+  identities could not bulk-approve at all) and a one-line-away ceiling bypass. Both fixed;
+  the wrapper is deleted rather than replaced, so there is no hardcoding site left to inherit.
+  Why: ADR-030, #1524/#1542/#1545/#2495. Guard:
+  `actor_kind_literal_completeness_test.go` (`TestActorKindLiteralsAreAllowlisted`) — an
+  AST scan of `internal/core` and `server/` that derives each function's companion-parameter
+  position from its own signature and fails on any unreviewed literal; plus
+  `bulk_access_request_machine_actor_test.go` and
+  `server/http/handlers/bulk_access_requests_machine_actor_test.go` for the behaviour at both
+  layers.
 
 ## Last-admin / lockout
 
@@ -80,6 +100,31 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   security-closures `FIX-2-primitive`/`FIX-2-sso`. Guard: `last_admin_guard_wiring_test.go`,
   `last_admin_guard_external_test.go`, `group_admin_guard_test.go`,
   `project_scoped_group_admin_guard_test.go`, `scim_guards_test.go`.
+  Every path counts holders at **GLOBAL scope only** (`project_id = 0`), which became
+  load-bearing in a new way with #2496: resolving admin-ness from the structural flag puts
+  `project_admin` in the admin-role set, and that role is ordinarily held at PROJECT scope
+  where ADR-084's bypass confers nothing install-wide. Miscounting one as a global backup
+  would make the last REAL global admin's grant removable — the brick direction. Every
+  feeding query filters (`ListGlobalAdminAssignmentsForUpdate`: `project_id = 0 AND
+  environment_id = 0`; `ListProjectRoleAssignments(ctx, 0)`: `project_id = 0`). Guard:
+  `admin_role_structural_source_test.go:TestRemoveUserRole_ProjectScopedBypassIsNotAGlobalAdminBackup`
+  plus its companion `..._GloballyScopedProjectAdminIsAGlobalAdminBackup`, which keeps the
+  first from passing by simply excluding `project_admin` and reopening #2496's gap.
+  Known inconsistency, pre-existing and NOT introduced by #2496:
+  `ListProjectRoleAssignments(ctx, 0)` filters `project_id` only, so a grant at
+  `{ProjectID: 0, EnvironmentID: X}` is counted as a global holder by the core-side guards
+  while `ListGlobalAdminAssignmentsForUpdate` (the storage-side role-removal guard) also
+  requires `environment_id = 0`. The two disagree on that one shape for every admin role,
+  flagged rather than changed here.
+  Every path counts **live holders, not grant rows** (#2658): a user grant counts only for
+  a non-deleted, `IsActive`, non-login-blocked user (not suspended/deprovisioned); a group
+  grant only for a non-deleted group with at least one such global member. Core's
+  `filterActiveHolders` and storage's `RemoveGlobalAdminRoleGuarded`
+  (`globalAdminAssignmentHasLiveHolder`) apply the same rule, and `RemoveUserRole`'s global
+  admin branch holds `lastAdminGuardLockKey` like every other last-admin writer. Guard:
+  `TestCTAReview_RemoveUserRole_LastGlobalAdmin_AfterAdminGroupDeleted` (+ `_Postgres`),
+  `TestCTAReview_RemoveUserRole_LiveAdminStillCounts`,
+  `TestGlobalAdminLiveAccountStates_MatchAccountLoginBlocked`.
 - **INV-CORE-16** The last-admin check fails closed when `IsGlobalAdmin` itself errors, never
   silently allows. Guard: `scim_guards_test.go:TestGuardLastAdminDeactivation_FailsClosedOnIsGlobalAdminError`.
 - **INV-CORE-17** A direct-grant race and a group-role-grant race against the last-admin / SoD
@@ -96,10 +141,34 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `adr_open_decisions_tripwire_test.go:TestADRDecisionRoleSetContainsAdminIsStructural`.
 - **INV-CORE-19** `roleSetContainsAdmin` fails closed on a genuine storage error, never
   swallows it. Why: ADR-084 "Verification". Guard: `role_set_contains_admin_error_test.go`.
-- **INV-CORE-20** `installAdminRoleIDSet` (`rbac_management.go`) is STILL a second,
-  separately-maintained name-based admin-role list — ADR-084's own documented "not yet done".
-  Why: ADR-084. UNGUARDED (#issue: fold into the structural `bypasses_permission_checks`
-  resolution or justify why a second list must remain).
+- **INV-CORE-20** There is exactly ONE authority on "which roles confer administrative
+  authority": `models.Role.BypassesPermissionChecks`, enumerated by
+  `adminBypassRoleIDSet` (`admin_roles.go`) and tested for membership by
+  `storage.RoleSetBypassesPermissionChecks`. The second, name-based list
+  (`installAdminRoleIDSet` over `super_admin`/`admin`/`system_admin`) that backed every
+  last-install-admin guard is gone (#2496). It disagreed with the flag in both directions:
+  a flag-carrying role named outside the list (`project_admin`, or anything the ADR-084
+  backfill flagged) was not treated as admin-conferring at all, so removing the install's
+  LAST such global grant was completely unguarded; and a surviving flag-carrying holder
+  named outside the list was not counted as a backup administrator, so legitimate removals
+  were refused. `adminBypassRoleIDSet` returns an error rather than an empty set, and every
+  caller fails closed (INV-CORE-19's stance). Why: ADR-084, #2496. Guard:
+  `admin_role_structural_source_test.go` (behavioural: a flag-carrying, non-canonically-named
+  role IS admin-conferring, with both calibration directions) and
+  `admin_role_name_list_singleton_test.go` (structural: every admin-role-name string literal
+  in this package's non-test source needs a reviewed row, so a second list cannot land
+  silently — the mechanism that was missing when `installAdminRoleIDSet` survived ADR-084).
+  CONSEQUENCE, found while landing #2496: because `requireAdminRankCeilingForTarget` and the
+  global-admin holder count now resolve from the SAME authority, the last-admin refusal is
+  unreachable on `UpdateUser`/`DeleteUser` — the ceiling refuses any non-self actor that
+  does not bypass at the target's scopes, and an actor that bypasses at global scope IS a
+  surviving holder. The refusal remains reachable on `SuspendUser` and the SCIM paths, which
+  apply no ceiling; that is where its end-to-end coverage lives
+  (`server/http/handlers/users_update_lastadmin_test.go:TestSuspendUser_RefusesLastAdminDeactivation_RealServer`).
+  The precondition is itself checked, so the unreachability cannot go stale unnoticed:
+  `..._test.go:TestUpdateUser_CeilingAlreadyGuaranteesASurvivingAdminHolder` fails if an
+  actor can ever pass the ceiling without being a holder, at which point `UpdateUser` needs
+  its end-to-end case back.
 - **INV-CORE-21** On every startup, newly-added canonical permissions reconcile additively
   into existing installs' baseline roles — non-clobbering of existing grants, no-op on a
   pre-bootstrap install, idempotent, and the grant itself audited. Why: ADR-044. Guard:
@@ -162,11 +231,13 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   adds. Why: ADR-052. Guard: `secret_dependencies_test.go`
   (`TestTopologicalRotationOrderDetectsCycle`, `TestAddSecretDependency_Validation`,
   `TestAddSecretDependency_CrossEnvironmentRejected`,
-  `TestAddSecretDependency_ConcurrentRaceCannotPersistACycle`). **Cross-replica: UNGUARDED
-  and currently violated (#2660)** — that concurrency guard races goroutines through ONE
-  `KeyorixCore` on SQLite (serialized by its own `secretDependencyMu`); across replicas on
-  Postgres, `CreateSecretDependencyExclusive`'s `FOR UPDATE` on existing edges does not stop
-  the second add (READ COMMITTED snapshot excludes the first's new edge).
+  `TestAddSecretDependency_ConcurrentRaceCannotPersistACycle`). Cross-replica (#2660): that
+  concurrency guard races goroutines through ONE `KeyorixCore` on SQLite, and
+  `CreateSecretDependencyExclusive`'s `FOR UPDATE` on existing edges does not stop a second
+  replica's add (READ COMMITTED snapshot excludes the first's new edge), so every edge insert
+  runs under `WithNamedLock(secretDependencyGraphLockKey(project))` in
+  `LockedCreateSecretDependencyExclusive`, the only path `AddSecretDependency` uses. Guard:
+  `TestCTAReview_AddSecretDependency_CrossReplicaCycle_Postgres` (pg-gated).
   `TestCTAReview_AddSecretDependency_CrossReplicaCycle_Postgres` reproduces it (skipped until
   #2660 is fixed).
 - **INV-CORE-32** Dependency reads (impact/order) are filtered by environment, and `DELETE`
@@ -200,6 +271,14 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
 
 ## Atomicity / transactions
 
+- **INV-CORE-42** `provisionInvitationSetupLink` (`InviteToProjectWithLink`/`InviteGlobalWithLink`)
+  persists the invitation without a link ONLY on a benign condition (base_url unset, a real
+  throttle verdict). A storage fault — the mint step (#2444) or the resend throttle's own count
+  query (`ErrResendThrottleUnverifiable`, #2599) — persists nothing and returns a nil invitation;
+  the throttle itself stays fail-closed either way. Why: #2599, found by
+  `FuzzStorageFaultOperations`. Guard:
+  `invitation_throttle_count_error_test.go` (`TestInviteGlobalWithLink_ThrottleCountErrorPersistsNothing`,
+  `TestInviteGlobalWithLink_ThrottleLimitReachedStillPersistsInvitation`), corpus seeds `2599_*`.
 - **INV-CORE-35** Every non-test `*KeyorixCore`/`*AnomalyDetector` function making 2+
   storage/core writes outside `WithTransaction` is a reviewed, classified entry in
   `docs/atomicity-exempt.tsv` (A fix-required / B consume-first / C independent-by-design /
@@ -212,6 +291,49 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
 - **INV-CORE-37** A SUCCESS audit event never textually precedes the storage write it reports
   on, in the same function; denial/failure events are exempt by construction, anything else
   needs a reviewed `AUDIT:<fn>` exemption. Guard: `atomicity_guard_test.go:TestAtomicityGuard_AuditBeforeWrite`.
+- **INV-CORE-41** A failed `DecideAccessReviewItem` leaves the item PENDING and the grant
+  untouched — for BOTH decisions, so a reported error always means "nothing happened, retry",
+  never "the evidence says one thing and the access says another". The two halves get there
+  differently because they must:
+  - **attest** does every fallible read (reviewer controls, the live grant re-verification)
+    BEFORE the conditional claim, and nothing that can fail after it. Why: #2570, found by
+    `FuzzStorageFaultOperations`. Guard:
+    `access_review_decide_read_before_write_test.go:TestDecideAccessReviewItem_AttestGrantLookupErrorLeavesItemPending`,
+    corpus seed `2570_decideaccessreviewitem_listprojectroleassignments_error`.
+  - **revoke** cannot use that ordering — claim-before-act is what closes #1646's
+    cross-replica attest/revoke race — so it runs claim + removal + both audit events in ONE
+    transaction (`access_review_decide_tx.go`), named lock OUTSIDE and transaction INSIDE.
+    Closed 2026-10-05 (#2676); before it, a failed removal left the item stamped `revoked`
+    while the grant was still live (false ISO 27001 A.5.18 / SOC 2 CC6.2-6.3 evidence) and
+    un-retryable, logged as `SECURITY: ... manual reconciliation required`. Reachable with no
+    fault injection at all: a last-project-admin guard REFUSAL took the same path. Guards:
+    `access_review_decide_atomicity_test.go` (faultstorage, plus the guard-refusal and
+    audit-write-failure calibration cases),
+    `concurrency_access_review_revoke_tx_postgres_test.go` (pg-gated: the lock-ordering and
+    two-connection budget the nesting costs, which is also what pins no third pooled
+    connection is taken inside the transaction).
+
+    The revoke path and the standalone `RevokeAccessReviewGrant` endpoint share ONE
+    validation + principal-kind dispatch (`planReviewRevoke`) and ONE lock-and-guard decision
+    per removal shape (`with{User,Group,Machine}RoleRemovalGuards`, also used by the public
+    `RemoveUserRole`/`RemoveRoleFromGroup`/`RemoveMachineRole`). Guard that the sharing is
+    real, not claimed:
+    `access_review_decide_atomicity_test.go:TestDecideAccessReviewItem_RevokeStillRefusedByLastProjectAdminGuard`
+    — if the access-review path ever re-implemented the removal, that is the assertion that
+    would go red.
+- **INV-CORE-41** `DecideAccessReviewItem`'s attest path does every fallible read
+  (reviewer controls, the live grant re-verification) BEFORE the conditional claim that commits
+  the item's decision, and nothing that can fail after it — so a reported error means the item
+  is still pending. The revoke path still must act AFTER its claim to keep the #1646 race closed;
+  if that real action then fails, a compensating conditional UPDATE reverts the claim back to
+  pending (fail-closed: a non-match, e.g. a concurrent re-decide, is left alone and still logged
+  as `SECURITY: ... manual reconciliation required`) — safe because every RevokeAccessReviewGrant
+  branch returns its error from the same call that would have performed the removal, never after
+  a successful one, so revoke is idempotent on retry. Why: #2570, found by
+  `FuzzStorageFaultOperations`. Guard:
+  `access_review_decide_read_before_write_test.go:TestDecideAccessReviewItem_AttestGrantLookupErrorLeavesItemPending`,
+  `access_review_revoke_compensate_test.go:TestDecideAccessReviewItem_RevokeActionFailureRevertsClaim`,
+  corpus seed `2570_decideaccessreviewitem_listprojectroleassignments_error`.
 
 ## Check-then-act across replicas (GUARD-2)
 
@@ -222,16 +344,172 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   two-replica Postgres repro in `concurrency_check_then_act_exempt_review_postgres_test.go`.
   Guard: `check_then_act_lock_guard_test.go:TestCheckThenActLockGuard_UnlockedSecurityCheck`
   (AST walk; no control-flow, interprocedural, or `tx.<Write>` awareness — and it does not
-  detect stale rows, see the TSV's `STALE` class). Open: #2646 #2647 #2648 #2649 #2650 #2651
+  detect stale rows, see the TSV's `STALE` class). Open: #2646 #2647 #2649 #2650 #2651
+  detect stale rows, see the TSV's `STALE` class). Open: #2646 #2647 #2648 #2649 #2651
   #2652 #2653 #2654 #2655 #2656 #2657 #2659.
+  detect stale rows, see the TSV's `STALE` class). Open: #2646 #2647 #2648 #2649 #2650 #2651
+  #2652 #2653 #2654 #2656 #2657 #2659.
+  #2652 #2653 #2654 #2655 #2656.
+  #2652 #2655 #2656 #2657 #2659.
+  detect stale rows, see the TSV's `STALE` class). Open: #2648 #2649 #2650 #2651
+  detect stale rows, see the TSV's `STALE` class). Open: #2648 #2649 #2650 #2651
+  detect stale rows, see the TSV's `STALE` class). Open: #2648 #2650 #2651
+  #2652 #2653 #2654 #2655 #2656 #2657 #2659. Closed rows move to class `PARENT-LOCKED`
+  detect stale rows, see the TSV's `STALE` class). Open: #2648 #2649 #2650 #2651
+  detect stale rows, see the TSV's `STALE` class). Open: #2648 #2650 #2651
+  #2653 #2654 #2655 #2656 #2657 #2659. Closed rows move to class `PARENT-LOCKED`
+  detect stale rows, see the TSV's `STALE` class). Open: #2648 #2649 #2650 #2651
+  detect stale rows, see the TSV's `STALE` class). Open: #2648 #2650 #2651
+  #2653 #2654 #2655 #2657 #2659. Closed rows move to class `PARENT-LOCKED`
+  detect stale rows, see the TSV's `STALE` class). Open: #2648 #2649 #2650 #2651
+  detect stale rows, see the TSV's `STALE` class). Open: #2648 #2650 #2651
+  detect stale rows, see the TSV's `STALE` class). Open: #2648 #2650
+  #2653 #2654 #2655 #2657 #2659. Closed rows move to class `PARENT-LOCKED`
+  (INV-STORE-21) or are removed when a `WithNamedLock` now covers them.
+  detect stale rows, see the TSV's `STALE` class). Closed rows move to class
+  `PARENT-LOCKED` (INV-STORE-21), or to `STALE` once a `WithNamedLock` covers them so the
+  guard stops flagging the function at all (#2657/#2659, closed by #2669 — see INV-CORE-44).
+  The set of still-open races is NOT transcribed here. It is whatever the TSV's
+  `UNSAFE-OPEN` rows say, read straight out of the file:
+  `awk 'BEGIN{FS="\t"} !/^#/ && $2=="UNSAFE-OPEN" {print $1"\t"$3}' docs/check-then-act-lock-exempt.tsv | sort -u`
+  (11 rows as of 2026-10-05). An earlier version of this entry did transcribe the issue
+  list, and repeated appends left ten divergent, partly-truncated copies of it in place —
+  a list nobody could use and that contradicted the TSV. Keep the pointer, not the copy.
+  Note the TSV's own labels lag too: the guard cannot detect a stale row, so some
+  `UNSAFE-OPEN` rows name issues that have since been fixed. The TSV is the source of
+  truth for which ROWS exist; the issue is the source of truth for whether it is open.
 - **INV-CORE-42** A write that persists a pre-read snapshot must not overwrite columns the
   operation did not change, and must not resurrect a soft-deleted row. GORM `Save(struct)` on
   a soft-delete model is a resurrection primitive under concurrency: its `UPDATE ... WHERE
   deleted_at IS NULL` matches 0 rows and it falls back to `INSERT ... ON CONFLICT (id) DO
   UPDATE SET <all columns>` including `deleted_at = NULL`; `Select("*").Updates(...)` reverts
   every column a narrower concurrent writer (`SetAccountState`, `SetPasswordHash`, …) changed.
+  Why: C-GUARD2-EXEMPT-REVIEW. Guards:
+  share permission update (#2648, fixed):
+  `share_permission_column_scoped_guard_test.go:TestUpdateSharePermission_IsColumnScoped` +
+  `TestCTAReview_UpdateSharePermission_vs_RevokeShare_CrossReplicaPostgres` (pg-gated).
+  UNGUARDED: #2650 secret undelete, #2651 dynamic config re-enable, #2653/#2654 user
+  Why: C-GUARD2-EXEMPT-REVIEW. Guard: secret auto-rotate config (#2650, fixed):
+  `secret_autorotate_column_scoped_guard_test.go:TestSetSecretAutoRotate_IsColumnScoped` +
+  `TestCTAReview_SetSecretAutoRotate_vs_DeleteSecret_CrossReplicaPostgres` (pg-gated).
+  UNGUARDED: #2648 share revoke, #2651 dynamic config re-enable, #2653/#2654 user
+  suspension/password revert.
   Why: C-GUARD2-EXEMPT-REVIEW. Guard: UNGUARDED (#2648 share revoke, #2650 secret undelete,
   #2651 dynamic config re-enable, #2653/#2654 user suspension/password revert).
+  `TestCTAReview_UpdateSharePermission_vs_RevokeShare_CrossReplicaPostgres` (pg-gated);
+  user profile writes (#2653/#2654, fixed):
+  `user_profile_column_scoped_guard_test.go:TestUserProfileWrites_AreColumnScoped` +
+  `TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres` /
+  `TestCTAReview_UpdateOwnProfile_vs_ChangePassword_CrossReplicaPostgres` (pg-gated).
+  An operation whose NEW `account_state` is derived from the one it read (the SCIM lifecycle
+  paths: `scimUpdateUserTx`, `DeprovisionSCIMUser`) writes it only through
+  `SetAccountStateIfMatches` conditioned on that read value, never the blind
+  `SetAccountState`, and fails closed with `ErrUserAccountStateConflict` on a miss
+  (C-RACE-FIX-B2): `scim_account_state_conditional_guard_test.go:TestSCIMAccountStateWrites_AreConditional`,
+  `scim_account_state_persisted_test.go`, and
+  `TestCTAReview_SCIM_vs_SuspendUser_WithoutRowLock_CrossReplicaPostgres` (pg-gated).
+  UNGUARDED: #2650 secret undelete, #2651 dynamic config re-enable.
+- **INV-CORE-43** `ActivateMFA` only ever activates the TOTP secret the submitted code was
+  validated against: `ActivateMFASecret` is a conditional write pinned to that row's
+  ciphertext, and a mismatch (a concurrent `BeginMFAEnrollment` swapped the secret) fails the
+  whole activation closed with `ErrMFAEnrollmentChanged`. Why: #2655. Guard:
+  `TestActivateMFA_SecretSwappedAfterValidation_FailsClosed` (default-ci),
+  `TestCTAReview_ActivateMFA_vs_BeginMFAEnrollment_CrossReplicaPostgres` (pg-gated).
+- **INV-CORE-44** A project membership never ends `revoked` while its user still holds the
+  role grant that membership conferred: every write moving a (project, user) membership into
+  or out of `active` (`TransitionMembership`, `inviteMemberWithMode`) runs its state change
+  and its grant/removal side effect under `WithNamedLock(membershipLockKey(project, user))`.
+  Why: #2657, #2659. Guard:
+  `TestCTAReview_TransitionMembership_ActivateVsRevoke_CrossReplicaPostgres`,
+  `TestCTAReview_InviteMemberOpenMode_vs_Revoke_CrossReplicaPostgres` (pg-gated).
+- **INV-CORE-45** There is exactly ONE definition of "is a member of project P", and it is a
+  live role grant scoped to P (direct or via a non-deleted group; a global `project_id = 0`
+  grant and an expired grant both excluded) — ADR-021, stated in
+  `project_membership_definition.go`'s header. `storage.IsProjectMember` has one caller,
+  `core.IsProjectMember`; the ADR-022 `project_memberships` table is an ONBOARDING JOURNAL
+  that supplies lifecycle state for a membership the grant already established, and never
+  answers whether the membership exists. Why: #2781 — two non-equivalent definitions had
+  `GET /projects/{id}/members` and `GET /users/{id}/memberships` + the admin Users list's
+  project-count column contradicting each other, because nothing the web UI does writes the
+  journal. Note it is a DIFFERENT question from "which projects may this caller READ"
+  (`GetReadableScopes`, a strict superset — a global `secrets.read` holder reads every project
+  while being a member of none); #2780's project listing uses that one, deliberately.
+  Guard: `project_membership_definition_guard_test.go`
+  (`TestProjectMembership_OneDefinition_StorageIsProjectMemberHasOneCaller`,
+  `..._JournalReadsAreAllowlisted`, `..._NoCoreWrapperForJournalPerUserRead` — all default-ci,
+  all red/green-proved against a planted second definition);
+  behaviour: `project_membership_definition_test.go`,
+  `server/http/handlers/users_memberships_2781_test.go`.
+- **INV-CORE-46** Every surface that answers "what can this caller READ" answers it from one
+  place, and the number agrees with the list: `VisibleProjects` (project_visibility.go) is the
+  single source for project/environment visibility (`GET /api/v1/projects`,
+  `GET /api/v1/environments`, gRPC `ProjectService.ListProjects`), and
+  `ListReadableSecrets`/`CountReadableSecrets` (secret_readable_listing.go) is the single
+  source for secret visibility (`GET /api/v1/secrets` and the dashboard's TOTAL SECRETS,
+  whose value is that function's own `Total`). Every project a listing returns is one the
+  caller is authorized to read at the PROJECT scope — the same check `GET /projects/{id}`
+  applies — so a listing can never disclose a project its caller could not already fetch by
+  id. Why: #2780 — the listings were gated on GLOBAL `secrets.read` and then returned
+  everything unfiltered, so a project-scoped member got 403 and the UI reported "you have
+  nothing"; separately the dashboard counted secrets the caller had AUTHORED, so the number
+  was 0 for anyone who had created none. Guard: `project_visibility_test.go`,
+  `secret_readable_listing_test.go`,
+  `server/http/handlers/catalog_list_scoped_2780_test.go`,
+  `server/http/project_listing_least_privilege_2780_test.go` (real router, so re-adding a
+  route-level global gate fails it — the handler-level tests by construction cannot),
+  `server/http/dashboard_readable_count_2780_test.go` (asserts
+  `dashboard.totalSecrets == GET /api/v1/secrets total`, not a hard-coded number),
+  `server/grpc/services/project_service_list_scoped_2780_test.go`; structurally,
+  `server/http/permission_sweep_test.go`'s `noPermissionGateAllowlist` +
+  `TestNoUngatedRoutes` and `scripts/e2e/routes.json`. All default-ci.
+  `TestCTAReview_InviteMemberOpenMode_vs_Revoke_CrossReplicaPostgres` (pg-gated),
+  plus `FuzzCrossReplicaInvariants`' invariant 6 (`g4OrphanedMembershipGrants`,
+  pg-gated). That oracle fires on a (project, user) pair that has a `revoked`
+  membership row and NO `active` one, while a project-scope grant is still live.
+  Both conditions are load-bearing. It deliberately does NOT treat a revoked row
+  coexisting with an `active` row as a violation, because
+  `invite(open) → revoke → re-invite` reaches exactly that state serially — the
+  earlier cross-row-join form of the check did, and reported a violation on a
+  correct state. It DOES fire when the surviving row is merely PENDING
+  (`invited`/`identity_verified`/`provisioned`, e.g. a non-open-mode re-invite),
+  because a pending membership confers no grant and so cannot be the live grant's
+  owner. `active` is the only grant-conferring state: both `AddProjectMember` call
+  sites in the lifecycle are gated on it, and that premise is derived
+  behaviourally — over every validation mode and every state in
+  `membershipTransitions`, with a completeness check against that map's key set —
+  by `TestOnlyActiveMembershipStateConfersProjectGrant`, so adding a
+  grant-conferring state fails a test instead of silently blinding the oracle.
+  Both directions of the oracle are calibrated in
+  `cross_replica_invariant6_calibration_postgres_test.go`
+  (`TestInvariant6_SoundOnSerialReinvite` for soundness;
+  `TestInvariant6_FiresOnOrphanedGrantEndState`,
+  `TestInvariant6_FiresOnOrphanedGrantUnderPendingReinvite` and the two
+  `TestInvariant6_MembershipLockIsLoadBearing_*` mutation tests, which strip the
+  named lock from one replica, for sensitivity).
+  The three write sites that move a membership's state — `inviteMemberWithMode`'s
+  `CreateProjectMembership`, `TransitionMembership`'s
+  `TransitionProjectMembershipState`, and `revertFailedActivation`'s — are the
+  complete set (enumerated by caller, 2026-10-05) and all three are inside a
+  `membershipLockKey` closure; `revoked` has no outgoing transition, so a new
+  invite is the only way back, which is why the serial re-invite shape above is
+  reachable at all.
+  Why: C-GUARD2-EXEMPT-REVIEW. Guard: user profile writes (#2653/#2654, fixed):
+  `user_profile_column_scoped_guard_test.go:TestUserProfileWrites_AreColumnScoped` +
+  `TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres` /
+  `TestCTAReview_UpdateOwnProfile_vs_ChangePassword_CrossReplicaPostgres` (pg-gated).
+  An operation whose NEW `account_state` is derived from the one it read (the SCIM lifecycle
+  paths: `scimUpdateUserTx`, `DeprovisionSCIMUser`) writes it only through
+  `SetAccountStateIfMatches` conditioned on that read value, never the blind
+  `SetAccountState`, and fails closed with `ErrUserAccountStateConflict` on a miss
+  (C-RACE-FIX-B2): `scim_account_state_conditional_guard_test.go:TestSCIMAccountStateWrites_AreConditional`,
+  `scim_account_state_persisted_test.go`, and
+  `TestCTAReview_SCIM_vs_SuspendUser_WithoutRowLock_CrossReplicaPostgres` (pg-gated).
+  UNGUARDED: #2648 share revoke, #2650 secret undelete, #2651 dynamic config re-enable.
+  Why: C-GUARD2-EXEMPT-REVIEW. Guard: #2651 dynamic config re-enable is closed by a targeted
+  write (`SetDynamicSecretConfigAdminDSN`), guarded by
+  `TestCTAReview_CreateDynamicSecretConfig_vs_DeleteProject_CrossReplicaPostgres` (pg-gated)
+  and `TestSetDynamicSecretConfigAdminDSN_LeavesDisabledAlone`. UNGUARDED: #2648 share
+  revoke, #2650 secret undelete, #2653/#2654 user suspension/password revert.
 
 ## Account-state / exhaustiveness
 
@@ -276,6 +554,21 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `internal/storage`, plus nightly on `main` — closing the gap where `ci.yml`'s own
   Postgres-backed "core" leg only runs on `push`/`merge_group`/`ci:full`-labeled PRs, not an
   ordinary PR.
+## Anomaly detection
+
+- **INV-CORE-41** The incremental anomaly sweep records exactly the alerts a full sweep over
+  every secret would: its candidate horizon is never narrower than the widest per-secret rule
+  look-back (`cumulativeRateHorizon`, 24h), and a failed candidate query falls back to the full
+  sweep rather than skipping secrets. Why: PERF-2 performance study (C-PERF-FIXES); the obvious
+  "only secrets touched since the last run" filter silently drops `cumulative_rate`. Guard:
+  `anomaly_incremental_test.go` (`TestRunDetection_IncrementalSweepDetectsSameAnomaliesAsFullSweep`
+  — every rule type, real SQLite storage; `TestRunDetection_CandidateQueryFailureFallsBackToFullSweep`).
+- **INV-CORE-42** No access log falls between two anomaly passes unexamined: a pass's scan
+  window extends back to the persisted high-water mark of the last fully-successful pass
+  (capped at `maxDetectionCatchUp`), and a pass with storage failures does not advance it. This
+  is what makes the deferred, jittered first pass after startup safe. Guard:
+  `anomaly_incremental_test.go:TestRunDetection_HighWaterMarkClosesTheGapBetweenPasses`;
+  scheduler side `server/anomaly_scheduler_start_test.go:TestAnomalyScheduler_FirstPassIsDeferred`.
 
 ## Fuzzer oracles exercising internal/core directly
 

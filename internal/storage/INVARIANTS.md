@@ -10,7 +10,10 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
 ## Schema epoch (ADR-097, ADR-101)
 
 - **INV-STORAGE-01** An older binary refuses to start against a database migrated by a newer
-  schema epoch. Why: ADR-097. Guard: `TestSchemaEpoch_NewerRecordedEpoch_RefusesToStart`.
+  schema epoch, unless an ADR-101 compatibility floor recorded by that newer migration
+  explicitly covers the older binary (INV-STORAGE-04). With no floor recorded, the refusal is
+  unconditional. Why: ADR-097, ADR-101. Guard: `TestSchemaEpoch_NewerRecordedEpoch_RefusesToStart`,
+  `TestSchemaEpochFloor_RefusesOutsideSupportedRange/db_epoch_above_binary,_no_floor_recorded`.
 - **INV-STORAGE-02** `currentSchemaEpoch` has not silently bumped past 1 without the
   accompanying ADR-101 compatibility-floor work landing — this is a deliberate tripwire, not a
   claim that raising the epoch is wrong. Guard: `schema_epoch_tripwire_test.go:TestCurrentSchemaEpoch_StillOne_SeeADR101`.
@@ -18,10 +21,19 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   closed (refuses boot), not proceed silently. Why: ADR-097 "Corrupt value" section. UNGUARDED
   (#issue: no test located beyond the two epoch tests above directly asserting this; likely
   covered incidentally by `checkSchemaEpoch`'s own tests — confirm and cite precisely, or add).
-- **INV-STORAGE-04** Rolling back past a future `minCompatibleEpoch` floor must still refuse;
-  an additive-safe migration must NOT raise that floor. Why: ADR-101 design (not yet
-  implemented — `minCompatibleEpoch` does not exist in `system_metadata` yet). UNGUARDED
-  (#issue: implement `minCompatibleEpoch` per ADR-101 before any migration that would need it).
+- **INV-STORAGE-04** Rolling back past a recorded `minCompatibleEpoch` floor
+  (`system_metadata` key `schema_min_compatible_epoch`, declared by `minCompatibleSchemaEpoch`
+  in `factory.go`) must still refuse; an additive-safe migration must NOT raise that floor; a
+  recorded epoch or floor is never lowered by an older binary; a corrupt or sub-1 floor fails
+  closed. Why: ADR-101 (#2502). Guard: `factory_schema_epoch_floor_test.go`
+  (`TestSchemaEpochFloor_RefusesOutsideSupportedRange`, `_StartsInsideSupportedRange`,
+  `_AdditiveMigrationDoesNotRaiseFloor`, `_RecordNeverLowersEpochOrFloor`,
+  `_FreshInstall_RecordsDeclaredFloor`, `TestMinCompatibleSchemaEpoch_WithinRange`); Postgres
+  sibling `factory_schema_epoch_floor_postgres_test.go:TestSchemaEpochFloor_Postgres_RecordAndRefuse`.
+  `admin restore` deliberately keeps the strict no-floor rule (`SchemaEpochTooNew`): a backup
+  manifest carries no floor. `internal/backupfmt` skips the archived floor row exactly like the
+  `schema_epoch` row (guarded by the backup/restore round-trip tests, which fail on a UNIQUE
+  violation without the skip).
 
 ## AutoMigrate completeness
 
@@ -72,6 +84,15 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   created by migration. Guard: `factory_break_glass_index_test.go:TestBreakGlassActiveIndex_CreatedByMigration`.
 - **INV-STORAGE-14** Companion/sibling indexes are created on upgrade, not only fresh install.
   Guard: `factory_companion_index_test.go:TestCompanionIndexes_CreatedOnUpgrade`.
+- **INV-STORAGE-36** The anomaly hot-path indexes — `idx_anomaly_alerts_dedup` (matching
+  `CreateAnomalyAlert`'s dedup predicate), `idx_secret_access_logs_secret_time`,
+  `idx_secret_access_logs_access_time` — exist on a fresh install (struct tags) AND converge on
+  an upgraded one (`CREATE INDEX IF NOT EXISTS` in `migrateDatabase`), on both dialects. They
+  are additive, so no schema-epoch bump. Why: PERF-2 performance study (the dedup count was
+  the single most expensive query; per-secret access-log reads full-scanned). Guard:
+  `factory_companion_index_test.go:TestCompanionIndexes_CreatedOnUpgrade` (SQLite),
+  `factory_anomaly_index_postgres_test.go:TestAnomalyIndexes_Postgres_CreatedOnUpgrade`
+  (pg-gated).
 
 ## Backfills and fatal-migration discipline
 
@@ -117,10 +138,21 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   `TestResolveConfigRelativePath_*`, `TestLoad_DatabasePathTraversal_Rejected` — these live in
   `internal/config`, not `internal/storage`, but gate `factory.go`'s `createLocalStorage` input
   directly.
-- **INV-STORAGE-22** Opening a missing SQLite path should eventually refuse rather than
-  silently create an empty DB. Why: ADR-095 "Task 3". UNGUARDED (#issue: `createLocalStorage`
-  currently doesn't check for the file's prior existence; ADR-095 itself recommends this but it
-  was not built).
+- **INV-STORAGE-22** Opening a missing SQLite path should refuse rather than silently create an
+  empty DB. Why: ADR-095 "Task 3". Built as the OPT-IN `database.require_existing_path`
+  (#2504): `createLocalStorage` resolves the configured path through `localStorageDBFile` and
+  refuses when the file is absent, naming `keyorix system init --database` as the deliberate way
+  to create one. In-memory DSNs are exempt by construction (no file to pre-exist); the Postgres
+  backend is out of scope. Guard: `factory_local_storage_missing_path_log_test.go`
+  (`TestCreateLocalStorage_RequireExistingPath_RefusesMissing` — asserts the EFFECT, that a
+  refused boot created neither the file nor its parent directory, not just the returned error —
+  plus `_OpensExisting`, `_InMemoryExempt` and `_DSNQuerySuffix_...`, so the refusal cannot be
+  satisfied by refusing unconditionally). **The default is still false, i.e. create-if-missing**,
+  deliberately: nothing in the supported first-boot paths (`server/entrypoint.sh`,
+  `docker-compose.yml`) creates the file before the server starts, so defaulting it on would
+  break every containerized first boot. Flipping the default is the deliberate sign-off ADR-095
+  Task 3 asks for and is NOT settled here — it needs first boot to run
+  `keyorix system init --database` (or equivalent) first.
 - **INV-STORAGE-23** Two processes migrating the same SQLite file are serialized by SQLite
   itself: `withMigrationLock` runs the whole migration inside one `BEGIN EXCLUSIVE` transaction
   on a dedicated connection (`withSQLiteInDBMigrationLock`), so it holds however each process
@@ -159,6 +191,17 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   with zero cwd/filesystem dependency, unaffected by the ADR-095 path-resolution fix. Why:
   ADR-095 Task 2 table. Guard: documented-verified by direct code read in the ADR, not an
   independent test beyond the general Postgres bootstrap tests above.
+
+- **INV-STORAGE-38** The default connection pool is per dialect and measured, not shared:
+  `DefaultSQLiteMaxOpenConns` (8) and `DefaultPostgresMaxOpenConns` (25), with idle matching
+  the effective open cap; an operator's `max_open_conns` always wins. Harnesses that must mirror
+  production's pool reference the exported constants instead of copying a number. A Postgres pool
+  larger than the server's usable slots (`max_connections - superuser_reserved_connections`) is
+  logged at boot (it fails requests with SQLSTATE 53300). Why: #2631 (PERF-2), measurements in
+  `docs/CONFIGURATION.md` "Connection pool". Guard: `pool_defaults_test.go`
+  (`TestApplyPoolSettings_DialectDefaults`, `TestPostgresPoolHeadroomWarning`,
+  `TestWarnPostgresPoolHeadroom_ReadsTheRealServerLimits` pg-gated); `BenchmarkPoolSize` for
+  re-measuring.
 
 ## File permissions
 

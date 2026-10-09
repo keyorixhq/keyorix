@@ -23,20 +23,15 @@ import (
 // guard (internal/core/invitations.go: "a requester cannot approve their own
 // access request").
 //
-// `request access --project-id` is used throughout for the zero-grant
-// requester (#2360, fixed): the project-NAME resolution every other request
-// subcommand still uses (resolveRequestProjectID -> GET /api/v1/projects) is
-// gated on a GLOBAL permission a zero-grant or project-scoped-only caller
-// never holds (confirmed live by journey2's own N2 finding). #2360's own body
-// names `request access`/`list`/`withdraw`/`review` as ALL affected and
-// proposes `--project-id` on all four -- only `access` has shipped it so
-// far. Withdraw and the self-approval-attempt below therefore go over REST
-// directly (both routes accept any authenticated caller with no project-name
-// resolution involved -- server/http/router.go: CreateAccessRequest and
-// WithdrawAccessRequest carry no RequireScopedPermission), which is the same
-// workaround shape the brief itself prescribes for the request step. Noted
-// as a live, still-open gap in this journey's PR description, not re-filed
-// (#2360 already covers it).
+// `--project-id` is used throughout for the zero-grant requester and for the
+// project-scoped (not deployment-wide) reviewer (#2360, closed): the
+// project-NAME resolution these subcommands otherwise use
+// (resolveRequestProjectID -> GET /api/v1/projects) is gated on a GLOBAL
+// permission neither caller ever holds (confirmed live by journey2's own N2
+// finding). #2360's body names `request access`/`list`/`withdraw`/`review` as
+// all affected; all four now carry the flag, and this journey is the real-server
+// proof for each of them: the self-approval attempt and the withdraw path below
+// are driven through the CLI, not over REST as they had to be before.
 func TestJourney_AccessRequest(t *testing.T) {
 	serverBin, cliBin := harness.BuildBinaries(t)
 	s := harness.StartServer(t, serverBin, harness.DBBackend{Name: "sqlite"})
@@ -105,24 +100,19 @@ func TestJourney_AccessRequest(t *testing.T) {
 	// so they hold roles.assign at that scope -- enough to pass the review
 	// route's RequireScopedPermission gate -- and files a SEPARATE, later
 	// request to reach the maker-!=-checker guard itself, not a permission
-	// denial. Over REST directly (see this test's doc comment): the CLI's
-	// `request review --project <name>` can't be driven by a project-scoped
-	// (not global) caller either, the same #2360-shaped gap.
+	// denial. Driven through the CLI with --project-id (#2360): a
+	// project-scoped reviewer is still denied GET /api/v1/projects, so
+	// `request review --project <name>` cannot resolve a name for them.
 
-	selfReqEnv := restExpect(t, s, requesterToken, http.MethodPost,
-		fmt.Sprintf("/api/v1/projects/%d/access-requests", projID),
-		map[string]string{"suggested_role": "project_viewer", "reason": "second request, for the self-approval check"},
-		http.StatusCreated)
-	req2ID := decodeAccessRequestID(t, selfReqEnv.Data)
+	selfReqOut := runCLI(t, cliBin, requesterEnvCLI, "request", "access",
+		"--project-id", strconv.Itoa(projID), "--role", "project_viewer",
+		"--reason", "second request, for the self-approval check")
+	req2ID := parseAccessRequestID(t, selfReqOut)
 
-	selfApprove := restCall(t, s, requesterToken, http.MethodPut,
-		fmt.Sprintf("/api/v1/projects/%d/access-requests/%d", projID, req2ID),
-		map[string]string{"action": "approve"})
-	if selfApprove.StatusCode != http.StatusForbidden {
-		t.Fatalf("self-approval: want HTTP %d, got %d: %s", http.StatusForbidden, selfApprove.StatusCode, string(selfApprove.Raw))
-	}
-	if !strings.Contains(selfApprove.Message, "cannot approve their own") {
-		t.Fatalf("self-approval: want the maker-!=-checker refusal message, got: %s", selfApprove.Message)
+	selfApproveErr := runCLIExpectErr(t, cliBin, requesterEnvCLI, "request", "review",
+		"--id", strconv.Itoa(req2ID), "--action", "approve", "--project-id", strconv.Itoa(projID))
+	if !strings.Contains(selfApproveErr, "cannot approve their own") {
+		t.Fatalf("self-approval: want the maker-!=-checker refusal message, got:\n%s", selfApproveErr)
 	}
 
 	// ── Deny path: a second requester is rejected and keeps no access ───────
@@ -143,36 +133,24 @@ func TestJourney_AccessRequest(t *testing.T) {
 	// ── Withdraw path: the denied user requests again, then withdraws it
 	// themselves before anyone reviews it ────────────────────────────────────
 
-	withdrawReqEnv := restExpect(t, s, deniedToken, http.MethodPost,
-		fmt.Sprintf("/api/v1/projects/%d/access-requests", projID),
-		map[string]string{"reason": "trying again"}, http.StatusCreated)
-	req4ID := decodeAccessRequestID(t, withdrawReqEnv.Data)
+	// Both steps through the CLI with --project-id (#2360): the withdrawer is a
+	// zero-grant caller, so project-NAME resolution is unavailable to them.
+	withdrawReqOut := runCLI(t, cliBin, deniedEnvCLI, "request", "access",
+		"--project-id", strconv.Itoa(projID), "--reason", "trying again")
+	req4ID := parseAccessRequestID(t, withdrawReqOut)
 
-	restExpect(t, s, deniedToken, http.MethodPost,
-		fmt.Sprintf("/api/v1/projects/%d/access-requests/%d/withdraw", projID, req4ID), nil, http.StatusOK)
+	withdrawOut := runCLI(t, cliBin, deniedEnvCLI, "request", "withdraw",
+		"--id", strconv.Itoa(req4ID), "--project-id", strconv.Itoa(projID))
+	if !strings.Contains(withdrawOut, fmt.Sprintf("Access request %d withdrawn.", req4ID)) {
+		t.Fatalf("expected `request withdraw` to confirm the withdrawal, got:\n%s", withdrawOut)
+	}
 
-	listEnv := restExpect(t, s, adminToken, http.MethodGet,
-		fmt.Sprintf("/api/v1/projects/%d/access-requests", projID), nil, http.StatusOK)
-	var listData struct {
-		AccessRequests []struct {
-			ID    uint   `json:"ID"`
-			State string `json:"State"`
-		} `json:"access_requests"`
-	}
-	if err := json.Unmarshal(listEnv.Data, &listData); err != nil {
-		t.Fatalf("decode access-requests list: %v\nraw: %s", err, listEnv.Data)
-	}
-	found := false
-	for _, r := range listData.AccessRequests {
-		if r.ID == req4ID {
-			found = true
-			if r.State != "withdrawn" {
-				t.Fatalf("withdrawn request %d: want state \"withdrawn\", got %q", req4ID, r.State)
-			}
-		}
-	}
-	if !found {
-		t.Fatalf("withdrawn request %d not found in project %d's access-request list", req4ID, projID)
+	// `request list --project-id` is the admin's read-back of the resulting state
+	// (the same flag, exercised on the fourth subcommand #2360 names).
+	listOut := runCLI(t, cliBin, aEnv, "request", "list", "--project-id", strconv.Itoa(projID))
+	if !regexp.MustCompile(fmt.Sprintf(`(?m)^%d\s.*\bwithdrawn\b`, req4ID)).MatchString(listOut) {
+		t.Fatalf("withdrawn request %d not listed as \"withdrawn\" by `request list --project-id %d`:\n%s",
+			req4ID, projID, listOut)
 	}
 	// The withdrawer still has no access (withdrawing your own request must
 	// not itself grant anything).
@@ -200,25 +178,6 @@ func parseAccessRequestID(t *testing.T, cliOutput string) int {
 		t.Fatalf("parse access request ID %q: %v", m[1], err)
 	}
 	return id
-}
-
-// decodeAccessRequestID extracts the numeric ID from a raw
-// POST .../access-requests response's {"access_request": {"ID": N, ...}}
-// body (models.AccessRequest's untagged, PascalCase wire shape).
-func decodeAccessRequestID(t *testing.T, data json.RawMessage) uint {
-	t.Helper()
-	var wrapper struct {
-		AccessRequest struct {
-			ID uint `json:"ID"`
-		} `json:"access_request"`
-	}
-	if err := json.Unmarshal(data, &wrapper); err != nil {
-		t.Fatalf("decode access_request response: %v\nraw: %s", err, data)
-	}
-	if wrapper.AccessRequest.ID == 0 {
-		t.Fatalf("access_request response had no ID: %s", data)
-	}
-	return wrapper.AccessRequest.ID
 }
 
 // assertAccessRequestAudit confirms an audit event of the given action type,

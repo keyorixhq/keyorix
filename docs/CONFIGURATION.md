@@ -133,11 +133,15 @@ storage:
   database:
     # SQLite:
     path: /app/data/keyorix.db
+    # require_existing_path: false  # default false. When true, the server
+    #   REFUSES to start if the SQLite file above does not already exist,
+    #   instead of creating a new, empty one in its place — see
+    #   "Refusing to vivify a missing database" below.
     # PostgreSQL (recommended for production) — set type: postgres above:
     # dsn: "host=db user=keyorix dbname=keyorix port=5432 sslmode=require"
     # password: ""                # prefer KEYORIX_DB_PASSWORD
-    max_open_conns: 25
-    max_idle_conns: 25  # match max_open_conns, or a connection gets closed instead of reused
+    # max_open_conns: 8          # default: 8 for SQLite, 25 for Postgres (see below)
+    # max_idle_conns: 8          # default: the effective max_open_conns
     conn_max_lifetime_minutes: 30
     # audit_flusher_linger_window: ""  # e.g. "1ms"; default "" (0, no deliberate
     #   wait — the audit-chain batching flusher commits whatever is already
@@ -150,24 +154,69 @@ storage:
     #   safe default; only set this if production
     #   keyorix_audit_flusher_batch_size/_flushes_total metrics (exposed on
     #   the server's /metrics endpoint) justify it for your own load shape.
+    # insecure_audit_skip_durable_sync: false   # default: false. POSTGRES ONLY
+    #   -- a SQLite install that sets this REFUSES TO START. DO NOT ENABLE
+    #   without reading docs/security/hardening-guide.md §5a. Drops the audit
+    #   commit's WAIT for a disk sync (the row is still written and committed
+    #   before the secret is returned, and a failed audit write still fails the
+    #   request). Buys Vault-equivalent read latency; costs the durability of
+    #   the most recent audit entries on an OS or database-server crash.
+    #   Config file only -- no API, CLI flag or env var can set it.
 ```
 
-`type: remote` points the CLI at a Keyorix server over the API; see the remote
-section of the client config. **It is work in progress:** 202 of 428
-`RemoteStorage` methods (47%) return `ErrRemoteUnsupported`, and audit retrieval
-in particular is 2-of-27 implemented. Use `type: local` for anything that
-matters — see `docs/REMOTE_CLI_SETUP.md` for the per-area status. Remote TLS verification is **on by default** —
-an omitted `tls_verify` does not disable certificate checks.
+### Refusing to vivify a missing database
 
-**`type: remote` is a CLI/client mode only.** It cannot back a running Keyorix
-server: `Config.Validate()` refuses to boot when `storage.type: remote` is
-combined with `server.http.enabled` or `server.grpc.enabled` (ADR-083) — none
-of RemoteStorage's RBAC primitives are implemented, so every permission check
-on every route would fail closed for every caller. Use `type: local` or
-`type: postgres` for a deployed server.
+`require_existing_path` (SQLite only, default `false`).
 
----
+A mistyped `path`, or a volume mount that silently failed to attach, does not produce an error
+today — SQLite happily creates the file, the migration runs, and you get a healthy-looking
+server with zero secrets in it, while your real data sits untouched at the path you meant. An
+absolute `path` does not help: it stops two processes diverging onto two different files, but a
+single wrong absolute path still vivifies cleanly.
 
+Set `require_existing_path: true` and the server refuses to start instead:
+
+```
+no database found at /app/data/keyorix.db (configured database.path: "/app/data/keyorix.db")
+and database.require_existing_path is set: run 'keyorix system init --database' to create one
+deliberately, or verify database.path and the working directory -- refusing to create a new,
+empty database in its place
+```
+
+Create the database deliberately with `keyorix system init --database` (which creates the file
+with `O_CREATE|O_EXCL`), then start the server.
+
+In-memory DSNs (`:memory:`, `...?mode=memory`) are unaffected — there is no file that could
+pre-exist. The Postgres backend is unaffected too.
+
+**Why this is off by default:** the shipped first-boot paths (`server/entrypoint.sh`,
+`docker-compose.yml`) start the server directly and let it create the database, so turning this
+on by default would break every first boot that does not run `keyorix system init --database`
+first. Turn it on once your deployment creates the file explicitly — which is exactly the point:
+after that, a missing file can only mean something went wrong.
+### Audit commit durability (`insecure_audit_skip_durable_sync`)
+
+By default Keyorix will not return a secret value until that read's audit
+record is **durably** committed (ADR-112 §3). That is stricter than Vault,
+OpenBao, Conjur and Infisical, none of which wait for a disk sync before
+answering — and it is most of why a single-client read costs ~17ms on a busy
+spinning disk rather than ~1ms.
+
+`insecure_audit_skip_durable_sync: true` (ADR-112 Amendment 1) removes only
+that wait, and **only on PostgreSQL**:
+
+| `storage.type` | Behaviour |
+|---|---|
+| `postgres` / `postgresql` | Supported. `SET LOCAL synchronous_commit = off` on the audit transaction only. |
+| `local` / `sqlite` | **Refuses to start.** `PRAGMA synchronous` is per-connection and the pool is shared, so relaxing it would relax *every* table — a power loss could undo a just-committed secret rotation. The measured p99 also got worse under concurrency. |
+| `remote` | Not applicable; a server cannot run with remote storage (ADR-083). |
+
+It is appropriate **only** where power is genuinely guaranteed — a UPS, a
+healthy battery-backed RAID write cache, or replicated cloud block storage.
+[`security/hardening-guide.md` §5a](security/hardening-guide.md) states exactly
+what you give up, the measured before/after, and the four places the setting is
+surfaced once it is on (startup warning, an audit event in the hash chain at
+every boot, `admin validate`, and `GET /api/v1/system/info`).
 ## Encryption & KEK providers
 
 Envelope encryption (ADR-004): a per-process **DEK** encrypts secrets/tokens and
@@ -704,6 +753,29 @@ token, so set it via the env var.
 > Secrets are read from `KEYORIX_NOTIFY_WEBHOOK_TOKEN` / `KEYORIX_NOTIFY_SMTP_PASSWORD`
 > / `KEYORIX_NOTIFY_SLACK_WEBHOOK` / `KEYORIX_NOTIFY_TEAMS_WEBHOOK` when set, falling
 > back to the YAML value — keep secrets out of the config file.
+
+### Runtime-managed channels: URL encryption at rest, and one upgrade caveat
+
+A notification channel created at runtime (the channel CRUD API, as opposed to
+the `notifications:` block above) stores its destination URL **encrypted** when
+`storage.encryption.enabled` is set — the URL embeds the platform's bearer
+token, so it is treated as a credential. The ciphertext is bound to the
+channel's own id, so it cannot be moved to another channel's row, and the URL
+never appears in an audit diff.
+
+**If you are upgrading an install that already had runtime channels**, the first
+boot after the upgrade migrates each row's URL into the encrypted column and
+clears the old plaintext one. That clears it from anything that *reads* the
+database — but not from its storage: the old bytes survive in SQLite free pages
+and the WAL, and in PostgreSQL dead tuples, until reclaimed. If you treat those
+webhook URLs as credentials, run a `VACUUM` (PostgreSQL: `VACUUM FULL` or
+`pg_repack` on `notification_channels`) after that first boot. Keyorix does not
+do this for you: `VACUUM` is a long, exclusive, whole-database operation and
+must not fire implicitly from a startup path.
+
+If the migration cannot complete, the server **refuses to start** rather than
+serve with webhook credentials still in plaintext on an install that asked for
+encryption. The error names the channel to investigate.
 
 ## compliance_digest
 

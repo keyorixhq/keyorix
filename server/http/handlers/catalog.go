@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -87,16 +88,78 @@ func NewCatalogHandler(svc *core.KeyorixCore) *CatalogHandler {
 	return &CatalogHandler{coreService: svc, validator: validation.NewValidator()}
 }
 
-// ListProjects handles GET /api/v1/projects — returns projects with secret and
-// environment counts. Pass ?include_deleted=true to also return soft-deleted
-// projects (flagged via the deleted/deleted_at fields) for the restore UI.
+// ListProjects handles GET /api/v1/projects — returns the projects the CALLER CAN
+// READ, with secret and environment counts. Pass ?include_deleted=true to also
+// return soft-deleted projects (flagged via the deleted/deleted_at fields) for the
+// restore UI; that form still requires a global secrets.read (see below).
+//
+// Authorization is performed inside this handler (the route carries no
+// RequirePermission middleware for this endpoint), exactly like ListSecrets
+// (secrets_list.go) and for the same reason: #2780. The route used to require
+// GLOBAL secrets.read and then return EVERY project unfiltered, so the ordinary
+// least-privilege shape — system_viewer globally plus project_viewer on one
+// project — got a 403 here while the same account could read that project's
+// secrets through GET /api/v1/secrets and the project itself through
+// GET /api/v1/projects/{id}. The UI consequence was not a 403 page: the project
+// switcher came up empty, /projects rendered an empty list, the New Secret
+// dialog's required Project select had nothing in it, and because the switcher
+// fires from the layout, that persona took a 403 on every route in the app.
+//
+// This NARROWS rather than widens. VisibleProjects (internal/core/
+// project_visibility.go) authorizes each project at the project scope — the same
+// check GET /api/v1/projects/{id} applies — so every row returned is a row this
+// caller can already fetch by id, and nothing else:
+//
+//   - a global secrets.read holder is authorized at Scope{}, so their list is
+//     unchanged (every project, same as before);
+//   - a project-scoped reader gains the LISTING of projects they could already
+//     read individually;
+//   - a caller with no grants gets 200 with an empty array instead of a 403.
+//     That is deliberate: the 403 is what made the dashboard say "you have
+//     nothing", which is worse than saying nothing at all.
+//
+// ?include_deleted=true keeps the global gate. Role grants scoped to a project are
+// deliberately left in place across a soft-delete (to support RestoreProject)
+// while GetProject 404s on a deleted project, so a project-scoped reader cannot
+// read a soft-deleted project through ANY path today — filtering by readable scope
+// alone would newly disclose it. The restore UI is admin-only regardless.
 func (h *CatalogHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
 	includeDeleted := r.URL.Query().Get("include_deleted") == "true"
+
+	vis, err := h.coreService.VisibleProjects(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permSecretsRead)
+	if err != nil {
+		log.Printf("Error resolving visible projects for principal %d: %v", userCtx.PrincipalID(), err)
+		sendError(w, "Failed to list projects", "Failed to list projects", http.StatusInternalServerError, nil)
+		return
+	}
+	// The soft-deleted view stays admin-only — see the doc comment.
+	if includeDeleted && !vis.All {
+		sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
+		return
+	}
+
 	projects, err := h.coreService.ListProjectsWithCounts(r.Context(), includeDeleted)
 	if err != nil {
 		log.Printf("Error listing projects: %v", err)
 		sendError(w, "Failed to list projects", clientSafe(err), http.StatusInternalServerError, nil)
 		return
+	}
+	if !vis.All {
+		// Allocate a fresh slice rather than filtering in place: ListProjectsWithCounts'
+		// result is the caller's to keep, and an in-place filter would be a trap if it
+		// ever returned a shared/cached slice.
+		visible := make([]storage.ProjectWithCounts, 0, len(projects))
+		for _, p := range projects {
+			if vis.Allows(p.ID) {
+				visible = append(visible, p)
+			}
+		}
+		projects = visible
 	}
 	sendSuccess(w, map[string]interface{}{"projects": projects}, "")
 }
@@ -216,13 +279,51 @@ func (h *CatalogHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	sendCreated(w, newProjectWire(project), "Project created")
 }
 
-// ListEnvironments handles GET /api/v1/environments (global, for backward compat)
+// ListEnvironments handles GET /api/v1/environments (the deployment-wide,
+// cross-project environment list) — returns the environments belonging to projects
+// the CALLER CAN READ.
+//
+// This is ListProjects' sibling in #2780, and it had the identical defect: a global
+// secrets.read gate followed by an unfiltered list. It is the fix-siblings half of
+// that issue, and it is load-bearing for the demo symptom rather than cosmetic —
+// the web New Secret dialog's required Environment select is populated from THIS
+// endpoint (web/src/features/secrets/useSecretsList.ts), not from the per-project
+// /projects/{id}/environments. Scoping the project list alone would have left that
+// dialog with an empty, unsatisfiable Environment select for exactly the persona
+// #2780 is about; the secrets page's environment filter and the rotation-policies
+// page read it too.
+//
+// Same narrowing argument, same authorization helper: an environment is returned
+// only when its parent project is one the caller could already read by id, so a
+// global reader's list is unchanged and nobody sees an environment in a project
+// they cannot read. See ListProjects for the full reasoning.
 func (h *CatalogHandler) ListEnvironments(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
+	vis, err := h.coreService.VisibleProjects(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permSecretsRead)
+	if err != nil {
+		log.Printf("Error resolving visible projects for principal %d: %v", userCtx.PrincipalID(), err)
+		sendError(w, "Failed to list environments", "Failed to list environments", http.StatusInternalServerError, nil)
+		return
+	}
+
 	environments, err := h.coreService.ListEnvironments(r.Context())
 	if err != nil {
 		log.Printf("Error listing environments: %v", err)
 		sendError(w, "Failed to list environments", clientSafe(err), http.StatusInternalServerError, nil)
 		return
+	}
+	if !vis.All {
+		visible := make([]*models.Environment, 0, len(environments))
+		for _, e := range environments {
+			if e != nil && vis.Allows(e.ProjectID) {
+				visible = append(visible, e)
+			}
+		}
+		environments = visible
 	}
 	sendSuccess(w, map[string]interface{}{"environments": newEnvironmentWireList(environments)}, "")
 }

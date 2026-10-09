@@ -24,6 +24,17 @@ func (ls *LocalStorage) WithTransaction(ctx context.Context, fn func(storage.Sto
 			namedLockMu:           ls.namedLockMu,
 			consumeClockWatermark: ls.consumeClockWatermark,
 			rbacClockWatermark:    ls.rbacClockWatermark,
+			// auditSkipDurableSync (ADR-112 Amendment 1) is deliberately NOT
+			// propagated, and this is a correctness requirement rather than an
+			// oversight: a clone's audit append runs logAuditEventDirect inside
+			// THIS tx (GORM nests it as a SAVEPOINT), so a `SET LOCAL
+			// synchronous_commit = off` issued there would relax the commit
+			// durability of the caller's whole transaction — the secret
+			// mutation included — not just the audit row. Leaving the field at
+			// its zero value keeps that transaction durable.
+			// TestWithTransaction_CloneNeverInheritsAuditSkipDurableSync is the
+			// guard; a future refactor to a `clone := *ls` whole-struct copy
+			// would break it and must re-read this.
 		})
 	})
 }

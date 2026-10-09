@@ -464,7 +464,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission(permRolesRead)).Get("/connect/ref-grants", connectHandler.ListRefGrants)
 		r.With(customMiddleware.RequirePermission(permRolesWrite)).Post("/connect/ref-grants", connectHandler.CreateRefGrant)
 		r.With(customMiddleware.RequirePermission(permRolesWrite)).Delete("/connect/ref-grants/{id}", connectHandler.DeleteRefGrant)
-		r.With(customMiddleware.RequirePermission(permSecretsRead)).Get(pathProjects, catalogHandler.ListProjects)
+		// ListProjects authorizes INSIDE the handler (no RequirePermission here) so a
+		// project-scoped reader receives the projects they can actually read instead of
+		// a blanket 403 — the same shape, and the same reasoning, as ListSecrets below.
+		// #2780: the global gate here made the UI's project switcher, /projects page and
+		// New Secret dialog come up empty for a persona that could read the project's
+		// secrets perfectly well. The handler's own doc comment carries the full
+		// argument, including why ?include_deleted=true keeps the global requirement.
+		r.Get(pathProjects, catalogHandler.ListProjects)
 		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get(pathProjectsID, catalogHandler.GetProject)
 		r.With(customMiddleware.RequirePermission(permSecretsWrite)).Post(pathProjects, catalogHandler.CreateProject)
 		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope)).Put(pathProjectsID, catalogHandler.UpdateProject)
@@ -639,7 +646,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// (#161), not secrets.write — same shape as the project-restore fix above.
 		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, customMiddleware.ScopeFromProjectParam("projectId"))).Post("/projects/{projectId}/environments/{id}/restore", catalogHandler.RestoreEnvironment)
 		r.With(customMiddleware.RequireScopedPermission(permSecretsDelete, customMiddleware.ScopeFromEnvParam("id"))).Delete(pathEnvironmentsID, catalogHandler.DeleteEnvironment)
-		r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/environments", catalogHandler.ListEnvironments)
+		// The cross-project environment list, same treatment as ListProjects above and
+		// for the same reason (#2780, fix-siblings): the web New Secret dialog's
+		// required Environment select is populated from HERE, so scoping the project
+		// list alone would leave that dialog unsatisfiable for a project-scoped reader.
+		r.Get("/environments", catalogHandler.ListEnvironments)
 
 		// Secrets endpoints. Per-secret routes resolve scope from the secret's
 		// own project/environment via RequireScopedSecretPermission, which ALSO
@@ -1055,8 +1066,17 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Use(customMiddleware.RequirePermission(permAuditRead))
 			r.Get("/logs", auditHandler.GetAuditLogs)
 			r.Get("/search", auditHandler.SearchAuditLogs)
-			r.Get("/export", auditHandler.ExportAuditLogs)
-			r.Get("/export.csv", auditHandler.ExportAuditLogsCSV)
+			// FIX-1 sibling of ANOMALY-04 (#2733's bug class): both export routes
+			// return AuditExportEntry's full-fidelity shape, including IPAddress and
+			// the tamper-evidence hash chain -- deliberately never included in
+			// /logs or /search's AuditLogEntry shape. A handler-file doc comment
+			// (audit.go's toAuditLogEntries) already asserted these routes have
+			// "their own gate" above bare audit.read, but no such elevation was
+			// ever registered here -- raise the gate above the group's audit.read
+			// with system.read, same bar as /anomalies, so the base viewer/
+			// project_auditor tier cannot read other users' IP addresses via export.
+			r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/export", auditHandler.ExportAuditLogs)
+			r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/export.csv", auditHandler.ExportAuditLogsCSV)
 			r.Get("/rbac-logs", auditHandler.GetRBACAuditLogs)
 			r.Get("/retention", auditHandler.GetAuditRetention)
 			r.Get("/verify", auditHandler.VerifyAuditChain)

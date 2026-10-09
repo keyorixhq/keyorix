@@ -12,6 +12,9 @@ export const API_ENDPOINTS = {
         LOGOUT: '/auth/logout',
         REFRESH: '/auth/refresh',
         PROFILE: '/api/v1/auth/profile',
+        // Unauthenticated MFA login second-step — the bearer is the single-use
+        // challenge LOGIN just issued, not a session (server/http/router.go).
+        MFA_VERIFY: '/auth/mfa/verify',
     },
     PROJECTS: {
         LIST: '/api/v1/projects',

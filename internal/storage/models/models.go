@@ -1178,12 +1178,19 @@ func (l *DynamicSecretLease) BeforeSave(_ *gorm.DB) error {
 	return nil
 }
 
+// SecretAccessLog indexes: (secret_node_id, access_time) serves the anomaly
+// detector's per-secret ListSecretAccessLogs range read, and (access_time,
+// secret_node_id) its ListSecretIDsAccessedSince candidate scan (covering, so
+// SQLite range-scans it instead of full-scanning the first index for DISTINCT)
+// plus the other time-bounded aggregates in local_audit.go. Before these, each per-secret read was a full
+// table scan of an append-only table written on every secret access. Upgraded
+// installs gain them via migrateDatabase's CREATE INDEX IF NOT EXISTS block.
 type SecretAccessLog struct {
 	ID              uint `gorm:"primaryKey"`
-	SecretNodeID    uint
+	SecretNodeID    uint `gorm:"index:idx_secret_access_logs_secret_time,priority:1;index:idx_secret_access_logs_access_time,priority:2"`
 	SecretVersionID uint
 	AccessedBy      string
-	AccessTime      time.Time
+	AccessTime      time.Time `gorm:"index:idx_secret_access_logs_secret_time,priority:2;index:idx_secret_access_logs_access_time,priority:1"`
 	Action          string
 	IPAddress       string
 	UserAgent       string
@@ -1800,16 +1807,21 @@ type RotationPolicy struct {
 }
 
 // AnomalyAlert represents a detected anomaly in secret access patterns.
+//
+// idx_anomaly_alerts_dedup matches CreateAnomalyAlert's dedup predicate column for
+// column (four equalities, then the detected_at range last). Without it that count
+// ran once per candidate alert per pass against only the single-column
+// secret_node_id index, and was the most expensive query in the PERF-2 study.
 type AnomalyAlert struct {
 	ID           uint `gorm:"primaryKey"`
-	SecretNodeID uint `gorm:"index"`
+	SecretNodeID uint `gorm:"index;index:idx_anomaly_alerts_dedup,priority:1"`
 	SecretName   string
-	AlertType    string // off_hours, new_ip, frequency_spike, new_user, ml_outlier, principal_breadth
+	AlertType    string `gorm:"index:idx_anomaly_alerts_dedup,priority:2"` // off_hours, new_ip, frequency_spike, new_user, ml_outlier, principal_breadth
 	Severity     string // low, medium, high
 	Description  string
-	AccessedBy   string
-	IPAddress    string
-	DetectedAt   time.Time `gorm:"index"`
+	AccessedBy   string    `gorm:"index:idx_anomaly_alerts_dedup,priority:3"`
+	IPAddress    string    `gorm:"index:idx_anomaly_alerts_dedup,priority:4"`
+	DetectedAt   time.Time `gorm:"index;index:idx_anomaly_alerts_dedup,priority:5"`
 	Acknowledged bool      `gorm:"default:false"`
 	// AcknowledgedBy/AcknowledgedAt attribute WHO dismissed this alert and WHEN
 	// (#217) — a privileged principal could otherwise suppress evidence of their
@@ -2007,8 +2019,24 @@ type NotificationChannel struct {
 	Name    string `gorm:"uniqueIndex;not null" json:"name"`
 	Type    string `gorm:"not null" json:"type"` // webhook|slack|teams|email
 	Enabled bool   `gorm:"default:true" json:"enabled"`
-	// URL is the webhook endpoint (for webhook/slack/teams types)
-	URL string `json:"url,omitempty"`
+	// URL is the webhook endpoint (for webhook/slack/teams types) -- the
+	// destination URL IS the bearer credential (internal/notifychan/delivery.go).
+	// Not a persisted column (#2433): the at-rest form lives in URLEnc/URLMeta
+	// below, and internal/core/notification_channels.go populates this field by
+	// decrypting them on every read, so every existing caller of ch.URL keeps
+	// working unchanged. gorm:"-" also keeps this out of GORM's own column
+	// mapping so a caller can never accidentally write the plaintext straight
+	// back into a column, bypassing the encrypt step.
+	URL string `gorm:"-" json:"url,omitempty"`
+	// URLEnc/URLMeta hold the at-rest encrypted form of URL (#2433; same
+	// EncryptSecretWithAAD/DecryptSecretWithAAD envelope and AAD-binding
+	// convention as DynamicSecretConfig.AdminDSNEnc below) — ciphertext and
+	// passthrough-plaintext bytes alike when no encryptor is wired, mirroring
+	// encryptAuthSecret's own disabled-encryption behavior. Never exposed via
+	// JSON; API responses and audit diffs alike only ever see the decrypted URL
+	// field above (or a redacted placeholder for the audit diff).
+	URLEnc  []byte `json:"-"`
+	URLMeta []byte `json:"-"`
 	// Email is the recipient address (for email type)
 	Email string `json:"email,omitempty"`
 	// Events is a comma-separated list of event types this channel receives

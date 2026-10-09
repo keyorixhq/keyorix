@@ -342,7 +342,9 @@ type CreateOIDCBindingJSONBody struct {
 
 // GrantMachineRoleJSONBody defines parameters for GrantMachineRole.
 type GrantMachineRoleJSONBody struct {
-	RoleId int `json:"role_id"`
+	// EnvironmentId Scope the grant to one environment in this project; 0 or omitted = global (every environment).
+	EnvironmentId *int `json:"environment_id,omitempty"`
+	RoleId        int  `json:"role_id"`
 }
 
 // IssueMachineTokenJSONBody defines parameters for IssueMachineToken.

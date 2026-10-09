@@ -163,7 +163,9 @@ func (c *KeyorixCore) buildProjectInvite(ctx context.Context, projectID uint, em
 // benign early-exit paths (base_url unset, throttled) below, which must keep
 // creating the invitation immediately and unconditionally -- those are
 // config/rate-limit conditions, not storage faults, so there is nothing to
-// roll back and the existing "caller can resend" contract stays intact.
+// roll back and the existing "caller can resend" contract stays intact. A
+// throttle whose count query FAILED (ErrResendThrottleUnverifiable) is a
+// storage fault, not a rate-limit verdict, and does not take this path (#2599).
 func (c *KeyorixCore) persistInvitation(ctx context.Context, inv *models.ProjectInvitation, auditFn func(*models.ProjectInvitation)) (*models.ProjectInvitation, error) {
 	created, err := c.storage.CreateProjectInvitation(ctx, inv)
 	if err != nil {
@@ -228,7 +230,12 @@ func (c *KeyorixCore) createInvitationWithSetupTokenAtomically(ctx, invCtx conte
 // neither is a storage fault, the invitation is still created and committed
 // immediately via persistInvitation, and the caller can fix config/wait and
 // resend -- only the actual mint attempt needs atomicity with the invitation
-// insert.
+// insert. The one throttle outcome that is NOT benign is a failed count query
+// (ErrResendThrottleUnverifiable): that is a storage fault like a failed mint,
+// so it persists nothing and returns a nil invitation (#2599). Before, it
+// committed the invitation with no setup token and the HTTP layer reported 201
+// -- a state no fault-free run reaches. The throttle still fails closed: no
+// link is issued either way.
 func (c *KeyorixCore) provisionInvitationSetupLink(ctx, invCtx context.Context, inv *models.ProjectInvitation, auditFn func(*models.ProjectInvitation), req IssueSetupTokenRequest, displayName, assignmentSummary string) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
 	if c.setupBaseURL == "" {
 		created, err := c.persistInvitation(invCtx, inv, auditFn)
@@ -241,6 +248,9 @@ func (c *KeyorixCore) provisionInvitationSetupLink(ctx, invCtx context.Context, 
 	c.setupResendMu.Lock()
 	if err := c.checkResendThrottle(ctx, req.Purpose, req.SubjectEmail); err != nil {
 		c.setupResendMu.Unlock()
+		if errors.Is(err, ErrResendThrottleUnverifiable) {
+			return nil, nil, err
+		}
 		created, cerr := c.persistInvitation(invCtx, inv, auditFn)
 		if cerr != nil {
 			return nil, nil, cerr
@@ -280,7 +290,9 @@ func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email
 // the configured channel. Returns the invitation and the delivery outcome. If
 // provisioning fails (e.g. base_url unset, or the resend throttle below), the
 // invitation still exists and is returned with a nil result and the error, so the
-// caller can resend rather than losing the invite.
+// caller can resend rather than losing the invite. A storage fault (the mint
+// step, or the throttle's own count query) instead persists nothing and returns
+// a nil invitation (#2444, #2599).
 //
 // The link provisioning is throttled per (purpose, email) via
 // provisionSetupLinkThrottled — the same control ResendInvitationLink uses (#183) —
@@ -759,12 +771,22 @@ func (c *KeyorixCore) ListAccessRequests(ctx context.Context, projectID uint) ([
 	return rows, nil
 }
 
-// ApproveAccessRequest approves a pending request, granting grantedRole (falling
-// back to the suggested role) at the project scope, permanently. No auto-approval —
-// an admin performs this explicitly.
-func (c *KeyorixCore) ApproveAccessRequest(ctx context.Context, projectID, requestID, approverID uint, grantedRole string) (*models.AccessRequest, error) {
-	return c.ApproveAccessRequestWithExpiry(ctx, projectID, requestID, approverID, 0, grantedRole, 0)
-}
+// ApproveAccessRequest, a 4-argument convenience wrapper that hardcoded
+// approverMachineID=0, was DELETED in #2495. It is deliberately not replaced.
+//
+// Hardcoding 0 means "there is no acting machine identity", and that is not a
+// safe default on this path: a machine caller's approverID is also 0 (ADR-030 —
+// a machine identity has no UserID), so the pair (approverID=0,
+// approverMachineID=0) is exactly the unauthenticated/system pseudo-actor that
+// requireGranterHoldsRolePermissions exempts from the escalation-by-proxy
+// ceiling. A machine approver routed through that wrapper was therefore reported
+// to the ceiling as trusted-system and skipped it entirely. The bulk
+// approve/reject path (bulk_access_requests.go) did exactly that, which is the
+// defect #2495 closes.
+//
+// Call ApproveAccessRequestWithExpiry directly and state the machine identity
+// (0 for a genuine human approver) at the call site, so the claim is visible
+// where it is made rather than buried in a wrapper.
 
 // SetDualControlPolicy sets the N-of-M approval threshold for access requests
 // (A.5.3). <=1 = single approval (the default).

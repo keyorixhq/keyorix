@@ -115,6 +115,15 @@ editing code in one of these packages.** If your change would have to break a li
 invariant, stop and ask rather than silently removing it; if you discover or add one while
 working, add it to that package's file in the same PR.
 
+**New invariants go in `<pkg>/INVARIANTS.d/INV-<PKG>-<kebab-slug>.md`** (one per file,
+same bullet format, a slug ID named for what it protects — never "the next number", which
+is how `INV-CORE-41` came to be defined twice), not appended to `INVARIANTS.md`.
+`internal/statemap/invariants_fragments_guard_test.go` fails on any duplicate ID involving a
+fragment, on malformed or misnamed fragments and on orphan `INVARIANTS.d/` directories, and
+logs legacy-only duplicates, which become fatal when a package is migrated by
+`scripts/ledgers/migrate-invariants-to-fragments.sh` (coordinator only, quiet window). See
+`docs/invariants-fragments.md`.
+
 ### Core principle: prefer the machine-checked over the asserted
 
 **Every claim this codebase makes should have a mechanism that fails when the claim stops
@@ -392,6 +401,22 @@ tranche detail for the rest, and QUEUE.md for the incremental-population
 follow-up). Don't transcribe a row from that matrix without re-running its
 test first — a property verified during that pass is not the same claim as
 "this test exists and passes right now."
+
+## Shared ledgers: new rows go in `<name>.d/`
+
+`docs/adr-conformance-enforced.tsv`, `docs/review-coverage.tsv` and
+`docs/check-then-act-lock-exempt.tsv` are dual-read: their readers
+(`scripts/check-adr-conformance.sh`, `scripts/check-review-coverage.sh`,
+`TestCheckThenActLockGuard_UnlockedSecurityCheck`) read the flat file PLUS
+every one-row `*.tsv` fragment in the sibling `<name>.d/` directory, and fail
+on a duplicate key involving a fragment. **Add a new row as a new fragment
+file (`docs/<name>.d/<key>.tsv`, naming in that directory's `README.md`), never
+by appending to the flat file** — appends to one shared file were the main
+reason approved PRs fell out of the merge queue on 2026-10-03/04. Existing
+rows stay in the flat files until the coordinator runs
+`scripts/ledgers/migrate-to-fragments.sh` in a quiet window; don't run it on a
+feature branch. `docs/security-closures.tsv` is different: it is generated
+from `docs/security-closures.d/` (see "Closing a security fix" above).
 
 ## Code-scanning alerts
 

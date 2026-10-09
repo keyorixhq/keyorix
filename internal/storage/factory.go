@@ -36,13 +36,39 @@ const (
 // silent-downgrade regression this ADR documents (an old binary writing new
 // rows via a migrated-in column's DEFAULT, blind to whatever invariant that
 // column encodes). NOT bumped for pure comment/refactor changes that don't
-// touch what gets written to the database.
+// touch what gets written to the database. Every bump must also decide
+// minCompatibleSchemaEpoch below (ADR-101).
 const currentSchemaEpoch = 1
 
 // schemaEpochMetadataKey is the system_metadata (see models.SystemMetadata)
 // key checkSchemaEpoch/recordSchemaEpoch read and write. #nosec G101 --
 // metadata key name, not a credential.
 const schemaEpochMetadataKey = "schema_epoch"
+
+// minCompatibleSchemaEpoch (ADR-101) is the compatibility floor this binary's
+// schema declares: the OLDEST binary schema epoch that may still safely run
+// against a database this binary has migrated. recordSchemaEpoch writes it to
+// system_metadata next to schema_epoch; checkSchemaEpoch refuses to start any
+// binary whose currentSchemaEpoch is below a recorded floor.
+//
+// When you bump currentSchemaEpoch, you must also decide this value:
+//   - an additive-and-safe migration (an older binary's writes still default
+//     in the safe direction -- ADR-097's own default-direction reasoning)
+//     leaves it UNCHANGED, so old replicas mid-rollout, and a one-release
+//     rollback, keep booting;
+//   - a migration an older binary cannot safely run against raises it to the
+//     new currentSchemaEpoch, so every older binary refuses.
+//
+// It must stay within [1, currentSchemaEpoch]
+// (TestMinCompatibleSchemaEpoch_WithinRange). A floor already recorded in the
+// database is never lowered by recordSchemaEpoch, so declaring a lower value
+// here cannot reopen a floor a newer binary raised.
+const minCompatibleSchemaEpoch = 1
+
+// schemaMinCompatibleEpochMetadataKey is the system_metadata key ADR-101's
+// compatibility floor (minCompatibleSchemaEpoch) is recorded under. #nosec
+// G101 -- metadata key name, not a credential.
+const schemaMinCompatibleEpochMetadataKey = "schema_min_compatible_epoch"
 
 // migrationMu serializes migrateDatabase across goroutines IN THIS PROCESS (#266).
 // startHTTPServer and startGRPCServer each independently call CreateStorage →
@@ -147,13 +173,52 @@ func withMigrationLock(db *gorm.DB, isPostgres bool, dbPath string, fn func(*gor
 	return withSQLiteInDBMigrationLock(db, dbPath, run)
 }
 
-// defaultMaxOpenConns bounds the DB connection pool when the operator hasn't set
-// max_open_conns — Go's own default is unlimited, which lets a request flood exhaust the
-// backing database's connection limit. A conservative cap is safer out of the box.
-const defaultMaxOpenConns = 25
+// DefaultSQLiteMaxOpenConns and DefaultPostgresMaxOpenConns bound the DB connection
+// pool when the operator hasn't set max_open_conns. Go's own default is unlimited,
+// which lets a request flood exhaust the backing database's connection limit.
+// Exported so test harnesses that must mirror production's pool (e.g.
+// server/http's linearizability fuzzer) reference them instead of copying a number.
+//
+// The two dialects get different values because they fail differently (#2631,
+// Detected-by: PERF-2; measured with the real server over HTTP, 30s runs, 4 vCPU,
+// docs/CONFIGURATION.md has the tables):
+//
+//   - SQLite: 8. One writer at a time, and modernc.org/sqlite is pure Go, so every
+//     connection's query work competes for the same CPUs; past ~2x the cores, more
+//     connections only add contention. Against the old 25, in both harnesses (the
+//     real server over HTTP, and BenchmarkPoolSize through core), 8 did more total
+//     work per second and roughly halved read p99 (BenchmarkPoolSize: 469-654ms vs
+//     912-948ms). How the gain splits between reads and writes depends on the mix,
+//     so no per-side claim is made. 4 was within noise of 8 in-process but slower
+//     for reads over HTTP; 8 is the measured middle.
+//   - Postgres: 25, unchanged. 10, 25 and 50 are within run-to-run noise of each
+//     other for reads; 25 was best for writes. 100 failed requests outright
+//     (SQLSTATE 53300 "too many clients"): Postgres's own max_connections defaults
+//     to 100, and every replica brings its own pool. See warnPostgresPoolHeadroom.
+const (
+	DefaultSQLiteMaxOpenConns   = 8
+	DefaultPostgresMaxOpenConns = 25
+)
+
+// defaultMaxOpenConnsFor returns the dialect's default max_open_conns.
+func defaultMaxOpenConnsFor(dialect string) int {
+	if dialect == "postgres" {
+		return DefaultPostgresMaxOpenConns
+	}
+	return DefaultSQLiteMaxOpenConns
+}
+
+// effectiveMaxOpenConns is the pool cap applyPoolSettings sets: the operator's
+// max_open_conns when positive, else the dialect default.
+func effectiveMaxOpenConns(db *gorm.DB, dbCfg *config.DatabaseConfig) int {
+	if dbCfg.MaxOpenConns > 0 {
+		return dbCfg.MaxOpenConns
+	}
+	return defaultMaxOpenConnsFor(db.Dialector.Name())
+}
 
 // applyPoolSettings (below) matches MaxIdleConns to the EFFECTIVE MaxOpenConns
-// (whichever of the operator's own max_open_conns or defaultMaxOpenConns above is
+// (whichever of the operator's own max_open_conns or the dialect default above is
 // in force) when the operator hasn't set max_idle_conns (SESSION-PERF, #2403
 // follow-up). Go's own idle default is 2 — far below any sensible open ceiling —
 // so without this, a deployment that never sets max_idle_conns (the shipped
@@ -188,10 +253,13 @@ const sqliteBusyTimeoutMillis = 10000
 //     own cascade logic could orphan dependent rows with zero DB-level backstop and
 //     no visible error. See factory_sqlite_pragma_test.go for the scope note on
 //     what this codebase's GORM-generated schema currently declares.
+//
 //   - _busy_timeout=<ms> (#465): see sqliteBusyTimeoutMillis above.
+//
 //   - _journal_mode=WAL (#465): the default rollback-journal mode blocks readers
 //     during a write and vice versa, increasing SQLITE_BUSY frequency under
 //     concurrent access; WAL lets readers proceed concurrently with a writer.
+//
 //   - _txlock=immediate: SQLite's default BEGIN is DEFERRED — a transaction that
 //     reads first and writes second (e.g. AssignRole's existing-grant check
 //     before its Create) only requests the write lock at that first write
@@ -209,6 +277,7 @@ const sqliteBusyTimeoutMillis = 10000
 //     35871480798, 35840030029: "grant victim ...: database is locked (5)
 //     (SQLITE_BUSY)" from AssignUserRole) despite _busy_timeout already
 //     being set.
+//
 //   - _synchronous=FULL (SESSION-PERF, 2026-10-02): without this, `synchronous`
 //     is never touched by this DSN and falls through to the driver/library
 //     default — which modernc.org/sqlite v1.59.0 leaves unset when the DSN
@@ -231,6 +300,24 @@ const sqliteBusyTimeoutMillis = 10000
 //     docs/g80-remediation-notes.md's SESSION-PERF entry for the measured
 //     before/after (no throughput delta, as expected, since the pragma value
 //     is unchanged — this closes an unasserted-guarantee gap, not a bug).
+//
+//     NOT RELAXABLE BY CONFIGURATION. ADR-112 Amendment 1's fast audit mode
+//     (storage.database.insecure_audit_skip_durable_sync) is PostgreSQL-ONLY
+//     (Andrei's decision, 2026-10-05) and config validation REFUSES TO START
+//     when it is combined with a SQLite backend
+//     (internal/config's auditSkipDurableSyncSQLiteUnsupportedError), so this
+//     DSN has no NORMAL branch at all and never had one in a shipped build.
+//     Two reasons it is not offered here, both measured or structural:
+//     `synchronous` is a PER-CONNECTION property set once per DSN and the pool
+//     is shared by every query, so NORMAL would relax commit durability for
+//     the WHOLE database — a power loss could undo a just-committed secret
+//     rotation or revocation, not merely lose audit entries; and the measured
+//     p99 got WORSE under concurrency anyway (328.8->518.0ms at c=10,
+//     703.7->919.0ms at c=50 on pve01), so it was not even a clean latency
+//     win. Postgres's own path confines the equivalent change to the audit
+//     transaction alone (SET LOCAL synchronous_commit, see
+//     internal/storage/store/local_audit_chain.go), which is why it IS offered
+//     there.
 //
 // Postgres has no equivalent opt-out (FK enforcement is always on) and no analogous
 // pragmas, so this is intentionally SQLite-only — never applied to the Postgres
@@ -425,19 +512,59 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 	// is deliberately left untouched here (still cwd-relative if configured
 	// that way, still fed as-is into sqliteDSN/withMigrationLock below) --
 	// this is diagnostics only, not a fix for the underlying resolution
-	// defect (tracked separately), and not the refuse-on-missing check
-	// ADR-095 Task 3 recommends (#2504, pending sign-off). Best-effort:
-	// filepath.Abs only fails if os.Getwd() fails, which would already be a
-	// more fundamental problem than this log line; never block startup on it.
-	logDbPath := dbPath
-	if abs, aerr := filepath.Abs(dbPath); aerr == nil {
+	// defect (tracked separately). Best-effort: filepath.Abs only fails if
+	// os.Getwd() fails, which would already be a more fundamental problem
+	// than this log line; never block startup on it.
+	//
+	// The existence question is asked through localStorageDBFile, not
+	// os.Stat(dbPath) directly: database.path may legitimately carry a DSN
+	// query suffix ("file:secrets.db?_busy_timeout=...", see
+	// TestCreateLocalStorage_S27_ExistingDSNQueryString), which os.Stat can
+	// never resolve, so the raw-path form reported EVERY such configuration as
+	// "no database found" even when the file was right there. Same helper
+	// acquireSQLiteMigrationLock and prepareLocalStorageFile already use, and
+	// it also answers "is there a file to pre-exist at all" for the in-memory
+	// shapes below.
+	statPath, isRealFile := localStorageDBFile(dbPath)
+	logDbPath := statPath
+	if logDbPath == "" {
+		logDbPath = dbPath
+	}
+	if abs, aerr := filepath.Abs(logDbPath); aerr == nil && isRealFile {
 		logDbPath = abs
 	}
-	if _, statErr := os.Stat(dbPath); statErr == nil {
+	dbFileExists := false
+	if isRealFile {
+		if _, statErr := os.Stat(statPath); statErr == nil {
+			dbFileExists = true
+		}
+	}
+	switch {
+	case !isRealFile:
+		log.Printf("storage: opening in-memory SQLite database (configured: %q)", cfg.Storage.Database.Path)
+	case dbFileExists:
 		log.Printf("storage: opening existing SQLite database at %s (configured: %q)", logDbPath, cfg.Storage.Database.Path)
-	} else {
+	default:
 		log.Printf("storage: no database found at %s (configured: %q) -- a NEW, EMPTY database will be created here", logDbPath, cfg.Storage.Database.Path)
 	}
+
+	// INV-STORAGE-22 / ADR-095 Task 3 (#2504): refuse rather than vivify, when
+	// the operator has asked for that. An absolute path is not enough on its
+	// own -- it stops two processes diverging onto two files, but a single
+	// mistyped path (or a volume mount that silently failed to attach) still
+	// produces a fresh, empty, healthy-looking store, with the real data still
+	// sitting untouched where it was meant to be read from. Opt-in because
+	// nothing in the supported first-boot paths creates the file beforehand;
+	// see DatabaseConfig.RequireExistingPath's own doc comment for why the
+	// default is NOT flipped here. In-memory DSNs are exempt by construction
+	// (nothing to pre-exist) rather than by a carve-out.
+	if cfg.Storage.Database.RequireExistingPath && isRealFile && !dbFileExists {
+		return nil, fmt.Errorf("no database found at %s (configured database.path: %q) and database.require_existing_path is set: "+
+			"run 'keyorix system init --database' to create one deliberately, or verify database.path and the working directory "+
+			"-- refusing to create a new, empty database in its place (INV-STORAGE-22, ADR-095 Task 3)",
+			logDbPath, cfg.Storage.Database.Path)
+	}
+
 	if err := prepareLocalStorageFile(dbPath); err != nil {
 		return nil, err
 	}
@@ -480,6 +607,12 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 
 	ls := store.NewLocalStorage(db)
 	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
+	// No SetAuditSkipDurableSync here, deliberately: ADR-112 Amendment 1's
+	// fast audit mode is PostgreSQL-only and config validation refuses to
+	// start a SQLite backend that sets it, so there is nothing to propagate --
+	// and leaving the zero value (false, durable) means a config that somehow
+	// bypassed validation still gets durable commits rather than a half-
+	// applied weak mode.
 	return ls, nil
 }
 
@@ -498,6 +631,7 @@ func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (stora
 	if err := applyPoolSettings(db, &cfg.Storage.Database); err != nil {
 		return nil, err
 	}
+	warnPostgresPoolHeadroom(db, &cfg.Storage.Database)
 
 	if err := withMigrationLock(db, true, "", f.migrateDatabase); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
@@ -505,6 +639,11 @@ func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (stora
 
 	ls := store.NewLocalStorage(db)
 	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
+	// ADR-112 Amendment 1: read the computed status rather than the raw bool,
+	// so "configured" and "actually in effect" cannot drift apart between
+	// here and the surfaces that report it (start-up log, posture, API). This
+	// is the one backend where InEffect can be true.
+	ls.SetAuditSkipDurableSync(cfg.Storage.Database.AuditDurableSyncStatus(cfg.Storage.Type).InEffect)
 	return ls, nil
 }
 
@@ -517,27 +656,59 @@ func applyPoolSettings(db *gorm.DB, dbCfg *config.DatabaseConfig) error {
 	// Always cap open connections. Go's default is UNLIMITED, so without a cap a flood of
 	// concurrent requests (even unauthenticated ones like /readyz, which pings the DB) can
 	// open connections without bound and exhaust the backing database's max_connections.
-	effectiveMaxOpenConns := defaultMaxOpenConns
-	if dbCfg.MaxOpenConns > 0 {
-		effectiveMaxOpenConns = dbCfg.MaxOpenConns
-	}
-	sqlDB.SetMaxOpenConns(effectiveMaxOpenConns)
+	maxOpen := effectiveMaxOpenConns(db, dbCfg)
+	sqlDB.SetMaxOpenConns(maxOpen)
 	// Match the idle cap to the EFFECTIVE open cap by default (whether that came from the
-	// operator's own max_open_conns or defaultMaxOpenConns above), not a separate fixed
+	// operator's own max_open_conns or the dialect default), not a separate fixed
 	// constant — see defaultMaxIdleConns' doc comment. This keeps a connection, once
 	// opened, warm for reuse rather than opened and immediately closed again under any
 	// concurrency above Go's built-in default of 2, for whatever open ceiling is actually
 	// in effect. (database/sql itself silently caps idle to open if idle is ever set
-	// higher than open, so this can never exceed effectiveMaxOpenConns regardless.)
+	// higher than open, so this can never exceed maxOpen regardless.)
 	if dbCfg.MaxIdleConns > 0 {
 		sqlDB.SetMaxIdleConns(dbCfg.MaxIdleConns)
 	} else {
-		sqlDB.SetMaxIdleConns(effectiveMaxOpenConns)
+		sqlDB.SetMaxIdleConns(maxOpen)
 	}
 	if dbCfg.ConnMaxLifetimeMinutes > 0 {
 		sqlDB.SetConnMaxLifetime(time.Duration(dbCfg.ConnMaxLifetimeMinutes) * time.Minute)
 	}
 	return nil
+}
+
+// warnPostgresPoolHeadroom logs a startup warning when this process's pool alone
+// can exceed the Postgres server's usable connection slots (max_connections minus
+// superuser_reserved_connections). Past that point requests fail with SQLSTATE
+// 53300 "sorry, too many clients already" instead of queueing in the pool, measured
+// at max_open_conns 100 against a default max_connections of 100 (#2631). It is a
+// warning, not a refusal: the server's limit can be raised later without a restart
+// of this process, and a lookup failure must never block boot. It cannot see other
+// replicas' pools, and the message says so.
+func warnPostgresPoolHeadroom(db *gorm.DB, dbCfg *config.DatabaseConfig) {
+	var maxConn, reserved int
+	if err := db.Raw("SELECT current_setting('max_connections')::int").Scan(&maxConn).Error; err != nil {
+		return
+	}
+	if err := db.Raw("SELECT current_setting('superuser_reserved_connections')::int").Scan(&reserved).Error; err != nil {
+		return
+	}
+	if msg := postgresPoolHeadroomWarning(effectiveMaxOpenConns(db, dbCfg), maxConn, reserved); msg != "" {
+		log.Print(msg)
+	}
+}
+
+// postgresPoolHeadroomWarning is warnPostgresPoolHeadroom's decision, separated so
+// it is testable without a server. Empty means no warning.
+func postgresPoolHeadroomWarning(maxOpen, maxConnections, reserved int) string {
+	usable := maxConnections - reserved
+	if maxConnections <= 0 || maxOpen <= usable {
+		return ""
+	}
+	return fmt.Sprintf("WARNING: storage.database.max_open_conns is %d but the Postgres server allows only %d "+
+		"non-superuser connections (max_connections=%d minus superuser_reserved_connections=%d). Under load, "+
+		"requests past that fail with SQLSTATE 53300 \"too many clients\" instead of queueing. Lower "+
+		"max_open_conns so that (replicas x max_open_conns) stays below %d, or raise max_connections.",
+		maxOpen, usable, maxConnections, reserved, usable)
 }
 
 // columnExists reports whether table already has column, branching on the
@@ -595,34 +766,89 @@ func tableExists(db *gorm.DB, table string) bool {
 	return count > 0
 }
 
-// checkSchemaEpoch (ADR-097) refuses to let an older binary run migrateDatabase
-// against a database a newer binary already migrated. Called BEFORE any other
-// migration step. system_metadata not existing yet means a fresh install (or a
-// database old enough to predate system_metadata itself, i.e. pre-ADR-029) --
-// either way, there is nothing recorded to compare against, so this proceeds.
-// A missing schema_epoch key means an older binary that predates this guard
-// wrote to this database last -- absence of a recorded epoch cannot itself
-// justify refusing to start, so this proceeds too. Only an explicit, parsed
-// epoch GREATER than currentSchemaEpoch, or a value that fails to parse at
-// all (fail-closed, matching this file's #G54 discipline: a corrupted marker
-// is worse to silently ignore than to loudly refuse), blocks startup.
+// checkSchemaEpoch (ADR-097, ADR-101) refuses to let a binary run
+// migrateDatabase against a database whose schema it cannot safely run
+// against. Called BEFORE any other migration step. It applies
+// checkSchemaEpochFor with this binary's own compiled-in currentSchemaEpoch.
 func checkSchemaEpoch(db *gorm.DB) error {
+	return checkSchemaEpochFor(db, currentSchemaEpoch)
+}
+
+// checkSchemaEpochFor is checkSchemaEpoch with the binary's schema epoch as a
+// parameter, so tests can exercise binaries older and newer than this one.
+//
+// system_metadata not existing yet means a fresh install (or a database old
+// enough to predate system_metadata itself, i.e. pre-ADR-029) -- either way,
+// there is nothing recorded to compare against, so this proceeds. A missing
+// schema_epoch key means an older binary that predates this guard wrote to
+// this database last -- absence of a recorded epoch cannot itself justify
+// refusing to start, so this proceeds too.
+//
+// Otherwise it refuses (fail-closed, matching this file's #G54 discipline: a
+// corrupted marker is worse to silently ignore than to loudly refuse) when:
+//   - schema_epoch, or the ADR-101 floor, does not parse as an integer;
+//   - the recorded floor is below 1 -- not an epoch any binary writes;
+//   - the recorded floor is above binaryEpoch (ADR-101: a migration declared
+//     its schema unsafe for binaries this old -- the dangerous rollback);
+//   - schema_epoch is above binaryEpoch and NO floor is recorded (ADR-097's
+//     original refusal: no migration author ever stated that this schema is
+//     safe for an older binary, and the absence of a compatibility claim is
+//     not a claim).
+//
+// A schema_epoch above binaryEpoch WITH a recorded floor at or below
+// binaryEpoch proceeds: that is ADR-101's whole point -- the migration that
+// produced the newer schema explicitly declared it safe for this binary
+// (an old replica mid-rollout, or a rollback that does not cross the floor).
+func checkSchemaEpochFor(db *gorm.DB, binaryEpoch int) error {
 	if !tableExists(db, "system_metadata") {
 		return nil
 	}
-	var m models.SystemMetadata
-	err := db.Where("key = ?", schemaEpochMetadataKey).Take(&m).Error
+	m, epochFound, err := readSchemaMetadata(db, schemaEpochMetadataKey)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil
-		}
 		return fmt.Errorf("failed to read schema epoch: %w", err)
+	}
+	floorRow, floorFound, err := readSchemaMetadata(db, schemaMinCompatibleEpochMetadataKey)
+	if err != nil {
+		return fmt.Errorf("failed to read minimum compatible schema epoch: %w", err)
+	}
+	// The floor is checked first and independently of schema_epoch: a floor
+	// above this binary refuses whatever the epoch row says (or whether it
+	// exists at all).
+	if floorFound {
+		floor, floorErr := strconv.Atoi(floorRow.Value)
+		if floorErr != nil {
+			return fmt.Errorf("stored minimum compatible schema epoch %q is not a valid integer -- refusing to start rather than guess whether this binary is below the database's compatibility floor (ADR-101)", floorRow.Value)
+		}
+		if floor < 1 {
+			return fmt.Errorf("stored minimum compatible schema epoch %d is below 1, which no version of Keyorix "+
+				"writes -- refusing to start rather than trust a corrupted compatibility floor (ADR-101)", floor)
+		}
+		if floor > binaryEpoch {
+			return fmt.Errorf(
+				"database declares a minimum compatible schema epoch of %d (database schema epoch %s), above this "+
+					"binary's schema epoch %d (floor recorded at %s, %s ago) -- a migration this database has already "+
+					"applied was declared unsafe for binaries this old, so this binary must not run against it. "+
+					"If this is a rolling upgrade, this pod is expected to be replaced by the new image; if this "+
+					"binary was rolled back, roll forward to a version with schema epoch %d or later, or restore a "+
+					"backup taken before the newer version ran. Refusing to start (ADR-101)",
+				floor, m.Value, binaryEpoch, floorRow.UpdatedAt.Format(time.RFC3339),
+				time.Since(floorRow.UpdatedAt).Round(time.Second), floor)
+		}
+	}
+	if !epochFound {
+		return nil
 	}
 	dbEpoch, parseErr := strconv.Atoi(m.Value)
 	if parseErr != nil {
 		return fmt.Errorf("stored schema epoch %q is not a valid integer -- refusing to start rather than guess whether this database is ahead of this binary (ADR-097)", m.Value)
 	}
-	if SchemaEpochTooNew(dbEpoch) {
+	if floorFound {
+		// floor <= binaryEpoch (checked above): the migration(s) that produced
+		// dbEpoch declared this binary compatible (ADR-101) -- proceed even if
+		// dbEpoch is newer.
+		return nil
+	}
+	if dbEpoch > binaryEpoch {
 		// #1674 (Part 2 continuation, design decision recorded in
 		// docs/adr-101-schema-epoch-compatibility-floor.md): this refusal is NOT
 		// made conditional on how recently the newer epoch was recorded, or on
@@ -633,7 +859,9 @@ func checkSchemaEpoch(db *gorm.DB) error {
 		// timestamp below to auto-proceed would legalize the second case (the
 		// most common real downgrade: roll back shortly after a bad deploy) to
 		// silence the first. The timestamp is reported to help a human tell them
-		// apart, not consulted to decide for them.
+		// apart, not consulted to decide for them. The ONLY thing that lets an
+		// older binary through is ADR-101's explicitly recorded floor, handled
+		// above -- and none is recorded here.
 		return fmt.Errorf(
 			"database schema epoch %d is newer than this binary's schema epoch %d "+
 				"(recorded at %s, %s ago) -- this database was migrated by a newer "+
@@ -646,11 +874,26 @@ func checkSchemaEpoch(db *gorm.DB) error {
 				"docs/adr-039-ha-deployment.md for the supported multi-replica "+
 				"topology), or (b) this binary was downgraded against a schema a newer "+
 				"version already migrated -- if so, upgrade this binary to match, or "+
-				"restore a backup taken before the newer version ran. Refusing to start "+
-				"is the safe default in both cases (ADR-097)",
-			dbEpoch, currentSchemaEpoch, m.UpdatedAt.Format(time.RFC3339), time.Since(m.UpdatedAt).Round(time.Second))
+				"restore a backup taken before the newer version ran. No minimum "+
+				"compatible schema epoch is recorded, so nothing declares this schema "+
+				"safe for an older binary. Refusing to start "+
+				"is the safe default in both cases (ADR-097, ADR-101)",
+			dbEpoch, binaryEpoch, m.UpdatedAt.Format(time.RFC3339), time.Since(m.UpdatedAt).Round(time.Second))
 	}
 	return nil
+}
+
+// readSchemaMetadata reads one system_metadata row; found is false (with a
+// nil error) only when the key is absent.
+func readSchemaMetadata(db *gorm.DB, key string) (m models.SystemMetadata, found bool, err error) {
+	err = db.Where("key = ?", key).Take(&m).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return m, false, nil
+	}
+	if err != nil {
+		return m, false, err
+	}
+	return m, true, nil
 }
 
 // CurrentSchemaEpoch returns this binary's compiled-in schema version
@@ -662,28 +905,46 @@ func CurrentSchemaEpoch() int {
 }
 
 // SchemaEpochTooNew reports whether epoch is newer than this binary's
-// CurrentSchemaEpoch() -- the same comparison checkSchemaEpoch applies to a
-// live database's recorded epoch (ADR-097), exposed so `admin restore`
-// (design §3.5) can apply the identical decision rule to an archive's
-// manifest-declared schema_epoch instead: a backup taken by a newer binary
-// than this one is refused, for the same reason a newer-schema live
-// database is.
+// CurrentSchemaEpoch() -- the comparison checkSchemaEpoch applies to a live
+// database's recorded epoch when no ADR-101 compatibility floor is recorded
+// (ADR-097), exposed so `admin restore` (design §3.5) can apply it to an
+// archive's manifest-declared schema_epoch instead: a backup taken by a
+// newer binary than this one is refused, for the same reason a newer-schema
+// live database with no compatibility claim is. A backup manifest carries no
+// floor, so restore keeps this strict rule.
 func SchemaEpochTooNew(epoch int) bool {
 	return epoch > currentSchemaEpoch
 }
 
-// recordSchemaEpoch (ADR-097) upserts currentSchemaEpoch into system_metadata.
-// Called only after migrateDatabase's other steps all succeed -- never on a
+// recordSchemaEpoch (ADR-097, ADR-101) records currentSchemaEpoch and its
+// compatibility floor minCompatibleSchemaEpoch in system_metadata. Called
+// only after migrateDatabase's other steps all succeed -- never on a
 // partial/failed migration, so a crash mid-migration can't advance the
 // recorded epoch past what was actually, successfully applied.
 func recordSchemaEpoch(db *gorm.DB) error {
+	return recordSchemaEpochAs(db, currentSchemaEpoch, minCompatibleSchemaEpoch)
+}
+
+// recordSchemaEpochAs writes both keys in ONE upsert statement (so neither
+// can land without the other), and the upsert only ever RAISES a stored
+// value: an older binary that ADR-101 lets boot against a newer schema must
+// not stamp the database back down to its own epoch, and no binary may lower
+// a floor a newer migration raised. It also means an additive-safe migration
+// (one that leaves minCompatibleSchemaEpoch unchanged) never moves the floor.
+// The comparison is done in SQL, not read-then-write in Go, so two replicas
+// recording concurrently cannot interleave a lower value over a higher one.
+func recordSchemaEpochAs(db *gorm.DB, epoch, floor int) error {
+	now := time.Now()
+	keepHigher := gorm.Expr("CASE WHEN CAST(system_metadata.value AS INTEGER) >= CAST(excluded.value AS INTEGER) " +
+		"THEN system_metadata.value ELSE excluded.value END")
+	keepHigherTime := gorm.Expr("CASE WHEN CAST(system_metadata.value AS INTEGER) >= CAST(excluded.value AS INTEGER) " +
+		"THEN system_metadata.updated_at ELSE excluded.updated_at END")
 	if err := db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "key"}},
-		DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
-	}).Create(&models.SystemMetadata{
-		Key:       schemaEpochMetadataKey,
-		Value:     strconv.Itoa(currentSchemaEpoch),
-		UpdatedAt: time.Now(),
+		DoUpdates: clause.Assignments(map[string]interface{}{"value": keepHigher, "updated_at": keepHigherTime}),
+	}).Create(&[]models.SystemMetadata{
+		{Key: schemaEpochMetadataKey, Value: strconv.Itoa(epoch), UpdatedAt: now},
+		{Key: schemaMinCompatibleEpochMetadataKey, Value: strconv.Itoa(floor), UpdatedAt: now},
 	}).Error; err != nil {
 		return fmt.Errorf("failed to record schema epoch: %w", err)
 	}
@@ -1087,6 +1348,28 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		if err := exec("CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_alerted ON anomaly_alerts (alerted)"); err != nil {
 			return err
 		}
+		// Companion composite index for CreateAnomalyAlert's dedup count (see
+		// models.AnomalyAlert's doc comment). Every column already exists on any
+		// anomaly_alerts table this code can meet (accessed_by/ip_address/detected_at
+		// are in the table's original shape), so no column gate is needed. Purely
+		// additive: an older binary ignores an extra index, so no schema-epoch bump.
+		if err := exec("CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_dedup ON anomaly_alerts (secret_node_id, alert_type, accessed_by, ip_address, detected_at)"); err != nil {
+			return err
+		}
+	}
+	// Companion indexes for models.SecretAccessLog (see its doc comment). An install
+	// that predates them, or that gained the table via the SESSION-U U1 AutoMigrate
+	// below before they existed, would otherwise keep full-scanning this table once
+	// per secret per anomaly pass. On Postgres a plain CREATE INDEX blocks writes to
+	// secret_access_logs for the build's duration — once, during boot, under the
+	// migration lock, like every other index in this function.
+	if tableExists(db, "secret_access_logs") {
+		if err := exec("CREATE INDEX IF NOT EXISTS idx_secret_access_logs_secret_time ON secret_access_logs (secret_node_id, access_time)"); err != nil {
+			return err
+		}
+		if err := exec("CREATE INDEX IF NOT EXISTS idx_secret_access_logs_access_time ON secret_access_logs (access_time, secret_node_id)"); err != nil {
+			return err
+		}
 	}
 
 	// Track last successful login per user (nil = never logged in).
@@ -1370,7 +1653,6 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	scheduleExists := tableExists(db, "secret_access_schedules")
 	secretTemplateExists := tableExists(db, "secret_templates")
 	alertEscalationExists := tableExists(db, "alert_escalation_policies")
-	notificationChannelExists := tableExists(db, "notification_channels")
 	secretVersionCommentExists := tableExists(db, "secret_version_comments")
 	mfaStepupTokenExists := tableExists(db, "mfa_stepup_tokens")
 	hygieneTrendExists := tableExists(db, "hygiene_trend_snapshots")
@@ -1867,10 +2149,20 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 			return fmt.Errorf("failed to migrate alert_escalation_policies table: %w", err)
 		}
 	}
-	if !notificationChannelExists {
-		if err := db.AutoMigrate(&models.NotificationChannel{}); err != nil {
-			return fmt.Errorf("failed to migrate notification_channels table: %w", err)
-		}
+	// Unconditional (#2433), not guarded on !notificationChannelExists like the
+	// SESSION-U U1 block above: that guard only ever existed to catch up a table
+	// that was missing ENTIRELY on an upgrading install (the historical bug those
+	// 11 models share) -- it was never meant to freeze the table's columns at
+	// whatever existed the day the catch-up landed. NotificationChannel added two
+	// new columns (URLEnc/URLMeta) after that fix shipped; the old `if !exists`
+	// gate would skip AutoMigrate entirely once the table exists, so an
+	// upgrading install would never get the new columns at all, even though
+	// notification_channels.go's CRUD now depends on them unconditionally.
+	// AutoMigrate is additive and safe on an existing table (same rationale as
+	// "Create rotation_policies if missing" below), so there is no reason this
+	// one model needed the once-only gate going forward.
+	if err := db.AutoMigrate(&models.NotificationChannel{}); err != nil {
+		return fmt.Errorf("failed to migrate notification_channels table: %w", err)
 	}
 	if !secretVersionCommentExists {
 		if err := db.AutoMigrate(&models.SecretVersionComment{}); err != nil {

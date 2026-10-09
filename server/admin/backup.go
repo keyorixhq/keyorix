@@ -27,6 +27,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"syscall"
 
 	"github.com/keyorixhq/keyorix/internal/backupfmt"
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -47,6 +49,12 @@ import (
 // reach internal/core's unexported constant, and this package already has
 // its own direct-SQL access pattern to the raw DB.
 const auditHighWaterMetadataKey = "audit_checkpoint_highwater" // #nosec G101 -- metadata key name, not a credential
+
+// backupLiveAfterReadHook, when non-nil, runs on the live-server path after
+// every key-file and database read and before the key set is re-verified.
+// Test-only: it lets a test change a key file at exactly that point. Always
+// nil in production.
+var backupLiveAfterReadHook func()
 
 var (
 	backupOutput           string
@@ -77,11 +85,17 @@ any byte reaches the target -- not only by a post-hoc 'admin verify-audit'.
 
 On SQLite, consistency is guaranteed by the same exclusive database lock
 every admin command takes: no server (or other admin command) can be
-writing while this runs. On Postgres, backup instead reads through a single
-REPEATABLE READ snapshot transaction by default (design §4) -- consistent
-without blocking other replicas in an HA deployment from (re)starting; pass
+writing while this runs -- so on SQLite, STOP THE SERVER FIRST; a backup
+beside a live SQLite server is refused. On Postgres, backup instead reads
+through a single REPEATABLE READ snapshot transaction by default (design §4)
+and works beside a LIVE server (e.g. 'docker compose exec backend ...'): the
+key files are read while holding the key-rotation read lock, so no key
+rotation can change them or re-encrypt rows until every read is done, and
+they are re-checked afterwards -- if a rotation is in progress, or the key
+files changed during the backup, it fails and leaves no archive. Pass
 --exclusive for the stronger (but availability-costing) guarantee of also
-holding the exclusive lock, e.g. before a major upgrade.
+holding the exclusive lock, e.g. before a major upgrade; that needs the
+server stopped.
 
 --output must not already exist: each backup is a distinct, timestamped
 artifact. Store it OFF this host -- a backup that never leaves the machine
@@ -124,7 +138,12 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 	if !isPostgresStorage(cfg) || backupExclusive {
 		lock, err := acquireDatabaseLock(cfg)
 		if err != nil {
-			return err
+			if isPostgresStorage(cfg) {
+				return fmt.Errorf("--exclusive needs the database to itself: stop the server first, or drop "+
+					"--exclusive for the default live (REPEATABLE READ snapshot) backup: %w", err)
+			}
+			return fmt.Errorf("on SQLite, admin backup needs the database to itself -- stop the server first "+
+				"(a live backup without downtime needs Postgres): %w", err)
 		}
 		defer lock.Release() //nolint:errcheck
 	}
@@ -144,10 +163,32 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 		keyEntries, keyBlobs, kerr = readKeyFilesForBackup(cfg)
 		return kerr
 	})
+	// #2602: a live server holds dek.lock exclusively for its whole lifetime,
+	// so on Postgres -- where the database side needs no lock (the REPEATABLE
+	// READ snapshot below) -- the key side switches to the live path instead
+	// of refusing. --exclusive and SQLite never reach here live: both already
+	// hold (or were refused) the database lock above.
+	liveServer := false
+	if err != nil && isPostgresStorage(cfg) && !backupExclusive && errors.Is(err, syscall.EWOULDBLOCK) {
+		release, lerr := encryption.NewService(&cfg.Storage.Encryption, ".").AcquireKeyFileReadLock()
+		if lerr != nil {
+			return fmt.Errorf("a key rotation or provider migration is in progress -- retry the backup after it "+
+				"completes: %w", lerr)
+		}
+		// Held until every read below -- the key files AND the database
+		// snapshot -- is done; see liveKeyMaterial's doc comment.
+		defer release()
+		keyEntries, keyBlobs, manifestKey, err = liveKeyMaterial(cfg, backupPassphraseSource)
+		liveServer = err == nil
+	}
 	if err != nil {
 		return err
 	}
 	defer crypto.WipeBytes(manifestKey)
+	if liveServer {
+		fmt.Println("A live server holds the encryption key lock: taking a live backup (keys read under the " +
+			"key-rotation read lock, database through one REPEATABLE READ snapshot).")
+	}
 
 	gdb, err := storage.OpenGormDB(cfg)
 	if err != nil {
@@ -206,6 +247,15 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 
 	manifest, werr := backupfmt.WriteBackup(readDB, storage.CurrentSchemaEpoch(), highWater, manifestKey, keyEntries, keyBlobs, f)
 	releaseSnapshotTx() // all reads are done -- release before anything below opens another connection
+	if werr == nil && liveServer {
+		// Belt and braces for any key-file writer that does NOT take the
+		// rewrite lock (first-boot key generation, an `admin restore`
+		// installing keys): never archive a key set that changed under us.
+		if backupLiveAfterReadHook != nil {
+			backupLiveAfterReadHook()
+		}
+		werr = verifyKeyFilesUnchanged(cfg, keyEntries)
+	}
 	if werr != nil {
 		_ = f.Close()
 		_ = os.Remove(backupOutput)
@@ -388,4 +438,116 @@ func readAuditHighWater(gdb *gorm.DB) (string, error) {
 	default:
 		return "", err
 	}
+}
+
+// liveKeyMaterial is `admin backup`'s key side when a live server holds
+// dek.lock (#2602): it reads the live key-file set and derives the
+// backup-manifest signing key from a STAGED copy of exactly those bytes,
+// never by initializing an encryption Service against the live key
+// directory (INV-ENCRYPTION-01: nothing may Initialize there without
+// dek.lock, which the live server holds). The staged copy gets its own,
+// uncontended dek.lock, so unwrapManifestKey runs unchanged against it.
+//
+// The caller must hold the key-file rewrite lock in shared mode
+// (Service.AcquireKeyFileReadLock) across this call AND the database
+// snapshot read, so no rotation can rewrite these files -- or commit a
+// re-encryption sweep -- in between. A live server itself never rewrites
+// key files after startup; verifyKeyFilesUnchanged re-checks the set after
+// the database read for any writer that does not take that lock.
+func liveKeyMaterial(cfg *config.Config, src crypto.PassphraseSource) ([]backupfmt.KeyFileEntry, [][]byte, []byte, error) {
+	entries, blobs, err := readKeyFilesForBackup(cfg)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	stagingDir, err := os.MkdirTemp("", "keyorix-admin-backup-keys-*")
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("create key staging directory: %w", err)
+	}
+	defer os.RemoveAll(stagingDir) //nolint:errcheck
+	stagedCfg := *cfg
+	stagedCfg.Storage.Encryption = stagedEncryptionConfig(cfg.Storage.Encryption, stagingDir)
+	for i, e := range entries {
+		dest := stagedKeyPath(stagingDir, e.OriginalPath)
+		if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+			return nil, nil, nil, fmt.Errorf("stage key file %q: %w", e.OriginalPath, err)
+		}
+		if err := os.WriteFile(dest, blobs[i], 0o600); err != nil {
+			return nil, nil, nil, fmt.Errorf("stage key file %q: %w", e.OriginalPath, err)
+		}
+	}
+	key, err := unwrapManifestKey(&stagedCfg, stagingDir, src, nil)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return entries, blobs, key, nil
+}
+
+// stagedKeyPath mirrors a live key-file path under stagingDir: a relative
+// path keeps its shape (the staged Service's baseDir is stagingDir), an
+// absolute one is re-rooted beneath it.
+func stagedKeyPath(stagingDir, p string) string {
+	if filepath.IsAbs(p) {
+		return filepath.Join(stagingDir, p)
+	}
+	return filepath.Join(stagingDir, filepath.Clean(p))
+}
+
+// stagedEncryptionConfig rewrites every key-file path keyfiles.Registry
+// enumerates (salt, DEK, write-capable providers' wrapped KEK, Shamir share
+// files -- across the primary provider and its fallbacks) to its staged
+// mirror. Relative paths already resolve under the staged baseDir and are
+// left as-is; absolute ones are re-rooted, matching stagedKeyPath. Any other
+// provider input (an env var, a KEK file, a KMS key ID) is only ever READ by
+// KEK derivation and is left pointing where it is.
+func stagedEncryptionConfig(enc config.EncryptionConfig, stagingDir string) config.EncryptionConfig {
+	reroot := func(p string) string {
+		if p != "" && filepath.IsAbs(p) {
+			return stagedKeyPath(stagingDir, p)
+		}
+		return p
+	}
+	var stageProvider func(kp config.KeyProviderConfig) config.KeyProviderConfig
+	stageProvider = func(kp config.KeyProviderConfig) config.KeyProviderConfig {
+		kp.WrappedKeyPath = reroot(kp.WrappedKeyPath)
+		if kp.ShamirShareFiles != nil {
+			shares := make([]string, len(kp.ShamirShareFiles))
+			for i, sh := range kp.ShamirShareFiles {
+				shares[i] = reroot(sh)
+			}
+			kp.ShamirShareFiles = shares
+		}
+		if kp.Fallbacks != nil {
+			fbs := make([]config.KeyProviderConfig, len(kp.Fallbacks))
+			for i, fb := range kp.Fallbacks {
+				fbs[i] = stageProvider(fb)
+			}
+			kp.Fallbacks = fbs
+		}
+		return kp
+	}
+	enc.SaltPath = reroot(enc.SaltPath)
+	enc.DEKPath = reroot(enc.DEKPath)
+	enc.KeyProvider = stageProvider(enc.KeyProvider)
+	return enc
+}
+
+// verifyKeyFilesUnchanged re-reads the live key-file set after a live
+// backup's database read and refuses the backup if any file was added,
+// removed or rewritten since it was archived.
+func verifyKeyFilesUnchanged(cfg *config.Config, archived []backupfmt.KeyFileEntry) error {
+	now, _, err := readKeyFilesForBackup(cfg)
+	if err != nil {
+		return fmt.Errorf("re-read key files after the database snapshot: %w", err)
+	}
+	if len(now) != len(archived) {
+		return fmt.Errorf("the encryption key files changed during the backup (%d file(s) before, %d after) -- "+
+			"refusing to write an archive whose keys may not match its data; retry the backup", len(archived), len(now))
+	}
+	for i := range now {
+		if now[i].OriginalPath != archived[i].OriginalPath || now[i].SHA256 != archived[i].SHA256 {
+			return fmt.Errorf("the encryption key file %q changed during the backup -- refusing to write an archive "+
+				"whose keys may not match its data; retry the backup", archived[i].OriginalPath)
+		}
+	}
+	return nil
 }

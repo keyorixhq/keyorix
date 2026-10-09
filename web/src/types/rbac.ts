@@ -10,8 +10,9 @@ export interface Role {
     id: number;
     name: string;
     description: string;
-    created_at: string;
-    updated_at: string;
+    // Always sent by the server (roleWire); true for the built-in roles that skip
+    // per-permission checks.
+    bypasses_permission_checks: boolean;
 }
 
 export interface RoleWithPermissions extends Role {
@@ -20,13 +21,17 @@ export interface RoleWithPermissions extends Role {
 
 // A role granted to a group, with the grant's optional time-bound expiry
 // (absent = permanent).
-export interface GroupRoleGrant extends Role {
+export interface GroupRoleGrant {
+    id: number;
+    name: string;
+    description: string;
     expires_at?: string;
 }
 
 export interface GroupRoles {
     group_id: number;
-    roles: GroupRoleGrant[];
+    // null (not []) when the group holds no role grants.
+    roles: GroupRoleGrant[] | null;
 }
 
 // A secret a group can reach via shares (normalized from the server's SecretNode).
@@ -48,8 +53,6 @@ export interface Group {
     name: string;
     description: string;
     member_count?: number;
-    created_at: string;
-    updated_at: string;
 }
 
 export type BuiltInRole = 'super_admin' | 'admin' | 'editor' | 'viewer' | 'auditor';

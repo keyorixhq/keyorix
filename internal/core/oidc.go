@@ -260,6 +260,8 @@ func (c *KeyorixCore) OIDCEnabled() bool {
 // machine identity + roles (ADR-031), mirroring ValidateMachineToken so the
 // middleware builds the same machine principal. Rejects when OIDC is disabled,
 // the token fails verification, no binding exists, or the machine is not active.
+// A storage failure while reading the machine's roles returns
+// ErrRoleResolutionUnavailable (#2748) — never an empty role list.
 func (c *KeyorixCore) ValidateOIDCToken(ctx context.Context, raw string) (*models.MachineIdentity, []string, error) {
 	if c.oidcVerifier == nil {
 		return nil, nil, fmt.Errorf("oidc authentication is not enabled")
@@ -273,11 +275,19 @@ func (c *KeyorixCore) ValidateOIDCToken(ctx context.Context, raw string) (*model
 		return nil, nil, fmt.Errorf("no machine identity bound to this token")
 	}
 	if m.State != MachineActive {
-		return nil, nil, fmt.Errorf("machine identity is %s", m.State)
+		// #2518: the same typed sentinel the opaque-token paths return for this
+		// identical condition (machine_token.go). This path has no positive
+		// auth cache today, so nothing can mistake it for a transient failure —
+		// kept in step so a future cached OIDC path cannot inherit the trap.
+		return nil, nil, fmt.Errorf("%w: %s", ErrMachineIdentityNotActive, m.State)
 	}
 	roles, err := c.storage.GetMachineRoles(ctx, m.ID)
 	if err != nil {
-		return m, []string{}, nil
+		// #2748: same fix as ValidateMachineToken's own GetMachineRoles branch
+		// (and #1944's for the two user-credential validators) — a storage
+		// failure resolving roles is retryable, not a successful validation
+		// with no grants. See ErrRoleResolutionUnavailable.
+		return nil, nil, ErrRoleResolutionUnavailable
 	}
 	roleNames := make([]string, len(roles))
 	for i, r := range roles {

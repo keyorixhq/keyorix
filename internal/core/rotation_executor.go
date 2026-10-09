@@ -750,14 +750,24 @@ func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, spec Aut
 			return fmt.Errorf("%s a rotation backend requires admin authority on this project: %w", action, err)
 		}
 	}
+	// Persist only the rotation columns, conditional on the facts checked above
+	// still holding: the secret is live, still in secret.ProjectID (where the
+	// admin gate ran), and still bound to the backend the gate was decided on.
+	// A full-row UpdateSecret of this snapshot undeleted a concurrently deleted
+	// secret and reverted concurrent binding/ownership changes (#2650).
+	fromBackend := secret.RotationBackend
 	secret.AutoRotate = spec.Enabled
 	secret.RotationLength = spec.Length
 	secret.RotationCharset = spec.Charset
 	secret.RotationBackend = spec.Backend
 	secret.RotationRef = spec.Ref
 	secret.UpdatedAt = c.now()
-	if _, err := c.storage.UpdateSecret(ctx, secret); err != nil {
+	matched, err := c.storage.UpdateSecretRotationConfig(ctx, secret, fromBackend)
+	if err != nil {
 		return fmt.Errorf("failed to update secret: %w", err)
+	}
+	if !matched {
+		return fmt.Errorf("secret %d was deleted, moved or its rotation backend changed concurrently; retry", id)
 	}
 	uid := actorID
 	sid := id

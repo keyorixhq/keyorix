@@ -60,7 +60,7 @@ func postgresTargetIdentityPath(cfg *config.Config) (string, error) {
 // REPEATABLE READ snapshot connection backup uses or the GORM connection
 // migration/LoadArchive use.
 func postgresOpenSQL(cfg *config.Config) (*sql.DB, error) {
-	db, err := sql.Open("pgx", cfg.Storage.Database.DSN)
+	db, err := sql.Open("pgx", config.BuildPostgresDSN(&cfg.Storage.Database))
 	if err != nil {
 		return nil, fmt.Errorf("open postgres: %w", err)
 	}
@@ -211,11 +211,11 @@ func resyncPostgresSequences(db *sql.DB) error {
 		}
 		// #nosec G201 -- s.Table/idCol come from parseSchema resolving storage.AllModels()'s
 		// compiled-in Go structs via GORM's own naming strategy, never from archive or request content.
-		q := fmt.Sprintf(
+		q := fmt.Sprintf( // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query
 			`SELECT setval(pg_get_serial_sequence('%s', 'id'), COALESCE((SELECT MAX(id) FROM %s), 1), `+
 				`(SELECT MAX(id) FROM %s) IS NOT NULL)`,
 			s.Table, quoteIdentPG(s.Table), quoteIdentPG(s.Table))
-		if _, err := db.Exec(q); err != nil {
+		if _, err := db.Exec(q); err != nil { // nosemgrep: go.lang.security.audit.sqli.gosql-sqli.gosql-sqli -- q is built entirely from s.Table above, never from archive/request content; see the #nosec G201 note
 			return fmt.Errorf("resync sequence for table %q: %w", s.Table, err)
 		}
 	}
@@ -235,7 +235,7 @@ func quoteIdentPG(ident string) string {
 // infrastructure -- internal/auditverify's own independence requirement
 // means it already speaks both dialects) instead of OpenSQLiteReadOnly.
 func verifyRestoredAuditPostgres(cfg *config.Config) error {
-	db, err := auditverify.OpenPostgres(cfg.Storage.Database.DSN)
+	db, err := auditverify.OpenPostgres(config.BuildPostgresDSN(&cfg.Storage.Database))
 	if err != nil {
 		return fmt.Errorf("open restored database for automatic verify-audit: %w", err)
 	}

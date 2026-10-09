@@ -230,6 +230,23 @@ var multiStepAmbiguousCommitExceptions = []nonLoadBearingException{}
 // op.Execute) ties the exemption to evidence the known, reviewed code path
 // fired, not to the table-diff shape alone. Silent missing envs stay a
 // violation.
+//
+// #2406: unlike every other entry here, these 4 are consulted from the
+// default: (plain-error) branch of checkOracles' oracle (a), not just the
+// success branch -- core.RevokeLease performs an EXTERNAL, irreversible
+// side effect (engine.Revoke drops the credential on the real target) that
+// cannot be tied to the SAME transaction as its own bookkeeping writes.
+// Once that drop succeeds, the lease row MUST end up marked "revoked" --
+// claiming otherwise (leaving it "active") would be a worse lie in the
+// other direction, implying a dead credential is still live. If the
+// FOLLOW-ON audit write then fails, RevokeLease correctly returns an error
+// (closing #2406: callers must not see a clean, unconditional success) --
+// but the DynamicSecretLease/AuditEvent state has still legitimately moved
+// relative to before the call, exactly the shape the default: branch's
+// blanket "error implies zero state change" assumption doesn't hold for.
+// See RevokeLease's own #2406 doc comment (dynamic_secrets.go) for the
+// full design. All 4 entries reach the identical core.RevokeLease /
+// RevokeLeasesForConfig code path.
 var opScopedBestEffortTables = []struct {
 	op, method string
 	tables     []string
@@ -264,6 +281,47 @@ var opScopedBestEffortTables = []struct {
 		minNthCall:          2,
 		requireLogSubstring: "created without its environment",
 	},
+	// MigrateUserToMachine (internal/core/migrate_user_to_machine.go) deliberately
+	// returns the already-created machine identity ALONGSIDE a non-nil error when
+	// GetRolePermissions fails after the identity row committed — the function's
+	// own doc comment (lines 64-67) says so explicitly: "The identity exists;
+	// report the partial state..." rather than attempt a compensating delete.
+	// This is the default-branch (reported-error) analogue of bestEffortTables'
+	// AddPasswordHistory entry: a documented, intentional "committed anyway, told
+	// the caller" tradeoff, not a bug. Found live: FuzzStorageFaultOperations
+	// (REST POST /api/v1/projects/{id}/machine-identities/migrate-from-user,
+	// fault=GetRolePermissions#1/error), Session CR round 2.
+	{op: "REST POST /api/v1/projects/{id}/machine-identities/migrate-from-user", method: "GetRolePermissions", tables: []string{"AuditEvent", "MachineIdentity"}},
+	// FIX-2 (#2812): the SECOND fault that lands on that same documented branch.
+	// SuspendUser's own storage write is SetAccountState, so faulting it at call
+	// #1 reaches the identical `return m, fmt.Errorf("machine identity %d
+	// created but failed to suspend source user %d: ...")` line the entry above
+	// exists for -- same op, same tradeoff, same two tables, different method on
+	// the way in. Found live by FuzzStorageFaultOperations (shard 0) on PR #2804,
+	// a PR with zero production-code changes, and confirmed pre-existing on
+	// origin/main @ cbb9863e via REPLAY_HEX=3b6362.
+	//
+	// Deliberately an opScopedBestEffortTables entry, NOT a knownOpenTolerances
+	// one: a tolerance asserts "open bug, expires on <date>", and this is not a
+	// bug. The user row is never half-written -- the entire diff is the identity
+	// the code chose to keep, and the error names its ID so the caller can
+	// finish the job. Oracle (a) permits "nothing committed OR the caller needs
+	// no new ID to clean anything up" (#2449's own wording); this satisfies the
+	// second clause and fails the oracle only because the oracle cannot
+	// recognise an informative partial success. Scoped to these two tables, so
+	// the oracle still fails if anything ELSE diverges -- a genuinely
+	// half-applied suspension (a User/Session/AuditCheckpoint row) would still
+	// be caught, which is the property worth keeping.
+	//
+	// #2812 stays open for the broader #2549 question (whether to build a
+	// general declared-exemption mechanism that also asserts the error text
+	// still carries the recoverable ID); this entry stops CI failing on a
+	// documented behaviour in the meantime.
+	{op: "REST POST /api/v1/projects/{id}/machine-identities/migrate-from-user", method: "SetAccountState", tables: []string{"AuditEvent", "MachineIdentity"}},
+	{op: "REST POST /api/v1/dynamic-secrets/configs/{id}/revoke-all", method: "LogAuditEvent", tables: []string{"DynamicSecretLease", "AuditEvent"}},
+	{op: "REST POST /api/v1/dynamic-secrets/leases/{leaseID}/revoke", method: "LogAuditEvent", tables: []string{"DynamicSecretLease", "AuditEvent"}},
+	{op: "GRPC keyorix.v1.DynamicSecretService.RevokeLease", method: "LogAuditEvent", tables: []string{"DynamicSecretLease", "AuditEvent"}},
+	{op: "GRPC keyorix.v1.DynamicSecretService.RevokeAllLeases", method: "LogAuditEvent", tables: []string{"DynamicSecretLease", "AuditEvent"}},
 }
 
 func opScopedAcceptableByDesign(op, method string, nth int, diff []string, execLog string) bool {
@@ -321,17 +379,57 @@ func opScopedAcceptableByDesign(op, method string, nth int, diff []string, execL
 // one. Coordinator review requested on this exclusion specifically (Session
 // CR round 2 PR body) per the "never widen a carve-out without flagging it"
 // rule -- not silently assumed correct.
+//
+// #2410/#2406: the four GRPC/REST revoke-lease routes under
+// fault=LogAuditEvent#1/effect-then-error use `columns`, not `tables` --
+// found live, CI input cf013c0032 on GRPC RevokeAllLeases: ORACLE (d)
+// VIOLATION, differing tables vs before AND vs reference: [AuditEvent
+// DynamicSecretLease]. AuditEvent is already excluded by outcomeLogTables.
+// Unlike CreateUserWithRoleGrants's PasswordHistory above, DynamicSecretLease
+// is NOT fully divergent -- core.RevokeLease (dynamic_secrets.go) always marks
+// the lease `revoked` (the external credential drop already happened and is
+// irreversible), and ONLY when the follow-on audit write then fails does it
+// additionally stamp DynamicSecretLease.RevokeError with that failure's own
+// message, in the SAME row update -- see RevokeLease's own #2406 doc comment.
+// The reference (fault-free) run never sets RevokeError, so that is the ONE
+// column that legitimately differs; every other DynamicSecretLease column
+// (Revoked, RevokedAt, LeaseID, ...) must still match both the pre-fault AND
+// reference state exactly. A whole-table exclusion here (the `tables` field)
+// would also hide a lease left "active" when it should be "revoked" -- the
+// exact mixed-state bug oracle (d) exists to catch -- so this must be
+// column-scoped. See TestEffectThenErrorColumnExclusion_RedOnOtherColumnChange
+// in this file's own test for the direct proof that a change to any OTHER
+// DynamicSecretLease column is still caught.
 var effectThenErrorExtraExclusions = []struct {
 	op, method string
 	tables     []string
+	// columns narrows one table to a column-level exclusion instead of
+	// removing it from the comparison entirely (see hashExcludingColumns):
+	// key is the table name, value is the column(s) stripped from every row
+	// of that table before it's hashed. A table named here does NOT also need
+	// to be named in `tables` -- the two are independent, applied together.
+	columns map[string][]string
 }{
 	{op: "GRPC keyorix.v1.UserService.CreateUser", method: "CreateUserWithRoleGrants", tables: []string{"PasswordHistory"}},
+	{op: "REST POST /api/v1/dynamic-secrets/configs/{id}/revoke-all", method: "LogAuditEvent", columns: map[string][]string{"DynamicSecretLease": {"RevokeError"}}},
+	{op: "REST POST /api/v1/dynamic-secrets/leases/{leaseID}/revoke", method: "LogAuditEvent", columns: map[string][]string{"DynamicSecretLease": {"RevokeError"}}},
+	{op: "GRPC keyorix.v1.DynamicSecretService.RevokeLease", method: "LogAuditEvent", columns: map[string][]string{"DynamicSecretLease": {"RevokeError"}}},
+	{op: "GRPC keyorix.v1.DynamicSecretService.RevokeAllLeases", method: "LogAuditEvent", columns: map[string][]string{"DynamicSecretLease": {"RevokeError"}}},
 }
 
 func effectThenErrorExtraExcludedTables(op, method string) []string {
 	for _, e := range effectThenErrorExtraExclusions {
 		if e.op == op && e.method == method {
 			return e.tables
+		}
+	}
+	return nil
+}
+
+func effectThenErrorExtraExcludedColumns(op, method string) map[string][]string {
+	for _, e := range effectThenErrorExtraExclusions {
+		if e.op == op && e.method == method {
+			return e.columns
 		}
 	}
 	return nil
@@ -738,7 +836,48 @@ func diffSubsetOf(diff, allowed []string) bool {
 // re-encoded for this PR's opCatalog wiring since #2416's own merge commit
 // could not commit a working seed before that wiring existed); no entry
 // needed unless a new finding is filed.
+// #2407 (REST PUT /api/v1/projects/{id}/access-requests/{requestId},
+// CreateAccessRequestApproval#1/error, oracle (a)) was tolerated here and is
+// now fixed (#2415, merged) -- finalizeAccessRequestApproval runs the grant,
+// the approval record and the request-state update inside ONE
+// storage.WithTransaction, so a reported failure leaves nothing behind,
+// including the former compensating revert's own "approval_race_reverted"
+// audit row that produced the oracle (a) diff. Entry removed by FIX-2; #2415
+// should have dropped it itself (COMMON-RULES: "the PR that fixes #NNNN
+// removes its tolerance in the same PR").
+//
+// NO regression SEED is committed for #2407, deliberately -- it would be a
+// vacuous guard. Verified by replaying the issue's own input (REPLAY_HEX=
+// 4f002c3230303030, and its re-encoded equivalent 4f002c0000) against
+// internal/core/invitations.go checked out at 7d9d31d6^, i.e. the genuine
+// pre-fix code: the run PASSES, logging "ACCEPTABLE-BY-DESIGN: ... state
+// diverges only in outcome-log tables [AuditEvent]". onlyOutcomeLogTables
+// short-circuits before matchingKnownOpen is ever consulted, so this tuple
+// could not fail for either the fixed or the unfixed subject, and the
+// tolerance above had been dead code since that exemption landed. #2407's
+// real, non-vacuous guard is
+// internal/core.TestFinalizeAccessRequestApproval_ApprovalRecordFailureRevertsGrant,
+// which asserts the EFFECT ("a reported failure must leave ZERO new audit
+// rows") and does go red against that same pre-fix file.
 var knownOpenTolerances = []knownOpenTolerance{
+	// #2807 (filed 2026-10-05 from THIS PR's own fuzz-changed run, shard 0,
+	// minimized input committed by the fuzzer as
+	// testdata/fuzz/FuzzStorageFaultOperations/cc44f6cd6ac24cd8; pre-minimization
+	// REPLAY_HEX=d820633230): a GetUserRoles error AFTER the passkey assertion
+	// already verified leaves the reserved LoginAttempt consumed and an
+	// MFAStepUpGrant committed, while completeLogin reports a 500 and revokes
+	// only the Session (#2412). Confirmed PRE-EXISTING on origin/main @ cbb9863e
+	// by replaying the same input directly against it -- this PR touches no
+	// production code (it removes a dead tolerance and adds two seedIntent
+	// entries), so the finding is not ours. Scoped to this one tuple and this one
+	// table set, per COMMON-RULES: not table-wide, not method-wide.
+	// Remove this entry in the PR that fixes #2807.
+	{
+		op: "REST POST /auth/webauthn/login/finish", method: "GetUserRoles", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2807", expires: "2026-10-19",
+		tables:     []string{"MFAStepUpGrant", "LoginAttempt", "AuditEvent"},
+		findingDoc: "#2807",
+	},
 	// docs/findings/2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md
 	// (SESSION-FI, AT5): NOT a bug -- BulkRejectAccessRequests' unconditional
 	// summary audit event legitimately differs in content (X/Y counts) when
@@ -974,6 +1113,115 @@ var knownOpenTolerances = []knownOpenTolerance{
 		tables:     []string{"AccessReviewItem"},
 		findingDoc: "#2606",
 	},
+	// ---- SESSION ORACLE-A-1, item 1: unblock the merge queue --------------
+	// Two pre-existing oracle (a) error-branch findings landed on main unfixed
+	// (SESSION-STALE-PR-1: both were found on PRs that touched neither code
+	// path -- #2719 and #2461 -- and both merged with the fuzz leg red, so they
+	// now fail UNRELATED PRs at random). Both confirmed to reproduce on
+	// pristine main at 98031965 by direct replay before these entries were
+	// written, so neither is caused by any open PR.
+	//
+	// Both are the SAME shape, and the shape is one this repo has ALREADY
+	// reviewed, classified and machine-enforced as correct:
+	// docs/atomicity-exempt.tsv class B, "consume-first by design: a single-use
+	// value is consumed BEFORE later work and must stay consumed even if later
+	// work fails (replay protection)". Both functions carry their own
+	// `// atomicity: consume-first by design` marker comment and a verifying
+	// *_FailsClosed test. Oracle (a)'s error branch has no knowledge of that
+	// ledger, so it reads a deliberately-retained consumption as a partial
+	// commit -- the same harness-oracle gap as #2549's stepup entry above, not
+	// a product bug. "Fixing" either by rolling the consume back into the
+	// transaction would un-consume a single-use token on a later failure,
+	// which is precisely what class B and those tests forbid.
+	//
+	// Each entry is scoped to ONE op + ONE storage method + ONE fault kind +
+	// ONE nth + the exact tables the consumption can touch: a diff that
+	// includes anything else is a DIFFERENT finding and must still fail
+	// loudly. Remove each when its issue is resolved (see this session's
+	// report: the recommended resolution is to teach oracle (a) the class-B
+	// ledger, not to change either function).
+	//
+	// #2817's tolerance was here and is REMOVED by this PR -- oracle (a) now
+	// knows the class-B consume-first shape directly
+	// (consumeFirstAccountsForDiff, consume_first_oracle_test.go), so the
+	// exemption is derived from docs/atomicity-exempt.tsv rather than listed
+	// as an open finding, and it covers EVERY storage method on the op rather
+	// than the one method a tolerance row could name.
+	//
+	// #2814's tolerance was here and is REMOVED by this PR, for the same
+	// reason as #2817's directly above: CompleteSAML is itself a class-B
+	// consume-first row, so oracle (a) now derives the exemption from
+	// docs/atomicity-exempt.tsv (consumeFirstAccountsForDiff,
+	// consume_first_oracle_test.go) instead of carrying it as an open finding
+	// against one named storage method.
+	// #2817: DisableMFA (internal/core/mfa.go) runs requireReauth -- itself a
+	// class-B row (atomicity-exempt.tsv:61) -- BEFORE the
+	// SetUserMFAEnabled+DeleteMFAForUser transaction. requireReauth's
+	// MarkTOTPStepUsed burns the matched TOTP time-step
+	// (MFASecret.LastUsedStep) and writes an "mfa.reauth_verified" AuditEvent
+	// on c.storage, outside that transaction, so a DeleteMFAForUser error
+	// rolls the disable back and correctly leaves the step burned.
+	{
+		op: "REST POST /api/v1/auth/mfa/disable", method: "DeleteMFAForUser", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2817", expires: "2026-10-17",
+		tables:     []string{"AuditEvent", "MFASecret"},
+		findingDoc: "#2817",
+	},
+	// #2814: CompleteSAML (internal/core/sso.go) is itself a class-B row
+	// (atomicity-exempt.tsv:76) -- ConsumeSSOLoginState burns the single-use
+	// RelayState row first, by design, because st.Nonce is what the
+	// InResponseTo check validates against and a replayable state row would
+	// let a captured (RelayState, SAMLResponse) pair re-drive user
+	// resolution/provisioning. A GetUserByUsername error inside
+	// resolveSSOUser therefore fails closed with the state correctly consumed.
+	{
+		op: "REST POST /auth/saml/{provider}/acs", method: "GetUserByUsername", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2814", expires: "2026-10-17",
+		tables:     []string{"SSOLoginState"},
+		findingDoc: "#2814",
+	},
+	// #2842 (ORACLE-A-1). Surfaced by CI's fuzz shard 0 + fuzz-changed on
+	// #2821, whose entire diff was the two auth/MFA/SAML rows directly above
+	// -- nothing in the secrets path. Confirmed to reproduce on pristine
+	// origin/main by direct replay before this entry was written.
+	//
+	// NOT a bug: RollbackSecret (internal/core/versions.go) re-instates a
+	// historical value via RotateSecret, whose storeNextSecretVersion +
+	// c.storage.UpdateSecret pair is DELIBERATELY non-transactional.
+	// updateSecretWithNewVersion's own doc comment
+	// (internal/core/secrets_versions.go) says so, and gives the reason by
+	// contrast with the UpdateSecret path it DID make transactional: for a
+	// rotation the new value may already have been applied to an external
+	// upstream system, and the version row is the only record of it, so
+	// rolling it back would trade a loud failure for silent loss of the only
+	// record of a live credential. The version row surviving the node update's
+	// failure is the intended outcome.
+	//
+	// Deliberately a tolerance and NOT a consumeFirstExemptions entry: that
+	// mechanism requires a class-B (consume-first) row in
+	// docs/atomicity-exempt.tsv, enforced by
+	// TestConsumeFirstExemptions_MatchAtomicityLedger, precisely so it cannot
+	// become a general "state on an error path is fine" carve-out. Nothing is
+	// consumed here -- the rationale is "must not roll back", a different
+	// claim. #2842 asks for RotateSecret to be classified in that ledger and
+	// for oracle (a) to key off the classification; remove this entry then.
+	//
+	// Scoping is sufficient here, and that is measured rather than assumed: a
+	// DERIVED sweep of this op -- run it once unfaulted, read the real call
+	// log off FaultyStorage.Calls(), then fault every (method, nth) pair the
+	// op actually makes -- enumerated all 96 real pairs and found exactly ONE
+	// oracle violation, the UpdateSecret#1 pair below. So unlike #2548/#2565
+	// (where the write lands before any faulted call, making every method on
+	// the op reproduce it and forcing a method wildcard), this one really is
+	// specific to the single call that straddles the version write. No
+	// wildcard needed, and no #2549-style treadmill of one new row per red
+	// build expected on this op.
+	{
+		op: "REST POST /api/v1/secrets/{id}/rollback", method: "UpdateSecret", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2842", expires: "2026-10-17",
+		tables:     []string{"SecretVersion"},
+		findingDoc: "#2842",
+	},
 }
 
 func matchingKnownOpen(in oracleInput, oracle string, diff []string) *knownOpenTolerance {
@@ -1205,10 +1453,11 @@ func checkOracles(t *testing.T, in oracleInput) {
 		// writeAccessLog), so an effect-then-error delete legitimately has the
 		// secret gone but no access-log row. It only became visible to this
 		// oracle once secret_access_logs was migrated on every install (#2314).
-		excluded := append(append([]string{}, outcomeLogTables...), effectThenErrorExtraExcludedTables(in.op, in.method)...)
-		nonAuditBefore := hashExcluding(in.before, excluded...)
-		nonAuditAfter := hashExcluding(in.after, excluded...)
-		nonAuditRef := hashExcluding(in.refAfter, excluded...)
+		excludedTables := append(append([]string{}, outcomeLogTables...), effectThenErrorExtraExcludedTables(in.op, in.method)...)
+		excludedColumns := effectThenErrorExtraExcludedColumns(in.op, in.method)
+		nonAuditBefore := hashExcludingColumns(in.before, excludedTables, excludedColumns)
+		nonAuditAfter := hashExcludingColumns(in.after, excludedTables, excludedColumns)
+		nonAuditRef := hashExcludingColumns(in.refAfter, excludedTables, excludedColumns)
 		if nonAuditAfter != nonAuditBefore && nonAuditAfter != nonAuditRef {
 			if multiStepFirstCallAmbiguousCommit(in.op, in.method, in.nth) {
 				t.Logf("FLAG FOR REVIEW (not auto-fixed, not silently accepted): %s: state matches neither "+
@@ -1226,6 +1475,43 @@ func checkOracles(t *testing.T, in oracleInput) {
 	default:
 		if in.after.Hash != in.before.Hash {
 			diff := diffTables(in.before, in.after)
+			// Same 3-layer tolerance as the SUCCESS branch above, reused here for
+			// a reported ERROR that still changed state: a function can commit a
+			// real effect and then fail on a later, best-effort or documented-
+			// partial step (see opScopedBestEffortTables' MigrateUserToMachine
+			// entry and bestEffortTables generally) just as easily on the error
+			// path as on the success path — there is nothing about "the caller
+			// was told ERROR" that makes a best-effort audit-log failure, or a
+			// documented partial-commit-on-error design, suddenly a bug.
+			if acceptableByDesign(in.method, diff) {
+				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in %v, which %s explicitly documents "+
+					"as best-effort/non-fatal (see acceptableByDesign's doc comment)", label, diff, in.method)
+				return
+			}
+			if opScopedAcceptableByDesign(in.op, in.method, in.nth, diff, in.execLog) {
+				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in %v, which this op/method pair "+
+					"explicitly documents as best-effort/non-fatal (see opScopedBestEffortTables' doc comment)",
+					label, diff)
+				return
+			}
+			if onlyOutcomeLogTables(diff) {
+				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in outcome-log tables %v — see "+
+					"onlyOutcomeLogTables' doc comment on the SUCCESS branch above; the same reasoning applies "+
+					"to a reported ERROR", label, diff)
+				return
+			}
+			// Fourth layer, ERROR branch only: the consume-first shape
+			// docs/atomicity-exempt.tsv already classifies as correct (class B).
+			// Accepts ONLY when the entire before→after change is the op's
+			// declared single-use consumption — see consume_first_oracle_test.go
+			// for exactly what it verifies and, as importantly, what it does not.
+			if e, ok := consumeFirstAccountsForDiff(in); ok {
+				t.Logf("ACCEPTABLE-BY-DESIGN (consume-first, docs/atomicity-exempt.tsv class B, %s): %s: "+
+					"state diverges in %v, but every table and column OUTSIDE this op's declared single-use "+
+					"consumption is byte-for-byte identical to this run's own pre-fault state — %s",
+					e.fn, label, diff, e.why)
+				return
+			}
 			report("a", diff, "%s: ORACLE (a) VIOLATION — reported an ERROR but logical state changed anyway "+
 				"(partial commit). Differing tables: %v", label, diff)
 		}
@@ -1234,7 +1520,7 @@ func checkOracles(t *testing.T, in oracleInput) {
 
 // outcomeLogTables record what the caller was TOLD happened (audit trail, secret
 // access log), not application state; the oracles compare them separately.
-var outcomeLogTables = []string{"AuditEvent", "SecretAccessLog"}
+var outcomeLogTables = []string{"AuditEvent", "SecretAccessLog", "Notification"}
 
 // onlyOutcomeLogTables reports whether every differing table is an outcome log.
 func onlyOutcomeLogTables(diff []string) bool {
@@ -1348,6 +1634,70 @@ func hashExcluding(snap dbSnapshot, excludeTables ...string) string {
 	return hex.EncodeToString(h[:])
 }
 
+// hashExcludingColumns is hashExcluding's column-scoped sibling (#2410): the
+// tables in excludeTables are dropped from the comparison entirely, same as
+// hashExcluding; each table named in excludeColumns instead STAYS in the
+// comparison, but has the named column(s) stripped from every row before
+// that table's own hash is recomputed -- so a difference in some OTHER
+// column of that same table is still caught, while an already-documented,
+// legitimately-divergent column doesn't make the whole table (and therefore
+// the whole snapshot) look different. excludeColumns may be nil.
+func hashExcludingColumns(snap dbSnapshot, excludeTables []string, excludeColumns map[string][]string) string {
+	exclude := make(map[string]bool, len(excludeTables))
+	for _, t := range excludeTables {
+		exclude[t] = true
+	}
+	var lines []string
+	for name, ts := range snap.Tables {
+		if exclude[name] {
+			continue
+		}
+		h := ts.Hash
+		if cols := excludeColumns[name]; len(cols) > 0 {
+			h = rowsHashExcludingColumns(ts.Rows, cols)
+		}
+		lines = append(lines, name+":"+h)
+	}
+	sort.Strings(lines)
+	h := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+	return hex.EncodeToString(h[:])
+}
+
+// rowsHashExcludingColumns recomputes one table's canonical hash (same
+// construction snapshotDB uses: sorted per-row JSON, newline-joined, SHA-256)
+// with columns stripped from each row's already-canonicalized JSON first.
+// rows are always this file's own canonicalRow output (sorted-key JSON of a
+// model's exported, non-excluded fields -- see snapshot_test.go) and never
+// fuzz input; a row that fails to parse as JSON is kept as-is rather than
+// silently dropped, since that would only happen if canonicalRow's own
+// output shape changed underneath this function.
+func rowsHashExcludingColumns(rows []string, columns []string) string {
+	strip := make(map[string]bool, len(columns))
+	for _, c := range columns {
+		strip[c] = true
+	}
+	canon := make([]string, 0, len(rows))
+	for _, row := range rows {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(row), &fields); err != nil {
+			canon = append(canon, row)
+			continue
+		}
+		for c := range strip {
+			delete(fields, c)
+		}
+		b, err := json.Marshal(fields) // map[string]json.RawMessage marshals with sorted keys
+		if err != nil {
+			canon = append(canon, row)
+			continue
+		}
+		canon = append(canon, string(b))
+	}
+	sort.Strings(canon)
+	h := sha256.Sum256([]byte(strings.Join(canon, "\n")))
+	return hex.EncodeToString(h[:])
+}
+
 // TestOpScopedAcceptableByDesign_ProjectWithTransaction_RequiresNthCallTwo is
 // the coordinator-requested split-out check (PR #2252 review) for the
 // "REST POST /api/v1/projects"/WithTransaction/[Environment] exemption above:
@@ -1399,4 +1749,52 @@ func TestOpScopedAcceptableByDesign_ProjectWithTransaction_RequiresNthCallTwo(t 
 func TestOpScopedAcceptableByDesign_UnrestrictedEntriesIgnoreNthCall(t *testing.T) {
 	assert.True(t, opScopedAcceptableByDesign("REST POST /api/v1/users/", "AssignRole", 1, []string{"UserRole"}, ""))
 	assert.True(t, opScopedAcceptableByDesign("REST POST /api/v1/users/", "GetRoleByName", 99, []string{"UserRole"}, ""))
+}
+
+// TestHashExcludingColumns_ColumnScopedExclusion is #2410's direct proof:
+// excluding one column from one table must mask ONLY a change isolated to
+// that column, and still catch a change to any OTHER column on the same
+// table -- the exact distinction a whole-table exclusion (hashExcluding, and
+// the effectThenErrorExtraExclusions `tables` field) cannot make, and
+// exactly why this entry needed `columns` instead.
+func TestHashExcludingColumns_ColumnScopedExclusion(t *testing.T) {
+	mkSnap := func(revokeError, other string) dbSnapshot {
+		row := fmt.Sprintf(`{"Other":%q,"RevokeError":%q}`, other, revokeError)
+		h := sha256.Sum256([]byte(row))
+		ts := tableSnapshot{Table: "DynamicSecretLease", Hash: hex.EncodeToString(h[:]), Rows: []string{row}}
+		return dbSnapshot{Tables: map[string]tableSnapshot{"DynamicSecretLease": ts}}
+	}
+
+	base := mkSnap("", "same")
+	onlyRevokeErrorDiffers := mkSnap("boom", "same")
+	otherColumnDiffers := mkSnap("", "different")
+
+	excludeColumns := map[string][]string{"DynamicSecretLease": {"RevokeError"}}
+
+	assert.Equal(t,
+		hashExcludingColumns(base, nil, excludeColumns),
+		hashExcludingColumns(onlyRevokeErrorDiffers, nil, excludeColumns),
+		"a change isolated to the excluded column must not change the hash")
+
+	assert.NotEqual(t,
+		hashExcludingColumns(base, nil, excludeColumns),
+		hashExcludingColumns(otherColumnDiffers, nil, excludeColumns),
+		"a change to a DIFFERENT column on the same table must still be caught -- column exclusion must not become a whole-table one")
+}
+
+// TestHashExcludingColumns_MatchesHashExcludingWhenNoColumns proves
+// hashExcludingColumns, called with a nil excludeColumns map, reduces to
+// exactly hashExcluding's whole-table-exclusion behavior -- the pre-#2410
+// callers of hashExcluding (world_reuse_soundness_test.go,
+// mixed_principal_authority_fuzz_test.go, fuzz_shared_secrets_view_test.go)
+// still call hashExcluding directly and are unaffected by this change; this
+// proves the function the oracle (d) call site switched TO would have given
+// them the identical answer, for the entries that only ever used `tables`.
+func TestHashExcludingColumns_MatchesHashExcludingWhenNoColumns(t *testing.T) {
+	snap := dbSnapshot{Tables: map[string]tableSnapshot{
+		"A": {Table: "A", Hash: "aaa"},
+		"B": {Table: "B", Hash: "bbb"},
+	}}
+	assert.Equal(t, hashExcluding(snap, "A"), hashExcludingColumns(snap, []string{"A"}, nil))
+	assert.Equal(t, hashExcluding(snap), hashExcludingColumns(snap, nil, nil))
 }

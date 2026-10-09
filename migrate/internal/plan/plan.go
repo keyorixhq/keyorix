@@ -181,6 +181,8 @@ func Apply(ctx context.Context, api target.API, items []Item, force bool) []Resu
 }
 
 func applyOne(ctx context.Context, api target.API, item Item, force bool) Result {
+	// Every write records which source item it came from on the target's audit event (#2545).
+	ctx = target.WithSourceOrigin(ctx, item.Entry.Path)
 	switch item.Outcome {
 	case Skip, Error:
 		return Result{Item: item, Ran: false}

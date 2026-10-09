@@ -21,7 +21,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"addProjectMember":                   reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/members
 	"assignPermissionToRole":             reasonSchemaNotYetWritten, // post /api/v1/roles/{id}/permissions
 	"attestProjectAccessReview":          reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/attest
-	"authConsumeSetup":                   reasonSchemaNotYetWritten, // post /auth/setup/consume
 	"authLogout":                         reasonSchemaNotYetWritten, // post /auth/logout
 	"authPasswordReset":                  reasonSchemaNotYetWritten, // post /auth/password-reset
 	"changePassword":                     reasonSchemaNotYetWritten, // post /api/v1/auth/change-password
@@ -63,7 +62,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getUnusedSecrets":                   reasonSchemaNotYetWritten, // get /api/v1/secrets/usage/unused
 	"getUser":                            reasonSchemaNotYetWritten, // get /api/v1/users/{id}
 	"getUserByEmail":                     reasonSchemaNotYetWritten, // get /api/v1/users/by-email
-	"getUserMembershipsForUser":          reasonSchemaNotYetWritten, // get /api/v1/users/{id}/memberships
 	"grantMachineRole":                   reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/machine-identities/{machineId}/roles
 	"inviteMember":                       reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/memberships
 	"liftLegalHold":                      reasonSchemaNotYetWritten, // delete /api/v1/legal-hold
@@ -215,7 +213,14 @@ var schemaExemptOperations = map[string]bool{
 // (loud, not silent -- an out-of-date entry here fails closed).
 var exercisingTests = map[string][]string{
 	"authGetSetupToken":             {"TestGetSetupToken_HappyPath_S11"},
-	"authLogin":                     {"TestLogin_HappyPath_S8"},
+	"authLogin":                     {"TestLogin_HappyPath_S8", "TestContractQA2_Login_MFARequiredBranch"},
+	"authConsumeSetup":              {"TestConsumeSetup_HappyPath_S11"},
+	"enrollMFA":                     {"TestContractQA2_EnrollMFA"},
+	"activateMFA":                   {"TestContractQA2_ActivateMFA"},
+	"disableMFA":                    {"TestContractQA2_DisableMFA"},
+	"recoveryCodesStatus":           {"TestContractQA2_RecoveryCodesStatus"},
+	"regenerateMFARecoveryCodes":    {"TestContractQA2_RegenerateRecoveryCodes"},
+	"verifyMFALogin":                {"TestContractQA2_VerifyMFALogin"},
 	"authRefresh":                   {"TestRefreshToken_ValidToken_S7"},
 	"healthCheck":                   {"TestHealthCheck"},
 	"getVersion":                    {"TestVersionHandler_ExposesOnlySkewFields"},
@@ -369,4 +374,7 @@ var exercisingTests = map[string][]string{
 	"createProjectEnvironment": {"TestContractCatalog_CreateProjectEnvironment"},
 	"listEnvironments":         {"TestContractCatalog_ListEnvironments"},
 	"cloneEnvironment":         {"TestContractCatalog_CloneEnvironment"},
+	// #2781 (one definition of project membership) --
+	// users_memberships_2781_test.go.
+	"getUserMembershipsForUser": {"TestContract2781_GetUserMembershipsForUser"},
 }

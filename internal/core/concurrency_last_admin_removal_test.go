@@ -33,11 +33,16 @@ func TestConcurrency_RemoveUserRole_CannotStrandLastTwoAdmins(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
-		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
+		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{}, &models.User{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.AuditEvent{},
 	))
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
+	// #2658: the last-admin guard counts only live (existing, active) holders,
+	// so each admin grant needs a real user row behind it.
+	for _, id := range []uint{100, 101} {
+		require.NoError(t, db.Create(&models.User{ID: id, Username: fmt.Sprintf("admin-%d", id), Email: fmt.Sprintf("admin-%d@example.com", id), IsActive: true, AccountState: "active"}).Error)
+	}
 	require.NoError(t, db.Create(&models.UserRole{UserID: 100, RoleID: 1}).Error) // admin #1, global
 	require.NoError(t, db.Create(&models.UserRole{UserID: 101, RoleID: 1}).Error) // admin #2, global
 
@@ -94,11 +99,16 @@ func TestConcurrency_RemoveUserRole_RepeatedPairsNeverStrandInstall(t *testing.T
 			db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 			require.NoError(t, err)
 			require.NoError(t, db.AutoMigrate(
-				&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
+				&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{}, &models.User{},
 				&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 				&models.Project{}, &models.Environment{}, &models.AuditEvent{},
 			))
 			require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
+			// #2658: the last-admin guard counts only live (existing, active) holders,
+			// so each admin grant needs a real user row behind it.
+			for _, id := range []uint{200, 201} {
+				require.NoError(t, db.Create(&models.User{ID: id, Username: fmt.Sprintf("admin-%d", id), Email: fmt.Sprintf("admin-%d@example.com", id), IsActive: true, AccountState: "active"}).Error)
+			}
 			require.NoError(t, db.Create(&models.UserRole{UserID: 200, RoleID: 1}).Error)
 			require.NoError(t, db.Create(&models.UserRole{UserID: 201, RoleID: 1}).Error)
 

@@ -61,12 +61,12 @@ func TestRoleDescriptionByName_Found(t *testing.T) {
 		writeJSON(w, `{"data":{"id":5,"name":"vault-migrated-read","description":"migrate.source-id: abc123"}}`)
 	})
 	c := fakeKeyorix(t, mux)
-	desc, found, err := c.RoleDescriptionByName(context.Background(), "vault-migrated-read")
+	id, desc, found, err := c.RoleDescriptionByName(context.Background(), "vault-migrated-read")
 	if err != nil {
 		t.Fatalf("RoleDescriptionByName: %v", err)
 	}
-	if !found || desc != "migrate.source-id: abc123" {
-		t.Fatalf("found=%v desc=%q", found, desc)
+	if !found || desc != "migrate.source-id: abc123" || id != 5 {
+		t.Fatalf("id=%d found=%v desc=%q", id, found, desc)
 	}
 }
 
@@ -77,7 +77,7 @@ func TestRoleDescriptionByName_NotFound(t *testing.T) {
 		writeJSON(w, `{"error":{"message":"not found"}}`)
 	})
 	c := fakeKeyorix(t, mux)
-	_, found, err := c.RoleDescriptionByName(context.Background(), "nope")
+	_, _, found, err := c.RoleDescriptionByName(context.Background(), "nope")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

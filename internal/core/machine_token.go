@@ -31,9 +31,20 @@ const (
 // ValidateMachineToken/CurrentMachineTokenRestriction on the same two
 // conditions ErrPATRevoked/ErrPATExpired cover for PATs — the caller (auth
 // middleware) surfaces either as a 401.
+//
+// ErrMachineIdentityNotActive is the THIRD such condition (#2518): the
+// credential itself is fine but its owning machine identity is no longer
+// active (suspended / revoked / deprovisioned). CurrentMachineTokenRestriction's
+// own doc comment already named it one of the signals its caller "must treat as
+// deny the request, not a transient lookup failure to degrade past" — but it
+// returned a plain fmt.Errorf, which the auth middleware's cache-hit path
+// cannot tell apart from a storage blip, so it fell into the
+// degrade-to-stale-snapshot branch instead (INV-MW-05). A typed sentinel is
+// what makes the claim in that doc comment actually checkable by the caller.
 var (
-	ErrMachineTokenRevoked = errors.New("token revoked")
-	ErrMachineTokenExpired = errors.New("token expired")
+	ErrMachineTokenRevoked      = errors.New("token revoked")
+	ErrMachineTokenExpired      = errors.New("token expired")
+	ErrMachineIdentityNotActive = errors.New("machine identity is not active")
 )
 
 // IssueMachineTokenResult carries the freshly minted token. PlainToken is shown
@@ -244,10 +255,22 @@ func (c *KeyorixCore) ClassifyMachineToken(ctx context.Context, projectID, machi
 		return cred, nil // no-op
 	}
 	old := cred.Classification
-	cred.Classification = level
-	if err := c.storage.UpdateMachineIdentityCredential(ctx, cred); err != nil {
+	// #2696: a column-scoped write of `classification` alone, conditional on the
+	// value this function actually read. The previous full-row Save carried every
+	// other column of the unlocked read back with it — `revoked` included — so a
+	// RevokeMachineToken committing on another replica between the read above and
+	// this write was silently reverted and the revoked token authenticated again.
+	// A no-match means the label moved under us; fail closed rather than clobber
+	// the concurrent classifier's value, and write no audit event (nothing of ours
+	// was persisted).
+	matched, err := c.storage.SetMachineIdentityCredentialClassification(ctx, cred.ID, old, level)
+	if err != nil {
 		return nil, err
 	}
+	if !matched {
+		return nil, fmt.Errorf("token classification changed concurrently; re-read and retry")
+	}
+	cred.Classification = level
 	aid, pid := actorID, m.ProjectID
 	diff := fmt.Sprintf(`{"classification":{"before":%q,"after":%q}}`, old, level)
 	c.writeAuditEventDiff(ctx, "machine_identity.token_classified", &aid, nil, &pid, "",
@@ -279,10 +302,18 @@ func (c *KeyorixCore) ClassifyMachineTokenByID(ctx context.Context, credentialID
 		return nil // no-op
 	}
 	old := cred.Classification
-	cred.Classification = level
-	if err := c.storage.UpdateMachineIdentityCredential(ctx, cred); err != nil {
+	// #2696: same column-scoped conditional write as ClassifyMachineToken's —
+	// see its comment. This function has no production caller today, which is
+	// precisely why it must not be left holding the full-row primitive for
+	// whoever adds one.
+	matched, err := c.storage.SetMachineIdentityCredentialClassification(ctx, cred.ID, old, level)
+	if err != nil {
 		return err
 	}
+	if !matched {
+		return fmt.Errorf("token classification changed concurrently; re-read and retry")
+	}
+	cred.Classification = level
 	var pid *uint
 	if m, err := c.storage.GetMachineIdentity(ctx, cred.MachineIdentityID); err == nil {
 		pid = &m.ProjectID
@@ -306,6 +337,9 @@ func (c *KeyorixCore) ClassifyMachineTokenByID(ctx context.Context, credentialID
 // reject outright for arriving from a disallowed network. The returned
 // credential id lets the caller invoke TouchMachineTokenLastUsed itself, once
 // its own restriction check has actually passed.
+//
+// A storage failure while reading the machine's roles returns
+// ErrRoleResolutionUnavailable (#2748) — never an empty role list.
 func (c *KeyorixCore) ValidateMachineToken(ctx context.Context, raw string) (*models.MachineIdentity, []string, *MachineTokenRestriction, uint, error) {
 	if !strings.HasPrefix(raw, machineTokenPrefix) {
 		return nil, nil, nil, 0, fmt.Errorf("not a machine token")
@@ -325,12 +359,22 @@ func (c *KeyorixCore) ValidateMachineToken(ctx context.Context, raw string) (*mo
 		return nil, nil, nil, 0, fmt.Errorf("machine identity not found")
 	}
 	if m.State != MachineActive {
-		return nil, nil, nil, 0, fmt.Errorf("machine identity is %s", m.State)
+		// Same sentinel as CurrentMachineTokenRestriction's identical check
+		// (#2518). Not load-bearing here — every caller of this function denies
+		// on any error — but a sibling condition returning a differently-typed
+		// error is exactly how the cache-hit path came to be unable to see it,
+		// so the two are kept in step.
+		return nil, nil, nil, 0, fmt.Errorf("%w: %s", ErrMachineIdentityNotActive, m.State)
 	}
 
 	roles, err := c.storage.GetMachineRoles(ctx, m.ID)
 	if err != nil {
-		return m, []string{}, machineRestrictionFrom(cred), cred.ID, nil
+		// #2748: fail the validation with the same distinguishable, retryable
+		// error ValidatePATToken/ValidateSessionToken use (#1944) instead of
+		// returning a valid-looking machine principal with an empty role list.
+		// Both user-credential paths were fixed by #1944; these two machine
+		// paths were missed by it. See ErrRoleResolutionUnavailable.
+		return nil, nil, nil, 0, ErrRoleResolutionUnavailable
 	}
 	roleNames := make([]string, len(roles))
 	for i, r := range roles {
@@ -386,7 +430,14 @@ func (c *KeyorixCore) CurrentMachineTokenRestriction(ctx context.Context, raw st
 		return nil, ErrMachineTokenExpired
 	}
 	if identityState != MachineActive {
-		return nil, fmt.Errorf("machine identity is %s", identityState)
+		// #2518: wrap the typed sentinel so the auth middleware's cache-hit path
+		// can distinguish this DEFINITIVE deny from an indeterminate storage
+		// error, while keeping the concrete state in the message for logs. A
+		// bare fmt.Errorf here meant suspending a machine identity took up to
+		// validTokenTTL to take effect on every replica other than the one that
+		// ran the suspension (only that one flushes via
+		// SetMachineTokenCacheFlusher).
+		return nil, fmt.Errorf("%w: %s", ErrMachineIdentityNotActive, identityState)
 	}
 	return machineRestrictionFrom(cred), nil
 }
@@ -413,6 +464,29 @@ func machineRestrictionFrom(cred *models.MachineIdentityCredential) *MachineToke
 	return &MachineTokenRestriction{AllowedCIDRs: cidrs}
 }
 
+// requireEnvironmentInProject fails closed unless scope.EnvironmentID is 0
+// (global) or names an environment of scope.ProjectID. environment_id is
+// caller-supplied, and a machine-role grant or removal scoped to (project A, an
+// environment of project B) must never be stored or acted on (#2595). Same check
+// as CreateSecret / dynamic secrets / rotation policies. Shared by
+// AssignMachineRole and RemoveMachineRole so the two cannot drift.
+func (c *KeyorixCore) requireEnvironmentInProject(ctx context.Context, scope Scope) error {
+	if scope.EnvironmentID == 0 {
+		return nil
+	}
+	env, err := c.storage.GetEnvironment(ctx, scope.EnvironmentID)
+	if err != nil {
+		if !isEnvironmentNotFoundErr(err) {
+			return fmt.Errorf("failed to verify target environment %d: %w", scope.EnvironmentID, err)
+		}
+		return fmt.Errorf("%s: environment %d not found", i18n.T("ErrorValidation", nil), scope.EnvironmentID)
+	}
+	if env.ProjectID != scope.ProjectID {
+		return fmt.Errorf("%s: environment %d does not belong to project %d", i18n.T("ErrorValidation", nil), scope.EnvironmentID, scope.ProjectID)
+	}
+	return nil
+}
+
 // AssignMachineRole grants a role to a machine identity at the given scope and
 // audits it. The machine must belong to scope.ProjectID — the caller is only
 // proven to hold roles.assign at that project, so a machine in another project
@@ -432,21 +506,8 @@ func (c *KeyorixCore) AssignMachineRole(ctx context.Context, machineID, roleID u
 	if err != nil {
 		return err
 	}
-	// An environment-scoped grant must name an environment of THIS project (#2595):
-	// environment_id is caller-supplied, and a grant scoped to (project A, an
-	// environment of project B) must never be stored. Fail closed, same check as
-	// CreateSecret / dynamic secrets / rotation policies.
-	if scope.EnvironmentID != 0 {
-		env, eerr := c.storage.GetEnvironment(ctx, scope.EnvironmentID)
-		if eerr != nil {
-			if !isEnvironmentNotFoundErr(eerr) {
-				return fmt.Errorf("failed to verify target environment %d: %w", scope.EnvironmentID, eerr)
-			}
-			return fmt.Errorf("%s: environment %d not found", i18n.T("ErrorValidation", nil), scope.EnvironmentID)
-		}
-		if env.ProjectID != scope.ProjectID {
-			return fmt.Errorf("%s: environment %d does not belong to project %d", i18n.T("ErrorValidation", nil), scope.EnvironmentID, scope.ProjectID)
-		}
+	if err := c.requireEnvironmentInProject(ctx, scope); err != nil {
+		return err
 	}
 	if _, err := c.storage.GetRole(ctx, roleID); err != nil {
 		return err
@@ -476,15 +537,47 @@ func (c *KeyorixCore) AssignMachineRole(ctx context.Context, machineID, roleID u
 }
 
 // RemoveMachineRole revokes a machine identity's role grant at the given scope.
+// scope.EnvironmentID, when non-zero, must name an environment of scope.ProjectID
+// (fail closed, same as AssignMachineRole); storage matches the scope exactly, so
+// a project-wide (EnvironmentID 0) removal never touches an environment-scoped grant.
+//
+// Uses the SAME lock key as AssignMachineRole (sodGrantLockKey("machine", machineID)),
+// not a separate one: a grant and a removal racing on the same machine identity must
+// serialize against each other too, not just against other grants/removals of their
+// own kind (GUARD-2, check-then-act lock guard).
 func (c *KeyorixCore) RemoveMachineRole(ctx context.Context, machineID, roleID uint, scope Scope, actorID uint) error {
 	m, err := c.machineInProject(ctx, scope.ProjectID, machineID)
 	if err != nil {
 		return err
 	}
-	if err := c.storage.RemoveMachineRole(ctx, machineID, roleID, scope); err != nil {
+	return c.withMachineRoleRemovalGuards(ctx, machineID, scope, func(ctx context.Context) error {
+		return c.removeMachineRoleWriteOn(ctx, c.storage, c.auditNow(), m, roleID, scope, actorID)
+	})
+}
+
+// withMachineRoleRemovalGuards runs write under exactly the named lock and
+// scope validation a machine-role removal requires — hoisted out of
+// RemoveMachineRole so the access-review revoke transaction (#2676) reuses this
+// decision rather than restating it, the same arrangement
+// withUserRoleRemovalGuards / withGroupRoleRemovalGuards use for their
+// respective principals.
+func (c *KeyorixCore) withMachineRoleRemovalGuards(ctx context.Context, machineID uint, scope Scope, write func(ctx context.Context) error) error {
+	return c.storage.WithNamedLock(ctx, sodGrantLockKey("machine", machineID), func(ctx context.Context) error {
+		if err := c.requireEnvironmentInProject(ctx, scope); err != nil {
+			return err
+		}
+		return write(ctx)
+	})
+}
+
+// removeMachineRoleWriteOn is the machine-role removal's persistent effect
+// through an explicit storage handle and audit target — the machine counterpart
+// of removeUserRoleWriteOn.
+func (c *KeyorixCore) removeMachineRoleWriteOn(ctx context.Context, st storage.Storage, tgt auditTarget, m *models.MachineIdentity, roleID uint, scope Scope, actorID uint) error {
+	if err := st.RemoveMachineRole(ctx, m.ID, roleID, scope); err != nil {
 		return err
 	}
-	c.logMachineEvent(ctx, "machine_identity.role_removed", m, actorID)
+	c.logMachineEventOn(ctx, tgt, "machine_identity.role_removed", m, actorID)
 	return nil
 }
 

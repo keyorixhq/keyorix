@@ -289,7 +289,7 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 	// account went back to active. The result: a brand-new, fully valid PAT was
 	// spuriously rejected (401) for up to invalidTokenTTL, even though the account was
 	// already active again and nothing about that credential was ever wrong.
-	needsCacheEvictionSweep := AccountLoginBlocked(userID, state) || AccountRestricted(state)
+	needsCacheEvictionSweep := accountStateNeedsEvictionSweep(userID, state)
 	// G5 follow-up (#2402): skipping the sweep entirely on the "becoming active" branch
 	// left a DIFFERENT, narrower bug open — an EXISTING negative cache entry, written
 	// while the account WAS blocked/restricted (e.g. the very first use of a token
@@ -308,10 +308,67 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 
 	var sessionHashes []string
 	err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		hashes, serr := c.setAccountStateInTx(ctx, tx, userID, state)
+		sessionHashes = hashes
+		return serr
+	})
+	if err != nil {
+		return fmt.Errorf("failed to update account state: %w", err)
+	}
+	// Evict the captured session/PAT-token hashes from the auth cache — AFTER commit,
+	// so a rolled-back transaction never evicts a still-valid cache entry — so the new
+	// state is reflected on the very next request, not after the cache TTL. A
+	// blocked/restricted target TOMBSTONES (denies even a never-cached credential, since
+	// the whole point is "deny effective immediately"); a target becoming active only
+	// CLEARS an existing entry, never creates a new negative one (see needsCacheClearSweep's
+	// doc comment above for why these need different primitives, not just a different
+	// condition on the same one).
+	if needsCacheEvictionSweep {
+		c.invalidateTokenCache(sessionHashes...)
+	} else if needsCacheClearSweep {
+		c.clearCachedTokens(sessionHashes...)
+	}
+	aid := adminID
+	c.writeAuditEventFull(ctx, eventType, &aid, nil, nil, "",
+		fmt.Sprintf("user %d account state set to %s", userID, state))
+	return nil
+}
+
+// accountStateNeedsEvictionSweep reports whether a transition to state needs the
+// TOMBSTONING cache sweep (as opposed to the clear-only one). Extracted so
+// setAccountState and setAccountStateInTx's callers cannot disagree about which
+// primitive to use after commit — see setAccountState's own doc comment above
+// for why the two directions need different primitives rather than one
+// primitive under a different condition.
+func accountStateNeedsEvictionSweep(userID uint, state string) bool {
+	return AccountLoginBlocked(userID, state) || AccountRestricted(state)
+}
+
+// setAccountStateInTx is setAccountState's transaction body, extracted (#2867) so
+// a caller that must commit an account-state change TOGETHER with another write
+// can run both inside ONE WithTransaction. It returns the session/PAT token
+// hashes the caller must evict from the auth cache AFTER commit.
+//
+// The caller owns, and must do in this order: the userID validation and the
+// admin-rank ceiling check (BEFORE any write — an under-ranked actor must leave
+// nothing committed), accountStateMu, the WithTransaction, then post-commit the
+// cache sweep (pick the primitive with accountStateNeedsEvictionSweep) and the
+// audit event. setAccountState immediately above is the single-write caller and
+// is the reference for that ordering; MigrateUserToMachine
+// (migrate_user_to_machine.go) is the multi-write one.
+//
+// Writing the hashes to the caller rather than evicting here is deliberate: the
+// eviction must not happen until the transaction has actually committed, or a
+// rolled-back change evicts a still-valid cache entry.
+func (c *KeyorixCore) setAccountStateInTx(ctx context.Context, tx storage.Storage, userID uint, state string) ([]string, error) {
+	needsCacheEvictionSweep := accountStateNeedsEvictionSweep(userID, state)
+	needsCacheClearSweep := !needsCacheEvictionSweep
+	var sessionHashes []string
+	{
 		// The lock-guarded read is still needed for serialization (row lock + existence
 		// check) even though its returned user struct is no longer written back wholesale.
 		if _, err := tx.LockUserForUpdate(ctx, userID); err != nil {
-			return err
+			return nil, err
 		}
 		if needsCacheEvictionSweep || needsCacheClearSweep {
 			// Capture the user's current session-token HASHES BEFORE mutating so we can
@@ -334,7 +391,7 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 		}
 
 		if err := tx.SetAccountState(ctx, userID, state, c.now()); err != nil {
-			return err
+			return nil, err
 		}
 		// A state that blocks login must also terminate the user's existing sessions AND
 		// PATs, so suspension is effective immediately instead of lingering until the
@@ -348,28 +405,8 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 				sessionHashes = append(sessionHashes, hashes...)
 			}
 		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("failed to update account state: %w", err)
 	}
-	// Evict the captured session/PAT-token hashes from the auth cache — AFTER commit,
-	// so a rolled-back transaction never evicts a still-valid cache entry — so the new
-	// state is reflected on the very next request, not after the cache TTL. A
-	// blocked/restricted target TOMBSTONES (denies even a never-cached credential, since
-	// the whole point is "deny effective immediately"); a target becoming active only
-	// CLEARS an existing entry, never creates a new negative one (see needsCacheClearSweep's
-	// doc comment above for why these need different primitives, not just a different
-	// condition on the same one).
-	if needsCacheEvictionSweep {
-		c.invalidateTokenCache(sessionHashes...)
-	} else if needsCacheClearSweep {
-		c.clearCachedTokens(sessionHashes...)
-	}
-	aid := adminID
-	c.writeAuditEventFull(ctx, eventType, &aid, nil, nil, "",
-		fmt.Sprintf("user %d account state set to %s", userID, state))
-	return nil
+	return sessionHashes, nil
 }
 
 // activePATHashes returns the token hashes of all non-revoked PATs that have a hash,

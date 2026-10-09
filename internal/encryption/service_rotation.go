@@ -109,10 +109,11 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResu
 		// dynamic_secret_leases) are exactly the tables #422's sweep-gap fix added;
 		// silently under-reporting them left an operator with no visibility into
 		// whether that fix's own sweeps ran, even after the data itself was safe.
-		log.Printf("✅ Sweep committed: %d secret_versions, %d api_tokens, %d api_clients, %d password_resets, %d mfa_secrets, %d dynamic_secret_configs, %d dynamic_secret_leases re-encrypted (%d legacy AAD upgraded)",
+		log.Printf("✅ Sweep committed: %d secret_versions, %d api_tokens, %d api_clients, %d password_resets, %d mfa_secrets, %d dynamic_secret_configs, %d dynamic_secret_leases, %d notification_channels re-encrypted (%d legacy AAD upgraded)",
 			result.SecretVersionsSwept, result.APITokensSwept,
 			result.APIClientsSwept, result.AccountResetsSwept, result.MFASecretsSwept,
-			result.DynamicSecretConfigsSwept, result.DynamicSecretLeasesSwept, result.LegacyAADUpgraded)
+			result.DynamicSecretConfigsSwept, result.DynamicSecretLeasesSwept,
+			result.NotificationChannelsSwept, result.LegacyAADUpgraded)
 		sweepResult = result
 		return nil
 	}
@@ -471,4 +472,29 @@ func (s *Service) Shutdown() {
 	releaseKeyLock(s.serverLock)
 	s.serverLock = nil
 	s.initialized = false
+}
+
+// AcquireKeyFileReadLock holds the key-file REWRITE lock (<dek_path>.lock,
+// see keymanager_filelock.go) in SHARED mode and returns its release func.
+// While it is held, no key-file rewriter (DEK rotation and its re-encryption
+// sweep, KEK-passphrase rotation, provider migration) can write -- each takes
+// that lock exclusively for its whole write -- so a caller reading the key
+// files and a database snapshot under it gets a mutually consistent pair.
+//
+// It is NOT the server-vs-CLI dek.lock (AcquireExclusiveKeyLock/
+// AcquireSharedKeyLock) and does not conflict with a live server, which
+// holds dek.lock for its lifetime but never rewrites key files after
+// startup. Its one caller is `admin backup`'s live-server path (#2602).
+// Deliberately does NOT require the Service to be initialized: it needs only
+// the configured key paths, and its caller never initializes against the
+// live key directory.
+func (s *Service) AcquireKeyFileReadLock() (release func(), err error) {
+	if s.keyManager.configErr != nil {
+		return nil, s.keyManager.configErr
+	}
+	l, err := s.keyManager.tryAcquireSharedKeyLock()
+	if err != nil {
+		return nil, err
+	}
+	return l.release, nil
 }

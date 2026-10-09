@@ -52,7 +52,20 @@ SERVER_BIN="$REPO_ROOT/bin/keyorix-server"
 WEB_DIR="$REPO_ROOT/web"
 MAX_SPECS_PER_GROUP=2
 
-mapfile -t ALL_SPECS < <(cd "$WEB_DIR" && find e2e/real -maxdepth 1 -name '*.spec.ts' | sort)
+# KEYORIX_E2E_SPECS optionally narrows the run to a space-separated list of
+# spec paths (relative to web/), for iterating on one file without paying for
+# every other group's server boot + Vite start. Unset -- the CI and default
+# local behaviour -- runs every e2e/real/*.spec.ts file, as before. This is an
+# iteration aid, not a way to land a change that only passes in isolation:
+# whatever narrowing happened here, the full run is still what has to be green.
+if [ -n "${KEYORIX_E2E_SPECS:-}" ]; then
+    # Intentional word-splitting: the variable is a space-separated path list.
+    # shellcheck disable=SC2206
+    ALL_SPECS=(${KEYORIX_E2E_SPECS})
+    echo "==> KEYORIX_E2E_SPECS is set: running only ${ALL_SPECS[*]}"
+else
+    mapfile -t ALL_SPECS < <(cd "$WEB_DIR" && find e2e/real -maxdepth 1 -name '*.spec.ts' | sort)
+fi
 [ "${#ALL_SPECS[@]}" -gt 0 ] || { echo "no e2e/real/*.spec.ts files found under $WEB_DIR" >&2; exit 1; }
 
 SPEC_GROUPS=()
@@ -82,10 +95,154 @@ fi
 
 REAL_HOME="$HOME"
 
+# CURRENT_SERVER_PID + the EXIT trap below are what make a FAILING run clean up
+# after itself (WEB-SWEEP-1). run_group's own `trap group_cleanup RETURN` only
+# fires on a normal return; fail() calls `exit`, which terminates the shell
+# WITHOUT running a RETURN trap, so until now any group that failed left its
+# keyorix-server alive and still listening on that group's port. The next run
+# then passed its health check against the PREVIOUS run's orphan -- same port,
+# different database -- and died on the first login with a Python KeyError on
+# the admin credentials it had just created in a database the server answering
+# was not using. Confirmed live: a failing group 1 left PID … on :18190, and the
+# next invocation failed in exactly that way with no indication the two were
+# related. An EXIT trap covers the fail() path, a Ctrl-C and an unexpected
+# `set -e` abort alike.
+CURRENT_SERVER_PID=""
+cleanup_current_server() {
+    [ -n "$CURRENT_SERVER_PID" ] && kill "$CURRENT_SERVER_PID" 2>/dev/null
+    return 0
+}
+trap cleanup_current_server EXIT
+
 if [ ! -d "$WEB_DIR/node_modules" ]; then
     echo "==> pnpm install"
     (cd "$WEB_DIR" && pnpm install --frozen-lockfile)
 fi
+
+# seed_demo_data puts realistic content behind every page a real-backend spec
+# visits (WEB-SWEEP-1). Before this, each group seeded one empty project, so
+# every list page rendered its empty state and a spec could only ever assert
+# "the shell rendered" -- a page that silently drops its rows, or a role gate
+# that hides content it should show, looks identical to a correctly-rendered
+# empty list.
+#
+# Two API shapes here are easy to get wrong and are spelled out rather than
+# left to be rediscovered:
+#
+#   * POST /api/v1/projects/{id}/members grants a SCOPED ROLE. A project role
+#     alone does NOT satisfy the global-scope permission gates most list
+#     endpoints use (server/http/router.go gates GET /api/v1/projects with
+#     RequirePermission, not RequireScopedPermission), which is exactly why the
+#     least-privilege persona below is a genuinely restricted view and not just
+#     a second admin.
+#   * POST /api/v1/secrets/{id}/share requires the SHARER to be a live member
+#     of the secret's project (internal/core/sharing.go's
+#     requireLiveOwnerAuthority) as well as the recipient. Creating a project
+#     does not make the creator a member of it -- hence the explicit
+#     self-membership grant before any share call.
+#
+# Every call is best-effort on purpose: a seeding failure must not fail the
+# suite before Playwright has run, because an empty page is a far clearer
+# diagnostic in a spec's own assertion than a curl exit code buried in this
+# script's output. Each step echoes what it did.
+seed_demo_data() {
+    local group_label="$1" server_url="$2" token="$3" project_name="$4"
+    local lowpriv_username="$5" lowpriv_password="$6"
+
+    api() { # api METHOD PATH [JSON-BODY]
+        if [ -n "${3:-}" ]; then
+            curl -s -X "$1" "$server_url$2" -H "Authorization: Bearer $token" \
+                -H "Content-Type: application/json" -d "$3"
+        else
+            curl -s -X "$1" "$server_url$2" -H "Authorization: Bearer $token"
+        fi
+    }
+
+    echo "==> [group $group_label] seeding project \"$project_name\""
+    local pid
+    pid="$(api POST /api/v1/projects \
+        "{\"name\":\"$project_name\",\"description\":\"real-backend web e2e fixture\"}" |
+        python3 -c 'import sys,json
+try:
+    print(json.load(sys.stdin)["data"]["id"])
+except Exception:
+    print("")')"
+    [ -n "$pid" ] || {
+        echo "    (project create returned no id -- later seeding is skipped)" >&2
+        return 0
+    }
+
+    # The creator is not implicitly a member; sharing below needs this.
+    api POST "/api/v1/projects/$pid/members" '{"user_id":1,"role":"project_admin"}' >/dev/null
+
+    # Environment ids are server-assigned per project (development, staging and
+    # production are created with the project), so they are read back rather
+    # than assumed to be 1/2/3 -- they are not, for any project after the first.
+    #
+    # Named env_a/env_b, not dev_env/staging_env: the list endpoint returns the
+    # three sorted by NAME (development, production, staging), so position 2 is
+    # production, not staging. The fixture only needs two distinct environments
+    # so that the list page has more than one to group by; naming them after a
+    # position-based guess at which is which would be wrong, and the kind of
+    # wrong a later reader would believe.
+    local env_ids
+    env_ids="$(api GET "/api/v1/projects/$pid/environments" |
+        python3 -c 'import sys,json
+try:
+    print(" ".join(str(e["id"]) for e in json.load(sys.stdin)["data"]["environments"]))
+except Exception:
+    print("")')"
+    local env_a env_b
+    env_a="$(echo "$env_ids" | cut -d" " -f1)"
+    env_b="$(echo "$env_ids" | cut -d" " -f2)"
+    [ -n "$env_b" ] || env_b="$env_a"
+    echo "    project id=$pid environments=[$env_ids]"
+
+    # One secret per type the UI offers (web/src/constants.ts SECRET_TYPES), so
+    # the list page's type column, filters and per-type detail views all have a
+    # row to render.
+    echo "==> [group $group_label] seeding one secret of every type"
+    api POST /api/v1/secrets "{\"name\":\"e2e-api-key\",\"value\":\"sk_test_EXAMPLE_0001\",\"type\":\"api_key\",\"project_id\":$pid,\"environment_id\":$env_a}" >/dev/null
+    api POST /api/v1/secrets "{\"name\":\"e2e-password\",\"value\":\"Tr0ubad0ur-Mesa-Quilt-88\",\"type\":\"password\",\"project_id\":$pid,\"environment_id\":$env_a}" >/dev/null
+    api POST /api/v1/secrets "{\"name\":\"e2e-plain-text\",\"value\":\"rotate quarterly\",\"type\":\"text\",\"project_id\":$pid,\"environment_id\":$env_b}" >/dev/null
+    api POST /api/v1/secrets "{\"name\":\"e2e-certificate\",\"value\":\"-----BEGIN CERTIFICATE-----\\nMIIBkTCB+wIJAEXAMPLE\\n-----END CERTIFICATE-----\",\"type\":\"certificate\",\"project_id\":$pid,\"environment_id\":$env_b}" >/dev/null
+    api POST /api/v1/secrets "{\"name\":\"e2e-json-blob\",\"value\":\"{\\\"retries\\\":3}\",\"type\":\"json\",\"project_id\":$pid,\"environment_id\":$env_b}" >/dev/null
+
+    echo "==> [group $group_label] seeding a group, a machine identity and the least-privilege user"
+    api POST /api/v1/groups '{"name":"e2e-platform","description":"real-backend web e2e fixture"}' >/dev/null
+    api POST "/api/v1/projects/$pid/machine-identities" \
+        '{"name":"e2e-ci-runner","identity_type":"ci","description":"real-backend web e2e fixture"}' >/dev/null
+
+    local lowpriv_id
+    lowpriv_id="$(api POST /api/v1/users \
+        "{\"username\":\"$lowpriv_username\",\"email\":\"$lowpriv_username@example.invalid\",\"display_name\":\"Web E2E Viewer\",\"password\":\"$lowpriv_password\",\"role\":\"system_viewer\"}" |
+        python3 -c 'import sys,json
+try:
+    print(json.load(sys.stdin)["data"]["id"])
+except Exception:
+    print("")')"
+    if [ -n "$lowpriv_id" ]; then
+        api POST "/api/v1/projects/$pid/members" \
+            "{\"user_id\":$lowpriv_id,\"role\":\"project_viewer\"}" >/dev/null
+        # A share so /sharing and the recipient's own shared-with-me view both
+        # have a row. Secret ids are per-install sequential; read the first one
+        # back rather than assuming it is 1.
+        local first_secret
+        first_secret="$(api GET /api/v1/secrets |
+            python3 -c 'import sys,json
+try:
+    print(json.load(sys.stdin)["data"]["secrets"][0]["id"])
+except Exception:
+    print("")')"
+        [ -n "$first_secret" ] && api POST "/api/v1/secrets/$first_secret/share" \
+            "{\"recipient_id\":$lowpriv_id,\"is_group\":false,\"permission\":\"read\"}" >/dev/null
+        echo "    least-privilege user id=$lowpriv_id (system_viewer + project_viewer on $project_name)"
+    else
+        echo "    (least-privilege user create returned no id)" >&2
+    fi
+
+    unset -f api
+}
 
 # run_group boots one fresh server+DB, bootstraps an admin, seeds a project,
 # runs the given spec files against it, and tears it all down -- isolating
@@ -103,6 +260,7 @@ run_group() {
     local server_pid=""
     group_cleanup() {
         [ -n "$server_pid" ] && kill "$server_pid" 2>/dev/null || true
+        CURRENT_SERVER_PID=""
         rm -rf "$smoke_dir"
     }
     trap group_cleanup RETURN
@@ -122,6 +280,14 @@ run_group() {
     local admin_username="webe2eadmin"
     local admin_password="Quartz-Falcon-77-Ridge!-$$-${RANDOM}"
     local admin_email="webe2eadmin@example.invalid"
+    # Least-privilege persona (WEB-SWEEP-1): system_viewer globally plus
+    # project_viewer on the seeded project. Specs that have to prove a
+    # non-admin's view of the UI -- role-gated navigation, 403 pages, an empty
+    # project switcher -- need a real second account, not the admin with a flag
+    # flipped client-side. Same no-substring rule as the admin password above.
+    local lowpriv_username="webe2eviewer"
+    local lowpriv_password="Basalt-Heron-42-Glade!-$$-${RANDOM}"
+    local seed_project_name="web-e2e-project"
 
     # Relative to $smoke_dir (every admin subcommand below runs with cwd set
     # there) -- the CLI itself rejects an absolute --config path ("access
@@ -150,6 +316,7 @@ run_group() {
     (cd "$smoke_dir" && exec env KEYORIX_CONFIG_PATH="$config_rel" KEYORIX_BOOTSTRAP_TOKEN="$bootstrap_token" "$SERVER_BIN") \
         >"$smoke_dir/server.log" 2>&1 &
     server_pid=$!
+    CURRENT_SERVER_PID="$server_pid"
 
     for _ in $(seq 1 30); do
         if curl -fs "$server_url/health" >/dev/null 2>&1; then break; fi
@@ -170,19 +337,31 @@ run_group() {
     [ "$init_code" = "200" ] || fail "[group $group_label] POST /system/init returned $init_code: $(cat "$smoke_dir/init-response.json")"
 
     echo "==> [group $group_label] creating a project + secret so the real pages have something to show"
+    # The login response is captured to a file first, and parsed with a guard,
+    # so a login that FAILS reports the server's own error instead of a Python
+    # KeyError on "data" -- the shape every non-200 login response takes.
     local token
-    token="$(curl -s -X POST "$server_url/auth/login" -H "Content-Type: application/json" \
-        -d "{\"username\":\"$admin_username\",\"password\":\"$admin_password\"}" |
-        python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["token"])')"
-    [ -n "$token" ] || fail "[group $group_label] could not extract a login token"
-    curl -s -X POST "$server_url/api/v1/projects" -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
-        -d '{"name":"web-e2e-project","description":"SESSION-I web real-backend smoke"}' >/dev/null
+    curl -s -X POST "$server_url/auth/login" -H "Content-Type: application/json" \
+        -d "{\"username\":\"$admin_username\",\"password\":\"$admin_password\"}" \
+        -o "$smoke_dir/login-response.json"
+    token="$(python3 -c 'import sys,json
+try:
+    print(json.load(open(sys.argv[1]))["data"]["token"])
+except Exception:
+    print("")' "$smoke_dir/login-response.json")"
+    [ -n "$token" ] ||
+        fail "[group $group_label] POST /auth/login did not return a token: $(cat "$smoke_dir/login-response.json")"
+    seed_demo_data "$group_label" "$server_url" "$token" "$seed_project_name" \
+        "$lowpriv_username" "$lowpriv_password"
 
     echo "==> [group $group_label] running Playwright specs against the real backend: ${specs[*]}"
     export HOME="$REAL_HOME"
     export KEYORIX_E2E_BACKEND_URL="$server_url"
     export KEYORIX_E2E_ADMIN_USERNAME="$admin_username"
     export KEYORIX_E2E_ADMIN_PASSWORD="$admin_password"
+    export KEYORIX_E2E_LOWPRIV_USERNAME="$lowpriv_username"
+    export KEYORIX_E2E_LOWPRIV_PASSWORD="$lowpriv_password"
+    export KEYORIX_E2E_PROJECT_NAME="$seed_project_name"
     export KEYORIX_E2E_WEB_PORT="$web_port"
 
     (cd "$WEB_DIR" && pnpm exec playwright test --config=playwright.config.real.ts "${specs[@]}") ||

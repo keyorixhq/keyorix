@@ -3,7 +3,7 @@
 // Covers: CreateUser, GetUser, GetUserByEmail, GetUserByUsername, UpdateUser,
 //
 //	DeleteUser, RestoreUser, ListUsers, GetUserGroups,
-//	CreateGroup, GetGroup, UpdateGroup, DeleteGroup, ListGroups,
+//	CreateGroup, GetGroup, UpdateGroupFields, DeleteGroup, ListGroups,
 //	AddUserToGroup, RemoveUserFromGroup, ListGroupMembers.
 //
 // All operations use direct GORM queries.
@@ -212,19 +212,45 @@ func (ls *LocalStorage) UpdateUser(ctx context.Context, user *models.User) (*mod
 	return user, nil
 }
 
-// UpdateUserIfActiveStateMatches persists user's full row via a conditional
-// UPDATE gated on the row's CURRENT is_active still being fromActive (closing
-// the IsActive TOCTOU race described in the storage.Storage interface doc —
-// see internal/core/storage/interface.go). Mirrors
-// TransitionMachineIdentityState's `WHERE id = ? AND state = ?` + `Select("*")`
-// shape exactly, so every field UpdateUser mutated on user in memory (Username,
-// Email, DisplayName, IsActive, UpdatedAt, ...) is persisted in the same
-// statement, not just a hardcoded column subset.
+// UpdateUserIfActiveStateMatches persists the profile columns of user via a
+// conditional UPDATE gated on the row's CURRENT is_active still being
+// fromActive (closing the IsActive TOCTOU race described in the storage.Storage
+// interface doc — see internal/core/storage/interface.go), and on the row not
+// being soft-deleted (GORM adds deleted_at IS NULL for the soft-delete model).
+//
+// It writes ONLY the seven profile columns below, the fields its callers
+// (core.UpdateUser, SCIM's scimUpdateUserTx / DeprovisionSCIMUser) actually
+// own (the SCIM paths also change account_state; they persist it separately,
+// through the conditional SetAccountStateIfMatches, C-RACE-FIX-B2). It used to
+// write the full pre-read row (Select("*")), which reverted
+// every column a narrower concurrent writer changed after that read:
+// SetAccountState (a suspension), SetPasswordHash (a password change), the MFA
+// and lockout writers. Gating on is_active alone did not catch any of them,
+// since none of those writers touches is_active (#2653, #2654).
+//
+// Bug origin (#2653, #2654):
+//
+//	Introduced-by: the Select("*") full-row shape copied from
+//	               TransitionMachineIdentityState when this method was added
+//	Detected-by:   C-GUARD2-EXEMPT-REVIEW #2662
+//	Class:         cross-replica check-then-act (stale full-row lost update)
+//	Severity:      high (a reported-successful suspension or password change
+//	               is silently reverted by a concurrent profile edit)
+//	Guard:         TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres,
+//	               TestCTAReview_UpdateOwnProfile_vs_ChangePassword_CrossReplicaPostgres,
+//	               TestUserProfileWrites_AreColumnScoped
 func (ls *LocalStorage) UpdateUserIfActiveStateMatches(ctx context.Context, user *models.User, fromActive bool) (bool, error) {
 	res := ls.db.WithContext(ctx).Model(&models.User{}).
 		Where("id = ? AND is_active = ?", user.ID, fromActive).
-		Select("*").
-		Updates(user)
+		Updates(map[string]interface{}{
+			"username":        user.Username,
+			"username_folded": user.UsernameFolded,
+			"email":           user.Email,
+			"email_folded":    user.EmailFolded,
+			"display_name":    user.DisplayName,
+			"is_active":       user.IsActive,
+			"updated_at":      user.UpdatedAt,
+		})
 	if res.Error != nil {
 		if isDuplicateEmailViolation(res.Error) {
 			// Same translation UpdateUser applies (#117/#120/#218): a concurrent
@@ -261,6 +287,40 @@ func (ls *LocalStorage) SetAccountState(ctx context.Context, id uint, state stri
 		return fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil))
 	}
 	return nil
+}
+
+// SetAccountStateIfMatches persists ONLY account_state (plus updated_at), and
+// only if the row's current account_state is still fromState — see the
+// storage.Storage interface doc. GORM adds deleted_at IS NULL for the
+// soft-delete model. COALESCE so a NULL column (pre-backfill, INV-STORAGE-15)
+// is matched by fromState "", the value GORM reads it back as.
+func (ls *LocalStorage) SetAccountStateIfMatches(ctx context.Context, id uint, fromState, toState string, updatedAt time.Time) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.User{}).
+		Where("id = ? AND COALESCE(account_state, '') = ?", id, fromState).
+		Updates(map[string]interface{}{"account_state": toState, "updated_at": updatedAt})
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// ClaimUserExternalIDIfUnset persists ONLY external_id (plus updated_at), and
+// only onto a live row whose external_id is still unset — see the
+// storage.Storage interface doc for why resolveSSOUser's first-federation write
+// cannot be the generic full-row UpdateUser (#2699).
+//
+// GORM adds `deleted_at IS NULL` for this soft-delete model, which is the
+// clause that actually stops the resurrection; `COALESCE(external_id,”) = ”`
+// is the CAS on the value the caller read. COALESCE because the column is NULL
+// on rows written before it existed, which GORM reads back as "".
+func (ls *LocalStorage) ClaimUserExternalIDIfUnset(ctx context.Context, id uint, externalID string, updatedAt time.Time) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.User{}).
+		Where("id = ? AND COALESCE(external_id, '') = ''", id).
+		Updates(map[string]interface{}{"external_id": externalID, "updated_at": updatedAt})
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
 }
 
 // SetPasswordHash persists ONLY password_hash and password_changed_at (plus
@@ -493,11 +553,33 @@ func (ls *LocalStorage) GetGroup(ctx context.Context, id uint) (*models.Group, e
 	return &group, nil
 }
 
-func (ls *LocalStorage) UpdateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {
-	if err := ls.db.WithContext(ctx).Save(group).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+// UpdateGroupFields persists only the non-nil fields, and only onto a live row
+// — see the storage.Storage interface doc for why the full-row UpdateGroup this
+// replaced (a bare Save) resurrected a deleted group together with its retained
+// role grants and memberships (#2697).
+//
+// GORM adds `deleted_at IS NULL` for this soft-delete model, which is the clause
+// that stops the resurrection. A nil field is simply absent from the SET list,
+// so a SCIM rename cannot revert a description another replica changed.
+func (ls *LocalStorage) UpdateGroupFields(ctx context.Context, id uint, name, nameFolded, description *string, updatedAt time.Time) (bool, error) {
+	// updated_at is passed in rather than left to GORM's implicit stamp, matching
+	// SetAccountState/SetPasswordHash/UpdateUserIfActiveStateMatches in this file:
+	// the caller's clock source is the one the rest of core compares against.
+	cols := map[string]interface{}{"updated_at": updatedAt}
+	if name != nil {
+		cols["name"] = *name
 	}
-	return group, nil
+	if nameFolded != nil {
+		cols["name_folded"] = *nameFolded
+	}
+	if description != nil {
+		cols["description"] = *description
+	}
+	res := ls.db.WithContext(ctx).Model(&models.Group{}).Where(sqlWhereID, id).Updates(cols)
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
 }
 
 // DeleteGroup cascades: removes GroupRole and UserGroup join rows before deleting the group.

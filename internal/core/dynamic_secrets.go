@@ -239,9 +239,11 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	// #94: the admin DSN is encrypted bound to DynamicSecretConfigAAD(cfg.ID, ...), so
 	// it must be encrypted AFTER the row exists (cfg.ID is an auto-increment PK, not
 	// known beforehand) — insert first with the DSN columns empty, then encrypt and
-	// persist them in a second write. The gap between the two writes is invisible to
-	// any other caller: cfg.ID isn't returned to the requester until this function
-	// returns, so nothing else can observe or race the momentarily-DSN-less row.
+	// persist them in a second write. The inserted row IS visible between the two
+	// writes: the insert commits on its own, and DeleteProject's #369 cascade disables
+	// it by project, not by ID. So the second write touches ONLY the DSN columns
+	// (SetDynamicSecretConfigAdminDSN, #2651); a full-row Save here wrote
+	// disabled=false back over a concurrent DeleteProject.
 	cfg, err := c.insertDynamicSecretConfigRow(ctx, req)
 	if err != nil {
 		return nil, err
@@ -260,7 +262,7 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	if err := validateEncryptedAdminDSNField(cfg.AdminDSNEnc); err != nil {
 		return nil, fmt.Errorf("encrypted admin DSN is invalid: %w", err)
 	}
-	if err := c.storage.UpdateDynamicSecretConfig(ctx, cfg); err != nil {
+	if err := c.storage.SetDynamicSecretConfigAdminDSN(ctx, cfg.ID, cfg.AdminDSNEnc, cfg.AdminDSNMeta); err != nil {
 		return nil, fmt.Errorf("failed to persist encrypted admin DSN: %w", err)
 	}
 	pid := cfg.ProjectID
@@ -580,7 +582,13 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 		ExpiresAt:      expiresAt,
 	})
 	if err != nil {
+		// Also the #2652 path: storage refuses an active lease whose config a
+		// concurrent DeleteProject (#369) or disable committed after the cfg.Disabled
+		// check above, so the credential minted for it is revoked here, not leaked.
 		c.cleanupOrphanedRole(ctx, cfg, engine, adminDSN, roleName, userID)
+		if errors.Is(err, storage.ErrDynamicSecretConfigDisabled) {
+			return nil, fmt.Errorf("dynamic-secret config is disabled")
+		}
 		return nil, fmt.Errorf("failed to persist lease: %w", err)
 	}
 	uid := userID
@@ -686,9 +694,6 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	lease.RevokeReason = reason
 	lease.RevokeError = "" // clear any error from a prior failed attempt — this retry succeeded
 	lease.RevokedAt = &now
-	if err := c.storage.UpdateDynamicSecretLease(ctx, lease); err != nil {
-		return err
-	}
 	// #97: for most ephemeral backends (AWS STS, Azure, GCP, and Kubernetes unless
 	// opted into bound-token revocation) engine.Revoke above is a documented no-op
 	// — the credential cannot be invalidated early at the provider, only marked
@@ -704,7 +709,27 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 		msg = fmt.Sprintf("marked dynamic lease %s revoked locally (reason=%s); the %s credential cannot be invalidated early and remains live until its provider-enforced expiry at %s",
 			lease.LeaseID, reason, cfg.BackendType, lease.ExpiresAt.UTC().Format(time.RFC3339))
 	}
-	c.writeAuditEventFull(ctx, "dynamic_lease.revoked", uidPtr, nil, &pid, "", msg)
+	// #2406: the target credential IS already dropped (engine.Revoke above
+	// succeeded) -- that cannot be undone, and must not be. But a failed audit
+	// write for a security action this sensitive is itself a gap that must
+	// not be swallowed the way a merely-incidental audit write would be
+	// (emitAudit's normal best-effort contract, unchanged for every other
+	// caller). Record the gap on the lease itself (the same RevokeError field
+	// the target-revoke-failure branch above uses, so it surfaces through the
+	// same existing API/UI path) and return an error, so RevokeLeasesForConfig
+	// -- and the REST/gRPC bulk-revoke response, which already propagates a
+	// non-nil error as a non-2xx/non-OK response -- cannot report a clean,
+	// unconditional success while this lease's audit trail has a hole in it.
+	auditOK := c.writeAuditEventFull(ctx, "dynamic_lease.revoked", uidPtr, nil, &pid, "", msg)
+	if !auditOK {
+		lease.RevokeError = "revoked on target, but the audit record failed to persist — verify manually (see server log)"
+	}
+	if err := c.storage.UpdateDynamicSecretLease(ctx, lease); err != nil {
+		return err
+	}
+	if !auditOK {
+		return fmt.Errorf("lease %s revoked on target, but failed to record the audit event — treat as unconfirmed", lease.LeaseID)
+	}
 	return nil
 }
 
@@ -827,6 +852,19 @@ func (c *KeyorixCore) RevokeLeasesForConfig(ctx context.Context, configID, userI
 	}
 	c.writeAuditEventFull(ctx, "dynamic_secret.bulk_revoke", uidPtr, nil, pidPtr, "",
 		fmt.Sprintf("bulk-revoked dynamic leases for config %d (revoked=%d, failed=%d, reason=%s)", configID, revoked, failed, reason))
+	// #2406: this used to always return a nil error here, regardless of
+	// failed -- counts caught the per-lease outcome, but the REST/gRPC
+	// callers both already propagate a non-nil error as a non-2xx/non-OK
+	// response and a nil one as unconditional success (dynamic_secrets.go's
+	// RevokeAllLeases handler, dynamic_secret_service.go's gRPC sibling), so
+	// an incident responder's bulk kill-switch call reported a clean 200/OK
+	// even when some leases weren't fully revoked (target drop failed) or
+	// weren't fully CONFIRMED revoked (the target drop succeeded, but its
+	// audit record didn't -- see RevokeLease's own #2406 doc comment).
+	// Mirrors RevokeExpiredLeases' own identical fix above in this same file.
+	if failed > 0 {
+		return revoked, failed, fmt.Errorf("bulk-revoke for config %d: %d of %d attempted lease(s) did not fully complete (target revoke and/or its audit record) — see server log for which", configID, failed, revoked+failed)
+	}
 	return revoked, failed, nil
 }
 

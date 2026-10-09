@@ -110,6 +110,75 @@ describe('authService.login', () => {
         await authService.login({ ...credentials, rememberMe: true });
         expect(mockPost).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ rememberMe: true }));
     });
+
+    it('resolves to an mfa_required payload as-is, without throwing (#2442)', async () => {
+        const payload = {
+            mfa_required: true,
+            mfa_challenge: 'chal-abc123',
+            totp_available: true,
+            webauthn_available: false,
+        };
+        mockPost.mockResolvedValueOnce(ok(payload));
+        const result = await authService.login(credentials);
+        expect(result).toEqual(payload);
+    });
+});
+
+// ── verifyMfa ─────────────────────────────────────────────────────────────────
+
+describe('authService.verifyMfa', () => {
+    it('POSTs the challenge and code, and returns the login-shaped payload', async () => {
+        const payload = {
+            expires_at: '2030-01-01',
+            user_id: 1,
+            username: 'alice',
+            email: 'a@x.io',
+        };
+        mockPost.mockResolvedValueOnce(ok(payload));
+        const result = await authService.verifyMfa('chal-abc123', '123456');
+        expect(result).toEqual(payload);
+        expect(mockPost).toHaveBeenCalledWith(expect.stringContaining('mfa/verify'), {
+            mfa_challenge: 'chal-abc123',
+            code: '123456',
+        });
+    });
+
+    it('throws with the server message on a wrong/expired code (401)', async () => {
+        mockPost.mockRejectedValueOnce(axiosErr(401, { message: 'Invalid or expired code' }));
+        await expect(authService.verifyMfa('chal-abc123', '000000')).rejects.toThrow('Invalid or expired code');
+    });
+
+    it('prefers the human-readable `message` over the generic `error` status-name (real sendError shape carries both)', async () => {
+        // server/http/handlers/helpers.go's sendError always sets BOTH fields:
+        // `error` is a generic category name ("Unauthorized"), `message` is the
+        // actual detail ("Invalid or expired code"). Showing `error` here would
+        // surface the useless generic name instead.
+        mockPost.mockRejectedValueOnce(axiosErr(401, { error: 'Unauthorized', message: 'Invalid or expired code' }));
+        await expect(authService.verifyMfa('chal-abc123', '000000')).rejects.toThrow('Invalid or expired code');
+    });
+
+    it('throws with the server message on lockout/rate-limit (429)', async () => {
+        mockPost.mockRejectedValueOnce(axiosErr(429, { message: 'Too many attempts. Try again later.' }));
+        await expect(authService.verifyMfa('chal-abc123', '000000')).rejects.toThrow(
+            'Too many attempts. Try again later.'
+        );
+    });
+
+    it('throws a generic message when the server sends no error text', async () => {
+        mockPost.mockRejectedValueOnce(axiosErr(500, {}));
+        await expect(authService.verifyMfa('chal-abc123', '123456')).rejects.toThrow('Verification failed');
+    });
+
+    it('throws a generic message when data object is missing', async () => {
+        mockPost.mockResolvedValueOnce({ data: {} });
+        await expect(authService.verifyMfa('chal-abc123', '123456')).rejects.toThrow('Verification failed');
+    });
+
+    it('rethrows a non-axios error unchanged', async () => {
+        const networkError = new Error('Network Error');
+        mockPost.mockRejectedValueOnce(networkError);
+        await expect(authService.verifyMfa('chal-abc123', '123456')).rejects.toBe(networkError);
+    });
 });
 
 // ── logout ────────────────────────────────────────────────────────────────────

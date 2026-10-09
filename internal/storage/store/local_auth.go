@@ -29,6 +29,11 @@ import (
 // (backup, replica, injection, insider) never yields a live, replayable token. The
 // plaintext lives only in the client's possession.
 func hashSessionToken(token string) string {
+	// codeql[go/weak-sensitive-data-hashing] -- token is a high-entropy random session
+	// token, not a password; this is a deterministic lookup hash (needs fast, indexable
+	// equality), not credential storage, matching the PAT/machine/setup-token precedent
+	// (internal/core/hash.go's sha256Hex) a slow KDF would only protect against guessing a
+	// low-entropy secret, which doesn't apply here.
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
 }

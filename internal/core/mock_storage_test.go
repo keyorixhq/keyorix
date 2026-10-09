@@ -60,6 +60,19 @@ func (m *MockStorage) WithTransaction(_ context.Context, fn func(storage.Storage
 	return fn(m)
 }
 
+// LockLiveProject answers "live" (#2702/#2710/#2711/#2712). This mock has no
+// projects at all, and every test using it exercises a path where the project's
+// existence is not the subject — answering false would make the create paths
+// that now re-check it fail for a reason none of those tests is about.
+//
+// Note what this costs: a mock-backed test can never observe the deleted-parent
+// rollback. That is deliberate, and it is why the proof for this fix is the four
+// cross-replica Postgres tests in
+// concurrency_child_under_deleted_project_postgres_test.go against real storage
+// and a real row lock, not anything here — a mock cannot model a row lock, and a
+// mock that returned a canned false would test the error message, not the race.
+func (m *MockStorage) LockLiveProject(_ context.Context, _ uint) (bool, error) { return true, nil }
+
 // Login rate-limiting stubs (core rate-limit logic is tested against real SQLite).
 func (m *MockStorage) RecordLoginAttempt(_ context.Context, _ string, _ time.Time) error { return nil }
 func (m *MockStorage) CountRecentLoginAttempts(_ context.Context, _ string, _ time.Time) (int64, error) {
@@ -120,8 +133,8 @@ func (m *MockStorage) GetProject(ctx context.Context, id uint) (*models.Project,
 	return &models.Project{}, nil
 }
 
-func (m *MockStorage) UpdateProject(_ context.Context, project *models.Project) (*models.Project, error) {
-	return project, nil
+func (m *MockStorage) UpdateProjectFields(_ context.Context, _ uint, _, _ string, _ *bool, _ time.Time) (bool, error) {
+	return true, nil
 }
 
 func (m *MockStorage) DeleteProject(_ context.Context, _ uint) error {
@@ -189,11 +202,27 @@ func (m *MockStorage) ListGlobalAdminAssignmentsForUpdate(_ context.Context, _ [
 	return nil, nil
 }
 
+// ListAdminBypassRoleIDs (#2496) is the structural replacement for
+// installAdminRoleIDSet's name lookups. MockStorage-driven tests never seed a
+// bypass-flagged role, so the honest answer here is "this install has none" —
+// returned directly rather than via m.Called so no existing test needs a stub,
+// which is exactly the position those tests were already in when every
+// install-admin name resolved as absent via GetRoleByName. Real last-admin
+// coverage lives against store.LocalStorage (last_admin_guard_external_test.go,
+// concurrency_last_admin_removal_test.go, admin_role_structural_source_test.go).
+//
+// The empty answer makes the last-admin guards no-op, never fail-open on a
+// masked error: an error return here would be indistinguishable from a real
+// storage failure and would turn every MockStorage test that touches a role
+// removal into a refusal.
+func (m *MockStorage) ListAdminBypassRoleIDs(_ context.Context) ([]uint, error) {
+	return nil, nil
+}
+
 // RemoveGlobalAdminRoleGuarded (#525) is likewise unused by MockStorage-driven
-// tests — every one of them mocks the three install-admin role names
-// (super_admin/admin/system_admin) as absent via GetRoleByName, so
-// RemoveUserRole's installAdminRoleIDSet is always empty and this is never
-// reached (real-storage RemoveUserRole/last-admin coverage lives in
+// tests — none of them seeds a bypass-flagged role, so RemoveUserRole's
+// adminBypassRoleIDSlice is always empty and this is never reached
+// (real-storage RemoveUserRole/last-admin coverage lives in
 // last_admin_guard_external_test.go and concurrency_last_admin_removal_test.go,
 // both against a real store.LocalStorage). If a future test DOES reach this
 // unmocked, m.Called panics loudly rather than silently allowing the removal.
@@ -352,6 +381,11 @@ func (m *MockStorage) GetAccessReviewItem(ctx context.Context, id uint) (*models
 
 func (m *MockStorage) UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) (bool, error) {
 	args := m.Called(ctx, item)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockStorage) RevertAccessReviewItemClaim(ctx context.Context, itemID uint, fromDecision string, actorID uint) (bool, error) {
+	args := m.Called(ctx, itemID, fromDecision, actorID)
 	return args.Bool(0), args.Error(1)
 }
 
@@ -633,6 +667,11 @@ func (m *MockStorage) UpdateSecret(ctx context.Context, secret *models.SecretNod
 
 func (m *MockStorage) TransitionSecretStatus(ctx context.Context, secret *models.SecretNode, fromStatus string) (bool, error) {
 	args := m.Called(ctx, secret, fromStatus)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockStorage) UpdateSecretRotationConfig(ctx context.Context, secret *models.SecretNode, fromBackend string) (bool, error) {
+	args := m.Called(ctx, secret, fromBackend)
 	return args.Bool(0), args.Error(1)
 }
 
@@ -937,6 +976,16 @@ func (m *MockStorage) SetAccountState(ctx context.Context, id uint, state string
 	return args.Error(0)
 }
 
+func (m *MockStorage) SetAccountStateIfMatches(ctx context.Context, id uint, fromState, toState string, updatedAt time.Time) (bool, error) {
+	args := m.Called(ctx, id, fromState, toState, updatedAt)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockStorage) ClaimUserExternalIDIfUnset(ctx context.Context, id uint, externalID string, updatedAt time.Time) (bool, error) {
+	args := m.Called(ctx, id, externalID, updatedAt)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStorage) SetPasswordHash(ctx context.Context, id uint, hash string, changedAt time.Time) error {
 	args := m.Called(ctx, id, hash, changedAt)
 	return args.Error(0)
@@ -1076,10 +1125,9 @@ func (m *MockStorage) GetGroup(ctx context.Context, id uint) (*models.Group, err
 	return args.Get(0).(*models.Group), args.Error(1)
 }
 
-func (m *MockStorage) UpdateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {
-	a := m.Called(ctx, group)
-	v, _ := a.Get(0).(*models.Group)
-	return v, a.Error(1)
+func (m *MockStorage) UpdateGroupFields(ctx context.Context, id uint, name, nameFolded, description *string, updatedAt time.Time) (bool, error) {
+	a := m.Called(ctx, id, name, nameFolded, description, updatedAt)
+	return a.Bool(0), a.Error(1)
 }
 
 func (m *MockStorage) DeleteGroup(ctx context.Context, id uint) error {
@@ -1330,6 +1378,14 @@ func (m *MockStorage) CountSecretReadsBySecretIDs(ctx context.Context, secretIDs
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(map[uint]int), args.Error(1)
+}
+
+func (m *MockStorage) ListSecretIDsAccessedSince(ctx context.Context, since time.Time) ([]uint, error) {
+	args := m.Called(ctx, since)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]uint), args.Error(1)
 }
 
 func (m *MockStorage) PrincipalSecretFirstSeen(ctx context.Context, since time.Time) (map[string]map[uint]time.Time, error) {
@@ -1874,8 +1930,8 @@ func (m *MockStorage) ListRotationPolicies(ctx context.Context, projectID *uint,
 	return args.Get(0).([]*models.RotationPolicy), args.Error(1)
 }
 
-func (m *MockStorage) UpdateRotationPolicy(_ context.Context, _ *models.RotationPolicy) error {
-	return nil
+func (m *MockStorage) UpdateRotationPolicyFields(_ context.Context, _ uint, _ storage.RotationPolicyFieldUpdate, _ time.Time) (bool, error) {
+	return true, nil
 }
 
 func (m *MockStorage) DeleteRotationPolicy(_ context.Context, _ uint) error {
@@ -2003,9 +2059,9 @@ func (m *MockStorage) ListActiveMachineIdentityCredentials(ctx context.Context) 
 	return args.Get(0).([]*models.MachineIdentityCredential), args.Error(1)
 }
 
-func (m *MockStorage) UpdateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) error {
-	args := m.Called(ctx, c)
-	return args.Error(0)
+func (m *MockStorage) SetMachineIdentityCredentialClassification(ctx context.Context, credentialID uint, fromClassification, toClassification string) (bool, error) {
+	args := m.Called(ctx, credentialID, fromClassification, toClassification)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockStorage) CountMachineIdentityCredentialsByClassification(ctx context.Context) (map[string]int, error) {
@@ -2210,8 +2266,13 @@ func (m *MockStorage) UpsertMFASecret(_ context.Context, _ *models.MFASecret) er
 func (m *MockStorage) GetMFASecret(_ context.Context, _ uint) (*models.MFASecret, error) {
 	return nil, nil
 }
-func (m *MockStorage) ActivateMFASecret(_ context.Context, _ uint) error { return nil }
+func (m *MockStorage) ActivateMFASecret(_ context.Context, _ uint, _ []byte) (bool, error) {
+	return true, nil
+}
 func (m *MockStorage) MarkTOTPStepUsed(_ context.Context, _ uint, _ int64) (bool, error) {
+	return true, nil
+}
+func (m *MockStorage) ReleaseTOTPStepIfUnchanged(_ context.Context, _ uint, _ int64) (bool, error) {
 	return true, nil
 }
 func (m *MockStorage) DeleteMFAForUser(_ context.Context, _ uint) error          { return nil }
@@ -2250,6 +2311,9 @@ func (m *MockStorage) ListDynamicSecretConfigs(_ context.Context, _, _ uint) ([]
 	return nil, nil
 }
 func (m *MockStorage) UpdateDynamicSecretConfig(_ context.Context, _ *models.DynamicSecretConfig) error {
+	return nil
+}
+func (m *MockStorage) SetDynamicSecretConfigAdminDSN(_ context.Context, _ uint, _, _ []byte) error {
 	return nil
 }
 func (m *MockStorage) TransitionDynamicSecretConfigDisabled(ctx context.Context, c *models.DynamicSecretConfig, fromDisabled bool) (bool, error) {
@@ -2296,8 +2360,11 @@ func (m *MockStorage) GetWebAuthnCredentialByCredID(_ context.Context, _ []byte,
 func (m *MockStorage) LockWebAuthnCredentialForUpdate(_ context.Context, _ []byte, _ uint) (*models.WebAuthnCredential, error) {
 	return nil, nil
 }
-func (m *MockStorage) UpdateWebAuthnCredential(_ context.Context, _ *models.WebAuthnCredential) error {
-	return nil
+func (m *MockStorage) DisableWebAuthnCredential(_ context.Context, _ uint) (bool, error) {
+	return true, nil
+}
+func (m *MockStorage) SetWebAuthnCredentialCounterState(_ context.Context, _ uint, _ []byte, _ time.Time) (bool, error) {
+	return true, nil
 }
 func (m *MockStorage) AdvanceWebAuthnCredentialCounter(_ context.Context, _ []byte, _ uint, _ []byte, _ uint32, _ time.Time) (bool, error) {
 	return false, nil

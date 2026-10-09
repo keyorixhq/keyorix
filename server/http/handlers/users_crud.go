@@ -515,15 +515,41 @@ func (h *UserHandler) accountStateAction(w http.ResponseWriter, r *http.Request,
 	}
 	if err := transition(r.Context(), admin.UserID, uint(id)); err != nil {
 		status := http.StatusInternalServerError
+		msg := clientSafe(err)
 		switch {
 		case errors.Is(err, core.ErrInsufficientAdminAuthority):
 			status = http.StatusForbidden
+		case strings.Contains(err.Error(), "last install administrator"):
+			// SuspendUser calls guardLastAdminDeactivation (#G02) exactly as
+			// UpdateUser and DeleteUser do, and both of those map this refusal to a
+			// readable 409 (see their own switches above). This one did not, so the
+			// same refusal arrived as a bare 500 "Failed to ..." — the identical
+			// readability defect ADR-108 PR 6 fixed for UpdateUser, still open on
+			// this route.
+			//
+			// It matters more here than on either sibling: UpdateUser and DeleteUser
+			// both run requireAdminRankCeilingForTarget first, which (since #2496
+			// unified admin resolution on the structural bypass flag) means any actor
+			// who reaches their guard at all is itself a surviving global-admin
+			// holder — so their 409 case cannot fire. accountStateAction applies NO
+			// ceiling, only a self-action check, so THIS is the route on which the
+			// last-admin refusal is actually reachable, and the one whose message a
+			// real operator will see.
+			//
+			// The real reason is forwarded verbatim rather than through
+			// clientSafe, matching UpdateUser's and DeleteUser's identical cases:
+			// it is a deliberate, operator-facing policy refusal, not an internal
+			// failure whose detail might leak anything — and clientSafe replaces it
+			// with "an internal error occurred", which is precisely the useless
+			// message ADR-108 PR 6 set out to remove.
+			status = http.StatusConflict
+			msg = err.Error()
 		case strings.Contains(err.Error(), errNotFound):
 			status = http.StatusNotFound
 		default:
 			log.Printf("account state transition error for user %d: %v", uint(id), err)
 		}
-		sendError(w, "Error", clientSafe(err), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	sendSuccess(w, nil, okMessage)

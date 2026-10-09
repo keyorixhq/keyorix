@@ -10,9 +10,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"golang.org/x/crypto/bcrypt"
@@ -188,21 +188,15 @@ func (c *KeyorixCore) mintSession(ctx context.Context, userID uint, userAgent, i
 	}
 	// Bound concurrent sessions per user so unbounded logins can't grow the table or
 	// enlarge the credential-theft blast radius. Best-effort — never fail a login on
-	// it. The discarded return error already made that best-effort; a PANIC here
-	// did not, since it propagates straight past this line and out through the
+	// it, including a panic here (found live by FuzzStorageFaultOperations,
+	// server/faultops, docs/findings/2026-10-02-FINDING-mfa-verify-enforcesessionlimit-panic-masks-successful-login.md):
+	// unrecovered, it would propagate past this line and out through the
 	// transport's own panic-recovery wrapper as a 500 — misreporting an
 	// already-committed session (and, for the MFA-verify caller, an already-
-	// consumed TOTP step) as a failed login. Same shape as users.go's identical
-	// best-effort-call recover wrap (found live by FuzzStorageFaultOperations,
-	// server/faultops, docs/findings/2026-10-02-FINDING-mfa-verify-enforcesessionlimit-panic-masks-successful-login.md).
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("Warning: EnforceSessionLimit panicked for user %d (session %d already minted, best-effort limit not enforced this time): %v", userID, created.ID, r)
-			}
-		}()
-		_ = c.storage.EnforceSessionLimit(ctx, userID, maxSessionsPerUser)
-	}()
+	// consumed TOTP step) as a failed login.
+	besteffort.Run(ctx, "auth.mintSession.EnforceSessionLimit", func() error {
+		return c.storage.EnforceSessionLimit(ctx, userID, maxSessionsPerUser)
+	})
 	return created, nil
 }
 
@@ -496,10 +490,12 @@ func (c *KeyorixCore) authEffectiveNow() time.Time {
 	return now
 }
 
-// ErrRoleResolutionUnavailable is returned by ValidateSessionToken and
-// ValidatePATToken when the credential itself checked out (found, unrevoked,
-// unexpired, owning account active and not blocked) but the owner's role
-// names could not be read from storage (#1944). It is deliberately distinct
+// ErrRoleResolutionUnavailable is returned by ValidateSessionToken,
+// ValidatePATToken, ValidateMachineToken and ValidateOIDCToken when the
+// credential itself checked out (found, unrevoked, unexpired, owning account
+// active and not blocked / machine identity active) but the principal's role
+// names could not be read from storage (#1944 for the two user-credential
+// validators, #2748 for the two machine ones). It is deliberately distinct
 // from every "invalid credential" error: the failure says nothing about the
 // token, so callers must not treat it as a bad credential (no 401 / negative
 // cache / brute-force strike) — the HTTP middleware answers 503 and the gRPC
@@ -622,6 +618,9 @@ func (c *KeyorixCore) SessionStillLive(ctx context.Context, sessionID uint) (boo
 // drift here would make every legitimate cache hit spuriously fail closed as a
 // hash mismatch.
 func hashSessionTokenForLookup(token string) string {
+	// codeql[go/weak-sensitive-data-hashing] -- mirrors internal/storage/store's
+	// hashSessionToken: token is a high-entropy random session token, not a
+	// password, so a fast deterministic lookup hash is correct, not a slow KDF.
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
 }

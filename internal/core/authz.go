@@ -1115,7 +1115,8 @@ func (c *KeyorixCore) resolveGlobalAdminHolders(ctx context.Context, adminIDs ma
 }
 
 // filterActiveHolders drops every holder whose account is no longer usable as a
-// fallback admin (soft-deleted, or IsActive=false) — see resolveGlobalAdminHolders'
+// fallback admin (soft-deleted, IsActive=false, or a login-blocked
+// account_state such as suspended) — see resolveGlobalAdminHolders'
 // #G03 doc comment above for why a surviving grant ROW is not sufficient on its own.
 func (c *KeyorixCore) filterActiveHolders(ctx context.Context, holders map[uint]bool) (map[uint]bool, error) {
 	for id := range holders {
@@ -1129,7 +1130,11 @@ func (c *KeyorixCore) filterActiveHolders(ctx context.Context, holders map[uint]
 			}
 			return nil, err
 		}
-		if !user.IsActive {
+		// #2658: a suspended/deprovisioned admin keeps IsActive=true (setAccountState
+		// changes only account_state) but cannot log in, so it is no fallback admin
+		// either. Same predicate the storage-level RemoveGlobalAdminRoleGuarded check
+		// applies (store.GlobalAdminLiveAccountStates).
+		if !user.IsActive || AccountLoginBlocked(user.ID, user.AccountState) {
 			delete(holders, id)
 		}
 	}
@@ -1165,7 +1170,10 @@ func (c *KeyorixCore) guardLastGlobalAdminGroupRole(ctx context.Context, groupID
 	if scope.ProjectID != 0 || scope.EnvironmentID != 0 {
 		return nil // not the global scope — project admins are recoverable
 	}
-	adminIDs := c.installAdminRoleIDSet(ctx)
+	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+	if err != nil {
+		return err // #2496: fail closed — "can't tell" must not read as "not an admin role"
+	}
 	if !adminIDs[roleID] {
 		return nil // not removing an install-admin role
 	}
@@ -1180,7 +1188,7 @@ func (c *KeyorixCore) guardLastGlobalAdminGroupRole(ctx context.Context, groupID
 		return err
 	}
 	if len(holders) == 0 {
-		return fmt.Errorf("refusing to remove role %d from group %d: the install would be left with no super_admin/admin/system_admin at the global scope and no one able to manage users, roles, or settings", roleID, groupID)
+		return fmt.Errorf("refusing to remove role %d from group %d: the install would be left with no install administrator at the global scope and no one able to manage users, roles, or settings", roleID, groupID)
 	}
 	return nil
 }
@@ -1192,7 +1200,10 @@ func (c *KeyorixCore) guardLastGlobalAdminGroupRole(ctx context.Context, groupID
 // group with no admin-tier grant at all is never blocked, regardless of the
 // install's overall admin count.
 func (c *KeyorixCore) guardLastGlobalAdminGroupDelete(ctx context.Context, groupID uint) error {
-	adminIDs := c.installAdminRoleIDSet(ctx)
+	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+	if err != nil {
+		return err // #2496: fail closed
+	}
 	if len(adminIDs) == 0 {
 		return nil // no install-admin role seeded — nothing to guard
 	}
@@ -1210,7 +1221,7 @@ func (c *KeyorixCore) guardLastGlobalAdminGroupDelete(ctx context.Context, group
 		return err
 	}
 	if len(holders) == 0 {
-		return fmt.Errorf("refusing to delete group %d: it holds the install's last administrative role grant, and deleting it would leave no super_admin/admin/system_admin at the global scope", groupID)
+		return fmt.Errorf("refusing to delete group %d: it holds the install's last administrative role grant, and deleting it would leave no install administrator at the global scope", groupID)
 	}
 	return nil
 }
@@ -1224,7 +1235,10 @@ func (c *KeyorixCore) guardLastGlobalAdminGroupDelete(ctx context.Context, group
 // authority via this one group. A group with no admin-tier grant at all is never
 // blocked, regardless of the install's overall admin count.
 func (c *KeyorixCore) guardLastGlobalAdminMembership(ctx context.Context, userID, groupID uint) error {
-	adminIDs := c.installAdminRoleIDSet(ctx)
+	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+	if err != nil {
+		return err // #2496: fail closed
+	}
 	if len(adminIDs) == 0 {
 		return nil // no install-admin role seeded — nothing to guard
 	}
@@ -1242,7 +1256,7 @@ func (c *KeyorixCore) guardLastGlobalAdminMembership(ctx context.Context, userID
 		return err
 	}
 	if len(holders) == 0 {
-		return fmt.Errorf("refusing to remove user %d from group %d: they may be the install's last administrator via this group's role grant, and removing them would leave no super_admin/admin/system_admin at the global scope", userID, groupID)
+		return fmt.Errorf("refusing to remove user %d from group %d: they may be the install's last administrator via this group's role grant, and removing them would leave no install administrator at the global scope", userID, groupID)
 	}
 	return nil
 }

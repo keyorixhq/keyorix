@@ -66,6 +66,30 @@ if [ ! -f "$LEDGER" ]; then
 fi
 
 rows=$(grep -vE '^[[:space:]]*(#|$)' "$LEDGER" || true)
+
+# Fragment directory (dual-read, C-MERGE-FRICTION): when CLOSURE_LEDGER_D is
+# set, every <dir>/*.tsv file is ONE more row in the same format, read in
+# addition to the flat ledger above — so a new claim is a new file, not an
+# append to a shared one (two PRs appending to one ledger is a guaranteed
+# merge conflict). Unset (the default, i.e. docs/security-closures.tsv) means
+# no fragments: that ledger is already generated from docs/security-closures.d/
+# by scripts/gen-security-closures-tsv.sh, and reading that directory here as
+# well would count every claim twice. A fragment must hold exactly one row;
+# the duplicate-claim check below runs over legacy + fragment rows together.
+LEDGER_D="${CLOSURE_LEDGER_D:-}"
+if [ -n "$LEDGER_D" ] && [ -d "$LEDGER_D" ]; then
+    for frag in "$LEDGER_D"/*.tsv; do
+        [ -e "$frag" ] || continue
+        frag_rows=$(grep -vE '^[[:space:]]*(#|$)' "$frag" || true)
+        n=$(grep -c . <<<"$frag_rows" || true)
+        if [ "$n" -ne 1 ]; then
+            die "fragment $frag holds $n rows — a ledger fragment must hold exactly one"
+            continue
+        fi
+        if [ -z "$rows" ]; then rows="$frag_rows"; else rows="$rows"$'\n'"$frag_rows"; fi
+    done
+fi
+
 if [ -z "$rows" ]; then
     echo "FAIL: closure ledger is empty — a ledger with no rows cannot fail, and" >&2
     echo "      a check that cannot fail is not a check." >&2
@@ -176,20 +200,29 @@ if [ "${1:-}" = "--self-test" ]; then
     run_case() {
         # $1=description  $2=expected(reject|accept)  $3=row(s), one per line
         # $4=forced KEYORIX_TEST_PG_DSN for this sub-invocation ("" = unset, "-" = inherit ambient)
+        # $5..=optional fragment files, each "name.tsv=<content>" — written into a
+        #      fresh CLOSURE_LEDGER_D. Always a fresh dir, so the real fragment
+        #      directory a wrapper (check-adr-conformance.sh) exported never leaks in.
         local desc="$1" expect="$2" body="$3" dsn="$4" out rc
+        shift 4
         local tmp; tmp=$(mktemp)
+        local tmpd; tmpd=$(mktemp -d)
         printf '%s\n' "$body" > "$tmp"
+        local frag
+        for frag in "$@"; do
+            printf '%s\n' "${frag#*=}" > "$tmpd/${frag%%=*}"
+        done
         set +e
         if [ "$dsn" = "-" ]; then
-            out=$(CLOSURE_LEDGER="$tmp" "$0" 2>&1)
+            out=$(CLOSURE_LEDGER="$tmp" CLOSURE_LEDGER_D="$tmpd" "$0" 2>&1)
         elif [ -z "$dsn" ]; then
-            out=$(CLOSURE_LEDGER="$tmp" env -u KEYORIX_TEST_PG_DSN "$0" 2>&1)
+            out=$(CLOSURE_LEDGER="$tmp" CLOSURE_LEDGER_D="$tmpd" env -u KEYORIX_TEST_PG_DSN "$0" 2>&1)
         else
-            out=$(CLOSURE_LEDGER="$tmp" KEYORIX_TEST_PG_DSN="$dsn" "$0" 2>&1)
+            out=$(CLOSURE_LEDGER="$tmp" CLOSURE_LEDGER_D="$tmpd" KEYORIX_TEST_PG_DSN="$dsn" "$0" 2>&1)
         fi
         rc=$?
         set -e
-        rm -f "$tmp"
+        rm -rf "$tmp" "$tmpd"
         if [ "$expect" = "reject" ] && [ "$rc" -eq 0 ]; then
             echo "FAIL: self-test case '$desc' PASSED when it must be REJECTED — the checker" >&2
             echo "      cannot detect this bad row and is therefore worthless for it." >&2
@@ -232,6 +265,39 @@ if [ "${1:-}" = "--self-test" ]; then
     run_case "manual row with an artefact note, no pkg/test needed" "accept" \
         'SELF-TEST-7	-	-	manual	deadbeef	-	calibration row citing a fake artefact' \
         "-"
+
+    # Fragment-directory cases (CLOSURE_LEDGER_D). Manual rows only, so these
+    # exercise the row-collection path without running go test.
+    run_case "fragment row duplicating a legacy claim_id" "reject" \
+        'SELF-TEST-8	-	-	manual	deadbeef	-	calibration row (legacy)' \
+        "-" \
+        'SELF-TEST-8.tsv=SELF-TEST-8	-	-	manual	deadbeef	-	calibration row (fragment)'
+
+    run_case "two fragments with the same claim_id" "reject" \
+        'SELF-TEST-9	-	-	manual	deadbeef	-	calibration row (legacy)' \
+        "-" \
+        'a.tsv=SELF-TEST-10	-	-	manual	deadbeef	-	calibration row' \
+        'b.tsv=SELF-TEST-10	-	-	manual	deadbeef	-	calibration row'
+
+    run_case "fragment holding two rows" "reject" \
+        'SELF-TEST-11	-	-	manual	deadbeef	-	calibration row (legacy)' \
+        "-" \
+        $'SELF-TEST-12.tsv=SELF-TEST-12\t-\t-\tmanual\tdeadbeef\t-\tone\nSELF-TEST-13\t-\t-\tmanual\tdeadbeef\t-\ttwo'
+
+    run_case "malformed fragment row (bad verification) is checked like a legacy row" "reject" \
+        'SELF-TEST-14	-	-	manual	deadbeef	-	calibration row (legacy)' \
+        "-" \
+        'SELF-TEST-15.tsv=SELF-TEST-15	./internal/core	TestX	sometimes	deadbeef	-	calibration row'
+
+    run_case "fragment-only ledger (legacy file holds comments only)" "accept" \
+        '# header only' \
+        "-" \
+        'SELF-TEST-16.tsv=SELF-TEST-16	-	-	manual	deadbeef	-	calibration row citing a fake artefact'
+
+    run_case "legacy + distinct fragment rows" "accept" \
+        'SELF-TEST-17	-	-	manual	deadbeef	-	calibration row citing a fake artefact' \
+        "-" \
+        $'SELF-TEST-18.tsv=# a comment line is allowed\nSELF-TEST-18\t-\t-\tmanual\tdeadbeef\t-\tcalibration row citing a fake artefact'
 
     if [ "$selffail" -ne 0 ]; then
         exit 1

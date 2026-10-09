@@ -69,7 +69,7 @@ func TestGetProjectDrift_HappyPath(t *testing.T) {
 
 func TestListEnvironments_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/environments", nil)
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/environments", nil)) // #2780: authorizes in-handler
 	w := httptest.NewRecorder()
 	h.ListEnvironments(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -5628,7 +5628,7 @@ func TestSecretHandler_ListAccessors_HappyPath(t *testing.T) {
 
 func TestCatalogHandler_ListEnvironments_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil)) // #2780: authorizes in-handler
 	w := httptest.NewRecorder()
 	h.ListEnvironments(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)

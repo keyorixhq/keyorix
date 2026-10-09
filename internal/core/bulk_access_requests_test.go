@@ -38,7 +38,7 @@ func pendingReq(id uint) *models.AccessRequest {
 func TestBulkApproveAccessRequests_EmptyIDs(t *testing.T) {
 	t.Parallel()
 	k := newBulkTestCore(t)
-	_, err := k.BulkApproveAccessRequests(context.Background(), nil, 1)
+	_, err := k.BulkApproveAccessRequests(context.Background(), nil, 1, 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "required")
 }
@@ -46,7 +46,7 @@ func TestBulkApproveAccessRequests_EmptyIDs(t *testing.T) {
 func TestBulkApproveAccessRequests_EmptySlice(t *testing.T) {
 	t.Parallel()
 	k := newBulkTestCore(t)
-	_, err := k.BulkApproveAccessRequests(context.Background(), []uint{}, 1)
+	_, err := k.BulkApproveAccessRequests(context.Background(), []uint{}, 1, 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "required")
 }
@@ -58,7 +58,7 @@ func TestBulkApproveAccessRequests_FetchError(t *testing.T) {
 	storageErr := errors.New("db exploded")
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{1}).Return(nil, storageErr)
 
-	_, err := k.BulkApproveAccessRequests(context.Background(), []uint{1}, 2)
+	_, err := k.BulkApproveAccessRequests(context.Background(), []uint{1}, 2, 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "fetch")
 }
@@ -71,7 +71,7 @@ func TestBulkApproveAccessRequests_NotFound(t *testing.T) {
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{42}).
 		Return([]*models.AccessRequest{}, nil)
 
-	result, err := k.BulkApproveAccessRequests(context.Background(), []uint{42}, 2)
+	result, err := k.BulkApproveAccessRequests(context.Background(), []uint{42}, 2, 0)
 	require.NoError(t, err)
 	assert.Empty(t, result.Approved)
 	require.Len(t, result.Failed, 1)
@@ -96,7 +96,7 @@ func TestBulkApproveAccessRequests_ApproveError(t *testing.T) {
 	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 
-	result, err := k.BulkApproveAccessRequests(context.Background(), []uint{5}, 2)
+	result, err := k.BulkApproveAccessRequests(context.Background(), []uint{5}, 2, 0)
 	require.NoError(t, err)
 	assert.Empty(t, result.Approved)
 	require.Len(t, result.Failed, 1)
@@ -113,7 +113,7 @@ func TestBulkApproveAccessRequests_TooManyIDs(t *testing.T) {
 		ids[i] = uint(i + 1)
 	}
 
-	result, err := k.BulkApproveAccessRequests(context.Background(), ids, 2)
+	result, err := k.BulkApproveAccessRequests(context.Background(), ids, 2, 0)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "exceeds the maximum batch size")
@@ -144,7 +144,7 @@ func TestBulkApproveAccessRequests_AtBatchLimit(t *testing.T) {
 	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 
-	result, err := k.BulkApproveAccessRequests(context.Background(), ids, 2)
+	result, err := k.BulkApproveAccessRequests(context.Background(), ids, 2, 0)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Empty(t, result.Approved)
@@ -164,7 +164,7 @@ func TestBulkApproveAccessRequests_MixedResults(t *testing.T) {
 	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 
-	result, err := k.BulkApproveAccessRequests(context.Background(), []uint{1, 99}, 2)
+	result, err := k.BulkApproveAccessRequests(context.Background(), []uint{1, 99}, 2, 0)
 	require.NoError(t, err)
 
 	// ID 1: failed (permission denied by Authorize); ID 99: failed (not in pre-fetch).
@@ -177,7 +177,7 @@ func TestBulkApproveAccessRequests_MixedResults(t *testing.T) {
 func TestBulkRejectAccessRequests_EmptyIDs(t *testing.T) {
 	t.Parallel()
 	k := newBulkTestCore(t)
-	_, err := k.BulkRejectAccessRequests(context.Background(), nil, 1, "no access")
+	_, err := k.BulkRejectAccessRequests(context.Background(), nil, 1, 0, "no access")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "required")
 }
@@ -185,7 +185,7 @@ func TestBulkRejectAccessRequests_EmptyIDs(t *testing.T) {
 func TestBulkRejectAccessRequests_EmptySlice(t *testing.T) {
 	t.Parallel()
 	k := newBulkTestCore(t)
-	_, err := k.BulkRejectAccessRequests(context.Background(), []uint{}, 1, "no access")
+	_, err := k.BulkRejectAccessRequests(context.Background(), []uint{}, 1, 0, "no access")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "required")
 }
@@ -193,7 +193,7 @@ func TestBulkRejectAccessRequests_EmptySlice(t *testing.T) {
 func TestBulkRejectAccessRequests_EmptyReason(t *testing.T) {
 	t.Parallel()
 	k := newBulkTestCore(t)
-	_, err := k.BulkRejectAccessRequests(context.Background(), []uint{1}, 1, "")
+	_, err := k.BulkRejectAccessRequests(context.Background(), []uint{1}, 1, 0, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reason")
 }
@@ -205,7 +205,7 @@ func TestBulkRejectAccessRequests_FetchError(t *testing.T) {
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{1}).
 		Return(nil, errors.New("db down"))
 
-	_, err := k.BulkRejectAccessRequests(context.Background(), []uint{1}, 2, "not allowed")
+	_, err := k.BulkRejectAccessRequests(context.Background(), []uint{1}, 2, 0, "not allowed")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "fetch")
 }
@@ -217,7 +217,7 @@ func TestBulkRejectAccessRequests_NotFound(t *testing.T) {
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{55}).
 		Return([]*models.AccessRequest{}, nil)
 
-	result, err := k.BulkRejectAccessRequests(context.Background(), []uint{55}, 2, "not allowed")
+	result, err := k.BulkRejectAccessRequests(context.Background(), []uint{55}, 2, 0, "not allowed")
 	require.NoError(t, err)
 	assert.Empty(t, result.Rejected)
 	require.Len(t, result.Failed, 1)
@@ -237,7 +237,7 @@ func TestBulkRejectAccessRequests_RejectError(t *testing.T) {
 	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 
-	result, err := k.BulkRejectAccessRequests(context.Background(), []uint{7}, 2, "denied")
+	result, err := k.BulkRejectAccessRequests(context.Background(), []uint{7}, 2, 0, "denied")
 	require.NoError(t, err)
 	assert.Empty(t, result.Rejected)
 	require.Len(t, result.Failed, 1)
@@ -265,7 +265,7 @@ func TestBulkRejectAccessRequests_RejectNonPending(t *testing.T) {
 	m.On("GetAccessRequest", mock.Anything, uint(8)).
 		Return(already, nil)
 
-	result, err := k.BulkRejectAccessRequests(context.Background(), []uint{8}, 2, "denied")
+	result, err := k.BulkRejectAccessRequests(context.Background(), []uint{8}, 2, 0, "denied")
 	require.NoError(t, err)
 	assert.Empty(t, result.Rejected)
 	require.Len(t, result.Failed, 1)
@@ -283,7 +283,7 @@ func TestBulkRejectAccessRequests_TooManyIDs(t *testing.T) {
 		ids[i] = uint(i + 1)
 	}
 
-	result, err := k.BulkRejectAccessRequests(context.Background(), ids, 2, "denied")
+	result, err := k.BulkRejectAccessRequests(context.Background(), ids, 2, 0, "denied")
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "exceeds the maximum batch size")
@@ -310,7 +310,7 @@ func TestBulkRejectAccessRequests_AtBatchLimit(t *testing.T) {
 	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 
-	result, err := k.BulkRejectAccessRequests(context.Background(), ids, 2, "denied")
+	result, err := k.BulkRejectAccessRequests(context.Background(), ids, 2, 0, "denied")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Empty(t, result.Rejected)
@@ -329,7 +329,7 @@ func TestBulkRejectAccessRequests_MixedResults(t *testing.T) {
 	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 
-	result, err := k.BulkRejectAccessRequests(context.Background(), []uint{3, 77}, 2, "no")
+	result, err := k.BulkRejectAccessRequests(context.Background(), []uint{3, 77}, 2, 0, "no")
 	require.NoError(t, err)
 	assert.Empty(t, result.Rejected)
 	assert.Len(t, result.Failed, 2)

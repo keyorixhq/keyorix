@@ -48,11 +48,13 @@ Format: `INV-AUDITVERIFY-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#i
 - **INV-AUDITVERIFY-09** `ExternalAnchorStatus` (a caller-supplied `--anchor` bundle held
   outside this host's blast radius) must never be conflated with `AnchorStatus` (the in-DB
   checkpoint's own RFC 3161 receipt) — a host admin who controls the DB can forge the latter.
-  Why: verify.go `ExternalAnchorStatus` doc comment. Guard: `TestParseExternalAnchorBundle`
-  only covers parsing, not non-conflation of the two statuses or that the final verdict reflects
-  the worse of the two — UNGUARDED (#issue: assert the two fields can disagree, e.g. in-DB
-  anchor VALID while an external bundle says MISMATCH, and that `Result`'s verdict surfaces
-  the mismatch).
+  Why: verify.go `ExternalAnchorStatus` doc comment. Guard: `anchor_status_independence_test.go`
+  — `TestAnchorStatus_InDBAnchorDoesNotMaskExternalMismatch` (a re-seeded chain with a re-signed
+  in-DB checkpoint and anchor token passes every in-DB check, yet an earlier external bundle
+  drives the verdict to BROKEN, and `Anchor` is identical with or without the bundle) and
+  `TestAnchorStatus_ExternalAuthenticationDoesNotMarkInDBAnchor` (an authenticated bundle never
+  makes the in-DB anchor present or verified). Not covered: an in-DB anchor that verifies
+  against TSA roots, which needs a real RFC 3161 token the fixtures cannot mint (#2516).
 - **INV-AUDITVERIFY-10** `WriteWitnessIfHigher` must never lower the witness file's recorded
   high-water mark — only monotonically advance it. Why: witness.go — the rollback protection in
   `docs/design-b3-backup-v2.md` §6.3 compares an archive's recorded high-water mark against this
@@ -62,9 +64,13 @@ Format: `INV-AUDITVERIFY-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#i
   archive tar member, never listed in `internal/keyfiles.Registry`) so it survives being
   overwritten by `admin restore`. Why: witness.go — comparing an old archive against its own
   (also-old) embedded witness would prove nothing. Guard: `TestWitnessPath_SiblingOfDBFile`
-  proves the path relationship; the "never a tar member / never in keyfiles.Registry" half has
-  no direct cross-package test found — UNGUARDED (#issue: add a test in internal/backupfmt or
-  internal/keyfiles asserting the witness filename is excluded from both).
+  proves the path relationship;
+  `internal/keyfiles/witness_exclusion_test.go:TestRegistry_NeverIncludesAuditHighWaterWitness`
+  (every path-bearing Registry branch, witness on disk beside every key file) and
+  `internal/backupfmt/witness_exclusion_test.go:TestBackupArchive_NeverContainsAuditHighWaterWitness`
+  (closed-world archive member set, no witness name or bytes in any member) prove the
+  exclusion half. Not covered: a config that names the witness file directly as a key path —
+  Registry follows config and nothing rejects that (#2517).
 - **INV-AUDITVERIFY-12** The backup-manifest signing key must be domain-separated from (never
   equal to) the audit-checkpoint signing key, even when both are derived from the same KEK.
   Guard: `TestDeriveBackupManifestKey_DomainSeparatedFromAuditCheckpointKey`.

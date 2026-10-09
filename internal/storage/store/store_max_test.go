@@ -298,9 +298,11 @@ func TestUpdateGroup_Success(t *testing.T) {
 	ctx := context.Background()
 	g, err := ls.CreateGroup(ctx, &models.Group{Name: "g-upd", NameFolded: "g-upd"})
 	require.NoError(t, err)
-	g.Name = "g-upd-v2"
-	g.NameFolded = "g-upd-v2"
-	got, err := ls.UpdateGroup(ctx, g)
+	name, folded := "g-upd-v2", "g-upd-v2"
+	matched, err := ls.UpdateGroupFields(ctx, g.ID, &name, &folded, nil, time.Now())
+	require.NoError(t, err)
+	require.True(t, matched)
+	got, err := ls.GetGroup(ctx, g.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "g-upd-v2", got.Name)
 }
@@ -401,8 +403,7 @@ func TestUpdateProject_DuplicateNameError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Rename p1 to "proj-beta" — must hit the unique-name collision.
-	p1.Name = "proj-beta"
-	_, err = ls.UpdateProject(ctx, p1)
+	_, err = ls.UpdateProjectFields(ctx, p1.ID, "proj-beta", p1.Description, nil, time.Now())
 	require.Error(t, err)
 }
 
@@ -1836,16 +1837,21 @@ func TestCreateMachineIdentityCredential_Error(t *testing.T) {
 	require.Error(t, err)
 }
 
-// UpdateMachineIdentityCredential — error path.
-func TestUpdateMachineIdentityCredential_Error(t *testing.T) {
+// SetMachineIdentityCredentialClassification — error path.
+func TestSetMachineIdentityCredentialClassification_Error(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	ls := NewLocalStorage(db)
-	err = ls.UpdateMachineIdentityCredential(context.Background(), &models.MachineIdentityCredential{})
+	// No migrated table: the UPDATE errors, and the method must surface that
+	// rather than reporting a clean no-match (#2696 — a no-match means "the row
+	// moved", which a caller is allowed to treat as a benign concurrent write;
+	// a storage error must never be collapsed into it).
+	matched, err := ls.SetMachineIdentityCredentialClassification(context.Background(), 1, "", "internal")
 	require.Error(t, err)
+	require.False(t, matched)
 }
 
 // ListMachineIdentityCredentials — empty.

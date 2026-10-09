@@ -26,6 +26,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -64,10 +65,20 @@ func freshNCCoreWithChannel(t *testing.T) (*core.KeyorixCore, uint) {
 		&models.AuditEvent{},
 		&models.NotificationChannel{},
 	))
+	// URLEnc, not URL (#2433): URL is gorm:"-" (not a persisted column) -- a raw
+	// db.Create setting only URL would silently persist no URL at all, and
+	// UpdateNotificationChannel (which TestNCUpdate_Success below drives) would
+	// then decrypt an empty URLEnc, failing webhook URL validation on any
+	// update that doesn't itself touch "url".
+	//
+	// Wrapped with the plaintext format tag (#2468), not the bare bytes: url_enc
+	// is self-describing now, and a raw URL there is an unrecognised format byte
+	// that the read path correctly refuses. This core has no encryptor wired, so
+	// plaintext-tagged is exactly what its own write path would have produced.
 	ch := &models.NotificationChannel{
 		Name:    "test-channel",
 		Type:    "webhook",
-		URL:     "https://example.com/hook",
+		URLEnc:  ports.WrapNotificationChannelURL(ports.NotificationChannelURLTagPlaintext, []byte("https://example.com/hook")),
 		Enabled: true,
 	}
 	require.NoError(t, db.Create(ch).Error)

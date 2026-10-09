@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -23,7 +24,16 @@ import (
 // suspended (login blocked) so it can no longer authenticate as a human. actorID
 // is the acting admin, recorded on every audit event. The created machine
 // identity is returned.
-func (c *KeyorixCore) MigrateUserToMachine(ctx context.Context, username string, projectID uint, identityType, name string, actorID uint, suspendSource bool) (*models.MachineIdentity, error) {
+// actorMachineID is the acting MACHINE identity, or 0 for a human actor —
+// #2495, found by actor_kind_literal_completeness_test.go. This path is HTTP-
+// reachable (POST /api/v1/projects/{id}/machine-identities/migrate-from-user)
+// and the route gate is actor-aware, so a machine identity holding the required
+// permissions can perform the migration; passing only actorID recorded
+// CreatedByMachineIdentityID as 0 on the resulting identity, leaving a
+// machine-created machine identity attributed to nobody. Attribution only — no
+// privilege ceiling consults it — which is why this is a lower-severity sibling
+// of the bulk-approval defect in the same change, not a second ceiling bypass.
+func (c *KeyorixCore) MigrateUserToMachine(ctx context.Context, username string, projectID uint, identityType, name string, actorID, actorMachineID uint, suspendSource bool) (*models.MachineIdentity, error) {
 	if username == "" {
 		return nil, fmt.Errorf("username is required")
 	}
@@ -54,44 +64,99 @@ func (c *KeyorixCore) MigrateUserToMachine(ctx context.Context, username string,
 	// event below, which is gated behind audit.read.
 	desc := fmt.Sprintf("Migrated from user %q (id %d)", user.Username, user.ID)
 
-	createIdentity := func(ctx context.Context) (*models.MachineIdentity, error) {
-		return c.CreateMachineIdentity(ctx, projectID, name, identityType, desc, "", actorID, 0)
-	}
-
 	var m *models.MachineIdentity
 	if suspendSource {
-		// #2413: SuspendUser acquires lastAdminGuardLockKey itself, but it used
-		// to do so AFTER CreateMachineIdentity had already committed -- a
-		// failure to acquire the lock (not the guard check, which has its own
-		// documented partial-success handling below) reported an error for an
-		// identity that, in fact, already existed. Taking the SAME lock here
-		// first means a lock-acquisition failure leaves nothing committed at
-		// all: CreateMachineIdentity runs only once the lock is actually held.
-		// WithNamedLock is reentrant via the lock-marked ctx it hands fn
-		// (see its own doc comment), so SuspendUser's internal WithNamedLock
-		// call for the identical key just proceeds without re-locking.
-		var suspendErr error
+		// #2867: the identity's insert and the source user's suspension now
+		// commit together, in ONE transaction, with every check that can refuse
+		// the operation run BEFORE either write.
+		//
+		// Previously CreateMachineIdentity committed in its own transaction and
+		// SuspendUser then ran in a second one, so any refusal or failure in the
+		// suspension left a new machine identity beside a still-ACTIVE human
+		// account with live sessions and PATs — and the two reliably-reachable
+		// refusals (an actor who does not outrank the target; a target who is
+		// the install's last global admin) hit that path on ordinary input, not
+		// just under injected faults. The old code reported the partial state in
+		// its error and left the operator to finish by hand.
+		//
+		// #2413's reason for taking lastAdminGuardLockKey here first still
+		// holds and is now stronger: nothing is written until the lock is
+		// actually held, so a lock-acquisition failure leaves nothing behind.
+		// WithNamedLock is reentrant via the lock-marked ctx it hands fn (see
+		// its own doc comment), so the guard below can be called inside it.
+		var evictHashes []string
 		lockErr := c.storage.WithNamedLock(ctx, lastAdminGuardLockKey, func(ctx context.Context) error {
-			var cerr error
-			m, cerr = createIdentity(ctx)
-			if cerr != nil {
-				return cerr
+			// ---- every refusal, before any write ----
+			// The last-admin guard, under the same lock acquisition as the write
+			// it protects (#1646) — two concurrent migrations of two different
+			// admins must not each see "another admin survives".
+			if err := c.guardLastAdminDeactivation(ctx, user.ID); err != nil {
+				return err
 			}
-			suspendErr = c.SuspendUser(ctx, actorID, user.ID)
+			// The admin-rank ceiling setAccountState would apply, hoisted here so
+			// an under-ranked actor creates no identity. Same condition and same
+			// phrasing as setAccountState's own call, so the refusal a caller
+			// sees is unchanged.
+			if actorID != user.ID {
+				if err := c.requireAdminRankCeilingForTarget(ctx, actorID, user.ID, "change the account state of"); err != nil {
+					return err
+				}
+			}
+			// Input validation and row assembly, also before the transaction.
+			// actorMachineID is threaded through, not dropped: #2495/#2784 made
+			// this path record CreatedByMachineIdentityID for a MACHINE actor
+			// (the route gate is actor-aware, so a machine identity with the
+			// right permissions can perform the migration). Passing 0 here would
+			// silently re-open that attribution gap behind an atomicity fix.
+			pending, err := c.newMachineIdentityForCreate(projectID, name, identityType, desc, "", actorID, actorMachineID)
+			if err != nil {
+				return err
+			}
+
+			// ---- one transaction for both writes ----
+			// accountStateMu is held across it for the same reason
+			// setAccountState holds it: #344's read-modify-write race against
+			// UpdateSCIMUser is serialized in-process by this mutex and across
+			// replicas by setAccountStateInTx's own LockUserForUpdate.
+			c.accountStateMu.Lock()
+			defer c.accountStateMu.Unlock()
+			var created *models.MachineIdentity
+			if txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+				var cerr error
+				created, cerr = tx.CreateMachineIdentity(ctx, pending)
+				if cerr != nil {
+					return fmt.Errorf("failed to create machine identity: %w", cerr)
+				}
+				hashes, serr := c.setAccountStateInTx(ctx, tx, user.ID, AccountSuspended)
+				if serr != nil {
+					return fmt.Errorf("failed to update account state: %w", serr)
+				}
+				evictHashes = hashes
+				return nil
+			}); txErr != nil {
+				// Nothing committed: no identity, and the user is untouched.
+				return txErr
+			}
+			m = created
 			return nil
 		})
 		if lockErr != nil {
 			return nil, lockErr
 		}
-		if suspendErr != nil {
-			// The identity exists; report the partial state so the operator can
-			// suspend the source user manually rather than silently leaving an
-			// active human login alongside the new machine identity.
-			return m, fmt.Errorf("machine identity %d created but failed to suspend source user %d: %w", m.ID, user.ID, suspendErr)
-		}
+		// ---- after commit ----
+		// Cache eviction and both audit events run only now, so a rolled-back
+		// transaction never evicts a still-valid cache entry (setAccountState's
+		// own ordering) and never claims an identity was created.
+		// AccountSuspended blocks login, so the TOMBSTONING primitive is the
+		// right one here — see accountStateNeedsEvictionSweep.
+		c.invalidateTokenCache(evictHashes...)
+		c.logMachineEvent(ctx, "machine_identity.created", m, actorID)
+		aid := actorID
+		c.writeAuditEventFull(ctx, "account.suspended", &aid, nil, nil, "",
+			fmt.Sprintf("user %d account state set to %s", user.ID, AccountSuspended))
 	} else {
 		var err error
-		m, err = createIdentity(ctx)
+		m, err = c.CreateMachineIdentity(ctx, projectID, name, identityType, desc, "", actorID, actorMachineID)
 		if err != nil {
 			return nil, err
 		}

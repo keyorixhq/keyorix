@@ -112,78 +112,37 @@ func (c *KeyorixCore) enforceAccessReviewReviewerControls(ctx context.Context, a
 // underlying removal is itself audited (role.removed / role.group_removed for
 // roles), and a recertification-specific access_review.revoked event records the
 // decision with the acting reviewer. actorID is the reviewer performing the revoke.
+// #2676: both revoke entry points — this standalone one and the campaign's
+// DecideAccessReviewItem — now resolve the decision through the SAME
+// planReviewRevoke (access_review_decide_tx.go): one validation, one
+// principal-kind dispatch, one lock-and-guard decision per removal shape. They
+// differ in exactly one respect, which is the whole point of #2676: the
+// campaign path runs its write inside a transaction shared with the item claim,
+// because there the claim and the removal must agree or neither happen. There is
+// no claim here, so there is nothing to keep consistent with and no transaction
+// is needed.
+//
+// Before this, the dispatch (revokeRoleByPrincipalType) and validation lived
+// here and the campaign path reached them by calling this function after its
+// claim had already committed. Keeping that arrangement while adding a
+// transactional variant would have meant two copies of "which principal kind
+// maps to which removal, under which lock" — the second-implementation shape
+// #2496 had to unwind, load-bearing here for the last-admin guard.
 func (c *KeyorixCore) RevokeAccessReviewGrant(ctx context.Context, actorID, projectID uint, d AccessReviewDecision) error {
-	if projectID == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
-	}
-	if err := c.enforceAccessReviewReviewerControls(ctx, actorID, d); err != nil {
+	plan, err := c.planReviewRevoke(ctx, actorID, projectID, d)
+	if err != nil {
 		return err
 	}
-	switch d.Source {
-	case "role":
-		if d.PrincipalID == 0 || d.RoleID == 0 {
-			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and role_id are required to revoke a role grant")
-		}
-		scope := Scope{ProjectID: projectID, EnvironmentID: d.EnvironmentID}
-		if err := c.revokeRoleByPrincipalType(ctx, actorID, d, scope); err != nil {
+	return plan.guarded(ctx, func(lockCtx context.Context) error {
+		if err := plan.write(lockCtx, c.storage, c.auditNow()); err != nil {
 			return err
 		}
-	case "direct_share", "group_share":
-		if d.PrincipalID == 0 || d.SecretID == 0 {
-			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and secret_id are required to revoke a share")
+		c.logAccessReviewDecisionOn(lockCtx, c.auditNow(), EventAccessReviewRevoked, "revoked", actorID, projectID, d)
+		if plan.afterCommit != nil {
+			plan.afterCommit(lockCtx)
 		}
-		if err := c.revokeReviewShare(ctx, projectID, d); err != nil {
-			return err
-		}
-	case "owner":
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "ownership cannot be revoked via access review; reassign or delete the secret instead")
-	default:
-		return fmt.Errorf("%s: unknown access-review source %q", i18n.T("ErrorValidation", nil), d.Source)
-	}
-	c.logAccessReviewDecision(ctx, EventAccessReviewRevoked, "revoked", actorID, projectID, d)
-	return nil
-}
-
-func (c *KeyorixCore) revokeRoleByPrincipalType(ctx context.Context, actorID uint, d AccessReviewDecision, scope Scope) error {
-	switch d.PrincipalType {
-	case "group":
-		return c.RemoveRoleFromGroup(ctx, actorID, d.PrincipalID, d.RoleID, scope)
-	case "machine":
-		return c.RemoveMachineRole(ctx, d.PrincipalID, d.RoleID, scope, actorID)
-	default:
-		return c.RemoveUserRole(ctx, actorID, d.PrincipalID, d.RoleID, scope)
-	}
-}
-
-// revokeReviewShare deletes the ShareRecord matching the decision's secret +
-// recipient. It deletes the record directly (not via RevokeShare, which is owner-
-// gated) because access recertification acts on the project scope's authority —
-// which is exactly why the target secret must be verified to belong to THAT
-// project first: without it, a reviewer authorized on project A could pass any
-// SecretID and delete a share belonging to a secret in a DIFFERENT project
-// (IDOR; #99).
-func (c *KeyorixCore) revokeReviewShare(ctx context.Context, projectID uint, d AccessReviewDecision) error {
-	secret, err := c.storage.GetSecret(ctx, d.SecretID)
-	if err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
-	}
-	if secret.ProjectID != projectID {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil), "secret does not belong to this project")
-	}
-	isGroup := d.Source == "group_share"
-	shares, err := c.storage.ListSharesBySecret(ctx, d.SecretID, c.shareEffectiveNow())
-	if err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
-	}
-	for _, sh := range shares {
-		if sh.RecipientID == d.PrincipalID && sh.IsGroup == isGroup {
-			if err := c.storage.DeleteShareRecord(ctx, sh.ID); err != nil {
-				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-			}
-			return nil
-		}
-	}
-	return fmt.Errorf("%s: no matching share to revoke", i18n.T("ErrorNotFound", nil))
+		return nil
+	})
 }
 
 // AttestAccessReviewGrant records that the reviewer examined the grant and chose to
@@ -198,6 +157,21 @@ func (c *KeyorixCore) revokeReviewShare(ctx context.Context, projectID uint, d A
 // access is still needed and correct"; recording it for a grant that no longer exists
 // would certify a false state in the compliance evidence trail (#209).
 func (c *KeyorixCore) AttestAccessReviewGrant(ctx context.Context, actorID, projectID uint, d AccessReviewDecision) error {
+	if err := c.checkAccessReviewAttestation(ctx, actorID, projectID, d); err != nil {
+		return err
+	}
+	c.logAccessReviewDecision(ctx, EventAccessReviewAttested, "attested", actorID, projectID, d)
+	return nil
+}
+
+// checkAccessReviewAttestation runs every check an attestation must pass —
+// validation, reviewer controls, and the live re-verification of the grant —
+// without recording anything. It is all reads: DecideAccessReviewItem runs it
+// BEFORE claiming the campaign item, so a storage error here (e.g.
+// ListProjectRoleAssignments failing) is reported with nothing persisted
+// (#2570), instead of after the claim had already committed the item as
+// attested.
+func (c *KeyorixCore) checkAccessReviewAttestation(ctx context.Context, actorID, projectID uint, d AccessReviewDecision) error {
 	if projectID == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
 	}
@@ -207,11 +181,7 @@ func (c *KeyorixCore) AttestAccessReviewGrant(ctx context.Context, actorID, proj
 	if err := c.enforceAccessReviewReviewerControls(ctx, actorID, d); err != nil {
 		return err
 	}
-	if err := c.verifyAccessReviewGrantExists(ctx, projectID, d); err != nil {
-		return err
-	}
-	c.logAccessReviewDecision(ctx, EventAccessReviewAttested, "attested", actorID, projectID, d)
-	return nil
+	return c.verifyAccessReviewGrantExists(ctx, projectID, d)
 }
 
 // verifyAccessReviewGrantExists re-queries the actual grant a decision references —
@@ -311,6 +281,15 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 // the secret as SecretNodeID when the grant is per-secret, project as ProjectID,
 // and the full decision in the structured diff).
 func (c *KeyorixCore) logAccessReviewDecision(ctx context.Context, eventType, verb string, actorID, projectID uint, d AccessReviewDecision) {
+	c.logAccessReviewDecisionOn(ctx, c.auditNow(), eventType, verb, actorID, projectID, d)
+}
+
+// logAccessReviewDecisionOn is logAccessReviewDecision against an explicit audit
+// target (audit_target.go). The campaign revoke path writes this event inside
+// the same transaction as the claim and the grant removal, so the recertification
+// evidence and the state it certifies cannot disagree (#2676). ONE body, two
+// entry points.
+func (c *KeyorixCore) logAccessReviewDecisionOn(ctx context.Context, tgt auditTarget, eventType, verb string, actorID, projectID uint, d AccessReviewDecision) {
 	encoded, _ := json.Marshal(accessReviewAuditDetail(d))
 	var actor *uint
 	if actorID != 0 {
@@ -328,5 +307,5 @@ func (c *KeyorixCore) logAccessReviewDecision(ctx context.Context, eventType, ve
 		principal = "principal"
 	}
 	desc := fmt.Sprintf("access review: %s %s grant for %s %d", verb, d.Source, principal, d.PrincipalID)
-	c.writeAuditEventDiff(ctx, eventType, actor, secretID, &pid, "", desc, string(encoded))
+	c.writeAuditEventDiffOn(ctx, tgt, eventType, actor, secretID, &pid, "", desc, string(encoded))
 }

@@ -126,7 +126,9 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 
 	uid, sID, uname, sname := userCtx.UserID, response.ID, userCtx.Username, response.Name
 	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
-	auditCtx := core.DetachedAuditContext(r.Context())
+	// #2545: a client-asserted origin (e.g. keyorix-migrate's source path) is recorded as a
+	// labelled note on the audit event — never as attribution; see core.ClientOriginHeader.
+	auditCtx := core.WithClientOrigin(core.DetachedAuditContext(r.Context()), r.Header.Get(core.ClientOriginHeader))
 	goSafe(func() {
 		h.coreService.LogSecretCreatedWithProject(auditCtx, uid, sID, response.ProjectID, uname, sname, ip, ua)
 	}) // #nosec G118
@@ -261,7 +263,21 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 		// what the middleware is trusted to have done.
 		secret = middleware.GetResolvedSecretFromContext(r.Context())
 		if secret == nil || secret.ID != uint(id) {
+			// Fail closed: the scoped-permission middleware did not authorize
+			// THIS path id (it resolved nothing, or a different secret), so
+			// re-authorize the machine principal against the path secret's own
+			// scope before serving anything. core.GetSecret itself performs no
+			// authorization; the previous fallback served the path secret
+			// unchecked.
 			secret, err = h.coreService.GetSecret(r.Context(), uint(id))
+			if err == nil {
+				allowed, aerr := h.coreService.AuthorizeSecretPrincipalForSecret(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), secret, permSecretsRead)
+				if aerr != nil || !allowed {
+					log.Printf("SECURITY: GetSecret machine branch: path secret %d not authorized for principal %d after resolved-secret mismatch", id, userCtx.PrincipalID())
+					h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
+					return
+				}
+			}
 		}
 	} else {
 		secret, err = h.coreService.GetSecretWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
@@ -581,7 +597,7 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 	uid, sID, uname, sname := userCtx.UserID, uint(id), userCtx.Username, response.Name
 	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
 	diff := core.BuildSecretUpdateDiff(oldSecret, req, reqBody.Value != "")
-	auditCtx := core.DetachedAuditContext(r.Context())
+	auditCtx := core.WithClientOrigin(core.DetachedAuditContext(r.Context()), r.Header.Get(core.ClientOriginHeader)) // #2545, see CreateSecret
 	goSafe(func() {
 		h.coreService.LogSecretUpdatedWithDiff(auditCtx, uid, sID, response.ProjectID, uname, sname, ip, ua, diff)
 	}) // #nosec G118

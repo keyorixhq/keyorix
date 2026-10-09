@@ -70,7 +70,10 @@ paths:
                 password: {type: string, format: password}
       responses:
         '200':
-          description: Login successful
+          description: >-
+            Login successful, OR the password was correct but a second factor is
+            required (core.ErrMFARequired) -- the two shapes are disambiguated by
+            `data.mfa_required`, never by status code (both are 200).
           content:
             application/json:
               schema:
@@ -78,20 +81,9 @@ paths:
                 properties:
                   message: {type: string}
                   data:
-                    type: object
-                    properties:
-                      token: {type: string, description: Session bearer token}
-                      expires_at: {type: string, format: date-time}
-                      absolute_expires_at: {type: string, format: date-time, description: Hard ceiling past which refresh is refused}
-                      user_id: {type: integer}
-                      username: {type: string}
-                      email: {type: string}
-                      display_name: {type: string}
-                      role: {type: string}
-                      roles: {type: array, items: {type: string}}
-                      permissions: {type: array, items: {type: string}}
-                      password_change_required: {type: boolean}
-                      account_state: {type: string}
+                    oneOf:
+                      - $ref: '#/components/schemas/LoginSuccessData'
+                      - $ref: '#/components/schemas/MFAChallengeData'
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '429': {$ref: '#/components/responses/Error'}
@@ -224,8 +216,55 @@ paths:
                 token: {type: string}
                 password: {type: string, format: password}
       responses:
-        '200': {description: 'Account setup complete; payload identical to login'}
+        '200':
+          description: >-
+            Account setup complete, payload identical to /auth/login -- including
+            the same mfa_required branch when the account already has MFA enrolled
+            (core.ErrMFARequired short-circuits the normal session mint here too).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    oneOf:
+                      - $ref: '#/components/schemas/LoginSuccessData'
+                      - $ref: '#/components/schemas/MFAChallengeData'
         '400': {$ref: '#/components/responses/Error'}
+  /auth/mfa/verify:
+    post:
+      tags: [Auth]
+      summary: Complete MFA login with the challenge from /auth/login
+      description: >-
+        Unauthenticated: the bearer of trust is the single-use mfa_challenge
+        issued by /auth/login (or /auth/setup/consume), not a session. Verifies a
+        TOTP or recovery code and, on success, mints a real session -- same
+        payload shape as a normal login.
+      operationId: verifyMFALogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mfa_challenge, code]
+              properties:
+                mfa_challenge: {type: string, description: The challenge token from /auth/login's mfa_required response}
+                code: {type: string, description: 'A current TOTP code, or an unused recovery code'}
+      responses:
+        '200':
+          description: MFA verified, session minted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data: {$ref: '#/components/schemas/LoginSuccessData'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '429': {$ref: '#/components/responses/Error'}
   /health:
     get:
       tags: [System]
@@ -451,6 +490,165 @@ paths:
       responses:
         '204': {description: Token revoked}
         '404': {$ref: '#/components/responses/Error'}
+  /api/v1/auth/mfa/enroll:
+    post:
+      tags: [Auth]
+      summary: Begin TOTP MFA enrolment
+      description: >-
+        Generate a pending TOTP secret for the authenticated caller and return the
+        otpauth:// URI (for a QR code) and the base32 secret. Blocked under
+        impersonation. Must be followed by activate to actually enable MFA.
+      operationId: enrollMFA
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Pending enrolment created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: object
+                    required: [otpauth_uri, secret]
+                    properties:
+                      otpauth_uri: {type: string}
+                      secret: {type: string, description: Base32 TOTP secret}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/auth/mfa/activate:
+    post:
+      tags: [Auth]
+      summary: Confirm MFA enrolment and enable it
+      description: >-
+        Confirm the pending enrolment with a current TOTP code AND the account
+        password (re-proof that this is the account holder, not just whoever
+        generated the pending secret via enroll -- #372). Returns the one-time
+        recovery codes. Blocked under impersonation.
+      operationId: activateMFA
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, password]
+              properties:
+                code: {type: string, description: Current TOTP code from the pending secret}
+                password: {type: string, format: password}
+      responses:
+        '200':
+          description: MFA enabled; one-time recovery codes issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: object
+                    required: [recovery_codes]
+                    properties:
+                      recovery_codes: {type: array, items: {type: string}}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/auth/mfa/disable:
+    post:
+      tags: [Auth]
+      summary: Disable MFA
+      description: >-
+        Turn off MFA after verifying a current TOTP code OR the account password,
+        then clear the secret and all recovery codes. Blocked under impersonation.
+      operationId: disableMFA
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Exactly one re-proof is required; the handler checks code first, falling back to password.
+              properties:
+                code: {type: string, description: Current TOTP code or a recovery code}
+                password: {type: string, format: password}
+      responses:
+        '200':
+          description: MFA disabled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: object
+                    required: [mfa_enabled]
+                    properties:
+                      mfa_enabled: {type: boolean}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/auth/mfa/recovery-codes:
+    get:
+      tags: [Auth]
+      summary: How many recovery codes remain unused
+      description: 'Returns remaining/total unused recovery codes for the caller. total == 0 means MFA is not enabled.'
+      operationId: recoveryCodesStatus
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Recovery-code status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: object
+                    required: [remaining, total]
+                    properties:
+                      remaining: {type: integer}
+                      total: {type: integer}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/auth/mfa/recovery-codes/regenerate:
+    post:
+      tags: [Auth]
+      summary: Replace all recovery codes
+      description: >-
+        Re-proof with a current TOTP code OR the account password, then replace
+        every recovery code with a fresh set. The old codes stop working
+        immediately. Blocked under impersonation.
+      operationId: regenerateMFARecoveryCodes
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Exactly one re-proof is required; the handler checks code first, falling back to password.
+              properties:
+                code: {type: string, description: Current TOTP code or a recovery code}
+                password: {type: string, format: password}
+      responses:
+        '200':
+          description: New one-time recovery codes issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: object
+                    required: [recovery_codes]
+                    properties:
+                      recovery_codes: {type: array, items: {type: string}}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
   /api/v1/auth/mfa/stepup:
     post:
       tags: [Auth]
@@ -604,13 +802,27 @@ paths:
     get:
       tags: [Projects]
       summary: List projects with secret and environment counts
-      description: List all projects accessible to the caller, including secret and environment counts.
+      description: >-
+        List the projects the CALLER CAN READ, including secret and environment
+        counts. A caller holding secrets.read at the global scope gets every
+        project; a caller whose grants are project-scoped gets exactly the projects
+        they are authorized to read at the project scope — the same check
+        GET /api/v1/projects/{id} applies, so every project listed here is one the
+        caller can also fetch by id. A caller with no such grant gets 200 with an
+        empty array, not 403.
       operationId: listProjects
       security: [{bearerAuth: []}]
       parameters:
         - name: include_deleted
           in: query
-          description: When 'true', also returns soft-deleted projects (each flagged via deleted/deleted_at) for the restore UI.
+          description: >-
+            When 'true', also returns soft-deleted projects (each flagged via
+            deleted/deleted_at) for the restore UI. This form requires secrets.read at
+            the GLOBAL scope: project-scoped role grants deliberately survive a
+            soft-delete (so RestoreProject can work) while GET /api/v1/projects/{id}
+            returns 404 for a deleted project, so a project-scoped reader cannot read a
+            soft-deleted project through any path and must not see one listed. A caller
+            without the global grant gets 403 for this form, and 200 for the default one.
           schema: {type: string, enum: ['true', 'false']}
       responses:
         '200':
@@ -705,9 +917,17 @@ paths:
           application/json:
             schema:
               type: object
+              required: [name]
               properties:
                 name: {type: string}
                 description: {type: string}
+                require_mfa:
+                  type: boolean
+                  nullable: true
+                  description: >-
+                    ADR-037 per-project security-policy control. Omit (or null) to
+                    leave unchanged. Changing it additionally requires roles.assign
+                    at the project, not just secrets.write.
       responses:
         '200':
           description: "Envelope {data, message='Project updated'}. data is the updated project object."
@@ -1385,7 +1605,12 @@ paths:
     get:
       tags: [Environments]
       summary: List all environments (global, backward-compat)
-      description: Return all environments across all projects accessible to the authenticated user.
+      description: >-
+        Return the environments belonging to projects the CALLER CAN READ, across
+        all of them. Scoped exactly like GET /api/v1/projects: a global secrets.read
+        holder gets every environment, a project-scoped reader gets only their
+        projects', and a caller with no such grant gets 200 with an empty array
+        rather than 403.
       operationId: listEnvironments
       security: [{bearerAuth: []}]
       responses:
@@ -2287,13 +2512,14 @@ paths:
     delete:
       tags: [MachineIdentities]
       summary: Remove a project role from a machine identity
-      description: Revoke a previously granted project-scoped role from a machine identity.
+      description: Revoke a previously granted project- or environment-scoped role from a machine identity.
       operationId: removeMachineRole
       security: [{bearerAuth: []}]
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer}}
         - {name: machineId, in: path, required: true, schema: {type: integer}}
         - {name: roleId, in: path, required: true, schema: {type: integer}}
+        - {name: environment_id, in: query, required: false, description: "Remove the grant scoped to this one environment (must belong to the project; 400 otherwise). Omitted or 0 removes the project-wide grant only.", schema: {type: integer}}
       responses:
         '200':
           description: Envelope with null `data` and a confirmation message.
@@ -5104,12 +5330,49 @@ paths:
     get:
       tags: [Users]
       summary: List user project memberships
-      description: Return all project memberships for the specified user with their role and state in each project.
+      description: >-
+        Return every project the specified user is a member of, with their role(s)
+        and the membership's onboarding state. "Member of a project" means the user
+        holds a live role grant scoped to that project, directly or through a group —
+        the same definition GET /api/v1/projects/{id}/members reports, so the two
+        views agree. An install-wide grant (project 0) is not membership of any
+        project and is never listed here, nor is an expired time-bound grant.
+        `state` is the ADR-022 onboarding lifecycle state where an invite produced
+        the membership, and `active` for a grant added directly via
+        POST /api/v1/projects/{id}/members. `via_group` marks a membership held only
+        through a group, which the project's own members list cannot remove.
       operationId: getUserMembershipsForUser
       security: [{bearerAuth: []}]
       responses:
         '200':
-          description: "Envelope `data.memberships[]` with project_id, project_name, role, state."
+          description: "Envelope {data, message}. data.memberships is an array of {project_id, project_name, role, roles[], state, via_group}."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      memberships:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            project_id: {type: integer}
+                            project_name: {type: string}
+                            role: {type: string, description: "The highest-privilege role the user holds at this project's scope."}
+                            roles:
+                              type: array
+                              description: "Every role the user holds at this project's scope, sorted."
+                              items: {type: string}
+                            state:
+                              type: string
+                              description: "ADR-022 onboarding state; 'active' when the grant was added directly."
+                              enum: [invited, identity_verified, provisioned, active, revoked]
+                            via_group:
+                              type: boolean
+                              description: "True when the membership comes only from a group grant."
         '401': {$ref: '#/components/responses/Error'}
 
   /api/v1/users/{id}/shared-secrets:
@@ -5854,7 +6117,11 @@ paths:
     get:
       tags: [Audit]
       summary: Cursor-paginated full-fidelity audit feed for SIEM pull
-      description: Return a cursor-paginated, full-fidelity audit event feed designed for SIEM ingestion.
+      description: >-
+        Return a cursor-paginated, full-fidelity audit event feed designed
+        for SIEM ingestion. Gated by audit.read AND system.read (same bar as
+        /audit/anomalies): this feed includes ip_address, which /audit/logs
+        and /audit/search deliberately omit.
       operationId: exportAuditLogs
       security: [{bearerAuth: []}]
       parameters:
@@ -5879,7 +6146,9 @@ paths:
       description: >-
         Returns a bounded, human/auditor-friendly CSV attachment with a header
         row. Distinct from the JSON /audit/export SIEM feed — this is a
-        single one-shot download capped at 10 000 rows. Gated by audit.read.
+        single one-shot download capped at 10 000 rows. Gated by audit.read
+        AND system.read (same bar as /audit/anomalies): the export includes
+        ip_address, which /audit/logs and /audit/search deliberately omit.
       operationId: exportAuditLogsCSV
       security: [{bearerAuth: []}]
       parameters:
@@ -6988,6 +7257,39 @@ components:
               message: {type: string}
               details: {type: object, additionalProperties: true, nullable: true}
   schemas:
+    # authLogin/authConsumeSetup/verifyMFALogin all return one of these two
+    # shapes in `data`, disambiguated by presence of `mfa_required` -- never by
+    # status code (both are 200). See server/http/handlers/auth.go's
+    # buildLoginResponse and mfa.go's VerifyMFA.
+    LoginSuccessData:
+      type: object
+      required: [token]
+      properties:
+        token: {type: string, description: Session bearer token}
+        expires_at: {type: string, format: date-time}
+        absolute_expires_at: {type: string, format: date-time, description: Hard ceiling past which refresh is refused}
+        user_id: {type: integer}
+        username: {type: string}
+        email: {type: string}
+        display_name: {type: string}
+        role: {type: string}
+        roles: {type: array, items: {type: string}}
+        permissions: {type: array, items: {type: string}}
+        password_change_required: {type: boolean}
+        account_state: {type: string}
+    MFAChallengeData:
+      type: object
+      description: >-
+        The password (or setup token) was correct, but a second factor is
+        required -- core.ErrMFARequired. The client must complete
+        POST /auth/mfa/verify (TOTP/recovery code) with this challenge, or the
+        WebAuthn login ceremony, to get a real session.
+      required: [mfa_required, mfa_challenge, totp_available, webauthn_available]
+      properties:
+        mfa_required: {type: boolean, enum: [true]}
+        mfa_challenge: {type: string, description: Single-use challenge token to pass to /auth/mfa/verify}
+        totp_available: {type: boolean, description: Whether this account can complete the challenge with a TOTP/recovery code}
+        webauthn_available: {type: boolean, description: Whether this account can complete the challenge via a WebAuthn passkey}
     # docs/cli-split-inventory.md §7 PR 9 -- share.
     # models.ShareRecord carries no `json:` tags, so it serializes with bare
     # (capitalized) Go field names -- see the identical note on PR 3/4/5's schemas
@@ -7070,12 +7372,12 @@ components:
         id: {type: integer}
         event_type: {type: string}
         timestamp: {type: string}
-        user_id: {type: integer, nullable: true}
+        user_id: {type: integer, description: "Omitted (never null) when the event has no acting user."}
         actor_type: {type: string}
         description: {type: string}
         success: {type: boolean}
-        diff: {type: object, nullable: true}
-        impersonation: {type: boolean}
+        diff: {type: object, description: "Omitted (never null) when the event recorded no diff."}
+        impersonation: {type: boolean, description: "Omitted when false."}
     OwnershipRecord:
       type: object
       properties:
@@ -7611,6 +7913,7 @@ components:
       type: object
       description: One entry in a secret's effective access list (owner, direct share, or group share).
       properties:
+        user_id: {type: integer}
         username: {type: string}
         permission: {type: string}
         source: {type: string, description: "How access was granted: owner, direct share, or group share."}
@@ -7700,7 +8003,7 @@ components:
         id: {type: integer}
         name: {type: string}
         description: {type: string}
-        expires_at: {type: string, format: date-time, nullable: true}
+        expires_at: {type: string, format: date-time, description: "Omitted (never null) for a permanent grant."}
     RoleRef:
       type: object
       description: A minimal role reference (id, name only) -- GET /api/v1/users/{id}/roles's shape.
@@ -7909,16 +8212,20 @@ components:
         notify_on_breach: {type: boolean}
         is_active: {type: boolean}
         created_by: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
     RotationPolicyEvaluation:
       type: object
       description: >-
         One policy-covered secret's rotation posture, as returned by
         GET /api/v1/rotation-policies/evaluate (ADR-108 PR 1 addition).
       properties:
+        policy_id: {type: integer, format: uint32}
         policy_name: {type: string}
         secret_id: {type: integer, format: uint32}
         secret_name: {type: string}
         project_id: {type: integer, format: uint32}
+        last_rotated_at: {type: string, format: date-time, nullable: true}
         days_overdue: {type: integer}
         is_overdue: {type: boolean}
         is_approaching: {type: boolean}

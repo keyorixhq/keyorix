@@ -20,6 +20,7 @@ silently removing it.
 | `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 35 | 28 | 7 |
 | `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 21 | 17 | 4 |
 | `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 27 | 24 | 3 |
+| `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 28 | 25 | 3 |
 | `internal/auditverify` | [internal/auditverify/INVARIANTS.md](../internal/auditverify/INVARIANTS.md) | 15 | 12 | 3 |
 | `server/middleware` | [server/middleware/INVARIANTS.md](../server/middleware/INVARIANTS.md) | 22 | 20 | 2 |
 | `server/http` (+ `handlers`) | [server/http/INVARIANTS.md](../server/http/INVARIANTS.md) | 19 | 19 | 0 |
@@ -45,9 +46,9 @@ even if you skip everything else:
   panic"** in `internal/core` (INV-CORE-34) or for "every key-shaped byte slice gets
   `wipeBytes`" in `internal/encryption` (INV-ENCRYPTION-25) — both are point-fixes after live
   fuzz findings, the same recurring shape, in two different packages.
-- **`web/src/types` has no generation/drift check against the server's own OpenAPI
-  document** (`web/src/INVARIANTS.md` INV-WEB-05) — asymmetric with `cli/`'s generated API
-  client from the same spec.
+- **`web/src/types` drift check covers only the schema'd wire types, and does not run on
+  an `openapi.yaml`-only PR** (`web/src/INVARIANTS.md` INV-WEB-05) — guarded by
+  `openapiDrift.test.ts`, but `web-ci.yml` is path-filtered to `web/**`.
 
 ## Ledger gaps (informational, not filed as issues)
 

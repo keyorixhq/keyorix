@@ -165,7 +165,7 @@ func TestApproveAccessRequest_PermanentByDefault(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = h.CoreService.ApproveAccessRequest(ctx, proj, created.ID, 1, "editor")
+	_, err = h.CoreService.ApproveAccessRequestWithExpiry(ctx, proj, created.ID, 1, 0, "editor", 0)
 	require.NoError(t, err)
 
 	var ur models.UserRole

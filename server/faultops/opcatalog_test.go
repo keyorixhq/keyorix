@@ -640,6 +640,36 @@ func enrolMFADirect(ctx context.Context, w *faultWorld) (any, error) {
 		Update("mfa_enabled", true).Error; err != nil {
 		return nil, fmt.Errorf("setting users.mfa_enabled directly: %w", err)
 	}
+	// #2838: seed the recovery codes real activation would have issued. Without
+	// them this fixture produced an account with MFA enabled and ZERO recovery
+	// codes, which no real account ever has -- and which made a whole class of
+	// partial commit structurally UNOBSERVABLE: DeleteMFARecoveryCodes deleted
+	// zero rows, so a fault between it and CreateMFARecoveryCodes left the
+	// snapshot unchanged. A planted class-A bug (the pre-#G08 shape, the exact
+	// "account left with zero recovery codes" state that transaction's comment
+	// exists to prevent) SURVIVED against the unseeded fixture; with these rows
+	// it is killed. Verified both directions -- see this PR's body.
+	//
+	// Inserted directly rather than through /activate for the same reason
+	// Activated/MFAEnabled are: spending a real TOTP step here would consume the
+	// step Execute needs (see this function's own doc comment above).
+	// mfaRecoveryCodeCount is not exported from internal/core, so the count is
+	// spelled out; the oracle never compares the count, only presence.
+	recoveryCodes := make([]*models.MFARecoveryCode, 0, 10)
+	for i := 0; i < 10; i++ {
+		// A fixed, obviously-fake hash per index. Deterministic on purpose: the
+		// reference world and the fault world are bootstrapped independently, so
+		// anything random here would have to rely on CodeHash's presenceOnlyFields
+		// reduction to compare equal. It does carry that reduction (snapshot_test.go),
+		// but not depending on it keeps this fixture's rows comparable byte-for-byte.
+		recoveryCodes = append(recoveryCodes, &models.MFARecoveryCode{
+			UserID:   userID,
+			CodeHash: fmt.Sprintf("faultops-seeded-recovery-code-hash-%02d", i),
+		})
+	}
+	if err := w.db.Create(&recoveryCodes).Error; err != nil {
+		return nil, fmt.Errorf("seeding mfa_recovery_codes rows directly: %w", err)
+	}
 	return enrolled.Data.Secret, nil
 }
 

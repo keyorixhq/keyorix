@@ -212,13 +212,17 @@ func TestResolveSSOUser(t *testing.T) {
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, ExternalID: ""}, nil)
 		// First link claims the account for this provider+subject (so a later provider
 		// can't re-link it).
-		store.On("UpdateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
-			return u.ID == 9 && u.ExternalID == "sso:okta:okta|123"
-		})).Return(&models.User{ID: 9, ExternalID: "sso:okta:okta|123"}, nil)
+		// #2699: the claim is a column-scoped conditional write of external_id
+		// alone, and the caller then re-reads so its login gate acts on the
+		// COMMITTED row rather than the snapshot read above.
+		store.On("ClaimUserExternalIDIfUnset", mock.Anything, uint(9), "sso:okta:okta|123", mock.Anything).Return(true, nil)
+		store.On("GetUser", mock.Anything, uint(9)).Return(&models.User{ID: 9, ExternalID: "sso:okta:okta|123", IsActive: true, AccountState: AccountActive}, nil)
 		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io", true)
 		require.NoError(t, err)
 		assert.Equal(t, uint(9), u.ID)
-		store.AssertCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		assert.Equal(t, "sso:okta:okta|123", u.ExternalID, "the re-read row, not the pre-claim snapshot, is what comes back")
+		store.AssertCalled(t, "ClaimUserExternalIDIfUnset", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
 	})
 
 	t.Run("unverified email does NOT match an existing account (no takeover)", func(t *testing.T) {
@@ -272,14 +276,14 @@ func TestResolveSSOUser(t *testing.T) {
 		c, store, _, _ := ssoTestCore(t)
 		// sub=="" so the externalId fast-path lookup must not even run.
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, ExternalID: ""}, nil)
-		store.On("UpdateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
-			return u.ID == 9 && u.ExternalID == "sso:okta:"
-		})).Return(&models.User{ID: 9, ExternalID: "sso:okta:"}, nil)
+		store.On("ClaimUserExternalIDIfUnset", mock.Anything, uint(9), "sso:okta:", mock.Anything).Return(true, nil)
+		store.On("GetUser", mock.Anything, uint(9)).Return(&models.User{ID: 9, ExternalID: "sso:okta:", IsActive: true, AccountState: AccountActive}, nil)
 		u, err := c.resolveSSOUser(context.Background(), "okta", "", "ada@x.io", true)
 		require.NoError(t, err)
 		require.NotNil(t, u)
 		assert.Equal(t, uint(9), u.ID)
-		store.AssertCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		store.AssertCalled(t, "ClaimUserExternalIDIfUnset", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
 		store.AssertNotCalled(t, "GetUserByExternalID", mock.Anything, mock.Anything)
 	})
 
@@ -376,7 +380,8 @@ func TestProvisionSSOUser(t *testing.T) {
 		assert.Equal(t, uint(99), u.ID, "must be the fresh account, not the victim (id 7)")
 		require.NotNil(t, created)
 		assert.Equal(t, "sso:okta:evil|999", created.ExternalID, "fresh account bound to the asserting provider+subject, not the victim")
-		store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything) // victim not claimed/reused
+		store.AssertNotCalled(t, "ClaimUserExternalIDIfUnset", mock.Anything, mock.Anything, mock.Anything, mock.Anything) // victim not claimed/reused
+		store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
 	})
 
 	t.Run("reuses an existing user instead of duplicating", func(t *testing.T) {
@@ -882,4 +887,19 @@ func TestSanitizeReturnTo(t *testing.T) {
 	assert.Equal(t, "", sanitizeReturnTo(`/ok/\evil.com`))
 	// A same-origin path with a subpath still passes.
 	assert.Equal(t, "/secrets/view", sanitizeReturnTo("/secrets/view"))
+}
+
+// #2778 review: a concurrent first login through ANOTHER provider claims the
+// account between this login's read and its conditional claim. The claim
+// returns false and the re-read shows the other provider's id: this login must
+// be refused, not completed onto an account bound elsewhere.
+func TestResolveSSOUser_LostClaimToOtherProviderIsRefused(t *testing.T) {
+	c, store, _, _ := ssoTestCore(t)
+	store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound))
+	store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, ExternalID: ""}, nil)
+	store.On("ClaimUserExternalIDIfUnset", mock.Anything, uint(9), "sso:okta:okta|123", mock.Anything).Return(false, nil)
+	store.On("GetUser", mock.Anything, uint(9)).Return(&models.User{ID: 9, ExternalID: "sso:azure:azure|999", IsActive: true, AccountState: AccountActive}, nil)
+	u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io", true)
+	require.Error(t, err)
+	assert.Nil(t, u)
 }

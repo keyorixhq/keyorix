@@ -1,8 +1,10 @@
 package middleware
 
-// auth_roles_unavailable_test.go — regression coverage for #1944.
+// auth_roles_unavailable_test.go — regression coverage for #1944 (PAT,
+// session) and #2748 (machine token, OIDC JWT).
 //
-// When ValidatePATToken/ValidateSessionToken report
+// When ValidatePATToken/ValidateSessionToken/ValidateMachineToken/
+// ValidateOIDCToken report
 // core.ErrRoleResolutionUnavailable (the credential checked out but the
 // owner's roles could not be read from storage), the auth middleware must
 // treat it like any other transient infrastructure failure: a retryable 503,
@@ -24,6 +26,13 @@ import (
 const (
 	rolesDownPAT     = "kx_pat_rolesdown1944"
 	rolesDownSession = "session-rolesdown-1944"
+	// #2748: the two MACHINE credential paths had the same soft-fail #1944
+	// removed from the user paths. A machine-token cache HIT only ever
+	// refreshes the credential's restriction/revocation state, never its
+	// roles, so a positively-cached empty role list would have survived for
+	// the whole validTokenTTL window.
+	rolesDownMachine = "kx_machine_rolesdown2748"
+	rolesDownOIDC    = "header.rolesdown2748.sig"
 )
 
 // rolesUnavailableValidator behaves like fakeValidator except that the two
@@ -45,12 +54,28 @@ func (v rolesUnavailableValidator) ValidateSessionToken(ctx context.Context, tok
 	return v.fakeValidator.ValidateSessionToken(ctx, token)
 }
 
+func (v rolesUnavailableValidator) ValidateMachineToken(ctx context.Context, token string) (*models.MachineIdentity, []string, *core.MachineTokenRestriction, uint, error) {
+	if token == rolesDownMachine {
+		return nil, nil, nil, 0, core.ErrRoleResolutionUnavailable
+	}
+	return v.fakeValidator.ValidateMachineToken(ctx, token)
+}
+
+func (v rolesUnavailableValidator) ValidateOIDCToken(ctx context.Context, token string) (*models.MachineIdentity, []string, error) {
+	if token == rolesDownOIDC {
+		return nil, nil, fmt.Errorf("validate: %w", core.ErrRoleResolutionUnavailable)
+	}
+	return v.fakeValidator.ValidateOIDCToken(ctx, token)
+}
+
 func TestHandleAuthRequest_RoleResolutionUnavailable_Is503AndUncached(t *testing.T) {
 	cases := []struct {
 		name, token, remoteAddr, ip string
 	}{
 		{"PAT", rolesDownPAT, "203.0.113.44:5555", "203.0.113.44"},
 		{"session", rolesDownSession, "203.0.113.45:5555", "203.0.113.45"},
+		{"machine token", rolesDownMachine, "203.0.113.46:5555", "203.0.113.46"},
+		{"OIDC JWT", rolesDownOIDC, "203.0.113.47:5555", "203.0.113.47"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

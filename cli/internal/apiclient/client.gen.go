@@ -532,7 +532,7 @@ type ClientInterface interface {
 	GrantMachineRole(ctx context.Context, id int, machineId int, body GrantMachineRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RemoveMachineRole request
-	RemoveMachineRole(ctx context.Context, id int, machineId int, roleId int, reqEditors ...RequestEditorFn) (*http.Response, error)
+	RemoveMachineRole(ctx context.Context, id int, machineId int, roleId int, params *RemoveMachineRoleParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListMachineTokens request
 	ListMachineTokens(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -962,6 +962,11 @@ type ClientInterface interface {
 
 	// AuthLogout request
 	AuthLogout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// VerifyMFALoginWithBody request with any body
+	VerifyMFALoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	VerifyMFALogin(ctx context.Context, body VerifyMFALoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// HealthCheck request
 	HealthCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2904,8 +2909,8 @@ func (c *Client) GrantMachineRole(ctx context.Context, id int, machineId int, bo
 	return c.Client.Do(req)
 }
 
-func (c *Client) RemoveMachineRole(ctx context.Context, id int, machineId int, roleId int, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRemoveMachineRoleRequest(c.Server, id, machineId, roleId)
+func (c *Client) RemoveMachineRole(ctx context.Context, id int, machineId int, roleId int, params *RemoveMachineRoleParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveMachineRoleRequest(c.Server, id, machineId, roleId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -4778,6 +4783,30 @@ func (c *Client) AuthLogin(ctx context.Context, body AuthLoginJSONRequestBody, r
 
 func (c *Client) AuthLogout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthLogoutRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) VerifyMFALoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewVerifyMFALoginRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) VerifyMFALogin(ctx context.Context, body VerifyMFALoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewVerifyMFALoginRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10140,7 +10169,7 @@ func NewGrantMachineRoleRequestWithBody(server string, id int, machineId int, co
 }
 
 // NewRemoveMachineRoleRequest generates requests for RemoveMachineRole
-func NewRemoveMachineRoleRequest(server string, id int, machineId int, roleId int) (*http.Request, error) {
+func NewRemoveMachineRoleRequest(server string, id int, machineId int, roleId int, params *RemoveMachineRoleParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -10177,6 +10206,28 @@ func NewRemoveMachineRoleRequest(server string, id int, machineId int, roleId in
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.EnvironmentId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "environment_id", runtime.ParamLocationQuery, *params.EnvironmentId); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
@@ -15119,6 +15170,46 @@ func NewAuthLogoutRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewVerifyMFALoginRequest calls the generic VerifyMFALogin builder with application/json body
+func NewVerifyMFALoginRequest(server string, body VerifyMFALoginJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewVerifyMFALoginRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewVerifyMFALoginRequestWithBody generates requests for VerifyMFALogin with any type of body
+func NewVerifyMFALoginRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/auth/mfa/verify")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewHealthCheckRequest generates requests for HealthCheck
 func NewHealthCheckRequest(server string) (*http.Request, error) {
 	var err error
@@ -15671,7 +15762,7 @@ type ClientWithResponsesInterface interface {
 	GrantMachineRoleWithResponse(ctx context.Context, id int, machineId int, body GrantMachineRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*GrantMachineRoleResponse, error)
 
 	// RemoveMachineRoleWithResponse request
-	RemoveMachineRoleWithResponse(ctx context.Context, id int, machineId int, roleId int, reqEditors ...RequestEditorFn) (*RemoveMachineRoleResponse, error)
+	RemoveMachineRoleWithResponse(ctx context.Context, id int, machineId int, roleId int, params *RemoveMachineRoleParams, reqEditors ...RequestEditorFn) (*RemoveMachineRoleResponse, error)
 
 	// ListMachineTokensWithResponse request
 	ListMachineTokensWithResponse(ctx context.Context, id int, machineId int, reqEditors ...RequestEditorFn) (*ListMachineTokensResponse, error)
@@ -16101,6 +16192,11 @@ type ClientWithResponsesInterface interface {
 
 	// AuthLogoutWithResponse request
 	AuthLogoutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AuthLogoutResponse, error)
+
+	// VerifyMFALoginWithBodyWithResponse request with any body
+	VerifyMFALoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyMFALoginResponse, error)
+
+	VerifyMFALoginWithResponse(ctx context.Context, body VerifyMFALoginJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyMFALoginResponse, error)
 
 	// HealthCheckWithResponse request
 	HealthCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*HealthCheckResponse, error)
@@ -22313,28 +22409,15 @@ type AuthLoginResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *struct {
-		Data *struct {
-			// AbsoluteExpiresAt Hard ceiling past which refresh is refused
-			AbsoluteExpiresAt      *time.Time `json:"absolute_expires_at,omitempty"`
-			AccountState           *string    `json:"account_state,omitempty"`
-			DisplayName            *string    `json:"display_name,omitempty"`
-			Email                  *string    `json:"email,omitempty"`
-			ExpiresAt              *time.Time `json:"expires_at,omitempty"`
-			PasswordChangeRequired *bool      `json:"password_change_required,omitempty"`
-			Permissions            *[]string  `json:"permissions,omitempty"`
-			Role                   *string    `json:"role,omitempty"`
-			Roles                  *[]string  `json:"roles,omitempty"`
-
-			// Token Session bearer token
-			Token    *string `json:"token,omitempty"`
-			UserId   *int    `json:"user_id,omitempty"`
-			Username *string `json:"username,omitempty"`
-		} `json:"data,omitempty"`
-		Message *string `json:"message,omitempty"`
+		Data    *AuthLogin_200_Data `json:"data,omitempty"`
+		Message *string             `json:"message,omitempty"`
 	}
 	JSON400 *Error
 	JSON401 *Error
 	JSON429 *Error
+}
+type AuthLogin_200_Data struct {
+	union json.RawMessage
 }
 
 // Status returns HTTPResponse.Status
@@ -22369,6 +22452,34 @@ func (r AuthLogoutResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r AuthLogoutResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type VerifyMFALoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data    *LoginSuccessData `json:"data,omitempty"`
+		Message *string           `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON429 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r VerifyMFALoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r VerifyMFALoginResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -23845,8 +23956,8 @@ func (c *ClientWithResponses) GrantMachineRoleWithResponse(ctx context.Context, 
 }
 
 // RemoveMachineRoleWithResponse request returning *RemoveMachineRoleResponse
-func (c *ClientWithResponses) RemoveMachineRoleWithResponse(ctx context.Context, id int, machineId int, roleId int, reqEditors ...RequestEditorFn) (*RemoveMachineRoleResponse, error) {
-	rsp, err := c.RemoveMachineRole(ctx, id, machineId, roleId, reqEditors...)
+func (c *ClientWithResponses) RemoveMachineRoleWithResponse(ctx context.Context, id int, machineId int, roleId int, params *RemoveMachineRoleParams, reqEditors ...RequestEditorFn) (*RemoveMachineRoleResponse, error) {
+	rsp, err := c.RemoveMachineRole(ctx, id, machineId, roleId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -25216,6 +25327,23 @@ func (c *ClientWithResponses) AuthLogoutWithResponse(ctx context.Context, reqEdi
 		return nil, err
 	}
 	return ParseAuthLogoutResponse(rsp)
+}
+
+// VerifyMFALoginWithBodyWithResponse request with arbitrary body returning *VerifyMFALoginResponse
+func (c *ClientWithResponses) VerifyMFALoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyMFALoginResponse, error) {
+	rsp, err := c.VerifyMFALoginWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseVerifyMFALoginResponse(rsp)
+}
+
+func (c *ClientWithResponses) VerifyMFALoginWithResponse(ctx context.Context, body VerifyMFALoginJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyMFALoginResponse, error) {
+	rsp, err := c.VerifyMFALogin(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseVerifyMFALoginResponse(rsp)
 }
 
 // HealthCheckWithResponse request returning *HealthCheckResponse
@@ -35668,24 +35796,8 @@ func ParseAuthLoginResponse(rsp *http.Response) (*AuthLoginResponse, error) {
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest struct {
-			Data *struct {
-				// AbsoluteExpiresAt Hard ceiling past which refresh is refused
-				AbsoluteExpiresAt      *time.Time `json:"absolute_expires_at,omitempty"`
-				AccountState           *string    `json:"account_state,omitempty"`
-				DisplayName            *string    `json:"display_name,omitempty"`
-				Email                  *string    `json:"email,omitempty"`
-				ExpiresAt              *time.Time `json:"expires_at,omitempty"`
-				PasswordChangeRequired *bool      `json:"password_change_required,omitempty"`
-				Permissions            *[]string  `json:"permissions,omitempty"`
-				Role                   *string    `json:"role,omitempty"`
-				Roles                  *[]string  `json:"roles,omitempty"`
-
-				// Token Session bearer token
-				Token    *string `json:"token,omitempty"`
-				UserId   *int    `json:"user_id,omitempty"`
-				Username *string `json:"username,omitempty"`
-			} `json:"data,omitempty"`
-			Message *string `json:"message,omitempty"`
+			Data    *AuthLogin_200_Data `json:"data,omitempty"`
+			Message *string             `json:"message,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -35738,6 +35850,56 @@ func ParseAuthLogoutResponse(rsp *http.Response) (*AuthLogoutResponse, error) {
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseVerifyMFALoginResponse parses an HTTP response from a VerifyMFALoginWithResponse call
+func ParseVerifyMFALoginResponse(rsp *http.Response) (*VerifyMFALoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &VerifyMFALoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data    *LoginSuccessData `json:"data,omitempty"`
+			Message *string           `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
 
 	}
 

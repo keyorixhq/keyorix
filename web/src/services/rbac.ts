@@ -11,6 +11,7 @@ function normalizeRole(r: any): RoleWithPermissions {
         id: r.id ?? 0,
         name: r.name ?? '',
         description: r.description ?? '',
+        bypasses_permission_checks: r.bypasses_permission_checks ?? false,
         permissions: (r.permissions ?? []).map((p: any) =>
             typeof p === 'string'
                 ? { id: 0, name: p, description: '', resource: p.split('.')[0] ?? '', action: p.split('.')[1] ?? '' }
@@ -22,8 +23,6 @@ function normalizeRole(r: any): RoleWithPermissions {
                       action: p.action ?? '',
                   }
         ),
-        created_at: r.created_at ?? '',
-        updated_at: r.updated_at ?? '',
     };
 }
 

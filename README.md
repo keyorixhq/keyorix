@@ -68,6 +68,10 @@ KEYORIX_MASTER_PASSWORD=yourpassword keyorix-server
 keyorix login --server http://localhost:8080 --username admin --password yourpassword
 ```
 
+With an authenticator app enrolled, `login` prompts for a code after the
+password; `--mfa-code` supplies one (or an unused recovery code)
+non-interactively.
+
 **Create and use secrets:**
 
 ```bash

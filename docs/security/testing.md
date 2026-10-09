@@ -11,7 +11,24 @@
 
 ## 1. Standing CI gates (every PR, every merge to `main`)
 
-Eleven required status checks, no bypass, including for maintainers:
+A GitHub ruleset on `main` requires 18 status-check contexts and routes every
+merge through a squash-only merge queue (`gh api
+repos/keyorixhq/keyorix/rulesets` → "Require core CI checks on main"). The
+table below groups them by what they check conceptually; the ruleset's own
+context names (`build-and-test`, `static-analysis`, `lint`, `licenses`,
+`fuzz-targets`, `fuzz-reach`, `adr-numbers`, `exclusion-freshness`,
+`assert-leg-completeness`, `base-branch-check`, `gitleaks`, `helm-chart`,
+`helm-chart-security`, `operator`, `pnpm-workspace-root-guard`,
+`workflow-lint`, `dco-check`, `security-fix-regression-check`) are CI job
+names, not a 1:1 mapping to this table. The ruleset also blocks force-pushing
+and deleting `main` outright (`non_fast_forward`, `deletion`). **Correction
+(2026-10-05):** this section previously said "no bypass, including for
+maintainers." The ruleset's `bypass_actors` list carried a standing
+`OrganizationAdmin` entry with `bypass_mode: always` — real, not
+hypothetical. Resolved the same day: kept as a deliberate break-glass path,
+narrowed to `bypass_mode: pull_request` (visible on the PR, scoped to the
+actor type, not individuals) rather than removed; see
+[`SDLC.md`](SDLC.md#branch-protection) for the full detail.
 
 | Gate | What it catches |
 |---|---|

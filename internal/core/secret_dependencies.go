@@ -17,9 +17,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"sort"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -122,9 +122,6 @@ func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string,
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized on the dependency target")
 	}
 
-	c.secretDependencyMu.Lock()
-	defer c.secretDependencyMu.Unlock()
-
 	// #1623: actorID alone cannot be persisted into CreatedBy for a machine
 	// caller -- AuthorizeSecretPrincipal above needs actorID as the real
 	// PrincipalID (a machine's own MachineIdentity.ID) to resolve its grants,
@@ -137,7 +134,7 @@ func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string,
 	if actorKind == ActorTypeMachine {
 		createdBy = 0
 	}
-	created, err := c.storage.CreateSecretDependencyExclusive(ctx, &models.SecretDependency{
+	created, err := c.LockedCreateSecretDependencyExclusive(ctx, &models.SecretDependency{
 		ProjectID:                  dependent.ProjectID,
 		DependentSecretID:          dependentID,
 		DependsOnSecretID:          dependsOnID,
@@ -184,10 +181,36 @@ func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string,
 // existing edges (FOR UPDATE only locks rows that already exist), so two
 // concurrent same-process calls adding A→B and B→A could otherwise both pass
 // the cycle check before either commits.
+//
+// #2660: secretDependencyMu is per-process, and on Postgres FOR UPDATE on the
+// existing edges does not block a phantom INSERT, so two replicas adding A->B
+// and B->A could each read the graph without the other's edge, both pass the
+// cycle check, and both commit a cycle (INV-CORE-31). Every write that can add
+// an edge now runs under WithNamedLock(secretDependencyGraphLockKey(project)),
+// which serializes the whole read-check-insert across replicas; the mutex is
+// kept as the cheap same-process fast path, taken inside the named lock (the
+// same named-lock-then-mutex order removeGlobalAdminRoleIfApplicable uses).
+// AddSecretDependency goes through here, so both callers share the lock.
 func (c *KeyorixCore) LockedCreateSecretDependencyExclusive(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error) {
-	c.secretDependencyMu.Lock()
-	defer c.secretDependencyMu.Unlock()
-	return c.storage.CreateSecretDependencyExclusive(ctx, d)
+	var created *models.SecretDependency
+	err := c.storage.WithNamedLock(ctx, secretDependencyGraphLockKey(d.ProjectID), func(ctx context.Context) error {
+		c.secretDependencyMu.Lock()
+		defer c.secretDependencyMu.Unlock()
+		var cerr error
+		created, cerr = c.storage.CreateSecretDependencyExclusive(ctx, d)
+		return cerr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return created, nil
+}
+
+// secretDependencyGraphLockKey is the WithNamedLock key serializing every edge
+// insert into one project's secret dependency graph (#2660). The cycle check
+// reads the project's whole graph, so the key is per project, not per edge.
+func secretDependencyGraphLockKey(projectID uint) string {
+	return fmt.Sprintf("secret-dependency-graph:%d", projectID)
 }
 
 // RemoveSecretDependency deletes one edge. focalSecretID is the secret the request is
@@ -362,31 +385,29 @@ func (c *KeyorixCore) requireSecret(ctx context.Context, id uint) (*models.Secre
 // (oracle (a): reported ERROR, but SecretNode state changed anyway). An error
 // return was already handled correctly; only the panic path was missing.
 func (c *KeyorixCore) emitDependencyLifecycleEvents(ctx context.Context, eventType string, actorID, secretID, projectID uint, secretName string) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("Warning: dependency-lifecycle event emission for secret %d panicked (best-effort, primary operation already succeeded): %v", secretID, r)
+	besteffort.Run(ctx, "secret_dependencies.emitDependencyLifecycleEvents", func() error {
+		edges, err := c.storage.ListSecretDependenciesForProject(ctx, projectID)
+		if err != nil {
+			return err // best-effort; the primary operation already succeeded
 		}
-	}()
-	edges, err := c.storage.ListSecretDependenciesForProject(ctx, projectID)
-	if err != nil {
-		return // best-effort; the primary operation already succeeded
-	}
-	for _, e := range edges {
-		switch secretID {
-		case e.DependsOnSecretID:
-			// secretID is the "depends-on" target — its dependent loses its upstream.
-			dep := e.DependentSecretID
-			c.writeAuditEvent(ctx, eventType, actorPtr(actorID), &dep,
-				fmt.Sprintf("dependency of secret %d on %q (id %d) %s due to secret lifecycle event",
-					e.DependentSecretID, secretName, secretID, lifecycleVerb(eventType)))
-		case e.DependentSecretID:
-			// secretID is the dependent — the edge it owns is now unresolvable.
-			src := e.DependentSecretID
-			c.writeAuditEvent(ctx, eventType, actorPtr(actorID), &src,
-				fmt.Sprintf("dependency of %q (id %d) on secret %d %s due to secret lifecycle event",
-					secretName, secretID, e.DependsOnSecretID, lifecycleVerb(eventType)))
+		for _, e := range edges {
+			switch secretID {
+			case e.DependsOnSecretID:
+				// secretID is the "depends-on" target — its dependent loses its upstream.
+				dep := e.DependentSecretID
+				c.writeAuditEvent(ctx, eventType, actorPtr(actorID), &dep,
+					fmt.Sprintf("dependency of secret %d on %q (id %d) %s due to secret lifecycle event",
+						e.DependentSecretID, secretName, secretID, lifecycleVerb(eventType)))
+			case e.DependentSecretID:
+				// secretID is the dependent — the edge it owns is now unresolvable.
+				src := e.DependentSecretID
+				c.writeAuditEvent(ctx, eventType, actorPtr(actorID), &src,
+					fmt.Sprintf("dependency of %q (id %d) on secret %d %s due to secret lifecycle event",
+						secretName, secretID, e.DependsOnSecretID, lifecycleVerb(eventType)))
+			}
 		}
-	}
+		return nil
+	})
 }
 
 // lifecycleVerb returns a short past-tense word for an audit description.

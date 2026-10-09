@@ -193,8 +193,13 @@ deploy and upgrade Keyorix in their environment.
   `golangci-lint`, `go test -race`, `go vet`, `gitleaks`, `CodeQL`, `checkov`,
   `go-licenses`, fuzz-target-staleness, DCO sign-off (full list and hardening
   log: [`SECURITY-VERIFICATION.md`](./SECURITY-VERIFICATION.md)).
-- **CODEOWNERS**-required review on cryptography, auth/authz/RBAC core,
-  HTTP/gRPC middleware, database migrations, and the CI/CD pipeline itself.
+- **CODEOWNERS** designates the required reviewer for cryptography,
+  auth/authz/RBAC core, HTTP/gRPC middleware, database migrations, and the
+  CI/CD pipeline itself. **Not currently enforced as a GitHub branch-
+  protection gate** — verified via `gh api` that `main`'s ruleset has no
+  required-reviewer rule; see
+  [`SECURITY-VERIFICATION.md`](./SECURITY-VERIFICATION.md#process-controls)
+  and [`../security/SDLC.md`](../security/SDLC.md#branch-protection).
 - **Schema-epoch downgrade guard** (ADR-097) — a binary older than the
   database it's pointed at refuses to start rather than silently running
   against unknown schema state, turning a class of unauthorized/unintended

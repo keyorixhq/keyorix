@@ -422,6 +422,10 @@ func TestRoleService_CreateRole_CannotClaimReservedAdminBypassName(t *testing.T)
 
 func TestRoleService_RemoveRole(t *testing.T) {
 	svc, h := newRoleService(t)
+	// #2658: the last-admin guard counts only live holders, so the context
+	// admin (id 1, super_admin) needs a real users row to keep the install
+	// governed once "removee"'s grant of roles[0] is removed.
+	h.CreateTestUser(t, "admin", 1)
 	user := h.CreateTestUser(t, "removee", 501)
 	roles, err := svc.ListRoles(roleAdminCtx(), &pb.ListRolesRequest{})
 	require.NoError(t, err)

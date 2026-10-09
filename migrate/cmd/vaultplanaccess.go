@@ -138,93 +138,9 @@ func runPlanAccess(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	var warnings []string
-	warn := func(what string) {
-		warnings = append(warnings, "could not read "+what+" (permission denied) — treated as empty; see healthscan-policy.hcl for the policy stanza that would allow it")
-	}
-
-	kvMountsRaw, status, err := healthscan.ListKVMounts(ctx, vc)
-	if err != nil {
-		return fmt.Errorf("list KV mounts: %w", err)
-	}
-	if status == healthscan.StatusForbidden {
-		warn("sys/mounts")
-	}
-	kvMounts := make([]accessplan.KVMountInfo, 0, len(kvMountsRaw))
-	for _, m := range kvMountsRaw {
-		kvMounts = append(kvMounts, accessplan.KVMountInfo{Path: m.Path, KVVersion: m.KVVersion})
-	}
-
-	policies, unreadablePolicies, status, err := healthscan.ListPolicies(ctx, vc)
-	if err != nil {
-		return fmt.Errorf("list policies: %w", err)
-	}
-	if status == healthscan.StatusForbidden {
-		warn("sys/policies/acl")
-	}
-	for _, name := range unreadablePolicies {
-		warn("policy " + name)
-	}
-
-	appRoles, unreadableApproles, _, status, err := healthscan.ListAppRoleRoleConfigs(ctx, vc)
-	if err != nil {
-		return fmt.Errorf("list AppRole roles: %w", err)
-	}
-	if status == healthscan.StatusForbidden {
-		warn("sys/auth (AppRole roles)")
-	}
-	for _, name := range unreadableApproles {
-		warn("AppRole role " + name)
-	}
-
-	k8sRoles, unreadableK8s, _, status, err := healthscan.ListKubernetesAuthRoleConfigs(ctx, vc)
-	if err != nil {
-		return fmt.Errorf("list Kubernetes auth roles: %w", err)
-	}
-	if status == healthscan.StatusForbidden {
-		warn("sys/auth (Kubernetes auth roles)")
-	}
-	for _, name := range unreadableK8s {
-		warn("Kubernetes auth role " + name)
-	}
-
-	userpassUsers, unreadableUserpass, _, status, err := healthscan.ListUserpassUsers(ctx, vc)
-	if err != nil {
-		return fmt.Errorf("list userpass users: %w", err)
-	}
-	if status == healthscan.StatusForbidden {
-		warn("sys/auth (userpass users)")
-	}
-	for _, name := range unreadableUserpass {
-		warn("userpass user " + name)
-	}
-
-	projectsRaw, err := reader.ListProjects(ctx)
-	if err != nil {
-		return fmt.Errorf("list Keyorix projects: %w", err)
-	}
-	projects := make([]accessplan.ProjectRef, 0, len(projectsRaw))
-	environments := make(map[int][]accessplan.EnvironmentRef, len(projectsRaw))
-	for _, p := range projectsRaw {
-		projects = append(projects, p)
-		envs, err := reader.ListEnvironments(ctx, p.ID)
-		if err != nil {
-			return fmt.Errorf("list environments for project %q: %w", p.Name, err)
-		}
-		environments[p.ID] = envs
-	}
-
-	mapper, err := accessplan.NewPathMapper(projects, environments, kvMounts, paPathMap)
+	built, warnings, err := buildFreshAccessPlan(ctx, vc, reader, paK8sIssuer, paPathMap)
 	if err != nil {
 		return err
-	}
-
-	built := accessplan.Build(accessplan.BuildInput{
-		Policies: policies, AppRoles: appRoles, KubernetesRoles: k8sRoles, UserpassUsers: userpassUsers,
-	}, mapper, paK8sIssuer)
-
-	if err := accessplan.Reconcile(ctx, built.Items, reader); err != nil {
-		return fmt.Errorf("reconcile against Keyorix: %w", err)
 	}
 
 	for _, w := range warnings {

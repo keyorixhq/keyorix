@@ -67,6 +67,13 @@ func (h *CatalogHandler) CreateInvitation(w http.ResponseWriter, r *http.Request
 			sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 			return
 		}
+		// #2599: the resend throttle's count query failed. Nothing was persisted
+		// and no link was issued; the request can simply be retried.
+		if errors.Is(err, core.ErrResendThrottleUnverifiable) {
+			log.Printf("Error checking setup-link resend throttle for invitation to %q on project %d: %v", body.Email, id, err)
+			sendError(w, "Error", core.ErrResendThrottleUnverifiable.Error(), http.StatusServiceUnavailable, nil) // nosemgrep: keyorix-raw-error-to-client -- ErrResendThrottleUnverifiable is a fixed sentinel with a known-safe message, not a raw backend/driver error
+			return
+		}
 		// A nil inv means the invitation was not created at all; a non-nil inv with an
 		// error means it was created but the link could not be provisioned (e.g.
 		// base_url unset) — surface that so the admin can fix config and resend.
@@ -147,6 +154,12 @@ func (h *CatalogHandler) CreateGlobalInvitation(w http.ResponseWriter, r *http.R
 		if errors.Is(err, core.ErrSetupTokenIssuanceFailed) {
 			log.Printf("Error issuing setup token for global invitation to %q: %v", body.Email, err)
 			sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
+			return
+		}
+		// #2599: see CreateInvitation's identical branch.
+		if errors.Is(err, core.ErrResendThrottleUnverifiable) {
+			log.Printf("Error checking setup-link resend throttle for global invitation to %q: %v", body.Email, err)
+			sendError(w, "Error", core.ErrResendThrottleUnverifiable.Error(), http.StatusServiceUnavailable, nil) // nosemgrep: keyorix-raw-error-to-client -- ErrResendThrottleUnverifiable is a fixed sentinel with a known-safe message, not a raw backend/driver error
 			return
 		}
 		// A nil inv means the invitation was not created at all (bad input); a non-nil
@@ -340,11 +353,11 @@ func (h *CatalogHandler) ResolveAccessRequest(w http.ResponseWriter, r *http.Req
 	// #1573: approverMachineID distinguishes one machine approver from another —
 	// ApproverID/ResolvedBy is 0 for every machine caller (ADR-030, no UserID),
 	// so without this the dual-control distinct-approver count could not tell
-	// two different machines' sign-offs apart. 0 for a human actor.
-	var approverMachineID uint
-	if actor.MachineIdentityID != nil {
-		approverMachineID = *actor.MachineIdentityID
-	}
+	// two different machines' sign-offs apart. 0 for a human actor. #2495: via
+	// the shared machineID(r) helper rather than an inline re-derivation, so
+	// this and the bulk endpoints cannot disagree about what "the acting machine
+	// identity" is.
+	approverMachineID := machineID(r)
 	var resolveErr error
 	switch body.Action {
 	case "approve":
