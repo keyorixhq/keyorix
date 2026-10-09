@@ -67,7 +67,8 @@ type EmergencyAccessPosture struct {
 	// break_glass.review_window. This is what "every activation must be
 	// reviewed afterwards" is ENFORCED by -- the ADR's own words are "an open
 	// activation without a recorded review shows as a posture deviation". A
-	// pending review never blocks break-glass ACTIVATION itself (INV-CORE-48,
+	// pending review never blocks break-glass ACTIVATION itself
+	// (INV-CORE-break-glass-unreviewed-reported-never-blocks-activation,
 	// narrowed #2461 round 2) -- escalation here is the "emergency-access"
 	// control going to Gap (EvaluateControls), a recurring SECURITY: log line,
 	// a repeating admin notification, and an audit event (see
@@ -88,8 +89,10 @@ type EmergencyAccessPosture struct {
 	// against, so a report is interpretable without also knowing the
 	// deployment's config.
 	ReviewWindowHours int `json:"review_window_hours"`
-	// IndependentReviewImpossible is INV-CORE-49 (#2461 round 2, Andrei's
-	// decision item (c)): true when the deployment has at most one active
+	// IndependentReviewImpossible is
+	// INV-CORE-break-glass-independent-review-impossible-is-visible (#2461
+	// round 2, Andrei's decision item (c)): true when the deployment has at
+	// most one active
 	// global admin-tier holder, so no human OTHER than a break-glass activator
 	// could ever satisfy ReviewBreakGlass's self-review refusal for an
 	// activation they performed -- independent review is structurally
@@ -817,7 +820,8 @@ func (c *KeyorixCore) accessGovernancePostureFromSnapshot(ctx context.Context, p
 		accumulateAccessRequestPosture(p, pid, snap)
 	}
 	// Deployment-wide, not per-project -- computed once rather than inside the
-	// loop above (#2461 round 2, INV-CORE-49).
+	// loop above (#2461 round 2,
+	// INV-CORE-break-glass-independent-review-impossible-is-visible).
 	if impossible, err := c.independentBreakGlassReviewImpossible(ctx); err == nil {
 		p.EmergencyAccess.IndependentReviewImpossible = impossible
 	} else {
@@ -827,7 +831,8 @@ func (c *KeyorixCore) accessGovernancePostureFromSnapshot(ctx context.Context, p
 
 // independentBreakGlassReviewImpossible reports whether this deployment has at
 // most one active global admin-tier holder -- i.e. whether a break-glass
-// activator could ever find an independent reviewer at all (INV-CORE-49,
+// activator could ever find an independent reviewer at all
+// (INV-CORE-break-glass-independent-review-impossible-is-visible,
 // #2461 round 2, Andrei's decision item (c)). Approximated the same way
 // guardLastGlobalAdmin* approximates "another administrator exists" elsewhere
 // in this file: active global admin-tier holder count, not a precise count of

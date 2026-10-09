@@ -76,8 +76,10 @@ func TestEvaluateControls_GapsFromPosture(t *testing.T) {
 // TestEvaluateControls_EmergencyAccessGapsOnUnreviewedActivation is #2461
 // round 2's proving test: an unreviewed break-glass activation past the
 // review window used to be purely informational on this control (Status
-// hard-coded to never gap) -- INV-CORE-48 requires it to surface as a real
-// Gap, not just a number in Detail nobody is forced to notice.
+// hard-coded to never gap) --
+// INV-CORE-break-glass-unreviewed-reported-never-blocks-activation requires
+// it to surface as a real Gap, not just a number in Detail nobody is forced
+// to notice.
 func TestEvaluateControls_EmergencyAccessGapsOnUnreviewedActivation(t *testing.T) {
 	t.Parallel()
 	clean := &CompliancePosture{EmergencyAccess: EmergencyAccessPosture{ActiveActivations: 1, TotalActivations: 3}}
@@ -90,7 +92,8 @@ func TestEvaluateControls_EmergencyAccessGapsOnUnreviewedActivation(t *testing.T
 }
 
 // TestEvaluateControls_EmergencyAccessIndependentReviewerGapsWithOneAdmin is
-// INV-CORE-49's proving test: a deployment where independent review is
+// INV-CORE-break-glass-independent-review-impossible-is-visible's proving
+// test: a deployment where independent review is
 // structurally impossible must gap on its OWN distinct control, regardless
 // of whether any activation is currently unreviewed.
 func TestEvaluateControls_EmergencyAccessIndependentReviewerGapsWithOneAdmin(t *testing.T) {

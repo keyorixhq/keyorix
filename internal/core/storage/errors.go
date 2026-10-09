@@ -84,6 +84,27 @@ var ErrBreakGlassNotActive = errors.New("break-glass activation is not active")
 // submissions racing for the same activation (only the first wins).
 var ErrBreakGlassAlreadyReviewed = errors.New("break-glass activation has already been reviewed")
 
+// ErrBreakGlassNotFound is returned (wrapped) by GetBreakGlassActivation for a
+// definitive "no such activation row" (gorm.ErrRecordNotFound) only — never
+// for a transient retrieval failure, which keeps its ErrorRetrievalFailed
+// wrapping so a caller can still tell a 404 from a 500. Same convention and
+// same reason as ErrUserNotFound/ErrSecretNotFound: the i18n text
+// GetBreakGlassActivation embeds is an implementation detail that changes with
+// the deployment's locale, so it is not a classification contract (#2461
+// round 2 — ReviewBreakGlass's handler matched the English words "not found"
+// and returned 500 under ru/fr/de).
+var ErrBreakGlassNotFound = errors.New("break-glass activation not found")
+
+// IsBreakGlassNotFound is IsUserNotFound's break-glass counterpart — true only
+// for a definitive "this activation does not exist", false for a transient
+// retrieval failure.
+func IsBreakGlassNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, ErrBreakGlassNotFound)
+}
+
 // ErrDuplicateActiveMembership is returned (wrapped) by CreateProjectMembership when the
 // insert collides with the partial unique index on (project_id, user_id) scoped to
 // non-revoked rows. InviteMember's own "no active membership" check races with a

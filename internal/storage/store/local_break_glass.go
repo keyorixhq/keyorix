@@ -74,7 +74,11 @@ func (ls *LocalStorage) GetBreakGlassActivation(ctx context.Context, id uint) (*
 		// GetMachineIdentityCredentialByID's (local_machine_credentials.go) already-
 		// established pattern for the same bug class.
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+			// Also wraps the storage.ErrBreakGlassNotFound sentinel (#2461 round 2)
+			// so a caller can classify this without matching the LOCALE-DEPENDENT
+			// i18n.T("ErrorNotFound") text; gorm.ErrRecordNotFound stays wrapped too
+			// for the existing errors.Is callers.
+			return nil, fmt.Errorf("%s: %w: %w", i18n.T("ErrorNotFound", nil), storage.ErrBreakGlassNotFound, err)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}

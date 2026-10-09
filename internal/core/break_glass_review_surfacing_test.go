@@ -95,7 +95,8 @@ func TestAccumulateBreakGlassPosture_CountsUnreviewedPastTheWindow(t *testing.T)
 }
 
 // TestAccumulateBreakGlassPosture_SingleAdminDeploymentFlagsIndependentReviewImpossible
-// is INV-CORE-49's proving test (#2461 round 2, Andrei's decision item (c)):
+// is INV-CORE-break-glass-independent-review-impossible-is-visible's proving
+// test (#2461 round 2, Andrei's decision item (c)):
 // a deployment with exactly one active global admin-tier holder must flag
 // IndependentReviewImpossible, and a second admin must clear it. Uses a real
 // LocalStorage (newSCIMGuardCore) rather than MockStorage because the

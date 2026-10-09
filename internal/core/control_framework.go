@@ -200,7 +200,9 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 			ID: "emergency-access", Name: "Governed emergency (break-glass) access", Area: ctrlAccessGovernance,
 			// #2461 round 2: an unreviewed activation past the review window used to
 			// be purely informational here (Status always Pass-or-Unknown, never
-			// Gap) -- "visibility is the control" (INV-CORE-48) does not mean this
+			// Gap) -- "visibility is the control"
+			// (INV-CORE-break-glass-unreviewed-reported-never-blocks-activation)
+			// does not mean this
 			// matrix may silently read a real posture deviation as passing. A
 			// failed collection still needs to surface as unknown, not a default
 			// Pass or a false Gap.
@@ -210,7 +212,8 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 		},
 		{
 			ID: "emergency-access-independent-reviewer", Name: "Break-glass has an independent reviewer available", Area: ctrlAccessGovernance,
-			// INV-CORE-49 (#2461 round 2, Andrei's decision item (c)): a deployment
+			// INV-CORE-break-glass-independent-review-impossible-is-visible
+			// (#2461 round 2, Andrei's decision item (c)): a deployment
 			// where no human other than the activator could ever review an
 			// activation must say so as its own distinct finding -- never silently
 			// read identical to "reviewed" or to an ordinary unreviewed backlog.
@@ -370,7 +373,9 @@ func classificationDetail(p *CompliancePosture) string {
 	return fmt.Sprintf("%d of %d classifiable items unclassified across secrets/dynamic-configs/machine-identities/machine-credentials", unclassified, total)
 }
 
-// independentReviewerDetail reports INV-CORE-49's distinct finding in
+// independentReviewerDetail reports
+// INV-CORE-break-glass-independent-review-impossible-is-visible's distinct
+// finding in
 // human-readable form -- it must say outright that independent review is
 // impossible, not leave an auditor to infer it from a count being 1.
 func independentReviewerDetail(e EmergencyAccessPosture) string {

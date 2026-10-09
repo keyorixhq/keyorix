@@ -38,6 +38,20 @@ All notable changes to Keyorix are documented here. This project follows
   blocked, because an emergency path that can be disabled by unfiled
   paperwork fails exactly when it is needed.
 
+  **Upgrade note:** break-glass activations recorded before this release have
+  no review on file (`reviewed_at` is NULL), so immediately after upgrading
+  every one of them older than `break_glass.review_window` is counted as
+  unreviewed — the posture report's `emergency_access.unreviewed_activations`
+  will jump, the "emergency-access" control will show a Gap, and the 6-hourly
+  reminder will log and audit them until each one is reviewed. Retention will
+  not clear the backlog for you — an unreviewed activation is never purged, no
+  matter how old, deliberately, so retention cannot silently erase the
+  deviation. They are also NOT backfilled as "pre-review-era": a synthetic
+  review record would assert a second pair of eyes that never looked, which is
+  exactly the claim this change exists to make true. Review the pre-upgrade
+  activations (any user other than the activator with `roles.assign` at the
+  project can) to clear the report. (#2461)
+
 ## v0.95.3 — 2026-10-01
 
 ### Security

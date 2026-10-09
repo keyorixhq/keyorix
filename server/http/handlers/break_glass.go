@@ -172,10 +172,15 @@ func (h *CatalogHandler) ReviewBreakGlass(w http.ResponseWriter, r *http.Request
 		// the still-active case 500.
 		case errors.Is(err, core.ErrBreakGlassSelfReview), errors.Is(err, core.ErrBreakGlassUnattributableReviewer):
 			status = http.StatusForbidden
-		case strings.Contains(msg, "not found"):
+		// Both "no such activation" and "that activation belongs to another
+		// project" arrive as storage.ErrBreakGlassNotFound, so both are 404 —
+		// a project-ID mismatch must not read as a server fault, and must not
+		// disclose that the ID exists elsewhere. A genuine retrieval FAILURE is
+		// deliberately not in this arm: it falls through to the default 500.
+		case errors.Is(err, storage.ErrBreakGlassNotFound):
 			status = http.StatusNotFound
 		case errors.Is(err, storage.ErrBreakGlassAlreadyReviewed), errors.Is(err, core.ErrBreakGlassStillActive),
-			strings.Contains(msg, "required") || strings.Contains(msg, "characters"):
+			errors.Is(err, core.ErrBreakGlassInvalidNote), errors.Is(err, core.ErrInvalidInput):
 			status = http.StatusBadRequest
 		default:
 			log.Printf("Error reviewing break-glass activation %d for project %d: %v", activationID, id, err)

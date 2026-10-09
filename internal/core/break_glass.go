@@ -35,6 +35,9 @@ var (
 	ErrBreakGlassSelfReview             = errors.New("break-glass: self-review refused")
 	ErrBreakGlassUnattributableReviewer = errors.New("break-glass: unattributable reviewer refused")
 	ErrBreakGlassStillActive            = errors.New("break-glass: activation still active")
+	// ErrBreakGlassInvalidNote covers both review-note length bounds (too
+	// short and too long).
+	ErrBreakGlassInvalidNote = errors.New("break-glass: invalid review note")
 )
 
 // minBreakGlassJustificationLen is the minimum length, after trimming
@@ -574,29 +577,42 @@ func (c *KeyorixCore) LogBreakGlassRevoked(ctx context.Context, actorID, project
 // without a recorded review shows as a posture deviation."
 func (c *KeyorixCore) ReviewBreakGlass(ctx context.Context, actorID, projectID, activationID uint, note string) error {
 	if projectID == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
+		return fmt.Errorf("%w: %s: %s", ErrInvalidInput, i18n.T("ErrorValidation", nil), "project ID is required")
 	}
 	if err := requireHumanReviewer(actorID); err != nil {
 		return fmt.Errorf("%w: %s: %s", ErrBreakGlassUnattributableReviewer, i18n.T("ErrorPermissionDenied", nil), err)
 	}
 	note = strings.TrimSpace(note)
 	if len(note) < minBreakGlassReviewNoteLen {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil),
+		return fmt.Errorf("%w: %s: %s", ErrBreakGlassInvalidNote, i18n.T("ErrorValidation", nil),
 			fmt.Sprintf("review note must be at least %d characters", minBreakGlassReviewNoteLen))
 	}
 	// #2461 round 2: this becomes a PERMANENT audit-trail record (same reasoning
 	// as minBreakGlassReviewNoteLen above); cap it so a reviewer cannot pack an
 	// arbitrarily large payload into the audit log via a review note.
 	if len(note) > maxBreakGlassReviewNoteLen {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil),
+		return fmt.Errorf("%w: %s: %s", ErrBreakGlassInvalidNote, i18n.T("ErrorValidation", nil),
 			fmt.Sprintf("review note must be at most %d characters", maxBreakGlassReviewNoteLen))
 	}
 	activation, err := c.storage.GetBreakGlassActivation(ctx, activationID)
 	if err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+		// GetBreakGlassActivation already distinguishes a definitive "no such
+		// row" (storage.ErrBreakGlassNotFound) from a transient retrieval
+		// failure. Keep them apart here so the handler maps the first to 404
+		// and the second to 500, instead of reporting a DB fault as a 404 (the
+		// bug local_break_glass.go's own comment records for the proxy path).
+		// The not-found message is rebuilt rather than wrapped so it is
+		// byte-identical to the project-mismatch refusal below.
+		if storage.IsBreakGlassNotFound(err) {
+			return fmt.Errorf("%w: %s", storage.ErrBreakGlassNotFound, i18n.T("ErrorNotFound", nil))
+		}
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	if activation.ProjectID != projectID {
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		// Deliberately the SAME sentinel, and so the same 404, as "no such
+		// activation": a project-ID mismatch must not disclose that the
+		// activation ID exists under some project the caller cannot see.
+		return fmt.Errorf("%w: %s", storage.ErrBreakGlassNotFound, i18n.T("ErrorNotFound", nil))
 	}
 	if actorID == activation.UserID {
 		return fmt.Errorf("%w: %s: %s", ErrBreakGlassSelfReview, i18n.T("ErrorPermissionDenied", nil),
@@ -640,7 +656,8 @@ func (c *KeyorixCore) ListUnreviewedBreakGlassActivations(ctx context.Context, w
 // see ReviewBreakGlass's doc comment above for why activation stays
 // single-person and a self-review is refused; that reasoning is not repeated
 // here. A pending review never blocks break-glass ACTIVATION itself
-// (INV-CORE-48, narrowed #2461 round 2 -- Andrei's decision): nothing here
+// (INV-CORE-break-glass-unreviewed-reported-never-blocks-activation, narrowed
+// #2461 round 2 -- Andrei's decision): nothing here
 // blocks an activation, blocks a user, or expires a grant early, and no such
 // lockout should be added without a fresh, explicit product decision. What IS
 // enforced, and made hard to ignore (round 2): the "emergency-access"
