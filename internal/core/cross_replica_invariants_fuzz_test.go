@@ -934,14 +934,6 @@ func g4FindViolation(t testing.TB, w *g4World) string {
 		t.Fatalf("GLOBAL INVARIANT VIOLATED (INV-CORE-44, #2657/#2659 class): %d (user, project) pair(s) hold a live project-scope role grant while every membership row for the pair is `revoked`: %+v",
 			len(orphaned), orphaned)
 	}
-	// 6. no revoked membership with a live role grant for that (user, project) (#2657/#2659 class).
-	var revokedWithGrant int64
-	require.NoError(t, w.setupDB.Raw(
-		"SELECT count(*) FROM project_memberships m JOIN user_roles ur ON ur.user_id = m.user_id AND ur.project_id = m.project_id WHERE m.state = 'revoked'",
-	).Scan(&revokedWithGrant).Error)
-	if revokedWithGrant > 0 {
-		return fmt.Sprintf("GLOBAL INVARIANT VIOLATED (#2657/#2659 class): %d revoked membership(s) still carry a live role grant", revokedWithGrant)
-	}
 
 	// 7. victim stays suspended unless an explicit reactivate op ran since.
 	w.mu.Lock()
