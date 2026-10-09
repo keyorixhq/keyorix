@@ -168,7 +168,14 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, core.ErrMFARequired) {
 			challenge, cerr := h.coreService.CreateMFAChallenge(r.Context(), user.ID)
 			if cerr != nil {
-				sendError(w, "Internal", "failed to start MFA challenge", http.StatusInternalServerError, nil)
+				// #2888 (#2740 option C): the password was ALREADY confirmed correct
+				// -- that's the only way ErrMFARequired is ever returned. A distinct
+				// 500 here, versus the 401 a wrong password gets below, would confirm
+				// the password was right during any CreateMFAChallenge storage
+				// hiccup. Must look exactly like a wrong password to the client;
+				// LogAuthError still records the real reason for an operator.
+				goSafe(func() { h.coreService.LogAuthError(context.Background(), body.Username, ip, cerr) }) // #nosec G118
+				sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
 				return
 			}
 			// Tell the client which second factors this account can complete, so it
@@ -186,8 +193,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, ok := h.completeLogin(w, r, session, user)
-	if !ok {
+	resp, err := h.completeLogin(w, r, session, user)
+	if err != nil {
+		// #2888: same byte-identical response as the wrong-credential branch
+		// above -- see completeLogin's doc comment.
+		goSafe(func() { h.coreService.LogAuthError(context.Background(), body.Username, ip, err) }) // #nosec G118
+		sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -241,24 +252,35 @@ func (h *AuthHandler) buildLoginResponse(ctx context.Context, session *models.Se
 // completeLogin finishes a login-completion flow for an already-minted session:
 // it resolves the identity payload, sets the session cookies, and returns the
 // response body to hand to sendSuccess. On a buildLoginResponse failure (the
-// identity read errored) it fails closed instead of handing back a session — it
-// revokes the session it was about to issue and writes a generic 500, and returns
-// ok=false so the caller stops without setting cookies or logging the login as
-// successful. Shared by every HTTP handler that mints a session and reaches the
-// same response shape: Login, ConsumeSetup, VerifyMFA, FinishWebAuthnLogin, and
+// identity read errored) it fails closed instead of handing back a session —
+// it revokes the session it was about to issue and returns a non-nil error so
+// the caller stops without setting cookies or logging the login as successful.
+// Shared by every HTTP handler that mints a session and reaches the same
+// response shape: Login, ConsumeSetup, VerifyMFA, FinishWebAuthnLogin, and
 // FinishWebAuthnPasswordlessLogin (#2412).
-func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, session *models.Session, user *models.User) (loginResponseBody, bool) {
+//
+// #2888 (#2740 option C): this used to write its OWN 500 "Login could not be
+// completed" response directly. Every one of its five callers reaches this
+// point only once the password/code/assertion has ALREADY been confirmed
+// correct, so a 500 here -- distinct from each caller's own 401/400
+// wrong-credential response -- was a clean oracle: a storage hiccup on this
+// post-verdict identity-resolution read would have confirmed the credential
+// was right, for every login path at once. It no longer writes anything; the
+// caller maps a non-nil error to EXACTLY its own wrong-credential response
+// (same status, body, headers), so the two cases are indistinguishable to
+// the client. LogAuthError (internal/core/audit.go) still records the real
+// reason for an operator.
+func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, session *models.Session, user *models.User) (loginResponseBody, error) {
 	resp, err := h.buildLoginResponse(r.Context(), session, user)
 	if err != nil {
 		log.Printf("completeLogin: %v; revoking session %d for user %d", err, session.ID, user.ID)
 		if rerr := h.coreService.Logout(r.Context(), session.SessionToken); rerr != nil {
 			log.Printf("completeLogin: failed to revoke session after identity resolution error: %v", rerr)
 		}
-		sendError(w, "Internal", "Login could not be completed. Please try again.", http.StatusInternalServerError, nil)
-		return loginResponseBody{}, false
+		return loginResponseBody{}, err
 	}
 	h.setSessionCookies(w, session)
-	return resp, true
+	return resp, nil
 }
 
 // ── Setup-token endpoints (ADR-028) ─────────────────────────────────────────────
@@ -335,7 +357,14 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, core.ErrMFARequired) {
 		challenge, cerr := h.coreService.CreateMFAChallenge(r.Context(), result.User.ID)
 		if cerr != nil {
-			sendError(w, "Internal", "failed to start MFA challenge", http.StatusInternalServerError, nil)
+			// #2888 (#2740 option C sibling of Login's own fix): the token was
+			// ALREADY consumed and the new password ALREADY set -- that's the
+			// only way ErrMFARequired is reached here. A distinct error for a
+			// CreateMFAChallenge storage hiccup, versus the generic "could not
+			// be completed" every other failure gets below, would reveal that
+			// this specific token was genuinely valid. Must look identical.
+			goSafe(func() { h.coreService.LogAuthError(context.Background(), result.User.Username, ip, cerr) }) // #nosec G118
+			sendError(w, "BadRequest", "This setup link could not be completed. It may be invalid or expired — ask your administrator for a new one.", http.StatusBadRequest, nil)
 			return
 		}
 		sendSuccess(w, map[string]interface{}{
@@ -360,8 +389,12 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, ok := h.completeLogin(w, r, result.Session, result.User)
-	if !ok {
+	resp, err := h.completeLogin(w, r, result.Session, result.User)
+	if err != nil {
+		// #2888: same byte-identical response as the generic failure branch
+		// above -- see completeLogin's doc comment.
+		goSafe(func() { h.coreService.LogAuthError(context.Background(), result.User.Username, ip, err) }) // #nosec G118
+		sendError(w, "BadRequest", "This setup link could not be completed. It may be invalid or expired — ask your administrator for a new one.", http.StatusBadRequest, nil)
 		return
 	}
 	goSafe(func() {

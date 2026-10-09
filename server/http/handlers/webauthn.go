@@ -293,8 +293,12 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 		sendError(w, "Unauthorized", "Assertion failed or challenge expired", http.StatusUnauthorized, nil)
 		return
 	}
-	resp, ok := h.completeLogin(w, r, session, user)
-	if !ok {
+	resp, err := h.completeLogin(w, r, session, user)
+	if err != nil {
+		// #2888 (#2740 option C): same byte-identical response as the failed-
+		// assertion branch above -- see completeLogin's doc comment.
+		goSafe(func() { h.coreService.LogAuthError(context.Background(), user.Username, ip, err) }) // #nosec G118
+		sendError(w, "Unauthorized", "Assertion failed or challenge expired", http.StatusUnauthorized, nil)
 		return
 	}
 	goSafe(func() {
@@ -376,8 +380,12 @@ func (h *AuthHandler) FinishWebAuthnPasswordlessLogin(w http.ResponseWriter, r *
 		sendError(w, "Unauthorized", "Passwordless login failed", http.StatusUnauthorized, nil)
 		return
 	}
-	resp, ok := h.completeLogin(w, r, session, user)
-	if !ok {
+	resp, err := h.completeLogin(w, r, session, user)
+	if err != nil {
+		// #2888 (#2740 option C): same byte-identical response as the failed-
+		// assertion branch above -- see completeLogin's doc comment.
+		goSafe(func() { h.coreService.LogAuthError(context.Background(), user.Username, ip, err) }) // #nosec G118
+		sendError(w, "Unauthorized", "Passwordless login failed", http.StatusUnauthorized, nil)
 		return
 	}
 	goSafe(func() {

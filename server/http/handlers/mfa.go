@@ -175,25 +175,32 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	// rule applied to VerifyMFA's own reservation.
 	session, user, err := h.verifyMFALoginReleasingOnPanic(r.Context(), body.Challenge, body.Code, r.Header.Get("User-Agent"), ip, reserved, attemptID)
 	if err != nil {
-		if errors.Is(err, core.ErrMFAVerificationStorageFailure) {
+		// FIX-1 (#2548) + #2740 review (option C), #2888 round 2: 503 "retry" and
+		// the reservation release are BOTH ONLY for ErrMFAVerificationUnavailable
+		// -- the genuinely pre-verdict case (the code was never evaluated at
+		// all). ErrMFAVerificationStorageFailure WITHOUT that wrap means the
+		// code WAS found correct and only a later write (the anti-replay mark)
+		// failed; releasing the slot for THAT case was the actual bug: a wrong
+		// code always keeps its slot consumed, so a correct-code-but-write-
+		// failed attempt releasing its slot was a side channel confirming
+		// correctness, observable by watching when 429s start -- regardless of
+		// this response's own status/body already matching the wrong-code case.
+		if errors.Is(err, core.ErrMFAVerificationUnavailable) {
 			if reserved {
 				h.coreService.ReleaseLoginAttempt(r.Context(), attemptID)
 			}
-			// FIX-1 (#2548) + #2740 review (option C): 503 "retry" ONLY when the
-			// failure happened before any code was evaluated. A failure after the
-			// code was found correct stays a plain 401, identical to a wrong code,
-			// so the response can never confirm a correct guess. err itself is
-			// never passed through (it wraps the raw storage error).
-			if errors.Is(err, core.ErrMFAVerificationUnavailable) {
-				sendError(w, "ServiceUnavailable", errMFAVerificationUnavailable, http.StatusServiceUnavailable, nil)
-				return
-			}
+			sendError(w, "ServiceUnavailable", errMFAVerificationUnavailable, http.StatusServiceUnavailable, nil)
+			return
 		}
 		sendError(w, "Unauthorized", "Invalid or expired code", http.StatusUnauthorized, nil)
 		return
 	}
-	resp, ok := h.completeLogin(w, r, session, user)
-	if !ok {
+	resp, err := h.completeLogin(w, r, session, user)
+	if err != nil {
+		// #2888: same byte-identical response as the wrong-code branch above --
+		// see completeLogin's doc comment.
+		goSafe(func() { h.coreService.LogAuthError(context.Background(), user.Username, ip, err) }) // #nosec G118
+		sendError(w, "Unauthorized", "Invalid or expired code", http.StatusUnauthorized, nil)
 		return
 	}
 	goSafe(func() {

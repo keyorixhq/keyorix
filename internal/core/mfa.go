@@ -449,13 +449,26 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 	}
 	if !verified {
 		if storageErr != nil {
-			// Neither path could be conclusively evaluated — do NOT audit as a failed
-			// attempt and do NOT count it toward the lockout: this request never
-			// actually got a verdict on whether its code was right.
+			// Always audited distinctly from a confirmed wrong code -- an
+			// operator must be able to tell a storage hiccup apart from a
+			// genuine bad guess.
 			c.auditMFAError(ctx, ch.UserID, "login", storageErr)
 			if !codeMatched {
+				// Neither path could be conclusively evaluated: do NOT count it
+				// toward the lockout -- this request never actually got a
+				// verdict on whether its code was right, and its caller (the
+				// HTTP handler) releases the login-attempt-rate-limit slot for
+				// exactly this wrapped sentinel, for the same reason.
 				return nil, false, nil, fmt.Errorf("%w: %w: %s: %w", ErrMFAVerificationStorageFailure, ErrMFAVerificationUnavailable, i18n.T("ErrorRetrievalFailed", nil), storageErr)
 			}
+			// #2888 (#2740 option C extended to lockout/rate-limit bookkeeping,
+			// not just the HTTP response): the code WAS confirmed correct here
+			// -- only the anti-replay consumption write (MarkTOTPStepUsed)
+			// failed. This must still count toward the lockout exactly like a
+			// wrong code would, or the lockout/rate-limit timing becomes a side
+			// channel confirming correctness even though the returned error and
+			// the HTTP response are already identical either way.
+			c.recordFailedLogin(ctx, user)
 			return nil, false, nil, fmt.Errorf("%w: %s: %w", ErrMFAVerificationStorageFailure, i18n.T("ErrorRetrievalFailed", nil), storageErr)
 		}
 		c.auditMFAFailed(ctx, ch.UserID, "login")
@@ -643,17 +656,32 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 	secondFactorEnrolled := user.MFAEnabled || user.WebAuthnEnabled
 	ok := false
 	// storageErr tracks a genuine storage-read failure that happened BEFORE any
-	// code or password was evaluated (only loading the TOTP secret), as distinct from a CONFIRMED negative result (wrong code/password),
-	// mirroring VerifyMFACredentials' own storageErr handling (#2548 sibling,
-	// found during the FIX-1 sweep): a resolution error here must not be
-	// indistinguishable from a legitimate negative result, or it both wrongly
-	// reports "invalid code or password" and wrongly counts toward the account
-	// lockout for a code/password that was never actually checked. Once set,
-	// storageErr takes precedence in the final verdict below even if the OTHER
-	// path (TOTP vs. password+step-up-grant) independently produced a clean
-	// negative result -- same precedence VerifyMFACredentials already uses
-	// between its TOTP and recovery-code paths.
-	var storageErr error
+	// code or password was evaluated (only loading the TOTP secret), as distinct
+	// from a CONFIRMED negative result (wrong code/password), mirroring
+	// VerifyMFACredentials' own storageErr handling (#2548 sibling, found during
+	// the FIX-1 sweep): a resolution error here must not be indistinguishable
+	// from a legitimate negative result, or it both wrongly reports "invalid
+	// code or password" and wrongly counts toward the account lockout for a
+	// code/password that was never actually checked. Once set, storageErr takes
+	// precedence in the final verdict below even if the OTHER path (TOTP vs.
+	// password+step-up-grant) independently produced a clean negative result --
+	// same precedence VerifyMFACredentials already uses between its TOTP and
+	// recovery-code paths.
+	//
+	// postVerdictErr (#2888 round 2) is the DIFFERENT case: the code or password
+	// WAS confirmed correct, and a SUBSEQUENT write (the anti-replay mark, or
+	// consuming the step-up grant) failed. The response must still stay
+	// identical to a wrong code/password (#2740 option C) -- but unlike
+	// storageErr, this must still count toward the lockout, exactly like a
+	// genuine wrong guess, and is audited as mfa.error (not mfa.failed) rather
+	// than silently discarded, so an operator can still tell the two apart. An
+	// earlier version of this function discarded MarkTOTPStepUsed/
+	// ConsumeMFAStepUpGrant's own error entirely to achieve the identical
+	// response -- which also meant a correct guess whose consumption write
+	// happened to fail went completely unaudited as anything OTHER than a
+	// confirmed wrong answer, the exact ambiguity storageErr exists to avoid in
+	// the other direction.
+	var storageErr, postVerdictErr error
 	if user.MFAEnabled {
 		if secret, err := c.loadTOTPSecret(ctx, user.ID); err != nil {
 			storageErr = err
@@ -661,10 +689,9 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 			// Use the same anti-replay path as VerifyMFACredentials: identify the
 			// matched time-step and atomically mark it used so a stolen code cannot
 			// be replayed within the ±1 step (~90 s) window.
-			// A MarkTOTPStepUsed failure here happens AFTER the code matched: it
-			// must stay indistinguishable from a wrong code (no storageErr), or the
-			// distinct response confirms a correct guess (#2740 option C).
-			if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, user.ID, step); ferr == nil && fresh {
+			if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, user.ID, step); ferr != nil {
+				postVerdictErr = ferr
+			} else if fresh {
 				ok = true
 			}
 		}
@@ -672,9 +699,9 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 	if !ok && codeOrPassword != "" && bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(codeOrPassword)) == nil {
 		if !secondFactorEnrolled {
 			ok = true
-		} else if consumed, gerr := c.storage.ConsumeMFAStepUpGrant(ctx, user.ID, models.MFAStepUpPurposeReauth, c.authEffectiveNow()); gerr == nil && consumed {
-			// (A ConsumeMFAStepUpGrant error is only reachable once the password
-			// was CORRECT, so it must not set storageErr: same #2740 option C rule.)
+		} else if consumed, gerr := c.storage.ConsumeMFAStepUpGrant(ctx, user.ID, models.MFAStepUpPurposeReauth, c.authEffectiveNow()); gerr != nil {
+			postVerdictErr = gerr
+		} else if consumed {
 			// The password is correct AND the caller independently proved they
 			// still hold the enrolled second factor recently, FOR THIS PURPOSE —
 			// password alone would not be enough on its own, but password + a
@@ -702,6 +729,17 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 			// never actually got a verdict on whether its code/password was right.
 			c.auditMFAError(ctx, user.ID, phase, storageErr)
 			return fmt.Errorf("%w: %s: %w", ErrMFAVerificationStorageFailure, i18n.T("ErrorRetrievalFailed", nil), storageErr)
+		}
+		if postVerdictErr != nil {
+			// The code/password WAS confirmed correct; only a subsequent
+			// consumption write failed. Audited distinctly for an operator, but
+			// still counts toward the lockout and returns the SAME generic error
+			// as a genuine wrong code/password (#2888, #2740 option C extended to
+			// lockout bookkeeping): a correct guess must never be cheaper,
+			// lockout-wise, than a wrong one.
+			c.auditMFAError(ctx, user.ID, phase, postVerdictErr)
+			c.recordFailedLogin(ctx, user)
+			return fmt.Errorf("invalid code or password")
 		}
 		c.auditMFAFailed(ctx, user.ID, phase)
 		c.recordFailedLogin(ctx, user) // count the failed re-auth attempt toward the lockout

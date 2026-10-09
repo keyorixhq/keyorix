@@ -6,6 +6,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -48,6 +49,16 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 	if !verified {
 		if storageErr != nil {
 			c.auditMFAError(ctx, userID, "stepup", storageErr)
+			// #2888 (#2740 option C extended to lockout bookkeeping): when the
+			// code WAS confirmed correct and only a subsequent write (the
+			// anti-replay mark) failed, verifyMFAStepUpCode does NOT wrap this
+			// error with ErrMFAVerificationUnavailable (unlike the genuinely
+			// pre-verdict case) -- that is exactly the signal used here to still
+			// count it toward the lockout, same as a wrong code would be. A
+			// correct guess must never be cheaper, lockout-wise, than a wrong one.
+			if !errors.Is(storageErr, ErrMFAVerificationUnavailable) {
+				c.recordFailedLogin(ctx, user)
+			}
 			return fmt.Errorf("%w: %s: %w", ErrMFAVerificationStorageFailure, i18n.T("ErrorRetrievalFailed", nil), storageErr)
 		}
 		c.auditMFAFailed(ctx, userID, "stepup")
@@ -85,12 +96,18 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 // back to a recovery code, mirroring the login second-factor verification.
 // Returns (true, nil) on a confirmed match, (false, nil) on a confirmed
 // negative result (the code genuinely doesn't match either path), and
-// (false, err) when a storage failure left either path unable to reach a
-// verdict at all — the caller (VerifyMFAStepUp) must not treat the last case
-// as a wrong code. The recovery-code path is tried regardless of a TOTP-phase
-// storage error, same as VerifyMFACredentials: the caller may have supplied a
-// recovery code, not a TOTP code, and a failed TOTP secret read must not
-// preempt a genuinely valid recovery code.
+// (false, err) on a storage failure -- err is wrapped with
+// ErrMFAVerificationUnavailable only when NEITHER path reached a verdict at
+// all (codeMatched stays false); the caller (VerifyMFAStepUp) uses exactly
+// that wrap to decide whether to count the attempt toward the lockout (#2888
+// round 2: a code confirmed correct, with only its anti-replay MarkTOTPStepUsed
+// write failing, still counts, exactly like a wrong code would -- it must
+// never be cheaper, lockout-wise, than a genuine bad guess, even though the
+// RESPONSE this produces is already identical to a wrong code either way).
+// The recovery-code path is tried regardless of a TOTP-phase storage error,
+// same as VerifyMFACredentials: the caller may have supplied a recovery code,
+// not a TOTP code, and a failed TOTP secret read must not preempt a
+// genuinely valid recovery code.
 func (c *KeyorixCore) verifyMFAStepUpCode(ctx context.Context, userID uint, code string) (bool, error) {
 	var storageErr error
 	codeMatched := false // see VerifyMFACredentials / ErrMFAVerificationUnavailable
