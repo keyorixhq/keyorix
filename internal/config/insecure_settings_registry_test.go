@@ -51,6 +51,58 @@ func TestInsecureSettingsRegistry_EveryEntryHasThePrefixWarningAndAuditHook(t *t
 	}
 }
 
+// Every renamed setting's DeprecatedAlias (when non-empty) must actually
+// appear in deprecatedSettingAliases with a matching NewPath whose leaf
+// equals the registry entry's own leaf -- i.e. the registry and the alias
+// table must agree on what each setting is called today. A registry entry
+// claiming a rename that the alias table doesn't know about would mean the
+// OLD key silently stopped working with no deprecation warning at all,
+// exactly the silent-weakening failure mode ADR-112 exists to prevent.
+func TestInsecureSettingsRegistry_DeprecatedAliasesMatchAliasTable(t *testing.T) {
+	aliasByOld := make(map[string]string, len(deprecatedSettingAliases))
+	for _, a := range deprecatedSettingAliases {
+		aliasByOld[a.OldPath] = a.NewPath
+	}
+	for _, e := range InsecureSettingsRegistry {
+		if e.DeprecatedAlias == "" {
+			continue
+		}
+		t.Run(e.Name, func(t *testing.T) {
+			newPath, ok := aliasByOld[e.DeprecatedAlias]
+			if !ok {
+				t.Fatalf("registry entry %q claims DeprecatedAlias %q, but no such entry exists in deprecatedSettingAliases", e.Name, e.DeprecatedAlias)
+			}
+			registryLeaf := e.Name[strings.LastIndex(e.Name, ".")+1:]
+			aliasLeaf := newPath[strings.LastIndex(newPath, ".")+1:]
+			if registryLeaf != aliasLeaf {
+				t.Errorf("registry entry %q's leaf %q does not match deprecatedSettingAliases' NewPath leaf %q (from %q)",
+					e.Name, registryLeaf, aliasLeaf, newPath)
+			}
+		})
+	}
+}
+
+// Once a setting is renamed, its SourcePaths must name the CURRENT key, not
+// the old one -- SourcePaths is what insecure_settings_sweep_test.go sweeps
+// Config's surface against, and a renamed entry still pointing at its old
+// path would stop covering the setting (and would be caught, loudly, by
+// TestConfigSurface_RegistrySourcePathsAllExist -- this test says the same
+// thing at the registry's own level, where the fix belongs).
+func TestInsecureSettingsRegistry_RenamedEntriesSourceTheirCurrentKey(t *testing.T) {
+	for _, e := range InsecureSettingsRegistry {
+		if e.DeprecatedAlias == "" {
+			continue
+		}
+		t.Run(e.Name, func(t *testing.T) {
+			for _, p := range e.SourcePaths {
+				if p == e.DeprecatedAlias {
+					t.Errorf("SourcePaths still names the DEPRECATED path %q; after the rename it must name the current key (%q)", p, e.Name)
+				}
+			}
+		})
+	}
+}
+
 // Calling every entry's InEffect/Value against a zero-value *Config must
 // never panic -- the start-up warning loop and the settings-diff snapshot
 // both run this unconditionally on every boot, including the very first one

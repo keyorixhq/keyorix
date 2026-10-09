@@ -396,7 +396,7 @@ fresh install is enforced from its first start and recorded in the database
 security:
   enable_file_permission_check: true
   auto_fix_file_permissions: true
-  allow_unsafe_file_permissions: false
+  insecure_allow_unsafe_file_permissions: false   # deprecated alias: allow_unsafe_file_permissions
   require_mfa: true               # false = don't mandate a second factor for interactive login
   login_lockout:
     enabled: false                # opt-in per-account lockout (brute-force protection)
@@ -404,7 +404,15 @@ security:
     window: "15m"                 # consecutive-failure window
     base_cooldown: "1m"           # lock duration for the first lockout
     max_cooldown: "1h"            # ceiling for the exponential backoff
+    insecure_disable_login_lockout: false   # deprecated alias: disabled
 ```
+
+Every setting named `insecure_*` is part of ADR-112's opt-out rule: it weakens
+the baseline below its secure default, is warned about at every start it's in
+effect, and (renamed settings only, for now) keeps its old name working as a
+deprecated alias that also warns when used. A start-to-start diff audits any
+security-relevant setting that changes between two starts of the same
+deployment.
 
 With `require_mfa: true` (the default), an interactive (session-authenticated) user
 **without** a second factor is confined to the MFA-enrolment endpoints until they
@@ -947,6 +955,7 @@ encryption off the scheduler logs a warning and does nothing.
 audit_checkpoints:
   enabled: true
   schedule: "12h"         # Go duration between checkpoint writes (default 24h)
+  insecure_disable_audit_checkpoints: false   # deprecated alias: disabled
 ```
 
 **External-notary anchoring** (`audit.checkpoint_notary`, opt-in). The checkpoint

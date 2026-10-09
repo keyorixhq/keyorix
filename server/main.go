@@ -151,11 +151,11 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		log.Fatalf("Configuration is invalid: %v", err)
 	}
 
-	// ADR-112 opt-out rule (item 2): every insecure_ setting currently in effect
-	// gets a warning on EVERY start — never silent. See
-	// warnInsecureSettingsInEffect below. (The deprecated-alias warning for an old
-	// key that was renamed lands with the renames themselves, in their own
-	// follow-up PRs; no setting is renamed yet.)
+	// ADR-112 opt-out rule (item 2): a deprecated alias (an old key renamed to its
+	// current insecure_ form) found in this config file, and every insecure_ setting
+	// currently in effect, both get a warning on EVERY start — never silent. See
+	// warnDeprecatedSettingAliases/warnInsecureSettingsInEffect below.
+	warnDeprecatedSettingAliases(cfg)
 	warnInsecureSettingsInEffect(cfg)
 
 	// Run the file-permission / encryption-key / database-reachability checks that were
@@ -2205,6 +2205,16 @@ func logWarnOnImplicitRequireMFADefault(cfg *config.Config) {
 			reason = "the key is not set in this config"
 		}
 		log.Printf("INFO: security.require_mfa is enforcing on its ADR-112 secure-by-default value (%s). Session-authenticated users without MFA are confined to MFA enrolment until they enrol (PAT/machine credentials are unaffected). Set security.require_mfa explicitly to silence this.", reason)
+	}
+}
+
+// warnDeprecatedSettingAliases logs every ADR-112 deprecated-alias key (an old
+// name config.Load translated to its current insecure_ form) found in this
+// config file — "deprecated alias, warns when used" (opt-out rule item 2)
+// means the old key still works exactly as before, but is never silent about it.
+func warnDeprecatedSettingAliases(cfg *config.Config) {
+	for _, w := range cfg.DeprecatedSettingWarnings {
+		log.Printf("WARNING: deprecated config key: %s", w)
 	}
 }
 
