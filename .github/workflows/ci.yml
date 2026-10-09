@@ -280,7 +280,7 @@ jobs:
           fi
           if echo "$changed" | grep -qx '\.github/workflows/ci\.yml'; then
             echo "demo_smoke_relevant=true" >> "$GITHUB_OUTPUT"
-          elif [ -n "$changed" ] && echo "$changed" | grep -qE '^(scripts/demo/|server/Dockerfile$|server/webui/)'; then
+          elif [ -n "$changed" ] && echo "$changed" | grep -qE '^(scripts/demo/|server/Dockerfile$|server/webui/|web/src/|server/http/)'; then
             echo "demo_smoke_relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "demo_smoke_relevant=false" >> "$GITHUB_OUTPUT"
@@ -1632,6 +1632,9 @@ jobs:
           out=$(./scripts/demo/up.sh)
           echo "$out"
           echo "$out" | grep -q "already running and seeded" || { echo "expected the idempotent no-op path, got a reseed" >&2; exit 1; }
+
+      - name: Demo readiness check (fast API-only leg -- DEMO-READY-1)
+        run: ./scripts/demo/check.sh --url http://localhost:8080 --no-ui
 
       - name: scripts/demo/down.sh
         run: ./scripts/demo/down.sh --wipe

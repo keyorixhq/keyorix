@@ -1,0 +1,153 @@
+name: Demo readiness (full)
+
+# The FULL demo-readiness check (scripts/demo/check.sh, both backends, the
+# Playwright UI walk, and -- SQLite only -- the offline guarantee), distinct
+# from ci.yml's demo-up-smoke job: that one is path-filtered, API-only, and
+# SQLite-only, so it stays fast enough to gate every relevant PR. This
+# workflow is slow and NOT a merge gate -- it runs:
+#   * nightly on main (schedule), alerting via one tracked GitHub issue
+#     (scripts/ci/failure-issue.sh, same pattern as e2e-nightly.yml) so a
+#     regression surfaces the next morning even if no PR touched the demo
+#     path that day;
+#   * on every v*-rc* tag push, as a release gate a human checks before
+#     cutting the release (no issue filed here -- an RC tag isn't "main",
+#     so attributing a tag's failure to "main is NOT READY" would mislead).
+on:
+  schedule:
+    # 03:07 UTC nightly, off the round minute (matches e2e-nightly.yml's own
+    # off-round convention).
+    - cron: '7 3 * * *'
+  push:
+    tags:
+      - 'v*-rc*'
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: demo-readiness
+  cancel-in-progress: false
+
+jobs:
+  demo-check-sqlite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    outputs:
+      failing_steps: ${{ steps.check.outputs.failing_steps }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      # --ignore-scripts: same supply-chain rationale as web-ci.yml's own install step.
+      - name: Install web dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install Playwright browser
+        working-directory: web
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Demo readiness check (SQLite, full -- UI walk + offline guarantee)
+        id: check
+        run: |
+          set +e
+          ./scripts/demo/check.sh --sqlite --ui --offline 2>&1 | tee check-output.txt
+          rc="${PIPESTATUS[0]}"
+          {
+            echo "failing_steps<<DEMO_READY_EOF"
+            awk '/^NOT READY/{flag=1} flag' check-output.txt
+            echo "DEMO_READY_EOF"
+          } >> "$GITHUB_OUTPUT"
+          exit "$rc"
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker logs keyorix-demo 2>&1 || true
+
+  demo-check-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    outputs:
+      failing_steps: ${{ steps.check.outputs.failing_steps }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install web dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install Playwright browser
+        working-directory: web
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Demo readiness check (Postgres, full -- UI walk)
+        id: check
+        run: |
+          set +e
+          ./scripts/demo/check.sh --postgres --ui 2>&1 | tee check-output.txt
+          rc="${PIPESTATUS[0]}"
+          {
+            echo "failing_steps<<DEMO_READY_EOF"
+            awk '/^NOT READY/{flag=1} flag' check-output.txt
+            echo "DEMO_READY_EOF"
+          } >> "$GITHUB_OUTPUT"
+          exit "$rc"
+      - name: Dump compose logs on failure
+        if: failure()
+        run: docker compose -p keyorix-demo-check-pg -f docker-compose.yml logs 2>&1 || true
+
+  # Opens/updates/closes a single tracked issue -- only for the signals that
+  # genuinely mean "main is NOT READY" (the nightly schedule, or a manual
+  # dispatch standing in for it). An RC tag push runs the two jobs above as
+  # its own release gate but never files this issue -- see the header comment.
+  alert:
+    needs: [demo-check-sqlite, demo-check-postgres]
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Open, update or close the demo-readiness alert issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
+          SQLITE_RESULT: ${{ needs.demo-check-sqlite.result }}
+          SQLITE_STEPS: ${{ needs.demo-check-sqlite.outputs.failing_steps }}
+          POSTGRES_RESULT: ${{ needs.demo-check-postgres.result }}
+          POSTGRES_STEPS: ${{ needs.demo-check-postgres.outputs.failing_steps }}
+        run: |
+          detail=""
+          if [ "$SQLITE_RESULT" != "success" ]; then
+            detail="${detail}**SQLite** (${SQLITE_RESULT}):
+          ${SQLITE_STEPS}
+
+          "
+          fi
+          if [ "$POSTGRES_RESULT" != "success" ]; then
+            detail="${detail}**Postgres** (${POSTGRES_RESULT}):
+          ${POSTGRES_STEPS}
+          "
+          fi
+          ./scripts/ci/failure-issue.sh "$OUTCOME" "demo-readiness: main is NOT READY" "$detail"
