@@ -196,9 +196,9 @@ func g5EnumerateConflictPairs() []g5ConflictPair {
 // deleted here per the rule above: a row kept past its fix would excuse a
 // regression of that ordering forever. The sweep is now expected to find
 // those orderings clean, and will report them loudly if it does not.
+// #2891 likewise promoted #2650's seed (its fix landed via #2668), so its two
+// rows are deleted here too, for the same reason.
 var g5KnownOrderingViolations = map[string]string{
-	"secret-lifecycle/DeleteSecret||SetSecretAutoRotate:A-check,B-check,A-act,B-act":                 "2650",
-	"secret-lifecycle/DeleteSecret||SetSecretAutoRotate:B-check,A-check,A-act,B-act":                 "2650",
 	"project-lifecycle/DeleteProject||CreateDynamicSecretConfig:B-check,A-check,A-act,B-act":         "2651",
 	"project-lifecycle/DeleteProject||CreateDynamicSecretConfig:B-check,A-check,B-act,A-act":         "2651",
 	"project-lifecycle/DeleteProject||SetDynamicSecretConfigEnabled(on):A-check,A-act,B-check,B-act": "2806",
