@@ -15,6 +15,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -346,4 +347,134 @@ func TestSecretNodeCacheEpoch_ConcurrentEnsureOnPostgres(t *testing.T) {
 	require.NoError(t, db.Model(&models.SecretNode{}).Where("id = ?", s.ID).UpdateColumn("status", "suspended").Error)
 	require.NoError(t, db.Model(&models.SecretNode{}).Select("cache_epoch").Where("id = ?", s.ID).Row().Scan(&after))
 	require.Greater(t, after, before, "the trigger survived the concurrent migration but no longer bumps the epoch")
+}
+
+// TestSecretNodeCacheEpoch_CrossSchemaTriggerDoesNotMaskADroppedOne_Postgres is
+// coordinator round-5 item 1 (blocker): a tgname-only match against pg_trigger
+// is not scoped to a table or a schema at all — pg_trigger is one catalog
+// shared by every schema in the database — so a SAME-NAMED trigger on a
+// DIFFERENT secret_nodes table, in a DIFFERENT schema, makes the old query
+// report "present" for a schema whose own trigger is actually gone. The
+// schema-per-test Postgres harness used everywhere else in this file cannot
+// see this bug, because it only ever has ONE schema with the trigger at a
+// time; this test deliberately builds two.
+func TestSecretNodeCacheEpoch_CrossSchemaTriggerDoesNotMaskADroppedOne_Postgres(t *testing.T) {
+	dsn := os.Getenv("KEYORIX_TEST_PG_DSN")
+	if dsn == "" {
+		t.Skip("KEYORIX_TEST_PG_DSN not set — the Postgres trigger lifecycle is unverified in this run")
+	}
+	ctx := context.Background()
+	schemaA := fmt.Sprintf("cache_epoch_xschema_a_%d", os.Getpid())
+	schemaB := fmt.Sprintf("cache_epoch_xschema_b_%d", os.Getpid())
+	admin, err := gorm.Open(postgres.Open(dsn), gormConfig())
+	require.NoError(t, err)
+	for _, s := range []string{schemaA, schemaB} {
+		require.NoError(t, admin.Exec("DROP SCHEMA IF EXISTS "+s+" CASCADE").Error)
+		require.NoError(t, admin.Exec("CREATE SCHEMA "+s).Error)
+	}
+	t.Cleanup(func() {
+		_ = admin.Exec("DROP SCHEMA IF EXISTS " + schemaA + " CASCADE").Error
+		_ = admin.Exec("DROP SCHEMA IF EXISTS " + schemaB + " CASCADE").Error
+	})
+
+	dbA, err := gorm.Open(postgres.Open(pgdsn.PGSearchPathDSN(dsn, schemaA)), gormConfig())
+	require.NoError(t, err)
+	dbB, err := gorm.Open(postgres.Open(pgdsn.PGSearchPathDSN(dsn, schemaB)), gormConfig())
+	require.NoError(t, err)
+
+	// Schema B gets its OWN secret_nodes and a real, correctly-firing trigger —
+	// present ONLY so schema A's detection has something same-named to be fooled
+	// by. Nothing in schema B is otherwise exercised.
+	require.NoError(t, dbB.AutoMigrate(&models.SecretNode{}))
+	require.NoError(t, store.EnsureSecretNodeCacheEpoch(dbB))
+
+	// Schema A gets the trigger too, so a LocalStorage can warm against a real,
+	// working cache first — the failure this test proves is specifically about
+	// a stale HIT, not a cold miss.
+	require.NoError(t, dbA.AutoMigrate(&models.SecretNode{}))
+	require.NoError(t, store.EnsureSecretNodeCacheEpoch(dbA))
+
+	ls := store.NewLocalStorage(dbA)
+	created, err := ls.CreateSecret(ctx, &models.SecretNode{
+		Name: "xschema-warm", ProjectID: 1, EnvironmentID: 1, Status: "active",
+	})
+	require.NoError(t, err)
+	warm, err := ls.GetSecret(ctx, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, "active", warm.Status)
+
+	// Schema A's own trigger is now dropped — an operator DROP, or a restore
+	// that omitted it. Schema B's SAME-NAMED trigger, on a DIFFERENT table in a
+	// DIFFERENT schema of the SAME database, is untouched. IF EXISTS: with the
+	// bug this guards against, EnsureSecretNodeCacheEpoch(dbA) above may itself
+	// have been fooled by B's trigger into never creating A's in the first
+	// place, which is the SAME defect surfacing one step earlier.
+	require.NoError(t, dbA.Exec("DROP TRIGGER IF EXISTS "+store.SecretNodeCacheEpochTrigger+" ON secret_nodes").Error)
+
+	require.False(t, store.SecretNodeCacheEpochTriggerPresent(dbA),
+		"schema A's own secret_nodes trigger is gone, but a tgname-only match against pg_trigger (global across every schema) finds schema B's same-named trigger on a different table and would report 'present' here — a false positive that lets a stale warm entry keep hitting forever")
+
+	require.NoError(t, dbA.Model(&models.SecretNode{}).Where("id = ?", created.ID).
+		UpdateColumn("status", "suspended").Error)
+	got, err := ls.GetSecret(ctx, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, "suspended", got.Status,
+		"a warm entry was served after schema A's trigger was dropped: schema B's same-named trigger made the detection report 'present' for the wrong table")
+}
+
+// TestSecretNodeCacheEpoch_DisabledTriggerIsNotTrusted_Postgres is coordinator
+// round-5 item 2 (blocker): ALTER TABLE ... DISABLE TRIGGER (and
+// pg_restore --disable-triggers, which produces the same state) leaves the
+// trigger's row in pg_trigger exactly as it was — same tgname, tgisinternal
+// still false — it simply never fires. A presence check that does not also
+// read tgenabled cannot distinguish a disabled trigger from a working one, so
+// it would report "present" for a stamp that has permanently stopped moving.
+//
+// Known, documented gap this does NOT cover: session_replication_role =
+// replica suppresses ordinary triggers for the whole session without touching
+// tgenabled at all, so a disabled-session check could still read "present"
+// while nothing fires for that session. See SecretNodeCacheEpochTriggerPresent's
+// doc comment.
+func TestSecretNodeCacheEpoch_DisabledTriggerIsNotTrusted_Postgres(t *testing.T) {
+	dsn := os.Getenv("KEYORIX_TEST_PG_DSN")
+	if dsn == "" {
+		t.Skip("KEYORIX_TEST_PG_DSN not set — the Postgres trigger lifecycle is unverified in this run")
+	}
+	ctx := context.Background()
+	schema := fmt.Sprintf("cache_epoch_disabled_%d", os.Getpid())
+	admin, err := gorm.Open(postgres.Open(dsn), gormConfig())
+	require.NoError(t, err)
+	require.NoError(t, admin.Exec("DROP SCHEMA IF EXISTS "+schema+" CASCADE").Error)
+	require.NoError(t, admin.Exec("CREATE SCHEMA "+schema).Error)
+	t.Cleanup(func() { _ = admin.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE").Error })
+
+	db, err := gorm.Open(postgres.Open(pgdsn.PGSearchPathDSN(dsn, schema)), gormConfig())
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}))
+	require.NoError(t, store.EnsureSecretNodeCacheEpoch(db))
+
+	ls := store.NewLocalStorage(db)
+	created, err := ls.CreateSecret(ctx, &models.SecretNode{
+		Name: "disabled-trigger-warm", ProjectID: 1, EnvironmentID: 1, Status: "active",
+	})
+	require.NoError(t, err)
+	warm, err := ls.GetSecret(ctx, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, "active", warm.Status)
+
+	require.NoError(t, db.Exec("ALTER TABLE secret_nodes DISABLE TRIGGER "+store.SecretNodeCacheEpochTrigger).Error)
+
+	require.False(t, store.SecretNodeCacheEpochTriggerPresent(db),
+		"the trigger is DISABLED (tgenabled = 'D'): it still appears in pg_trigger under its own name on its own table, but a check that ignores tgenabled cannot tell firing from inert and would report 'present' for a trigger that will never bump the stamp again")
+
+	before := cacheEpochOf(t, db, created.ID)
+	require.NoError(t, db.Model(&models.SecretNode{}).Where("id = ?", created.ID).
+		UpdateColumn("status", "suspended").Error)
+	require.Equal(t, before, cacheEpochOf(t, db, created.ID),
+		"precondition: a disabled trigger must not bump cache_epoch, or this test is not exercising the disabled case")
+
+	got, err := ls.GetSecret(ctx, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, "suspended", got.Status,
+		"a warm entry was served after its trigger was disabled: the stamp was frozen and the trigger-presence check did not catch it")
 }

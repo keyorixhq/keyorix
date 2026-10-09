@@ -33,10 +33,27 @@ const (
 	secretNodeCacheEpochFunc    = "keyorix_secret_nodes_bump_cache_epoch"
 )
 
-// postgresCacheEpochLockKey is this migration's own advisory-lock key. Distinct
-// from internal/storage's postgresMigrationLockKey (872341) on purpose — see
-// ensurePostgresCacheEpochTrigger.
-const postgresCacheEpochLockKey = 872342
+// postgresCacheEpochLockKey is this migration's own advisory-lock key — see
+// ensurePostgresCacheEpochTrigger. Found the hard way (coordinator round-5 CI
+// run on #2764, server/admin's real admin-restore path, reproduced locally
+// with pg_locks/pg_stat_activity, not reasoned out in advance): the previous
+// value, 872342, was picked to be "distinct from postgresMigrationLockKey
+// (872341)" and WAS distinct from that one key — but collided with
+// internal/serverguard's serverPresenceLockKey, ALSO 872342, a completely
+// unrelated SESSION-scoped lock that `admin restore` holds for its own
+// duration. The restore's own serverguard connection held 872342 for the
+// whole operation; this function's xact-scoped acquire of the SAME key, on a
+// different connection, inside that same operation, then waited on itself
+// forever. Small sequential integers invite exactly this: nothing enumerates
+// them centrally, so "distinct from the one key I checked" is not "distinct
+// from every key in the codebase". The pattern every other advisory lock key
+// in package store already uses (auditAdvisoryLockKey, 0x4B455941_55444954 =
+// "KEYAUDIT"; auditCheckpointAdvisoryLockKey, "KEYACHKP"; bootstrapAdvisoryLockKey,
+// "KEYABOOT") makes a collision visible at the call site instead of needing a
+// cross-repo grep to catch: "KEYACEPO" reads as this lock's own name, and a
+// future key picked the same careless way would have to spell out "KEYA" plus
+// a 4-letter tag that ALSO happens to already exist, not guess a 19-bit int.
+const postgresCacheEpochLockKey = 0x4B455941_4345504F // "KEYACEPO"
 
 // sqliteCacheEpochTriggerSQL is the EXACT text of the SQLite trigger, kept as
 // one constant so the convergence check below can compare it byte-for-byte
@@ -162,7 +179,7 @@ func ensurePostgresCacheEpochTrigger(tx *gorm.DB) error {
 	// distinct from internal/storage's postgresMigrationLockKey, because this
 	// runs INSIDE that lock at both production call sites and must not look like
 	// a re-entrant acquisition of it.
-	if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", postgresCacheEpochLockKey).Error; err != nil {
+	if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(postgresCacheEpochLockKey)).Error; err != nil {
 		return fmt.Errorf("acquire cache_epoch migration advisory lock: %w", err)
 	}
 	// Dollar-quoted with a NAMED tag rather than bare $$, so the body can never
@@ -272,7 +289,19 @@ func SecretNodeCacheEpochTriggerPresent(db *gorm.DB) bool {
 	var count int64
 	q := "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = ?"
 	if db.Dialector.Name() == "postgres" {
-		q = "SELECT COUNT(*) FROM pg_trigger WHERE NOT tgisinternal AND tgname = ?"
+		// tgrelid = 'secret_nodes'::regclass (search_path-resolved, so this binds
+		// to the SAME secret_nodes this connection would actually read) is load
+		// bearing, not decorative: tgname alone matches a same-named trigger on
+		// ANY table in ANY schema visible to this connection, including a
+		// same-named trigger left on a table in a DIFFERENT schema of the same
+		// database — which would report "present" while the real secret_nodes
+		// has no trigger at all. tgenabled <> 'D' is load-bearing too: a
+		// DISABLED trigger (pg_restore --disable-triggers, ALTER TABLE ...
+		// DISABLE TRIGGER) still exists in pg_trigger and would otherwise read as
+		// present while never actually firing. Known gap this does NOT cover:
+		// session_replication_role = replica suppresses ordinary triggers for the
+		// whole session without touching tgenabled, and is not checked here.
+		q = "SELECT COUNT(*) FROM pg_trigger WHERE NOT tgisinternal AND tgrelid = 'secret_nodes'::regclass AND tgname = ? AND tgenabled <> 'D'"
 	}
 	if err := db.Raw(q, SecretNodeCacheEpochTrigger).Scan(&count).Error; err != nil {
 		return false
@@ -413,7 +442,11 @@ type nodeStampRead struct {
 func readLiveNodeStamp(ctx context.Context, db *gorm.DB, id uint) (nodeStampRead, error) {
 	triggerExists := "EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?)"
 	if db.Dialector.Name() == "postgres" {
-		triggerExists = "EXISTS (SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgname = ?)"
+		// Same tgrelid + tgenabled qualification as SecretNodeCacheEpochTriggerPresent,
+		// and for the same reason: tgname alone can match a same-named trigger on
+		// a different table (even in a different schema), and a disabled trigger
+		// still appears in pg_trigger without ever firing.
+		triggerExists = "EXISTS (SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgrelid = 'secret_nodes'::regclass AND tgname = ? AND tgenabled <> 'D')"
 	}
 	var rows []struct {
 		CacheEpoch     int64

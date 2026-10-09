@@ -1,6 +1,6 @@
 // secret_metadata_cache_fieldledger_test.go — the node cache's stamp is now
 // secret_nodes.cache_epoch, maintained by a database trigger
-// (internal/storage/factory.go's ensureSecretNodeCacheEpoch). The claim that
+// (EnsureSecretNodeCacheEpoch, secret_node_cache_epoch.go). The claim that
 // makes that a valid stamp is "the trigger fires on EVERY update to the row",
 // so this file asserts exactly that, column by column, derived from the model
 // rather than from a hand list.

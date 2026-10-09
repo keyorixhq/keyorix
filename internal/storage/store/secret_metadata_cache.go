@@ -84,7 +84,7 @@ import (
 // row's own cache_epoch, and nothing else.
 //
 // cache_epoch is maintained by a DATABASE TRIGGER
-// (internal/storage/factory.go's ensureSecretNodeCacheEpoch), which bumps it on
+// (EnsureSecretNodeCacheEpoch, secret_node_cache_epoch.go), which bumps it on
 // EVERY update to the row — Save(), Updates(), UpdateColumn() and raw SQL
 // alike, with no Go code to forget and nothing for a new writer to opt into.
 // That is what lets this be one int64 instead of the row's whole content: the
@@ -94,9 +94,11 @@ import (
 // and the content-derived stamp that did work made the stamp read nearly as
 // wide as the row, costing the cache most of its point.
 //
-// Deliberately NOT a field on models.SecretNode, so no Go write can set it even
-// by accident — and on Postgres the BEFORE trigger overwrites whatever a client
-// sent regardless.
+// IS a field on models.SecretNode (CacheEpoch, gorm:"<-:false"), so AutoMigrate
+// creates the column everywhere — but read-only to GORM, so no Go write can set
+// it even by accident, and on Postgres the BEFORE trigger overwrites whatever a
+// client sent regardless. Only the TRIGGER is not something AutoMigrate can
+// create, which is why EnsureSecretNodeCacheEpoch exists.
 //
 // A monotonically-increasing per-row counter also cannot TIE the way a
 // timestamp can (two writers inside one stored microsecond produced the same
@@ -184,7 +186,7 @@ type secretScheduleCacheEntry struct {
 // whether the store caches. Nil-safety here is the panic backstop only — the
 // POLICY that a tx-derived store must not read or write the cache is enforced
 // separately and structurally by TestCacheEnabled* in
-// secret_metadata_cache_guard_test.go, because a silent no-op is not a
+// cache_enabled_guard_test.go, because a silent no-op is not a
 // substitute for a missing cacheEnabled check.
 type secretMetadataCache struct {
 	mu        sync.Mutex

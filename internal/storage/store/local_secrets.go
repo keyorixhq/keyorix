@@ -520,7 +520,7 @@ func (ls *LocalStorage) CreateSecret(ctx context.Context, secret *models.SecretN
 // (cold cache, stale generation, not-found, or a generation-check error
 // itself) falls through to the exact live read this method always did. A
 // generation-check error is always treated as a miss, never as "assume
-// unchanged" — see secret_metadata_cache.go's liveNodeGeneration doc comment.
+// unchanged" — see secret_node_cache_epoch.go's readLiveNodeStamp doc comment.
 func (ls *LocalStorage) GetSecret(ctx context.Context, id uint) (*models.SecretNode, error) {
 	if secret, ok := ls.getCachedSecret(ctx, id); ok {
 		return secret, nil

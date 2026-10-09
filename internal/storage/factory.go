@@ -2639,15 +2639,15 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		// is long gone), and being after the bulk AutoMigrate loop it cannot
 		// trip the pgx "insufficient arguments" hazard that re-inspecting a
 		// just-ALTERed table causes (see automigrate_altered_table_hazard_test.go
-		// and the AutoMigrate list's own NOTEs). cache_epoch is not a field on
-		// models.SecretNode by design, so AutoMigrate never creates it and this
-		// is the ONLY thing that does — on every path.
-		// Defined in package store (store.EnsureSecretNodeCacheEpoch), not here:
-		// cache_epoch is deliberately not a field on models.SecretNode, so a
-		// bare AutoMigrate cannot create it — and the cache's own tests live in
-		// that package and would otherwise run against a schema with no column
-		// and no trigger, i.e. a stamp that never moves, passing vacuously. One
-		// definition, used by this migration and by those tests.
+		// and the AutoMigrate list's own NOTEs). The cache_epoch COLUMN is a
+		// field on models.SecretNode so the bulk AutoMigrate loop above already
+		// created it; the TRIGGER that maintains it is not something AutoMigrate
+		// can create, and this is the ONLY thing that does — on every path.
+		// Defined in package store (store.EnsureSecretNodeCacheEpoch), not here,
+		// so the cache's own tests (which live in that package) build their
+		// schema with the same call rather than a second copy of the SQL that
+		// could drift — and so they fail loudly instead of running against a
+		// trigger-less schema, i.e. a stamp that never moves, passing vacuously.
 		if err := store.EnsureSecretNodeCacheEpoch(tx); err != nil {
 			return err
 		}
