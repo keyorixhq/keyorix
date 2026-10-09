@@ -212,9 +212,9 @@ func TestSQLite_ConcurrentDistinctSecretWrites_UngatedControlFails(t *testing.T)
 // error); a caller whose context ends while queued gets that context's error; the
 // gate is free again once its holder ends; read-only transactions bypass it.
 func TestSQLiteWriteGate_FailsFastWithClearError(t *testing.T) {
-	prev := sqliteWriteGateMaxWait
-	sqliteWriteGateMaxWait = 50 * time.Millisecond
-	defer func() { sqliteWriteGateMaxWait = prev }()
+	prev := sqliteWriteGateMaxWait.Load()
+	sqliteWriteGateMaxWait.Store(int64(50 * time.Millisecond))
+	defer func() { sqliteWriteGateMaxWait.Store(prev) }()
 
 	db, err := openSQLiteGorm(sqliteDSN(filepath.Join(t.TempDir(), "gate.db")))
 	require.NoError(t, err)

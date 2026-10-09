@@ -5,11 +5,12 @@ package storage
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"gorm.io/gorm"
 )
@@ -17,14 +18,36 @@ import (
 // ErrSQLiteWriteContention is returned when a write transaction waited
 // sqliteWriteGateMaxWait for the SQLite write lock without getting it: the
 // clear, bounded failure that replaces an unbounded stall. Callers may retry.
-var ErrSQLiteWriteContention = errors.New("sqlite: timed out waiting for the database write lock (sustained write contention); retry the request")
+//
+// An alias, not a second error value: the sentinel itself lives in
+// internal/core/storage so internal/storage/store's isSQLiteBusyErr can match
+// it with errors.Is (this package imports that one, so the dependency cannot
+// run the other way). Kept under this name because it is this package's own
+// gate that returns it, and because the gate's tests read better for it.
+var ErrSQLiteWriteContention = corestorage.ErrSQLiteWriteContention
 
 // sqliteWriteGateMaxWait bounds how long a write transaction queues for the gate.
 // It equals the busy_timeout the DSN already gives SQLite itself (an in-process
 // waiter could previously wait exactly that long inside SQLite's busy handler),
 // so the worst case is unchanged. What changes is how long the typical waiter
 // waits: see sqliteWriteGate.
-var sqliteWriteGateMaxWait = time.Duration(sqliteBusyTimeoutMillis) * time.Millisecond
+//
+// An atomic, not a plain var: it is a var at all only so a test can shorten the
+// bound, and the two tests that do so wrote it while another goroutine in the
+// same test was reading it inside gateWriteSlot. Harmless today because nothing
+// in this package calls t.Parallel(), and a data race the moment anything does —
+// which is not a property worth depending on (coordinator review of #2637).
+var sqliteWriteGateMaxWait atomic.Int64
+
+func init() {
+	sqliteWriteGateMaxWait.Store(int64(time.Duration(sqliteBusyTimeoutMillis) * time.Millisecond))
+}
+
+// writeGateMaxWait reads the bound. Separate accessor so every read goes through
+// the atomic and a future direct read cannot reintroduce the race.
+func writeGateMaxWait() time.Duration {
+	return time.Duration(sqliteWriteGateMaxWait.Load())
+}
 
 // sqliteWriteGate serializes this process's SQLite write transactions through a
 // FIFO queue before they reach SQLite.
@@ -69,7 +92,7 @@ func (g *sqliteWriteGate) acquire(ctx context.Context) error {
 		return nil
 	default:
 	}
-	timer := time.NewTimer(sqliteWriteGateMaxWait)
+	timer := time.NewTimer(writeGateMaxWait())
 	defer timer.Stop()
 	select {
 	case g.slot <- struct{}{}:

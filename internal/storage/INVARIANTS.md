@@ -186,14 +186,52 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   handler, which starves waiters past `busy_timeout` under concurrency (`SQLITE_BUSY`). Every
   production SQLite open goes through the gate; read-only (`mode=ro`) opens are the only,
   allowlisted exceptions. A gate wait is bounded (`sqliteWriteGateMaxWait`, equal to the
-  busy_timeout) and fails with `ErrSQLiteWriteContention`, or with the caller's ctx error.
-  Not covered: autocommit writes outside a transaction (none via GORM: no
-  `SkipDefaultTransaction`). Why: #2630 (PERF-2: 2.7–6.4% write failures, p99 at the client
+  busy_timeout) and fails with `storage.ErrSQLiteWriteContention`, or with the caller's ctx
+  error. The error is classified as contention by `internal/storage/store`'s
+  `isSQLiteBusyErr` (via `errors.Is`, which is why the sentinel lives in
+  `internal/core/storage` — `internal/storage` imports `internal/storage/store`, so the gate's
+  own package is unreachable from the classifier), so the audit-chain busy-retry budget covers
+  it; `commitAuditBatch` deliberately does NOT bisect on it, because it is batch-global rather
+  than item-specific.
+
+  Scope, stated precisely because the earlier wording overclaimed: the gate is
+  **per-`*sql.DB` handle**, not per-process — `newSQLiteWriteGate()` is called once per
+  `openSQLiteGorm`. A process that opens the same database file through two handles has one
+  gate each and they do not serialize against each other; those handles meet SQLite's raw busy
+  handler as before. In practice the extra openers are one-shot CLI paths
+  (`server/admin/{backup,diagnose,restore}.go`, `internal/encryptionops/*`) that do not run
+  concurrently with a serving process, which is why this is a documented limit rather than an
+  active bug.
+
+  Also not covered: autocommit writes outside a transaction (none via GORM today: no
+  `SkipDefaultTransaction`); and the window between a ctx cancellation releasing the gate
+  (`context.AfterFunc(ctx, t.release)`) and `database/sql`'s own rollback completing — a second
+  writer can enter during it and meet the raw busy handler. That ordering is deliberate (the
+  alternative is wedging the gate on a rollback that never returns) but it is a real gap, and
+  it means a future caller that leaks a transaction on a background context would wedge every
+  write in the process permanently where it previously degraded to `busy_timeout` retries.
+
+  The read-only bypass has no non-test caller today. It is correct as implemented (modernc
+  `tx.go` only applies `beginMode` when `!opts.ReadOnly`, so a read-only tx takes a plain
+  DEFERRED `BEGIN` and cannot hold the write lock), but SQLite does not ENFORCE read-only at
+  the transaction level: a future caller that sets `sql.TxOptions{ReadOnly: true}` and then
+  writes would both escape the gate and reopen the deferred-upgrade window INV-STORAGE-25
+  closes. The AST guard covers open paths, not `TxOptions`.
+
+  Test-suite scope: the guard allowlists `internal/testhelper` and `internal/testutil`, which
+  open SQLite ungated, as does the fuzzworld harness — so production runs gated while most
+  handler/core/store tests do not. The gate's own behaviour is covered by its own tests; what
+  is NOT covered is the rest of the suite exercising code under the gate.
+
+  Why: #2630 (PERF-2: 2.7–6.4% write failures, p99 at the client
   timeout). Guard: `sqlite_concurrent_write_test.go`
   (`TestSQLite_ConcurrentDistinctSecretWrites_SucceedOrFailFast` green,
   `TestSQLite_ConcurrentDistinctSecretWrites_UngatedControlFails` red control,
   `TestSQLiteWriteGate_FailsFastWithClearError`),
-  `sqlite_open_paths_guard_test.go:TestSQLiteOpenPaths_AllGoThroughTheWriteGate`.
+  `sqlite_open_paths_guard_test.go:TestSQLiteOpenPaths_AllGoThroughTheWriteGate` (which proves
+  the OPEN path, not the per-process property the earlier wording claimed),
+  `store/local_audit_chain_gate_contention_test.go` (the classifier recognises the sentinel,
+  and a batch-global contention failure is not bisected).
 
 ## Connection / transaction hazards — Postgres
 
