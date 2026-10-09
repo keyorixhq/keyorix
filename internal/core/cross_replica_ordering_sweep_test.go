@@ -196,16 +196,14 @@ func g5EnumerateConflictPairs() []g5ConflictPair {
 // deleted here per the rule above: a row kept past its fix would excuse a
 // regression of that ordering forever. The sweep is now expected to find
 // those orderings clean, and will report them loudly if it does not.
+// #2891 likewise promoted #2650's seed (its fix landed via #2668), #2852
+// promoted #2659's (fix landed via #2669), and #2884 promoted #2651's (fix
+// landed via #2675), so those six rows are deleted here too, for the same
+// reason.
 var g5KnownOrderingViolations = map[string]string{
-	"secret-lifecycle/DeleteSecret||SetSecretAutoRotate:A-check,B-check,A-act,B-act":                 "2650",
-	"secret-lifecycle/DeleteSecret||SetSecretAutoRotate:B-check,A-check,A-act,B-act":                 "2650",
-	"project-lifecycle/DeleteProject||CreateDynamicSecretConfig:B-check,A-check,A-act,B-act":         "2651",
-	"project-lifecycle/DeleteProject||CreateDynamicSecretConfig:B-check,A-check,B-act,A-act":         "2651",
 	"project-lifecycle/DeleteProject||SetDynamicSecretConfigEnabled(on):A-check,A-act,B-check,B-act": "2806",
 	"project-lifecycle/DeleteProject||SetDynamicSecretConfigEnabled(on):A-check,B-check,A-act,B-act": "2806",
 	"project-lifecycle/DeleteProject||SetDynamicSecretConfigEnabled(on):A-check,B-check,B-act,A-act": "2806",
-	"membership/TransitionMembership(revoke)||InviteMember:B-check,A-check,A-act,B-act":              "2659",
-	"membership/TransitionMembership(revoke)||InviteMember:B-check,A-check,B-act,A-act":              "2659",
 }
 
 // g5LedgerIssuesWithoutASeed documents every g5KnownOrderingViolations issue
