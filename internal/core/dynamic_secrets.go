@@ -739,8 +739,8 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 		// warning, so the log is the only place it can go.
 		if matched, rrerr := c.storage.RecordDynamicSecretLeaseRevocation(ctx, lease.LeaseID, lease.Status, lease.RevokeReason, lease.RevokeError, lease.RevokedAt); rrerr != nil || !matched {
 			log.Printf("dynamic secret lease %s: target revoke FAILED and the revoke_failed marker could not be "+
-				"persisted (matched=%v, err=%v) — the credential is still live with no row recording it",
-				lease.LeaseID, matched, rrerr)
+				"persisted (matched=%v, err=%s) — the credential is still live with no row recording it",
+				lease.LeaseID, matched, ports.SanitizeErrorMessage(rrerr))
 		}
 		c.writeAuditEventFull(ctx, "dynamic_lease.revoke_failed", uidPtr, nil, &pid, "",
 			fmt.Sprintf("FAILED to revoke dynamic lease %s (role %s): %v", lease.LeaseID, lease.RoleName, rerr))
