@@ -119,12 +119,6 @@ var fullRowOverwriteMethods = map[string]bool{
 	"UpdateLegalHold":           true,
 	"UpdateDynamicSecretConfig": true,
 	"UpdateDynamicSecretLease":  true,
-	"UpdateSecret":              true,
-	"UpdateUser":                true,
-	"SaveAnomalyConfig":         true,
-	"UpdateLegalHold":           true,
-	"UpdateDynamicSecretConfig": true,
-	"UpdateDynamicSecretLease":  true,
 	"UpdateUser":                true,
 	"SaveAnomalyConfig":         true,
 	// UpdateSecret was here until #2695 replaced it with UpdateSecretFields (a

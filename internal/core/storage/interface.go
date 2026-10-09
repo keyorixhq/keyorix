@@ -2036,6 +2036,8 @@ type SecretTemplateFieldUpdate struct {
 	DefaultTags           string
 	DescriptionPattern    string
 	RotationHintDays      int
+}
+
 // SecretFieldUpdate names the secret_nodes columns one operation owns, for
 // UpdateSecretFields. A nil pointer means "do not write this column at all" —
 // which is the whole point: it replaced a full-row GORM Save whose eight
