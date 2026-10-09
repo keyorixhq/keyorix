@@ -87,6 +87,7 @@ EOF
 coverage_floor_exclusions() {
   cat <<'EOF'
 \.pb\.go:|PERMANENT|generated protobuf/gRPC code (protoc-gen-go/protoc-gen-go-grpc), ~16.7k lines, ~0% covered by design -- its one real test (server/proto/pb/generated_code_test.go's TestEveryFileIsGenerated) checks file headers, not the generated marshal/unmarshal/gRPC logic itself; same principle gosec's own -exclude-generated flag already applies to this same package|#1541|2026-08-25
+internal/faultstorage/faulty_storage_generated\.go:|PERMANENT|generated fault-injection wrapper (internal/faultstorage/gen, `// Code generated ... DO NOT EDIT.`), ~3.8k statements of one-line pass-through methods that exist only so tests can inject storage faults; ~1% covered by design -- correctness of the generator is proven by generated_fresh_test.go (output matches the generator) and gen's own tests, not by exercising every wrapper. Counted only since Go 1.27.2 fixed coverage statement weights (#2893), which exposed it as 3.8k of the floor's 34.7k statements|#2893|2026-10-09
 EOF
 }
 
