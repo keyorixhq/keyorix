@@ -1272,6 +1272,32 @@ group memberships, or both). Changes are audited as `auth.sso_roles_synced`.
 > id_token) as the source of truth, so the IdP's group governance *is* your Keyorix
 > RBAC governance for these roles.
 
+**SAML: a reconcile that cannot be fully applied refuses the login.** For a SAML
+provider, if any part of `group_sync` or `group_role_map` fails to apply on login — most
+importantly a **removal** the IdP asked for (the user was dropped from a group at the
+IdP) — the login is **refused** and no session is issued, because a session would carry
+the access the IdP just revoked. Steps that did apply before the failure are kept (the
+next successful login converges the rest). Each refusal is audited as a failed
+`auth.sso_reconcile_refused` event naming every step that failed and what had already
+been applied, and the browser is told the login was refused because the IdP's group or
+role assertion could not be applied.
+
+> **The last administrator.** If the IdP stops asserting the group (or mapped role) that
+> makes a user the install's **only** administrator, Keyorix's last-admin guard refuses
+> the removal and that user's SSO login stays refused — the IdP's revocation wins. This
+> is audited as `auth.sso_reconcile_last_admin_removal_refused`, logged with the two ways
+> back: re-add the user to the admin group at the IdP, or run
+> `keyorix-server admin recover-admin <user>` with the recovery key on the server host
+> (it works for an SSO-only account that never had a password: it issues a one-time
+> password), then create a second administrator. Keep at least two administrators, and
+> a recovery key, on an SSO-managed install.
+
+> **SAML: empty vs. absent groups attribute.** A groups attribute that is **present with
+> no values** means "this user is in no groups": every synced membership and mapped role
+> is removed. A groups attribute that is **absent** from the assertion is a no-op
+> (memberships and roles are left as they are), as for a missing OIDC claim — make sure
+> your IdP releases the attribute on every assertion.
+
 ## membership
 
 Project-membership onboarding mode (ADR-022).

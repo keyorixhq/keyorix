@@ -210,7 +210,9 @@ func TestReconcileSSOGroups_RefusesStrandingLastProjectAdmin(t *testing.T) {
 	// The IdP no longer asserts "proj7-admins" for this user (desired is
 	// empty) — reconcileSSOGroupRemovals must refuse the removal rather than
 	// silently stranding project 7.
-	removed, err := c.reconcileSSOGroupRemovals(ctx, u.ID, map[uint]bool{}, map[uint]bool{group.ID: true})
+	rep := &ssoReconcileReport{}
+	c.reconcileSSOGroupRemovals(ctx, u.ID, map[uint]bool{}, map[uint]bool{group.ID: true}, map[uint]string{group.ID: group.Name}, rep)
+	removed, err := rep.removed, rep.err()
 	assert.Equal(t, 0, removed, "the last-admin-conferring group membership must not have been removed")
 	// #2839 item 1: the refusal is now REPORTED rather than swallowed, so
 	// CompleteSAML can refuse the login instead of minting a session over a
