@@ -1740,6 +1740,8 @@ func checkOraclesReporting(t fuzzVerdict, in oracleInput) {
 					"state diverges in %v, but every table and column OUTSIDE this op's declared single-use "+
 					"consumption is byte-for-byte identical to this run's own pre-fault state — %s",
 					e.fn, label, diff, e.why)
+				return
+			}
 			// #2549: the error-reporting branch's own business-state exemption.
 			// The three layers above all describe a side effect the code is
 			// willing to LOSE (best-effort) or a log of the reported outcome.

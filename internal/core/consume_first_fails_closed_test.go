@@ -75,12 +75,9 @@ func TestVerifyMFALogin_MintFailureAfterConsume_FailsClosed(t *testing.T) {
 	c.storage = base
 	ch2, err := c.CreateMFAChallenge(ctx, 1)
 	require.NoError(t, err)
-	sess2, _, err := c.VerifyMFALogin(ctx, ch2, code, "ua", "1.2.3.4")
+	sess2, _, _, err := c.VerifyMFALogin(ctx, ch2, code, "ua", "1.2.3.4")
 	require.NoError(t, err, "the TOTP step must be usable again once the earlier mint failure's fault clears")
 	require.NotNil(t, sess2)
-	sess2, _, _, err := c.VerifyMFALogin(ctx, ch2, code, "ua", "1.2.3.4")
-	require.Error(t, err, "the TOTP step must stay consumed even though the earlier mint failed")
-	assert.Nil(t, sess2)
 }
 
 // TestVerifyMFAStepUp_GrantFailureAfterConsume_FailsClosed is O4's

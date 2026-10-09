@@ -275,8 +275,7 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 	// deliberately NOT covered by this recover — the assertion was already evaluated by
 	// then, so the slot must stay counted exactly like a successful or failed evaluation
 	// would (same release-only-pre-verdict rule #2619 established for the error path).
-	session, user, err := h.finishWebAuthnLoginReleasingOnPanic(r.Context(), body.Challenge, body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed, reserved, attemptID)
-	session, user, identity, err := h.coreService.FinishWebAuthnLogin(r.Context(), body.Challenge, body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed)
+	session, user, identity, err := h.finishWebAuthnLoginReleasingOnPanic(r.Context(), body.Challenge, body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed, reserved, attemptID)
 	if err != nil {
 		if errors.Is(err, core.ErrWebAuthnLoginNotEvaluated) {
 			log.Printf("FinishWebAuthnLogin: %v", err)
@@ -319,7 +318,7 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 // finishWebAuthnLoginReleasingOnPanic calls core.FinishWebAuthnLogin, releasing the
 // reserved login-attempt slot and re-panicking unchanged if the call panics instead of
 // returning — see FinishWebAuthnLogin's call-site comment for why this exists.
-func (h *AuthHandler) finishWebAuthnLoginReleasingOnPanic(ctx context.Context, challenge, webAuthnSession, userAgent, ip string, parsed *protocol.ParsedCredentialAssertionData, reserved bool, attemptID uint) (session *models.Session, user *models.User, err error) {
+func (h *AuthHandler) finishWebAuthnLoginReleasingOnPanic(ctx context.Context, challenge, webAuthnSession, userAgent, ip string, parsed *protocol.ParsedCredentialAssertionData, reserved bool, attemptID uint) (session *models.Session, user *models.User, identity core.UserIdentity, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			if reserved {

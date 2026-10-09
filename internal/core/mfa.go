@@ -473,9 +473,6 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 }
 
 // VerifyMFALogin consumes a challenge, verifies a TOTP code or a recovery code,
-// and on success mints and returns the session (the second login step).
-func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userAgent, ip string) (*models.Session, *models.User, error) {
-	user, usedRecovery, consumedTOTPStep, err := c.VerifyMFACredentials(ctx, challenge, code)
 // and on success mints and returns the session (the second login step) together
 // with the response identity.
 //
@@ -489,7 +486,7 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 // MFA gate stayed satisfied for the rest of the window on a later session the
 // user never completed a second factor for.
 func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userAgent, ip string) (*models.Session, *models.User, UserIdentity, error) {
-	user, usedRecovery, err := c.VerifyMFACredentials(ctx, challenge, code)
+	user, usedRecovery, consumedTOTPStep, err := c.VerifyMFACredentials(ctx, challenge, code)
 	if err != nil {
 		return nil, nil, UserIdentity{}, err
 	}
@@ -520,7 +517,6 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 				log.Printf("VerifyMFALogin: failed to release TOTP step after mintSession failure for user %d: %v", user.ID, rerr)
 			}
 		}
-		return nil, nil, err
 		return nil, nil, UserIdentity{}, err
 	}
 	// Record the MFA step-up window when the classification gate requires it.

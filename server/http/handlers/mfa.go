@@ -173,8 +173,7 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	// same way the CR3 finding did — see FinishWebAuthnLogin's identical sibling fix
 	// (webauthn.go) for the full reasoning; this is the same release-only-pre-verdict
 	// rule applied to VerifyMFA's own reservation.
-	session, user, err := h.verifyMFALoginReleasingOnPanic(r.Context(), body.Challenge, body.Code, r.Header.Get("User-Agent"), ip, reserved, attemptID)
-	session, user, identity, err := h.coreService.VerifyMFALogin(r.Context(), body.Challenge, body.Code, r.Header.Get("User-Agent"), ip)
+	session, user, identity, err := h.verifyMFALoginReleasingOnPanic(r.Context(), body.Challenge, body.Code, r.Header.Get("User-Agent"), ip, reserved, attemptID)
 	if err != nil {
 		if errors.Is(err, core.ErrMFAVerificationStorageFailure) {
 			if reserved {
@@ -220,7 +219,7 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 // login-attempt slot and re-panicking unchanged if the call panics instead of
 // returning — see VerifyMFA's call-site comment, and FinishWebAuthnLogin's identical
 // sibling (webauthn.go), for why this exists.
-func (h *AuthHandler) verifyMFALoginReleasingOnPanic(ctx context.Context, challenge, code, userAgent, ip string, reserved bool, attemptID uint) (session *models.Session, user *models.User, err error) {
+func (h *AuthHandler) verifyMFALoginReleasingOnPanic(ctx context.Context, challenge, code, userAgent, ip string, reserved bool, attemptID uint) (session *models.Session, user *models.User, identity core.UserIdentity, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			if reserved {

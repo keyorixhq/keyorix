@@ -123,9 +123,6 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 	},
 	"internal/core/mfa.go:(*KeyorixCore).requireReauth:c.storage.ConsumeMFAStepUpGrant": {
 		expectedPurpose: "MFAStepUpPurposeReauth",
-		reason: "requireReauth's account-security-factor-change gate (DisableMFA, " +
-	"internal/core/mfa.go:596": {
-		expectedPurpose: "MFAStepUpPurposeReauth",
 		reason: "(Line shifted to :596 by #2841's VerifyMFALogin change, which resolves the response identity " +
 			"before minting the session and the user-scoped MFAStepupToken and so added lines earlier in this " +
 			"file; previously :580, shifted there in turn by main's #2465 doc-comment additions on " +
