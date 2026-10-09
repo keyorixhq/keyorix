@@ -549,8 +549,13 @@ func TestReconcileSSOGroups_RefusesAdminGroupEscalation(t *testing.T) {
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 2}).Error) // group 1 confers admin
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 2, RoleID: 9}).Error) // group 2 is benign
 
-	// The IdP asserts BOTH group names.
-	c.reconcileSSOGroups(ctx, &SSOProvider{Name: "okta"}, 7, []string{"keyorix-admins", "engineers"})
+	// The IdP asserts BOTH group names. The reconcile must SUCCEED: the admin
+	// group is refused by the escalation guard, which is a counted "blocked", not
+	// an error -- the privilege simply is not granted, which is the fail-closed
+	// direction (#2839 item 1 made real failures an error; a blocked escalation
+	// deliberately is not one, or an install whose GroupRoleMap names an admin
+	// group could never log that user in).
+	require.NoError(t, c.reconcileSSOGroups(ctx, &SSOProvider{Name: "okta"}, 7, []string{"keyorix-admins", "engineers"}))
 
 	groups, err := ls.GetUserGroups(ctx, 7)
 	require.NoError(t, err)
@@ -661,7 +666,7 @@ func TestReconcileSSORoles_IsRBACAudited(t *testing.T) {
 	p := &SSOProvider{Name: "okta", GroupRoleMap: map[string]string{"keyorix-auditors": "system_auditor"}}
 
 	// IdP asserts keyorix-auditors → system_auditor should be granted.
-	c.reconcileSSORoles(ctx, p, 7, []string{"keyorix-auditors"})
+	require.NoError(t, c.reconcileSSORoles(ctx, p, 7, []string{"keyorix-auditors"}))
 
 	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 50)
 	require.NoError(t, err)
@@ -678,7 +683,7 @@ func TestReconcileSSORoles_IsRBACAudited(t *testing.T) {
 	assert.Equal(t, uint(10), *assigned.RoleID)
 
 	// A later login with no group asserted must revoke system_admin, also audited.
-	c.reconcileSSORoles(ctx, p, 7, nil)
+	require.NoError(t, c.reconcileSSORoles(ctx, p, 7, nil))
 
 	entries, _, err = c.ListRBACAuditLogs(ctx, 1, 50)
 	require.NoError(t, err)
