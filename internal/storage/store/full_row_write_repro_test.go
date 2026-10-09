@@ -1,9 +1,16 @@
-// full_row_write_repro_test.go — deterministic repros for two open stale
-// full-row writes the C-GUARD-3 guard 1 review classified UNSAFE-OPEN (see
-// docs/full-row-write-exempt.tsv). Each plays the cross-replica interleaving
+// full_row_write_repro_test.go — deterministic repro for an open stale
+// full-row write the C-GUARD-3 guard 1 review classified UNSAFE-OPEN (see
+// docs/full-row-write-exempt.tsv). Plays the cross-replica interleaving
 // sequentially on one SQLite store: the operation's read, the concurrent
 // writer's committed change, then the operation's stale whole-row Save.
 // Skipped until the issue in the skip message is fixed; un-skip with the fix.
+//
+// #2696's repro (ClassifyMachineToken un-revoking a concurrently revoked
+// token) lived here too until #2696 landed: UpdateMachineIdentityCredential's
+// full-row Save was replaced by the column-scoped
+// SetMachineIdentityCredentialClassification, which cannot write the Revoked
+// column at all, so the repro's premise no longer exists. Removed rather than
+// updated — there is no write path left to reproduce against.
 package store
 
 import (
@@ -50,30 +57,4 @@ func TestFullRowRepro_UpdateSecretResurrectsConcurrentlyDeletedSecret(t *testing
 	require.Error(t, err, "a secret deleted by another replica was resurrected by a stale UpdateSecret")
 }
 
-// A machine-token credential revoked between ClassifyMachineToken's read and
-// its write must stay revoked: token auth reads `revoked` from the row.
-func TestFullRowRepro_ClassifyMachineTokenUnrevokesConcurrentlyRevokedToken(t *testing.T) {
-	t.Skip(fullRowReproSkipMachineToken)
-	ctx := context.Background()
-	ls := newFullRowReproStore(t)
-	mi, err := ls.CreateMachineIdentity(ctx, &models.MachineIdentity{Name: "ci", ProjectID: 1, State: "active"})
-	require.NoError(t, err)
-	cred, err := ls.CreateMachineIdentityCredential(ctx, &models.MachineIdentityCredential{MachineIdentityID: mi.ID, Name: "t", TokenHash: "h"})
-	require.NoError(t, err)
-
-	stale, err := ls.GetMachineIdentityCredentialByID(ctx, cred.ID) // replica A: ClassifyMachineToken's read
-	require.NoError(t, err)
-	require.NoError(t, ls.RevokeMachineIdentityCredential(ctx, 1, cred.ID)) // replica B: RevokeMachineToken commits
-
-	stale.Classification = "internal" // replica A: its stale whole-row write
-	require.NoError(t, ls.UpdateMachineIdentityCredential(ctx, stale))
-
-	got, err := ls.GetMachineIdentityCredentialByID(ctx, cred.ID)
-	require.NoError(t, err)
-	require.True(t, got.Revoked, "a machine token revoked by another replica was un-revoked by a stale classification write")
-}
-
-const (
-	fullRowReproSkipSecret       = "#2695: open stale full-row write — UpdateSecret resurrects a concurrently deleted secret; un-skip with the fix"
-	fullRowReproSkipMachineToken = "#2696: open stale full-row write — ClassifyMachineToken un-revokes a concurrently revoked token; un-skip with the fix"
-)
+const fullRowReproSkipSecret = "#2695: open stale full-row write — UpdateSecret resurrects a concurrently deleted secret; un-skip with the fix"
