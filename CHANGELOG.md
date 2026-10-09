@@ -15,6 +15,29 @@ All notable changes to Keyorix are documented here. This project follows
   the opt-in upgrade for a deployment that can require 1.3-only clients.
   `tls.allowed_ciphers` has no effect under strict mode (TLS 1.3 negotiates
   its own suite set) and now warns if both are set.
+- **The server now refuses to start on an incomplete key-file set** (ADR-112,
+  follow-up from #2400). #2400 made a single restore operation atomic (every
+  file in a key-material set is either all written or none are); this adds the
+  boot-time check for what that cannot cover — a set assembled across multiple
+  operations. The encryption key files (salt, wrapped DEK, and any KMS/TPM
+  wrapped-key blob or Shamir share files) must either all be present or all be
+  absent. A partial set — the salt restored but not the wrapped DEK, say —
+  refuses to start, naming every present and missing file.
+  A second, **best-effort** check compares ages within each group of files one
+  operation writes together (a Shamir provider's share set, in practice) and
+  refuses when they differ by more than 24h. It is deliberately *not* presented
+  as a mixed-generation guarantee, because mtimes cannot provide one: `cp`,
+  `install`, `docker cp` and `kubectl cp` all stamp the destination with the
+  current time, so a set hand-assembled from two different backups by the most
+  common means shows no gap at all, and mtime is writable by anyone who can
+  write the file. Issue #2900 tracks the real fix — a key-set manifest
+  (generation id plus per-file hash) written atomically with the keys and
+  verified at boot, which also covers the `.pending` rotation-staging files.
+  The wrapped DEK is exempt from the timing check (routine DEK rotation
+  legitimately rewraps it on its own schedule), and so is any comparison
+  *across* groups: `rotate-kek` rewrites only the salt and DEK, so a deployment
+  with a KMS/TPM/Shamir fallback keeps that provider's blob at its original
+  age, which must not become a refusal to boot after an ordinary rotation.
 
 ## v0.95.3 — 2026-10-01
 
