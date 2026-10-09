@@ -78,12 +78,14 @@ func (c *KeyorixCore) VerifyPasswordCredentials(ctx context.Context, username, p
 	// merely knows the correct password — without ever passing MFA — repeatedly
 	// reset the account's failed-login counter/lock, defeating the lockout as a
 	// brute-force backstop and even undoing a defender-triggered lock. The
-	// TOCTOU-safe recheck-and-clear (checkLockAndClearLoginFailures) instead
-	// happens at the ACTUAL full-authentication point for each login path: Login
+	// TOCTOU-safe lock recheck (recheckLoginLockFailClosed) instead happens at
+	// the ACTUAL full-authentication point for each login path: LoginPending
 	// itself, immediately before mintSession, when no second factor is required;
-	// VerifyMFALogin and the WebAuthn Finish* functions, immediately before their
-	// own mintSession, when one is. Every login path ends up covered exactly once,
-	// at the point it is truly done authenticating — never earlier.
+	// VerifyMFALoginPending and the WebAuthn Finish*Pending functions,
+	// immediately before their own mintSession, when one is. The CLEAR happens
+	// later still — only once the login has been delivered (#2894, see
+	// LoginCompletion) — so every login path is covered exactly once, at the
+	// point it is truly done, and never earlier.
 	// A deactivated account (IsActive=false — e.g. admin deactivation via UpdateUser,
 	// or a SCIM/IdP deactivation) is refused login regardless of account_state. The
 	// state-based gate below does not cover this, so without it a deactivated user who
@@ -101,11 +103,51 @@ func (c *KeyorixCore) VerifyPasswordCredentials(ctx context.Context, username, p
 	return user, nil
 }
 
+// ErrLoginPostVerdict marks an error a login path returned AFTER the supplied
+// credential had already been confirmed CORRECT — a storage fault during the
+// remaining work (the password-expiry gate, the session mint, a step-up-grant
+// write), never a bad guess (#2894).
+//
+// It exists so a transport can audit the denial as auth.login_error rather than
+// auth.login_failed, and MUST NOT change anything the client can observe: every
+// caller maps it to exactly the same status, body and headers a wrong
+// credential gets (#2888), and the lockout accounting is made identical too
+// (LoginCompletion.Failed / recordFailedLogin on these branches). It is only
+// ever inspected server-side.
+var ErrLoginPostVerdict = errors.New("login denied by a storage error after the credential matched")
+
 // Login validates credentials, creates a session, and returns (session, user, error).
+//
+// Convenience wrapper over LoginPending for callers that own nothing further
+// after this returns — the login IS complete when they get a session, so the
+// lockout clear is committed immediately. Every TRANSPORT must use LoginPending
+// instead: an HTTP login still has to resolve the identity payload and set
+// cookies, and a failure there has to count toward the lockout exactly like a
+// wrong password (see LoginCompletion).
 func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, error) {
+	session, user, lc, err := c.LoginPending(ctx, req)
+	if err != nil {
+		return nil, user, err
+	}
+	lc.Succeeded(ctx)
+	return session, user, nil
+}
+
+// LoginPending is Login with the lockout accounting left open: on success the
+// returned LoginCompletion MUST get Succeeded (the login reached the client) or
+// Failed (it was denied by a later fault) exactly once. Until then the
+// account's failed-login counter still holds whatever the credential check
+// found, which is what makes a post-verdict fault indistinguishable from a
+// wrong password in lockout state as well as in the response (#2894).
+//
+// On an error return the user may still be non-nil (it is, for every
+// post-verdict failure) so a transport can name the account in an audit event;
+// the session is always nil and no completion is handed back, because the
+// accounting has already been settled here.
+func (c *KeyorixCore) LoginPending(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, *LoginCompletion, error) {
 	user, err := c.VerifyPasswordCredentials(ctx, req.Username, req.Password)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// Enforce the password max-age policy: if the password has expired, gate the
 	// account to password_reset_required NOW so the middleware blocks API access
@@ -113,7 +155,12 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	// response alone is not sufficient — a client that ignores it would retain
 	// full API access indefinitely.
 	if err := c.enforcePasswordExpiryGate(ctx, user); err != nil {
-		return nil, nil, err
+		// #2894: the password already matched (VerifyPasswordCredentials returned a
+		// user), so this is a post-verdict storage fault, not a bad guess. Count it
+		// toward the lockout exactly as a wrong password would — the response the
+		// caller builds is already identical either way (#2888), so leaving the
+		// counter untouched here would make a correct password the CHEAPER probe.
+		return nil, user, nil, c.denyAfterCredentialMatched(ctx, user, err)
 	}
 	// Accounts with any second factor (TOTP or a passkey) get no session from the
 	// password step — the caller must complete it (CreateMFAChallenge →
@@ -125,23 +172,40 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	// the WebAuthn Finish* functions each do their own clear once the second
 	// factor actually succeeds).
 	if user.MFAEnabled || user.WebAuthnEnabled {
-		return nil, user, ErrMFARequired
+		return nil, user, nil, ErrMFARequired
 	}
 	// No second factor configured — the password step IS the full authentication.
 	// Re-check the lock state under the same serialization recordFailedLogin uses
-	// (the account's mutex shard + a Postgres row lock) before minting a session,
-	// and only then clear any accumulated failure state: a concurrent burst of
-	// failed attempts against this account may have tripped the lock between the
-	// snapshot read inside VerifyPasswordCredentials and now (TOCTOU) — never
-	// trust that stale snapshot alone.
-	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
-		return nil, nil, err
+	// (the account's mutex shard + a Postgres row lock) before minting a session:
+	// a concurrent burst of failed attempts against this account may have tripped
+	// the lock between the snapshot read inside VerifyPasswordCredentials and now
+	// (TOCTOU) — never trust that stale snapshot alone. The accumulated failure
+	// state is deliberately NOT cleared here; see LoginCompletion.
+	if err := c.recheckLoginLockFailClosed(ctx, user); err != nil {
+		return nil, user, nil, err
 	}
+	lc := c.newLoginCompletion(user)
 	created, err := c.mintSession(ctx, user.ID, req.UserAgent, req.IPAddress)
 	if err != nil {
-		return nil, nil, err
+		lc.Failed(ctx)
+		return nil, user, nil, fmt.Errorf("%w: %w", ErrLoginPostVerdict, err)
 	}
-	return created, user, nil
+	return created, user, lc, nil
+}
+
+// denyAfterCredentialMatched settles the lockout accounting for a login denied
+// by a storage fault that happened AFTER the credential matched but BEFORE a
+// LoginCompletion existed, and returns the cause wrapped as ErrLoginPostVerdict
+// so the transport audits it as auth.login_error.
+//
+// The audit event itself is deliberately left to the transport, which already
+// emits both auth.login_failed and auth.login_error asynchronously (goSafe):
+// writing one synchronously here, on the post-verdict branch only, would make
+// that branch measurably slower than the wrong-credential branch and turn the
+// audit trail itself into the timing oracle this whole change exists to close.
+func (c *KeyorixCore) denyAfterCredentialMatched(ctx context.Context, user *models.User, cause error) error {
+	c.recordFailedLogin(ctx, user)
+	return fmt.Errorf("%w: %w", ErrLoginPostVerdict, cause)
 }
 
 // mintSession creates and persists a new session token for a user. The access

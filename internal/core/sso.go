@@ -258,7 +258,11 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	if c.loginLocked(user) {
 		return nil, nil, "", fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 	}
-	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
+	// TOCTOU re-check only; the clear happens after the session actually exists
+	// (#2894). SSO never FEEDS this counter (an IdP-rejected assertion never
+	// reaches here), so a post-mint fault simply leaves it untouched rather than
+	// at 0 — there is no wrong-credential branch here for it to differ from.
+	if err := c.recheckLoginLockFailClosed(ctx, user); err != nil {
 		return nil, nil, "", err
 	}
 
@@ -279,6 +283,7 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	if err != nil {
 		return nil, nil, "", err
 	}
+	c.clearLoginFailures(ctx, user)
 	_ = c.RecordLogin(ctx, user.ID) // best-effort last-login stamp
 	c.writeAuditEvent(ctx, EventSSOLogin, actorPtr(user.ID), nil,
 		fmt.Sprintf("SSO login via %s (subject=%s)", providerName, sub))
@@ -397,7 +402,11 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 	if c.loginLocked(user) {
 		return nil, nil, "", fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 	}
-	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
+	// TOCTOU re-check only; the clear happens after the session actually exists
+	// (#2894). SSO never FEEDS this counter (an IdP-rejected assertion never
+	// reaches here), so a post-mint fault simply leaves it untouched rather than
+	// at 0 — there is no wrong-credential branch here for it to differ from.
+	if err := c.recheckLoginLockFailClosed(ctx, user); err != nil {
 		return nil, nil, "", err
 	}
 
@@ -420,6 +429,7 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 	if err != nil {
 		return nil, nil, "", err
 	}
+	c.clearLoginFailures(ctx, user)
 	_ = c.RecordLogin(ctx, user.ID) // best-effort last-login stamp
 	c.writeAuditEvent(ctx, EventSSOLogin, actorPtr(user.ID), nil,
 		fmt.Sprintf("SAML login via %s (subject=%s)", name, info.Subject))

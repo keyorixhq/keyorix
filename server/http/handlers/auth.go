@@ -156,7 +156,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// (never a real credential guess) need not consume a slot.
 	h.reserveLoginAttempt(r.Context(), ip)
 
-	session, user, err := h.coreService.Login(r.Context(), &core.LoginRequest{
+	// LoginPending, not Login: an HTTP login is not finished when core returns a
+	// session — completeLogin still has to resolve the identity payload, and a
+	// fault there must cost the attacker the same lockout progress a wrong
+	// password does (#2894). See core.LoginCompletion.
+	session, user, lc, err := h.coreService.LoginPending(r.Context(), &core.LoginRequest{
 		Username:  body.Username,
 		Password:  body.Password,
 		UserAgent: r.Header.Get(hdrUserAgent),
@@ -174,6 +178,14 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 				// the password was right during any CreateMFAChallenge storage
 				// hiccup. Must look exactly like a wrong password to the client;
 				// LogAuthError still records the real reason for an operator.
+				//
+				// #2894: and it must not be cheaper in LOCKOUT state either. Login
+				// deliberately leaves the counter alone on the ErrMFARequired branch
+				// (a correct password is not full authentication for an MFA account),
+				// so without this the counter would sit one short of the threshold
+				// here while a wrong password would have tripped it -- "did the
+				// account lock?" would answer "was the password right?".
+				h.coreService.RecordPostVerdictLoginFailure(r.Context(), user)
 				goSafe(func() { h.coreService.LogAuthError(context.Background(), body.Username, ip, cerr) }) // #nosec G118
 				sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
 				return
@@ -188,12 +200,24 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			}, "MFA required")
 			return
 		}
-		goSafe(func() { h.coreService.LogAuthFailure(context.Background(), body.Username, ip) }) // #nosec G118
+		// #2894: a storage fault AFTER the password matched (the password-expiry
+		// gate, or the session mint) is NOT a wrong credential, and must not be
+		// audited as one -- auth.login_failed would tell an operator a password was
+		// guessed wrong when it was in fact correct, hiding the real incident.
+		// core wraps those with ErrLoginPostVerdict for exactly this, and has
+		// already counted them toward the lockout. The RESPONSE stays byte-identical
+		// either way, and both audit writes are async (goSafe) so this branch is not
+		// measurably slower than the wrong-password one.
+		if errors.Is(err, core.ErrLoginPostVerdict) {
+			goSafe(func() { h.coreService.LogAuthError(context.Background(), body.Username, ip, err) }) // #nosec G118
+		} else {
+			goSafe(func() { h.coreService.LogAuthFailure(context.Background(), body.Username, ip) }) // #nosec G118
+		}
 		sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
 		return
 	}
 
-	resp, err := h.completeLogin(w, r, session, user)
+	resp, err := h.completeLogin(w, r, session, user, lc)
 	if err != nil {
 		// #2888: same byte-identical response as the wrong-credential branch
 		// above -- see completeLogin's doc comment.
@@ -270,16 +294,31 @@ func (h *AuthHandler) buildLoginResponse(ctx context.Context, session *models.Se
 // (same status, body, headers), so the two cases are indistinguishable to
 // the client. LogAuthError (internal/core/audit.go) still records the real
 // reason for an operator.
-func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, session *models.Session, user *models.User) (loginResponseBody, error) {
+//
+// #2894: this is also the single commit point for the login's LOCKOUT
+// accounting, for every one of those callers at once. The identity read above
+// is the last fallible step of a login, and it happens after the credential has
+// already been confirmed correct, so the account's failed-login counter must
+// not have been reset before it: a fault here denies the login with a response
+// byte-identical to a wrong credential, and the lockout state has to be
+// identical too, or the account locking (or not) is the oracle the response no
+// longer is. lc.Failed() counts the denial exactly as a wrong credential would
+// be counted; lc.Succeeded() is the ONLY place a delivered login clears the
+// counter. lc may be nil for a flow with no per-account lockout stake (the
+// setup-token consume path, which authenticates a one-shot token rather than a
+// guessable credential) — both methods are nil-safe.
+func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, session *models.Session, user *models.User, lc *core.LoginCompletion) (loginResponseBody, error) {
 	resp, err := h.buildLoginResponse(r.Context(), session, user)
 	if err != nil {
 		log.Printf("completeLogin: %v; revoking session %d for user %d", err, session.ID, user.ID)
 		if rerr := h.coreService.Logout(r.Context(), session.SessionToken); rerr != nil {
 			log.Printf("completeLogin: failed to revoke session after identity resolution error: %v", rerr)
 		}
+		lc.Failed(r.Context())
 		return loginResponseBody{}, err
 	}
 	h.setSessionCookies(w, session)
+	lc.Succeeded(r.Context())
 	return resp, nil
 }
 
@@ -389,7 +428,13 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.completeLogin(w, r, result.Session, result.User)
+	// nil completion: the setup-token flow authenticates a single-use token, not
+	// a guessable per-account credential, and never touches the failed-login
+	// counter on any branch -- so there is nothing for a post-verdict failure
+	// here to have to match (#2894). The RESPONSE is still byte-identical to the
+	// generic failure branch above (#2888), which is the property that matters
+	// for this endpoint.
+	resp, err := h.completeLogin(w, r, result.Session, result.User, nil)
 	if err != nil {
 		// #2888: same byte-identical response as the generic failure branch
 		// above -- see completeLogin's doc comment.

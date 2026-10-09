@@ -66,7 +66,11 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 		return fmt.Errorf("invalid code")
 	}
 
-	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
+	// TOCTOU re-check only — the failure state is NOT cleared here (#2894): the
+	// step-up grant below is still to be written, and a fault there denies the
+	// step-up while leaving the counter at 0, making a CORRECT code the cheaper
+	// probe than a wrong one. See LoginCompletion.
+	if err := c.recheckLoginLockFailClosed(ctx, user); err != nil {
 		return err
 	}
 
@@ -76,8 +80,11 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 		ExpiresAt: c.now().Add(c.mfaStepUpWindow()),
 	}
 	if err := c.storage.CreateMFAStepUpGrant(ctx, grant); err != nil {
-		return fmt.Errorf("failed to record MFA step-up: %w", err)
+		// #2894: the code already verified, so count this post-verdict storage
+		// fault exactly as a wrong code would be counted (recordFailedLogin above).
+		return c.denyAfterCredentialMatched(ctx, user, fmt.Errorf("failed to record MFA step-up: %w", err))
 	}
+	c.clearLoginFailures(ctx, user)
 	uid := userID
 	c.writeAuditEvent(ctx, "mfa.stepup_verified", &uid, nil,
 		fmt.Sprintf("user %d completed MFA step-up for restricted secret access", userID))

@@ -149,8 +149,7 @@ func (c *KeyorixCore) recordFailedLogin(ctx context.Context, user *models.User) 
 	}
 }
 
-// checkLockAndClearLoginFailures re-checks the account's lock state and, if not
-// locked, clears any accumulated failure state — both under the SAME
+// recheckLoginLockFailClosed re-checks the account's lock state under the SAME
 // serialization (the user's loginFailureMu shard, plus the Postgres FOR UPDATE
 // row lock LockUserForUpdate takes) that recordFailedLogin uses. This closes the
 // TOCTOU gap between a caller's pre-verification snapshot check (loginLocked,
@@ -165,15 +164,24 @@ func (c *KeyorixCore) recordFailedLogin(ctx context.Context, user *models.User) 
 // check uses) when the account is found to be locked; the caller MUST refuse the
 // login rather than mint a session. Also returns an error — failing closed — if
 // the lock state cannot be verified (a storage error), rather than falling back
-// to the caller's stale snapshot. When the lockout feature is disabled this is
-// equivalent to clearLoginFailures. Shared by every login path that reaches a
+// to the caller's stale snapshot. Shared by every login path that reaches a
 // session mint after passing the lockout gate: password (Login), TOTP/recovery
 // (VerifyMFALogin), and WebAuthn (FinishWebAuthnLogin /
 // FinishWebAuthnPasswordlessLogin) — recordFailedLogin feeds the same counter
 // from all of them, so the recheck must cover all of them too.
-func (c *KeyorixCore) checkLockAndClearLoginFailures(ctx context.Context, user *models.User) error {
+//
+// #2894: this function used to ALSO clear the accumulated failure state on its
+// way past (it was called checkLockAndClearLoginFailures), which put the clear
+// BEFORE every remaining fallible step of the login — mintSession, the
+// password-expiry gate, the step-up-grant write, and the transport's own
+// identity resolution. A storage fault in any of those denied the login with a
+// response byte-identical to a wrong credential (#2888) while leaving the
+// counter at 0, so a CORRECT guess was strictly cheaper lockout-wise than a
+// wrong one: at threshold−1, a wrong password locks the account and a correct
+// password plus an injected fault does not. The clear now happens only at each
+// path's true completion point — see LoginCompletion.
+func (c *KeyorixCore) recheckLoginLockFailClosed(ctx context.Context, user *models.User) error {
 	if !c.loginLockout.Enabled {
-		c.clearLoginFailures(ctx, user)
 		return nil
 	}
 	uid := user.ID
@@ -197,16 +205,6 @@ func (c *KeyorixCore) checkLockAndClearLoginFailures(ctx context.Context, user *
 			lockErr = fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 			return nil
 		}
-		if u.FailedLoginAttempts == 0 && u.LoginLockedUntil == nil && u.LoginLockoutCount == 0 {
-			return nil // nothing to clear
-		}
-		if err := tx.UpdateLoginLockoutState(ctx, uid, 0, nil, nil, 0); err != nil {
-			return err
-		}
-		user.FailedLoginAttempts = 0
-		user.LastFailedLoginAt = nil
-		user.LoginLockedUntil = nil
-		user.LoginLockoutCount = 0
 		return nil
 	})
 	if err != nil {
@@ -216,6 +214,122 @@ func (c *KeyorixCore) checkLockAndClearLoginFailures(ctx context.Context, user *
 		return fmt.Errorf("unable to verify account lock state, please try again")
 	}
 	return lockErr
+}
+
+// LoginCompletion is the deferred half of a login's lockout accounting (#2894).
+//
+// A login is NOT finished when a core login function returns: the transport
+// still has to resolve the identity payload (a storage read) and set the session
+// cookies, and the identity read can fail — which denies the login with a
+// response byte-identical to a wrong credential (#2888). Until then the
+// account's failed-login counter is left exactly as the credential check found
+// it, so the two cases cost an attacker the same lockout progress:
+//
+//	wrong credential:                  N−1 → recordFailedLogin → N  (locks at N)
+//	correct credential, late fault:    N−1 → Failed()          → N  (locks at N)
+//	correct credential, delivered:     N−1 → Succeeded()       → 0
+//
+// Counting the late failure WITHOUT also deferring the clear is not enough, and
+// that is why this type exists rather than a bare recordFailedLogin call in each
+// failure branch: clear-then-count leaves the account at 1, not N, so at
+// threshold−1 a correct guess still buys the attacker N−1 extra attempts that a
+// wrong guess does not. Both halves are required.
+//
+// Exactly one of Succeeded or Failed must be called, exactly once; both are
+// no-ops afterwards, and both are nil-safe so a flow with no per-account
+// lockout stake (the setup-token consume path, which authenticates a one-shot
+// token rather than a guessable credential) can pass nil.
+//
+// Not safe for concurrent use: it belongs to one in-flight login.
+type LoginCompletion struct {
+	c    *KeyorixCore
+	user *models.User
+	done bool
+	// countsFailures is false for a path whose own WRONG-credential branch does
+	// not feed this counter either — see newLoginCompletionNotCounted.
+	countsFailures bool
+}
+
+// newLoginCompletion is called by a login path once the credential has been
+// confirmed correct and the lock re-checked, but before any remaining fallible
+// step. Use this for every path whose wrong-credential branch calls
+// recordFailedLogin: password login, the TOTP second factor, the WebAuthn
+// second factor, WebAuthn re-auth and TOTP step-up.
+func (c *KeyorixCore) newLoginCompletion(user *models.User) *LoginCompletion {
+	return &LoginCompletion{c: c, user: user, countsFailures: true}
+}
+
+// newLoginCompletionNotCounted is newLoginCompletion for a path whose own
+// wrong-credential branch deliberately does NOT feed the per-account counter,
+// so counting a post-verdict fault would make a CORRECT credential the more
+// expensive one — the same oracle as #2894, just inverted.
+//
+// Today that is exactly one path: passwordless WebAuthn. A failed discoverable
+// assertion never identifies a user at all (the user handle comes out of the
+// assertion the authenticator signed), so there is nobody to charge the failure
+// to, and charging one would let an attacker lock an arbitrary victim — see
+// checkPasswordlessAccountState. The property still holds, with both sides at
+// zero cost: a failed assertion leaves the counter alone, and so does a valid
+// assertion whose mint faulted. What must NOT happen, and did before #2894, is
+// the valid-assertion case CLEARING it — wiping a victim's accumulated lockout
+// progress on the way to a denial.
+func (c *KeyorixCore) newLoginCompletionNotCounted(user *models.User) *LoginCompletion {
+	return &LoginCompletion{c: c, user: user, countsFailures: false}
+}
+
+// Succeeded records that the login reached the client, clearing the accumulated
+// failure state. This is the ONLY place a successful login's counter is reset.
+func (lc *LoginCompletion) Succeeded(ctx context.Context) {
+	if lc == nil || lc.done {
+		return
+	}
+	lc.done = true
+	lc.c.clearLoginFailures(ctx, lc.user)
+}
+
+// Failed records that the login was denied AFTER the credential had already
+// matched — a storage fault, not a bad guess. It counts toward the lockout
+// exactly as a wrong credential would, because the response the client gets is
+// already identical to a wrong credential's (#2888) and the lockout state must
+// not be the thing that tells them apart. The audit trail still distinguishes
+// the two (auth.login_error vs auth.login_failed), which is where an operator —
+// and only an operator — can see the difference.
+func (lc *LoginCompletion) Failed(ctx context.Context) {
+	if lc == nil || lc.done {
+		return
+	}
+	lc.done = true
+	if !lc.countsFailures {
+		// This path's wrong-credential branch does not count either, so the
+		// matching cost is zero — leaving the counter exactly as the credential
+		// check found it. NOT clearing it is the whole fix here; see
+		// newLoginCompletionNotCounted.
+		return
+	}
+	lc.c.recordFailedLogin(ctx, lc.user)
+}
+
+// RecordPostVerdictLoginFailure counts a login denial that happened AFTER the
+// credential was confirmed correct, for a step the TRANSPORT owns rather than
+// core (#2894).
+//
+// There is exactly one such step: /auth/login issuing the MFA challenge for an
+// account that has a second factor. Login returns ErrMFARequired there having
+// deliberately NOT cleared the counter (a correct password alone is not full
+// authentication for such an account), so the password step itself leaves the
+// counter at whatever the failure history was — but if CreateMFAChallenge then
+// fails, the handler answers with the same 401 a wrong password gets, and
+// without this call the counter would stay one short of the threshold while a
+// wrong password would have tripped it. "Does the account lock?" would answer
+// "was the password right?".
+//
+// Not needed for the setup-token consume flow's equivalent branch: that path
+// authenticates a one-shot token and never feeds this counter on any branch.
+func (c *KeyorixCore) RecordPostVerdictLoginFailure(ctx context.Context, user *models.User) {
+	if user == nil {
+		return
+	}
+	c.recordFailedLogin(ctx, user)
 }
 
 // clearLoginFailures resets the lockout state after a successful authentication.
@@ -239,8 +353,8 @@ func (c *KeyorixCore) clearLoginFailures(ctx context.Context, user *models.User)
 // not change the account_state — a suspended account stays suspended.
 //
 // #484: persists via the same narrow UpdateLoginLockoutState primitive #454 already
-// established for the automatic clear paths (clearLoginFailures /
-// checkLockAndClearLoginFailures) — not the generic UpdateUser. UnlockUser clears the
+// established for the automatic clear paths (clearLoginFailures, reached via
+// LoginCompletion.Succeeded) — not the generic UpdateUser. UnlockUser clears the
 // exact same four columns those callers do, just admin-triggered instead of triggered
 // by a successful login.
 // S1 sweep decision (CLI-split inventory #2012): deliberately NOT ceiling-gated

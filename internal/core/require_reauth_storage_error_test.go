@@ -84,6 +84,18 @@ func TestRequireReauth_GetMFASecretErrorDoesNotFeedLockout(t *testing.T) {
 // audit trail -- an operator reviewing mfa.failed events could not tell a
 // write failure apart from a real bad guess. markTOTPStepErrStub is shared
 // with mfa_login_storage_error_test.go.
+//
+// #2894 review note — WHICH HALF OF THIS TEST IS A RED PROOF: only the audit
+// half. The LoginLockedUntil assertion below is green against main too, for a
+// mechanical reason worth writing down so nobody reads it as proof that it
+// isn't: main discarded MarkTOTPStepUsed's error outright, so the attempt fell
+// through to the generic wrong-credential arm, which already called
+// recordFailedLogin. The lockout cost was therefore already correct here, and
+// #2888 only gave the case its own distinct audit event. The lockout claim is
+// pinned precisely — against a wrong-code CONTROL rather than a bare "is it
+// locked" — by TestRequireReauth_PostVerdictFaultCostsTheSameAsAWrongCode in
+// login_lockout_post_verdict_parity_test.go, which is red under the one
+// regression that can now happen: the postVerdictErr arm ceasing to count.
 func TestRequireReauth_MarkTOTPStepUsedErrorAfterMatch_StillCountsTowardLockout(t *testing.T) {
 	t.Parallel()
 	c, db, fixed := newMFATestCore(t)

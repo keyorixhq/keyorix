@@ -478,8 +478,12 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 	// Cleared the second factor — but a concurrent burst of failed second-factor
 	// attempts against this account may have tripped the lock since the
 	// pre-verification snapshot check above (TOCTOU). Re-check under the same
-	// serialization recordFailedLogin uses before minting a session.
-	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
+	// serialization recordFailedLogin uses before minting a session. The
+	// accumulated failure state is deliberately NOT cleared here (#2894): the
+	// login still has a session to mint, a password-expiry gate to pass and an
+	// identity payload to resolve, and a fault in any of those must cost the
+	// attacker the same lockout progress a wrong code does — see LoginCompletion.
+	if err := c.recheckLoginLockFailClosed(ctx, user); err != nil {
 		return nil, false, nil, err
 	}
 	return user, usedRecovery, consumedTOTPStep, nil
@@ -487,17 +491,37 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 
 // VerifyMFALogin consumes a challenge, verifies a TOTP code or a recovery code,
 // and on success mints and returns the session (the second login step).
+//
+// Convenience wrapper over VerifyMFALoginPending for callers that own nothing
+// further after this returns; every TRANSPORT must use the Pending form — see
+// Login/LoginPending and LoginCompletion for why.
 func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userAgent, ip string) (*models.Session, *models.User, error) {
+	session, user, lc, err := c.VerifyMFALoginPending(ctx, challenge, code, userAgent, ip)
+	if err != nil {
+		return nil, user, err
+	}
+	lc.Succeeded(ctx)
+	return session, user, nil
+}
+
+// VerifyMFALoginPending is VerifyMFALogin with the lockout accounting left open
+// — the returned LoginCompletion MUST get Succeeded or Failed exactly once
+// (#2894). On an error return the user is non-nil for every post-verdict
+// failure, so a transport can name the account in its auth.login_error event.
+func (c *KeyorixCore) VerifyMFALoginPending(ctx context.Context, challenge, code, userAgent, ip string) (*models.Session, *models.User, *LoginCompletion, error) {
 	user, usedRecovery, consumedTOTPStep, err := c.VerifyMFACredentials(ctx, challenge, code)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// Apply the same password-expiry hard gate as the non-MFA login path (ADR-025).
 	// Idempotent: the gate is a no-op when the state is already password_reset_required
 	// (set during the initial credential check for MFA-enabled accounts).
 	if err := c.enforcePasswordExpiryGate(ctx, user); err != nil {
-		return nil, nil, err
+		// The code was already confirmed correct, so this is a post-verdict storage
+		// fault (#2894) — counted toward the lockout exactly like a wrong code.
+		return nil, user, nil, c.denyAfterCredentialMatched(ctx, user, err)
 	}
+	lc := c.newLoginCompletion(user)
 	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
 	if err != nil {
 		// #2567: VerifyMFACredentials already consumed the TOTP step (anti-replay)
@@ -514,7 +538,13 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 				log.Printf("VerifyMFALogin: failed to release TOTP step after mintSession failure for user %d: %v", user.ID, rerr)
 			}
 		}
-		return nil, nil, err
+		// #2894: the code matched, so count this exactly as a wrong code would be
+		// counted, and mark it post-verdict so VerifyMFA audits auth.login_error.
+		// Note what is deliberately NOT done here: the per-IP login-attempt slot
+		// stays CONSUMED (the handler releases only for ErrMFAVerificationUnavailable),
+		// because a wrong code keeps its slot too.
+		lc.Failed(ctx)
+		return nil, user, nil, fmt.Errorf("%w: %w", ErrLoginPostVerdict, err)
 	}
 	// Record the MFA step-up window when the classification gate requires it.
 	// Best-effort: a write failure does not block the login, but the user won't
@@ -527,7 +557,7 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 		c.writeAuditEventFull(ctx, "mfa.recovery_used", &uid, nil, nil, ip, fmt.Sprintf("user %s used a recovery code", user.Username))
 	}
 	c.writeAuditEventFull(ctx, "mfa.login_verified", &uid, nil, nil, ip, fmt.Sprintf("user %s passed MFA", user.Username))
-	return session, user, nil
+	return session, user, lc, nil
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
