@@ -278,13 +278,26 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	}
 
 	// Reconcile native group memberships and/or mapped role grants from the IdP's
-	// groups claim (best-effort — a sync failure must not block an otherwise-valid
-	// login).
+	// groups claim, and refuse the login if that did not fully apply -- the same
+	// rule CompleteSAML follows (#2839 item 1, #2903; extended to OIDC by #2907).
+	// This used to be best-effort ("a sync failure must not block an otherwise-
+	// valid login"), so a failed REVOCATION -- the IdP dropped the user from its
+	// admin group and the removal errored or was refused -- left the user holding
+	// the privilege AND minted a session carrying it for its whole lifetime.
+	// Not rolled back on refusal: class C, see CompleteSAML and
+	// docs/atomicity-exempt.tsv (the JIT:(*KeyorixCore).CompleteSAML row, whose
+	// reconcile conditions cover this path too since #2907).
 	if p.GroupSync {
-		c.syncSSOGroups(ctx, p, user.ID, rawID)
+		if rerr := c.syncSSOGroups(ctx, p, user.ID, rawID); rerr != nil {
+			log.Printf("CompleteSSO: refusing login for user %d: %v", user.ID, rerr)
+			return nil, nil, "", ssoReconcileLoginRefusal(SSOMsgGroupReconcileRefused, rerr)
+		}
 	}
 	if len(p.GroupRoleMap) > 0 {
-		c.syncSSORoles(ctx, p, user.ID, rawID)
+		if rerr := c.syncSSORoles(ctx, p, user.ID, rawID); rerr != nil {
+			log.Printf("CompleteSSO: refusing login for user %d: %v", user.ID, rerr)
+			return nil, nil, "", ssoReconcileLoginRefusal(SSOMsgRoleReconcileRefused, rerr)
+		}
 	}
 
 	if err := c.enforcePasswordExpiryGate(ctx, user); err != nil {
@@ -721,30 +734,26 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 // Crucially, if the groups claim is ABSENT from the token (vs present-but-empty), the
 // sync is a no-op: many IdPs only emit groups in the userinfo endpoint or under a
 // specific scope, and treating "absent" as "assert no groups" would strip every
-// membership on login. Best-effort: errors are swallowed (the caller must not fail an
-// otherwise-valid login on a sync hiccup), but the net change is audited.
-func (c *KeyorixCore) syncSSOGroups(ctx context.Context, p *SSOProvider, userID uint, rawID string) {
+// membership on login. A present-but-EMPTY claim is the IdP asserting no groups and
+// reconciles to zero.
+//
+// Returns reconcileSSOGroups' error (wrapping ErrSSOReconcileIncomplete), and
+// CompleteSSO refuses the login on it (#2907). It used to swallow every error so
+// the login always proceeded -- see CompleteSSO for why that was the bug.
+func (c *KeyorixCore) syncSSOGroups(ctx context.Context, p *SSOProvider, userID uint, rawID string) error {
 	claim := strings.TrimSpace(p.GroupsClaim)
 	if claim == "" {
 		claim = ssoDefaultGroupClaim
 	}
 	asserted, present := extractTokenStringList(rawID, claim)
 	if !present {
-		return // IdP did not assert groups in the id_token — leave memberships untouched.
+		return nil // IdP did not assert groups in the id_token — leave memberships untouched.
 	}
-	// Deliberately discarded, and deliberately DIFFERENT from CompleteSAML, which
-	// refuses the login on the same error. Andrei's #2839 decision is about
-	// CompleteSAML specifically; this OIDC path's best-effort stance is documented
-	// above and predates it, so changing it here would be an unreviewed behaviour
-	// change on a different login path. The inconsistency is real and is flagged
-	// in that PR for a decision -- the security argument ("a user removed from an
-	// IdP admin group could keep a stale role and still log in") applies here
-	// verbatim.
-	_ = c.reconcileSSOGroups(ctx, p, userID, asserted)
+	return c.reconcileSSOGroups(ctx, p, userID, asserted)
 }
 
 // ErrSSOReconcileIncomplete marks a group/role reconciliation that did not fully
-// apply the IdP's assertion. CompleteSAML refuses the login on it (#2839 item 1,
+// apply the IdP's assertion. CompleteSAML and CompleteSSO refuse the login on it (#2839 item 1,
 // Andrei's condition 1): the dangerous direction is a REMOVAL that did not happen,
 // which leaves the user holding a group or role the IdP has revoked, and minting a
 // session then hands them that stale privilege for the whole session lifetime.
@@ -887,7 +896,8 @@ func (c *KeyorixCore) finishSSOReconcile(ctx context.Context, p *SSOProvider, us
 // to return nothing and swallow every error, which is the bug #2839 item 1 names:
 // a user removed from an IdP admin group whose removal then failed kept the group
 // AND got a session. Whether the caller refuses the login on that is the caller's
-// decision — see CompleteSAML (refuses) and syncSSOGroups (does not).
+// decision; both login paths refuse (CompleteSAML, and CompleteSSO via
+// syncSSOGroups since #2907).
 //
 // Every step is attempted even after one fails, and the audit event written at
 // the end (finishSSOReconcile) records both what failed and what applied.
@@ -1020,18 +1030,19 @@ func (c *KeyorixCore) reconcileSSOGroupRemovals(ctx context.Context, userID uint
 // (the "managed" roles): a managed role is granted when an asserted group maps to it
 // and removed when none do; a role NOT in the map is never touched, so manual grants
 // survive. Like group sync, an ABSENT groups claim is a no-op (so an IdP that omits
-// groups can't strip a user's roles), and it is best-effort (never blocks login).
+// groups can't strip a user's roles). Its error refuses the login in CompleteSSO
+// (#2907), exactly as syncSSOGroups'.
 // Roles are bound at global scope (system roles); an unknown mapped role is skipped.
-func (c *KeyorixCore) syncSSORoles(ctx context.Context, p *SSOProvider, userID uint, rawID string) {
+func (c *KeyorixCore) syncSSORoles(ctx context.Context, p *SSOProvider, userID uint, rawID string) error {
 	claim := strings.TrimSpace(p.GroupsClaim)
 	if claim == "" {
 		claim = ssoDefaultGroupClaim
 	}
 	asserted, present := extractTokenStringList(rawID, claim)
 	if !present {
-		return // IdP did not assert groups in the id_token — leave roles untouched.
+		return nil // IdP did not assert groups in the id_token — leave roles untouched.
 	}
-	_ = c.reconcileSSORoles(ctx, p, userID, asserted) // best-effort — see syncSSOGroups
+	return c.reconcileSSORoles(ctx, p, userID, asserted)
 }
 
 // reconcileSSORoles reconciles the user's grants of the MAPPED roles to match the roles

@@ -493,7 +493,7 @@ func TestSyncSSOGroups(t *testing.T) {
 		store.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, assert.AnError)
 		store.On("ListGroupRoleAssignments", mock.Anything, uint(3)).Return(nil, nil)
 
-		c.syncSSOGroups(context.Background(), p, 7, raw)
+		require.NoError(t, c.syncSSOGroups(context.Background(), p, 7, raw))
 
 		store.AssertCalled(t, "AddUserToGroup", mock.Anything, uint(7), uint(1), uint(0))
 		store.AssertCalled(t, "RemoveUserFromGroup", mock.Anything, uint(7), uint(3), uint(0))
@@ -509,7 +509,7 @@ func TestSyncSSOGroups(t *testing.T) {
 		store.On("ListGroups", mock.Anything).Return([]*models.Group{{ID: 1, Name: "admins"}}, nil)
 		store.On("GetUserGroups", mock.Anything, uint(7)).Return([]*models.Group{}, nil)
 
-		c.syncSSOGroups(context.Background(), p, 7, raw)
+		require.NoError(t, c.syncSSOGroups(context.Background(), p, 7, raw))
 		store.AssertNotCalled(t, "AddUserToGroup", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 
@@ -518,7 +518,7 @@ func TestSyncSSOGroups(t *testing.T) {
 		p.GroupSync = true
 		raw := signToken(t, key, "kid-1", jwt.MapClaims{"sub": "okta|123"}) // no groups claim
 
-		c.syncSSOGroups(context.Background(), p, 7, raw)
+		require.NoError(t, c.syncSSOGroups(context.Background(), p, 7, raw))
 		// Returns before listing groups — so an IdP that omits groups in the id_token
 		// can't strip a user's memberships.
 		store.AssertNotCalled(t, "ListGroups", mock.Anything)
@@ -599,7 +599,7 @@ func TestSyncSSORoles(t *testing.T) {
 		// evictUserSessionCache: evicts the removed-role user's cached sessions.
 		store.On("ListSessionTokenHashesForUser", mock.Anything, uint(7)).Return([]string{}, nil)
 
-		c.syncSSORoles(context.Background(), p, 7, raw)
+		require.NoError(t, c.syncSSORoles(context.Background(), p, 7, raw))
 
 		store.AssertCalled(t, "AssignRole", mock.Anything, uint(7), uint(10), mock.Anything)    // secrets_writer granted
 		store.AssertCalled(t, "RemoveRole", mock.Anything, uint(7), uint(20), mock.Anything)    // system_auditor revoked
@@ -620,7 +620,7 @@ func TestSyncSSORoles(t *testing.T) {
 		store.On("GetRoleByName", mock.Anything, "system_admin").Return(&models.Role{ID: 10, Name: "system_admin"}, nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-		c.syncSSORoles(context.Background(), p, 7, raw)
+		require.NoError(t, c.syncSSORoles(context.Background(), p, 7, raw))
 
 		store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
@@ -630,7 +630,7 @@ func TestSyncSSORoles(t *testing.T) {
 		p.GroupRoleMap = map[string]string{"keyorix-admins": "system_admin"}
 		raw := signToken(t, key, "kid-1", jwt.MapClaims{"sub": "okta|1"}) // no groups claim
 
-		c.syncSSORoles(context.Background(), p, 7, raw)
+		require.NoError(t, c.syncSSORoles(context.Background(), p, 7, raw))
 		store.AssertNotCalled(t, "GetUserRoles", mock.Anything, mock.Anything)
 		store.AssertNotCalled(t, "RemoveRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
@@ -640,9 +640,12 @@ func TestSyncSSORoles(t *testing.T) {
 		p.GroupRoleMap = map[string]string{"keyorix-admins": "does_not_exist"}
 		raw := signToken(t, key, "kid-1", jwt.MapClaims{"groups": []string{"keyorix-admins"}})
 		store.On("GetUserRoles", mock.Anything, uint(7)).Return([]*models.Role{}, nil)
-		store.On("GetRoleByName", mock.Anything, "does_not_exist").Return((*models.Role)(nil), fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil)))
+		// Real GetRoleByName wraps storage.ErrRoleNotFound for a missing name
+		// (#2903); a bare message is a lookup FAILURE, which now refuses the login.
+		store.On("GetRoleByName", mock.Anything, "does_not_exist").Return((*models.Role)(nil),
+			fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrRoleNotFound))
 
-		c.syncSSORoles(context.Background(), p, 7, raw)
+		require.NoError(t, c.syncSSORoles(context.Background(), p, 7, raw))
 		store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 }

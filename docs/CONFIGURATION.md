@@ -1272,7 +1272,7 @@ group memberships, or both). Changes are audited as `auth.sso_roles_synced`.
 > id_token) as the source of truth, so the IdP's group governance *is* your Keyorix
 > RBAC governance for these roles.
 
-**SAML: a reconcile that cannot be fully applied refuses the login.** For a SAML
+**A reconcile that cannot be fully applied refuses the login.** For a SAML or OIDC
 provider, if any part of `group_sync` or `group_role_map` fails to apply on login — most
 importantly a **removal** the IdP asked for (the user was dropped from a group at the
 IdP) — the login is **refused** and no session is issued, because a session would carry
