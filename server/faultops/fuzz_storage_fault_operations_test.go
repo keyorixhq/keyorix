@@ -1232,32 +1232,29 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// docs/atomicity-exempt.tsv (consumeFirstAccountsForDiff,
 	// consume_first_oracle_test.go) instead of carrying it as an open finding
 	// against one named storage method.
-	// #2817: DisableMFA (internal/core/mfa.go) runs requireReauth -- itself a
-	// class-B row (atomicity-exempt.tsv:61) -- BEFORE the
-	// SetUserMFAEnabled+DeleteMFAForUser transaction. requireReauth's
-	// MarkTOTPStepUsed burns the matched TOTP time-step
-	// (MFASecret.LastUsedStep) and writes an "mfa.reauth_verified" AuditEvent
-	// on c.storage, outside that transaction, so a DeleteMFAForUser error
-	// rolls the disable back and correctly leaves the step burned.
-	{
-		op: "REST POST /api/v1/auth/mfa/disable", method: "DeleteMFAForUser", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2817", expires: "2026-10-17",
-		tables:     []string{"AuditEvent", "MFASecret"},
-		findingDoc: "#2817",
-	},
-	// #2814: CompleteSAML (internal/core/sso.go) is itself a class-B row
-	// (atomicity-exempt.tsv:76) -- ConsumeSSOLoginState burns the single-use
-	// RelayState row first, by design, because st.Nonce is what the
-	// InResponseTo check validates against and a replayable state row would
-	// let a captured (RelayState, SAMLResponse) pair re-drive user
-	// resolution/provisioning. A GetUserByUsername error inside
-	// resolveSSOUser therefore fails closed with the state correctly consumed.
-	{
-		op: "REST POST /auth/saml/{provider}/acs", method: "GetUserByUsername", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2814", expires: "2026-10-17",
-		tables:     []string{"SSOLoginState"},
-		findingDoc: "#2814",
-	},
+	// (#2817's row — REST POST /api/v1/auth/mfa/disable, DeleteMFAForUser,
+	// error, nth 1 — and #2814's — REST POST /auth/saml/{provider}/acs,
+	// GetUserByUsername, error, nth 1 — are GONE, finishing the deletion the
+	// two REMOVED notes directly above already describe. Both rows survived
+	// that PR as a merge artefact: the notes landed, the rows did not get
+	// dropped, so main carried a comment saying "REMOVED by this PR" sitting
+	// right on top of the row it claimed to have removed. This branch's new
+	// staleness guard is what surfaced it — TestKnownOpenTolerances_AreLoadBearing
+	// reported both rows dead with "their fault fired, but the oracle did not
+	// report a violation for them".
+	//
+	// Deleted rather than baselined into toleranceDeadPendingTriage, on the
+	// measured reason each went quiet: the harness log shows both now accepted
+	// by consumeFirstAccountsForDiff, i.e. "ACCEPTABLE-BY-DESIGN (consume-first,
+	// docs/atomicity-exempt.tsv class B, (*KeyorixCore).requireReauth /
+	// (*KeyorixCore).CompleteSAML)". That is a design-cited exemption derived
+	// from the class-B ledger and enforced against it
+	// (TestConsumeFirstExemptions_MatchAtomicityLedger), and it is STRICTLY
+	// NARROWER than the rows it replaces: it requires every table and column
+	// outside the op's declared single-use consumption to be byte-for-byte
+	// identical to the pre-fault state, where the rows allowlisted a fixed table
+	// set and nothing else. So this removes two blanket carve-outs and keeps the
+	// derived one — the tolerance list shrinks, the guard does not.)
 	// #2842 (ORACLE-A-1). Surfaced by CI's fuzz shard 0 + fuzz-changed on
 	// #2821, whose entire diff was the two auth/MFA/SAML rows directly above
 	// -- nothing in the secrets path. Confirmed to reproduce on pristine

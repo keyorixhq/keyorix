@@ -532,9 +532,19 @@ func TestKnownToleranceStaleness_DetectsDeadAndLiveRows(t *testing.T) {
 // the oracle starts consulting it again (it is live, not debt). The check's own
 // red/green calibration no longer depends on one of these rows happening to be
 // a fixed bug — see TestKnownOpenToleranceStaleness_DetectsDeadAndLiveRows.
+// (#2407's baseline entry — REST PUT
+// /api/v1/projects/{id}/access-requests/{requestId}, CreateAccessRequestApproval,
+// error, nth 1 — is GONE. Its knownOpenTolerance row no longer exists: #2415
+// fixed the bug (finalizeAccessRequestApproval now runs the grant, the approval
+// record and the request-state update inside one storage.WithTransaction) and
+// FIX-2 deleted the row, leaving this baseline pointing at nothing. The
+// stale-baseline half of the ratchet is what caught it: "found 1
+// toleranceDeadPendingTriage entr(y/ies) whose knownOpenTolerance is gone". A
+// baseline entry with no row behind it is pure noise — it can never go red
+// again, so it only hides the fact that the exemption it names is already
+// retired.)
 var toleranceDeadPendingTriage = map[string]string{
-	"REST PUT /api/v1/projects/{id}/access-requests/{requestId}/CreateAccessRequestApproval/error#1": "#2407",
-	"REST POST /auth/mfa/verify/GetMFASecret/error#1":                                                "#2548",
+	"REST POST /auth/mfa/verify/GetMFASecret/error#1": "#2548",
 }
 
 // toleranceStalenessUndrivable names the knownOpenTolerances entries
