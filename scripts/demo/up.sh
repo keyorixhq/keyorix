@@ -280,6 +280,12 @@ echo
 # The CLI authenticates from the environment from here on (session obtained by
 # the code login above); no stored password, no --password flags.
 export KEYORIX_SERVER="$SERVER_URL" KEYORIX_TOKEN="$DEMO_TOKEN"
+# check.sh asks for this session (KEYORIX_DEMO_SESSION_OUT=<file>) so its admin
+# checks don't spend two more of the 10-per-15-minute login attempts (#2956) on an
+# identical MFA login. Only written on request; 0600; check.sh deletes it.
+if [ -n "${KEYORIX_DEMO_SESSION_OUT:-}" ]; then
+  ( umask 077; printf '%s' "$DEMO_TOKEN" > "$KEYORIX_DEMO_SESSION_OUT" )
+fi
 ok "Admin MFA enrolled (TOTP) and logged in with a code"
 
 step "Seeding org structure: 2 projects, 2 groups"

@@ -148,7 +148,12 @@ PG_PROJECT="keyorix-demo-check-pg"
 PG_ENV_FILE="$SCRATCH/.env.demo-check"
 
 bring_up_sqlite() {
-  "$REPO_ROOT/scripts/demo/up.sh" >"$SCRATCH/up.log" 2>&1
+  # up.sh leaves its final admin MFA session here, so step_admin_login can reuse
+  # it (the login budget is 10 attempts / 15 min / IP, #2956, and the UI walk
+  # needs two of them). Read and deleted in step_admin_login.
+  mkdir -p "$REPO_ROOT/.demo-2-check-state"
+  UP_SESSION_FILE="$REPO_ROOT/.demo-2-check-state/up-admin-session"
+  KEYORIX_DEMO_SESSION_OUT="$UP_SESSION_FILE" "$REPO_ROOT/scripts/demo/up.sh" >"$SCRATCH/up.log" 2>&1
   local rc=$?
   cat "$SCRATCH/up.log"
   return $rc
@@ -378,6 +383,16 @@ step_admin_login() {
     [ "$HTTP_CODE" = "200" ] || { echo "the admin session from the seed's MFA login is not accepted ($HTTP_CODE): $RESP_BODY"; return 1; }
     echo "reused the seed's MFA login"
     return 0
+  fi
+  if [ -n "${UP_SESSION_FILE:-}" ] && [ -s "$UP_SESSION_FILE" ]; then
+    ADMIN_TOKEN="$(cat "$UP_SESSION_FILE")"
+    rm -f "$UP_SESSION_FILE"
+    req GET /api/v1/projects "$ADMIN_TOKEN"
+    if [ "$HTTP_CODE" = "200" ]; then
+      echo "reused up.sh's MFA login"
+      return 0
+    fi
+    ADMIN_TOKEN=""
   fi
   # The demo admin has MFA (require_mfa is on): answer the challenge with the
   # TOTP key up.sh / the Postgres seed recorded. Against a --url target with no
