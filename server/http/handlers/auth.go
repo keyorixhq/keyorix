@@ -14,7 +14,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core"
-	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -60,8 +59,55 @@ func (h *AuthHandler) checkLoginRateLimit(ctx context.Context, ip string) bool {
 // sharing this budget (Login, RefreshToken, VerifyMFA, BeginWebAuthnLogin,
 // FinishWebAuthnLogin, BeginWebAuthnPasswordlessLogin,
 // FinishWebAuthnPasswordlessLogin, ConsumeSetup) now reserves a slot.
-func (h *AuthHandler) reserveLoginAttempt(ctx context.Context, ip string) {
-	h.coreService.RecordFailedLogin(ctx, ip)
+//
+// #2936 (Andrei, 2026-10-10: "count failures only"): the reservation is still
+// taken up front, for exactly F2's reason, but it is now RELEASABLE, and every
+// request that delivers a session hands its own slot back via returnLoginSlot.
+// "A successful login also consumes a slot" turned out to be a meaningful
+// behaviour change after all: one demo laptop / booth NAT / office egress is
+// one IP, an MFA login spent two slots, and a handful of ordinary logins
+// locked everybody out for 15 minutes, surviving a restart. Only an outcome
+// that delivers a session returns its slot; a wrong credential, a refused
+// request and a post-verdict storage fault (#2880/#2894) all keep it, so the
+// failure budget is exactly what it was. The step of a multi-request flow that
+// does NOT finish it (the password step of an MFA login, a WebAuthn Begin)
+// keeps its slot while the flow is open, bound to the single-use row that
+// carries the flow forward (the MFA challenge, the ceremony session; see
+// loginSlot.heldID). Core's LoginCompletion.Succeeded hands those back when
+// the finishing step delivers a session (#2936 item 4), so a delivered login
+// flow costs nothing and a failed, expired or abandoned one keeps every slot.
+func (h *AuthHandler) reserveLoginAttempt(ctx context.Context, ip string) loginSlot {
+	id, ok := h.coreService.ReserveLoginAttempt(ctx, ip)
+	return loginSlot{id: id, ok: ok}
+}
+
+// loginSlot is one reserved unit of an IP's login budget (#2936). ok is false
+// when nothing was reserved (blank IP, or the best-effort reservation write
+// failed), in which case there is nothing to return.
+type loginSlot struct {
+	id uint
+	ok bool
+}
+
+// heldID is the slot's id for binding it to a challenge or ceremony row that
+// carries it to the request that finishes the flow (#2936 item 4), or nil when
+// nothing was reserved.
+func (s loginSlot) heldID() *uint {
+	if !s.ok {
+		return nil
+	}
+	id := s.id
+	return &id
+}
+
+// returnLoginSlot hands a reserved slot back once its request has DELIVERED a
+// session (#2936). Call it only on that path: every other outcome must keep the
+// slot counted. Best-effort, like the reservation: a release that fails leaves
+// the slot counted, which only ever errs towards the stricter budget.
+func (h *AuthHandler) returnLoginSlot(ctx context.Context, s loginSlot) {
+	if s.ok {
+		h.coreService.ReleaseLoginAttempt(ctx, s.id)
+	}
 }
 
 // AuthHandler handles authentication HTTP requests.
@@ -156,12 +202,15 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// decode, rather than right after the rate-limit check: decode is not the
 	// slow step an attacker exploits, so a structurally-malformed request
 	// (never a real credential guess) need not consume a slot.
-	h.reserveLoginAttempt(r.Context(), ip)
+	slot := h.reserveLoginAttempt(r.Context(), ip)
 
-	// LoginWithIdentity resolves the response identity BEFORE the session is
-	// written (#2844, the #2841 ordering). Reading it here afterwards, as
-	// completeLogin does, left a live session behind when that read panicked.
-	session, user, identity, err := h.coreService.LoginWithIdentity(r.Context(), &core.LoginRequest{
+	// LoginWithIdentityPending: the response identity is resolved BEFORE the
+	// session is written (#2844, the #2841 ordering) — reading it here afterwards
+	// left a live session behind when that read panicked — and the lockout
+	// accounting stays open until the response is built (#2894), so a fault after
+	// the password matched costs the attacker the same lockout progress a wrong
+	// password does. See core.LoginCompletion.
+	session, user, identity, lc, err := h.coreService.LoginWithIdentityPending(r.Context(), &core.LoginRequest{
 		Username:  body.Username,
 		Password:  body.Password,
 		UserAgent: r.Header.Get(hdrUserAgent),
@@ -171,18 +220,29 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		// MFA-enabled account: the password was correct but a second factor is
 		// required. Issue a short-lived challenge instead of a session.
 		if errors.Is(err, core.ErrMFARequired) {
-			challenge, cerr := h.coreService.CreateMFAChallenge(r.Context(), user.ID)
+			// #2936 item 4: the password step keeps its slot, bound to the
+			// challenge; the second factor hands it back if (and only if) it
+			// delivers the session.
+			challenge, cerr := h.coreService.CreateMFAChallengeHoldingLoginSlot(r.Context(), user.ID, slot.heldID())
 			if cerr != nil {
-				// RESIL-1: the password already matched, so a write-gate timeout here
-				// must look exactly like a wrong credential (#2740 option C / #2888);
-				// a 500 or 503 would confirm the guess. Only the gate-contention case
-				// is changed here; the rest of #2888 is its own item.
-				if corestorage.IsWriteContention(cerr) {
-					log.Printf("Login: write gate contention after a matched credential; answering as a wrong credential")
-					sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
-					return
-				}
-				sendError(w, "Internal", "failed to start MFA challenge", http.StatusInternalServerError, nil)
+				// #2888 (#2740 option C): the password was ALREADY confirmed correct
+				// -- that's the only way ErrMFARequired is ever returned. A distinct
+				// 500 here, versus the 401 a wrong password gets below, would confirm
+				// the password was right during any CreateMFAChallenge storage
+				// hiccup. Must look exactly like a wrong password to the client;
+				// LogAuthError still records the real reason for an operator. This also
+				// covers RESIL-1's write-gate contention (#2998): a 503 here would
+				// confirm the guess just as a 500 would.
+				//
+				// #2894: and it must not be cheaper in LOCKOUT state either. Login
+				// deliberately leaves the counter alone on the ErrMFARequired branch
+				// (a correct password is not full authentication for an MFA account),
+				// so without this the counter would sit one short of the threshold
+				// here while a wrong password would have tripped it -- "did the
+				// account lock?" would answer "was the password right?".
+				h.coreService.RecordPostVerdictLoginFailure(r.Context(), user)
+				goSafe(func() { h.coreService.LogAuthError(context.Background(), body.Username, ip, cerr) }) // #nosec G118
+				sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
 				return
 			}
 			// Tell the client which second factors this account can complete, so it
@@ -195,23 +255,31 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			}, "MFA required")
 			return
 		}
-		// The same 500 completeLogin produced for this failure before the read
-		// moved into core: the password matched, so it is not reported as a
-		// wrong credential, and the reserved attempt stays counted.
-		if errors.Is(err, core.ErrLoginIdentityUnavailable) {
-			log.Printf("Login: %v", err)
-			sendError(w, "Internal", errLoginIncomplete, http.StatusInternalServerError, nil)
-			return
+		// #2894: a storage fault AFTER the password matched (the password-expiry
+		// gate, or the session mint) is NOT a wrong credential, and must not be
+		// audited as one -- auth.login_failed would tell an operator a password was
+		// guessed wrong when it was in fact correct, hiding the real incident.
+		// The identity read (ErrLoginIdentityUnavailable, #2844) is post-verdict too:
+		// it used to answer a distinct 500 here, which confirmed the password.
+		// core wraps those with ErrLoginPostVerdict for exactly this, and has
+		// already counted them toward the lockout. The RESPONSE stays byte-identical
+		// either way, and both audit writes are async (goSafe) so this branch is not
+		// measurably slower than the wrong-password one.
+		if errors.Is(err, core.ErrLoginPostVerdict) {
+			goSafe(func() { h.coreService.LogAuthError(context.Background(), body.Username, ip, err) }) // #nosec G118
+		} else {
+			goSafe(func() { h.coreService.LogAuthFailure(context.Background(), body.Username, ip) }) // #nosec G118
 		}
-		goSafe(func() { h.coreService.LogAuthFailure(context.Background(), body.Username, ip) }) // #nosec G118
 		sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
 		return
 	}
 
-	resp, ok := h.completeLoginWithIdentity(w, session, user, identity)
-	if !ok {
-		return
-	}
+	resp := h.completeLoginWithIdentity(w, r, session, user, identity, lc)
+
+	// #2936: a delivered login is not a failure; give the slot back. (The
+	// ErrMFARequired branch above returns earlier and keeps its slot: the flow
+	// is finished by /auth/mfa/verify, which returns ITS slot instead.)
+	h.returnLoginSlot(r.Context(), slot)
 
 	// Audit log + last-login stamp (both non-blocking)
 	ua := r.Header.Get(hdrUserAgent)
@@ -276,10 +344,10 @@ func (h *AuthHandler) loginResponseFromIdentity(session *models.Session, user *m
 // completeLogin finishes a login-completion flow for an already-minted session:
 // it resolves the identity payload, sets the session cookies, and returns the
 // response body to hand to sendSuccess. On a buildLoginResponse failure (the
-// identity read errored) it fails closed instead of handing back a session — it
-// revokes the session it was about to issue and writes a generic 500, and returns
-// ok=false so the caller stops without setting cookies or logging the login as
-// successful (#2412).
+// identity read errored) it fails closed instead of handing back a session —
+// it revokes the session it was about to issue and returns a non-nil error so
+// the caller stops without setting cookies or logging the login as successful
+// (#2412).
 //
 // Its only caller is now ConsumeSetup. The other four (Login, VerifyMFA,
 // FinishWebAuthnLogin, FinishWebAuthnPasswordlessLogin) use
@@ -292,7 +360,20 @@ func (h *AuthHandler) loginResponseFromIdentity(session *models.Session, user *m
 // error was compensated, and a panic unwound past this function to the
 // recovery middleware's 500 with the session still live. The panic is re-raised
 // after the revoke, so the caller-visible response is unchanged.
-func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, session *models.Session, user *models.User) (loginResponseBody, bool) {
+//
+// #2888 (#2740 option C): this used to write its OWN 500 "Login could not be
+// completed" response directly. Its caller reaches this point only once the
+// setup token has ALREADY been confirmed valid, so a 500 here -- distinct from
+// the caller's own generic failure response -- was a clean oracle. It no
+// longer writes anything; the caller maps a non-nil error to EXACTLY its own
+// failure response (same status, body, headers). LogAuthError
+// (internal/core/audit.go) still records the real reason for an operator.
+//
+// #2894: lc is the login's LOCKOUT accounting: lc.Failed() on the error branch,
+// lc.Succeeded() once the response is built. lc may be nil for a flow with no
+// per-account lockout stake (the setup-token consume path) — both methods are
+// nil-safe.
+func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, session *models.Session, user *models.User, lc *core.LoginCompletion) (loginResponseBody, error) {
 	built := false
 	defer func() {
 		if built {
@@ -307,11 +388,12 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, sess
 	built = true
 	if err != nil {
 		h.revokeUndeliveredLogin(r.Context(), session, user, err.Error())
-		sendError(w, "Internal", errLoginIncomplete, http.StatusInternalServerError, nil)
-		return loginResponseBody{}, false
+		lc.Failed(r.Context())
+		return loginResponseBody{}, err
 	}
 	h.setSessionCookies(w, session)
-	return resp, true
+	lc.Succeeded(r.Context())
+	return resp, nil
 }
 
 // revokeUndeliveredLogin is completeLogin's compensation: the session was minted
@@ -336,13 +418,17 @@ func (h *AuthHandler) revokeUndeliveredLogin(ctx context.Context, session *model
 // second compensation: core resolves the identity before its first write (see
 // core.resolveLoginIdentityBeforeMint) and returns it, and the handler uses THIS
 // function rather than re-reading it — re-reading would reopen the same window
-// one layer up. Returns (body, true) unconditionally; the bool is kept so the
-// three call sites (FinishWebAuthnLogin, FinishWebAuthnPasswordlessLogin,
-// VerifyMFA) read identically to the completeLogin ones.
-func (h *AuthHandler) completeLoginWithIdentity(w http.ResponseWriter, session *models.Session, user *models.User, identity core.UserIdentity) (loginResponseBody, bool) {
+// one layer up.
+//
+// #2894: nothing fallible remains, so this is where the delivered login commits
+// its lockout accounting (lc.Succeeded clears the counter). The post-verdict
+// failures that used to reach completeLogin's error branch now happen inside
+// core, before the mint, and are already counted there.
+func (h *AuthHandler) completeLoginWithIdentity(w http.ResponseWriter, r *http.Request, session *models.Session, user *models.User, identity core.UserIdentity, lc *core.LoginCompletion) loginResponseBody {
 	resp := h.loginResponseFromIdentity(session, user, identity)
 	h.setSessionCookies(w, session)
-	return resp, true
+	lc.Succeeded(r.Context())
+	return resp
 }
 
 // ── Setup-token endpoints (ADR-028) ─────────────────────────────────────────────
@@ -407,7 +493,7 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 	// an unbounded setup-token-guessing/DoS surface on an otherwise rate-limited
 	// unauthenticated endpoint. Reserved after the trivial field-presence check,
 	// matching every other call site's "not a structurally-malformed request" bar.
-	h.reserveLoginAttempt(r.Context(), ip)
+	slot := h.reserveLoginAttempt(r.Context(), ip)
 	result, err := h.coreService.CompleteSetup(r.Context(), body.Token, body.Password, r.Header.Get(hdrUserAgent), ip)
 	// The new password was accepted, but the account has MFA (TOTP) or a passkey
 	// enrolled — mirror Login's ErrMFARequired handling exactly (see Login above)
@@ -417,17 +503,17 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 	// ErrMFARequired is checked before the generic err != nil block because
 	// CompleteSetup returns a valid result.User alongside this sentinel.
 	if errors.Is(err, core.ErrMFARequired) {
-		challenge, cerr := h.coreService.CreateMFAChallenge(r.Context(), result.User.ID)
+		challenge, cerr := h.coreService.CreateMFAChallengeHoldingLoginSlot(r.Context(), result.User.ID, slot.heldID())
 		if cerr != nil {
-			// RESIL-1: same rule as Login — a gate timeout after the setup token and
-			// new password were accepted answers exactly like this endpoint's other
-			// generic failure, not a distinguishable 500.
-			if corestorage.IsWriteContention(cerr) {
-				log.Printf("ConsumeSetup: write gate contention after an accepted setup token; answering with the generic failure")
-				sendError(w, "BadRequest", "This setup link could not be completed. It may be invalid or expired — ask your administrator for a new one.", http.StatusBadRequest, nil)
-				return
-			}
-			sendError(w, "Internal", "failed to start MFA challenge", http.StatusInternalServerError, nil)
+			// #2888 (#2740 option C sibling of Login's own fix): the token was
+			// ALREADY consumed and the new password ALREADY set -- that's the
+			// only way ErrMFARequired is reached here. A distinct error for a
+			// CreateMFAChallenge storage hiccup, versus the generic "could not
+			// be completed" every other failure gets below, would reveal that
+			// this specific token was genuinely valid. Must look identical. This
+			// also covers RESIL-1's write-gate contention (#2998).
+			goSafe(func() { h.coreService.LogAuthError(context.Background(), result.User.Username, ip, cerr) }) // #nosec G118
+			sendError(w, "BadRequest", "This setup link could not be completed. It may be invalid or expired — ask your administrator for a new one.", http.StatusBadRequest, nil)
 			return
 		}
 		sendSuccess(w, map[string]interface{}{
@@ -452,10 +538,24 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, ok := h.completeLogin(w, r, result.Session, result.User)
-	if !ok {
+	// nil completion: the setup-token flow authenticates a single-use token, not
+	// a guessable per-account credential, and never touches the failed-login
+	// counter on any branch -- so there is nothing for a post-verdict failure
+	// here to have to match (#2894). The RESPONSE is still byte-identical to the
+	// generic failure branch above (#2888), which is the property that matters
+	// for this endpoint.
+	resp, err := h.completeLogin(w, r, result.Session, result.User, nil)
+	if err != nil {
+		// #2888: same byte-identical response as the generic failure branch
+		// above -- see completeLogin's doc comment.
+		goSafe(func() { h.coreService.LogAuthError(context.Background(), result.User.Username, ip, err) }) // #nosec G118
+		sendError(w, "BadRequest", "This setup link could not be completed. It may be invalid or expired — ask your administrator for a new one.", http.StatusBadRequest, nil)
 		return
 	}
+	// #2936: the session is delivered, so the slot goes back (the MFA-required
+	// branch above binds it to the challenge instead; the second-factor step
+	// returns it once that step delivers the session).
+	h.returnLoginSlot(r.Context(), slot)
 	goSafe(func() {
 		h.coreService.LogAuthLogin(context.Background(), result.User.ID, result.User.Username, ip, r.Header.Get(hdrUserAgent))
 	}) // #nosec G118
@@ -520,13 +620,18 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	// doc. Reserved after the trivial "is a token even present" check, matching
 	// Login's "after decode" placement — a request with no token at all is not a
 	// real guess attempt.
-	h.reserveLoginAttempt(r.Context(), ip)
+	slot := h.reserveLoginAttempt(r.Context(), ip)
 
 	session, err := h.coreService.RefreshSession(r.Context(), token)
 	if err != nil {
 		sendError(w, "Unauthorized", "Session not found or expired", http.StatusUnauthorized, nil)
 		return
 	}
+	// #2936: a delivered refresh is not a failed guess. A logged-in client
+	// refreshes on a timer, and this endpoint shares the login budget, so
+	// keeping the slot would let an open browser tab lock its own IP out of
+	// logging in.
+	h.returnLoginSlot(r.Context(), slot)
 
 	// Token rotation: evict the OLD token from the auth cache immediately, like Logout
 	// and ChangePassword. Without this, the just-validated old token lingers in the 30s

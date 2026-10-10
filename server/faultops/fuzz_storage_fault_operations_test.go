@@ -1068,14 +1068,15 @@ var knownOpenTolerances = []knownOpenTolerance{
 	//       reference only by the missing LoginAttempt row. That is #2837's
 	//       question (an op-scoped best-effort exemption for the reservation
 	//       write; see also #2921's proposal to bind such rows to the
-	//       atomicity ledger instead), so the row is re-pointed there and
-	//       pinned to that one method. Expiry deliberately NOT moved.
-	{
-		op: "REST POST /auth/mfa/verify", method: "ReserveLoginAttempt", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2837", expires: "2026-10-17",
-		tables:     []string{"LoginAttempt"},
-		findingDoc: "#2837",
-	},
+	//       atomicity ledger instead), so the row was re-pointed there and
+	//       pinned to that one method.
+	//       DELETED by #2956 (#2936, "the per-IP login budget counts failures,
+	//       not logins"): a delivered login now RETURNS its reservation
+	//       (returnLoginSlot after completeLoginWithIdentity), so the fault-free
+	//       reference run has no LoginAttempt row either and the
+	//       ReserveLoginAttempt#1/error run no longer differs from it at all.
+	//       TestKnownOpenTolerances_AreLoadBearing reported the row dead; it went
+	//       quiet because the behaviour changed, not because something shadows it.
 	// The fifth #2549 entry (op="REST POST /api/v1/auth/mfa/stepup",
 	// method=CreateMFAStepUpGrant#1, tables=[MFASecret]) MOVED to
 	// oracleAByDesignErrors (oracle_a_by_design_test.go). Unlike the four bulk-op
@@ -1113,14 +1114,10 @@ var knownOpenTolerances = []knownOpenTolerance{
 	//     that tuple's diff [LoginAttempt]; on main it is still #2807's bug shape.
 	//   - ReserveLoginAttempt#1/error: the same #2837 shape as /auth/mfa/verify's
 	//     row above (reservation write fails, login succeeds best-effort, run
-	//     lacks only the LoginAttempt row). Kept, re-pointed to #2837, pinned to
-	//     that method. Expiry deliberately NOT moved.
-	{
-		op: "REST POST /auth/webauthn/login/finish", method: "ReserveLoginAttempt", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2837", expires: "2026-10-17",
-		tables:     []string{"LoginAttempt"},
-		findingDoc: "#2837",
-	},
+	//     lacks only the LoginAttempt row). Was kept, re-pointed to #2837 and
+	//     pinned to that method; DELETED by #2956 for the same reason as
+	//     /auth/mfa/verify's row above (a delivered login returns its slot, so
+	//     there is no LoginAttempt diff left to tolerate).
 	// (#2834 -- compliance snapshot persisting partial counts -- is FIXED: its two
 	// tolerances are gone. POST /api/v1/compliance/snapshots now fails closed on any
 	// degraded sub-rollup; guarded by compliance_snapshot_fail_closed_test.go.)
@@ -1152,23 +1149,16 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// stood here is removed: #2897 makes that purge failure observable and it is
 	// now an op-scoped acceptable-by-design entry above, so the tolerance no
 	// longer tolerates anything.)
-	// Pre-existing, unrelated to this PR's own MFA-reauth changes (#2392 only
-	// newly wires /auth/mfa/verify into the fuzzer, it doesn't touch this code
-	// path) -- found by a live 2-minute FuzzStorageFaultOperations run during
-	// this PR's rebase. VerifyMFACredentials (internal/core/mfa.go) calls
-	// MarkTOTPStepUsed (consuming the TOTP step) BEFORE mintSession's own,
-	// independent CreateSession call; a CreateSession failure reports the
-	// whole verify as an error with the step already burned, so the caller
-	// cannot retry with the same correct code. Filed as #2567 (cross-links
-	// #2548 -- same "distinguish a storage hiccup from a confirmed negative
-	// result before a real-consequence side effect runs" shape, different
-	// specific mechanism).
-	{
-		op: "REST POST /auth/mfa/verify", method: "CreateSession", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2567", expires: "2026-10-17",
-		tables:     []string{"MFASecret", "LoginAttempt"},
-		findingDoc: "#2567",
-	},
+	// (#2567's entry -- REST POST /auth/mfa/verify, CreateSession#1/error,
+	// [MFASecret LoginAttempt] -- is gone. The "step burned, cannot retry with
+	// the same code" half is fixed: VerifyMFALoginPending gives the step back
+	// with ReleaseTOTPStepIfUnchanged
+	// (TestVerifyMFALogin_CreateSessionFailure_ReleasesTOTPStepForRetry). What
+	// remains is the by-design post-verdict shape #2894 makes deliberate (slot
+	// counted, auth.login_error audited, last_used_step = step-1), now pinned in
+	// oracleAByDesignErrors with its design citation and proving tests. This row
+	// stopped matching once #2894 added the AuditEvent, and
+	// TestKnownOpenTolerances_AreLoadBearing reported it dead.)
 	// Coordinator priority (12:34Z): random pre-existing fuzz findings were
 	// blocking unrelated PRs (e.g. #2556). Added here, into this PR's own
 	// branch, so the hotspot file stays serialized through one PR rather than
@@ -1493,6 +1483,22 @@ var bestEffortTables = map[string][]string{
 	// not an undiscovered bug — so it belongs here, not in
 	// knownOpenTolerances.
 	"LastUserSecretActivity": {"AccessReviewCampaign"},
+	// ReleaseLoginAttempt (#2936): a request that delivers a session returns its
+	// reserved per-IP login-budget slot (server/http/handlers/auth.go
+	// returnLoginSlot) through core.ReleaseLoginAttempt, which is explicitly
+	// best-effort (besteffort.Run: an error OR a panic is logged, counted and
+	// swallowed). The login itself has already succeeded; a failed release only
+	// leaves that one LoginAttempt row counted -- the stricter side of the
+	// budget, never a looser one. So when the faulted method is the release
+	// itself, the run differs from the fault-free reference by exactly that
+	// row and nothing else. Method-scoped: a LoginAttempt divergence caused by
+	// any OTHER faulted method is not covered here. A method-only entry is
+	// sound because the method is best-effort at EVERY call site: the only
+	// storage.ReleaseLoginAttempt caller is core.ReleaseLoginAttempt
+	// (rate_limit.go), and every handler release (auth.go returnLoginSlot,
+	// mfa.go, webauthn.go -- including the pre-verdict CR3/#2565 releases)
+	// goes through it.
+	"ReleaseLoginAttempt": {"LoginAttempt"},
 }
 
 // acceptableByDesign reports whether every table in diff is accounted for by
