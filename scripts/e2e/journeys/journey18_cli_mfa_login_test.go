@@ -177,6 +177,42 @@ func activateMFA(t *testing.T, s *harness.Server, token, secret, password string
 	return data.RecoveryCodes, totpStep(now)
 }
 
+// enrolTOTPAndLogin takes an interactive user through what security.require_mfa
+// (ADR-112, on in the shipped config) demands before anything else works: log in with
+// the password, enrol + activate a TOTP factor through the public API, then complete a
+// real two-step login (/auth/login's mfa_challenge -> /auth/mfa/verify). It returns the
+// session token that login issued -- a fresh MFA-backed session, not the pre-enrolment
+// one, so nothing here depends on the server refreshing an older session's MFA state.
+func enrolTOTPAndLogin(t *testing.T, s *harness.Server, username, password string) string {
+	t.Helper()
+	preToken := adminLogin(t, s, username, password)
+	secret := beginMFAEnrollment(t, s, preToken)
+	_, burned := activateMFA(t, s, preToken, secret, password)
+
+	env := restExpect(t, s, "", http.MethodPost, "/auth/login",
+		map[string]string{"username": username, "password": password}, http.StatusOK)
+	var challenge struct {
+		MFARequired  bool   `json:"mfa_required"`
+		MFAChallenge string `json:"mfa_challenge"`
+	}
+	if err := json.Unmarshal(env.Data, &challenge); err != nil {
+		t.Fatalf("decode POST /auth/login for %s: %v\nraw: %s", username, err, env.Data)
+	}
+	if !challenge.MFARequired || challenge.MFAChallenge == "" {
+		t.Fatalf("POST /auth/login for MFA-enrolled %s: expected an mfa_challenge, got: %s", username, env.Data)
+	}
+	env = restExpect(t, s, "", http.MethodPost, "/auth/mfa/verify",
+		map[string]string{"mfa_challenge": challenge.MFAChallenge, "code": totpCodeAfterStep(t, secret, burned)},
+		http.StatusOK)
+	var session struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(env.Data, &session); err != nil || session.Token == "" {
+		t.Fatalf("POST /auth/mfa/verify for %s returned no session token (err %v): %s", username, err, env.Data)
+	}
+	return session.Token
+}
+
 // totpPeriod mirrors internal/core's own step length (mfa.go's totpPeriod).
 const totpPeriod = 30 * time.Second
 

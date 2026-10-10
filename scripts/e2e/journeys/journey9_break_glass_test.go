@@ -43,7 +43,17 @@ func TestJourney_BreakGlass(t *testing.T) {
 	s := startServerWithBreakGlass(t, serverBin)
 	t.Cleanup(s.Close)
 
-	adminToken := adminLogin(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
+	// This journey boots with the shipped config, so security.require_mfa is on
+	// (ADR-112). Prove that premise first -- an un-enrolled admin session is
+	// confined to enrolment -- then enrol TOTP through the real API and work from
+	// the MFA-backed session, the way a real operator on a fresh install must.
+	preMFA := adminLogin(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
+	if denied := restCall(t, s, preMFA, http.MethodGet, "/api/v1/projects", nil); denied.StatusCode != http.StatusForbidden ||
+		!strings.Contains(string(denied.Raw), "MFAEnrollmentRequired") {
+		t.Fatalf("premise: the shipped config should require MFA enrolment first; GET /api/v1/projects got %d: %s",
+			denied.StatusCode, denied.Raw)
+	}
+	adminToken := enrolTOTPAndLogin(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
 	aEnv := adminEnv(s, adminToken)
 
 	// ── Admin: project, secret, a role deliberately WITHOUT secrets.read ───
@@ -80,7 +90,9 @@ func TestJourney_BreakGlass(t *testing.T) {
 	runCLI(t, cliBin, aEnv, "rbac", "assign-role", "--user", "smoketestadmin@example.invalid",
 		"--role", "project_admin", "--project", n9ProjectName)
 
-	oncallToken := adminLogin(t, s, n9OncallUser, n9UserPass)
+	// require_mfa covers every interactive user, not just admins: the oncall
+	// engineer enrols too before break-glass is reachable at all.
+	oncallToken := enrolTOTPAndLogin(t, s, n9OncallUser, n9UserPass)
 
 	// ── Before: the oncall user genuinely cannot read the secret ───────────
 	assertSecretReadDenied(t, s, oncallToken, secID)

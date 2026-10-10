@@ -504,21 +504,51 @@ const EventSecretVersionsListed = "secret.versions_listed"
 // so who listed a secret's versions from where still feeds its baselines.
 const AccessActionVersionsList = "versions_list"
 
+// EventSecretMetadataRead is the audit event for a metadata-only secret lookup
+// (GET /secrets/by-name): the response carries the secret's metadata, never its
+// value, so it is not a secret.read (AUDIT-UX-3, same rule as
+// EventSecretVersionsListed).
+const EventSecretMetadataRead = "secret.metadata_read"
+
+// AccessActionMetadataRead is the secret_access_logs action written with
+// EventSecretMetadataRead. Not "read": read counts filter on action "read".
+// Anomaly detection reads every action, so metadata lookups still feed its
+// baselines.
+const AccessActionMetadataRead = "metadata_read"
+
 // LogSecretVersionsListed writes audit_events + secret_access_logs for a
 // version-history listing, as ONE atomic unit, and blocks until both are
 // durably committed: the same audit-before-response contract (and the same
 // writer) as LogSecretReadWithProject, which this replaces for the listing.
 // Returns an error if the write fails; the caller must not send the listing.
 func (c *KeyorixCore) LogSecretVersionsListed(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) error { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
+	return c.logSecretMetadataAccess(ctx, EventSecretVersionsListed, AccessActionVersionsList,
+		fmt.Sprintf("User %s listed the versions of secret %s", username, secretName),
+		userID, secretID, projectID, username, ip, ua)
+}
+
+// LogSecretMetadataRead writes secret.metadata_read + an access-log row of
+// action "metadata_read" (atomically, like LogSecretVersionsListed) for a
+// metadata-only lookup by name.
+func (c *KeyorixCore) LogSecretMetadataRead(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) error { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
+	return c.logSecretMetadataAccess(ctx, EventSecretMetadataRead, AccessActionMetadataRead,
+		fmt.Sprintf("User %s looked up secret %s", username, secretName),
+		userID, secretID, projectID, username, ip, ua)
+}
+
+// logSecretMetadataAccess is the shared atomic writer for metadata-only secret
+// access events (no value disclosed). The description must end in
+// " secret <name>" (the dashboard extracts the name from it).
+func (c *KeyorixCore) logSecretMetadataAccess(ctx context.Context, eventType, accessAction, description string, userID, secretID, projectID uint, username, ip, ua string) error { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
 	uid, sid, pid := userID, secretID, projectID
 	t := true
 	event := &models.AuditEvent{
-		EventType:    EventSecretVersionsListed,
+		EventType:    eventType,
 		UserID:       &uid,
 		SecretNodeID: &sid,
 		ProjectID:    &pid,
 		IPAddress:    ip,
-		Description:  sanitizeAuditText(fmt.Sprintf("User %s listed the versions of secret %s", username, secretName)),
+		Description:  sanitizeAuditText(description),
 		Success:      &t,
 		EventTime:    time.Now(),
 		ActorType:    actorTypeFromContext(ctx),
@@ -533,7 +563,7 @@ func (c *KeyorixCore) LogSecretVersionsListed(ctx context.Context, userID uint, 
 		SecretNodeID: secretID,
 		AccessedBy:   username,
 		AccessTime:   time.Now(),
-		Action:       AccessActionVersionsList,
+		Action:       accessAction,
 		IPAddress:    ip,
 		UserAgent:    ua,
 	}

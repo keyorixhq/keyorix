@@ -21,7 +21,9 @@ import (
 //     is refused WITH the reason.
 //  2. After `rbac assign-role ... project_admin` (what scripts/demo/up.sh now seeds),
 //     `share create --permission write` to a project_viewer succeeds.
-//  3. The viewer updates the secret with the CLI (the share elevates her).
+//  3. The viewer updates the secret with the CLI (the share elevates her) — and
+//     nothing else: suspend, resume, move or re-share are refused with the reason
+//     (#3001 allowlist: update value, update metadata, rotate).
 //  4. `share revoke`; the viewer's update is refused again, her role's read stays.
 //  5. The audit trail names the share id on create, elevated update and revoke.
 //  6. Sharing with a non-member is refused with the reason.
@@ -105,6 +107,20 @@ func shareElevation(t *testing.T, s *harness.Server, cliBin, adminUser, adminEma
 		if e := restCall(t, s, aliceToken, http.MethodPost, sharePath,
 			map[string]interface{}{"recipient_id": bobID, "is_group": false, "permission": "read"}); e.StatusCode != http.StatusForbidden {
 			t.Errorf("write share must not grant re-sharing: got %d: %s", e.StatusCode, e.Raw)
+		}
+	})
+
+	t.Run("a write share elevates only update, metadata and rotate (#3001)", func(t *testing.T) {
+		runCLI(t, cliBin, aliceEnv, "secret", "rotate", "--id", strconv.Itoa(sid), "--value", "rotated-by-alice")
+		assertSecretUnchanged(t, s, adminToken, sid, "rotated-by-alice")
+		runCLI(t, cliBin, aliceEnv, "secret", "update", "--id", strconv.Itoa(sid), "--value", "updated-by-alice")
+		// An incident freeze she could undo, or a denial of service: refused, with the reason.
+		runCLIExpectErr(t, cliBin, aliceEnv, "secret", "suspend", "--id", strconv.Itoa(sid))
+		for _, p := range []string{"suspend", "resume", "move", "rollback", "transfer-ownership"} {
+			e := restCall(t, s, aliceToken, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/%s", sid, p), map[string]interface{}{})
+			if e.StatusCode != http.StatusForbidden || !strings.Contains(e.Message, "only lets you update its value and metadata or rotate it") {
+				t.Errorf("POST .../%s: want 403 with the share reason, got %d: %s", p, e.StatusCode, e.Raw)
+			}
 		}
 	})
 

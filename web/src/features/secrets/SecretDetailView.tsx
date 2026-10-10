@@ -70,6 +70,7 @@ const relativeFromNow = (d: string | Date): string => {
 const auditEventLabel = (eventType: string): string => {
     const KNOWN: Record<string, string> = {
         'secret.versions_listed': 'Versions listed',
+        'secret.metadata_read': 'Metadata read',
         'secret.created': 'Created',
         'secret.updated': 'Updated',
         'secret.rotated': 'Rotated',

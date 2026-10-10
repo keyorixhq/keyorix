@@ -71,8 +71,18 @@ Share a secret with a user or group.
 
 A share applies only to members of the secret's project. For them, the
 effective permission on the secret is the higher of their project role and the
-share (a `project_viewer` shared with `write` may update that secret); a share
-never grants delete, `secrets.manage` or re-sharing. See the
+share, with one limit: a `write` share elevates only three actions on that
+secret — `PUT /api/v1/secrets/{id}` (value and metadata; not a change to
+`expiration`, `clear_expiration` or `max_reads`), `PUT .../tags` and
+`PATCH .../description`, and `POST .../rotate` (gRPC: `UpdateSecret`). Every
+other `secrets.write` route (suspend, resume, move, rollback,
+transfer-ownership, classification, auto-rotate, dependencies, version
+comments, share, restore, `/shares/{id}`, project-level bulk routes) answers
+`403` for a share-only caller, with `message` "A share on this secret only lets
+you update its value and metadata or rotate it. ..." where the gate consulted
+the share. A share never grants delete, `secrets.manage` or re-sharing.
+Each elevated action is audited as `share_access_elevated` once it succeeds
+(action, secret, share id, actor); refusals and failures write nothing. See the
 [user guide](SECRET_SHARING_USER_GUIDE.md#how-a-share-combines-with-a-project-role).
 
 **Example:**

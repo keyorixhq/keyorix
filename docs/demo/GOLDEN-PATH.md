@@ -107,9 +107,10 @@ they use a name instead.) Or just log in as alice in the web UI and show
 ## 3b. Share, then revoke: a share elevates one secret (~1.5 min)
 
 alice can read `db-password` (secret 2, in `backend-api`) through her
-`project_viewer` role, but she cannot change it. A `write` share lifts her to
-write on that one secret only; revoking it takes away exactly that and nothing
-else (#2941). `up.sh` makes the admin `project_admin` on `backend-api`, because
+`project_viewer` role, but she cannot change it. A `write` share lets her
+update that one secret's value and metadata and rotate it, nothing more: she
+still cannot suspend, move or re-share it (#2941, #3001). Revoking the share
+takes away exactly that and nothing else. `up.sh` makes the admin `project_admin` on `backend-api`, because
 only an owner who is a member of the secret's project can share it (#2976).
 
 ```sh
@@ -119,6 +120,7 @@ only an owner who is a member of the secret's project can share it (#2976).
 
 # as alice (or in the web UI: open db-password, edit the value)
 ./bin/keyorix secret update --id 2 --value demo-db-pass-v2   # works: the share elevates her on this secret
+./bin/keyorix secret suspend --id 2                          # 403: a share never lets her suspend it
 
 # as admin
 ./bin/keyorix share revoke --share-id <id from share list>

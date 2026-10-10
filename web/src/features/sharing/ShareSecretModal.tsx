@@ -31,6 +31,17 @@ const ALL_PERMISSION_OPTIONS = [
     { value: 'write', label: 'Read & Write' },
 ];
 
+// What each share level grants (server: core.secretActionShareElevates). A write
+// share never covers suspend/resume, expiry or read limits, moving, ownership,
+// rollback, classification, auto-rotation, re-sharing, ACLs or delete: those keep
+// needing a project role.
+export const PERMISSION_HINTS: Record<'read' | 'write', string> = {
+    read: 'The recipient can read this secret.',
+    write:
+        'The recipient can read this secret, update its value and metadata (description, tags), and rotate it. ' +
+        'Suspending, changing its expiry, moving, deleting, re-sharing or changing access still needs a project role.',
+};
+
 // Time-bound (JIT) share presets. 'never' = a permanent share (no expiry sent);
 // the rest are durations from now, resolved to an ISO timestamp at submit time.
 const EXPIRY_OPTIONS = [
@@ -300,6 +311,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
                         onChange={(e) => setPermission(e.target.value as 'read' | 'write')}
                         options={permissionOptions}
                         disabled={shareSecret.isPending || success}
+                        helperText={PERMISSION_HINTS[permission]}
                     />
                 </div>
 

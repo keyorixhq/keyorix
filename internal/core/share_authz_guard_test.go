@@ -39,15 +39,20 @@ func TestShareTerm_DecisionFunctionsConsultIt(t *testing.T) {
 			}
 		}
 	}
-	for _, fn := range []string{"AuthorizeSecret", "CheckSecretPermission"} {
+	for _, fn := range []string{"AuthorizeSecretAction", "checkSecretPermission"} {
 		require.Contains(t, bodies, fn)
 		assert.True(t, bodyCalls(bodies[fn], "sharePermissionFor"),
 			"%s must consult the share term (sharePermissionFor) — #2941", fn)
 	}
-	for _, fn := range []string{"AuthorizeSecretPrincipal", "AuthorizeSecretPrincipalForSecret"} {
+	// The action-less entry points delegate to the action-aware ones (so they get the
+	// share term with no action: read elevation only).
+	assert.True(t, bodyCalls(bodies["AuthorizeSecret"], "AuthorizeSecretAction"), "AuthorizeSecret must delegate to AuthorizeSecretAction")
+	assert.True(t, bodyCalls(bodies["CheckSecretPermission"], "checkSecretPermission"), "CheckSecretPermission must delegate to checkSecretPermission")
+	for _, fn := range []string{"AuthorizeSecretPrincipal", "AuthorizeSecretPrincipalForSecret", "AuthorizeSecretPrincipalForSecretAction"} {
 		require.Contains(t, bodies, fn)
-		assert.True(t, bodyCalls(bodies[fn], "AuthorizeSecret") || bodyCalls(bodies[fn], "AuthorizeSecretPrincipalForSecret"),
-			"%s must route human users through AuthorizeSecret", fn)
+		assert.True(t, bodyCalls(bodies[fn], "AuthorizeSecret") || bodyCalls(bodies[fn], "AuthorizeSecretAction") ||
+			bodyCalls(bodies[fn], "AuthorizeSecretPrincipalForSecret") || bodyCalls(bodies[fn], "AuthorizeSecretPrincipalForSecretAction"),
+			"%s must route human users through AuthorizeSecret(Action)", fn)
 	}
 }
 
@@ -95,12 +100,21 @@ func TestShareTerm_AuthorizeSecret_MaxOfRoleAndShare(t *testing.T) {
 		require.NoError(t, err)
 		return ok
 	}
+	// A secrets.write decision a share can make names an allowlisted action and runs
+	// under a request recorder (the transports always provide one).
+	allowedWrite := func(user uint) bool {
+		rctx, _ := WithShareElevationRecorder(ctx)
+		d, err := c.AuthorizeSecretAction(rctx, user, secretID, permSecretsWrite, SecretActionUpdate)
+		require.NoError(t, err)
+		return d.Allowed
+	}
 	assert.False(t, allowed(2, permSecretsRead), "member with a no-permission role and no share: denied")
 
 	share := &models.ShareRecord{SecretID: secretID, OwnerID: 9, RecipientID: 2, Permission: "write"}
 	require.NoError(t, db.Create(share).Error)
 	assert.True(t, allowed(2, permSecretsRead), "write share grants read")
-	assert.True(t, allowed(2, permSecretsWrite), "write share grants write")
+	assert.True(t, allowedWrite(2), "write share grants an allowlisted write")
+	assert.False(t, allowed(2, permSecretsWrite), "a write decision that names no action is not elevated (#3001 follow-up)")
 	for _, perm := range []string{permSecretsDelete, permSecretsManage, permRolesAssign} {
 		assert.False(t, allowed(2, perm), "a share never grants %s", perm)
 	}
@@ -115,7 +129,7 @@ func TestShareTerm_AuthorizeSecret_MaxOfRoleAndShare(t *testing.T) {
 	// BeforeSave-bypass guard, g1619, rejects raw writes to hooked columns).
 	share.ExpiresAt = &past
 	require.NoError(t, db.Save(share).Error)
-	assert.False(t, allowed(2, permSecretsWrite), "an expired share grants nothing")
+	assert.False(t, allowedWrite(2), "an expired share grants nothing")
 
 	// A corrupt level grants nothing (never reads as owner).
 	share.ExpiresAt = nil
@@ -125,9 +139,9 @@ func TestShareTerm_AuthorizeSecret_MaxOfRoleAndShare(t *testing.T) {
 
 	// Revoked (deleted) grants nothing.
 	require.NoError(t, db.Model(share).Update("permission", "write").Error)
-	require.True(t, allowed(2, permSecretsWrite))
+	require.True(t, allowedWrite(2))
 	require.NoError(t, db.Delete(share).Error)
-	assert.False(t, allowed(2, permSecretsWrite), "revoke removes exactly the elevation")
+	assert.False(t, allowedWrite(2), "revoke removes exactly the elevation")
 }
 
 func TestShareTerm_CheckSecretPermission_NonMemberShareGrantsNothing(t *testing.T) {
@@ -139,10 +153,12 @@ func TestShareTerm_CheckSecretPermission_NonMemberShareGrantsNothing(t *testing.
 
 	_, err := c.CheckSecretPermission(ctx, secretID, 3, PermissionRead)
 	assert.Error(t, err, "a non-member's share must not pass the core permission check either")
-	pc, err := c.CheckSecretPermission(ctx, secretID, 2, PermissionWrite)
+	pc, err := c.EnforceSecretActionPermission(ctx, secretID, 2, SecretActionUpdate)
 	require.NoError(t, err)
 	assert.Equal(t, "direct_share", pc.Source)
 	require.NotNil(t, pc.ShareID)
+	_, err = c.CheckSecretPermission(ctx, secretID, 2, PermissionWrite)
+	assert.ErrorIs(t, err, ErrShareActionNotElevated, "an action-less write check is not elevated, and says why")
 	_, err = c.CheckSecretPermission(ctx, secretID, 2, PermissionOwner)
 	assert.Error(t, err, "a write share never grants owner")
 }

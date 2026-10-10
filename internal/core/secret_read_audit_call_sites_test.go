@@ -35,9 +35,12 @@ import (
 // secretReadAuditCallSiteAllowlist names LogSecretReadWithProject call sites
 // deliberately exempt from "checked, not in goSafe", keyed
 // "<file basename>:<enclosing function name>", with the reason as the value.
-var secretReadAuditCallSiteAllowlist = map[string]string{
-	"secrets_crud.go:GetSecretByName": "metadata-only response (newSecretNodeWire, no value field) -- there is no disclosed value for audit-before-disclosure to gate here, so this stays fire-and-forget like every other non-value-disclosing audit call (LogSecretCreated, LogSecretUpdated, ...). See GetSecretByName's own doc comment.",
-}
+//
+// Empty since AUDIT-UX-3: GET /secrets/by-name (the former only entry) is a
+// metadata-only lookup and now writes secret.metadata_read via
+// LogSecretMetadataRead, so every remaining LogSecretReadWithProject call site
+// is a value disclosure and must be checked and synchronous.
+var secretReadAuditCallSiteAllowlist = map[string]string{}
 
 func TestSecretReadAuditCallSites_CheckedAndNotInGoSafe(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -54,12 +57,12 @@ func TestSecretReadAuditCallSites_CheckedAndNotInGoSafe(t *testing.T) {
 		t.Fatal("discovered zero LogSecretReadWithProject call sites across the repo — the AST walk is almost certainly broken (GetSecret, GetSecretValueByRef, and CopySecret alone should match), not that every value-disclosing path stopped auditing")
 	}
 	// A floor, not an exact count: new value-disclosing endpoints are expected to
-	// add call sites over time. 6 is the count known at the time this test was
-	// written (GetSecret, GetSecretByName, GetSecretValueByRef, GetSecretVersions
-	// x2 HTTP+gRPC, GetSecretValue gRPC, CopySecret, bulk-render) -- see the PR
-	// body's full inventory for the authoritative list as of this change.
-	if len(sites) < 6 {
-		t.Fatalf("discovered only %d LogSecretReadWithProject call site(s); expected at least 6 — the AST walk may be skipping a directory it shouldn't", len(sites))
+	// add call sites over time. 5 is the count of value-disclosing sites today
+	// (GetSecret, GetSecretValueByRef, GetSecretValue gRPC, CopySecret, bulk-render);
+	// GetSecretVersions (#2970) and GetSecretByName (AUDIT-UX-3) moved to their own
+	// metadata events and are no longer call sites.
+	if len(sites) < 5 {
+		t.Fatalf("discovered only %d LogSecretReadWithProject call site(s); expected at least 5 — the AST walk may be skipping a directory it shouldn't", len(sites))
 	}
 
 	var violations []string

@@ -6,6 +6,7 @@
 package services
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -42,7 +43,12 @@ func TestShareElevation2941_GRPC_WriteShareLetsReaderUpdate_RevokeRemovesIt(t *t
 
 	share := &models.ShareRecord{SecretID: uint(sec.GetId()), OwnerID: 1, RecipientID: 2, Permission: "write"}
 	require.NoError(t, r.db.Create(share).Error)
-	_, err = r.svc.UpdateSecret(alice, &pb.UpdateSecretRequest{Id: sec.GetId(), Value: &v})
+	// Through the server chain's ShareElevationAuditInterceptor: an elevated write
+	// needs its recorder (#3001 follow-up, audited when performed).
+	err = viaShareAudit(r.svc.core, alice, func(ctx context.Context) error {
+		_, uerr := r.svc.UpdateSecret(ctx, &pb.UpdateSecretRequest{Id: sec.GetId(), Value: &v})
+		return uerr
+	})
 	require.NoError(t, err, "#2941: a write share elevates a project reader to update this secret over gRPC")
 
 	require.NoError(t, r.db.Delete(share).Error)

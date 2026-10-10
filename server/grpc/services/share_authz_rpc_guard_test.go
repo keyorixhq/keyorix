@@ -19,6 +19,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -74,8 +75,8 @@ func TestAuthorizeSecretScoped_CallsShareAwareCheck(t *testing.T) {
 		}
 	}
 	require.NotNil(t, body, "secret_service.go must declare authorizeSecretScoped")
-	assert.True(t, callsFunc(body, "AuthorizeSecretPrincipalForSecret"),
-		"authorizeSecretScoped must decide with core.AuthorizeSecretPrincipalForSecret (role + ACL + share term)")
+	assert.True(t, callsFunc(body, "AuthorizeSecretPrincipalForSecretAction"),
+		"authorizeSecretScoped must decide with core.AuthorizeSecretPrincipalForSecretAction (role + ACL + share term, per action)")
 	assert.False(t, callsFunc(body, "AuthorizePrincipal"),
 		"authorizeSecretScoped must not make a role-only AuthorizePrincipal decision for a found secret")
 }
@@ -125,4 +126,72 @@ func callsFunc(body *ast.BlockStmt, name string) bool {
 		return !found
 	})
 	return found
+}
+
+// TestSecretsWriteRPCs_NameTheirAction (#3001 follow-up): every
+// authorizeSecretScoped(..., permSecretsWrite, ...) call in this package must name its
+// core.SecretAction (the RPC's write-share allowlist decision); no other permission
+// may name one. The behavioural matrix is share_write_allowlist_test.go.
+func TestSecretsWriteRPCs_NameTheirAction(t *testing.T) {
+	writeCalls := 0
+	for _, file := range []string{"secret_service.go", "share_service.go"} {
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, file, nil, 0)
+		require.NoError(t, err)
+		ast.Inspect(f, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			id, ok := call.Fun.(*ast.Ident)
+			if !ok || id.Name != "authorizeSecretScoped" || len(call.Args) < 5 {
+				return true
+			}
+			pos := fset.Position(call.Pos())
+			perm, _ := call.Args[4].(*ast.Ident)
+			if perm == nil || perm.Name != "permSecretsWrite" {
+				assert.Len(t, call.Args, 5, "%s:%d: only a secrets.write call names a SecretAction", file, pos.Line)
+				return true
+			}
+			writeCalls++
+			if assert.Len(t, call.Args, 6, "%s:%d: a secrets.write authorizeSecretScoped call must name its core.SecretAction", file, pos.Line) {
+				act, ok := call.Args[5].(*ast.SelectorExpr)
+				assert.True(t, ok && strings.HasPrefix(act.Sel.Name, "SecretAction"),
+					"%s:%d: the action must be a core.SecretAction* constant", file, pos.Line)
+			}
+			return true
+		})
+	}
+	assert.GreaterOrEqual(t, writeCalls, 3, "calibration: UpdateSecret, SetSecretAutoRotate and ShareSecret at least")
+}
+
+// TestServerChain_HasShareElevationAuditInterceptor: the server's unary chain must
+// include ShareElevationAuditInterceptor, which commits share_access_elevated rows
+// only for RPCs that succeeded. (Leaving it out fails closed — core refuses write-share
+// elevation without a recorder — but would silently break every share-elevated
+// update over gRPC.)
+func TestServerChain_HasShareElevationAuditInterceptor(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "../server.go", nil, 0)
+	require.NoError(t, err)
+	found := false
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "ChainUnaryInterceptor" {
+			return true
+		}
+		for _, arg := range call.Args {
+			if c, ok := arg.(*ast.CallExpr); ok {
+				if s, ok := c.Fun.(*ast.SelectorExpr); ok && s.Sel.Name == "ShareElevationAuditInterceptor" {
+					found = true
+				}
+			}
+		}
+		return true
+	})
+	assert.True(t, found, "server/grpc/server.go's ChainUnaryInterceptor must include interceptors.ShareElevationAuditInterceptor")
 }
