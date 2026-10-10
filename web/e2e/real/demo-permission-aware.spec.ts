@@ -114,7 +114,9 @@ test.describe('least-privilege user (alice)', () => {
         await settle(page);
         await page.getByRole('row').filter({ hasText: /e2e-/ }).first().getByTitle('View').click();
         const actions = page.getByTestId('secret-actions');
-        await expect(actions).toBeVisible();
+        // The detail view itself is up (header rendered); the action bar is attached but empty.
+        await expect(page.getByTestId('secret-header')).toBeVisible();
+        await expect(actions).toBeAttached();
         for (const name of [/^edit$/i, /^rotate$/i, /^share$/i, /^suspend$/i, /^resume$/i, /^delete$/i, /^copy$/i]) {
             await expect(actions.getByRole('button', { name }), String(name)).toHaveCount(0);
         }
@@ -130,10 +132,18 @@ test.describe('least-privilege user (alice)', () => {
         await page.goto(`/projects/${pid}/members`);
         await settle(page);
         const main = page.locator('main');
-        await expect(main.getByText('Human members')).toBeVisible();
+        await expect(main.getByRole('heading', { name: 'Human members' })).toBeVisible();
         await expect(main.getByRole('button', { name: /invite by email/i })).toHaveCount(0);
         await expect(main.getByRole('button', { name: /^Add$/ })).toHaveCount(0);
-        await expect(main.getByTitle('Remove from project')).toHaveCount(0);
+        // The one removal she keeps is leaving the project herself (the row confirms "Remove yourself").
+        const removes = main.getByTitle('Remove from project');
+        expect(await removes.count()).toBeLessThanOrEqual(1);
+        if ((await removes.count()) === 1) {
+            await expect(main.locator('li').filter({ has: page.getByTitle('Remove from project') })).toContainText(
+                LOWPRIV_USERNAME as string
+            );
+        }
+        await expect(main.locator('select')).toHaveCount(0);
         // The admin-only lookups are not even requested, so they cannot 403 into the console.
         expect(
             failed.filter((p) => p === '/api/v1/users'),
