@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
@@ -64,10 +65,12 @@ func isApproverRole(roleName string) bool {
 // has admin authority on every project (requireAdminAuthorityAt), so they may
 // see anything a project admin may and are a project admin for alerting purposes.
 //
-// Install-wide admins that are deactivated or deleted are dropped: nothing about
-// the subject (secret names, anomaly detail) may reach someone whose account is
-// off. Project members come from ListProjectMembers, which already excludes
-// soft-deleted users and lapsed grants.
+// Every candidate -- approver-role project members AND install-wide admins -- is
+// vetted the same way: a deleted user, a deactivated one, or one whose login is
+// blocked (AccountLoginBlocked: suspended, deprovisioned, blank/unrecognised
+// state) is dropped, because nothing about the subject (secret names, anomaly
+// detail) may reach someone whose account is off. Admin-group members count only
+// through a GLOBAL (project_id=0) membership.
 //
 // Every notifier that notifies project admins MUST resolve them here -- the
 // guard in notify_recipients_guard_test.go fails any notify*/remind* function
@@ -78,14 +81,9 @@ func isApproverRole(roleName string) bool {
 // the recipients it did resolve together with the error, so the caller can still
 // alert them and report the gap loudly (#166).
 func (c *KeyorixCore) projectAdminRecipients(ctx context.Context, projectID uint) ([]uint, error) {
-	seen := map[uint]struct{}{}
-	var ids []uint
-	add := func(uid uint) {
-		if _, dup := seen[uid]; !dup {
-			seen[uid] = struct{}{}
-			ids = append(ids, uid)
-		}
-	}
+	// candidates: every user who might be a recipient. ONE vetting rule (an active
+	// account whose login is not blocked) is applied to all of them below.
+	candidates := map[uint]struct{}{}
 	var errs []error
 
 	members, err := c.storage.ListProjectMembers(ctx, projectID)
@@ -94,13 +92,10 @@ func (c *KeyorixCore) projectAdminRecipients(ctx context.Context, projectID uint
 	}
 	for _, m := range members {
 		if isApproverRole(m.RoleName) {
-			add(m.UserID)
+			candidates[m.UserID] = struct{}{}
 		}
 	}
 
-	// Install-wide admins: collected first, then vetted for an active account.
-	global := map[uint]struct{}{}
-	addGlobal := func(uid uint) { global[uid] = struct{}{} }
 	adminRoleIDs, err := c.adminBypassRoleIDSlice(ctx)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("resolve install-wide admins: %w", err))
@@ -112,28 +107,34 @@ func (c *KeyorixCore) projectAdminRecipients(ctx context.Context, projectID uint
 		for _, a := range assignments {
 			switch a.PrincipalType {
 			case "user":
-				addGlobal(a.PrincipalID)
+				candidates[a.PrincipalID] = struct{}{}
 			case "group":
-				gm, gerr := c.storage.ListGroupMembers(ctx, a.PrincipalID)
+				// The assignment is GLOBAL, so only members whose own membership is
+				// global (user_groups.project_id=0) inherit it. ListGroupMembers
+				// ignores that scope: a member scoped to another project would be
+				// told about every project (same rule as resolveGroupAdminMembers).
+				gm, gerr := c.storage.ListGroupMembersAt(ctx, a.PrincipalID, corestorage.Scope{})
 				if gerr != nil {
 					errs = append(errs, fmt.Errorf("list members of admin group %d: %w", a.PrincipalID, gerr))
 					continue
 				}
 				for _, u := range gm {
-					addGlobal(u.ID)
+					candidates[u.ID] = struct{}{}
 				}
 			}
 		}
 	}
-	for uid := range global {
+
+	var ids []uint
+	for uid := range candidates {
 		u, uerr := c.storage.GetUser(ctx, uid)
 		switch {
 		case uerr != nil && corestorage.IsUserNotFound(uerr):
 			continue // deleted: not a recipient, not a failure
 		case uerr != nil:
-			errs = append(errs, fmt.Errorf("vet install-wide admin %d: %w", uid, uerr))
-		case u != nil && u.IsActive:
-			add(uid)
+			errs = append(errs, fmt.Errorf("vet recipient %d: %w", uid, uerr))
+		case u != nil && u.IsActive && !AccountLoginBlocked(u.ID, u.AccountState):
+			ids = append(ids, uid)
 		}
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
@@ -249,7 +250,10 @@ func (c *KeyorixCore) notifyMembershipActivated(ctx context.Context, m *models.P
 // notifyAccessRequested fans a new-request notification out to the project's
 // admins (projectAdminRecipients: approver-role members + install-wide admins).
 func (c *KeyorixCore) notifyAccessRequested(ctx context.Context, req *models.AccessRequest) {
-	recipients, _ := c.projectAdminRecipients(ctx, req.ProjectID) // partial result still notified (best-effort)
+	recipients, rerr := c.projectAdminRecipients(ctx, req.ProjectID) // partial result still notified (best-effort)
+	if rerr != nil {
+		log.Printf("SECURITY: notifyAccessRequested: failed to fully resolve project %d admins (%d resolved), some admins may not be notified: %v", req.ProjectID, len(recipients), rerr)
+	}
 	pid := req.ProjectID
 	label := c.projectLabel(ctx, req.ProjectID)
 	link := fmt.Sprintf("/projects/%d", req.ProjectID)

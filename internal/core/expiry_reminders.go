@@ -8,6 +8,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -62,7 +63,10 @@ func (c *KeyorixCore) SendExpiryReminders(ctx context.Context, leadDays int) (in
 		if projectID == 0 || (ct.expired == 0 && ct.soon == 0) {
 			continue
 		}
-		recipients, _ := c.projectAdminRecipients(ctx, projectID) // partial result still notified (best-effort)
+		recipients, rerr := c.projectAdminRecipients(ctx, projectID) // partial result still notified (best-effort)
+		if rerr != nil {
+			log.Printf("SECURITY: SendExpiryReminders: failed to fully resolve project %d admins (%d resolved), some admins may not be notified: %v", projectID, len(recipients), rerr)
+		}
 		pid := projectID
 		title := "Secrets expiring"
 		msg := expiryReminderMessage(c.projectLabel(ctx, projectID), ct.expired, ct.soon)

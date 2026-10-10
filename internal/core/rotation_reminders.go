@@ -6,6 +6,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -61,7 +62,10 @@ func (c *KeyorixCore) SendRotationReminders(ctx context.Context) (int, error) { 
 		if ct.overdue == 0 && ct.approaching == 0 {
 			continue
 		}
-		recipients, _ := c.projectAdminRecipients(ctx, projectID) // partial result still notified (best-effort)
+		recipients, rerr := c.projectAdminRecipients(ctx, projectID) // partial result still notified (best-effort)
+		if rerr != nil {
+			log.Printf("SECURITY: SendRotationReminders: failed to fully resolve project %d admins (%d resolved), some admins may not be notified: %v", projectID, len(recipients), rerr)
+		}
 		pid := projectID
 		title := "Secrets due for rotation"
 		msg := rotationReminderMessage(c.projectLabel(ctx, projectID), ct.overdue, ct.approaching)

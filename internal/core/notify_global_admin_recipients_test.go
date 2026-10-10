@@ -173,3 +173,40 @@ func TestSendExpiryReminders_DedupesAdminWithBothScopes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, notificationsFor(t, db, testGlobalAdminID, NotificationExpiryReminder), 1)
 }
+
+// Review point 1 (MERGE-MASTER, #2987): a member of an install-wide admin group
+// whose OWN membership is scoped to another project (user_groups.project_id != 0)
+// derives no install-wide authority from it, so must not receive this project's
+// admin notifications. ListGroupMembers ignored that scope.
+func TestSendExpiryReminders_ProjectScopedAdminGroupMemberNotNotified(t *testing.T) {
+	t.Parallel()
+	c, db, _ := newExpiryReminderCore(t)
+	seedInstallWideAdmins(t, db)
+	require.NoError(t, db.Create(&models.Project{ID: 2, Name: "other"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 75, Username: "scoped", Email: "scoped@x.io", IsActive: true}).Error)
+	require.NoError(t, db.Create(&models.UserGroup{UserID: 75, GroupID: 40, ProjectID: 2}).Error)
+	_, err := c.SendExpiryReminders(context.Background(), 14)
+	require.NoError(t, err)
+	assert.Empty(t, notificationsFor(t, db, 75, NotificationExpiryReminder),
+		"a member of the admin group scoped to project 2 must not be told about project 1")
+	assertProjectAdminAudience(t, db, NotificationExpiryReminder)
+}
+
+// Review point 2: one vetting rule (active AND login not blocked) for BOTH the
+// install-wide admins and the approver-role project members.
+func TestSendExpiryReminders_SuspendedAccountsNotNotified(t *testing.T) {
+	t.Parallel()
+	c, db, _ := newExpiryReminderCore(t)
+	seedInstallWideAdmins(t, db)
+	require.NoError(t, db.Model(&models.User{}).Where("id = ?", testGlobalAdminID).Update("account_state", AccountSuspended).Error)
+	require.NoError(t, db.Model(&models.User{}).Where("id = ?", 5).Update("account_state", AccountSuspended).Error)
+	require.NoError(t, db.Create(&models.User{ID: 76, Username: "deprov", Email: "deprov@x.io", IsActive: true}).Error)
+	require.NoError(t, db.Model(&models.User{}).Where("id = ?", 76).Update("account_state", AccountDeprovisioned).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 76, RoleID: 30}).Error)
+	_, err := c.SendExpiryReminders(context.Background(), 14)
+	require.NoError(t, err)
+	for _, uid := range []uint{testGlobalAdminID, 5, 76} {
+		assert.Emptyf(t, notificationsFor(t, db, uid, NotificationExpiryReminder), "user %d (login blocked) must NOT be notified", uid)
+	}
+	assert.Len(t, notificationsFor(t, db, testGroupAdminID, NotificationExpiryReminder), 1, "the healthy group-inherited admin still is")
+}

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -1122,7 +1123,10 @@ func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *mo
 // notifyApprovalProgress alerts the project's approvers that a request needs more
 // sign-offs (best-effort).
 func (c *KeyorixCore) notifyApprovalProgress(ctx context.Context, req *models.AccessRequest, received, required int) {
-	recipients, _ := c.projectAdminRecipients(ctx, req.ProjectID) // partial result still notified (best-effort)
+	recipients, rerr := c.projectAdminRecipients(ctx, req.ProjectID) // partial result still notified (best-effort)
+	if rerr != nil {
+		log.Printf("SECURITY: notifyApprovalProgress: failed to fully resolve project %d admins (%d resolved), some admins may not be notified: %v", req.ProjectID, len(recipients), rerr)
+	}
 	pid := req.ProjectID
 	label := c.projectLabel(ctx, req.ProjectID)
 	link := fmt.Sprintf("/projects/%d", req.ProjectID)

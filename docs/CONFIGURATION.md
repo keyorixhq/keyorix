@@ -954,11 +954,12 @@ activation / overdue-review alerts — goes to the same audience:
 - members holding an approver role on that project (`project_admin`,
   `system_admin`, `admin`, `super_admin`), **and**
 - every active **install-wide admin** (an admin-bypass role held at global scope,
-  directly or through a group), because they have admin authority on every
-  project even though they hold no project-scoped role row.
+  directly or through a group whose membership of them is global; a member of
+  that group scoped to a single project does not count), because they have admin
+  authority on every project even though they hold no project-scoped role row.
 
-Each person is notified once however many grants they hold. Deactivated or
-deleted accounts are never notified, and the person who filed an access request
+Each person is notified once however many grants they hold. Deactivated,
+suspended, deprovisioned or deleted accounts are never notified, and the person who filed an access request
 is never alerted about their own request. License-expiry and machine-credential
 expiry have no project and go to every install-wide admin; personal-token,
 role-grant and read-quota reminders go to the owner of the item.
