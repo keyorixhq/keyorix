@@ -184,7 +184,9 @@ const EVENT_STYLES: Record<string, { dot: string; label: string }> = {
 };
 
 const ActivityRow: React.FC<{ item: ActivityItem }> = ({ item }) => {
-    const style = EVENT_STYLES[item.type] ?? { dot: 'bg-gray-400', label: item.type };
+    // The server sends a readable `label` for every event; the raw audit type stays
+    // available as `eventType` (tooltip). Older servers send neither: fall back to type.
+    const style = EVENT_STYLES[item.type] ?? { dot: 'bg-gray-400', label: item.label ?? item.type };
     const secretPart = item.secretName ? ` "${item.secretName}"` : '';
     return (
         <div className="flex items-start gap-3 py-3 border-b border-base last:border-0">
@@ -194,7 +196,7 @@ const ActivityRow: React.FC<{ item: ActivityItem }> = ({ item }) => {
             <div className="flex-1 min-w-0">
                 <p className="text-sm text-base-primary">
                     <span className="font-semibold">{item.actor}</span>{' '}
-                    <span className="text-base-muted">
+                    <span className="text-base-muted" title={item.eventType ?? item.type}>
                         {style.label}
                         {secretPart}
                     </span>
