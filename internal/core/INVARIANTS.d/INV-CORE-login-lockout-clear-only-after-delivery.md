@@ -5,9 +5,10 @@
   identical to its state after a wrong credential, not merely the HTTP response
   (INV-CORE-24's sibling property for #2888's response-shape rule). Concretely,
   with the threshold at N and the counter at N−1: a wrong credential goes to N
-  and locks; a correct credential plus an injected fault in the password-expiry
-  gate, the session mint, the step-up-grant write, or the transport's identity
-  read also goes to N and locks; only a login the client actually received
+  and locks; a correct credential plus an injected fault in the TOCTOU lock
+  recheck (`recheckLockAfterCredentialMatched`, #2894 review), the
+  password-expiry gate, the session mint, the step-up-grant write, or the
+  transport's identity read also goes to N and locks; only a login the client actually received
   resets to 0. Why: #2894 — `checkLockAndClearLoginFailures` cleared the counter
   on its way past the TOCTOU re-check, which put the clear BEFORE every
   remaining fallible step of every login path (`internal/core/auth.go`,
@@ -50,5 +51,12 @@
   post-verdict window is entirely in core (`FinishWebAuthnLogin`,
   `FinishWebAuthnPasswordlessLogin`, `FinishWebAuthnReauth`,
   `VerifyMFAStepUp`), which the handlers package cannot drive because only
-  `internal/core` has a cryptographically valid WebAuthn assertion fixture.
+  `internal/core` has a cryptographically valid WebAuthn assertion fixture;
+  `internal/core/login_lockout_recheck_fault_parity_test.go` for the recheck
+  fault on every path; `mfa_totp_recovery_lookup_parity_test.go` for the TOTP
+  second factor, where a six-digit code is evaluated by the TOTP path ALONE
+  (`isTOTPShaped`) so a recovery-code lookup fault cannot turn a wrong code into
+  "unavailable" while a correct one stays "invalid code"; and
+  `server/http/handlers/mfa_stepup_identical_response_test.go` for the step-up
+  endpoint's response bytes.
 <!-- section: Last-admin / lockout -->

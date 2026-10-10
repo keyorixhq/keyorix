@@ -135,6 +135,9 @@ var oracleAByDesignErrors = []oracleAByDesignError{
 		kind:   faultstorage.KindError,
 		nth:    1,
 		tables: []string{"MFASecret"},
+		// #2894 review: the post-verdict denial is now audited mfa.error (it used
+		// to go unaudited), the same outcome log the login rows below carry.
+		outcomeLogs: []string{"AuditEvent"},
 		designComment: "internal/core/mfa_stepup.go: VerifyMFAStepUp consumes the TOTP step " +
 			"(advancing MFASecret's replay window) BEFORE minting the step-up grant, and fails " +
 			"closed if the grant write fails",

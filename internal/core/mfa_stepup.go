@@ -70,8 +70,19 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 	// step-up grant below is still to be written, and a fault there denies the
 	// step-up while leaving the counter at 0, making a CORRECT code the cheaper
 	// probe than a wrong one. See LoginCompletion.
-	if err := c.recheckLoginLockFailClosed(ctx, user); err != nil {
-		return err
+	if err := c.recheckLockAfterCredentialMatched(ctx, user, true); err != nil {
+		if errors.Is(err, ErrLoginPostVerdict) {
+			// Counted already; audited here, synchronously like the wrong-code
+			// branch's mfa.failed, so an operator sees the fault (#2894 review).
+			c.auditMFAError(ctx, userID, "stepup", err)
+			return err
+		}
+		// The recheck found the account locked by a concurrent burst. Answer
+		// exactly like a wrong code (#2894 review): a wrong code at this moment
+		// gets "invalid code" too, and its recordFailedLogin is a no-op on a
+		// locked account, so both cost the same and read the same.
+		c.auditMFAFailed(ctx, userID, "stepup")
+		return fmt.Errorf("invalid code")
 	}
 
 	grant := &models.MFAStepUpGrant{
@@ -82,7 +93,9 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 	if err := c.storage.CreateMFAStepUpGrant(ctx, grant); err != nil {
 		// #2894: the code already verified, so count this post-verdict storage
 		// fault exactly as a wrong code would be counted (recordFailedLogin above).
-		return c.denyAfterCredentialMatched(ctx, user, fmt.Errorf("failed to record MFA step-up: %w", err))
+		perr := c.denyAfterCredentialMatched(ctx, user, fmt.Errorf("failed to record MFA step-up: %w", err))
+		c.auditMFAError(ctx, userID, "stepup", perr)
+		return perr
 	}
 	c.clearLoginFailures(ctx, user)
 	uid := userID
@@ -111,28 +124,34 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 // write failing, still counts, exactly like a wrong code would -- it must
 // never be cheaper, lockout-wise, than a genuine bad guess, even though the
 // RESPONSE this produces is already identical to a wrong code either way).
-// The recovery-code path is tried regardless of a TOTP-phase storage error,
-// same as VerifyMFACredentials: the caller may have supplied a recovery code,
-// not a TOTP code, and a failed TOTP secret read must not preempt a
-// genuinely valid recovery code.
+// The input's shape picks the one path that can verify it (isTOTPShaped), so
+// a failed TOTP secret read never preempts a valid recovery code, and a
+// recovery-lookup fault never overrides a conclusive TOTP verdict.
 func (c *KeyorixCore) verifyMFAStepUpCode(ctx context.Context, userID uint, code string) (bool, error) {
 	var storageErr error
 	codeMatched := false // see VerifyMFACredentials / ErrMFAVerificationUnavailable
-	if secret, serr := c.loadTOTPSecret(ctx, userID); serr != nil {
-		storageErr = serr
-	} else if step, ok := c.validateTOTPStep(secret, code); ok {
-		codeMatched = true
-		if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, userID, step); ferr != nil {
-			storageErr = ferr
-		} else if fresh {
+	// Exactly one path evaluates a given input, as in VerifyMFACredentials: a
+	// six-digit code gets its verdict from the TOTP path alone, so a recovery-
+	// lookup fault cannot make a wrong TOTP code read differently from a correct
+	// one (#2894 review). See isTOTPShaped.
+	if isTOTPShaped(code) {
+		if secret, serr := c.loadTOTPSecret(ctx, userID); serr != nil {
+			storageErr = serr
+		} else if step, ok := c.validateTOTPStep(secret, code); ok {
+			codeMatched = true
+			if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, userID, step); ferr != nil {
+				storageErr = ferr
+			} else if fresh {
+				return true, nil
+			}
+		}
+	} else {
+		consumed, cerr := c.storage.ConsumeMFARecoveryCode(ctx, userID, sha256Hex(normalizeRecoveryCode(code)), c.now())
+		if cerr != nil {
+			storageErr = cerr
+		} else if consumed {
 			return true, nil
 		}
-	}
-	consumed, cerr := c.storage.ConsumeMFARecoveryCode(ctx, userID, sha256Hex(normalizeRecoveryCode(code)), c.now())
-	if cerr != nil {
-		storageErr = cerr
-	} else if consumed {
-		return true, nil
 	}
 	if storageErr != nil && !codeMatched {
 		storageErr = fmt.Errorf("%w: %w", ErrMFAVerificationUnavailable, storageErr)

@@ -437,26 +437,32 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 	// "unavailable" (see ErrMFAVerificationUnavailable).
 	codeMatched := false
 	var consumedTOTPStep *int64 // non-nil iff verified via a freshly-marked TOTP step (#2567, see VerifyMFALogin)
-	if secret, err := c.loadTOTPSecret(ctx, ch.UserID); err != nil {
-		storageErr = err
-	} else if step, ok := c.validateTOTPStep(secret, code); ok {
-		codeMatched = true
-		// Single-use within the validity window: atomically advance the last-used
-		// step. A code already accepted at this (or a later) step is a replay and
-		// MarkTOTPStepUsed returns false, so it is rejected — closing the ~90s
-		// replay window the bare totp validation left open.
-		if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, ch.UserID, step); ferr != nil {
-			storageErr = ferr
-		} else if fresh {
-			verified = true
-			consumedTOTPStep = &step
+	// Exactly one path evaluates a given input (#2894 review): see isTOTPShaped.
+	totpShaped := isTOTPShaped(code)
+	if totpShaped {
+		if secret, err := c.loadTOTPSecret(ctx, ch.UserID); err != nil {
+			storageErr = err
+		} else if step, ok := c.validateTOTPStep(secret, code); ok {
+			codeMatched = true
+			// Single-use within the validity window: atomically advance the last-used
+			// step. A code already accepted at this (or a later) step is a replay and
+			// MarkTOTPStepUsed returns false, so it is rejected — closing the ~90s
+			// replay window the bare totp validation left open.
+			if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, ch.UserID, step); ferr != nil {
+				storageErr = ferr
+			} else if fresh {
+				verified = true
+				consumedTOTPStep = &step
+			}
 		}
 	}
-	if !verified {
-		// Tried regardless of a TOTP-phase storageErr: the caller may have supplied
-		// a recovery code, not a TOTP code, and this path is independent of the one
-		// above — a failed TOTP secret read must not preempt a genuinely valid
-		// recovery code.
+	if !verified && !totpShaped {
+		// Only for input that cannot be a TOTP code. A six-digit input never
+		// reaches here: a recovery code can never match it, and looking one up
+		// anyway let a recovery-lookup fault turn a WRONG TOTP code into
+		// "unavailable" (503, uncounted) while a CORRECT one whose anti-replay
+		// mark failed stayed "invalid code" (401, counted) — the status code
+		// answered "was the TOTP code right?" (#2894 review).
 		if consumed, err := c.storage.ConsumeMFARecoveryCode(ctx, ch.UserID, sha256Hex(normalizeRecoveryCode(code)), c.now()); err != nil {
 			storageErr = err
 		} else if consumed {
@@ -499,8 +505,8 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 	// login still has a session to mint, a password-expiry gate to pass and an
 	// identity payload to resolve, and a fault in any of those must cost the
 	// attacker the same lockout progress a wrong code does — see LoginCompletion.
-	if err := c.recheckLoginLockFailClosed(ctx, user); err != nil {
-		return nil, false, nil, err
+	if err := c.recheckLockAfterCredentialMatched(ctx, user, true); err != nil {
+		return user, false, nil, err
 	}
 	return user, usedRecovery, consumedTOTPStep, nil
 }
@@ -538,6 +544,11 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 func (c *KeyorixCore) VerifyMFALoginPending(ctx context.Context, challenge, code, userAgent, ip string) (*models.Session, *models.User, UserIdentity, *LoginCompletion, error) {
 	user, usedRecovery, consumedTOTPStep, err := c.VerifyMFACredentials(ctx, challenge, code)
 	if err != nil {
+		if errors.Is(err, ErrLoginPostVerdict) {
+			// The code matched and the lock recheck faulted: name the account so
+			// the transport can audit auth.login_error (#2894 review).
+			return nil, user, UserIdentity{}, nil, err
+		}
 		return nil, nil, UserIdentity{}, nil, err
 	}
 	// Apply the same password-expiry hard gate as the non-MFA login path (ADR-025).
@@ -607,6 +618,25 @@ func (c *KeyorixCore) loadTOTPSecret(ctx context.Context, userID uint) (string, 
 		return "", err
 	}
 	return c.decryptAuthSecret(row.SecretEnc, row.SecretMeta, ports.MFASecretAAD(userID))
+}
+
+// isTOTPShaped reports whether code can be a TOTP code at all: exactly six
+// ASCII digits after trimming, the only shape validateTOTPStep can match.
+// generateRecoveryCodes' codes normalize to ten characters, so the two shapes
+// are disjoint and every input has exactly one path that can verify it. The
+// MFA verifiers route on this so that a fault on the OTHER path can never
+// change the verdict a conclusive check already reached (#2894 review).
+func isTOTPShaped(code string) bool {
+	code = strings.TrimSpace(code)
+	if len(code) != 6 {
+		return false
+	}
+	for i := 0; i < len(code); i++ {
+		if code[i] < '0' || code[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // totpPeriod is the TOTP step length in seconds.

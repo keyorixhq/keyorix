@@ -14,6 +14,22 @@ command, and most of DEMO-1's findings are fixed (MFA, least-privilege CLI
 access, live backup, fresh-volume restore). What's left open is smaller and
 listed below.
 
+## Before you're on stage: run the readiness check (~5 min)
+
+`make demo-check` (or `./scripts/demo/check.sh`) walks this exact script end
+to end through the public API/CLI only — health, both logins, least
+privilege, create/read/rotate/version-history, ACL, the machine-identity
+read, MFA, audit + chain verify, the posture report, secret-read p50 latency,
+and (if Playwright is installed) a real-backend UI walk of login/projects/
+secrets/audit — printing one ✅/❌ line per step and a final `DEMO READY` /
+`NOT READY: N problems`. Run it with no arguments the morning of a demo: it
+brings up its own fresh SQLite instance, checks it, and tears it down. Pass
+`--keep` to leave that instance running for the actual demo instead of
+bringing up a second one by hand; `--postgres` checks the Postgres backend
+instead; `--ui`/`--offline` force the Playwright walk / the airgap-e2e
+offline-guarantee leg on. Anything red here is a demo blocker — fix it (or
+pick a different flow) before you're in front of a customer, not during.
+
 ## 0. Before you're on stage (~1 min)
 
 ```sh
@@ -170,6 +186,24 @@ the real disaster-recovery scenario `--overwrite-existing` isn't — also now
 works, on both backends (was #2604); see `docs/AIRGAP_RUNBOOK.md` for that
 full drill rather than live here, since it needs a second volume and isn't
 worth the extra live-demo fragility for 10 minutes on stage.
+
+## Optional: emergency access (break-glass) (~1 min)
+
+Break-glass is **off by default** (secure default). `scripts/demo/up.sh` turns it
+on explicitly in the demo's `keyorix.yaml` (`break_glass.enabled: true`,
+emergency role `project_developer`); on any other install add that block yourself
+(see `docs/CONFIGURATION.md#break_glass`) and restart. A user must be a **member
+of the project** (a role scoped to it, e.g. `project_viewer`) to activate; it then
+lifts them to the emergency role for a limited time:
+
+```bash
+keyorix break-glass activate --project-id 1 --justification "prod incident INC-123" --ttl 1h
+keyorix break-glass list --project-id 1
+keyorix break-glass revoke --project-id 1 --activation-id <id>
+```
+
+If it is not enabled the command now says so (`break-glass is not enabled on this
+server; set break_glass.enabled`) instead of a bare `permission denied`.
 
 ## 8. Footprint (~30 sec) — close on the koi-pond pitch
 

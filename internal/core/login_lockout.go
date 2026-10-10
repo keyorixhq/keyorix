@@ -10,6 +10,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -210,10 +211,43 @@ func (c *KeyorixCore) recheckLoginLockFailClosed(ctx context.Context, user *mode
 	if err != nil {
 		// Unable to verify the current lock state — fail closed. Silently falling
 		// back to "not locked" here would reopen exactly the snapshot-trust gap
-		// this function exists to close.
-		return fmt.Errorf("unable to verify account lock state, please try again")
+		// this function exists to close. Every caller has already matched the
+		// credential, so this is a post-verdict fault: callers go through
+		// recheckLockAfterCredentialMatched, which settles the lockout for it.
+		return fmt.Errorf("%w: %w", errLoginLockRecheckUnavailable, err)
 	}
 	return lockErr
+}
+
+// errLoginLockRecheckUnavailable marks recheckLoginLockFailClosed's storage-fault
+// branch, as distinct from its "the account is locked" refusal. Its text is the
+// message that branch has always carried.
+var errLoginLockRecheckUnavailable = errors.New("unable to verify account lock state, please try again")
+
+// recheckLockAfterCredentialMatched is recheckLoginLockFailClosed for a caller
+// whose credential has ALREADY matched, which is every caller today (#2894
+// review). A storage fault in the recheck is then a post-verdict denial, and it
+// must cost exactly what a wrong credential costs on the same path: counted
+// when that path's wrong-credential branch counts (counted=true), left alone
+// when it does not (passwordless, counted=false; see
+// newLoginCompletionNotCounted). Before this, the fault returned a bare error
+// nobody counted, so at threshold−1 a wrong credential locked the account and a
+// correct one plus a LockUserForUpdate fault did not.
+//
+// The count runs here, after recheckLoginLockFailClosed has released the
+// account's mutex shard (recordFailedLogin takes the same shard). The error is
+// wrapped with ErrLoginPostVerdict so transports audit auth.login_error and
+// answer exactly like a wrong credential. A recheck that SUCCEEDS and finds the
+// account locked is a genuine refusal and is returned unchanged.
+func (c *KeyorixCore) recheckLockAfterCredentialMatched(ctx context.Context, user *models.User, counted bool) error {
+	err := c.recheckLoginLockFailClosed(ctx, user)
+	if err == nil || !errors.Is(err, errLoginLockRecheckUnavailable) {
+		return err
+	}
+	if counted {
+		c.recordFailedLogin(ctx, user)
+	}
+	return fmt.Errorf("%w: %w", ErrLoginPostVerdict, err)
 }
 
 // LoginCompletion is the deferred half of a login's lockout accounting (#2894).

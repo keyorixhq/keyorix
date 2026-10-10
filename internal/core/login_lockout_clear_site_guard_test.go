@@ -59,18 +59,20 @@ var allowedLockoutAccountingSites = []clearSite{
 		why: "same as CompleteSSO."},
 
 	// --- the no-clear TOCTOU re-check ---
-	{fn: "LoginPending", callee: "recheckLoginLockFailClosed",
+	{fn: "LoginPending", callee: "recheckLockAfterCredentialMatched",
 		why: "re-check only; the clear is deferred to the returned LoginCompletion."},
-	{fn: "VerifyMFACredentials", callee: "recheckLoginLockFailClosed",
+	{fn: "VerifyMFACredentials", callee: "recheckLockAfterCredentialMatched",
 		why: "re-check only; VerifyMFALoginPending's LoginCompletion owns the clear."},
-	{fn: "FinishWebAuthnLoginPending", callee: "recheckLoginLockFailClosed",
+	{fn: "FinishWebAuthnLoginPending", callee: "recheckLockAfterCredentialMatched",
 		why: "re-check only; its own LoginCompletion owns the clear."},
-	{fn: "checkPasswordlessAccountState", callee: "recheckLoginLockFailClosed",
+	{fn: "checkPasswordlessAccountState", callee: "recheckLockAfterCredentialMatched",
 		why: "re-check only; FinishWebAuthnPasswordlessLoginPending's LoginCompletion owns the clear."},
-	{fn: "FinishWebAuthnReauth", callee: "recheckLoginLockFailClosed",
+	{fn: "FinishWebAuthnReauth", callee: "recheckLockAfterCredentialMatched",
 		why: "re-check only; the clear is after CreateMFAStepUpGrant."},
-	{fn: "VerifyMFAStepUp", callee: "recheckLoginLockFailClosed",
+	{fn: "VerifyMFAStepUp", callee: "recheckLockAfterCredentialMatched",
 		why: "re-check only; the clear is after CreateMFAStepUpGrant."},
+	{fn: "recheckLockAfterCredentialMatched", callee: "recheckLoginLockFailClosed",
+		why: "the wrapper every credential-verifying login path uses (#2894 review): it adds no clear, and on the recheck's storage-fault branch it counts the attempt (when the path counts wrong credentials) and wraps ErrLoginPostVerdict."},
 	{fn: "CompleteSSO", callee: "recheckLoginLockFailClosed",
 		why: "re-check only; the clear is after mintSession."},
 	{fn: "CompleteSAML", callee: "recheckLoginLockFailClosed",
@@ -83,9 +85,10 @@ var allowedLockoutAccountingSites = []clearSite{
 
 // trackedLockoutCallees are the primitives whose call sites are pinned.
 var trackedLockoutCallees = map[string]bool{
-	"clearLoginFailures":             true,
-	"recheckLoginLockFailClosed":     true,
-	"checkLockAndClearLoginFailures": true, // the removed combined form: must never come back
+	"clearLoginFailures":                true,
+	"recheckLoginLockFailClosed":        true,
+	"recheckLockAfterCredentialMatched": true,
+	"checkLockAndClearLoginFailures":    true, // the removed combined form: must never come back
 }
 
 // TestClearLoginFailures_HasNoCallerBeforeAFallibleStep is the guard described
