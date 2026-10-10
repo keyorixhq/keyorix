@@ -154,11 +154,19 @@ func g5SpecFor(op g4Op) (g5SyncSpec, bool) {
 // g5SeedCase is one pending seed replayed deterministically: the issue it
 // belongs to, and the ordering that reaches its bad end state.
 //
-// The op pair is NOT repeated here — it is read from the seed file in
-// testdata/fuzz-pending/<issue>/ at run time, so this registry and the fuzzer's
-// own corpus cannot drift apart. A row whose seed file is missing fails.
+// The op pair is NOT repeated here — it is read from the seed file at run
+// time (testdata/fuzz-pending/<issue>/ while pending, the named live-corpus
+// file once promoted), so this registry and the fuzzer's own corpus cannot
+// drift apart. A row whose seed file is missing fails.
 type g5SeedCase struct {
 	issue string
+	// corpus is the seed's file name in testdata/fuzz/FuzzCrossReplicaInvariants/
+	// once it has been promoted there; empty while the seed is still pending in
+	// testdata/fuzz-pending/<issue>/. A promoted row keeps its forced replay:
+	// the live corpus only replays the seed's ops sequentially, which never
+	// reaches the interleaving that broke, so dropping the row would lose the
+	// regression coverage for the race itself.
+	corpus string
 	// stale names which of the seed's two ops is the one whose write lands on
 	// a stale check: "A" for pair[0] (replica c0), "B" for pair[1] (c1).
 	//
@@ -198,13 +206,44 @@ type g5SeedCase struct {
 // now the live corpus rather than a forced ordering here. Their rows are gone
 // accordingly: a g5SeedCases row whose seed dir no longer exists is what
 // TestG5SyncPointSpecsCoverEveryPendingSeed rejects.
+//
+// The remaining three were promoted later (#2891, #2884, #2852) and keep
+// their rows, now pointing at the live-corpus file via corpus: with no
+// pendingSeedFix row, TestForcedPendingSeeds_Postgres asserts the forced
+// ordering keeps every invariant, i.e. it is the fix's regression test.
 var g5SeedCases = []g5SeedCase{
 	// seed (DeleteSecret, SetSecretAutoRotate): the full-row Save is stale.
-	{issue: "2650", stale: "B", why: "a secret undeleted by a stale full-row Save"},
+	{issue: "2650", corpus: "delete_vs_autorotate", stale: "B", why: "a secret undeleted by a stale full-row Save"},
 	// seed (DeleteProject, CreateDynamicSecretConfig): the second Save is stale.
-	{issue: "2651", stale: "B", why: "an enabled dynamic-secret config under a deleted project"},
+	{issue: "2651", corpus: "deleteproject_vs_createdynconfig", stale: "B", why: "an enabled dynamic-secret config under a deleted project"},
 	// seed (revoke, InviteMember): the invite's grant INSERT is stale.
-	{issue: "2659", stale: "B", why: "a revoked membership still holding an invite's role grant"},
+	{issue: "2659", corpus: "revoke_vs_invite_openmode", stale: "B", why: "a revoked membership still holding an invite's role grant"},
+}
+
+// g5PendingDir is where a seed waits while its issue is open.
+var g5PendingDir = filepath.Join("testdata", "fuzz-pending")
+
+// g5CorpusDir is FuzzCrossReplicaInvariants' live corpus, where a seed goes
+// once its fix has merged.
+var g5CorpusDir = filepath.Join("testdata", "fuzz", "FuzzCrossReplicaInvariants")
+
+// g5PendingIssues lists the issue dirs under testdata/fuzz-pending/. An absent
+// directory means nothing is pending (main deletes it once the last seed is
+// promoted), not an error; any other read error still fails.
+func g5PendingIssues(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir(g5PendingDir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	require.NoError(t, err, "reading %s", g5PendingDir)
+	var issues []string
+	for _, e := range entries {
+		if e.IsDir() {
+			issues = append(issues, e.Name())
+		}
+	}
+	return issues
 }
 
 // order returns the driver ordering that pauses this row's stale writer.
@@ -215,16 +254,14 @@ func (c g5SeedCase) order() interleaveOrder {
 	return orderBAAaBa
 }
 
-// g5SeedBytes reads the single fuzz corpus entry in
-// testdata/fuzz-pending/<issue>/ and decodes its []byte(...) literal.
-//
-// Go's corpus format is a two-line file: a `go test fuzz v1` header and one
-// `[]byte("...")` line per fuzz argument. FuzzCrossReplicaInvariants takes
-// exactly one []byte argument, so exactly one such line is expected; anything
-// else is an error rather than a best-effort parse.
-func g5SeedBytes(t *testing.T, issue string) []byte {
+// g5SeedFile returns the path of this row's seed: the named live-corpus file
+// once promoted, else the single file in testdata/fuzz-pending/<issue>/.
+func (c g5SeedCase) g5SeedFile(t *testing.T) string {
 	t.Helper()
-	dir := filepath.Join("testdata", "fuzz-pending", issue)
+	if c.corpus != "" {
+		return filepath.Join(g5CorpusDir, c.corpus)
+	}
+	dir := filepath.Join(g5PendingDir, c.issue)
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err, "reading %s", dir)
 	var files []string
@@ -234,18 +271,31 @@ func g5SeedBytes(t *testing.T, issue string) []byte {
 		}
 	}
 	require.Len(t, files, 1, "expected exactly one seed file in %s, got %v", dir, files)
+	return files[0]
+}
 
-	raw, err := os.ReadFile(files[0]) //nolint:gosec // our own testdata
+// g5SeedBytes reads this row's fuzz corpus entry (see g5SeedFile) and decodes
+// its []byte(...) literal.
+//
+// Go's corpus format is a two-line file: a `go test fuzz v1` header and one
+// `[]byte("...")` line per fuzz argument. FuzzCrossReplicaInvariants takes
+// exactly one []byte argument, so exactly one such line is expected; anything
+// else is an error rather than a best-effort parse.
+func g5SeedBytes(t *testing.T, c g5SeedCase) []byte {
+	t.Helper()
+	path := c.g5SeedFile(t)
+
+	raw, err := os.ReadFile(path) //nolint:gosec // our own testdata
 	require.NoError(t, err)
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	require.GreaterOrEqual(t, len(lines), 2, "corpus file %s is missing its []byte line", files[0])
+	require.GreaterOrEqual(t, len(lines), 2, "corpus file %s is missing its []byte line", path)
 	require.Equal(t, "go test fuzz v1", strings.TrimSpace(lines[0]),
-		"corpus file %s does not start with the Go fuzz v1 header", files[0])
+		"corpus file %s does not start with the Go fuzz v1 header", path)
 
 	m := regexp.MustCompile(`^\[\]byte\("(.*)"\)$`).FindStringSubmatch(strings.TrimSpace(lines[1]))
-	require.NotNil(t, m, "corpus line %q in %s is not a []byte(\"...\") literal", lines[1], files[0])
+	require.NotNil(t, m, "corpus line %q in %s is not a []byte(\"...\") literal", lines[1], path)
 	unquoted, err := strconv.Unquote(`"` + m[1] + `"`)
-	require.NoError(t, err, "unquoting the []byte literal in %s", files[0])
+	require.NoError(t, err, "unquoting the []byte literal in %s", path)
 	return []byte(unquoted)
 }
 
@@ -275,7 +325,7 @@ func TestForcedPendingSeeds_Postgres(t *testing.T) {
 	for _, tc := range g5SeedCases {
 		tc := tc
 		t.Run(tc.issue, func(t *testing.T) {
-			seed := g5SeedBytes(t, tc.issue)
+			seed := g5SeedBytes(t, tc)
 			pairs := decodeG4Pairs(seed)
 			require.Len(t, pairs, 1,
 				"seed for #%s decodes to %d pairs; this registry assumes one pair per pending seed", tc.issue, len(pairs))
@@ -372,39 +422,33 @@ func TestG4PairAlwaysSpansBothReplicas(t *testing.T) {
 // no-DSN quick CI path, not only in the Postgres leg.
 func TestG5SyncPointSpecsCoverEveryPendingSeed(t *testing.T) {
 	t.Parallel()
-	entries, err := os.ReadDir(filepath.Join("testdata", "fuzz-pending"))
-	require.NoError(t, err)
 
-	registered := map[string]bool{}
+	byIssue := map[string]g5SeedCase{}
 	for _, tc := range g5SeedCases {
-		registered[tc.issue] = true
+		byIssue[tc.issue] = tc
 	}
 
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		issue := e.Name()
-		require.True(t, registered[issue],
+	// Every seed still pending needs a row; an absent or empty pending dir
+	// means nothing is pending and this loop is simply empty.
+	for _, issue := range g5PendingIssues(t) {
+		tc, ok := byIssue[issue]
+		require.True(t, ok,
 			"testdata/fuzz-pending/%s/ has no g5SeedCases row — add one naming the ordering that reproduces #%s, "+
 				"or this seed stays a blind-luck seed and must not be promoted", issue, issue)
-
-		seed := g5SeedBytes(t, issue)
-		pairs := decodeG4Pairs(seed)
-		require.Len(t, pairs, 1, "seed for #%s must decode to exactly one pair", issue)
-		for i, op := range pairs[0] {
-			spec, ok := g5SpecFor(op)
-			require.True(t, ok, "#%s op %d (kind %d) has no g5OpSyncPoints entry", issue, i, op.kind%g4NumOpKinds)
-			require.Contains(t, []string{"create", "update", "delete"}, spec.kind,
-				"#%s op %d names GORM callback family %q, which newSyncPoint cannot register", issue, i, spec.kind)
-		}
+		require.Empty(t, tc.corpus,
+			"#%s is still in testdata/fuzz-pending/ but its g5SeedCases row names a promoted corpus file", issue)
 	}
 
-	// And the converse: no g5SeedCases row may name an issue with no seed dir.
+	// Every row's seed (pending or promoted) must exist and be forceable.
 	for _, tc := range g5SeedCases {
-		_, err := os.Stat(filepath.Join("testdata", "fuzz-pending", tc.issue))
-		require.NoError(t, err,
-			"g5SeedCases has a row for #%s but testdata/fuzz-pending/%s/ does not exist — "+
-				"if the seed was promoted, delete the row (it is covered by the live corpus now)", tc.issue, tc.issue)
+		seed := g5SeedBytes(t, tc)
+		pairs := decodeG4Pairs(seed)
+		require.Len(t, pairs, 1, "seed for #%s must decode to exactly one pair", tc.issue)
+		for i, op := range pairs[0] {
+			spec, ok := g5SpecFor(op)
+			require.True(t, ok, "#%s op %d (kind %d) has no g5OpSyncPoints entry", tc.issue, i, op.kind%g4NumOpKinds)
+			require.Contains(t, []string{"create", "update", "delete"}, spec.kind,
+				"#%s op %d names GORM callback family %q, which newSyncPoint cannot register", tc.issue, i, spec.kind)
+		}
 	}
 }
