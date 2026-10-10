@@ -13,6 +13,12 @@
 //     definition, project_membership_definition.go). Removing U from P hides U's
 //     shares in P at once; re-adding U shows them again. A share on a secret that no
 //     longer resolves (deleted) is not listed.
+//   - when the request carries a PAT least-privilege restriction (ADR-042), only on
+//     secrets that token may read: the same PATRestriction.Allows(secrets.read,
+//     secret's project+environment) check AuthorizeSecret makes before any read of
+//     the secret itself (PAT-SCOPE-002). The route gate only proves the token may
+//     read secrets SOMEWHERE; without this a token confined to project A listed the
+//     owner's shares in every project.
 //
 // Nothing else widens it: holding global secrets.read does not add other users' shares
 // here (that is GET /api/v1/shares, unchanged), and received shares are not listed.
@@ -57,8 +63,9 @@ func (c *KeyorixCore) ListOwnedShareViews(ctx context.Context, actorType string,
 	return c.shareViews(ctx, visible), nil
 }
 
-// sharesInMemberProjects keeps the shares whose secret resolves and lies in a project
-// userID is a member of (IsProjectMember, asked once per project).
+// sharesInMemberProjects keeps the shares whose secret resolves, lies in a project
+// userID is a member of (IsProjectMember, asked once per project), and lies within
+// the request's PAT restriction for secrets.read (no restriction: every scope).
 func (c *KeyorixCore) sharesInMemberProjects(ctx context.Context, userID uint, shares []*models.ShareRecord) ([]*models.ShareRecord, error) {
 	if len(shares) == 0 {
 		return []*models.ShareRecord{}, nil
@@ -73,11 +80,16 @@ func (c *KeyorixCore) sharesInMemberProjects(ctx context.Context, userID uint, s
 	if err != nil {
 		return nil, fmt.Errorf("owned share list: resolve secrets: %w", err)
 	}
+	pat := patRestrictionFromContext(ctx)
 	projectOf := make(map[uint]uint, len(secrets))
 	for _, sec := range secrets {
-		if sec != nil {
-			projectOf[sec.ID] = sec.ProjectID
+		if sec == nil {
+			continue
 		}
+		if !pat.Allows(permSecretsRead, Scope{ProjectID: sec.ProjectID, EnvironmentID: sec.EnvironmentID}) {
+			continue // outside the token's project, environment or permissions
+		}
+		projectOf[sec.ID] = sec.ProjectID
 	}
 	member := map[uint]bool{}
 	out := make([]*models.ShareRecord, 0, len(shares))
@@ -87,7 +99,7 @@ func (c *KeyorixCore) sharesInMemberProjects(ctx context.Context, userID uint, s
 		}
 		pid, ok := projectOf[s.SecretID]
 		if !ok || pid == 0 {
-			continue // the secret is gone: nothing to manage
+			continue // the secret is gone, or outside the PAT restriction
 		}
 		isMember, seen := member[pid]
 		if !seen {

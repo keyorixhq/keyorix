@@ -242,3 +242,111 @@ func TestOwnedShares_MachineIsRefusedWithReason(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(raw), &out), raw)
 	assert.Equal(t, core.OwnedShareListDeniedMessage, out.Message, raw)
 }
+
+// ADR-042 (MERGE-MASTER's review of #3018): a PAT's least-privilege restriction
+// narrows the owner-scoped list exactly as it narrows a read of the secret itself
+// (AuthorizeSecret's PAT-SCOPE-002 check at the secret's project and environment).
+// Before the fix a token confined to P, or to one environment of P, passed the
+// any-scope gate and then listed olga's shares in every project she belongs to.
+func TestOwnedShares_PATRestrictionNarrowsTheList(t *testing.T) {
+	f := newOwnedShareFixture(t)
+	ctx := context.Background()
+	c := f.d.c
+
+	// A second environment in P with one more olga share, so an environment-scoped
+	// token has something in its project but outside its environment to leave out.
+	stage, err := c.CreateEnvironment(ctx, f.d.projectID, "stage")
+	require.NoError(t, err)
+	s, err := c.CreateSecret(ctx, &core.CreateSecretRequest{
+		Name: "olga-p-stage", Value: []byte("v1"), ProjectID: f.d.projectID, EnvironmentID: stage.ID,
+		Type: "generic", CreatedBy: "olga", OwnerID: f.ownerID,
+	})
+	require.NoError(t, err)
+	code, raw := doMachineRequest(t, f.d.srv, f.ownerTok, http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/share", s.ID),
+		[]byte(fmt.Sprintf(`{"recipient_id":%d,"is_group":false,"permission":"read"}`, f.d.aliceID)))
+	require.Equal(t, http.StatusCreated, code, raw)
+	var created struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &created), raw)
+	olgaShareStage := created.Data.ID
+	require.NotZero(t, olgaShareStage, raw)
+
+	pSecret, err := c.Storage().GetSecret(ctx, mustShareSecretID(t, f, f.olgaShareP))
+	require.NoError(t, err)
+
+	pat := func(scopes []string, project, env uint) string {
+		res, err := c.CreateOwnPAT(ctx, f.ownerID, fmt.Sprintf("pat-%d-%d-%v", project, env, scopes), nil, scopes, project, env, nil)
+		require.NoError(t, err)
+		return res.PlainToken
+	}
+	all := []uint{f.olgaShareP, f.olgaSharePayments, olgaShareStage}
+	sort.Slice(all, func(i, j int) bool { return all[i] < all[j] })
+
+	cases := []struct {
+		name string
+		tok  string
+		want []uint // nil: refused with 403 and the reason
+	}{
+		{"session (control)", f.ownerTok, all},
+		{"unrestricted PAT (control)", pat(nil, 0, 0), all},
+		{"PAT with secrets.read, no project (control)", pat([]string{"secrets.read"}, 0, 0), all},
+		{"PAT with secrets.*, no project (control)", pat([]string{"secrets.*"}, 0, 0), all},
+		{"PAT confined to project P", pat(nil, f.d.projectID, 0), []uint{f.olgaShareP, olgaShareStage}},
+		{"PAT confined to payments", pat(nil, f.otherProjectID, 0), []uint{f.olgaSharePayments}},
+		// The route gate (HoldsPermissionInAnyScope) asks at olga's role scopes, which
+		// are project-level, and an environment-confined token is denied any
+		// project-level check: refused outright, fail-closed. Core's own filter for
+		// such a token is pinned below.
+		{"PAT confined to one environment of P", pat(nil, f.d.projectID, pSecret.EnvironmentID), nil},
+		{"PAT with secrets.read confined to payments", pat([]string{"secrets.read"}, f.otherProjectID, 0), []uint{f.olgaSharePayments}},
+		{"PAT without secrets.read", pat([]string{"secrets.write"}, 0, 0), nil},
+		{"PAT without secrets.read, confined to P", pat([]string{"projects.read"}, f.d.projectID, 0), nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			code, out, raw := f.owned(t, tc.tok, "")
+			if tc.want == nil {
+				assert.Equal(t, http.StatusForbidden, code, raw)
+				assert.Equal(t, core.OwnedShareListDeniedMessage, out.Message, raw)
+				assert.NotContains(t, raw, "olga")
+				return
+			}
+			require.Equal(t, http.StatusOK, code, raw)
+			assert.Equal(t, tc.want, shareIDs(out.Data.Data), raw)
+			assert.Equal(t, len(tc.want), out.Data.Total, raw)
+		})
+	}
+
+	// Core applies the restriction itself, whatever the route gate let through: the
+	// list is narrowed per secret at (project, environment), and a token that may not
+	// read secrets lists nothing.
+	coreCases := []struct {
+		name string
+		r    *core.PATRestriction
+		want []uint
+	}{
+		{"environment of P", &core.PATRestriction{ProjectID: f.d.projectID, EnvironmentID: pSecret.EnvironmentID}, []uint{f.olgaShareP}},
+		{"stage environment of P", &core.PATRestriction{ProjectID: f.d.projectID, EnvironmentID: stage.ID}, []uint{olgaShareStage}},
+		{"project payments", &core.PATRestriction{ProjectID: f.otherProjectID}, []uint{f.olgaSharePayments}},
+		{"no secrets.read", &core.PATRestriction{Permissions: []string{"secrets.write"}}, []uint{}},
+		{"unrestricted (control)", nil, all},
+	}
+	for _, tc := range coreCases {
+		t.Run("core/"+tc.name, func(t *testing.T) {
+			views, err := c.ListOwnedShareViews(core.WithPATRestriction(ctx, tc.r), core.ActorTypeUser, f.ownerID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, shareIDs(views))
+		})
+	}
+}
+
+// mustShareSecretID resolves the secret a share in the fixture is on.
+func mustShareSecretID(t *testing.T, f *ownedShareFixture, shareID uint) uint {
+	t.Helper()
+	sh, err := f.d.c.Storage().GetShareRecord(context.Background(), shareID)
+	require.NoError(t, err)
+	return sh.SecretID
+}
