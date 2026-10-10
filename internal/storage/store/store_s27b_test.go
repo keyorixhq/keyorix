@@ -45,12 +45,11 @@ package store
 
 import (
 	"context"
-	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -59,18 +58,12 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// s27bDBSeq makes each in-memory DB unique within the process, even across
-// repeated invocations of the same test (e.g. `go test -count=N`).
-var s27bDBSeq atomic.Int64
-
 // newS27bStore opens a unique in-memory SQLite DB, auto-migrates the supplied
 // model types, and returns a LocalStorage. The "_s27b" suffix avoids DSN
 // collisions with store_s27_test.go's "_s27" suffix.
 func newS27bStore(t *testing.T, mods ...interface{}) *LocalStorage {
 	t.Helper()
-	dsn := fmt.Sprintf("file:%s_s27b_%d?mode=memory&cache=shared", t.Name(), s27bDBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "stores27b_", sqlite.Open, &gorm.Config{})
 	if len(mods) > 0 {
 		require.NoError(t, db.AutoMigrate(mods...))
 	}

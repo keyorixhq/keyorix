@@ -156,7 +156,7 @@ func listSecretsForExport(ctx context.Context, client *apiclient.ClientWithRespo
 		return nil, fmt.Errorf("list secrets: %w", err)
 	}
 	if resp.StatusCode() != 200 {
-		return nil, fmt.Errorf("list secrets: HTTP %d", resp.StatusCode())
+		return nil, httpStatusError("list secrets", resp.StatusCode(), resp.Body)
 	}
 	var body struct {
 		Data struct {

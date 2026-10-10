@@ -445,6 +445,7 @@ func computeTrend(prev, current float64) *StatTrend {
 //
 //	secret.read     → "accessed"
 //	secret.versions_listed → "versions_listed" (a listing, not a value read)
+//	secret.metadata_read → "metadata_read" (a by-name lookup, not a value read)
 //	secret.created  → "created"
 //	secret.updated  → "updated"
 //	secret.deleted  → "deleted"
@@ -468,6 +469,9 @@ func mapAuditEventToActivity(e *models.AuditEvent, actor string) ActivityItem {
 		secretName = extractSecretName(e.Description)
 	case EventSecretVersionsListed:
 		eventType = "versions_listed"
+		secretName = extractSecretName(e.Description)
+	case EventSecretMetadataRead:
+		eventType = "metadata_read"
 		secretName = extractSecretName(e.Description)
 	case "secret.created":
 		eventType = "created"

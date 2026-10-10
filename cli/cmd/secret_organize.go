@@ -38,7 +38,7 @@ Use --to 0 (or omit --to) to move the node to the root (no parent).`,
 			return err
 		}
 		if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-			return fmt.Errorf("move secret: HTTP %d", resp.StatusCode())
+			return httpStatusError("move secret", resp.StatusCode(), resp.Body)
 		}
 		dest := "root"
 		if secretMoveTo != 0 {
@@ -87,7 +87,7 @@ secret with the source's value, type, classification, and description.`,
 			return err
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("copy secret: HTTP %d", resp.StatusCode())
+			return httpStatusError("copy secret", resp.StatusCode(), resp.Body)
 		}
 		fmt.Printf("Copied secret %d to environment %d as new secret %d.\n", secretCopyID, secretCopyToEnv, derefSecretInt(resp.JSON200.Data.ID))
 		return nil
@@ -133,7 +133,7 @@ single call. Name clashes in the target are skipped, never overwritten.`,
 			return err
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("copy environment secrets: HTTP %d", resp.StatusCode())
+			return httpStatusError("copy environment secrets", resp.StatusCode(), resp.Body)
 		}
 		fmt.Printf("Promoted environment %d -> %d: %d copied, %d skipped (name clashes).\n",
 			secretCopyEnvFrom, secretCopyEnvTo, derefSecretInt(resp.JSON200.Data.Copied), derefSecretInt(resp.JSON200.Data.Skipped))

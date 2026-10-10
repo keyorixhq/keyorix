@@ -81,7 +81,7 @@ func runMachineBindingAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create OIDC binding: %w", err)
 	}
 	if resp.JSON201 == nil || resp.JSON201.Data == nil {
-		return fmt.Errorf("failed to create OIDC binding: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to create OIDC binding", resp.StatusCode(), resp.Body)
 	}
 	b := *resp.JSON201.Data
 	fmt.Printf("OIDC binding created: id=%d issuer=%q subject=%q → machine %q\n", derefInt(b.Id), derefStr(b.Issuer), derefStr(b.Subject), derefStr(m.Name))
@@ -107,7 +107,7 @@ func runMachineBindingList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to list OIDC bindings: %w", err)
 	}
 	if resp.StatusCode() != 200 {
-		return fmt.Errorf("failed to list OIDC bindings: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to list OIDC bindings", resp.StatusCode(), resp.Body)
 	}
 	var rows []apiclient.OIDCBinding
 	if resp.JSON200 != nil && resp.JSON200.Data != nil && resp.JSON200.Data.Bindings != nil {
@@ -151,7 +151,7 @@ func runMachineBindingRm(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to remove OIDC binding: %w", err)
 	}
 	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-		return fmt.Errorf("failed to remove OIDC binding: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to remove OIDC binding", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("OIDC binding %d removed from machine %q.\n", bindingID, derefStr(m.Name))
 	return nil

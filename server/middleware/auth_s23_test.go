@@ -2,14 +2,11 @@ package middleware
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -18,12 +15,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
-
-// scopedTestDBSeq makes each in-memory DB unique within the process, so that
-// repeated invocations of the same test (go test -count=N) don't attach to a
-// live leftover DB from a prior iteration.
-var scopedTestDBSeq atomic.Int64
 
 // newScopedTestDB creates an in-memory SQLite DB suitable for scope resolver
 // and handleScopedPermissionRequest tests. It migrates only the tables needed
@@ -33,9 +26,9 @@ func newScopedTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	// i18n is needed by the local storage layer for error messages.
 	require.NoError(t, i18n.InitializeForTesting())
-	// Use a unique per-test file URI so parallel subtests don't share state.
-	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s_%d?mode=memory&cache=shared", t.Name(), scopedTestDBSeq.Add(1))), &gorm.Config{})
-	require.NoError(t, err)
+	// sqlitetest gives each call a private DB (so parallel subtests don't share
+	// state) on a single-connection pool (no shared-cache "table is locked").
+	db := sqlitetest.OpenWithConfig(t, "kxmw_scoped_", &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(
 		&models.Role{},
 		&models.Permission{},

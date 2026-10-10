@@ -35,6 +35,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	grpcserver "github.com/keyorixhq/keyorix/server/grpc"
 	httpserver "github.com/keyorixhq/keyorix/server/http"
 	"google.golang.org/grpc"
@@ -44,10 +45,11 @@ import (
 	"gorm.io/gorm"
 )
 
-var memDBSeq atomic.Int64
-
+// uniqueMemDSN is sqlitetest's DSN builder. openWorldDBTB takes a tbLite (it is
+// also called with a *testing.F), which sqlitetest.Open's testing.TB cannot
+// accept, so the pool cap stays at its one call site there.
 func uniqueMemDSN() string {
-	return fmt.Sprintf("file:faultops_%d?mode=memory&cache=shared&_timeout=30000&_journal_mode=WAL", memDBSeq.Add(1))
+	return sqlitetest.DSN("faultops_")
 }
 
 // pgDSNEnv matches CI's own convention (.github/workflows/ci.yml's test-suite

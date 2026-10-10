@@ -12,6 +12,7 @@ import "strings"
 var activityLabels = map[string]string{ // #nosec G101 -- audit event types mapped to display phrases, not credentials
 	"secret.read":                   "accessed secret",
 	"secret.versions_listed":        "listed versions of secret",
+	"secret.metadata_read":          "looked up secret",
 	"secret.created":                "created secret",
 	"secret.updated":                "updated secret",
 	"secret.deleted":                "deleted secret",

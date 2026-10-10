@@ -7,6 +7,13 @@ metadata:
 data:
   keyorix.yaml: |
     environment: production
+    # security.enable_file_permission_check is deliberately NOT set. Since ADR-112 an
+    # absent key means TRUE: key material (the keys PVC files, the *_FILE secret files
+    # from the Secret volume) is checked strictly at every start, while this
+    # ConfigMap-mounted file (root-owned 0644, mounted by the kubelet) only produces a
+    # warning. An explicit `true` would audit THIS file strictly too and the pod would
+    # refuse to start. deploy TestShippedHelmConfig_FilePermissionCheckIsOn
+    # pins this.
     server:
       http:
         enabled: true
