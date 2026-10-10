@@ -39,6 +39,55 @@ the file:
 | `KEYORIX_DOMAIN` | substituted into `server` origins in the shipped example configs |
 | _(operator-named)_ | the raw KEK, when `key_provider.type: env` (see [key_provider](#encryption--kek-providers)) |
 
+### Secrets from files (`<NAME>_FILE`)
+
+Every secret the server reads from the environment can instead be read from a
+file, by setting `<NAME>_FILE` to the file's path. This is the Docker-secrets
+and Kubernetes-Secret-volume convention: the value never appears in
+`docker inspect`, `/proc/<pid>/environ` or a child process's environment.
+
+```sh
+KEYORIX_DB_PASSWORD_FILE=/run/secrets/db_password
+KEYORIX_MASTER_PASSWORD_FILE=/run/secrets/master_password
+KEYORIX_BOOTSTRAP_TOKEN_FILE=/run/secrets/bootstrap_token
+```
+
+Supported for: `KEYORIX_MASTER_PASSWORD`, `KEYORIX_DB_PASSWORD`,
+`KEYORIX_BOOTSTRAP_TOKEN`, `KEYORIX_API_KEY`, `KEYORIX_SIEM_TOKEN`,
+`KEYORIX_SCIM_TOKEN`, `KEYORIX_SSO_<NAME>_CLIENT_SECRET`, `KEYORIX_SMTP_PASSWORD`,
+`KEYORIX_EVIDENCE_WEBHOOK_TOKEN`, `KEYORIX_NOTIFY_SMTP_PASSWORD`,
+`KEYORIX_NOTIFY_WEBHOOK_TOKEN`, `KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET`,
+`KEYORIX_NOTIFY_SLACK_WEBHOOK`, `KEYORIX_NOTIFY_TEAMS_WEBHOOK`, and the
+operator-named variables: the `key_provider` `env_var` and `shamir_share_env`
+entries, a rotation backend's `dsn_env`, and a Vault connector's `token_env`
+(default `VAULT_TOKEN`). `KEYORIX_CONFIG_PATH` is a path, not a secret, and has no
+`_FILE` form.
+
+Rules (all enforced at startup; the server refuses to start rather than guess):
+
+- **`X_FILE` set:** the file is read and exactly one trailing newline (`\n` or
+  `\r\n`) is removed. Nothing else is trimmed, so a secret may contain spaces.
+  Symlinks are followed (Kubernetes mounts every Secret key as one).
+- **Both `X` and `X_FILE` set:** error, naming both variables. There is no
+  precedence. An empty variable counts as unset, so `X=${X:-}` passthrough in a
+  compose file does not trigger this.
+- **File missing, unreadable, empty, not a regular file, or larger than 1 MiB:**
+  error. The server does not fall back to `X` or to a value in `keyorix.yaml`.
+- **Nothing is logged:** errors and warnings name the variable and the path, never
+  the value or the file contents.
+- **File permissions:** the same warn-or-refuse policy as key material
+  (`security.enable_file_permission_check`, `security.allow_unsafe_file_permissions`).
+  A secret file that is accessible to *other* users (`o+rwx`) or writable by its
+  group is refused. Group-read (`0440`, what a Kubernetes Secret volume with
+  `fsGroup` produces) and `0400`/`0600` are accepted. The file's owner is not
+  compared with the server's uid, because an orchestrator owns the mount.
+- **`--passphrase-fd`, `--passphrase-file` and `--passphrase-stdin` still win**
+  over `KEYORIX_MASTER_PASSWORD[_FILE]`, as they do over the plain variable.
+
+For a raw KEK (`key_provider.type: env`) the file holds the hex or base64 form,
+as the variable would. A 32-byte raw key ending in a newline byte cannot be
+stored this way; use `key_provider.type: file` for raw keys.
+
 ---
 
 ## environment
@@ -374,6 +423,17 @@ inputs an orchestrator usually mounts (a Kubernetes ConfigMap/Secret is
 root-owned 0644 by default) — only get a warning naming the file, the mismatch
 and the fix while the key is left at its default; set
 `enable_file_permission_check: true` explicitly to refuse on those too.
+
+The files behind `KEYORIX_*_FILE` secret variables ([above](#secrets-from-files-name_file))
+count as key material: strict on the default as well (accessible to other users,
+or writable by the group, refuses to start), with the same upgrade grace period
+as the key files.
+
+The shipped `keyorix.docker.yaml` and Helm chart **omit this key on purpose**, so
+they run with the check on (the default) and the bind-mounted / ConfigMap-mounted
+config file only warns. Writing `enable_file_permission_check: true` into either
+would audit that orchestrator-owned file strictly and the container would refuse
+to start.
 
 **Upgrading an existing deployment** that never set
 `enable_file_permission_check`: the server tells a fresh install from an upgrade
