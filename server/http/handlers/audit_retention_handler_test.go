@@ -3,35 +3,26 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
-
-// auditRetentionDBCounter makes each in-memory DB unique within the process.
-var auditRetentionDBCounter atomic.Int64
 
 // newAuditRetentionHandler builds an AdminJobsHandler backed by a fresh
 // in-memory SQLite DB with the AuditEvent schema migrated.
 func newAuditRetentionHandler(t *testing.T) *AdminJobsHandler {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := auditRetentionDBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_auditretention_%d?mode=memory&cache=shared&_busy_timeout=5000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxhandlers_auditretention_")
 	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
 	return NewAdminJobsHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
 }
@@ -99,10 +90,7 @@ func TestPurgeAuditLogsHandler_InvalidJSON(t *testing.T) {
 // TestPurgeAuditLogsHandler_StorageError verifies 500 when the DB is closed.
 func TestPurgeAuditLogsHandler_StorageError(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
-	n := auditRetentionDBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_auditretention_%d?mode=memory&cache=shared&_busy_timeout=5000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxhandlers_auditretention_")
 	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
 
 	h := NewAdminJobsHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))

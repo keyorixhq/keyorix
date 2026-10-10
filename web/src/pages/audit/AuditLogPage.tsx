@@ -1,3 +1,4 @@
+import { apiErrorMessage } from '../../services/client';
 import React, { useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router';
 import { Loading } from '../../components/ui/Loading';
@@ -46,6 +47,14 @@ const EVENT_STYLES: Record<
         darkColor: '#fbbf24',
         lightBg: '#fef9c3',
         lightColor: '#854d0e',
+    },
+    // A by-name lookup exposes metadata only, never a value: styled neutral, not as a Read.
+    'secret.metadata_read': {
+        label: 'Metadata read',
+        darkBg: 'rgba(148,163,184,0.15)',
+        darkColor: '#94a3b8',
+        lightBg: '#f1f5f9',
+        lightColor: '#475569',
     },
     // A version listing exposes metadata only, never a value: styled neutral, not as a Read.
     'secret.versions_listed': {
@@ -1066,7 +1075,7 @@ const AuditTabPanel: React.FC<AuditTabPanelProps> = ({
             <Alert
                 type="error"
                 title="Failed to load audit log"
-                message="There was an error loading the audit log. Please try again."
+                message={apiErrorMessage(error, 'There was an error loading the audit log. Please try again.')}
             />
         )}
         <div className="bg-surface border border-base rounded-xl shadow-xs overflow-hidden">

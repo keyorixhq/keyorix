@@ -291,6 +291,47 @@ func TestFixFilePermsCorrectModeNoWarning(t *testing.T) {
 	require.NoError(t, FixFilePerms([]FilePermSpec{{Path: p, Mode: 0600}}, false))
 }
 
+// sandboxExcusesMissingBit reports whether a special mode bit (setuid, setgid,
+// sticky) that failed to stick may be excused. It is true ONLY when the bit is
+// absent AND the session sandbox marker KEYORIX_SANDBOX is exactly "1": the
+// macOS Seatbelt session sandbox silently refuses to set these bits. In CI, on
+// dev machines and on the e2e VM the variable is unset, so a missing bit stays
+// a hard failure of the precondition.
+func sandboxExcusesMissingBit(got, bit os.FileMode, sandboxEnv string) bool {
+	return got&bit == 0 && sandboxEnv == "1"
+}
+
+// skipIfSandboxRefusedSpecialBit skips the test when sandboxExcusesMissingBit
+// holds; otherwise it does nothing, leaving the caller's require.* to fail.
+func skipIfSandboxRefusedSpecialBit(t *testing.T, got, bit os.FileMode) {
+	t.Helper()
+	if sandboxExcusesMissingBit(got, bit, os.Getenv("KEYORIX_SANDBOX")) {
+		t.Skip("the KEYORIX_SANDBOX=1 session sandbox refuses to set the special mode bit; CI runs this test")
+	}
+}
+
+func TestSandboxExcusesMissingBit(t *testing.T) {
+	const bit = os.ModeSetuid
+	cases := []struct {
+		name string
+		got  os.FileMode
+		env  string
+		want bool
+	}{
+		{"bit missing, sandbox env set: excused", 0600, "1", true},
+		{"bit missing, env unset: hard failure", 0600, "", false},
+		{"bit missing, env other value: hard failure", 0600, "true", false},
+		{"bit missing, env 0: hard failure", 0600, "0", false},
+		{"bit present, sandbox env set: nothing to excuse", bit | 0600, "1", false},
+		{"bit present, env unset: nothing to excuse", bit | 0600, "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, sandboxExcusesMissingBit(c.got, bit, c.env))
+		})
+	}
+}
+
 // TestFixFilePermsClearsSetuidBitEvenWhenLow9BitsMatch pins the fix for the
 // info.Mode().Perm() masking gap: a file whose low 9 bits already equal the
 // target mode but which ALSO carries the setuid bit must still be corrected —
@@ -303,6 +344,7 @@ func TestFixFilePermsClearsSetuidBitEvenWhenLow9BitsMatch(t *testing.T) {
 
 	info, err := os.Stat(p)
 	require.NoError(t, err)
+	skipIfSandboxRefusedSpecialBit(t, info.Mode(), os.ModeSetuid)
 	require.Equal(t, os.FileMode(0600), info.Mode().Perm(), "low 9 bits already match the target mode")
 	require.NotZero(t, info.Mode()&os.ModeSetuid, "setuid bit must actually be set going in")
 

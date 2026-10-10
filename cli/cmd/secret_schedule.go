@@ -80,7 +80,7 @@ machine reads bypass it.`,
 			return err
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("set secret schedule: HTTP %d", resp.StatusCode())
+			return httpStatusError("set secret schedule", resp.StatusCode(), resp.Body)
 		}
 		out := resp.JSON200.Data
 		fmt.Printf("Schedule set: secret %d is readable on days %q, %02d:00-%02d:00 %s\n",
@@ -108,7 +108,7 @@ var secretGetScheduleCmd = &cobra.Command{
 			return err
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("get secret schedule: HTTP %d", resp.StatusCode())
+			return httpStatusError("get secret schedule", resp.StatusCode(), resp.Body)
 		}
 		out := resp.JSON200.Data
 		fmt.Printf("Secret %d schedule:\n", id)
@@ -139,7 +139,7 @@ var secretClearScheduleCmd = &cobra.Command{
 			return err
 		}
 		if resp.StatusCode() != 204 {
-			return fmt.Errorf("clear secret schedule: HTTP %d", resp.StatusCode())
+			return httpStatusError("clear secret schedule", resp.StatusCode(), resp.Body)
 		}
 		fmt.Printf("Schedule cleared for secret %d.\n", id)
 		return nil

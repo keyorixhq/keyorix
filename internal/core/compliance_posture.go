@@ -447,22 +447,35 @@ func applyAccessRequestEffectiveExpiry(reqs []*models.AccessRequest, now time.Ti
 // on-demand admin report (it walks every project for the access-governance roll-up),
 // not a hot path.
 func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePosture, error) {
-	snap, err := c.buildComplianceSnapshot(ctx)
+	p, postureSnap, err := c.computeCompliancePosture(ctx)
 	if err != nil {
 		return nil, err
 	}
-	p := c.compliancePostureFromSnapshot(ctx, snap)
 
 	// Persist today's snapshot for trend tracking (best-effort — a write failure
-	// must not abort the posture response an auditor is waiting on).
-	today := truncateToUTCDay(c.now())
-	postureSnap := buildCompliancePostureSnapshot(p, today)
-	_ = c.storage.SaveCompliancePostureSnapshot(ctx, postureSnap)
+	// must not abort the posture response an auditor is waiting on). A degraded
+	// posture is returned to the caller (it carries Degraded/DegradedReasons) but
+	// is NEVER persisted (#2834): a stored snapshot is an audit artefact, and its
+	// counts would silently omit the sub-rollups that failed to read.
+	if !p.Degraded {
+		_ = c.storage.SaveCompliancePostureSnapshot(ctx, postureSnap)
+	}
 
 	// Fetch the previous snapshot and compute the trend.
 	p.Trend = c.computeComplianceTrend(ctx, postureSnap)
 
 	return p, nil
+}
+
+// computeCompliancePosture builds today's posture and the snapshot row derived from
+// it, without writing anything.
+func (c *KeyorixCore) computeCompliancePosture(ctx context.Context) (*CompliancePosture, *models.CompliancePostureSnapshot, error) {
+	snap, err := c.buildComplianceSnapshot(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	p := c.compliancePostureFromSnapshot(ctx, snap)
+	return p, buildCompliancePostureSnapshot(p, truncateToUTCDay(c.now())), nil
 }
 
 // truncateToUTCDay returns t with the time portion stripped (UTC midnight), so that
