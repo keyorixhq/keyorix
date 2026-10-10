@@ -126,8 +126,8 @@ func (s *failGetUserPermissionsStorage) GetUserPermissions(ctx context.Context, 
 // TestFinishWebAuthnLogin_PermissionsReadFailureLeavesNoSessionOrGrant is the
 // GetUserPermissions sibling of the test above: same sentinels, same
 // attempt-stays-counted rule, same nothing-written effect. It is the proving
-// test for the GetUserPermissions row in oracleAByDesignErrors (the fuzzer
-// found that tuple on #2764's CI, pre-existing on main before #2841).
+// test for the GetUserPermissions row in oracleAByDesignErrors (QUEUE-FIX-1;
+// the fuzzer found that tuple on #2764's CI, pre-existing on main before #2841).
 func TestFinishWebAuthnLogin_PermissionsReadFailureLeavesNoSessionOrGrant(t *testing.T) {
 	t.Parallel()
 	c, db := newWebAuthnSpecTestCore(t)

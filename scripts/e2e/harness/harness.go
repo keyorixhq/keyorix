@@ -130,6 +130,12 @@ type DBBackend struct {
 	// VerifyAuditFlag is the --db or --pg-dsn flag verify-audit needs to open
 	// the same database directly, without the running server's lock.
 	VerifyAuditFlag func(dir string) []string
+	// KeepMFADefault leaves security.require_mfa at the shipped value admin init
+	// writes (true, ADR-112). By default the harness sets it false: journeys log
+	// in as the bootstrap admin with a plain session and exercise other features;
+	// MFA itself is driven by journey18 (CLI MFA login) and journey19 (the
+	// require_mfa default), which set this.
+	KeepMFADefault bool
 }
 
 // Server is a running keyorix-server subprocess plus everything the caller
@@ -245,6 +251,21 @@ func StartServer(t *testing.T, binary string, backend DBBackend) *Server {
 	}
 
 	run("init", "--config", configPath)
+
+	if !backend.KeepMFADefault {
+		path := filepath.Join(dir, "keyorix.yaml")
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read generated config: %v", err)
+		}
+		const on, off = "\n  require_mfa: true\n", "\n  require_mfa: false\n"
+		if !strings.Contains(string(raw), on) {
+			t.Fatalf("generated config has no %q line to override (did configs/keyorix.yaml.tpl change?)", strings.TrimSpace(on))
+		}
+		if err := os.WriteFile(path, []byte(strings.Replace(string(raw), on, off, 1)), 0o600); err != nil { // #nosec G703 -- dir is always t.TempDir(), never attacker input
+			t.Fatalf("override require_mfa: %v", err)
+		}
+	}
 
 	if backend.ConfigExtra != "" {
 		raw, err := os.ReadFile(filepath.Join(dir, "keyorix.yaml"))

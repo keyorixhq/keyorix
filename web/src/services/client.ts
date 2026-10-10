@@ -114,6 +114,9 @@ const handle401 = async (
     }
 };
 
+// Where MFAEnrollmentRequired sends the user; ProfilePage reads `tab` and `mfa`.
+export const MFA_ENROLMENT_URL = '/profile?tab=security&mfa=required';
+
 const handle403 = (error: AxiosError, authStore: ReturnType<typeof useAuthStore.getState>): void => {
     // ADR-025: a restricted account is blocked from everything but the
     // password change. Route it to the profile page rather than just
@@ -122,6 +125,16 @@ const handle403 = (error: AxiosError, authStore: ReturnType<typeof useAuthStore.
     if (code === 'PasswordChangeRequired') {
         if (!window.location.pathname.startsWith('/profile')) {
             window.location.href = '/profile';
+        }
+    } else if (code === 'MFAEnrollmentRequired') {
+        // #2924 / ADR-112: security.require_mfa is on and this session has no second
+        // factor, so the server confines it to the enrolment endpoints and answers
+        // everything else with this 403. Take the user to the one place that can fix
+        // it (Profile -> Security -> Enable) instead of a "no permission" error. On
+        // /profile itself the 403s are expected (e.g. the recovery-code status call):
+        // no redirect, and no generic permission error either.
+        if (!window.location.pathname.startsWith('/profile')) {
+            window.location.href = MFA_ENROLMENT_URL;
         }
     } else {
         authStore.setError('You do not have permission to perform this action.');
