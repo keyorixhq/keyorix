@@ -332,6 +332,17 @@ grace period).
 
 ## 7. TLS
 
+**Secure baseline (from the release after v0.95.3).** `docker compose -f
+docker-compose.yml -f docker-compose.secure.yml up -d` runs the backend on TLS
+with a certificate its entrypoint generates on first start, has nginx verify
+it, turns on rate limiting and the `/metrics` token, and copies the config to a
+private 0600 file (so the host file's owner and mode no longer matter, #2922).
+`admin validate --posture` then reports no deviations. It needs a backend image
+newer than the pinned v0.95.3: until that release, build the backend from this
+checkout (`build:` in docker-compose.secure.yml). With the next release it
+becomes the default compose file. For Helm, the same baseline is
+`secureBaseline.enabled=true` (see `deploy/helm/keyorix/README.md`).
+
 The default stack serves plain HTTP on `8088`. Two ways to get HTTPS:
 
 **Bundled (recommended) — the `tls` profile.** An optional Caddy front-end that
@@ -350,8 +361,10 @@ restarts don't re-request them. For a `localhost` value Caddy uses its internal
 CA (browsers warn unless you trust Caddy's root). To use the CLI against it,
 export that root and point the CLI at it:
 `docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt`
-then `SSL_CERT_FILE=$PWD/caddy-root.crt keyorix login --server https://localhost ...`
-(verified: login over `https://localhost` works, `http://localhost` answers 308). When running the `tls` profile,
+then `keyorix --ca-file $PWD/caddy-root.crt login --server https://localhost ...`, or
+store it once with `keyorix config set ca_file $PWD/caddy-root.crt` (CLI releases
+after 0.95.3; with an older CLI, `SSL_CERT_FILE=$PWD/caddy-root.crt` works on Linux
+only) (verified: login over `https://localhost` works, `http://localhost` answers 308). When running the `tls` profile,
 don't also expose web's `8088` publicly — front everything through Caddy on
 80/443.
 
@@ -360,12 +373,22 @@ front of the `web` container: point it at `web:80` and forward
 `X-Forwarded-Proto: https`.
 
 The single-binary `keyorix-server` also supports TLS directly
-(`server.http.tls` in the config) for non-Docker deployments.
+(`server.http.tls` in the config) for non-Docker deployments. A config written by
+`keyorix-server admin init` already has it on, with a generated self-signed
+certificate (`certs/server.crt`) and `security.require_transport_tls: true`;
+replace the certificate with a CA-issued one, or see
+[CONFIGURATION.md](CONFIGURATION.md#the-generated-config-is-the-secure-baseline)
+for the proxy-terminated variant.
 
 ## 8. Metrics (Prometheus)
 
-The backend exposes Prometheus metrics at **`GET /metrics`** (unauthenticated by
-design — keep it inside your perimeter, don't expose it publicly). It includes Go
+The backend exposes Prometheus metrics at **`GET /metrics`**. With
+`server.http.metrics_token` or `metrics_token_file` set it requires
+`Authorization: Bearer <token>`; a config written by `admin init` points
+`metrics_token_file` at a generated `secrets/metrics_token` (0600), so give
+Prometheus that token (`authorization: { credentials_file: ... }` in its scrape
+config). Without a token it is unauthenticated: keep it inside your perimeter,
+don't expose it publicly. It includes Go
 runtime + process collectors and per-route HTTP metrics
 (`keyorix_http_requests_total`, `keyorix_http_request_duration_seconds`). Point
 your own Prometheus at `backend:8080/metrics`.
@@ -484,8 +507,9 @@ KEYORIX_MASTER_PASSWORD=… KEYORIX_DB_PASSWORD=… ./bin/keyorix-server
 ```
 
 Copy `keyorix-server` to the target host, point it at PostgreSQL, and the API +
-UI are served on one port (default 8080). Set TLS directly via `server.http.tls`
-in the config for HTTPS without a proxy.
+UI are served on one port (default 8080). A config from `admin init` serves HTTPS
+there with a generated self-signed certificate; point `server.http.tls` at a
+CA-issued one for production.
 
 `make build` (without the UI) produces an API-only binary that serves a small
 placeholder page in place of the dashboard — use `make build-ui` for the full

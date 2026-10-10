@@ -77,6 +77,11 @@ spec:
               mountPath: /etc/nginx/nginx.conf
               subPath: nginx.conf
               readOnly: true
+            {{- if .Values.secureBaseline.enabled }}
+            - name: server-ca
+              mountPath: /etc/keyorix/tls
+              readOnly: true
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health
@@ -105,4 +110,14 @@ spec:
         - name: nginx-config
           configMap:
             name: {{ include "keyorix.web.fullname" . }}-config
+        {{- if .Values.secureBaseline.enabled }}
+        # Only the server's public certificate, never its key or the token.
+        - name: server-ca
+          secret:
+            secretName: {{ include "keyorix.fullname" . }}-secure-baseline
+            defaultMode: 0444
+            items:
+              - key: server.crt
+                path: ca.crt
+        {{- end }}
 {{- end -}}

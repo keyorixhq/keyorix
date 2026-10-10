@@ -250,7 +250,10 @@ func StartServer(t *testing.T, binary string, backend DBBackend) *Server {
 		}
 	}
 
-	run("init", "--config", configPath)
+	// --dev: the harness drives the API over plain HTTP. The secure default
+	// (TLS + metrics token) is covered by server/admin_init_secure_baseline_test.go
+	// and scripts/smoke.sh (SECURE-DEFAULT-1).
+	run("init", "--dev", "--config", configPath)
 
 	if !backend.KeepMFADefault {
 		path := filepath.Join(dir, "keyorix.yaml")

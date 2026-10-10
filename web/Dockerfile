@@ -48,6 +48,7 @@ RUN pnpm build
 FROM nginx:alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5ffd29f1d3 AS production
 RUN apk update && apk add --no-cache --upgrade libuuid=2.42.3-r1 libexpat=2.8.5-r0
 COPY nginx.conf /etc/nginx/nginx.conf
+COPY keyorix-backend.conf /etc/nginx/keyorix-backend.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
 
 # busybox wget ships in nginx:alpine; curl does not. 127.0.0.1, not localhost:

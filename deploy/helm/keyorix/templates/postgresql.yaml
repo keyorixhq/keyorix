@@ -116,6 +116,20 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+          {{- if .Values.secureBaseline.enabled }}
+          # secureBaseline (SECURE-DEFAULT-1): TLS with the chart's self-signed
+          # certificate (the server connects with ssl_mode: require). The key is
+          # root-owned 0440 (group = fsGroup 999), which PostgreSQL accepts.
+          # `postgres` first: args replace the image's CMD.
+          args:
+            - postgres
+            - -c
+            - ssl=on
+            - -c
+            - ssl_cert_file=/etc/postgresql/tls/tls.crt
+            - -c
+            - ssl_key_file=/etc/postgresql/tls/tls.key
+          {{- end }}
           ports:
             - name: postgres
               containerPort: 5432
@@ -144,6 +158,11 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+            {{- if .Values.secureBaseline.enabled }}
+            - name: tls
+              mountPath: /etc/postgresql/tls
+              readOnly: true
+            {{- end }}
           {{- with .Values.postgresql.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
@@ -156,4 +175,15 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if .Values.secureBaseline.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ include "keyorix.fullname" . }}-secure-baseline
+            defaultMode: 0440
+            items:
+              - key: postgres.crt
+                path: tls.crt
+              - key: postgres.key
+                path: tls.key
+        {{- end }}
 {{- end -}}
