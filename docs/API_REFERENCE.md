@@ -140,6 +140,10 @@ Authorization: Bearer <token>
 }
 ```
 
+**Read counters:**
+- `total_reads`: how many times this secret's value has been read, over its whole life (one per value disclosure, counted from the secret access log). Returned by `GET /api/v1/secrets/{id}`, `GET /api/v1/secrets/by-name` and `GET /api/v1/secrets/{id}/versions` (as `data.total_reads`); not included in listings. On a value read, the count includes that read.
+- `read_count` (and each version's `ReadCount`): only the reads charged against `max_reads`. It stays `0` for a secret without `max_reads`.
+
 ### Update Secret
 ```http
 PUT /api/v1/secrets/{id}

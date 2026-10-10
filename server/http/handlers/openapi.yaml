@@ -4226,7 +4226,7 @@ paths:
         - {name: id, in: path, required: true, schema: {type: integer}}
       responses:
         '200':
-          description: Envelope `{data, message}`. `data.versions` is the version history array.
+          description: Envelope `{data, message}`. `data.versions` is the version history array; `data.total_reads` the secret's lifetime value-read count.
           content:
             application/json:
               schema:
@@ -4236,6 +4236,7 @@ paths:
                     type: object
                     properties:
                       versions: {type: array, items: {$ref: '#/components/schemas/SecretVersion'}}
+                      total_reads: {type: integer, description: "Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Each version's ReadCount counts only reads charged against max_reads."}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -7356,6 +7357,7 @@ components:
         description: {type: string}
         max_reads: {type: integer, nullable: true}
         read_count: {type: integer}
+        total_reads: {type: integer, description: "Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on single-secret GETs (by id, by name), omitted in listings. Not read_count, which counts only reads charged against max_reads."}
         expiration: {type: string, format: date-time, nullable: true}
         classification: {type: string}
         status: {type: string}
@@ -7794,6 +7796,7 @@ components:
         description: {type: string}
         max_reads: {type: integer, nullable: true}
         read_count: {type: integer}
+        total_reads: {type: integer, description: "Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on single-secret GETs (by id, by name), omitted in listings. Not read_count, which counts only reads charged against max_reads."}
         expiration: {type: string, format: date-time, nullable: true}
         classification: {type: string}
         status: {type: string}
