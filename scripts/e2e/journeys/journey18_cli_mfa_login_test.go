@@ -185,10 +185,32 @@ func activateMFA(t *testing.T, s *harness.Server, token, secret, password string
 // one, so nothing here depends on the server refreshing an older session's MFA state.
 func enrolTOTPAndLogin(t *testing.T, s *harness.Server, username, password string) string {
 	t.Helper()
+	token, _ := enrolTOTPFactor(t, s, username, password)
+	return token
+}
+
+// mfaFactor is an enrolled TOTP factor: its secret plus the last TOTP step the server
+// has marked used (single-use), so a later login can pick a strictly newer step.
+type mfaFactor struct {
+	Secret     string
+	BurnedStep int64
+}
+
+// enrolTOTPFactor is enrolTOTPAndLogin that also returns the factor, for journeys that
+// log in again later (e.g. against a restored server) with the same TOTP secret.
+func enrolTOTPFactor(t *testing.T, s *harness.Server, username, password string) (string, *mfaFactor) {
+	t.Helper()
 	preToken := adminLogin(t, s, username, password)
 	secret := beginMFAEnrollment(t, s, preToken)
 	_, burned := activateMFA(t, s, preToken, secret, password)
+	f := &mfaFactor{Secret: secret, BurnedStep: burned}
+	return loginWithTOTP(t, s, username, password, f), f
+}
 
+// loginWithTOTP completes a real two-step login for a user who already has an active
+// TOTP factor, and records the step it consumed in f.
+func loginWithTOTP(t *testing.T, s *harness.Server, username, password string, f *mfaFactor) string {
+	t.Helper()
 	env := restExpect(t, s, "", http.MethodPost, "/auth/login",
 		map[string]string{"username": username, "password": password}, http.StatusOK)
 	var challenge struct {
@@ -201,9 +223,10 @@ func enrolTOTPAndLogin(t *testing.T, s *harness.Server, username, password strin
 	if !challenge.MFARequired || challenge.MFAChallenge == "" {
 		t.Fatalf("POST /auth/login for MFA-enrolled %s: expected an mfa_challenge, got: %s", username, env.Data)
 	}
+	code, step := totpCodeAfterStepN(t, f.Secret, f.BurnedStep)
 	env = restExpect(t, s, "", http.MethodPost, "/auth/mfa/verify",
-		map[string]string{"mfa_challenge": challenge.MFAChallenge, "code": totpCodeAfterStep(t, secret, burned)},
-		http.StatusOK)
+		map[string]string{"mfa_challenge": challenge.MFAChallenge, "code": code}, http.StatusOK)
+	f.BurnedStep = step
 	var session struct {
 		Token string `json:"token"`
 	}
@@ -211,6 +234,21 @@ func enrolTOTPAndLogin(t *testing.T, s *harness.Server, username, password strin
 		t.Fatalf("POST /auth/mfa/verify for %s returned no session token (err %v): %s", username, err, env.Data)
 	}
 	return session.Token
+}
+
+// requireMFAEnrolmentPremise proves a journey really runs under the shipped
+// security.require_mfa default (ADR-112): a freshly logged-in, not-yet-enrolled session
+// is confined to enrolment and every other route answers 403 MFAEnrollmentRequired.
+// Call it before enrolTOTPAndLogin so a config that quietly stopped requiring MFA turns
+// the journey red instead of letting it pass vacuously.
+func requireMFAEnrolmentPremise(t *testing.T, s *harness.Server, username, password string) {
+	t.Helper()
+	pre := adminLogin(t, s, username, password)
+	if denied := restCall(t, s, pre, http.MethodGet, "/api/v1/projects", nil); denied.StatusCode != http.StatusForbidden ||
+		!strings.Contains(string(denied.Raw), "MFAEnrollmentRequired") {
+		t.Fatalf("premise: the shipped config should require MFA enrolment first; GET /api/v1/projects got %d: %s",
+			denied.StatusCode, denied.Raw)
+	}
 }
 
 // totpPeriod mirrors internal/core's own step length (mfa.go's totpPeriod).
@@ -238,17 +276,25 @@ func totpCodeAt(t *testing.T, secret string, at time.Time) string {
 // flight.
 func totpCodeAfterStep(t *testing.T, secret string, burned int64) string {
 	t.Helper()
-	now := time.Now().UTC()
-	for step := max(totpStep(now), burned) + 1; ; step++ {
+	code, _ := totpCodeAfterStepN(t, secret, burned)
+	return code
+}
+
+// totpCodeAfterStepN is totpCodeAfterStep that also returns the step the code is for.
+func totpCodeAfterStepN(t *testing.T, secret string, burned int64) (string, int64) {
+	t.Helper()
+	for {
+		now := time.Now().UTC()
+		step := max(totpStep(now), burned) + 1
 		at := time.Unix(step*int64(totpPeriod.Seconds()), 0).UTC()
 		if step > totpStep(now)+1 {
-			// Would fall outside the server's +1 skew window: wait for the clock to
-			// catch up rather than submitting a code that cannot be accepted.
+			// Would fall outside the server's +1 skew window: wait until that step is
+			// the clock's next one (re-deriving the step afterwards, not advancing past
+			// it) rather than submitting a code that cannot be accepted.
 			time.Sleep(time.Until(at.Add(-totpPeriod)) + time.Second)
-			now = time.Now().UTC()
 			continue
 		}
-		return totpCodeAt(t, secret, at)
+		return totpCodeAt(t, secret, at), step
 	}
 }
 
