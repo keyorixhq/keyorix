@@ -58,10 +58,33 @@ describe('defaultOptions.queries.retryDelay', () => {
     });
 });
 
-describe('defaultOptions.mutations', () => {
-    it('retries mutations once with a fixed 1s delay', () => {
+// #2738: `retry: 1` meant EVERY failed mutation was re-sent, including one the
+// server had already reached a verdict on. Two concrete consequences, both real:
+// the MFA re-auth endpoints spent two of internal/core requireReauth's
+// per-account lockout slots per user click, and a retry is PAUSED while
+// react-query's onlineManager reports offline — a paused mutation's promise never
+// settles, which is the permanently-stuck Disable-2FA dialog of that issue.
+describe('defaultOptions.mutations.retry', () => {
+    const retry = queryClient.getDefaultOptions().mutations?.retry as (failureCount: number, error: unknown) => boolean;
+
+    it('never retries a 4xx — a verdict is not a transient failure', () => {
+        expect(retry(0, { response: { status: 400 } })).toBe(false);
+        expect(retry(0, { response: { status: 401 } })).toBe(false);
+        expect(retry(0, { response: { status: 404 } })).toBe(false);
+        expect(retry(0, { response: { status: 429 } })).toBe(false);
+        expect(retry(0, { response: { status: 499 } })).toBe(false);
+    });
+
+    it('retries a 5xx or a response-less failure exactly once', () => {
+        expect(retry(0, { response: { status: 500 } })).toBe(true);
+        expect(retry(1, { response: { status: 500 } })).toBe(false);
+        expect(retry(0, new Error('network down'))).toBe(true);
+        expect(retry(1, new Error('network down'))).toBe(false);
+        expect(retry(0, undefined)).toBe(true);
+    });
+
+    it('keeps the fixed 1s delay', () => {
         const mutationDefaults = queryClient.getDefaultOptions().mutations;
-        expect(mutationDefaults?.retry).toBe(1);
         expect(mutationDefaults?.retryDelay).toBe(1000);
     });
 });
