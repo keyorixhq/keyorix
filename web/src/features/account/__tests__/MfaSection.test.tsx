@@ -15,13 +15,26 @@ const enrollMutate = vi.fn();
 const activateMutate = vi.fn();
 const disableMutate = vi.fn();
 const regenerateMutate = vi.fn();
+const enrollReset = vi.fn();
+const activateReset = vi.fn();
+const disableReset = vi.fn();
+const regenerateReset = vi.fn();
 
+// #2738: every mutation hook must expose reset(). The dialogs call it on close so a
+// request that never settles (react-query pauses a retry while onlineManager reports
+// offline) cannot leave the mutation -- and with it the dialog -- wedged for the rest
+// of the page's lifetime. A mock without reset() would crash the close path, which is
+// the point: the dialogs depend on it.
 vi.mock('../index', () => ({
     useMfaRecoveryStatus: () => ({ data: recoveryStatus, isLoading: statusLoading, isError: statusError }),
-    useEnrollMfa: () => ({ mutate: enrollMutate, isPending: enrollPending }),
-    useActivateMfa: () => ({ mutate: activateMutate, isPending: activatePending }),
-    useDisableMfa: () => ({ mutateAsync: disableMutate, isPending: disablePending }),
-    useRegenerateRecoveryCodes: () => ({ mutateAsync: regenerateMutate, isPending: regeneratePending }),
+    useEnrollMfa: () => ({ mutate: enrollMutate, isPending: enrollPending, reset: enrollReset }),
+    useActivateMfa: () => ({ mutate: activateMutate, isPending: activatePending, reset: activateReset }),
+    useDisableMfa: () => ({ mutateAsync: disableMutate, isPending: disablePending, reset: disableReset }),
+    useRegenerateRecoveryCodes: () => ({
+        mutateAsync: regenerateMutate,
+        isPending: regeneratePending,
+        reset: regenerateReset,
+    }),
 }));
 
 beforeEach(() => {
@@ -36,6 +49,10 @@ beforeEach(() => {
     activateMutate.mockReset();
     disableMutate.mockReset();
     regenerateMutate.mockReset();
+    enrollReset.mockReset();
+    activateReset.mockReset();
+    disableReset.mockReset();
+    regenerateReset.mockReset();
 });
 
 describe('MfaSection', () => {
@@ -223,17 +240,25 @@ describe('MfaSection enrolment flow', () => {
         expect(screen.queryByLabelText('6-digit code')).not.toBeInTheDocument();
     });
 
-    it('shows a spinner on the Verify & enable button while activation is pending', () => {
-        activatePending = true;
+    // Same shape as the ReauthModal case below: the spinner follows this dialog's own
+    // in-flight submission, not the parent mutation's isPending (#2738).
+    it('shows a spinner on the Verify & enable button while its own submission is in flight', async () => {
         enrollMutate.mockImplementation((_vars, opts) => {
             opts.onSuccess({ secret: 'SECRET', otpauth_uri: 'otpauth://x' });
         });
+        // Never calls back: activation stays in flight.
+        activateMutate.mockImplementation(() => {});
 
         render(<MfaSection />);
         fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+        fireEvent.change(screen.getByLabelText('6-digit code'), { target: { value: '123456' } });
+        fireEvent.change(screen.getByLabelText('Account password'), { target: { value: 'hunter2' } });
 
         const submitButton = screen.getByRole('button', { name: /verify/i });
-        expect(submitButton).toBeDisabled();
+        expect(submitButton).not.toBeDisabled();
+        fireEvent.click(submitButton);
+
+        await waitFor(() => expect(submitButton).toBeDisabled());
         expect(submitButton.querySelector('svg.animate-spin')).toBeInTheDocument();
     });
 });
@@ -248,7 +273,7 @@ describe('MfaSection regenerate flow', () => {
 
         render(<MfaSection />);
         fireEvent.click(screen.getByRole('button', { name: 'Regenerate codes' }));
-        fireEvent.change(screen.getByLabelText('Authenticator code or password'), { target: { value: '123456' } });
+        fireEvent.change(screen.getByLabelText('Authenticator code'), { target: { value: '123456' } });
         fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
 
         await waitFor(() => expect(regenerateMutate).toHaveBeenCalledWith({ code: '123456' }));
@@ -258,16 +283,31 @@ describe('MfaSection regenerate flow', () => {
         expect(screen.queryByText('Regenerate recovery codes')).not.toBeInTheDocument();
     });
 
-    it('treats non-6-digit input as a password, and closes immediately when no codes are returned', async () => {
+    it('closes immediately when no codes are returned', async () => {
         regenerateMutate.mockResolvedValue(undefined);
 
         render(<MfaSection />);
         fireEvent.click(screen.getByRole('button', { name: 'Regenerate codes' }));
-        fireEvent.change(screen.getByLabelText('Authenticator code or password'), { target: { value: 'hunter2' } });
+        fireEvent.change(screen.getByLabelText('Authenticator code'), { target: { value: '123456' } });
         fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
 
-        await waitFor(() => expect(regenerateMutate).toHaveBeenCalledWith({ password: 'hunter2' }));
+        await waitFor(() => expect(regenerateMutate).toHaveBeenCalledWith({ code: '123456' }));
         await waitFor(() => expect(screen.queryByText('Regenerate recovery codes')).not.toBeInTheDocument());
+    });
+
+    // #2738: the field used to be labelled "Authenticator code or password" and sent
+    // anything non-6-digit as `password` -- a submission internal/core's requireReauth
+    // ALWAYS refuses once a second factor is enrolled (its password branch additionally
+    // needs an MFAStepUpPurposeReauth grant no web login mints). The label changed, and
+    // so did what is submittable; the server check did not.
+    it('never submits the account password as a reauth proof', async () => {
+        render(<MfaSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Regenerate codes' }));
+        fireEvent.change(screen.getByLabelText('Authenticator code'), { target: { value: 'hunter2' } });
+
+        expect(screen.getByRole('button', { name: 'Regenerate' })).toBeDisabled();
+        fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+        await waitFor(() => expect(regenerateMutate).not.toHaveBeenCalled());
     });
 
     it('shows the server error message when the reauth proof is rejected', async () => {
@@ -275,7 +315,7 @@ describe('MfaSection regenerate flow', () => {
 
         render(<MfaSection />);
         fireEvent.click(screen.getByRole('button', { name: 'Regenerate codes' }));
-        fireEvent.change(screen.getByLabelText('Authenticator code or password'), { target: { value: '000000' } });
+        fireEvent.change(screen.getByLabelText('Authenticator code'), { target: { value: '000000' } });
         fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
 
         expect(await screen.findByText('Invalid TOTP code')).toBeInTheDocument();
@@ -284,7 +324,7 @@ describe('MfaSection regenerate flow', () => {
     it('Cancel closes the modal without submitting', () => {
         render(<MfaSection />);
         fireEvent.click(screen.getByRole('button', { name: 'Regenerate codes' }));
-        fireEvent.change(screen.getByLabelText('Authenticator code or password'), { target: { value: '123456' } });
+        fireEvent.change(screen.getByLabelText('Authenticator code'), { target: { value: '123456' } });
         fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
         expect(regenerateMutate).not.toHaveBeenCalled();
@@ -302,7 +342,7 @@ describe('MfaSection disable flow', () => {
 
         render(<MfaSection />);
         fireEvent.click(screen.getByRole('button', { name: 'Disable' }));
-        fireEvent.change(screen.getByLabelText('Authenticator code or password'), { target: { value: '123456' } });
+        fireEvent.change(screen.getByLabelText('Authenticator code'), { target: { value: '123456' } });
         fireEvent.click(screen.getByRole('button', { name: 'Disable 2FA' }));
 
         await waitFor(() => expect(disableMutate).toHaveBeenCalledWith({ code: '123456' }));
@@ -314,22 +354,33 @@ describe('MfaSection disable flow', () => {
 
         render(<MfaSection />);
         fireEvent.click(screen.getByRole('button', { name: 'Disable' }));
-        fireEvent.change(screen.getByLabelText('Authenticator code or password'), { target: { value: '123456' } });
+        fireEvent.change(screen.getByLabelText('Authenticator code'), { target: { value: '123456' } });
         fireEvent.click(screen.getByRole('button', { name: 'Disable 2FA' }));
 
-        expect(await screen.findByText('Invalid code or password.')).toBeInTheDocument();
+        expect(await screen.findByText(/not accepted/i)).toBeInTheDocument();
     });
 
-    it('shows a spinner on the confirm button of a ReauthModal while the action is pending', () => {
-        disablePending = true;
+    // #2738: the pending state is the DIALOG's own, driven by its in-flight submission
+    // — not the parent mutation's isPending, which outlives the dialog and used to
+    // leave the confirm button disabled for the rest of the page's lifetime.
+    it('shows a spinner on the confirm button while its own submission is in flight', async () => {
+        let settle: () => void = () => {};
+        disableMutate.mockImplementation(() => new Promise<void>((resolve) => (settle = resolve)));
 
         render(<MfaSection />);
         fireEvent.click(screen.getByRole('button', { name: 'Disable' }));
-        fireEvent.change(screen.getByLabelText('Authenticator code or password'), { target: { value: '123456' } });
+        fireEvent.change(screen.getByLabelText('Authenticator code'), { target: { value: '123456' } });
 
         const confirmButton = screen.getByRole('button', { name: 'Disable 2FA' });
-        expect(confirmButton).toBeDisabled();
+        expect(confirmButton).not.toBeDisabled();
+        fireEvent.click(confirmButton);
+
+        await waitFor(() => expect(confirmButton).toBeDisabled());
         expect(confirmButton.querySelector('svg.animate-spin')).toBeInTheDocument();
+
+        await act(async () => {
+            settle();
+        });
     });
 });
 
@@ -369,7 +420,7 @@ describe('MfaSection auto-clear (G28)', () => {
 
         render(<MfaSection />);
         fireEvent.click(screen.getByRole('button', { name: 'Regenerate codes' }));
-        fireEvent.change(screen.getByLabelText('Authenticator code or password'), { target: { value: '123456' } });
+        fireEvent.change(screen.getByLabelText('Authenticator code'), { target: { value: '123456' } });
         fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
         expect(await screen.findByText('bg-code-1')).toBeInTheDocument();
 

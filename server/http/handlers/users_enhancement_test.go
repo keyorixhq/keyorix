@@ -34,6 +34,11 @@ func setupUserEnhancementTest(t *testing.T) (*UserHandler, *UsersRolesHandler, *
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.ProjectMembership{}, &models.Project{},
 		&models.Role{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		// SecretNode: the membership/count path resolves projects through
+		// ListProjectsWithCounts (so soft-deleted ones are identifiable rather than
+		// nameless), and that query LEFT JOINs secret_nodes AND environments. Neither
+		// is seeded; the tables just have to exist.
+		&models.SecretNode{}, &models.Environment{},
 	))
 	coreService := core.NewKeyorixCore(store.NewLocalStorage(db))
 	uh, err := NewUserHandler(coreService)
@@ -110,12 +115,23 @@ func TestListUsers_MergesProjectCounts(t *testing.T) {
 
 	viewer := &models.Role{Name: "project_viewer"}
 	require.NoError(t, db.Create(viewer).Error)
+	// The projects have to EXIST: the counts exclude soft-deleted projects, and a
+	// grant pointing at a project that is not in the index at all counts as not-live
+	// for the same reason (a dangling grant must not inflate the number either). This
+	// fixture previously created grants on project ids 1/2 with no project rows and
+	// still reported 2 — nothing checked. See
+	// internal/core/project_membership_soft_delete_test.go.
+	for id, name := range map[uint]string{1: "alpha", 2: "beta", 3: "gamma"} {
+		require.NoError(t, db.Create(&models.Project{ID: id, Name: name}).Error)
+	}
 	// Member of two projects (grants), plus an invite to a third still in flight,
 	// plus a revoked journal row that must not count at all.
 	for _, pid := range []uint{1, 2} {
 		require.NoError(t, db.Create(&models.UserRole{UserID: alice.ID, RoleID: viewer.ID, ProjectID: pid}).Error)
 	}
 	require.NoError(t, db.Create(&models.ProjectMembership{ProjectID: 3, UserID: alice.ID, State: "invited"}).Error)
+	// Project 4 deliberately does not exist: a revoked journal row counts for
+	// nothing regardless, so this also pins that a dangling one is harmless.
 	require.NoError(t, db.Create(&models.ProjectMembership{ProjectID: 4, UserID: alice.ID, State: "revoked"}).Error)
 
 	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/users", nil))
