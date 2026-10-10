@@ -30,6 +30,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/oauth2"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -307,7 +308,12 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	if err != nil {
 		return nil, nil, "", err
 	}
-	_ = c.RecordLogin(ctx, user.ID) // best-effort last-login stamp
+	// Best-effort last-login stamp, panic-safe (#2910 fault sweep): it runs
+	// AFTER the session is minted, so a panic here used to unwind past a
+	// committed session and turn a completed login into a reported failure
+	// with an orphan session. Every other login path already runs it
+	// panic-safe (goSafe in the handlers).
+	besteffort.Run(ctx, "sso.CompleteSSO.RecordLogin", func() error { return c.RecordLogin(ctx, user.ID) })
 	c.writeAuditEvent(ctx, EventSSOLogin, actorPtr(user.ID), nil,
 		fmt.Sprintf("SSO login via %s (subject=%s)", providerName, sub))
 	return session, user, st.ReturnTo, nil
@@ -486,7 +492,8 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 	if err != nil {
 		return nil, nil, "", err
 	}
-	_ = c.RecordLogin(ctx, user.ID) // best-effort last-login stamp
+	// Best-effort and panic-safe -- see the identical step in CompleteSSO.
+	besteffort.Run(ctx, "sso.CompleteSAML.RecordLogin", func() error { return c.RecordLogin(ctx, user.ID) })
 	c.writeAuditEvent(ctx, EventSSOLogin, actorPtr(user.ID), nil,
 		fmt.Sprintf("SAML login via %s (subject=%s)", name, info.Subject))
 	return session, user, st.ReturnTo, nil

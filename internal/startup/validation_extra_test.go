@@ -45,7 +45,7 @@ func TestSafeFilePermPath_SafeRelative(t *testing.T) {
 // is caught by validateEncryption's own traversal check.
 func TestValidateEncryption_UnsafeSaltPath(t *testing.T) {
 	cfg := encCfg("../../outside/salt", "/tmp/dek")
-	err := validateEncryption(cfg, &ValidationResult{})
+	err := validateEncryption(cfg, &ValidationResult{}, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsafe")
 }
@@ -56,7 +56,7 @@ func TestValidateEncryption_UnsafeDEKPath(t *testing.T) {
 	dir := t.TempDir()
 	salt := writeKeyFile(t, dir, "kek.salt", 32)
 	cfg := encCfg(salt, "../../outside/dek.key")
-	err := validateEncryption(cfg, &ValidationResult{})
+	err := validateEncryption(cfg, &ValidationResult{}, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsafe")
 }
@@ -68,7 +68,7 @@ func TestValidateEncryption_MissingDEK(t *testing.T) {
 	salt := writeKeyFile(t, dir, "kek.salt", 32)
 	dek := filepath.Join(dir, "absent.dek")
 
-	err := validateEncryption(encCfg(salt, dek), &ValidationResult{})
+	err := validateEncryption(encCfg(salt, dek), &ValidationResult{}, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "DEK")
 }
@@ -181,7 +181,7 @@ func TestValidateFilePermissions_EncryptionPathsChecked(t *testing.T) {
 	cfg.Storage.Encryption.DEKPath = dek
 
 	result := &ValidationResult{}
-	err := validateFilePermissions(cfg, "", false, result)
+	err := validateFilePermissions(cfg, "", false, false, result)
 	require.NoError(t, err)
 }
 
@@ -200,7 +200,7 @@ func TestValidateFilePermissions_TLSGRPCPathsChecked(t *testing.T) {
 	cfg.Server.GRPC.TLS.KeyFile = key
 
 	result := &ValidationResult{}
-	err := validateFilePermissions(cfg, "", false, result)
+	err := validateFilePermissions(cfg, "", false, false, result)
 	require.NoError(t, err)
 }
 
@@ -219,7 +219,7 @@ func TestValidateFilePermissions_TLSHTTPPathsChecked(t *testing.T) {
 	cfg.Server.HTTP.TLS.KeyFile = key
 
 	result := &ValidationResult{}
-	err := validateFilePermissions(cfg, "", false, result)
+	err := validateFilePermissions(cfg, "", false, false, result)
 	require.NoError(t, err)
 }
 
@@ -236,7 +236,7 @@ func TestValidateFilePermissions_DatabasePathIncluded(t *testing.T) {
 	cfg.Storage.Database.Path = dbPath
 
 	result := &ValidationResult{}
-	err := validateFilePermissions(cfg, "", false, result)
+	err := validateFilePermissions(cfg, "", false, false, result)
 	require.NoError(t, err)
 }
 
