@@ -1217,7 +1217,7 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// wildcard needed, and no #2549-style treadmill of one new row per red
 	// build expected on this op.
 	{
-		op: "REST POST /api/v1/secrets/{id}/rollback", method: "UpdateSecret", kind: faultstorage.KindError,
+		op: "REST POST /api/v1/secrets/{id}/rollback", method: "UpdateSecretFields", kind: faultstorage.KindError,
 		nth: 1, oracle: "a", issue: "#2842", expires: "2026-10-17",
 		tables:     []string{"SecretVersion"},
 		findingDoc: "#2842",
