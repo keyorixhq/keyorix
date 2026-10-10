@@ -364,6 +364,32 @@ describe('response interceptor (error): 403 handling (ADR-025 password-change ga
         expect(location.href).toBe('');
     });
 
+    // #2924 / ADR-112: security.require_mfa confines a session with no second factor to the
+    // enrolment endpoints; everything else answers 403 MFAEnrollmentRequired.
+    it('redirects to MFA enrolment on an MFAEnrollmentRequired error, without a permission error', async () => {
+        const store = makeAuthStore({ isAuthenticated: true });
+        mockGetState.mockReturnValue(store);
+        const err = axiosErr({ response: { status: 403, data: { error: 'MFAEnrollmentRequired' } } });
+
+        await expect(responseOnRejected(err)).rejects.toBe(err);
+        expect(location.href).toBe('/profile?tab=security&mfa=required');
+        expect(store.setError).not.toHaveBeenCalled();
+    });
+
+    it('does not redirect (or complain) on MFAEnrollmentRequired when already on /profile', async () => {
+        // The Security tab's own recovery-code status call 403s for a user who has not
+        // enrolled yet; redirecting again would loop, and a generic "no permission"
+        // error would be wrong.
+        location.pathname = '/profile';
+        const store = makeAuthStore({ isAuthenticated: true });
+        mockGetState.mockReturnValue(store);
+        const err = axiosErr({ response: { status: 403, data: { error: 'MFAEnrollmentRequired' } } });
+
+        await expect(responseOnRejected(err)).rejects.toBe(err);
+        expect(location.href).toBe('');
+        expect(store.setError).not.toHaveBeenCalled();
+    });
+
     it('sets a generic permission-error message for any other 403', async () => {
         const store = makeAuthStore({ isAuthenticated: true });
         mockGetState.mockReturnValue(store);

@@ -681,10 +681,11 @@ func TestDeleteExpiredBreakGlassBefore_S27_HappyPath(t *testing.T) {
 	// A completed (non-active) activation older than 1 hour.
 	old := time.Now().Add(-2 * time.Hour)
 	activation := &models.BreakGlassActivation{
-		ProjectID: 1,
-		UserID:    1,
-		State:     "completed",
-		CreatedAt: old,
+		ProjectID:  1,
+		UserID:     1,
+		State:      "completed",
+		CreatedAt:  old,
+		ReviewedAt: &old,
 	}
 	require.NoError(t, ls.db.Create(activation).Error)
 	// An active one that must NOT be touched.

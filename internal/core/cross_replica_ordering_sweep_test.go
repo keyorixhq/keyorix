@@ -196,10 +196,14 @@ func g5EnumerateConflictPairs() []g5ConflictPair {
 // deleted here per the rule above: a row kept past its fix would excuse a
 // regression of that ordering forever. The sweep is now expected to find
 // those orderings clean, and will report them loudly if it does not.
-// #2891 likewise promoted #2650's seed (its fix landed via #2668), #2852
-// promoted #2659's (fix landed via #2669), and #2884 promoted #2651's (fix
-// landed via #2675), so those six rows are deleted here too, for the same
-// reason.
+// #2891 likewise promoted #2650's seed (its fix landed via #2668), so its two
+// rows are deleted here too, for the same reason. #2659's fix landed via
+// #2669 and its seed was promoted (see #2852, which also replaced invariant
+// 6's cross-row-join check with the INV-CORE-44 one), so its two rows are
+// deleted here as well. #2884 promoted #2651's seed (its fix landed via
+// #2675), so its two rows are deleted here too.
+// #2806's three rows are deleted by the PR that fixed it (the parent-liveness
+// check in SetDynamicSecretConfigEnabled), leaving the ledger empty.
 var g5KnownOrderingViolations = map[string]string{}
 
 // g5LedgerIssuesWithoutASeed documents every g5KnownOrderingViolations issue

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -211,6 +212,24 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 // error was silently swallowed). The caller (completeLogin) is responsible for
 // revoking the just-minted session when this returns an error.
 func (h *AuthHandler) buildLoginResponse(ctx context.Context, session *models.Session, user *models.User) (loginResponseBody, error) {
+	// Surface roles + permissions so the UI can gate nav/routes.
+	id, ierr := h.coreService.GetUserIdentity(ctx, user.ID)
+	if ierr != nil {
+		return loginResponseBody{}, fmt.Errorf("resolve user identity: %w", ierr)
+	}
+	return h.loginResponseFromIdentity(session, user, id), nil
+}
+
+// loginResponseFromIdentity assembles the response body from an identity the
+// caller has ALREADY resolved. It performs no storage reads and cannot fail.
+//
+// #2841: the WebAuthn login paths resolve the identity inside core, BEFORE
+// minting the session and the ambient MFA step-up grant, and hand it back — so
+// on this side there is nothing fallible left to run after the writes, and
+// therefore no partial state for completeLogin to compensate for. Keeping the
+// assembly separate from the read is what makes that possible without
+// duplicating the body shape.
+func (h *AuthHandler) loginResponseFromIdentity(session *models.Session, user *models.User, id core.UserIdentity) loginResponseBody {
 	resp := loginResponseBody{
 		Token:       session.SessionToken,
 		UserID:      user.ID,
@@ -226,16 +245,11 @@ func (h *AuthHandler) buildLoginResponse(ctx context.Context, session *models.Se
 	if session.AbsoluteExpiresAt != nil {
 		resp.AbsoluteExpiresAt = session.AbsoluteExpiresAt.UTC().Format(time.RFC3339)
 	}
-	// Surface roles + permissions so the UI can gate nav/routes.
-	id, ierr := h.coreService.GetUserIdentity(ctx, user.ID)
-	if ierr != nil {
-		return loginResponseBody{}, fmt.Errorf("resolve user identity: %w", ierr)
-	}
 	resp.Role, resp.Roles, resp.Permissions = id.Role, id.Roles, id.Permissions
 	// Flag an expired/required password change so the UI can route (ADR-025).
 	resp.AccountState = core.NormalizeAccountState(user.AccountState)
 	resp.PasswordChangeRequired = h.coreService.PasswordExpired(user) || core.AccountRestricted(user.AccountState)
-	return resp, nil
+	return resp
 }
 
 // completeLogin finishes a login-completion flow for an already-minted session:
@@ -244,9 +258,15 @@ func (h *AuthHandler) buildLoginResponse(ctx context.Context, session *models.Se
 // identity read errored) it fails closed instead of handing back a session — it
 // revokes the session it was about to issue and writes a generic 500, and returns
 // ok=false so the caller stops without setting cookies or logging the login as
-// successful. Shared by every HTTP handler that mints a session and reaches the
-// same response shape: Login, ConsumeSetup, VerifyMFA, FinishWebAuthnLogin, and
-// FinishWebAuthnPasswordlessLogin (#2412).
+// successful (#2412).
+//
+// Its callers are now Login and ConsumeSetup only. The other three (VerifyMFA,
+// FinishWebAuthnLogin, FinishWebAuthnPasswordlessLogin) moved to
+// completeLoginWithIdentity because their core functions write something
+// USER-scoped after minting (an MFAStepUpGrant, or an MFAStepupToken) that this
+// function's session-only revoke never undid — see #2841. Login and
+// ConsumeSetup write only the session, so the compensation here is complete for
+// them and the ordering change was unnecessary.
 func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, session *models.Session, user *models.User) (loginResponseBody, bool) {
 	resp, err := h.buildLoginResponse(r.Context(), session, user)
 	if err != nil {
@@ -254,9 +274,31 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, sess
 		if rerr := h.coreService.Logout(r.Context(), session.SessionToken); rerr != nil {
 			log.Printf("completeLogin: failed to revoke session after identity resolution error: %v", rerr)
 		}
-		sendError(w, "Internal", "Login could not be completed. Please try again.", http.StatusInternalServerError, nil)
+		sendError(w, "Internal", errLoginIncomplete, http.StatusInternalServerError, nil)
 		return loginResponseBody{}, false
 	}
+	h.setSessionCookies(w, session)
+	return resp, true
+}
+
+// completeLoginWithIdentity is completeLogin for a caller that already holds the
+// resolved identity, so no read can fail here and no session ever needs
+// revoking (#2841).
+//
+// It exists because completeLogin's revoke-on-failure path was only ever HALF a
+// compensation: core's WebAuthn login paths mint a session AND an ambient
+// MFAStepUpGrant, and completeLogin revoked only the session. A grant therefore
+// outlived a login the caller was told had failed, satisfying the
+// restricted-secret MFA gate for the rest of the step-up window on a later
+// session the user never proved a second factor for. The fix is ordering, not a
+// second compensation: core resolves the identity before its first write (see
+// core.resolveLoginIdentityBeforeMint) and returns it, and the handler uses THIS
+// function rather than re-reading it — re-reading would reopen the same window
+// one layer up. Returns (body, true) unconditionally; the bool is kept so the
+// three call sites (FinishWebAuthnLogin, FinishWebAuthnPasswordlessLogin,
+// VerifyMFA) read identically to the completeLogin ones.
+func (h *AuthHandler) completeLoginWithIdentity(w http.ResponseWriter, session *models.Session, user *models.User, identity core.UserIdentity) (loginResponseBody, bool) {
+	resp := h.loginResponseFromIdentity(session, user, identity)
 	h.setSessionCookies(w, session)
 	return resp, true
 }
@@ -703,7 +745,9 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = h.coreService.RequestPasswordReset(r.Context(), body.Email)
+	besteffort.Run(r.Context(), "http.AuthHandler.PasswordReset.RequestPasswordReset", func() error {
+		return h.coreService.RequestPasswordReset(r.Context(), body.Email)
+	})
 	sendSuccess(w, nil, "If that email is registered, a reset link has been sent")
 }
 

@@ -5,10 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,7 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -25,28 +22,29 @@ import (
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
 const identityFailClosedTestPassword = "Secret#Passw0rd!"
 
 const totpStepDuration = 30 * time.Second
 
-var identityFailClosedDBCounter atomic.Int64
-
 // newIdentityFailClosedTestHandler builds an AuthHandler over a FaultyStorage-
 // wrapped LocalStorage, with MFA enrolled and activated for user "alice" (id 1).
-// Each call gets its own private in-memory DB (a unique shared-cache name) so
+// Each call gets its own private in-memory DB (sqlitetest.Open, a unique
+// shared-cache name with the pool capped to one connection) so
 // concurrent/sequential test functions in this file never collide over user id
-// 1. Returns the handler, the fault wrapper (initially unarmed — a pure pass-
+// 1 — and so the detached goSafe audit writes a request dispatches cannot
+// collide with this test's own reads over SQLite's shared-cache table locks
+// (#2906: "database table is locked", which a busy timeout cannot retry).
+// Returns the handler, the fault wrapper (initially unarmed — a pure pass-
 // through), the TOTP secret, a clock ONE STEP PAST activation's own code (so
 // the caller's first verify code doesn't collide with the step
 // ActivateMFA's own anti-replay check already consumed), and the backing
 // *gorm.DB so a test can inspect what a request actually left behind in storage.
 func newIdentityFailClosedTestHandler(t *testing.T) (*AuthHandler, *faultstorage.FaultyStorage, string, time.Time, *gorm.DB) {
 	t.Helper()
-	dsn := fmt.Sprintf("file:kxidentityfailclosed%d?mode=memory&cache=shared&_timeout=30000", identityFailClosedDBCounter.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxidentityfailclosed")
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.MFASecret{}, &models.MFARecoveryCode{}, &models.MFAChallenge{},
 		&models.Session{}, &models.AuditEvent{}, &models.MFAStepupToken{}, &models.MFAStepUpGrant{},
@@ -102,10 +100,8 @@ func postVerifyMFA(t *testing.T, h *AuthHandler, challenge, code string) *httpte
 // TestVerifyMFA_GetUserPermissionsError_FailsClosed reproduces #2412 (CI fuzzing
 // on PR #2392, FuzzStorageFaultOperations input c67f27: "REST POST
 // /auth/mfa/verify", fault "GetUserPermissions#1/error", oracle (c)): a storage
-// error resolving the user's permissions — reached via buildLoginResponse's call
-// to GetUserIdentity, itself reached via VerifyMFA after VerifyMFALogin has
-// already minted a real session — must not produce a 200 with a live session
-// indistinguishable from a legitimate empty-permissions grant.
+// error resolving the user's permissions must not produce a 200 with a live
+// session indistinguishable from a legitimate empty-permissions grant.
 //
 // Confirmed red on the unfixed handler (buildLoginResponse swallowing the
 // GetUserIdentity error, `if id, ierr := ...; ierr == nil`): the request still
@@ -113,6 +109,18 @@ func postVerifyMFA(t *testing.T, h *AuthHandler, challenge, code string) *httpte
 // session minted by VerifyMFALogin is left live in storage — a fully
 // functional, fully authenticated session an attacker-observed storage blip
 // handed out with no indication anything failed.
+//
+// WHERE the fault now fires changed with #2841, and the end-to-end assertions
+// below did NOT: the identity read moved from buildLoginResponse (after
+// VerifyMFALogin had already minted a session, which completeLogin then
+// revoked) into VerifyMFALogin itself, before its first write. So the
+// zero-session assertion that used to prove "the minted session was revoked"
+// now proves "no session was ever minted" — a strictly stronger outcome,
+// reached without the revoke. #2412's own property, that this request must not
+// report success, is unchanged and still the thing under test; the zero-session
+// assertion is kept because it holds either way and would catch a regression in
+// EITHER mechanism. (The revoke path itself is still live and still covered —
+// Login and ConsumeSetup never moved, see buildLoginResponse's own callers.)
 func TestVerifyMFA_GetUserPermissionsError_FailsClosed(t *testing.T) {
 	h, fs, secret, fixed, db := newIdentityFailClosedTestHandler(t)
 	ctx := context.Background()
@@ -137,13 +145,14 @@ func TestVerifyMFA_GetUserPermissionsError_FailsClosed(t *testing.T) {
 	assert.Equal(t, false, body["success"], "the response must self-report failure, not success")
 	assert.NotContains(t, body, "data", "no session/identity payload may be handed back when identity resolution failed")
 
-	// VerifyMFALogin minted a real session before the fault fired (it lives
-	// one layer below, in buildLoginResponse); the literal symptom this test
-	// guards against is that session surviving as a live, usable grant. A
-	// fixed handler must revoke it rather than leave it live but undisclosed.
+	// The literal symptom this test guards against is a session surviving as a
+	// live, usable grant after a request that reported failure. Before #2841
+	// that meant "minted, then revoked by completeLogin"; since #2841 the
+	// identity read runs before the mint, so it means "never minted". Either
+	// way the row count must be zero — see this test's doc comment.
 	var sessionCount int64
 	require.NoError(t, db.Model(&models.Session{}).Where("user_id = ?", 1).Count(&sessionCount).Error)
-	assert.Zero(t, sessionCount, "the session minted before the identity-resolution fault fired must be revoked, not left live")
+	assert.Zero(t, sessionCount, "no live session may survive a request that reported failure")
 }
 
 // TestVerifyMFA_GetUserPermissionsError_FailsClosed_ThenClears confirms the
@@ -170,7 +179,7 @@ func TestVerifyMFA_GetUserPermissionsError_FailsClosed_ThenClears(t *testing.T) 
 
 	var sessionCount int64
 	require.NoError(t, db.Model(&models.Session{}).Where("user_id = ?", 1).Count(&sessionCount).Error)
-	require.Zero(t, sessionCount, "setup: session must have been revoked after the faulted attempt")
+	require.Zero(t, sessionCount, "setup: no session may survive the faulted attempt")
 
 	// Second attempt, one TOTP step later (the first step was already consumed
 	// by VerifyMFALogin's anti-replay marking, even though the overall request
@@ -198,10 +207,17 @@ func TestVerifyMFA_GetUserPermissionsError_FailsClosed_ThenClears(t *testing.T) 
 }
 
 // TestBuildLoginResponse_IdentityError_PropagatesAndMintsNothing exercises
-// buildLoginResponse directly — the single function shared by every login-
-// completion handler (Login, ConsumeSetup, VerifyMFA,
-// FinishWebAuthnLogin/Passwordless) — confirming the fix lives in the one
-// place all five call sites share, not just in VerifyMFA's call site.
+// buildLoginResponse directly — originally the single function shared by all
+// five login-completion handlers, confirming the #2412 fix lived in the one
+// place they shared rather than only in VerifyMFA's call site.
+//
+// Its callers are now Login and ConsumeSetup only: #2841 moved the other three
+// (VerifyMFA, FinishWebAuthnLogin, FinishWebAuthnPasswordlessLogin) to resolve
+// the identity inside core, before their first write, because each of those
+// also writes something user-scoped after minting that completeLogin's
+// session-only revoke never undid. So this test now covers two call sites, not
+// five; the other three are covered at the core boundary by
+// internal/core/login_identity_before_mint_test.go.
 func TestBuildLoginResponse_IdentityError_PropagatesAndMintsNothing(t *testing.T) {
 	h, fs, _, _, _ := newIdentityFailClosedTestHandler(t)
 
