@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -82,11 +83,20 @@ func (c *KeyorixCore) ClassifySecret(ctx context.Context, actorID uint, username
 		}
 	}
 	old := secret.Classification
-	secret.Classification = level
-	updated, err := c.storage.UpdateSecret(ctx, secret)
+	// #2695: write `classification` alone, onto a row that is still live. The
+	// previous full-row Save carried this function's whole unlocked read back —
+	// so it resurrected a concurrently deleted secret (shares and ACLs already
+	// revoked, no restore audit) and reverted a concurrent suspend, read-count
+	// increment or ownership clear.
+	matched, err := c.storage.UpdateSecretFields(ctx, secret.ID, storage.SecretFieldUpdate{Classification: &level})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	if !matched {
+		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+	}
+	secret.Classification = level
+	updated := secret
 	diff := fmt.Sprintf(`{"classification":{"before":%q,"after":%q}}`, old, level)
 	c.LogSecretUpdatedWithDiff(ctx, actorID, secretID, secret.ProjectID, username, secret.Name, "", "", diff)
 	return updated, nil
