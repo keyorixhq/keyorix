@@ -11,10 +11,7 @@ package storage
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,13 +24,13 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
 // firstBootSQLiteDSN returns a fresh, disposable in-memory shared-cache SQLite DSN.
 func firstBootSQLiteDSN(t *testing.T) string {
 	t.Helper()
-	n := atomic.AddInt64(&pkRebuildDBCounter, 1)
-	return fmt.Sprintf("file:firstboot_%d_%d?mode=memory&cache=shared", os.Getpid(), n)
+	return sqlitetest.DSN("firstboot_")
 }
 
 // firstBootPostgresDSN creates a fresh, disposable Postgres database (dropped on
@@ -152,9 +149,7 @@ func runConcurrentCreateSecretRace(t *testing.T, db *gorm.DB, concurrency int) {
 // row. This mechanism already existed (warnIfDuplicatesExist, factory.go) — this test
 // pins it specifically for the call path this fix adds.
 func TestEnsureSecretNodeNameIndex_PreExistingDuplicates_FailsLoudWithoutDeletingRows(t *testing.T) {
-	dsn := firstBootSQLiteDSN(t)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Discard})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "firstboot_", sqlite.Open, &gorm.Config{Logger: logger.Discard})
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}))
 
 	// Two colliding rows, inserted directly (bypassing any app-level check) — the exact
@@ -163,7 +158,7 @@ func TestEnsureSecretNodeNameIndex_PreExistingDuplicates_FailsLoudWithoutDeletin
 	require.NoError(t, db.Create(&models.SecretNode{Name: "DUPLICATE", ProjectID: 1, EnvironmentID: 1}).Error)
 	require.NoError(t, db.Create(&models.SecretNode{Name: "DUPLICATE", ProjectID: 1, EnvironmentID: 1}).Error)
 
-	err = ensureSecretNodeNameIndex(db)
+	err := ensureSecretNodeNameIndex(db)
 	require.Error(t, err, "creating the unique index over pre-existing duplicates must fail, not silently pick a winner")
 	assert.Contains(t, err.Error(), "pre-existing group(s)", "the error must name the actual problem so an operator can act on it")
 
