@@ -21,6 +21,8 @@ import {
 import { useUIStore } from '../../store/uiStore';
 import { useAuth } from '../../features/auth';
 import { ProjectSwitcher } from './ProjectSwitcher';
+import { appVersionLabel } from '../../utils/buildInfo';
+import { paletteShortcutLabel } from '../../utils/platform';
 
 export interface SidebarProps {
     isOpen: boolean;
@@ -319,11 +321,11 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
             style={{ borderColor: 'var(--border)' }}
         >
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                Keyorix v0.1.0
+                {appVersionLabel()}
             </p>
             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                 <kbd className="px-1 py-0.5 rounded-sm text-[10px]" style={{ backgroundColor: 'var(--bg-muted)' }}>
-                    ⌘K
+                    {paletteShortcutLabel()}
                 </kbd>{' '}
                 search
             </span>
