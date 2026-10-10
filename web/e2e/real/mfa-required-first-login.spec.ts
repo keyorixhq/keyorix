@@ -65,7 +65,9 @@ test('first login under require_mfa lands on enrolment, enrols TOTP, and reaches
 
     // 2. The MFAEnrollmentRequired 403 sends the browser to the enrolment route.
     await page.waitForURL(/\/profile\?tab=security&mfa=required/, { timeout: 20_000 });
-    await expect(page.getByText('Two-Factor Authentication')).toBeVisible();
+    // getByText is a case-insensitive substring match, so it also hits the enrolment banner
+    // ("Set up two-factor authentication to continue") and its message. Target the section heading.
+    await expect(page.getByRole('heading', { name: 'Two-Factor Authentication', exact: true })).toBeVisible();
     await expect(page.getByText('Set up two-factor authentication to continue')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText('You do not have permission to perform this action.')).toHaveCount(0);
 
