@@ -6,6 +6,25 @@ All notable changes to Keyorix are documented here. This project follows
 ## Unreleased
 
 ### Security
+- **A database fault during login no longer reveals that the password, TOTP
+  code or passkey was correct.** Every login path (password, TOTP, WebAuthn
+  second factor, passwordless, re-authentication, MFA step-up) already answered
+  a storage failure *after* the credential matched with the same response a
+  wrong credential gets. The account's **lockout state** now matches too: the
+  failed-attempt counter is cleared only once the login has actually been
+  delivered, and a post-match failure counts as an attempt. Previously the
+  counter was reset on the way to the failure, so an attacker at one attempt
+  short of the lockout threshold could tell a correct password from a wrong one
+  by whether the account locked. Audit logging distinguishes the two for
+  operators — `auth.login_error` (the credential was right; a storage fault
+  denied the login) versus `auth.login_failed` (a wrong credential) — and
+  `/auth/mfa/verify` now writes `auth.login_error` for this case instead of
+  nothing at all. Visible effects: a login denied by a transient storage fault
+  now counts toward the per-account lockout, so a sustained database problem can
+  lock accounts whose owners typed the right password; and the counter is reset a
+  few milliseconds later in the request than before. A fault reading the
+  account's roles after the password matched now also answers `401 Invalid
+  credentials` instead of a distinguishable `500`. (#2894, #2888)
 - **The shipped compose stack and Helm chart run with
   `security.enable_file_permission_check` on** (ADR-112 default): key material and
   the `*_FILE` secret files are checked strictly; the orchestrator-mounted config
