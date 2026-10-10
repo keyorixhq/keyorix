@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -26,17 +26,11 @@ import (
 // EncryptedValue is returned verbatim.
 func setupByRefScopeCore(t *testing.T) *core.KeyorixCore {
 	t.Helper()
-	// A uniquely-NAMED shared-cache in-memory DB: shared-cache keeps the connection pool
-	// on one DB (a plain ":memory:" pool gives each connection its own empty DB), and the
-	// unique name isolates it from other tests that use the default shared ":memory:".
-	// uniqueMemDSN (defined in integration_test.go) folds in an atomic counter so repeated
-	// invocations within one process (e.g. go test -count=N) each get a fresh DB instead of
-	// re-attaching to a prior iteration's live leftover.
-	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("")), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
+	// A private in-memory DB per call (sqlitetest): the unique name isolates it from other
+	// tests, and the counter in the name means repeated invocations within one process
+	// (e.g. go test -count=N) each get a fresh DB instead of re-attaching to a prior
+	// iteration's live leftover.
+	db := sqlitetest.OpenWithConfig(t, "kxtest_", &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(
 		&models.Project{}, &models.Environment{}, &models.User{},
 		&models.Role{}, &models.Permission{}, &models.RolePermission{},
