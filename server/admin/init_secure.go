@@ -66,6 +66,10 @@ func generateSecureBaselineFiles(cfg *config.Config, extraDNSNames []string) err
 		}
 	}
 
+	if len(pairs) == 0 && len(tokenPaths) == 0 {
+		fmt.Println("Nothing to generate: the config enables no TLS listener with cert_file/key_file and sets no metrics_token_file")
+		return nil
+	}
 	for _, p := range pairs {
 		if err := ensureSelfSignedCert(p.cert, p.key, extraDNSNames); err != nil {
 			return err

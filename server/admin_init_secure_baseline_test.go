@@ -307,16 +307,24 @@ storage:
   database:
     path: keyorix.db
 `, filepath.Join(tlsDir, "server.crt"), filepath.Join(tlsDir, "server.key"), filepath.Join(tlsDir, "metrics_token"))
-	cfgPath := filepath.Join(dir, "keyorix.yaml")
+	// The orchestrated config is named by KEYORIX_CONFIG_PATH (as in a
+	// container); a decoy ./keyorix.yaml with no TLS must not be what
+	// --secure-files reads (init's own default path). Found on the e2e VM: the
+	// compose backend generated nothing.
+	cfgPath := filepath.Join(dir, "orchestrated.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "keyorix.yaml"), []byte("server:\n  http:\n    enabled: true\n    port: \"8080\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	envWithPath := append(append([]string(nil), env...), "KEYORIX_CONFIG_PATH=./orchestrated.yaml")
 
 	if out, err := runAdmin(t, bin, dir, env, "init", "--secure-files", "--config", "./missing.yaml"); err == nil {
 		t.Fatalf("--secure-files without an existing config succeeded:\n%s", out)
 	}
 
-	out, err := runAdmin(t, bin, dir, env, "init", "--secure-files", "--tls-dns-name", "backend", "--config", "./keyorix.yaml")
+	out, err := runAdmin(t, bin, dir, envWithPath, "init", "--secure-files", "--tls-dns-name", "backend")
 	if err != nil {
 		t.Fatalf("admin init --secure-files: %v\n%s", err, out)
 	}
@@ -355,7 +363,7 @@ storage:
 		}
 	}
 
-	if out, err := runAdmin(t, bin, dir, env, "init", "--secure-files", "--config", "./keyorix.yaml"); err != nil {
+	if out, err := runAdmin(t, bin, dir, env, "init", "--secure-files", "--config", "./orchestrated.yaml"); err != nil {
 		t.Fatalf("second --secure-files run: %v\n%s", err, out)
 	}
 	for name, want := range first {

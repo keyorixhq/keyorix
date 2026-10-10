@@ -37,6 +37,9 @@ fi
 
 if [ "$KEYORIX_INIT_SECURE_FILES" = "true" ]; then
     set --
+    if [ -n "$KEYORIX_CONFIG_PATH" ]; then
+        set -- --config "$KEYORIX_CONFIG_PATH"
+    fi
     for name in $KEYORIX_TLS_DNS_NAMES; do
         set -- "$@" --tls-dns-name "$name"
     done

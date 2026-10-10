@@ -80,7 +80,10 @@ func runAdminInit(cmd *cobra.Command, args []string) error { // NOSONAR -- cogni
 	fmt.Println("==========================")
 
 	if initSecureFiles {
-		return runAdminInitSecureFiles(configPath)
+		// The config an orchestrator supplies: --config, else
+		// KEYORIX_CONFIG_PATH (what the server itself will load), not init's
+		// own ./keyorix.yaml default.
+		return runAdminInitSecureFiles(config.ResolvedPath(configPathFlag))
 	}
 
 	setupAll := initAll
