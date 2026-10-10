@@ -9,7 +9,7 @@ import (
 )
 
 // ListAdminsWithoutMFA returns every active, non-deleted global admin-tier
-// holder (super_admin/admin/system_admin, direct or via group membership —
+// holder (the install's admin-bypass roles, direct or via group membership —
 // see resolveGlobalAdminHolders) who has neither TOTP MFA nor WebAuthn
 // enrolled. Backs the ADR-112 posture report's "admins without MFA"
 // deviation (#2400 follow-up): admin-tier authority with no second factor is
@@ -20,7 +20,10 @@ import (
 //
 // Returned in ascending ID order for deterministic report output.
 func (c *KeyorixCore) ListAdminsWithoutMFA(ctx context.Context) ([]*models.User, error) {
-	adminIDs := c.installAdminRoleIDSet(ctx)
+	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+	if err != nil {
+		return nil, err // fail closed: "can't tell who is an admin" is not "no admins"
+	}
 	if len(adminIDs) == 0 {
 		return nil, nil
 	}
