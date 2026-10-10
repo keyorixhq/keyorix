@@ -235,3 +235,44 @@ test('revealing a secret value shows the plaintext without crashing the page (re
     await expect(page.getByText('Page failed to load')).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Secret Value' })).toBeVisible();
 });
+
+// DEMO-UI-2: the History and Recent access panels must follow the secret's own
+// mutations without a reload. Before, History kept showing only "Created" after
+// a rotation and Recent access never learned about a Reveal until a manual refresh.
+test('secret detail History and Recent access update after rotate and reveal, without a reload', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 2600 });
+
+    const unique = Date.now();
+    const secretName = `e2e-secret-${unique}`;
+    const envName = `e2eenv${unique}`;
+
+    await realLogin(page);
+    await createProjectEnvAndSecret(page, {
+        projectName: `e2e-history-${unique}`,
+        envName,
+        secretName,
+        value: `value-${unique}`,
+    });
+
+    await page
+        .getByRole('row', { name: new RegExp(secretName) })
+        .getByTitle('View')
+        .click();
+
+    const history = page.locator('div', { has: page.getByRole('heading', { name: 'History', exact: true }) }).last();
+    await expect(history.getByText('Created', { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(history.getByText('Rotated', { exact: true })).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Rotate', exact: true }).click();
+    await page.getByLabel('New value').fill(`rotated-${unique}`);
+    await page.getByRole('button', { name: 'Rotate secret' }).click();
+    await expect(page.getByText(`Rotate ${secretName}`)).not.toBeVisible({ timeout: 10_000 });
+    // No reload, no navigation: the rotation shows up in History by itself.
+    await expect(history.getByText('Rotated', { exact: true })).toBeVisible({ timeout: 10_000 });
+
+    // Reveal is a read: it lands in Recent access without a refresh.
+    await expect(page.getByRole('heading', { name: 'Recent access', exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Reveal', exact: true }).click();
+    await expect(page.getByText(`rotated-${unique}`, { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: 'Recent access', exact: true })).toBeVisible({ timeout: 10_000 });
+});
