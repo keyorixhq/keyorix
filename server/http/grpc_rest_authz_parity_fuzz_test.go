@@ -53,8 +53,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	keyorixgrpc "github.com/keyorixhq/keyorix/server/grpc"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
@@ -143,13 +143,8 @@ func buildParityWorld(f *testing.F) *parityWorld {
 	if err := i18n.InitializeForTesting(); err != nil {
 		f.Fatalf("i18n: %v", err)
 	}
-	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("&_timeout=30000&_journal_mode=WAL")), &gorm.Config{Logger: logger.Discard})
-	if err != nil {
-		f.Fatalf("open sqlite: %v", err)
-	}
-	if sqlDB, e := db.DB(); e == nil {
-		sqlDB.SetMaxOpenConns(1) // serialize: services write audit/access rows in detached goroutines
-	}
+	// sqlitetest caps the pool to one connection (services write audit/access rows in detached goroutines).
+	db := sqlitetest.OpenWithConfig(f, "kxtest_", &gorm.Config{Logger: logger.Discard})
 	if err := db.AutoMigrate(models.AllTestModels()...); err != nil {
 		f.Fatalf("migrate: %v", err)
 	}

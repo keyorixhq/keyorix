@@ -11,12 +11,11 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -29,29 +28,13 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
-// memDBSeq makes each in-memory test DB name unique.
-var memDBSeq atomic.Int64
-
-// uniqueMemDSN returns a uniquely-named shared-cache in-memory SQLite DSN. A fixed-name
-// "file::memory:?cache=shared" is ONE database for the whole process, so tests that use
-// it collide (e.g. one test's rows leak into another's), which makes them pass alone but
-// fail when run together. A unique name per call isolates each test's DB while keeping it
-// consistent across the connection pool. extra carries extra pragmas (e.g. "&_timeout=…").
-func uniqueMemDSN(extra string) string {
-	return fmt.Sprintf("file:kxtest_%d?mode=memory&cache=shared%s", memDBSeq.Add(1), extra)
-}
-
 // newTestCore creates a minimal *core.KeyorixCore backed by an in-memory SQLite DB.
 func newTestCore(t *testing.T) *core.KeyorixCore {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("&_timeout=30000&_journal_mode=WAL")), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
+	db := sqlitetest.OpenWithConfig(t, "kxtest_", &gorm.Config{})
 	// models.AllTestModels() is the single source of truth for the test schema —
 	// add new models there (internal/storage/models/all_models.go), not here.
-	err = db.AutoMigrate(models.AllTestModels()...)
+	err := db.AutoMigrate(models.AllTestModels()...)
 	require.NoError(t, err)
 	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the
 	// same production migration path #309's TestConcurrency_InviteMember_

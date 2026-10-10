@@ -2,12 +2,11 @@ package core
 
 import (
 	"context"
-	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -17,15 +16,10 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
-// patExpiryDBSeq makes each in-memory DB unique within the process.
-var patExpiryDBSeq atomic.Int64
-
 // newPATExpiryDB opens a fresh, isolated in-memory SQLite DB for expiry tests.
 func newPATExpiryDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	dsn := fmt.Sprintf("file:kx_pat_expiry_%d?mode=memory&cache=shared", patExpiryDBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "patexpiryenforce_", sqlite.Open, &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(
 		&models.PersonalAccessToken{},
 		&models.Notification{},
