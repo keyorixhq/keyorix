@@ -2144,9 +2144,11 @@ func resolveVaultToken(tokenEnv string) (string, error) {
 }
 
 // enforceSecretFilePermissions applies the key-material permission policy to the
-// files named by *_FILE secret variables (secretenv.CheckPermissions: nothing
-// for "other", no group write; owner not compared because an orchestrator owns
-// the mount). Same warn-vs-refuse matrix as enforceKeyFilePermissions: refuse
+// files named by *_FILE secret variables (secretenv.CheckPermissions: 0600/0400,
+// plus group-read only for an orchestrator-owned file in a group the process
+// holds). Key-material secrets (master password, KEK, Shamir shares) are refused
+// unconditionally where they are read (secretenv.LookupChecked); this covers the
+// rest. Same warn-vs-refuse matrix as enforceKeyFilePermissions: refuse
 // when security.enable_file_permission_check is on and
 // allow_unsafe_file_permissions is off, otherwise warn.
 func enforceSecretFilePermissions(cfg *config.Config) error {

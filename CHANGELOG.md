@@ -12,8 +12,17 @@ All notable changes to Keyorix are documented here. This project follows
   the operator-named KEK, Shamir-share, rotation-DSN and Vault-token variables.
   Setting both `X` and `X_FILE`, or pointing `X_FILE` at an unreadable or empty
   file, stops the server at startup; the value and the file contents are never
-  logged; the file-permission check refuses a secret file that is accessible to
-  other users or writable by its group. See `docs/CONFIGURATION.md`.
+  logged. File permissions: the master password, KEK and Shamir-share files are
+  **always refused** unless `0600`/`0400` (the key-material rule) -- the one
+  exception is a group-readable file the running user does not own whose group the
+  process holds (a Kubernetes Secret volume with `fsGroup`, a Docker secret with
+  `group_add`); every other secret file follows
+  `security.enable_file_permission_check` (refuse) / warn. The container
+  entrypoint (`KEYORIX_ADMIN_PASSWORD_FILE`, `KEYORIX_BOOTSTRAP_TOKEN_FILE`) and
+  `keyorix system init` resolve `_FILE` too, so a `_FILE`-only deployment
+  auto-bootstraps. A file value has exactly one trailing newline stripped (same
+  bytes as `--passphrase-file`); the plain `KEYORIX_MASTER_PASSWORD` variable keeps
+  its whitespace trim. See `docs/CONFIGURATION.md`.
 - **New `server.http/grpc.tls_mode: strict` setting** (ADR-112, secure-by-default
   baseline, item 3) switches a listener to TLS 1.3 only, with no fallback to
   1.2. The existing default (TLS 1.2 floor, restricted to forward-secret AEAD
