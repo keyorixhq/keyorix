@@ -31,7 +31,7 @@ const maxCAFileBytes = 1 << 20
 // that should not sit in a trust path), or is writable by group or others (anyone who can
 // write it can make this CLI trust their server).
 func LoadCAPool(path string) (*x509.CertPool, error) {
-	f, err := os.Open(path) //nolint:gosec // G304: the operator names their own CA file
+	f, err := os.Open(path) // #nosec G304 -- the operator names their own CA file (flag/env/config)
 	if err != nil {
 		return nil, fmt.Errorf("read CA file: %w", err)
 	}
