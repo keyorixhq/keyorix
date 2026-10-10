@@ -336,16 +336,20 @@ describe('ShareSecretModal submission + lifecycle', () => {
         expect(payload.permission).toBe('write');
     });
 
-    it('only offers Read Only when the sharer lacks write on the secret', () => {
-        const readOnlySecret: Secret = { ...secret, permissions: ['read'] };
-        render(<ShareSecretModal secret={readOnlySecret} isOpen onClose={() => {}} />);
+    // The dialog is opened from a secrets-list row, and secretsApi.list maps every row with
+    // `permissions: []` (the list endpoint returns no per-secret permissions). The dialog used to
+    // hide "Read & Write" unless secret.permissions held 'write', so for every real row it never
+    // offered it and a write share (the #2941 elevation) could not be created from the UI. The
+    // server is the enforcement: POST /secrets/{id}/share needs secrets.write on the secret.
+    it('offers Read & Write for a list row, whose permissions array is empty', () => {
+        const listRow: Secret = { ...secret, permissions: [] };
+        render(<ShareSecretModal secret={listRow} isOpen onClose={() => {}} />);
         const select = screen.getByDisplayValue('Read Only') as HTMLSelectElement;
         const optionLabels = Array.from(select.options).map((o) => o.textContent);
-        expect(optionLabels).toEqual(['Read Only']);
-        expect(optionLabels).not.toContain('Read & Write');
+        expect(optionLabels).toEqual(['Read Only', 'Read & Write']);
     });
 
-    it('offers Read & Write when the sharer holds write on the secret', () => {
+    it('offers Read & Write when the secret carries write', () => {
         render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
         const select = screen.getByDisplayValue('Read Only') as HTMLSelectElement;
         const optionLabels = Array.from(select.options).map((o) => o.textContent);

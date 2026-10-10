@@ -73,13 +73,13 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
     const listRef = useRef<HTMLDivElement>(null);
     const shareSecret = useShareSecret(secret.id);
 
-    // UX-only signal, not a security boundary: only offer 'write' as a grantable
-    // permission when the sharer themselves currently holds write on this secret.
-    // The server must still independently enforce this invariant — this list is
-    // just what the form presents, not what the API accepts.
-    const permissionOptions = ALL_PERMISSION_OPTIONS.filter(
-        (opt) => opt.value !== 'write' || secret.permissions.includes('write')
-    );
+    // Both permissions are always offered. This used to hide 'write' unless
+    // secret.permissions held it (#1465), but the dialog is opened from a list row and
+    // secretsApi.list maps every row with `permissions: []`, so 'write' was never
+    // offered and a write share (the #2941 elevation) could not be created in the UI.
+    // The server is the enforcement: POST /secrets/{id}/share requires secrets.write
+    // on the secret, and a refusal comes back with its reason (shareErrorMessage).
+    const permissionOptions = ALL_PERMISSION_OPTIONS;
 
     // Search users as query changes
     useEffect(() => {
