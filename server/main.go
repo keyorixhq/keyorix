@@ -151,10 +151,21 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		log.Fatalf("Configuration is invalid: %v", err)
 	}
 
+	// ADR-112 opt-out rule (item 2): every insecure_ setting currently in effect
+	// gets a warning on EVERY start — never silent. See
+	// warnInsecureSettingsInEffect below. (The deprecated-alias warning for an old
+	// key that was renamed lands with the renames themselves, in their own
+	// follow-up PRs; no setting is renamed yet.)
+	warnInsecureSettingsInEffect(cfg)
+
 	// Run the file-permission / encryption-key / database-reachability checks that were
 	// previously reachable ONLY via the manual `keyorix system validate` CLI subcommand
 	// (#330), despite official docs and that command's own help text claiming they run
 	// automatically on every boot.
+	// ADR-112: decide, once and from the database, whether this boot is an upgraded
+	// deployment still inside the file-permission-check grace period. Must run before
+	// runStartupValidation/enforceKeyFilePermissions, which both read the result.
+	applyADR112UpgradeGrace(cfg)
 	if err := runStartupValidation(cfg); err != nil {
 		log.Fatalf("startup validation: %v", err)
 	}
@@ -222,6 +233,10 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		log.Fatalf("key file consistency: %v", err)
 	}
 
+	// ADR-112: security.require_mfa now defaults to true (see config.Load). This is
+	// visibility only, not an enforcement gate — logWarnOnImplicitRequireMFADefault.
+	logWarnOnImplicitRequireMFADefault(cfg)
+
 	// Mark this process as a live server attached to cfg's database (ADR-108 §B,
 	// PR 11) — held for the whole process lifetime, released on shutdown. Lets
 	// `keyorix-server admin` commands detect and refuse to run concurrently
@@ -260,6 +275,9 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	if encSvc != nil {
 		defer encSvc.Shutdown()
 	}
+	// ADR-112: a boot that enforced enable_file_permission_check (checks passed, nothing
+	// softened) or require_mfa ratchets this deployment to enforced for that key for good.
+	recordADR112Markers(cfg)
 	// #G56: flush/close the SIEM audit forwarder (if configured) on shutdown — it
 	// queues events in memory (worker.go's Deliver is non-blocking, async), and
 	// nothing would otherwise call Close() to drain that queue before the process
@@ -269,6 +287,12 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// Record the evaluated license state once at startup (ADR-065), so the
 	// entitlement (and any degrade reason) is on the audit record.
 	coreService.AuditLicenseState(ctx)
+
+	// ADR-112 opt-out rule (item 2): the start-to-start settings diff. Config has no
+	// hot reload, so this is the only place a security-relevant setting changing
+	// between two starts ever becomes visible — audits old vs. new value for any
+	// difference since the previous start.
+	coreService.ReconcileSecurityPostureSnapshot(ctx, securityPostureSnapshot(cfg))
 
 	// Start every background scheduler exactly once, regardless of which of
 	// HTTP/gRPC is enabled (#G12) — see startSchedulers' doc comment.
@@ -2016,9 +2040,9 @@ func checkTransportTLSPosture(cfg *config.Config) error {
 // they run automatically on every boot (#330).
 //
 // Gated behind security.enable_file_permission_check — the flag these checks are
-// documented under and the one production.yaml/web-enabled.yaml explicitly turn on — so a
-// deployment that hasn't opted in (the default: the flag defaults to false) is completely
-// unaffected by wiring this in; enforceKeyFilePermissions below still runs unconditionally
+// documented under and the one production.yaml/web-enabled.yaml explicitly turn on.
+// ADR-112 flips this flag's default to true (config.Load resolves an absent key to true,
+// not Go's bool zero value) — enforceKeyFilePermissions below still runs unconditionally
 // as the lighter-weight, always-on permission check it always was. When the flag is set,
 // ValidateStartup itself decides warn-vs-fail-closed for a bad permission via
 // allow_unsafe_file_permissions, and auto-fixes bad permissions when
@@ -2026,6 +2050,15 @@ func checkTransportTLSPosture(cfg *config.Config) error {
 // auto-fix takes effect before that check re-inspects the same files) — any other failure
 // (missing/undersized DEK or salt, unreachable local database) refuses to start, matching
 // this being "the sole automated backstop for a world-readable master-key-material file."
+//
+// ADR-112 grace period: only an UPGRADED deployment that never explicitly set this key
+// and has never yet booted clean under the check (EnableFilePermissionCheckUpgradeGrace,
+// decided from the database by adr112UpgradeGraceEligible) gets a start-up warning instead
+// of an instant boot-blocking regression if ValidateStartup finds a problem. A fresh
+// install with the implicit default is enforced from its first start. A deployment that
+// explicitly set the key is unaffected: an explicit true keeps the strict ValidateStartup
+// and fails closed exactly as before (including on missing key material), an explicit
+// false still skips the whole check below exactly as before.
 func runStartupValidation(cfg *config.Config) error {
 	if !cfg.Security.EnableFilePermissionCheck {
 		// #G37: unlike checkTransportTLSPosture's cleartext warning, this opt-out was
@@ -2039,7 +2072,28 @@ func runStartupValidation(cfg *config.Config) error {
 	configPath := config.ResolvedPath("")
 	// Server startup has no --fix flag; remediation is governed solely by the
 	// config's Security.AutoFixFilePermissions field, as before.
-	result, err := startup.ValidateStartup(configPath, false)
+	//
+	// The TOLERANT variant is reachable ONLY through the ADR-112 grace period —
+	// never for a deployment that set security.enable_file_permission_check
+	// explicitly. That gate is the whole point, not a detail: the tolerance
+	// treats "KEK salt AND wrapped DEK both missing" as a fresh install, so with
+	// it in force a key volume that failed to mount is explained away as first
+	// boot, this function returns nil, and initializeEncryption then GENERATES A
+	// FRESH SALT AND DEK — over an existing, still-encrypted database whose real
+	// key material is merely unmounted. Every value in it becomes permanently
+	// unreadable, and the server reports a clean start while doing it.
+	//
+	// So the variant follows the same explicit/implicit split the err→warn
+	// softening below already follows, and for the same reason: an operator who
+	// wrote the key down asked for these checks, and "an explicit true keeps
+	// failing closed exactly as before" is what this function's own doc comment
+	// above promises. Guarded by
+	// TestRunStartupValidation_ExplicitTrue_MissingKeyMaterial_RefusesToStart.
+	validate := startup.ValidateStartup
+	if cfg.Security.EnableFilePermissionCheckImplicitDefault {
+		validate = startup.ValidateStartupTolerant
+	}
+	result, err := validate(configPath, false)
 	if result != nil {
 		for _, w := range result.Warnings {
 			log.Printf("startup validation warning: %s", w)
@@ -2049,6 +2103,11 @@ func runStartupValidation(cfg *config.Config) error {
 		}
 	}
 	if err != nil {
+		if cfg.Security.EnableFilePermissionCheckUpgradeGrace {
+			adr112GraceSoftened.Store(true)
+			log.Printf("WARNING: startup validation failed (%v) — ADR-112 grace period: this is an upgraded deployment and security.enable_file_permission_check was never set explicitly, so it continues instead of refusing to start. Fix the problem above, then set security.enable_file_permission_check: true explicitly to make this fail closed like a compliant deployment.", err)
+			return nil
+		}
 		return err
 	}
 	log.Printf("Startup validation passed (config, file permissions, encryption keys, database).")
@@ -2063,6 +2122,13 @@ func runStartupValidation(cfg *config.Config) error {
 // security.enable_file_permission_check is set (and not overridden by
 // allow_unsafe_file_permissions); otherwise it warns. A not-yet-created key file (first
 // boot) is skipped — it is created at 0600.
+//
+// ADR-112 implicit default (the key absent from the config): the encryption key material,
+// which the server writes itself, fails closed (a fresh install) or warns (an upgrade in the
+// grace period). A TLS private key is an input the orchestrator mounts (a Kubernetes Secret
+// is root-owned 0644 by default), so under the implicit default it only warns, naming the
+// file, its mode and the fix; an explicit enable_file_permission_check: true refuses on it
+// as before.
 func enforceKeyFilePermissions(cfg *config.Config) error { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	resolve := func(p string) string {
 		if p == "" || filepath.IsAbs(p) {
@@ -2070,18 +2136,56 @@ func enforceKeyFilePermissions(cfg *config.Config) error { // NOSONAR -- cogniti
 		}
 		return filepath.Join(".", p)
 	}
-	var paths []string
+	var keyPaths, tlsPaths []string
 	if cfg.Storage.Encryption.Enabled {
-		paths = append(paths, resolve(cfg.Storage.Encryption.DEKPath), resolve(cfg.Storage.Encryption.SaltPath))
+		keyPaths = append(keyPaths, resolve(cfg.Storage.Encryption.DEKPath), resolve(cfg.Storage.Encryption.SaltPath))
 	}
 	if cfg.Server.HTTP.TLS.Enabled {
-		paths = append(paths, cfg.Server.HTTP.TLS.KeyFile)
+		tlsPaths = append(tlsPaths, cfg.Server.HTTP.TLS.KeyFile)
 	}
 	if cfg.Server.GRPC.TLS.Enabled {
-		paths = append(paths, cfg.Server.GRPC.TLS.KeyFile)
+		tlsPaths = append(tlsPaths, cfg.Server.GRPC.TLS.KeyFile)
 	}
 
-	var insecure []string
+	insecureKeys := groupOrOtherReadable(keyPaths)
+	insecureTLS := groupOrOtherReadable(tlsPaths)
+	if len(insecureKeys)+len(insecureTLS) == 0 {
+		return nil
+	}
+	sec := cfg.Security
+	if !sec.EnableFilePermissionCheck || sec.AllowUnsafeFilePermissions {
+		msg := fmt.Sprintf("key material is readable beyond its owner: %s", strings.Join(append(insecureKeys, insecureTLS...), ", "))
+		log.Printf("WARNING: %s — restrict to 0600. Set security.enable_file_permission_check to fail closed instead of warning.", msg)
+		return nil
+	}
+	if sec.EnableFilePermissionCheckImplicitDefault {
+		for _, f := range insecureTLS {
+			log.Printf("WARNING: TLS private key %s is readable beyond its owner — chmod 600 it (Kubernetes: mount the Secret with defaultMode 0400), or set security.enable_file_permission_check: true explicitly to refuse to start on this (ADR-112: on the implicit default an orchestrator-mounted TLS key only warns).", f)
+		}
+		insecureTLS = nil
+		if len(insecureKeys) == 0 {
+			return nil
+		}
+	}
+	msg := fmt.Sprintf("key material is readable beyond its owner: %s", strings.Join(append(insecureKeys, insecureTLS...), ", "))
+	if sec.EnableFilePermissionCheckUpgradeGrace {
+		// ADR-112 grace period: an upgraded deployment that never explicitly opted into
+		// the check — it's failing closed only because of the new secure default. Don't
+		// turn a pre-existing bad-permission file (present before this upgrade, previously
+		// only warned about) into a boot-blocking regression. Warn loudly instead, naming
+		// exactly how to comply. A fresh install never gets here (see
+		// adr112UpgradeGraceEligible).
+		adr112GraceSoftened.Store(true)
+		log.Printf("WARNING: %s — this now fails closed by default (ADR-112); set to warn-only, which is what the pre-upgrade behavior was, with security.allow_unsafe_file_permissions, or (preferred) chmod the files to 0600 and set security.enable_file_permission_check: true explicitly once compliant.", msg)
+		return nil
+	}
+	return fmt.Errorf("%s — refusing to start (chmod to 0600, or set security.allow_unsafe_file_permissions to override)", msg)
+}
+
+// groupOrOtherReadable returns "path (mode NNN)" for every existing path whose mode grants
+// any group or other bit. Empty and absent paths are skipped.
+func groupOrOtherReadable(paths []string) []string {
+	var out []string
 	for _, p := range paths {
 		if p == "" {
 			continue
@@ -2091,18 +2195,10 @@ func enforceKeyFilePermissions(cfg *config.Config) error { // NOSONAR -- cogniti
 			continue // absent (e.g. created at 0600 on first boot) — nothing to check yet
 		}
 		if info.Mode().Perm()&0o077 != 0 {
-			insecure = append(insecure, fmt.Sprintf("%s (mode %o)", p, info.Mode().Perm()))
+			out = append(out, fmt.Sprintf("%s (mode %o)", p, info.Mode().Perm()))
 		}
 	}
-	if len(insecure) == 0 {
-		return nil
-	}
-	msg := fmt.Sprintf("key material is readable beyond its owner: %s", strings.Join(insecure, ", "))
-	if cfg.Security.EnableFilePermissionCheck && !cfg.Security.AllowUnsafeFilePermissions {
-		return fmt.Errorf("%s — refusing to start (chmod to 0600, or set security.allow_unsafe_file_permissions to override)", msg)
-	}
-	log.Printf("WARNING: %s — restrict to 0600. Set security.enable_file_permission_check to fail closed instead of warning.", msg)
-	return nil
+	return out
 }
 
 // verifyKeyFileSetConsistency is the boot-time key-file-set consistency check
@@ -2114,6 +2210,60 @@ func verifyKeyFileSetConsistency(cfg *config.Config) error {
 		return nil
 	}
 	return keyfiles.VerifyKeySetConsistency(&cfg.Storage.Encryption, ".")
+}
+
+// logWarnOnImplicitRequireMFADefault logs where security.require_mfa stands when the
+// config file never set it (ADR-112 resolves an absent key to true;
+// RequireMFAImplicitDefault is true only then).
+//
+// On a fresh install (or a deployment already enforced once) MFA is enforced and this is
+// informational: server/middleware.EnforceMFAEnrollment confines a session-authenticated
+// user without MFA to the enrolment endpoints (never locks the account out; PAT/machine
+// credentials are exempt). On an upgraded deployment, applyADR112UpgradeGrace has put
+// require_mfa in ADR-112's grace period (RequireMFAUpgradeGrace): MFA is NOT enforced yet,
+// and this warns loudly on every boot until the key is set explicitly.
+func logWarnOnImplicitRequireMFADefault(cfg *config.Config) {
+	sec := cfg.Security
+	switch {
+	case sec.RequireMFAUpgradeGrace:
+		log.Printf("WARNING: ADR-112 grace period: security.require_mfa now defaults to true, but %s and this config never set it, so MFA is NOT enforced yet. Have every interactive admin enrol (keyorix mfa enroll / activate, or Profile -> Security in the web UI), then set security.require_mfa: true explicitly to enforce it (or false to opt out visibly).", adr112MFAReason)
+	case sec.RequireMFA && sec.RequireMFAImplicitDefault:
+		reason := adr112MFAReason
+		if reason == "" {
+			reason = "the key is not set in this config"
+		}
+		log.Printf("INFO: security.require_mfa is enforcing on its ADR-112 secure-by-default value (%s). Session-authenticated users without MFA are confined to MFA enrolment until they enrol (PAT/machine credentials are unaffected). Set security.require_mfa explicitly to silence this.", reason)
+	}
+}
+
+// warnInsecureSettingsInEffect logs a start-up warning for every ADR-112
+// registry entry currently in effect — unconditionally, on every boot, so a
+// security-weakening setting can never be silently in effect (opt-out rule
+// item 2's "a start-up warning for every insecure_ setting in effect").
+// Looping config.InsecureSettingsRegistry here is also half of what makes
+// TestInsecureSettingsRegistry_EveryEntryHasThePrefixWarningAndAuditHook's
+// guarantee hold: every entry with a non-nil InEffect is warned about by
+// construction, with no per-entry call site that could forget to wire one in.
+func warnInsecureSettingsInEffect(cfg *config.Config) {
+	for _, s := range config.InsecureSettingsRegistry {
+		if s.InEffect(cfg) {
+			log.Printf("WARNING: %s is in effect — %s", s.Name, s.Describe)
+		}
+	}
+}
+
+// securityPostureSnapshot computes this boot's value of every ADR-112
+// registry entry, keyed by its Name — the input to
+// coreService.ReconcileSecurityPostureSnapshot's start-to-start diff. Looping
+// config.InsecureSettingsRegistry here is the other half of
+// TestInsecureSettingsRegistry_EveryEntryHasThePrefixWarningAndAuditHook's
+// guarantee: every entry with a non-nil Value is audited by construction.
+func securityPostureSnapshot(cfg *config.Config) map[string]string {
+	snapshot := make(map[string]string, len(config.InsecureSettingsRegistry))
+	for _, s := range config.InsecureSettingsRegistry {
+		snapshot[s.Name] = s.Value(cfg)
+	}
+	return snapshot
 }
 
 func startGRPCServer(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) error {

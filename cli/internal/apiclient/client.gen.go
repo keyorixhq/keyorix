@@ -171,6 +171,14 @@ type ClientInterface interface {
 
 	ChangePassword(ctx context.Context, body ChangePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ActivateMFAWithBody request with any body
+	ActivateMFAWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ActivateMFA(ctx context.Context, body ActivateMFAJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// EnrollMFA request
+	EnrollMFA(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// MfaStepUpWithBody request with any body
 	MfaStepUpWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1315,6 +1323,42 @@ func (c *Client) ChangePasswordWithBody(ctx context.Context, contentType string,
 
 func (c *Client) ChangePassword(ctx context.Context, body ChangePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewChangePasswordRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ActivateMFAWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewActivateMFARequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ActivateMFA(ctx context.Context, body ActivateMFAJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewActivateMFARequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) EnrollMFA(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewEnrollMFARequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -6130,6 +6174,73 @@ func NewChangePasswordRequestWithBody(server string, contentType string, body io
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewActivateMFARequest calls the generic ActivateMFA builder with application/json body
+func NewActivateMFARequest(server string, body ActivateMFAJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewActivateMFARequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewActivateMFARequestWithBody generates requests for ActivateMFA with any type of body
+func NewActivateMFARequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/auth/mfa/activate")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewEnrollMFARequest generates requests for EnrollMFA
+func NewEnrollMFARequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/auth/mfa/enroll")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -15401,6 +15512,14 @@ type ClientWithResponsesInterface interface {
 
 	ChangePasswordWithResponse(ctx context.Context, body ChangePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*ChangePasswordResponse, error)
 
+	// ActivateMFAWithBodyWithResponse request with any body
+	ActivateMFAWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ActivateMFAResponse, error)
+
+	ActivateMFAWithResponse(ctx context.Context, body ActivateMFAJSONRequestBody, reqEditors ...RequestEditorFn) (*ActivateMFAResponse, error)
+
+	// EnrollMFAWithResponse request
+	EnrollMFAWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*EnrollMFAResponse, error)
+
 	// MfaStepUpWithBodyWithResponse request with any body
 	MfaStepUpWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MfaStepUpResponse, error)
 
@@ -16752,6 +16871,67 @@ func (r ChangePasswordResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r ChangePasswordResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ActivateMFAResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			RecoveryCodes []string `json:"recovery_codes"`
+		} `json:"data,omitempty"`
+		Message *string `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ActivateMFAResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ActivateMFAResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type EnrollMFAResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			OtpauthUri string `json:"otpauth_uri"`
+
+			// Secret Base32 TOTP secret
+			Secret string `json:"secret"`
+		} `json:"data,omitempty"`
+		Message *string `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r EnrollMFAResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r EnrollMFAResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -22811,6 +22991,32 @@ func (c *ClientWithResponses) ChangePasswordWithResponse(ctx context.Context, bo
 	return ParseChangePasswordResponse(rsp)
 }
 
+// ActivateMFAWithBodyWithResponse request with arbitrary body returning *ActivateMFAResponse
+func (c *ClientWithResponses) ActivateMFAWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ActivateMFAResponse, error) {
+	rsp, err := c.ActivateMFAWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseActivateMFAResponse(rsp)
+}
+
+func (c *ClientWithResponses) ActivateMFAWithResponse(ctx context.Context, body ActivateMFAJSONRequestBody, reqEditors ...RequestEditorFn) (*ActivateMFAResponse, error) {
+	rsp, err := c.ActivateMFA(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseActivateMFAResponse(rsp)
+}
+
+// EnrollMFAWithResponse request returning *EnrollMFAResponse
+func (c *ClientWithResponses) EnrollMFAWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*EnrollMFAResponse, error) {
+	rsp, err := c.EnrollMFA(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseEnrollMFAResponse(rsp)
+}
+
 // MfaStepUpWithBodyWithResponse request with arbitrary body returning *MfaStepUpResponse
 func (c *ClientWithResponses) MfaStepUpWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MfaStepUpResponse, error) {
 	rsp, err := c.MfaStepUpWithBody(ctx, contentType, body, reqEditors...)
@@ -26233,6 +26439,99 @@ func ParseChangePasswordResponse(rsp *http.Response) (*ChangePasswordResponse, e
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseActivateMFAResponse parses an HTTP response from a ActivateMFAWithResponse call
+func ParseActivateMFAResponse(rsp *http.Response) (*ActivateMFAResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ActivateMFAResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				RecoveryCodes []string `json:"recovery_codes"`
+			} `json:"data,omitempty"`
+			Message *string `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseEnrollMFAResponse parses an HTTP response from a EnrollMFAWithResponse call
+func ParseEnrollMFAResponse(rsp *http.Response) (*EnrollMFAResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &EnrollMFAResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				OtpauthUri string `json:"otpauth_uri"`
+
+				// Secret Base32 TOTP secret
+				Secret string `json:"secret"`
+			} `json:"data,omitempty"`
+			Message *string `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	}
 

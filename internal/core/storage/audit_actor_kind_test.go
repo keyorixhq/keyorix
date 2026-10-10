@@ -1,0 +1,67 @@
+package storage
+
+import (
+	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+)
+
+// AuditActorKind in both directions (#2951 review): a row with no principal at
+// all is "system"; a row where a principal was involved but no acting user was
+// resolved (a failed login) stays "user", so brute-force evidence is found by
+// actor_type=user and never mixed into scheduler events.
+func TestAuditActorKind_SystemOnlyWithoutAnyPrincipal(t *testing.T) {
+	uid, zero, mid, admin := uint(7), uint(0), uint(4), uint(9)
+	cases := []struct {
+		name string
+		e    models.AuditEvent
+		want string
+	}{
+		// system: nothing identifies a principal
+		{"scheduler row, default user, no user", models.AuditEvent{EventType: "secret.auto_rotated", ActorType: "user"}, "system"},
+		{"legacy empty, no user", models.AuditEvent{EventType: "data.purged", ActorType: ""}, "system"},
+		{"user id 0", models.AuditEvent{EventType: "share.expired", ActorType: "user", UserID: &zero}, "system"},
+		{"explicit system", models.AuditEvent{EventType: "data.retention_purged", ActorType: "system"}, "system"},
+		{"explicit system keeps kind even with an ip", models.AuditEvent{EventType: "security.anomaly_detected", ActorType: "system", IPAddress: "203.0.113.9"}, "system"},
+		// user: a principal is involved
+		{"failed login: no user, client ip", models.AuditEvent{EventType: "auth.login_failed", ActorType: "user", IPAddress: "198.51.100.7"}, "user"},
+		{"failed login without an ip is still an auth attempt", models.AuditEvent{EventType: "auth.login_failed", ActorType: "user"}, "user"},
+		{"failed webauthn, legacy empty", models.AuditEvent{EventType: "webauthn.failed", ActorType: ""}, "user"},
+		{"mfa failure, no user", models.AuditEvent{EventType: "mfa.failed", ActorType: "user"}, "user"},
+		{"request row with client ip, no user", models.AuditEvent{EventType: "secret.read", ActorType: "user", IPAddress: "192.0.2.1"}, "user"},
+		{"impersonated, no user", models.AuditEvent{EventType: "secret.read", ActorType: "user", ImpersonatedBy: &admin}, "user"},
+		{"machine id on a default row", models.AuditEvent{EventType: "secret.read", ActorType: "user", MachineIdentityID: &mid}, "user"},
+		{"real user", models.AuditEvent{EventType: "secret.read", ActorType: "user", UserID: &uid}, "user"},
+		{"legacy empty, real user", models.AuditEvent{EventType: "secret.read", ActorType: "", UserID: &uid}, "user"},
+		// other stored kinds are shown as stored
+		{"machine, no user", models.AuditEvent{EventType: "secret.read", ActorType: "machine_identity", MachineIdentityID: &mid}, "machine_identity"},
+		{"machine, nothing else", models.AuditEvent{EventType: "secret.read", ActorType: "machine_identity"}, "machine_identity"},
+	}
+	for _, c := range cases {
+		e := c.e
+		if got := AuditActorKind(&e); got != c.want {
+			t.Errorf("%s: AuditActorKind = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// The actor beside the kind: never "system" for a non-system row.
+func TestAuditActorName_MatchesKind(t *testing.T) {
+	uid := uint(7)
+	names := map[uint]string{0: "system", 7: "alice"}
+	cases := []struct {
+		e    models.AuditEvent
+		want string
+	}{
+		{models.AuditEvent{EventType: "secret.auto_rotated", ActorType: "user"}, "system"},
+		{models.AuditEvent{EventType: "auth.login_failed", ActorType: "user", IPAddress: "198.51.100.7"}, "unknown"},
+		{models.AuditEvent{EventType: "secret.read", ActorType: "machine_identity"}, "unknown"},
+		{models.AuditEvent{EventType: "secret.read", ActorType: "user", UserID: &uid}, "alice"},
+	}
+	for _, c := range cases {
+		e := c.e
+		if got := AuditActorName(&e, names); got != c.want {
+			t.Errorf("%s/%s: AuditActorName = %q, want %q", e.EventType, e.ActorType, got, c.want)
+		}
+	}
+}
