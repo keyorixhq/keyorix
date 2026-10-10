@@ -39,6 +39,55 @@ the file:
 | `KEYORIX_DOMAIN` | substituted into `server` origins in the shipped example configs |
 | _(operator-named)_ | the raw KEK, when `key_provider.type: env` (see [key_provider](#encryption--kek-providers)) |
 
+### Secrets from files (`<NAME>_FILE`)
+
+Every secret the server reads from the environment can instead be read from a
+file, by setting `<NAME>_FILE` to the file's path. This is the Docker-secrets
+and Kubernetes-Secret-volume convention: the value never appears in
+`docker inspect`, `/proc/<pid>/environ` or a child process's environment.
+
+```sh
+KEYORIX_DB_PASSWORD_FILE=/run/secrets/db_password
+KEYORIX_MASTER_PASSWORD_FILE=/run/secrets/master_password
+KEYORIX_BOOTSTRAP_TOKEN_FILE=/run/secrets/bootstrap_token
+```
+
+Supported for: `KEYORIX_MASTER_PASSWORD`, `KEYORIX_DB_PASSWORD`,
+`KEYORIX_BOOTSTRAP_TOKEN`, `KEYORIX_API_KEY`, `KEYORIX_SIEM_TOKEN`,
+`KEYORIX_SCIM_TOKEN`, `KEYORIX_SSO_<NAME>_CLIENT_SECRET`, `KEYORIX_SMTP_PASSWORD`,
+`KEYORIX_EVIDENCE_WEBHOOK_TOKEN`, `KEYORIX_NOTIFY_SMTP_PASSWORD`,
+`KEYORIX_NOTIFY_WEBHOOK_TOKEN`, `KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET`,
+`KEYORIX_NOTIFY_SLACK_WEBHOOK`, `KEYORIX_NOTIFY_TEAMS_WEBHOOK`, and the
+operator-named variables: the `key_provider` `env_var` and `shamir_share_env`
+entries, a rotation backend's `dsn_env`, and a Vault connector's `token_env`
+(default `VAULT_TOKEN`). `KEYORIX_CONFIG_PATH` is a path, not a secret, and has no
+`_FILE` form.
+
+Rules (all enforced at startup; the server refuses to start rather than guess):
+
+- **`X_FILE` set:** the file is read and exactly one trailing newline (`\n` or
+  `\r\n`) is removed. Nothing else is trimmed, so a secret may contain spaces.
+  Symlinks are followed (Kubernetes mounts every Secret key as one).
+- **Both `X` and `X_FILE` set:** error, naming both variables. There is no
+  precedence. An empty variable counts as unset, so `X=${X:-}` passthrough in a
+  compose file does not trigger this.
+- **File missing, unreadable, empty, not a regular file, or larger than 1 MiB:**
+  error. The server does not fall back to `X` or to a value in `keyorix.yaml`.
+- **Nothing is logged:** errors and warnings name the variable and the path, never
+  the value or the file contents.
+- **File permissions:** the same warn-or-refuse policy as key material
+  (`security.enable_file_permission_check`, `security.allow_unsafe_file_permissions`).
+  A secret file that is accessible to *other* users (`o+rwx`) or writable by its
+  group is refused. Group-read (`0440`, what a Kubernetes Secret volume with
+  `fsGroup` produces) and `0400`/`0600` are accepted. The file's owner is not
+  compared with the server's uid, because an orchestrator owns the mount.
+- **`--passphrase-fd`, `--passphrase-file` and `--passphrase-stdin` still win**
+  over `KEYORIX_MASTER_PASSWORD[_FILE]`, as they do over the plain variable.
+
+For a raw KEK (`key_provider.type: env`) the file holds the hex or base64 form,
+as the variable would. A 32-byte raw key ending in a newline byte cannot be
+stored this way; use `key_provider.type: file` for raw keys.
+
 ---
 
 ## environment
@@ -375,6 +424,17 @@ root-owned 0644 by default) — only get a warning naming the file, the mismatch
 and the fix while the key is left at its default; set
 `enable_file_permission_check: true` explicitly to refuse on those too.
 
+The files behind `KEYORIX_*_FILE` secret variables ([above](#secrets-from-files-name_file))
+count as key material: strict on the default as well (accessible to other users,
+or writable by the group, refuses to start), with the same upgrade grace period
+as the key files.
+
+The shipped `keyorix.docker.yaml` and Helm chart **omit this key on purpose**, so
+they run with the check on (the default) and the bind-mounted / ConfigMap-mounted
+config file only warns. Writing `enable_file_permission_check: true` into either
+would audit that orchestrator-owned file strictly and the container would refuse
+to start.
+
 **Upgrading an existing deployment** that never set
 `enable_file_permission_check`: the server tells a fresh install from an upgrade
 by its database (users already exist). An upgrade gets a grace period — a
@@ -400,6 +460,24 @@ grace period` warning. Have every interactive admin enrol, then set
 `require_mfa: true` explicitly to enforce it (or `false` to opt out visibly). A
 fresh install is enforced from its first start and recorded in the database
 (`adr112.require_mfa.enforced`), so it stays enforced after its admins exist.
+
+`require_mfa` is an ADR-112 opt-out like the `insecure_*` settings: its registry
+entry is `security.insecure_disable_mfa_requirement`. An explicit
+`require_mfa: false` logs `WARNING: security.insecure_disable_mfa_requirement is
+in effect (off)` on every start, is recorded in the start-to-start settings
+diff, and `admin validate --posture` counts it as a deviation. The grace period
+reads `grace-not-enforced` and is treated the same way. (The YAML key keeps its
+current name; only the registry identifier carries the `insecure_` prefix.)
+
+| State (settings-diff value) | When | Counts as a deviation |
+|---|---|---|
+| `off` | `require_mfa: false` written in the config | yes |
+| `grace-not-enforced` | key absent, upgraded deployment inside the grace period | yes |
+| `enforcing-implicit` | key absent, fresh install or past the grace period | no |
+| `enforcing-explicit` | `require_mfa: true` written in the config | no |
+
+The first start after upgrading to this version records one settings-diff
+change for this entry, because it did not appear in the previous snapshot.
 
 ```yaml
 security:
@@ -969,6 +1047,26 @@ authenticity is provable later — verify with `keyorix compliance verify --file
 <pack>` (it asks the server, which recomputes the HMAC; a signature made under a
 pre-rotation DEK is reported as unverifiable rather than tampered).
 
+### Who "the project's admins" are (all project-level alerts)
+
+Every notification addressed to "the project's admins" — new and
+awaiting-approval access requests, anomaly alerts, secret-expiry, rotation,
+certificate-expiry and access-recertification reminders, and break-glass
+activation / overdue-review alerts — goes to the same audience:
+
+- members holding an approver role on that project (`project_admin`,
+  `system_admin`, `admin`, `super_admin`), **and**
+- every active **install-wide admin** (an admin-bypass role held at global scope,
+  directly or through a group whose membership of them is global; a member of
+  that group scoped to a single project does not count), because they have admin
+  authority on every project even though they hold no project-scoped role row.
+
+Each person is notified once however many grants they hold. Deactivated,
+suspended, deprovisioned or deleted accounts are never notified, and the person who filed an access request
+is never alerted about their own request. License-expiry and machine-credential
+expiry have no project and go to every install-wide admin; personal-token,
+role-grant and read-quota reminders go to the owner of the item.
+
 ## rotation_reminders
 
 An opt-in background scheduler that notifies project admins (in-app) of secrets
@@ -1111,13 +1209,15 @@ by default** (a deliberate secure default): until `break_glass.enabled: true` is
 and the server restarted, every activation attempt is refused with
 `permission denied: break-glass is not enabled on this server; set
 break_glass.enabled: true in keyorix.yaml and restart`. When enabled, any
-**member of the project** (a user, or a user's group, holding a role scoped to that
-project — a global role such as the install-wide viewer does not count) can
-`POST /api/v1/projects/{id}/break-glass` (or run `keyorix break-glass activate`)
-to **immediately** self-grant the configured emergency role at that project — no
-approval. Non-members get `permission denied: break-glass is available only to
-members of the project`, so in practice it elevates a lower project role (for
-example `project_viewer`) to the emergency role. The activation is **time-bound** (it
+**member of the project** (a user holding a role scoped to that project, directly or
+through a group; a global role such as the install-wide viewer does not count) can
+`POST /api/v1/projects/{id}/break-glass` (or run `keyorix break-glass activate`) to
+**immediately** self-grant the configured emergency role at that project — no
+approval. A non-member is refused with `403 permission denied: break-glass is
+available only to members of the project`, so in practice it elevates a lower project
+role (for example `project_viewer`) to the emergency role. The role is added on top of
+what the member already holds, so a user who can already read a secret sees the *extra*
+permissions (printed by `activate`), not new read access. The activation is **time-bound** (it
 auto-expires via the JIT mechanism, so it stops authorizing on its own), requires a
 **written justification**, is **loudly audited** (`break_glass.activated`), and
 **alerts the project's admins**. Each activation is a queryable record for post-hoc

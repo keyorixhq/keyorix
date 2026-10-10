@@ -125,7 +125,7 @@ func (c *KeyorixCore) StartImpersonation(ctx context.Context, adminID, targetID 
 		LastSeenAt:             &now,
 		ExpiresAt:              &expiresAt,
 	}
-	created, err := c.storage.CreateSession(ctx, session)
+	created, err := c.createSession(ctx, session, ip, "impersonation start")
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create impersonation session: %w", err)
 	}

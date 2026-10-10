@@ -184,6 +184,10 @@ Authorization: Bearer <token>
 }
 ```
 
+**Read counters:**
+- `total_reads`: the secret's lifetime read count, counted from the secret access log (rows with action `read`: one per value disclosure, plus metadata-only `GET /api/v1/secrets/by-name` lookups, which are still logged as reads today). Returned by `GET /api/v1/secrets/{id}` and `GET /api/v1/secrets/{id}/versions` (as `data.total_reads`); not included in listings or in `GET /api/v1/secrets/by-name`. On a value read, the count includes that read. On an install upgraded from before #2970, version listings were logged as `read` rows too; those rows still count, so a lifetime total there is inflated by the number of earlier version listings.
+- `read_count` (and each version's `ReadCount`): only the reads charged against `max_reads`. It stays `0` for a secret without `max_reads`.
+
 ### Update Secret
 ```http
 PUT /api/v1/secrets/{id}
@@ -425,6 +429,28 @@ note near the top of this document):
 - `NotFound` - Requested resource doesn't exist
 - `ConflictError` - Resource with same identifier exists
 - `InternalError` - Server-side error
+- `ServiceUnavailable` - Temporarily unable to take the request; retry after the `Retry-After` interval (see below)
+
+### HTTP status codes for overload and contention
+
+| Status | `error` | Headers | Meaning | Client action |
+|--------|---------|---------|---------|---------------|
+| `429` | `RateLimited` / `TooManyRequests` | `Retry-After` | **You** sent too much: a per-principal or per-IP rate limit or the login-attempt budget was exceeded. | Slow down; retry after `Retry-After`. |
+| `503` | `ServiceUnavailable` | `Retry-After` (seconds) | **The server** could not take a write right now: on SQLite deployments the single-writer lock was still busy after the 10 s wait bound (sustained write contention), or a transient storage fault kept a request from being authenticated. Fixed message, no internal detail. | Retry after `Retry-After`. Safe to retry idempotent requests blindly; for others, check state first. |
+| `500` | `InternalError` | — | An unexpected server failure not known to be transient. | Do not retry blindly; report with the request ID. |
+
+`429` is reserved for caller-caused overload; write-lock contention is the
+server's capacity, so it is a `503`. gRPC equivalents: rate limiting is
+`RESOURCE_EXHAUSTED`; write-lock contention is `UNAVAILABLE` with a
+`retry-after` trailer (seconds).
+
+A `503` from write contention means the request failed, not that nothing happened:
+a request that performs several write transactions may have committed an earlier
+one before a later one timed out.
+
+The `/auth/` endpoints (login, MFA, WebAuthn login, setup, password change) never
+return this `503`: a storage failure after a credential matched is answered as a
+wrong credential, so the response cannot confirm a guess.
 
 ## 🌍 **Multi-Language Support**
 

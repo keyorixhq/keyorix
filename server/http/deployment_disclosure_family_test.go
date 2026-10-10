@@ -32,6 +32,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/license"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/keyorixhq/keyorix/pkg/trust"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,7 +49,7 @@ func newFullSchemaTestCore(t *testing.T) *core.KeyorixCore {
 		Storage: config.StorageConfig{
 			Type: "local",
 			Database: config.DatabaseConfig{
-				Path: uniqueMemDSN("&_timeout=30000&_journal_mode=WAL"),
+				Path: sqlitetest.DSN("kxtest_"),
 			},
 		},
 	}
