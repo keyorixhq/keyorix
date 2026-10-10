@@ -1,0 +1,106 @@
+// e2e-server: require_mfa=true
+//
+// web/e2e/real/mfa-required-first-login.spec.ts -- the first login of an account on a
+// deployment that REQUIRES MFA (security.require_mfa: true), driven through the real UI
+// against a real server (#2924 asked for this journey; #2933 added the route it ends on).
+//
+// The first line of this file is not a comment for humans: scripts/e2e/web-real-smoke.sh
+// greps for exactly `// e2e-server: require_mfa=true` and, for the group that runs this
+// file, writes `require_mfa: true` under `security:` in that group's keyorix.yaml before
+// starting the server. Every other spec file boots with require_mfa unset (false), as it
+// always did. One spec per group (MAX_SPECS_PER_GROUP=1), so the policy never leaks into
+// another file's server. Keep that line first and exact when editing.
+//
+// THE USER JOURNEY (what a human does, and what each step proves):
+//   1. A fresh admin (the group's bootstrap admin: it has no MFA) logs in on /login.
+//      The password is right, so login succeeds and the SPA starts navigating to the
+//      dashboard.
+//   2. The dashboard's first API call is refused by EnforceMFAEnrollment with
+//      403 {"error":"MFAEnrollmentRequired"}. client.ts's handle403 sends the browser to
+//      /profile?tab=security&mfa=required (MFA_ENROLMENT_URL, #2933). We assert the URL
+//      and that the Security tab shows the "Set up two-factor authentication to continue"
+//      banner, NOT a generic "no permission" error.
+//   3. Independently of the UI, a plain same-origin fetch of an authed API route returns
+//      403 MFAEnrollmentRequired. This proves the server policy is really on, so step 2
+//      is not satisfied by some other redirect, and gives step 6 something to flip.
+//   4. The user clicks Enable, reads the setup key off the page, computes the current
+//      TOTP code with the repo's own helper (helpers.ts totpCode), enters it with the
+//      account password and clicks "Verify & enable". The recovery-codes dialog appears.
+//   5. The user clicks Done. The Security tab now shows the Enabled badge and the banner
+//      is gone.
+//   6. The same fetch as step 3 no longer returns MFAEnrollmentRequired (the session that
+//      enrolled is kept by ActivateMFA, and MFAEnabled is read per request), and
+//      navigating to /dashboard stays on /dashboard and renders "Total Secrets".
+//
+// LOGIN BUDGET: the per-IP limit is 10 logins per 15 minutes per server. This group uses
+// 2: the harness's own token login (used only for its health check, it seeds nothing in
+// a require_mfa group because the policy would 403 the seeding calls) and the one UI
+// login below. Nothing here calls apiLogin/createDedicatedUser: those would log in
+// again, and would be 403'd or pointless under the policy.
+//
+// WHY THE SHARED ADMIN IS FINE HERE: the helpers' rule (never enable MFA on ADMIN_USERNAME)
+// exists so other specs on the same server are not affected. This file is alone on its
+// server, so enrolling its admin affects nobody else.
+import { test, expect, Page } from '@playwright/test';
+import { ADMIN_PASSWORD, ADMIN_USERNAME, submitLogin, totpCode } from './helpers';
+
+// apiProbe issues an authenticated same-origin GET from inside the page (the session
+// cookie rides along; GETs need no CSRF header) and returns the status plus the
+// server's `error` code, if any. /api/v1/secrets is not on EnforceMFAEnrollment's
+// allowlist (mfaEnrollAllowedSuffixes), so under the policy an un-enrolled session
+// gets MFAEnrollmentRequired from it before any permission check.
+async function apiProbe(page: Page): Promise<{ status: number; error: string | null }> {
+    return page.evaluate(async () => {
+        const res = await fetch('/api/v1/secrets', { credentials: 'include' });
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        return { status: res.status, error: body?.error ?? null };
+    });
+}
+
+test('first login under require_mfa lands on enrolment, enrols TOTP, and reaches the dashboard', async ({ page }) => {
+    // 1. Log in as the fresh admin. Deliberately NOT realLogin(): that waits for
+    //    /dashboard, which this account must not be allowed to stay on.
+    await page.goto('/login');
+    await submitLogin(page, ADMIN_USERNAME as string, ADMIN_PASSWORD as string);
+
+    // 2. The MFAEnrollmentRequired 403 sends the browser to the enrolment route.
+    await page.waitForURL(/\/profile\?tab=security&mfa=required/, { timeout: 20_000 });
+    await expect(page.getByText('Two-Factor Authentication')).toBeVisible();
+    await expect(page.getByText('Set up two-factor authentication to continue')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('You do not have permission to perform this action.')).toHaveCount(0);
+
+    // 3. The server really is enforcing the policy for this session.
+    const before = await apiProbe(page);
+    expect(before, 'an un-enrolled session must be refused with MFAEnrollmentRequired under require_mfa').toEqual({
+        status: 403,
+        error: 'MFAEnrollmentRequired',
+    });
+
+    // 4. Enrol TOTP through the UI.
+    await page.getByRole('button', { name: 'Enable' }).click();
+    const secretLocator = page.locator('code').first();
+    await expect(secretLocator).toBeVisible({ timeout: 10_000 });
+    const secret = (await secretLocator.textContent())?.trim();
+    expect(secret, 'enrolment must render a non-empty setup key').toBeTruthy();
+
+    await page.getByPlaceholder('123456').fill(totpCode(secret as string));
+    await page.getByPlaceholder('Your current password').fill(ADMIN_PASSWORD as string);
+    await page.getByRole('button', { name: 'Verify & enable' }).click();
+    await expect(page.getByText('Save your recovery codes')).toBeVisible({ timeout: 10_000 });
+
+    // 5. Finish the dialog; the Security tab reflects the enrolled state.
+    await page.getByRole('button', { name: 'Done' }).click();
+    await expect(page.getByText('Enabled', { exact: true }).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Set up two-factor authentication to continue')).toHaveCount(0);
+
+    // 6. The console unlocks: the API no longer refuses with MFAEnrollmentRequired, and
+    //    the dashboard renders without bouncing back to enrolment.
+    const after = await apiProbe(page);
+    expect(after.error, 'after enrolment the session must no longer be confined to the enrolment endpoints').not.toBe(
+        'MFAEnrollmentRequired'
+    );
+
+    await page.goto('/dashboard');
+    await expect(page.getByText('Total Secrets')).toBeVisible({ timeout: 15_000 });
+    expect(new URL(page.url()).pathname).toBe('/dashboard');
+});

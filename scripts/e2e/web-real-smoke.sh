@@ -358,6 +358,27 @@ run_group() {
     sed -i.bak -E "s/port: \"8080\"/port: \"$server_port\"/" "$config_path"
     rm -f "$config_path.bak"
 
+    # A spec that needs the deployment policy security.require_mfa=true declares it
+    # with a line starting `// e2e-server: require_mfa=true` in its own file; its
+    # group (one spec per group, MAX_SPECS_PER_GROUP=1) then boots with that policy.
+    # Every other spec -- the default -- boots exactly as before, with require_mfa
+    # unset (false). The policy confines every interactive session of an account
+    # without MFA to the enrolment endpoints, so a group that sets it must not use
+    # the shared admin's Bearer token for fixtures (see seed_demo_data below).
+    local require_mfa=false spec
+    for spec in "${specs[@]}"; do
+        if grep -q '^// e2e-server: require_mfa=true' "$WEB_DIR/$spec"; then
+            require_mfa=true
+        fi
+    done
+    if [ "$require_mfa" = true ]; then
+        echo "==> [group $group_label] ${specs[*]} asks for security.require_mfa=true"
+        awk '{ print } /^security:[[:space:]]*$/ { print "  require_mfa: true" }' "$config_path" >"$config_path.new"
+        mv "$config_path.new" "$config_path"
+        grep -q '^  require_mfa: true$' "$config_path" ||
+            fail "[group $group_label] could not set security.require_mfa in $config_path (no top-level 'security:' line?)"
+    fi
+
     echo "==> [group $group_label] keyorix-server admin encryption init"
     (cd "$smoke_dir" && "$SERVER_BIN" admin encryption init --config "$config_rel") ||
         fail "admin encryption init exited non-zero"
@@ -408,8 +429,15 @@ except Exception:
     print("")' "$smoke_dir/login-response.json")"
     [ -n "$token" ] ||
         fail "[group $group_label] POST /auth/login did not return a token: $(cat "$smoke_dir/login-response.json")"
-    seed_demo_data "$group_label" "$server_url" "$token" "$seed_project_name" \
-        "$lowpriv_username" "$lowpriv_password"
+    if [ "$require_mfa" = true ]; then
+        # This Bearer token is an interactive session of an account with no MFA, so
+        # the policy 403s every seeding call (MFAEnrollmentRequired). The spec that
+        # asked for the policy owns what it needs.
+        echo "==> [group $group_label] require_mfa group: skipping seed_demo_data"
+    else
+        seed_demo_data "$group_label" "$server_url" "$token" "$seed_project_name" \
+            "$lowpriv_username" "$lowpriv_password"
+    fi
 
     echo "==> [group $group_label] running Playwright specs against the real backend: ${specs[*]}"
     export HOME="$REAL_HOME"
