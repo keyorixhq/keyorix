@@ -67,6 +67,11 @@ var exemptLedgers = map[string]exemptLedger{
 	// yet is skipped (TestExemptLedgers_RegisteredLedgersExist lists them).
 	"full-row-write-exempt.tsv":        {keyCols: []int{0, 1, 2}, addedByCol: 5, reviewedByCol: 6, reasonCol: 3},
 	"child-parent-liveness-exempt.tsv": {keyCols: []int{0, 1, 2}, addedByCol: 5, reviewedByCol: 6, reasonCol: 3},
+	// GUARD-1's best-effort-after-commit ledger (#2561). Columns:
+	// <package>:<function>#<callee>, guard, reason, added_by, reviewed_by.
+	// Carries them inline rather than in a sidecar because the format is new in
+	// that PR, so there is no existing ledger shape to preserve.
+	"besteffort-exempt.tsv": {keyCols: []int{0}, addedByCol: 3, reviewedByCol: 4, reasonCol: 2},
 }
 
 // legacyUnreviewedLedgers predate the review rule. Each is named with the issue

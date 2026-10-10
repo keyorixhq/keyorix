@@ -678,6 +678,11 @@ func (m *MockStorage) UpdateSecret(ctx context.Context, secret *models.SecretNod
 	return args.Get(0).(*models.SecretNode), args.Error(1)
 }
 
+func (m *MockStorage) UpdateSecretFields(ctx context.Context, id uint, f storage.SecretFieldUpdate) (bool, error) {
+	args := m.Called(ctx, id, f)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStorage) TransitionSecretStatus(ctx context.Context, secret *models.SecretNode, fromStatus string) (bool, error) {
 	args := m.Called(ctx, secret, fromStatus)
 	return args.Bool(0), args.Error(1)
