@@ -1,4 +1,5 @@
 import { formatDateTime } from '../../utils/datetime';
+import { apiErrorMessage } from '../../services/client';
 import React, { useState } from 'react';
 import {
     ShareIcon,
@@ -246,7 +247,10 @@ export const SharingManagementPage: React.FC = () => {
                 <Alert
                     type="error"
                     title="Failed to load shares"
-                    message="There was an error loading the sharing information. Please try again."
+                    message={apiErrorMessage(
+                        error,
+                        'There was an error loading the sharing information. Please try again.'
+                    )}
                 >
                     <Button variant="outline" size="sm" onClick={() => refetch()}>
                         Retry

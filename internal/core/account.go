@@ -248,7 +248,7 @@ func (c *KeyorixCore) resolveKeepSession(ctx context.Context, userID uint, keepS
 	if keepSessionToken == "" {
 		return 0, ""
 	}
-	s, serr := c.storage.GetSession(ctx, keepSessionToken)
+	s, serr := c.getKeepSession(ctx, keepSessionToken)
 	if serr != nil {
 		log.Printf("SECURITY: %s: could not resolve the caller's own session (%v) -- purging ALL sessions for user %d instead of sparing the caller's", reason, serr, userID)
 		c.writeAuditEventFull(ctx, EventKeepSessionLookupFailed, &userID, nil, nil, "",
@@ -256,6 +256,21 @@ func (c *KeyorixCore) resolveKeepSession(ctx context.Context, userID uint, keepS
 		return 0, ""
 	}
 	return s.ID, s.SessionToken
+}
+
+// getKeepSession is resolveKeepSession's lookup with a panic turned into an
+// error, so it takes the same fail-closed full-purge fallback. Every caller runs
+// it AFTER its change has committed (#2844 sweep, mfa/activate
+// GetSession#1/panic): an escaping panic reported the committed MFA activation
+// as failed AND skipped the session purge that must follow it, leaving every
+// other session live after a security-factor change.
+func (c *KeyorixCore) getKeepSession(ctx context.Context, token string) (s *models.Session, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			s, err = nil, fmt.Errorf("session lookup panicked: %v", r)
+		}
+	}()
+	return c.storage.GetSession(ctx, token)
 }
 
 // deleteSessionsForUserAndEvict deletes all of the user's sessions except keepID and

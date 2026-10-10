@@ -1,8 +1,9 @@
 // compliance_snapshots.go — TakeComplianceSnapshot and ListComplianceSnapshots.
 //
-// TakeComplianceSnapshot runs a full compliance posture evaluation and returns
-// the persisted CompliancePostureSnapshot for that calendar day (same row that
-// GetCompliancePosture already saves as a side-effect, now surfaced explicitly).
+// TakeComplianceSnapshot runs a full compliance posture evaluation and persists
+// the CompliancePostureSnapshot for that calendar day. It fails closed (#2834):
+// if any sub-rollup could not be read, or the row cannot be written, nothing is
+// persisted and an error is returned -- never a success with partial counts.
 //
 // ListComplianceSnapshots returns recent snapshots for trend display without
 // triggering a full posture evaluation.
@@ -10,24 +11,49 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// TakeComplianceSnapshot runs GetCompliancePosture and returns the
-// CompliancePostureSnapshot that was persisted for today's UTC date.
-// Errors from GetCompliancePosture are propagated; a failure to persist the
-// snapshot (best-effort inside GetCompliancePosture) does not surface here —
-// the posture is still returned via the in-memory buildCompliancePostureSnapshot
-// result captured below.
+// ErrCompliancePostureDegraded is returned (wrapped) by TakeComplianceSnapshot when
+// one or more posture sub-rollups failed to read. No snapshot is persisted.
+var ErrCompliancePostureDegraded = errors.New("compliance posture is degraded; snapshot not persisted")
+
+// TakeComplianceSnapshot evaluates the posture and persists the snapshot for
+// today's UTC date. A degraded posture (any sub-count/list read failed) returns
+// ErrCompliancePostureDegraded without writing; a failed write is returned too.
+// The error names the failed areas only, not the underlying error text.
 func (c *KeyorixCore) TakeComplianceSnapshot(ctx context.Context) (*models.CompliancePostureSnapshot, error) {
-	posture, err := c.GetCompliancePosture(ctx)
+	posture, snap, err := c.computeCompliancePosture(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("TakeComplianceSnapshot: %w", err)
 	}
-	today := truncateToUTCDay(c.now())
-	return buildCompliancePostureSnapshot(posture, today), nil
+	if posture.Degraded {
+		return nil, fmt.Errorf("TakeComplianceSnapshot: %w (unreadable: %s)",
+			ErrCompliancePostureDegraded, strings.Join(degradedAreas(posture), ", "))
+	}
+	if err := c.storage.SaveCompliancePostureSnapshot(ctx, snap); err != nil {
+		return nil, fmt.Errorf("TakeComplianceSnapshot: persist snapshot: %w", err)
+	}
+	return snap, nil
+}
+
+// degradedAreas returns the area name of each DegradedReasons entry (the text
+// before the first ": "), de-duplicated in order.
+func degradedAreas(p *CompliancePosture) []string {
+	seen := make(map[string]bool, len(p.DegradedReasons))
+	var areas []string
+	for _, r := range p.DegradedReasons {
+		area, _, _ := strings.Cut(r, ": ")
+		if !seen[area] {
+			seen[area] = true
+			areas = append(areas, area)
+		}
+	}
+	return areas
 }
 
 // EventComplianceSnapshotTaken is audited on every explicit POST

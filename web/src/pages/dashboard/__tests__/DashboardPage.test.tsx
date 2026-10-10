@@ -72,6 +72,16 @@ afterEach(() => {
     useUIStore.setState({ theme: initialTheme });
 });
 
+// What the signed-in user may do. Tests that exercise a control assume the user can; the
+// permission-aware cases flip fields on this object (see useCan.ts).
+const canState = vi.hoisted(() => ({
+    value: { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true },
+}));
+vi.mock('../../../features/auth/useCan', () => ({ useCan: () => canState.value }));
+beforeEach(() => {
+    canState.value = { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true };
+});
+
 describe('DashboardPage — header', () => {
     it('greets the user by their first name', () => {
         render(<DashboardPage />);
@@ -520,5 +530,42 @@ describe('DashboardPage — theme variants', () => {
         useUIStore.setState({ theme: 'system' });
         render(<DashboardPage />);
         expect(screen.getAllByText('Encryption').length).toBeGreaterThan(0);
+    });
+});
+
+describe('DashboardPage — tiles the user cannot see (DEMO-UI-1)', () => {
+    it('shows "Not visible to you" instead of zeros for audit- and admin-only tiles', () => {
+        canState.value = {
+            ...canState.value,
+            admin: false,
+            writeSecrets: false,
+            deleteSecrets: false,
+            manageMembers: false,
+            readAudit: false,
+        };
+        mockHooks({ stats: { ...baseStats, activeUsers: 0, auditEvents30d: 0, failedAuthAttempts24h: 0 } });
+        render(<DashboardPage />);
+
+        for (const label of [
+            'Active Users',
+            'Audit Events (30d)',
+            'Security',
+            'Failed Auth (24h)',
+            'Inactive Users',
+            'Secret Reads (30d)',
+        ]) {
+            const card = screen.getByText(label).closest('.rounded-xl, .rounded-lg') as HTMLElement;
+            expect(within(card).getByText('Not visible to you'), label).toBeInTheDocument();
+            expect(within(card).getByText('—'), label).toBeInTheDocument();
+        }
+        // A tile the user can see still shows its number.
+        expect(screen.getByText('120')).toBeInTheDocument();
+        // Nothing claims "No active alerts" about data the user cannot see.
+        expect(screen.queryByText('No active alerts')).not.toBeInTheDocument();
+    });
+
+    it('shows real numbers to a user who can read audit and the user directory', () => {
+        render(<DashboardPage />);
+        expect(screen.queryByText('Not visible to you')).not.toBeInTheDocument();
     });
 });

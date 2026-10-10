@@ -28,6 +28,7 @@ vi.mock('../../../features/admin', () => ({
 
 vi.mock('../../../services/client', () => ({
     apiClient: { get: (...args: any[]) => apiClientGet(...args) },
+    apiErrorMessage: (_e: unknown, fallback: string) => fallback,
 }));
 
 const entries = [

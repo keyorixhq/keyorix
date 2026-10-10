@@ -461,6 +461,24 @@ grace period` warning. Have every interactive admin enrol, then set
 fresh install is enforced from its first start and recorded in the database
 (`adr112.require_mfa.enforced`), so it stays enforced after its admins exist.
 
+`require_mfa` is an ADR-112 opt-out like the `insecure_*` settings: its registry
+entry is `security.insecure_disable_mfa_requirement`. An explicit
+`require_mfa: false` logs `WARNING: security.insecure_disable_mfa_requirement is
+in effect (off)` on every start, is recorded in the start-to-start settings
+diff, and `admin validate --posture` counts it as a deviation. The grace period
+reads `grace-not-enforced` and is treated the same way. (The YAML key keeps its
+current name; only the registry identifier carries the `insecure_` prefix.)
+
+| State (settings-diff value) | When | Counts as a deviation |
+|---|---|---|
+| `off` | `require_mfa: false` written in the config | yes |
+| `grace-not-enforced` | key absent, upgraded deployment inside the grace period | yes |
+| `enforcing-implicit` | key absent, fresh install or past the grace period | no |
+| `enforcing-explicit` | `require_mfa: true` written in the config | no |
+
+The first start after upgrading to this version records one settings-diff
+change for this entry, because it did not appear in the previous snapshot.
+
 ```yaml
 security:
   enable_file_permission_check: true
@@ -509,6 +527,31 @@ the database it counts the deviation instead of assuming the deployment enforces
 A setting on its implicit default with a real problem is also its own deviation. Only TLS mode and the KEK salt
 file's age are informational: no rotation-age threshold is defined anywhere in
 this codebase, so a number there would be a guess.
+
+Like every `admin` command, `admin validate --posture` needs the database to
+itself: it refuses while the server runs (stop it, or in Docker Compose use
+`docker compose stop backend` then `docker compose run --rm backend ./keyorix-server admin validate --posture`).
+
+### Hardening the generated config (clearing the posture report)
+
+The config written by `admin init` (and `keyorix.docker.yaml`) is a dev baseline:
+on it the report lists the three `insecure_*` settings below (cleartext transport,
+unauthenticated `/metrics`, no API rate limit), and exits 1. Verified on a fresh
+SQLite install: setting exactly these keys makes `admin validate --posture` print
+`No deviations found.` and exit 0 (the startup warning text for each is the
+`insecure_*` name, not the YAML key, so the mapping is:)
+
+| Report names | Set in `keyorix.yaml` |
+|---|---|
+| `security.insecure_allow_cleartext_transport` | `server.http.tls.enabled: true` (with `cert_file`/`key_file`) and `security.require_transport_tls: true`; or terminate TLS at a proxy you trust and list it in `server.http.trusted_proxies` |
+| `server.insecure_allow_unauthenticated_metrics` | `server.http.metrics_token: "<long random string>"`; `/metrics` then answers 401 without `Authorization: Bearer <token>` and 200 with it |
+| `server.insecure_disable_api_ratelimit` | `server.http.ratelimit.enabled: true` (and `server.grpc.ratelimit.enabled: true` if gRPC is on) |
+
+Also keep the key and config files `0600` and owned by the server's user. In
+Docker Compose the bind-mounted `keyorix.docker.yaml` arrives as the host's
+owner/mode (typically `0664`, uid 1000, while the container runs as uid 1001),
+which the report counts as a file-permission deviation until you
+`chmod 600 keyorix.docker.yaml && sudo chown 1001 keyorix.docker.yaml` (tracked in #2922).
 
 With `require_mfa: true` (the default), an interactive (session-authenticated) user
 **without** a second factor is confined to the MFA-enrolment endpoints until they
@@ -1004,6 +1047,26 @@ authenticity is provable later — verify with `keyorix compliance verify --file
 <pack>` (it asks the server, which recomputes the HMAC; a signature made under a
 pre-rotation DEK is reported as unverifiable rather than tampered).
 
+### Who "the project's admins" are (all project-level alerts)
+
+Every notification addressed to "the project's admins" — new and
+awaiting-approval access requests, anomaly alerts, secret-expiry, rotation,
+certificate-expiry and access-recertification reminders, and break-glass
+activation / overdue-review alerts — goes to the same audience:
+
+- members holding an approver role on that project (`project_admin`,
+  `system_admin`, `admin`, `super_admin`), **and**
+- every active **install-wide admin** (an admin-bypass role held at global scope,
+  directly or through a group whose membership of them is global; a member of
+  that group scoped to a single project does not count), because they have admin
+  authority on every project even though they hold no project-scoped role row.
+
+Each person is notified once however many grants they hold. Deactivated,
+suspended, deprovisioned or deleted accounts are never notified, and the person who filed an access request
+is never alerted about their own request. License-expiry and machine-credential
+expiry have no project and go to every install-wide admin; personal-token,
+role-grant and read-quota reminders go to the owner of the item.
+
 ## rotation_reminders
 
 An opt-in background scheduler that notifies project admins (in-app) of secrets
@@ -1164,6 +1227,15 @@ Deliberately not RBAC-gated on the *emergency* permissions — the point is acce
 caller does *not* have — but gated on project membership, so the controls are: it
 must be enabled here, the caller must belong to the project, every use is
 justified + audited + alerted, the grant expires, and an admin can revoke it early.
+
+Operating it from the CLI (verified end to end with a `project_viewer` user):
+`keyorix break-glass activate --project-id N --justification "..." --ttl 1h`,
+then an admin runs `keyorix break-glass list --project-id N` (in the test the
+activating user's own `list` printed "No break-glass activations", only the admin's
+did show it) and `keyorix break-glass revoke
+--project-id N --activation-id ID`. There is no CLI command for the review below:
+call `POST /api/v1/projects/N/break-glass/ID/review` with `{"note": "..."}` and a
+bearer token (response `Break-glass activation reviewed`).
 
 `POST …/break-glass/{activationId}/review` (ADR-112 §3) records a separate,
 after-the-fact check — who reviewed it, when, and a note — exactly once per

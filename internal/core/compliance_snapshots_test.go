@@ -19,16 +19,10 @@ import (
 func newSnapshotCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db := sqlitetest.OpenWithDialector(t, "compliancesnapshots_", sqlite.Open, &gorm.Config{})
-	require.NoError(t, db.AutoMigrate(
-		&models.Project{},
-		&models.Environment{},
-		&models.SecretNode{},
-		&models.AuditEvent{},
-		&models.CompliancePostureSnapshot{},
-		&models.RotationPolicy{},
-		&models.User{},
-		&models.Role{},
-	))
+	// Full schema: a posture sub-rollup that cannot be read (e.g. a missing table)
+	// degrades the posture, and a degraded posture is never snapshotted (#2834).
+	// The success path needs every rollup readable.
+	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
 	return NewKeyorixCore(store.NewLocalStorage(db)), db
 }
 

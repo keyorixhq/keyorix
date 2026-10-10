@@ -97,7 +97,10 @@ func TestJourney_SSOLogin(t *testing.T) {
 	issuer := fmt.Sprintf("%s/realms/%s", kcAddr, n5Realm)
 	s := startServerWithSSO(t, serverBin, serverPort, issuer, redirectURL)
 	t.Cleanup(s.Close)
-	adminToken := adminLogin(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
+	// Boots with the shipped config (security.require_mfa on, ADR-112): prove that,
+	// then enrol TOTP through the real API and work from the MFA-backed session.
+	requireMFAEnrolmentPremise(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
+	adminToken := enrolTOTPAndLogin(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
 
 	// ── First login (JIT-provisioned), mapped role from its group ───────────
 
