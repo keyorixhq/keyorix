@@ -1047,6 +1047,14 @@ type SecurityConfig struct {
 	// the same reason -- a hand-built *Config with RequireMFA: true must not be
 	// read as "inherited the default." Never read from YAML.
 	RequireMFAImplicitDefault bool `yaml:"-"`
+	// RequireMFAUpgradeGrace is true when server/main.go's applyADR112UpgradeGrace
+	// found an UPGRADED deployment (its database already has users, and no
+	// adr112.require_mfa.enforced marker) relying on the implicit default, and so
+	// set RequireMFA back to false for this boot: ADR-112's grace period for MFA
+	// on upgrades, with a loud start-up warning, until the key is set explicitly.
+	// A fresh install is enforced and marked, so it never gets here. Never read
+	// from YAML; false on every hand-built *Config.
+	RequireMFAUpgradeGrace bool `yaml:"-"`
 	// LoginLockout configures per-account login lockout (brute-force protection):
 	// after MaxAttempts failed password logins within Window, the account is locked
 	// for an exponentially-backing-off cooldown. Distinct from (and complementary to)

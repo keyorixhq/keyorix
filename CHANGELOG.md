@@ -51,10 +51,12 @@ All notable changes to Keyorix are documented here. This project follows
   period: a real file-permission or startup-validation problem logs a loud
   `ADR-112` warning naming the setting and how to comply, instead of refusing
   to start. The grace period ends for good at the first boot whose checks pass
-  (or when the key is set explicitly). `require_mfa` has no grace period: a
-  session-authenticated admin without MFA is confined to the enrolment
+  (or when the key is set explicitly). `require_mfa` on such a deployment is
+  also in a grace period: not enforced yet, with a loud start-up warning on
+  every boot until the key is set explicitly. On a fresh install a
+  session-authenticated user without MFA is confined to the enrolment
   endpoints until they enrol (non-interactive PAT/machine credentials are
-  unaffected), with a start-up warning while the key is unset. An explicit
+  unaffected). An explicit
   `enable_file_permission_check: true` keeps its exact pre-upgrade behavior,
   including refusing to start when the key material is missing.
 

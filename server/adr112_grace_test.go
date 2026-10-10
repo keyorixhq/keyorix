@@ -1,12 +1,13 @@
-// adr112_grace_test.go -- adr112UpgradeGraceEligible / recordADR112EnforcedIfClean:
-// the database-derived fact that separates a fresh install (enforced) from an
+// adr112_grace_test.go -- applyADR112UpgradeGrace / recordADR112Markers: the
+// database-derived fact that separates a fresh install (enforced) from an
 // upgraded deployment (grace-period warnings) under ADR-112's implicit
-// enable_file_permission_check default.
+// enable_file_permission_check and require_mfa defaults.
 package main
 
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,7 +81,7 @@ func TestADR112UpgradeGrace_Decision(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := recordADR112Enforced(db, time.Now()); err != nil {
+		if err := recordADR112Enforced(db, adr112FilePermEnforcedKey, time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		closeGormDB(db)
@@ -109,20 +110,20 @@ func TestADR112UpgradeGrace_Decision(t *testing.T) {
 
 // The ratchet: an upgraded deployment that boots clean once is enforced from
 // then on; one whose problem was softened this boot stays in the grace period.
-func TestRecordADR112EnforcedIfClean_Ratchet(t *testing.T) {
+func TestRecordADR112Markers_FilePermRatchet(t *testing.T) {
 	t.Cleanup(func() { adr112GraceSoftened.Store(false) })
 
 	cfg := adr112GraceConfig(t)
 	migrateADR112DB(t, cfg, 1)
 
 	adr112GraceSoftened.Store(true)
-	recordADR112EnforcedIfClean(cfg)
+	recordADR112Markers(cfg)
 	if ok, why := adr112UpgradeGraceEligible(cfg); !ok {
 		t.Fatalf("a softened boot must not end the grace period (%s)", why)
 	}
 
 	adr112GraceSoftened.Store(false)
-	recordADR112EnforcedIfClean(cfg)
+	recordADR112Markers(cfg)
 	if ok, why := adr112UpgradeGraceEligible(cfg); ok {
 		t.Fatalf("a clean boot must end the grace period for good (%s)", why)
 	}
@@ -156,5 +157,102 @@ func TestApplyADR112UpgradeGrace_FreshRefusesUpgradeWarns(t *testing.T) {
 	}
 	if !adr112GraceSoftened.Load() {
 		t.Error("upgrade: a softened failure must be recorded so the boot does not ratchet to enforced")
+	}
+}
+
+// ── require_mfa ──────────────────────────────────────────────────────────────
+
+func adr112MFAConfig(t *testing.T) *config.Config {
+	t.Helper()
+	cfg := adr112GraceConfig(t)
+	cfg.Security = config.SecurityConfig{RequireMFA: true, RequireMFAImplicitDefault: true}
+	return cfg
+}
+
+// ADR-112: a fresh install enforces require_mfa from its first start; an upgraded
+// deployment that never set the key gets the grace period (not enforced yet, loud
+// warning); an explicit true is never graced; a deployment enforced once stays
+// enforced (marker); an undecidable database fails closed (enforced).
+func TestApplyADR112UpgradeGrace_RequireMFA(t *testing.T) {
+	t.Cleanup(func() { adr112MFAReason = "" })
+
+	t.Run("fresh install is enforced", func(t *testing.T) {
+		cfg := adr112MFAConfig(t)
+		applyADR112UpgradeGrace(cfg)
+		if !cfg.Security.RequireMFA || cfg.Security.RequireMFAUpgradeGrace {
+			t.Fatalf("fresh install: want require_mfa enforced, got RequireMFA=%v grace=%v", cfg.Security.RequireMFA, cfg.Security.RequireMFAUpgradeGrace)
+		}
+	})
+	t.Run("upgrade gets the grace period, with a loud warning", func(t *testing.T) {
+		cfg := adr112MFAConfig(t)
+		migrateADR112DB(t, cfg, 1)
+		applyADR112UpgradeGrace(cfg)
+		if cfg.Security.RequireMFA || !cfg.Security.RequireMFAUpgradeGrace {
+			t.Fatalf("upgrade: want the grace period, got RequireMFA=%v grace=%v", cfg.Security.RequireMFA, cfg.Security.RequireMFAUpgradeGrace)
+		}
+		logged := captureLogs(func() { logWarnOnImplicitRequireMFADefault(cfg) })
+		for _, want := range []string{"WARNING", "ADR-112 grace period", "NOT enforced", "security.require_mfa: true"} {
+			if !strings.Contains(logged, want) {
+				t.Errorf("grace warning missing %q: %q", want, logged)
+			}
+		}
+	})
+	t.Run("explicit true on an upgrade is enforced", func(t *testing.T) {
+		cfg := adr112MFAConfig(t)
+		migrateADR112DB(t, cfg, 1)
+		cfg.Security.RequireMFAImplicitDefault = false
+		applyADR112UpgradeGrace(cfg)
+		if !cfg.Security.RequireMFA || cfg.Security.RequireMFAUpgradeGrace {
+			t.Fatal("an explicit require_mfa: true must never get the grace period")
+		}
+	})
+	t.Run("enforced once stays enforced", func(t *testing.T) {
+		cfg := adr112MFAConfig(t)
+		migrateADR112DB(t, cfg, 1)
+		recordADR112Markers(cfg) // RequireMFA true: writes the require_mfa marker
+		applyADR112UpgradeGrace(cfg)
+		if !cfg.Security.RequireMFA || cfg.Security.RequireMFAUpgradeGrace {
+			t.Fatal("a deployment with the require_mfa marker must stay enforced")
+		}
+	})
+	t.Run("undecidable database fails closed", func(t *testing.T) {
+		cfg := adr112MFAConfig(t)
+		if err := os.WriteFile(cfg.Storage.Database.Path, []byte("not a sqlite database, but long enough to be read as one...."), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		applyADR112UpgradeGrace(cfg)
+		if !cfg.Security.RequireMFA {
+			t.Fatal("an undecidable database must fail closed (require_mfa enforced)")
+		}
+	})
+}
+
+// A fresh install's first boot writes the require_mfa marker, so its second boot
+// (users now exist) is still enforced rather than mistaken for an upgrade. A
+// graced boot (RequireMFA false) writes none, so the grace period stays until the
+// key is set explicitly.
+func TestRecordADR112Markers_RequireMFARatchet(t *testing.T) {
+	t.Cleanup(func() { adr112MFAReason = "" })
+
+	fresh := adr112MFAConfig(t)
+	applyADR112UpgradeGrace(fresh) // fresh: enforced
+	migrateADR112DB(t, fresh, 1)   // the first boot bootstraps an admin
+	recordADR112Markers(fresh)
+	second := adr112MFAConfig(t)
+	second.Storage = fresh.Storage
+	applyADR112UpgradeGrace(second)
+	if !second.Security.RequireMFA {
+		t.Fatal("a fresh install's second boot must stay enforced")
+	}
+
+	upgrade := adr112MFAConfig(t)
+	migrateADR112DB(t, upgrade, 1)
+	applyADR112UpgradeGrace(upgrade) // graced: RequireMFA false
+	recordADR112Markers(upgrade)
+	again := adr112MFAConfig(t)
+	again.Storage = upgrade.Storage
+	applyADR112UpgradeGrace(again)
+	if !again.Security.RequireMFAUpgradeGrace {
+		t.Fatal("a graced boot must not write the require_mfa marker")
 	}
 }

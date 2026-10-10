@@ -383,10 +383,14 @@ refusing to start. The grace period ends for good the first time the deployment
 boots with the checks passing (recorded in the database as
 `adr112.file_permission_check.enforced`); from then on it fails closed like a
 fresh install. Setting the key explicitly (`true`, or `false` to opt out
-visibly) also ends it. `require_mfa` has no grace period: an upgraded
-deployment's admins are asked to enrol at their next interactive login (never
-locked out; tokens and machine credentials are unaffected), and the server logs
-a start-up warning while the key is unset.
+visibly) also ends it.
+
+`require_mfa` on an upgraded deployment that never set it gets the same kind of
+grace period: MFA is **not** enforced yet, and every start logs a loud `ADR-112
+grace period` warning. Have every interactive admin enrol, then set
+`require_mfa: true` explicitly to enforce it (or `false` to opt out visibly). A
+fresh install is enforced from its first start and recorded in the database
+(`adr112.require_mfa.enforced`), so it stays enforced after its admins exist.
 
 ```yaml
 security:

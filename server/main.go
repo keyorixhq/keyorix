@@ -268,9 +268,9 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	if encSvc != nil {
 		defer encSvc.Shutdown()
 	}
-	// ADR-112: a boot that ran the file-permission/startup checks and passed them
-	// without the upgrade grace period ratchets this deployment to enforced for good.
-	recordADR112EnforcedIfClean(cfg)
+	// ADR-112: a boot that enforced enable_file_permission_check (checks passed, nothing
+	// softened) or require_mfa ratchets this deployment to enforced for that key for good.
+	recordADR112Markers(cfg)
 	// #G56: flush/close the SIEM audit forwarder (if configured) on shutdown — it
 	// queues events in memory (worker.go's Deliver is non-blocking, async), and
 	// nothing would otherwise call Close() to drain that queue before the process
@@ -2159,24 +2159,28 @@ func verifyKeyFileSetConsistency(cfg *config.Config) error {
 	return keyfiles.VerifyKeySetConsistency(&cfg.Storage.Encryption, ".")
 }
 
-// logWarnOnImplicitRequireMFADefault logs a start-up warning when security.require_mfa is
-// enforcing solely because of ADR-112's new secure-by-default value (config.Load resolves
-// an absent key to true; RequireMFAImplicitDefault is true only when the config file never
-// set it explicitly).
+// logWarnOnImplicitRequireMFADefault logs where security.require_mfa stands when the
+// config file never set it (ADR-112 resolves an absent key to true;
+// RequireMFAImplicitDefault is true only then).
 //
-// Unlike enforceKeyFilePermissions/runStartupValidation above, this does NOT soften the
-// actual enforcement for the grace period: server/middleware.EnforceMFAEnrollment only
-// confines an already-authenticated session without MFA to the enrolment endpoints (it
-// does not lock the account out, and non-interactive PAT/machine credentials are exempt
-// entirely — see EnforceMFAEnrollment's own doc comment), so there is no boot-blocking or
-// account-lockout failure mode here to protect an upgrade from. The warning exists so an
-// operator who relied on MFA being off is not silently surprised by admins now being
-// prompted to enrol, and names exactly how to comply or acknowledge it.
+// On a fresh install (or a deployment already enforced once) MFA is enforced and this is
+// informational: server/middleware.EnforceMFAEnrollment confines a session-authenticated
+// user without MFA to the enrolment endpoints (never locks the account out; PAT/machine
+// credentials are exempt). On an upgraded deployment, applyADR112UpgradeGrace has put
+// require_mfa in ADR-112's grace period (RequireMFAUpgradeGrace): MFA is NOT enforced yet,
+// and this warns loudly on every boot until the key is set explicitly.
 func logWarnOnImplicitRequireMFADefault(cfg *config.Config) {
-	if !cfg.Security.RequireMFA || !cfg.Security.RequireMFAImplicitDefault {
-		return
+	sec := cfg.Security
+	switch {
+	case sec.RequireMFAUpgradeGrace:
+		log.Printf("WARNING: ADR-112 grace period: security.require_mfa now defaults to true, but %s and this config never set it, so MFA is NOT enforced yet. Have every interactive admin enrol (keyorix mfa enroll / activate, or Profile -> Security in the web UI), then set security.require_mfa: true explicitly to enforce it (or false to opt out visibly).", adr112MFAReason)
+	case sec.RequireMFA && sec.RequireMFAImplicitDefault:
+		reason := adr112MFAReason
+		if reason == "" {
+			reason = "the key is not set in this config"
+		}
+		log.Printf("INFO: security.require_mfa is enforcing on its ADR-112 secure-by-default value (%s). Session-authenticated users without MFA are confined to MFA enrolment until they enrol (PAT/machine credentials are unaffected). Set security.require_mfa explicitly to silence this.", reason)
 	}
-	log.Printf("WARNING: security.require_mfa is enforcing on its new secure-by-default value (ADR-112) — this config file never set it explicitly. Session-authenticated admins without MFA enrolled will be confined to MFA-enrolment endpoints until they enrol (non-interactive PAT/machine credentials are unaffected). Set security.require_mfa: true explicitly once you've reviewed this, or security.require_mfa: false to opt out (visibly, not silently).")
 }
 
 func startGRPCServer(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) error {
