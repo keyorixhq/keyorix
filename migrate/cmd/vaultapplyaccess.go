@@ -156,24 +156,6 @@ func runApplyAccess(cmd *cobra.Command, _ []string) error {
 	toExecute, selWarnings := accessplan.SelectForApply(fresh.Items, reviewed)
 	for _, w := range selWarnings {
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "WARNING:", w)
-	toExecute := make([]accessplan.Item, 0, len(reviewed))
-	seen := map[string]bool{}
-	for _, it := range fresh.Items {
-		key := accessplan.Key(it)
-		if !reviewed[key] {
-			continue // never execute something the operator did not review.
-		}
-		seen[key] = true
-		if it.Outcome != accessplan.Create {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "WARNING: %s %s no longer resolves to \"create\" (now %q) — not applied; re-run plan-access and review\n", it.Kind, it.SourceRef, it.Outcome)
-			continue
-		}
-		toExecute = append(toExecute, it)
-	}
-	for key := range reviewed {
-		if !seen[key] {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "WARNING: reviewed item %q is no longer part of the live Vault/Keyorix state — not applied; re-run plan-access and review\n", key)
-		}
 	}
 
 	credFile, err := os.OpenFile(aaCredentialsOut, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) // #nosec G304 -- operator-supplied output path, a CLI flag, not user/network input

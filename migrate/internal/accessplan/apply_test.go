@@ -24,12 +24,6 @@ type fakeWriter struct {
 
 func (f *fakeWriter) CreateRole(ctx context.Context, name, _ string, _ []string) (int, error) {
 	f.lastCreateRoleCtx = ctx
-	failActivate   bool
-	failIssue      bool
-	failCreateRole bool
-}
-
-func (f *fakeWriter) CreateRole(_ context.Context, name, _ string, _ []string) (int, error) {
 	if f.failCreateRole {
 		return 0, errors.New("create role failed")
 	}
@@ -83,7 +77,6 @@ func TestApply_RoleThenMachineThenGrant(t *testing.T) {
 		}
 	}
 	if len(w.createdRoles) != 1 || len(w.createdMachine) != 1 || len(w.issued) != 1 || len(w.grants) != 1 {
-	if len(w.createdRoles) != 1 || len(w.createdMachine) != 1 || len(w.activated) != 1 || len(w.issued) != 1 || len(w.grants) != 1 {
 		t.Fatalf("writer calls = %+v", w)
 	}
 	if results[1].Credential != "kx_machine_fake_token" {
@@ -137,17 +130,12 @@ func TestApply_GrantSkippedWhenParentNeverCreated(t *testing.T) {
 func TestApply_IssueCredentialFailureStillReportsAnError(t *testing.T) {
 	items := []Item{{Kind: KindMachineIdentity, Outcome: Create, ProposedName: "vault-approle-ci"}}
 	w := &fakeWriter{failIssue: true}
-func TestApply_ActivateFailureStopsBeforeIssuingCredential(t *testing.T) {
-	items := []Item{{Kind: KindMachineIdentity, Outcome: Create, ProposedName: "vault-approle-ci"}}
-	w := &fakeWriter{failIssue: true}
 	results := Apply(context.Background(), items, w)
 	if results[0].Error == "" || results[0].Credential != "" {
 		t.Fatalf("expected an error and no credential, got %+v", results[0])
 	}
 	if len(w.createdMachine) != 1 {
 		t.Fatal("CreateMachineIdentity must still have been called before the credential-issue failure")
-	if len(w.issued) != 0 {
-		t.Fatal("IssueMachineCredential must never be called when activation failed")
 	}
 }
 
