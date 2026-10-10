@@ -181,7 +181,7 @@ func (c *KeyorixCore) LoginPending(ctx context.Context, req *LoginRequest) (*mod
 	// the lock between the snapshot read inside VerifyPasswordCredentials and now
 	// (TOCTOU) — never trust that stale snapshot alone. The accumulated failure
 	// state is deliberately NOT cleared here; see LoginCompletion.
-	if err := c.recheckLoginLockFailClosed(ctx, user); err != nil {
+	if err := c.recheckLockAfterCredentialMatched(ctx, user, true); err != nil {
 		return nil, user, nil, err
 	}
 	lc := c.newLoginCompletion(user)

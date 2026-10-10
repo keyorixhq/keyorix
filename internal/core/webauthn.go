@@ -433,7 +433,7 @@ func (c *KeyorixCore) FinishWebAuthnReauth(ctx context.Context, userID uint, ses
 	// step-up grant below is still to be written, and a fault there denies the
 	// re-auth with the same error a failed assertion gets, so it must cost the
 	// same lockout progress. See LoginCompletion.
-	if err := c.recheckLoginLockFailClosed(ctx, user); err != nil {
+	if err := c.recheckLockAfterCredentialMatched(ctx, user, true); err != nil {
 		return err
 	}
 	c.persistUpdatedCredential(ctx, userID, cred)
@@ -601,7 +601,10 @@ func (c *KeyorixCore) FinishWebAuthnLoginPending(ctx context.Context, challenge,
 	// here (#2894): the password-expiry gate, the identity read and the session
 	// mint all still have to succeed, and a fault in any of them denies the login
 	// with the same response a failed assertion gets — see LoginCompletion.
-	if err := c.recheckLoginLockFailClosed(ctx, wu.user); err != nil {
+	if err := c.recheckLockAfterCredentialMatched(ctx, wu.user, true); err != nil {
+		if errors.Is(err, ErrLoginPostVerdict) {
+			return nil, wu.user, UserIdentity{}, nil, err
+		}
 		return nil, nil, UserIdentity{}, nil, err
 	}
 	c.persistUpdatedCredential(ctx, ch.UserID, cred)
@@ -756,6 +759,9 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLoginPending(ctx context.Context
 		return nil, nil, UserIdentity{}, nil, err
 	}
 	if err := c.checkPasswordlessAccountState(ctx, resolved); err != nil {
+		if errors.Is(err, ErrLoginPostVerdict) {
+			return nil, resolved, UserIdentity{}, nil, err
+		}
 		return nil, nil, UserIdentity{}, nil, err
 	}
 	c.persistUpdatedCredential(ctx, resolved.ID, cred)
@@ -824,7 +830,9 @@ func (c *KeyorixCore) checkPasswordlessAccountState(ctx context.Context, user *m
 	// Re-check under serialization before minting a session (TOCTOU guard). The
 	// clear is NOT done here (#2894) — FinishWebAuthnPasswordlessLogin's own
 	// LoginCompletion owns it, after the mint and the transport's identity read.
-	return c.recheckLoginLockFailClosed(ctx, user)
+	// A storage fault in the recheck is post-verdict but NOT counted: this path's
+	// failed assertions do not count either (see newLoginCompletionNotCounted).
+	return c.recheckLockAfterCredentialMatched(ctx, user, false)
 }
 
 // rejectIfCloned inspects a just-verified assertion's credential for a signature-
