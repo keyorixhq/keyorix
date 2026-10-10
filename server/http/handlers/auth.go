@@ -157,7 +157,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// (never a real credential guess) need not consume a slot.
 	h.reserveLoginAttempt(r.Context(), ip)
 
-	session, user, err := h.coreService.Login(r.Context(), &core.LoginRequest{
+	// LoginWithIdentity resolves the response identity BEFORE the session is
+	// written (#2844, the #2841 ordering). Reading it here afterwards, as
+	// completeLogin does, left a live session behind when that read panicked.
+	session, user, identity, err := h.coreService.LoginWithIdentity(r.Context(), &core.LoginRequest{
 		Username:  body.Username,
 		Password:  body.Password,
 		UserAgent: r.Header.Get(hdrUserAgent),
@@ -182,12 +185,20 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			}, "MFA required")
 			return
 		}
+		// The same 500 completeLogin produced for this failure before the read
+		// moved into core: the password matched, so it is not reported as a
+		// wrong credential, and the reserved attempt stays counted.
+		if errors.Is(err, core.ErrLoginIdentityUnavailable) {
+			log.Printf("Login: %v", err)
+			sendError(w, "Internal", errLoginIncomplete, http.StatusInternalServerError, nil)
+			return
+		}
 		goSafe(func() { h.coreService.LogAuthFailure(context.Background(), body.Username, ip) }) // #nosec G118
 		sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
 		return
 	}
 
-	resp, ok := h.completeLogin(w, r, session, user)
+	resp, ok := h.completeLoginWithIdentity(w, session, user, identity)
 	if !ok {
 		return
 	}
@@ -260,25 +271,46 @@ func (h *AuthHandler) loginResponseFromIdentity(session *models.Session, user *m
 // ok=false so the caller stops without setting cookies or logging the login as
 // successful (#2412).
 //
-// Its callers are now Login and ConsumeSetup only. The other three (VerifyMFA,
-// FinishWebAuthnLogin, FinishWebAuthnPasswordlessLogin) moved to
-// completeLoginWithIdentity because their core functions write something
-// USER-scoped after minting (an MFAStepUpGrant, or an MFAStepupToken) that this
-// function's session-only revoke never undid — see #2841. Login and
-// ConsumeSetup write only the session, so the compensation here is complete for
-// them and the ordering change was unnecessary.
+// Its only caller is now ConsumeSetup. The other four (Login, VerifyMFA,
+// FinishWebAuthnLogin, FinishWebAuthnPasswordlessLogin) use
+// completeLoginWithIdentity: their core functions resolve the identity before
+// minting, so nothing fallible runs after the session is written (#2841,
+// #2844). ConsumeSetup writes only the session after its last fallible step, so
+// the compensation here is complete for it.
+//
+// The revoke also runs when the identity read PANICS (#2844): before, only an
+// error was compensated, and a panic unwound past this function to the
+// recovery middleware's 500 with the session still live. The panic is re-raised
+// after the revoke, so the caller-visible response is unchanged.
 func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, session *models.Session, user *models.User) (loginResponseBody, bool) {
-	resp, err := h.buildLoginResponse(r.Context(), session, user)
-	if err != nil {
-		log.Printf("completeLogin: %v; revoking session %d for user %d", err, session.ID, user.ID)
-		if rerr := h.coreService.Logout(r.Context(), session.SessionToken); rerr != nil {
-			log.Printf("completeLogin: failed to revoke session after identity resolution error: %v", rerr)
+	built := false
+	defer func() {
+		if built {
+			return
 		}
+		if p := recover(); p != nil {
+			h.revokeUndeliveredLogin(r.Context(), session, user, fmt.Sprint(p))
+			panic(p)
+		}
+	}()
+	resp, err := h.buildLoginResponse(r.Context(), session, user)
+	built = true
+	if err != nil {
+		h.revokeUndeliveredLogin(r.Context(), session, user, err.Error())
 		sendError(w, "Internal", errLoginIncomplete, http.StatusInternalServerError, nil)
 		return loginResponseBody{}, false
 	}
 	h.setSessionCookies(w, session)
 	return resp, true
+}
+
+// revokeUndeliveredLogin is completeLogin's compensation: the session was minted
+// but its token will not be sent.
+func (h *AuthHandler) revokeUndeliveredLogin(ctx context.Context, session *models.Session, user *models.User, cause string) {
+	log.Printf("completeLogin: %s; revoking session %d for user %d", cause, session.ID, user.ID)
+	if rerr := h.coreService.Logout(ctx, session.SessionToken); rerr != nil {
+		log.Printf("completeLogin: failed to revoke session after identity resolution error: %v", rerr)
+	}
 }
 
 // completeLoginWithIdentity is completeLogin for a caller that already holds the
