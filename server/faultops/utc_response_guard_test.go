@@ -8,11 +8,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
 	"time"
+	_ "time/tzdata" // Etc/GMT-2 must resolve on hosts without a system zoneinfo
 
 	"github.com/go-chi/chi/v5"
 	"google.golang.org/grpc/codes"
@@ -100,10 +103,34 @@ type utcGuardRouteResult struct {
 	Fields     map[string]bool // JSON paths (array indexes as []) that held a timestamp
 }
 
+// utcGuardChildEnv marks the re-executed test process that runs the guard under
+// a non-UTC process zone.
+const utcGuardChildEnv = "KEYORIX_UTC_GUARD_CHILD"
+
+// utcGuardChildTZ is the TZ the child runs under: "Etc/GMT-2" is UTC+02:00
+// (the sign is inverted in the tz database), same offset as utcGuardZone.
+const utcGuardChildTZ = "Etc/GMT-2"
+
+// TestUTCResponseGuard runs the guard in a child process whose zone is set from
+// the TZ environment variable at startup. It does not assign time.Local: that
+// is a package-level variable read, unsynchronised, by every goroutine that
+// calls time.Now (net/http connection goroutines, gRPC, the world's
+// background workers), so writing it, and restoring it in a Cleanup, raced
+// with whichever of them was still winding down.
 func TestUTCResponseGuard(t *testing.T) {
-	saved := time.Local
-	time.Local = utcGuardZone
-	t.Cleanup(func() { time.Local = saved })
+	if os.Getenv(utcGuardChildEnv) != "1" {
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestUTCResponseGuard$", "-test.v")
+		cmd.Env = append(os.Environ(), utcGuardChildEnv+"=1", "TZ="+utcGuardChildTZ)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("guard child failed: %v\n%s", err, out)
+		}
+		t.Logf("guard child output:\n%s", out)
+		return
+	}
+	if _, off := time.Now().Zone(); off != 2*60*60 {
+		t.Fatalf("child process zone offset is %ds, want +7200s: the guard would not see an unconverted time", off)
+	}
 
 	w := newFaultWorld(t, nil)
 	// Encryption first, as in production: ops that need it would otherwise turn
