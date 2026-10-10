@@ -66,7 +66,12 @@ var knownUncoveredUserPaths = map[string]string{
 	// though the literal-prefix scan (by construction) can't find a static
 	// call site for something that's mechanically unreachable without a
 	// real external ceremony.
-	"POST /api/v1/auth/mfa/disable":                   "see coverage.go skipList -- depends on mfa/enroll+activate",
+	// POST /api/v1/auth/mfa/disable was here until this PR. It is now covered
+	// by web/e2e/real/mfa-disable-dialog.spec.ts, which names the path literally
+	// (it counts the POSTs to assert one click produces exactly one), so the
+	// ratchet finds it and the allowlist entry is stale -- hence removed. Its
+	// coverage.go skipList entry STAYS: that skip is about this Go driver, which
+	// still has nothing enrolled to disable, and is a separate mechanism.
 	"POST /api/v1/auth/mfa/recovery-codes/regenerate": "see coverage.go skipList -- depends on mfa/enroll+activate",
 	"POST /api/v1/auth/mfa/stepup":                    "see coverage.go skipList -- depends on mfa/enroll+activate",
 	"POST /auth/mfa/verify":                           "see coverage.go skipList -- needs an MFA-enrolled account",

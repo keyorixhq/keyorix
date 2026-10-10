@@ -85,23 +85,33 @@ func runAdminValidate(cmd *cobra.Command, args []string) error { // NOSONAR -- c
 
 	startup.PrintValidationResult(result)
 
-	if len(result.Warnings) > 0 || len(result.Errors) > 0 {
+	if recs := validateRecommendations(result); len(recs) > 0 {
 		fmt.Println("\nRecommendations:")
-		if len(result.Errors) > 0 {
-			fmt.Println("   • Fix the errors listed above before starting the system")
+		for _, r := range recs {
+			fmt.Println("   • " + r)
 		}
-		for _, warning := range result.Warnings {
-			if warning == "File permission checks are disabled" {
-				fmt.Println("   • Consider enabling file permission checks for better security")
-			}
-			if warning == "Encryption is disabled" {
-				fmt.Println("   • Consider enabling encryption for sensitive data protection")
-			}
-		}
-		fmt.Println("   • Run 'keyorix-server admin init --overwrite-existing' to reinitialize components")
-		fmt.Println("   • Run 'keyorix-server admin audit' to check file permissions")
-		fmt.Println("   • Run 'keyorix-server admin migrate' to apply pending migrations")
 	}
 
 	return nil
+}
+
+// validateRecommendations returns only recommendations tied to a finding in
+// result (#2940): a healthy install used to be told to re-run
+// "init --overwrite-existing" and "migrate" after "All validations passed!".
+func validateRecommendations(result *startup.ValidationResult) []string {
+	var recs []string
+	if len(result.Errors) > 0 {
+		recs = append(recs, "Fix the errors listed above before starting the system")
+	}
+	for _, warning := range result.Warnings {
+		if warning == "File permission checks are disabled" {
+			recs = append(recs,
+				"Consider enabling file permission checks for better security",
+				"Run 'keyorix-server admin audit' to check file permissions")
+		}
+		if warning == "Encryption is disabled" {
+			recs = append(recs, "Consider enabling encryption for sensitive data protection")
+		}
+	}
+	return recs
 }

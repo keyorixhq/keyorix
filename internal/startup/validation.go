@@ -383,7 +383,7 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 	}
 
 	if autoFix {
-		result.Warnings = append(result.Warnings, "File permissions were automatically fixed")
+		result.Warnings = append(result.Warnings, autoFixPermsNotice)
 	}
 
 	return nil
@@ -432,6 +432,16 @@ func noneExist(specs []securefiles.FilePermSpec) bool {
 	}
 	return true
 }
+
+// autoFixPermsNotice is shown whenever automatic permission fixing is ON (config
+// security.auto_fix_file_permissions, or admin validate --fix), not only when
+// something was changed. FixFilePerms prints one "[FIXED] <path>: <old> -> <new>"
+// line per file it actually changed, so say that, and say what to do (#2940: the
+// old text, "File permissions were automatically fixed", appeared on every start
+// and read like a fault).
+const autoFixPermsNotice = "Automatic file-permission fixing is on (security.auto_fix_file_permissions in keyorix.yaml): " +
+	"wrong modes on key, config and database files are reset at every start, and each change is logged as \"[FIXED] <path>\". " +
+	"If no [FIXED] line appears, nothing needed changing. Set it to false to turn this off."
 
 // validateEncryption verifies the on-disk key material required by the ADR-004
 // envelope scheme: the 32-byte KEK salt and the wrapped DEK. The KEK itself is

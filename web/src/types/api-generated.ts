@@ -9323,10 +9323,15 @@ export interface operations {
                     "application/json": {
                         data?: {
                             secrets?: components["schemas"]["SecretListEntry"][];
+                            /** @description Every secret the caller can read under the requested filter. A FLOOR rather than a count when `truncated` is true. */
                             total?: number;
                             page?: number;
                             page_size?: number;
                             total_pages?: number;
+                            /** @description Present and true only when assembling the caller's multi-scope union hit its per-scope bound, so `total` is a floor and later pages may be incomplete. A client must not present `total` as a complete count when this is set. Absent on an ordinary response. */
+                            truncated?: boolean;
+                            /** @description Names the bound and the scopes it affected. Absent unless truncated. */
+                            truncated_reason?: string;
                         };
                     };
                 };
@@ -12201,6 +12206,8 @@ export interface operations {
                                 state?: "invited" | "identity_verified" | "provisioned" | "active" | "revoked";
                                 /** @description True when the membership comes only from a group grant. */
                                 via_group?: boolean;
+                                /** @description True when the project has been soft-deleted. The grant survives a soft-delete (RestoreProject reinstates it), so the membership is reported rather than hidden, but it is not counted by the per-user project tallies on GET /api/v1/users. */
+                                project_deleted?: boolean;
                             }[];
                         };
                     };
