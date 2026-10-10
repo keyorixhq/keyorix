@@ -47,6 +47,7 @@ func (ls *LocalStorage) WithTransaction(ctx context.Context, fn func(storage.Sto
 			// guard; a future refactor to a `clone := *ls` whole-struct copy
 			// would break it and must re-read this.
 			secretMetaCache: ls.secretMetaCache,
+			rolePermCache:   ls.rolePermCache,
 		})
 	})
 }

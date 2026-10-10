@@ -37,7 +37,7 @@ func setupRenderHandlerTest(t *testing.T) (*SecretHandler, uint) {
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.User{},
 		&models.Project{}, &models.Environment{}, &models.SecretAccessLog{}, &models.AuditEvent{},
-		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
+		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.SystemMetadata{}, &models.UserRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 	))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@test.com"}).Error)
