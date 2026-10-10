@@ -75,6 +75,14 @@ with `openssl rand -base64 32`.
 | `KEYORIX_ADMIN_USERNAME`  | optional | Defaults to `admin`. |
 | `KEYORIX_ADMIN_EMAIL`     | optional | Defaults to `admin@keyorix.local`. |
 
+**Secrets as files.** The server also accepts each secret as a file instead of an
+environment variable: set `KEYORIX_DB_PASSWORD_FILE`, `KEYORIX_MASTER_PASSWORD_FILE`
+or `KEYORIX_BOOTSTRAP_TOKEN_FILE` to a path (Docker secrets mount under
+`/run/secrets/`, a Kubernetes Secret volume wherever you mount it). Setting both
+`X` and `X_FILE` is a startup error, not a precedence rule, and an unreadable or
+empty file stops the server. Details and the full list of supported variables:
+[CONFIGURATION.md](CONFIGURATION.md#secrets-from-files-name_file).
+
 Server configuration (storage, encryption paths, ports) lives in
 `keyorix.docker.yaml`, mounted read-only into the `backend` container. The full,
 annotated reference is `configs/keyorix.yaml.tpl`.
