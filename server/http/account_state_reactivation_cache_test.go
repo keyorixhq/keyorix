@@ -38,9 +38,10 @@ import (
 )
 
 // TestReactivateUser_DoesNotTombstoneNeverCachedPAT is the deterministic
-// regression test. RED on unfixed code: a PAT created while the account is
-// suspended is immediately, spuriously denied the first time it is ever
-// used, right after the SAME account is reactivated — even though the
+// regression test. RED on unfixed code: a PAT that survives into a
+// non-active state unrevoked (since #2701, a restricted one — a suspended
+// account can no longer mint one) is immediately, spuriously denied the
+// first time it is ever used, right after the SAME account is reactivated — even though the
 // account is active and the PAT was never revoked, expired, or previously
 // cached at all.
 func TestReactivateUser_DoesNotTombstoneNeverCachedPAT(t *testing.T) {
@@ -68,15 +69,26 @@ func TestReactivateUser_DoesNotTombstoneNeverCachedPAT(t *testing.T) {
 		t.Fatalf("grant victim read role: %v", err)
 	}
 
-	// Suspend the account, THEN create the PAT while it's still suspended —
+	// Restrict the account, THEN create the PAT while it's still restricted —
 	// this PAT has never been validated, never been cached, positive or
 	// negative, at any point before this test's own assertion below.
-	if err := c.SuspendUser(ctx, w.admin.ID, victim.ID); err != nil {
-		t.Fatalf("suspend: %v", err)
+	//
+	// This used to mint the PAT WHILE SUSPENDED. #2701 made that impossible by
+	// design: a PAT/session insert now re-checks that its owner is live and
+	// login-capable and rolls back otherwise, because a suspend's sweep must
+	// not be outlived by a credential minted under it. password_reset_required
+	// is login-capable (so the mint is allowed) yet not active (so the
+	// reactivation below runs the same sweep over this PAT's hash), which keeps
+	// the property under test unchanged: reactivation must not tombstone a
+	// never-cached, unrevoked PAT hash it collects. Minting BEFORE restricting
+	// would not do: the restrict's own sweep tombstones the hash, which tests
+	// #2402's clear path instead of this one.
+	if err := c.RequirePasswordReset(ctx, w.admin.ID, victim.ID); err != nil {
+		t.Fatalf("require password reset: %v", err)
 	}
 	res, err := c.CreateOwnPAT(ctx, victim.ID, "asrt-pat", nil, nil, 0, 0, nil)
 	if err != nil || res == nil {
-		t.Fatalf("create PAT while suspended: %v", err)
+		t.Fatalf("create PAT while restricted: %v", err)
 	}
 
 	// Reactivate. This is the sweep call under test: on unfixed code it
@@ -96,6 +108,6 @@ func TestReactivateUser_DoesNotTombstoneNeverCachedPAT(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Errorf("a PAT created during suspension, first used right after the SAME account's reactivation, must authenticate (the account is active and the PAT was never touched before) -- got %d, want 200", rec.Code)
+		t.Errorf("a PAT created while restricted, first used right after the SAME account's reactivation, must authenticate (the account is active and the PAT was never touched before) -- got %d, want 200", rec.Code)
 	}
 }

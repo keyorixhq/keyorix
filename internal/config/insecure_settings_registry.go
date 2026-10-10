@@ -343,6 +343,20 @@ var InsecureSettingsRegistry = []InsecureSetting{
 		InEffect:      func(c *Config) bool { return c.Security.StartupValidationState().Weakened() },
 		Value:         func(c *Config) string { return string(c.Security.StartupValidationState()) },
 	},
+	// #2986: not a boolean. An explicit require_mfa: false is "off"; an
+	// upgraded deployment that never set the key is "grace-not-enforced"
+	// (applyADR112UpgradeGrace sets RequireMFA false for the boot). Both count.
+	// The grace state is decided from the database, so every consumer must
+	// evaluate this entry AFTER applyADR112UpgradeGrace (server) or
+	// collectRequireMFAPosture (server/admin) -- DerivedInputs records that.
+	{
+		Name:          "security.insecure_disable_mfa_requirement",
+		SourcePaths:   []string{"security.require_mfa"},
+		DerivedInputs: []string{"security.RequireMFAImplicitDefault", "security.RequireMFAUpgradeGrace"},
+		Describe:      "polarity-inverted rename of security.require_mfa -- interactive logins do not require a second factor: off (require_mfa: false written in the config) or, in the ADR-112 upgrade grace period (grace-not-enforced), not enforced yet",
+		InEffect:      func(c *Config) bool { return c.Security.RequireMFAState().Weakened() },
+		Value:         func(c *Config) string { return string(c.Security.RequireMFAState()) },
+	},
 	{
 		Name:        "storage.encryption.key_provider.insecure_omit_shamir_commitment_check",
 		SourcePaths: []string{"storage.encryption.key_provider.shamir_commitment"},

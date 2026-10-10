@@ -20,7 +20,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/status"
 	"gorm.io/gorm"
@@ -47,17 +47,13 @@ func setupNoOracleFixture(t *testing.T) (c *core.KeyorixCore, secretID uint, att
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 
-	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("&_journal_mode=WAL")), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
+	db := sqlitetest.OpenWithConfig(t, "kxtest_", &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
 	c = core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 
 	c.SetBootstrapToken("test-bootstrap-token")
-	_, err = c.BootstrapSystem(ctx, &core.BootstrapRequest{
+	_, err := c.BootstrapSystem(ctx, &core.BootstrapRequest{
 		Username: "admin", Email: "admin@example.com", Password: "Qr7#Kp2$Lm5@Vn9!", Token: "test-bootstrap-token",
 	})
 	require.NoError(t, err)

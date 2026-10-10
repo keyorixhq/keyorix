@@ -7,6 +7,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -107,7 +108,38 @@ func runBGActivate(_ *cobra.Command, _ []string) error {
 	a := resp.JSON201.Data.Activation
 	fmt.Printf("Emergency access activated (id=%d): role %q until %s.\n",
 		derefUint32(a.Id), derefStr(a.RoleName), derefStr(a.ExpiresAt))
+	printBreakGlassEffect(client, bgProject, a)
 	return nil
+}
+
+// printBreakGlassEffect says what activation changed, so the demo (and an incident
+// responder) can SEE it (#2981). The role is granted on top of whatever the caller
+// already holds on the project, so for a user who can already read secrets the
+// visible difference is the extra permissions: they are listed when the role's
+// permissions are readable by the caller (best-effort: roles.read may be missing,
+// in which case only the always-true lines are printed).
+func printBreakGlassEffect(client *apiclient.ClientWithResponses, projectID uint32, a *apiclient.BreakGlassActivation) {
+	role := derefStr(a.RoleName)
+	fmt.Printf("  %q is now granted to you on project %d, in addition to the access you already had there.\n", role, projectID)
+	if roles, err := fetchRoles(context.Background(), client); err == nil {
+		for _, r := range roles {
+			if derefStr(r.Name) != role || r.Permissions == nil {
+				continue
+			}
+			names := make([]string, 0, len(*r.Permissions))
+			for _, p := range *r.Permissions {
+				if n := derefStr(p.Name); n != "" {
+					names = append(names, n)
+				}
+			}
+			if len(names) > 0 {
+				fmt.Printf("  It grants: %s\n", cliout.SanitizeForTerminal(strings.Join(names, ", ")))
+			}
+			break
+		}
+	}
+	fmt.Printf("  It expires automatically; a project administrator can end it early with: keyorix break-glass revoke --project-id %d --activation-id %d\n",
+		projectID, derefUint32(a.Id))
 }
 
 func runBGList(_ *cobra.Command, _ []string) error {
@@ -121,6 +153,13 @@ func runBGList(_ *cobra.Command, _ []string) error {
 	resp, err := client.ListBreakGlassActivationsWithResponse(context.Background(), bgProject)
 	if err != nil {
 		return err
+	}
+	// #2981: a refusal (e.g. listing needs roles.read, which a project member may not
+	// hold) used to fall into "No break-glass activations" below, telling alice there
+	// were none while the admin's own list showed hers. Only a successful empty list
+	// may say that.
+	if resp.StatusCode() != 200 {
+		return httpStatusError("list break-glass activations failed", resp.StatusCode(), resp.Body)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil || derefInt(resp.JSON200.Data.Count) == 0 {
 		fmt.Printf("No break-glass activations for project %d.\n", bgProject)

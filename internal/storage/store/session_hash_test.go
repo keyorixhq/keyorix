@@ -23,6 +23,9 @@ func TestSession_StoredHashedNotPlaintext(t *testing.T) {
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.Session{}))
 	ls := NewLocalStorage(db)
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 	ctx := context.Background()
 
 	const raw = "kx-session-plaintext-xyz"

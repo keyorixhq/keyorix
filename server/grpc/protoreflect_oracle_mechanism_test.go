@@ -12,15 +12,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
-	"gorm.io/gorm"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
 // --- oracle 1: classifyStatusLeak ---------------------------------------
@@ -60,13 +58,6 @@ func TestClassifyStatusLeak(t *testing.T) {
 
 // --- oracle 2/3: unexplainedWrite / the write-count trigger mechanism ---
 
-// oracleTestDBSeq gives each newOracleTestDB call its own shared-cache
-// in-memory database name -- without this, every test function in this file
-// would collide on one process-wide "kxoracletest" database (SQLite
-// shared-cache in-memory DBs are keyed by name within one process) and the
-// second test's CREATE TABLE would fail with "table already exists".
-var oracleTestDBSeq atomic.Int64
-
 // bestEffortSideEffectTablesForTest points the oracle's real (package-var)
 // exemption list at a fake table name for the duration of one test, and
 // restores it on cleanup -- every test below that exercises
@@ -89,11 +80,7 @@ func bestEffortSideEffectTablesForTest(t *testing.T, fake []writeExemption) {
 // independent of any real keyorix table or handler.
 func newOracleTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	dsn := fmt.Sprintf("file:kxoracletest_%d?mode=memory&cache=shared", oracleTestDBSeq.Add(1))
-	gdb, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
+	gdb := sqlitetest.Open(t, "kxoracletest_")
 	if err := gdb.Exec("CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT)").Error; err != nil {
 		t.Fatalf("create widgets: %v", err)
 	}
@@ -104,7 +91,6 @@ func newOracleTestDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("underlying *sql.DB: %v", err)
 	}
-	db.SetMaxOpenConns(1)
 	installWriteCountTriggers(t, db, discoverAllTables(t, db))
 	return db
 }
@@ -227,11 +213,7 @@ func TestUnexplainedWrite_RedOnMixedExemptAndNonExemptWrite(t *testing.T) {
 // config, not a swapped-out stand-in for it.
 func newSessionsShapedTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	dsn := fmt.Sprintf("file:kxoraclesessions_%d?mode=memory&cache=shared", oracleTestDBSeq.Add(1))
-	gdb, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
+	gdb := sqlitetest.Open(t, "kxoraclesessions_")
 	if err := gdb.Exec("CREATE TABLE sessions (id INTEGER PRIMARY KEY, last_seen_at TEXT, expires_at TEXT)").Error; err != nil {
 		t.Fatalf("create sessions: %v", err)
 	}
@@ -239,7 +221,6 @@ func newSessionsShapedTestDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("underlying *sql.DB: %v", err)
 	}
-	db.SetMaxOpenConns(1)
 	installWriteCountTriggers(t, db, discoverAllTables(t, db))
 	return db
 }
@@ -361,11 +342,7 @@ func TestUnexplainedWrite_RedOnSessionsUpdateOfOtherColumnAlone(t *testing.T) {
 // stand-in for it.
 func newReadCountShapedTestDB(t *testing.T, table string) *sql.DB {
 	t.Helper()
-	dsn := fmt.Sprintf("file:kxoraclereadcount_%d?mode=memory&cache=shared", oracleTestDBSeq.Add(1))
-	gdb, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
+	gdb := sqlitetest.Open(t, "kxoraclereadcount_")
 	if err := gdb.Exec(fmt.Sprintf("CREATE TABLE %s (id INTEGER PRIMARY KEY, read_count INTEGER, value TEXT)", table)).Error; err != nil {
 		t.Fatalf("create %s: %v", table, err)
 	}
@@ -373,7 +350,6 @@ func newReadCountShapedTestDB(t *testing.T, table string) *sql.DB {
 	if err != nil {
 		t.Fatalf("underlying *sql.DB: %v", err)
 	}
-	db.SetMaxOpenConns(1)
 	installWriteCountTriggers(t, db, discoverAllTables(t, db))
 	return db
 }

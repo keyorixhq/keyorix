@@ -46,9 +46,19 @@ var machineTokenListCmd = &cobra.Command{
 var machineTokenRevokeCmd = &cobra.Command{
 	Use:          "revoke <name|id> <token-id>",
 	Short:        "Revoke a machine identity token",
-	Args:         cobra.ExactArgs(2),
+	Args:         machineTokenRevokeArgs,
 	SilenceUsage: true,
 	RunE:         runMachineTokenRevoke,
+}
+
+// machineTokenRevokeArgs replaces cobra.ExactArgs(2), whose "accepts 2 arg(s),
+// received 1" left a presenter guessing which two (#2981).
+func machineTokenRevokeArgs(_ *cobra.Command, args []string) error {
+	if len(args) == 2 {
+		return nil
+	}
+	return fmt.Errorf("revoke takes the machine identity AND the token id: `keyorix machine token revoke <name|id> <token-id>` "+
+		"(got %d argument(s)); list a machine's token ids with `keyorix machine token list <name|id>`", len(args))
 }
 
 func init() {

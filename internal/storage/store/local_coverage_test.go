@@ -18,13 +18,12 @@ package store
 
 import (
 	"context"
-	"fmt"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -36,16 +35,10 @@ import (
 // helpers
 // ---------------------------------------------------------------------------
 
-// coverageDBSeq makes each in-memory DB unique within the process, even
-// across repeated invocations of the same test (e.g. `go test -count=N`).
-var coverageDBSeq atomic.Int64
-
 // newCovStore opens a unique in-memory SQLite and migrates the provided models.
 func newCovStore(t *testing.T, ms ...any) *LocalStorage {
 	t.Helper()
-	dsn := fmt.Sprintf("file:%s_cov_%d?mode=memory&cache=shared", t.Name(), coverageDBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "localcoverage_", sqlite.Open, &gorm.Config{})
 	if len(ms) > 0 {
 		require.NoError(t, db.AutoMigrate(ms...))
 	}
@@ -57,9 +50,7 @@ func newCovStore(t *testing.T, ms ...any) *LocalStorage {
 // such table".
 func newSecretOnlyStore(t *testing.T) *LocalStorage {
 	t.Helper()
-	dsn := fmt.Sprintf("file:%s_seconly_%d?mode=memory&cache=shared", t.Name(), coverageDBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "localcoverage_", sqlite.Open, &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}))
 	return NewLocalStorage(db)
 }
