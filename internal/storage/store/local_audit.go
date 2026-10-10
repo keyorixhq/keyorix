@@ -533,7 +533,9 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 			query = query.Where("success = ?", *filter.Success)
 		}
 		if filter.ActorType != nil {
-			cond, args := actorTypeWhere(*filter.ActorType)
+			// The displayed kind, not the raw column (#2951): one rule shared with
+			// the HTTP/gRPC views, storage.AuditActorKind.
+			cond, args := storage.AuditActorKindWhere(*filter.ActorType)
 			query = query.Where(cond, args...)
 		}
 		if filter.AfterID != nil {
@@ -548,13 +550,22 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 			// escapeLIKE sanitises % and _ in the caller-supplied username so
 			// a value like "admin%" doesn't turn into a wildcard prefix scan
 			// covering all usernames (#r124 LIKE injection).
-			cond := `user_id IN (SELECT id FROM users WHERE username LIKE ? ESCAPE '\' AND deleted_at IS NULL)`
-			// Events with no acting user are displayed with actor "system" (#2951), so
-			// a term that matches "system" also finds them, like a username match.
-			if strings.Contains("system", strings.ToLower(*filter.ActorUsername)) && *filter.ActorUsername != "" {
-				cond = "(" + cond + " OR user_id IS NULL OR user_id = 0)"
+			// LOWER on both sides: LIKE is case-insensitive (ASCII) on SQLite but
+			// case-sensitive on Postgres, so without it the same search returned
+			// different rows per backend.
+			cond := `user_id IN (SELECT id FROM users WHERE LOWER(username) LIKE LOWER(?) ESCAPE '\' AND deleted_at IS NULL)`
+			args := []interface{}{"%" + escapeLIKE(*filter.ActorUsername) + "%"}
+			// Rows of kind "system" are displayed with actor "system" (#2951), so a
+			// term that is part of "system" (ASCII case-insensitive, e.g. "sys") also
+			// finds exactly those rows: the same rule as actor_type=system
+			// (storage.AuditSystemActorWhere). A failed login has no user but is
+			// kind "user", so it is not pulled in here.
+			if term := strings.ToLower(*filter.ActorUsername); term != "" && strings.Contains("system", term) {
+				sysCond, sysArgs := storage.AuditSystemActorWhere()
+				cond = "(" + cond + " OR " + sysCond + ")"
+				args = append(args, sysArgs...)
 			}
-			query = query.Where(cond, "%"+escapeLIKE(*filter.ActorUsername)+"%")
+			query = query.Where(cond, args...)
 		}
 		if filter.ResourceType != nil {
 			// event_type is "resource_type.action" — match rows whose event_type
@@ -759,22 +770,4 @@ func (ls *LocalStorage) GetDistinctActiveUserIDs(ctx context.Context, since time
 		Distinct("user_id").
 		Pluck("user_id", &ids).Error
 	return ids, err
-}
-
-// actorTypeWhere returns the WHERE clause for the audit actor_type filter. It
-// matches the KIND the API displays (server/http/handlers displayActorType), not
-// just the raw column: a row with no acting user is shown as actor "system", so
-// kind "system" also covers rows that store "" (legacy) or the column default
-// "user" with a NULL/0 user_id, and kind "user" requires a real acting user.
-// Display only: the stored actor_type (part of the hashed record) is unchanged.
-func actorTypeWhere(kind string) (string, []interface{}) {
-	const noUser = "(user_id IS NULL OR user_id = 0)"
-	switch kind {
-	case "system":
-		return "(actor_type = ? OR (actor_type IN ('', 'user') AND " + noUser + "))", []interface{}{kind}
-	case "user":
-		return "(actor_type IN ('', 'user') AND NOT " + noUser + ")", nil
-	default:
-		return "actor_type = ?", []interface{}{kind}
-	}
 }

@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-// API timestamps are always UTC RFC 3339 (docs/api-reference.md, "Timestamps").
+// Responses sent through sendSuccess/sendCreated carry UTC RFC 3339 times
+// (docs/API_REFERENCE.md, "Timestamps", which lists what this does not cover).
 //
 // Times read back from the database carry whatever zone they were stored in
 // (gorm stamps CreatedAt/UpdatedAt in the server's local zone, SQLite hands the

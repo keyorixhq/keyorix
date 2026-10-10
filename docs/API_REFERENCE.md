@@ -45,31 +45,46 @@ Returns the complete OpenAPI 3.0 specification for all endpoints.
 ## 🕒 **Conventions**
 
 ### Timestamps
-Every timestamp in an API response (`timestamp`, `created_at`, `expires_at`,
-`last_activity`, `deleted_at`, …) is **UTC, RFC 3339** (for example
-`2026-10-10T01:53:40Z`; sub-second digits appear only when present). The server
-never emits a local offset such as `+02:00`, whatever zone it runs in or the
-database stored. This is display only: stored values, including everything
-covered by the audit hash chain, are not changed. Query parameters that take a
-time (`start_time`, `end_time`, `since`) accept any RFC 3339 offset and are
-compared as instants.
+Timestamps are RFC 3339. Responses sent through the standard
+`{"success": true, "data": ...}` envelope convert every `time.Time` in `data`
+to UTC (for example `2026-10-10T01:53:40Z`; sub-second digits appear only when
+present), and `GET /api/v1/projects` reports `last_activity`/`deleted_at` in
+UTC. This is display only: stored values, including everything covered by the
+audit hash chain, are not changed. Query parameters that take a time
+(`start_time`, `end_time`, `since`) accept any RFC 3339 offset and are compared
+as instants.
+
+Not yet covered by that conversion (they use their own response helpers or a
+custom JSON encoding): the secrets, shares, rotation-policy and folder handlers,
+and `gorm.DeletedAt` fields. A guard over every endpoint is tracked separately;
+until it lands, do not rely on a `Z` suffix outside the cases above.
 
 ### Audit log actor kind
-`GET /api/v1/audit/logs`, `/audit/search`, `/audit/export` and the CSV export
-report each event's `actor` (a username, or `system`) and `actor_type`:
+`GET /api/v1/audit/logs`, `/audit/search`, `GET /api/v1/secrets/{id}/audit`,
+the CSV export and the gRPC `GetAuditLogs`/stream report each event's kind in
+`actor_type`, and (except the per-secret trail) its `actor`:
 
-| `actor_type` | Meaning |
-|---|---|
-| `user` | A signed-in human; `actor` is their username |
-| `machine_identity` | A machine identity / token |
-| `system` | Keyorix itself (schedulers, rotation, retention, anomaly detection). `actor` is `system` |
+| kind | Meaning | `actor` |
+|---|---|---|
+| `user` | A human principal: a signed-in user, or an attempt by one that was not authenticated (`auth.login_failed`, failed MFA/WebAuthn) | the username, or `unknown` when no user was resolved |
+| `machine_identity` | A machine identity / token | `unknown` (see the stored `machine_identity_id`) |
+| `system` | Keyorix itself, with no principal involved | `system` |
 
-An event with no acting user is always reported as `system` (including older
-rows that stored an empty or default kind). The filters follow the same rule:
-`GET /api/v1/audit/logs?actor_type=system` returns exactly the events shown with
-kind `system` (`actor_type=user` only events with a real acting user), and
-`GET /api/v1/audit/search?actor=system` (a partial, case-insensitive match, like
-a username) finds system events as well as any user whose name contains the term.
+A row is `system` when it stores `system`, or when it stores the default `user`
+(or an empty value, on old rows) and nothing on it identifies a principal: no
+acting user, no machine identity, no impersonating admin, no client IP address,
+and it is not an `auth.*`, `mfa.*` or `webauthn.*` event. Every other default
+row is `user`, so failed logins stay under `actor_type=user` and are never mixed
+into scheduler events. The filters use the same rule:
+`GET /api/v1/audit/logs?actor_type=system` (and gRPC `actor_type`) returns
+exactly the events shown with kind `system`, and `actor=` (a partial match,
+case-insensitive on every database) finds users whose name contains the term
+plus, when the term is part of `system` (e.g. `sys`), the kind-`system` events.
+
+`GET /api/v1/audit/export` (the hash-chained SIEM export) is different: its
+`actor_type` is the **stored** value, unchanged, because it is an input to
+`entry_hash` and a verifier re-derives the hash from the exported fields. The
+displayed kind is in the separate `actor_kind_display` field.
 
 ## 🔐 **Secret Management API**
 

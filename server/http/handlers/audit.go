@@ -137,15 +137,11 @@ func (h *AuditHandler) toAuditLogEntries(ctx context.Context, events []*models.A
 	actorNames := h.coreService.ResolveUsernames(ctx, events)
 	entries := make([]AuditLogEntry, 0, len(events))
 	for _, e := range events {
-		var uid uint
-		if e.UserID != nil {
-			uid = *e.UserID
-		}
 		entry := AuditLogEntry{
 			ID:          e.ID,
 			EventType:   e.EventType,
-			Actor:       actorNames[uid],
-			ActorType:   displayActorType(e.ActorType, e.UserID),
+			Actor:       storage.AuditActorName(e, actorNames),
+			ActorType:   storage.AuditActorKind(e),
 			Description: e.Description,
 			Timestamp:   e.EventTime,
 		}
@@ -170,21 +166,25 @@ func (h *AuditHandler) toAuditLogEntries(ctx context.Context, events []*models.A
 // AuditLogEntry (UI-oriented) it preserves the raw IDs, success flag, diff, and
 // impersonation attribution so an external system can index every field.
 type AuditExportEntry struct {
-	ID             uint            `json:"id"`
-	EventType      string          `json:"event_type"`
-	Timestamp      time.Time       `json:"timestamp"`
-	Actor          string          `json:"actor"`
-	UserID         *uint           `json:"user_id,omitempty"`
-	ProjectID      *uint           `json:"project_id,omitempty"`
-	SecretID       *uint           `json:"secret_id,omitempty"`
-	Description    string          `json:"description"`
-	IPAddress      string          `json:"ip_address,omitempty"`
-	ActorType      string          `json:"actor_type"`
-	Success        bool            `json:"success"`
-	Diff           json.RawMessage `json:"diff,omitempty"`
-	Impersonation  bool            `json:"impersonation,omitempty"`
-	ImpersonatedBy string          `json:"impersonated_by,omitempty"`
-	ActingAs       string          `json:"acting_as,omitempty"`
+	ID          uint      `json:"id"`
+	EventType   string    `json:"event_type"`
+	Timestamp   time.Time `json:"timestamp"`
+	Actor       string    `json:"actor"`
+	UserID      *uint     `json:"user_id,omitempty"`
+	ProjectID   *uint     `json:"project_id,omitempty"`
+	SecretID    *uint     `json:"secret_id,omitempty"`
+	Description string    `json:"description"`
+	IPAddress   string    `json:"ip_address,omitempty"`
+	// ActorType is the STORED actor_type, verbatim (hash-covered; "" on legacy
+	// rows). ActorKindDisplay is the kind the API shows and filters by
+	// (storage.AuditActorKind, #2951).
+	ActorType        string          `json:"actor_type"`
+	ActorKindDisplay string          `json:"actor_kind_display"`
+	Success          bool            `json:"success"`
+	Diff             json.RawMessage `json:"diff,omitempty"`
+	Impersonation    bool            `json:"impersonation,omitempty"`
+	ImpersonatedBy   string          `json:"impersonated_by,omitempty"`
+	ActingAs         string          `json:"acting_as,omitempty"`
 	// PrevHash/EntryHash are the ADR-029 chain links. Exporting them gives the SIEM
 	// (the off-box observer) the anchor needed to detect on-box tampering —
 	// including tail-truncation, which on-box re-verification cannot catch.
@@ -255,10 +255,14 @@ func (h *AuditHandler) ExportAuditLogs(w http.ResponseWriter, r *http.Request) {
 			SecretID:    e.SecretNodeID,
 			Description: e.Description,
 			IPAddress:   e.IPAddress,
-			ActorType:   displayActorType(e.ActorType, e.UserID),
-			Success:     success,
-			PrevHash:    e.PrevHash,
-			EntryHash:   e.EntryHash,
+			// The stored, hash-covered value (ADR-029): a verifier re-derives
+			// entry_hash from these fields, so it must not be rewritten here.
+			// The kind the UI shows is the separate actor_kind_display.
+			ActorType:        e.ActorType,
+			ActorKindDisplay: storage.AuditActorKind(e),
+			Success:          success,
+			PrevHash:         e.PrevHash,
+			EntryHash:        e.EntryHash,
 		}
 		if e.Diff != "" {
 			entry.Diff = json.RawMessage(e.Diff)
@@ -288,29 +292,6 @@ func validActorType(s string) bool {
 	default:
 		return false
 	}
-}
-
-// actorTypeOrDefault normalizes a stored actor_type, treating an empty value
-// (legacy rows written before the column existed) as a human user.
-func actorTypeOrDefault(s string) string {
-	if s == "" {
-		return core.ActorTypeUser
-	}
-	return s
-}
-
-// displayActorType is the KIND shown for an audit row. An event with no acting
-// user is labelled actor "system" (core.ResolveUsernames maps user id 0), so
-// its kind is "system" too, whether it stores "" (legacy) or the column default
-// "user". An explicit "system" or "machine_identity" is kept. Display only: the
-// stored actor_type is untouched. The actor_type query filter applies the same
-// rule (store.actorTypeWhere).
-func displayActorType(stored string, userID *uint) string {
-	kind := actorTypeOrDefault(stored)
-	if kind == core.ActorTypeUser && (userID == nil || *userID == 0) {
-		return core.ActorTypeSystem
-	}
-	return kind
 }
 
 // GetRBACAuditLogs handles GET /api/v1/audit/rbac-logs — the role-assignment
