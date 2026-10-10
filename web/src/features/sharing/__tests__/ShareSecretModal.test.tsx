@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '../../../test/test-utils';
-import { ShareSecretModal, expiresAtFromPreset } from '../ShareSecretModal';
+import { render, screen, fireEvent, waitFor, act } from '../../../test/test-utils';
+import { ShareSecretModal, expiresAtFromPreset, SHARE_CONFIRMATION_MS } from '../ShareSecretModal';
 import { Secret } from '../../../types';
 import { AxiosError, AxiosHeaders } from 'axios';
 
@@ -481,5 +481,51 @@ describe('ShareSecretModal submission + lifecycle', () => {
         render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
         expect(screen.getByRole('button', { name: 'Sharing…' })).toBeInTheDocument();
         expect(screen.getByPlaceholderText(/Search by name/i)).toBeDisabled();
+    });
+});
+
+// SHARE-2: the "Shared!" confirmation must render and stay up before the dialog
+// closes itself; the pages used to close the dialog from onSuccess, so it never did.
+describe('ShareSecretModal success confirmation', () => {
+    const shareWithBob = async (onClose: () => void, onSuccess: () => void) => {
+        mockMutate.mockImplementation((_payload: unknown, opts?: { onSuccess?: () => void }) => opts?.onSuccess?.());
+        const view = render(<ShareSecretModal secret={secret} isOpen onClose={onClose} onSuccess={onSuccess} />);
+        fireEvent.change(screen.getByPlaceholderText(/Search by name/i), { target: { value: 'bob' } });
+        fireEvent.click(await screen.findByText('Bob'));
+        vi.useFakeTimers();
+        fireEvent.click(screen.getByRole('button', { name: /^Share$/i }));
+        return view;
+    };
+
+    it('shows "Shared!" and closes itself only after the confirmation delay', async () => {
+        const onClose = vi.fn();
+        const onSuccess = vi.fn();
+        try {
+            await shareWithBob(onClose, onSuccess);
+            expect(onSuccess).toHaveBeenCalledTimes(1);
+            expect(screen.getByText('Shared!')).toBeInTheDocument();
+            expect(screen.getByText('Secret shared successfully.')).toBeInTheDocument();
+            expect(onClose).not.toHaveBeenCalled();
+
+            act(() => vi.advanceTimersByTime(SHARE_CONFIRMATION_MS - 1));
+            expect(onClose).not.toHaveBeenCalled();
+            expect(screen.getByText('Shared!')).toBeInTheDocument();
+            act(() => vi.advanceTimersByTime(1));
+            expect(onClose).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('does not fire a pending auto-close after the dialog is gone', async () => {
+        const onClose = vi.fn();
+        try {
+            const view = await shareWithBob(onClose, () => {});
+            view.unmount();
+            act(() => vi.advanceTimersByTime(SHARE_CONFIRMATION_MS * 2));
+            expect(onClose).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });

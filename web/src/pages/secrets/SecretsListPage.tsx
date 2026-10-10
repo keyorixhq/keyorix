@@ -599,7 +599,7 @@ const EditSecretModal: React.FC<EditSecretModalProps> = ({
                 <Alert
                     type="error"
                     title="Failed to update secret"
-                    message={mutation.error instanceof Error ? mutation.error.message : 'An unexpected error occurred'}
+                    message={apiErrorMessage(mutation.error, 'An unexpected error occurred')}
                 />
             )}
             <div>
@@ -687,7 +687,7 @@ const DeleteSecretModal: React.FC<DeleteSecretModalProps> = ({ isOpen, secret, o
                 <Alert
                     type="error"
                     title="Failed to delete secret"
-                    message={mutation.error instanceof Error ? mutation.error.message : 'An unexpected error occurred'}
+                    message={apiErrorMessage(mutation.error, 'An unexpected error occurred')}
                 />
             )}
             <p className="text-sm text-base-secondary dark:text-base-muted">
@@ -986,7 +986,7 @@ const AutoRotateModal: React.FC<AutoRotateModalProps> = ({
                 <Alert
                     type="error"
                     title="Failed to update auto-rotation"
-                    message={mutation.error instanceof Error ? mutation.error.message : 'An unexpected error occurred'}
+                    message={apiErrorMessage(mutation.error, 'An unexpected error occurred')}
                 />
             )}
             <p className="text-sm text-base-muted">
@@ -1368,10 +1368,10 @@ export const SecretsListPage: React.FC = () => {
                     secret={list.modalData.secret}
                     isOpen
                     onClose={list.closeModal}
-                    onSuccess={() => {
-                        list.closeModal();
-                        list.refetch();
-                    }}
+                    // Refresh only: the dialog shows its "Shared!" confirmation and closes
+                    // itself shortly after. Closing it here unmounted it before the
+                    // confirmation could render.
+                    onSuccess={() => list.refetch()}
                 />
             )}
 

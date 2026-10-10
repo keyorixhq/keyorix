@@ -14,8 +14,15 @@ interface ShareSecretModalProps {
     secret: Secret;
     isOpen: boolean;
     onClose: () => void;
+    // Called once the share is created. The dialog then shows its "Shared!"
+    // confirmation and closes itself (onClose) after SHARE_CONFIRMATION_MS, so a
+    // caller must not close it from here: that unmounts it before the
+    // confirmation renders (SHARE-2).
     onSuccess?: () => void;
 }
+
+// How long the "Shared!" confirmation stays up before the dialog closes itself.
+export const SHARE_CONFIRMATION_MS = 1200;
 
 interface UserOption {
     id: number;
@@ -73,6 +80,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
     const [expiry, setExpiry] = useState('never');
     const [success, setSuccess] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
+    const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const listRef = useRef<HTMLDivElement>(null);
     const shareSecret = useShareSecret(secret.id);
 
@@ -138,7 +146,20 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
         return () => document.removeEventListener('mousedown', handler);
     }, []);
 
+    // A pending auto-close must not fire after the dialog is gone (or into a dialog
+    // reopened for another secret).
+    useEffect(
+        () => () => {
+            if (closeTimer.current) clearTimeout(closeTimer.current);
+        },
+        []
+    );
+
     const handleClose = () => {
+        if (closeTimer.current) {
+            clearTimeout(closeTimer.current);
+            closeTimer.current = null;
+        }
         setQuery('');
         setResults([]);
         setSelected(null);
@@ -171,7 +192,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
                 onSuccess: () => {
                     setSuccess(true);
                     onSuccess?.();
-                    setTimeout(handleClose, 1200);
+                    closeTimer.current = setTimeout(handleClose, SHARE_CONFIRMATION_MS);
                 },
             }
         );
