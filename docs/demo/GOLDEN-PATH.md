@@ -28,6 +28,20 @@ identity, and a populated audit trail — through the public API/CLI only.
 Prints the URL and every login it just created. Re-running it is a no-op
 (idempotent); `./scripts/demo/down.sh` stops it, `--wipe` resets it.
 
+**Multi-factor authentication is on, as in every default install**
+(`security.require_mfa`), and the demo keeps it on. `up.sh` therefore enrols
+TOTP for the demo admin through the real API (`keyorix mfa enroll` / `mfa
+activate`, no database writes) and prints a boxed **"ADD THIS TO YOUR
+AUTHENTICATOR APP NOW"** step with the setup key, the `otpauth://` URI, a QR
+code when `qrencode` is installed, and the recovery codes. Do that once, on
+the phone you will use on stage, before you start. The same details stay in
+`.demo-2-state` (re-printed by every re-run) so a lost key is recoverable
+while the demo exists.
+
+If any seeding step fails, `up.sh` removes the half-built container and data
+volume again and says so; fix the cause and re-run it. A volume left behind
+by an older interrupted run is replaced the same way.
+
 Say out loud: this exact container — same image, same binary — runs with
 **zero outbound network** the entire time, proven by `scripts/airgap-e2e.sh`
 with `--network none`: install, bootstrap, secrets, backup, restore, audit
@@ -38,24 +52,21 @@ anchoring, tamper-detection, all offline. No cloud SDKs are linked in at all
 ## 1. Log in, show the dashboard (~1 min)
 
 Open the URL `up.sh` printed (default **http://localhost:8080**) and log in
-with the admin credentials it printed. Walk the dashboard: total secrets,
+with the admin credentials it printed plus the 6-digit code from your
+authenticator app. Walk the dashboard: total secrets,
 active users, audit events, security status.
 
 ## 2. MFA enrollment, live (~1.5 min)
 
-My Account -> Security -> Two-Factor Authentication -> **Enable**. Scan the
-QR/enter the setup key in any TOTP app, enter the 6-digit code and your
-password, confirm. Log out, log back in — the server now challenges for the
-code. This is now fully working end to end (was DEMO-1's #1 blocker,
-#2552 — fixed by #2466/#2467).
-
-Caveat worth knowing before you enable it on the account you'll keep using
-for the rest of the demo: the CLI doesn't support MFA login yet (#2737) —
-either demo MFA on a throwaway account, or disable it again afterward
-(Security -> Disable; **use a fresh TOTP code, not the password** — the
-password-only path is correctly rejected once MFA is enrolled, and a
-rejected attempt currently leaves the dialog stuck, #2738 — close and
-reopen it if that happens).
+The admin is already enrolled by `up.sh` (that is why the login above asked
+for a code). To show enrolment itself live, log in as **alice**: the server
+confines her to the security page (`/profile?tab=security&mfa=required`) until
+she enrols — scan the QR/enter the setup key in any TOTP app, enter the
+6-digit code and her password, confirm. Log out, log back in — the server now
+challenges for the code. (Disabling it again: Security -> Disable; **use a
+fresh TOTP code, not the password** — the password-only path is correctly
+rejected once MFA is enrolled, and a rejected attempt currently leaves the
+dialog stuck, #2738 — close and reopen it if that happens.)
 
 ## 3. Least privilege (~1 min)
 
@@ -64,7 +75,9 @@ it either way:
 
 ```sh
 export HOME=./.demo-2-cli-home   # the isolated CLI credential store up.sh used
-./bin/keyorix login --server http://localhost:8080 --username alice --password '<from up.sh output>'
+./bin/keyorix login --server http://localhost:8080 --username alice --password '<from up.sh output>' \
+  --mfa-code <6-digit code>                # only once alice has enrolled her own TOTP (step 2);
+                                           # until then require_mfa confines her to the enrolment endpoints
 ./bin/keyorix secret list --project 2     # numeric ID — alice holds no deployment-wide role,
                                            # so a project NAME needs one; the CLI says so
                                            # and tells you the numeric ID to use instead
@@ -78,7 +91,8 @@ they use a name instead.) Or just log in as alice in the web UI and show
 ## 4. An audited secret reveal (~1.5 min)
 
 ```sh
-./bin/keyorix login --server http://localhost:8080 --username admin --password '<from up.sh output>'
+./bin/keyorix login --server http://localhost:8080 --username admin --password '<from up.sh output>' \
+  --mfa-code <6-digit code from your authenticator app>
 ./bin/keyorix secret get --id 1 --show-value       # stripe-api-key, already rotated to v2 by up.sh
 ./bin/keyorix audit logs --limit 3                 # the reveal is right there: secret.read
 ```
@@ -186,10 +200,6 @@ soft-delete confirmation text (#2568), stale docker-compose image pins
 (#2601), wrong relative time on Projects list (#2553).
 
 **New, found while re-walking (DEMO-2, 2026-10-05):**
-- The CLI doesn't support MFA login at all — breaks with a misleading
-  "login failed: HTTP 200" the moment MFA is enabled on the account used
-  for CLI work — [#2737](https://github.com/keyorixhq/keyorix/issues/2737).
-  Demo MFA on a throwaway account, or disable it again before step 3.
 - The "Disable two-factor authentication" dialog hangs forever (no error
   shown) after one rejected attempt (e.g. password instead of a code), and
   survives closing/reopening — only a full page reload clears it —
@@ -203,6 +213,11 @@ soft-delete confirmation text (#2568), stale docker-compose image pins
   admin lock for the whole rotation
   ([#2540](https://github.com/keyorixhq/keyorix/issues/2540)). Stop the server
   (`docker stop keyorix-demo`) first, run it, then start the server again.
+- `admin recovery-key rotate` still refuses to run against a live server
+  (SQLite and Postgres) — [#2540](https://github.com/keyorixhq/keyorix/issues/2540)
+  was closed 2026-10-04 but the failure still reproduces on current `main`;
+  flagged on the issue for the coordinator to confirm. Stop the server (or
+  `docker stop keyorix-demo`) first if you want to demo it live.
 
 **Polish, safe to demo through:** none currently open that affect this
 script's own steps.
