@@ -278,6 +278,26 @@ func TestSecretAccess_MatchesOldCLIOutputShape(t *testing.T) {
 	}
 }
 
+// The effective level and every grant behind it are shown, so a write share that
+// elevates a viewer role is visible (#2941).
+func TestSecretAccess_ShowsEffectiveLevelAndGrants(t *testing.T) {
+	srv := secretOpsServer(t, secretJSONRoute(http.MethodGet, "/api/v1/secrets/1/access",
+		`{"data":{"accessors":[{"username":"alice","permission":"write","source":"direct_share","grants":["role:read","direct_share:write"]},`+
+			`{"username":"bob","permission":"read","source":"role","grants":["role:read"]}]}}`))
+	setPATCreds(t, srv)
+	secretAccessID = 1
+	defer func() { secretAccessID = 0 }()
+
+	out := captureStdout(t, func() {
+		if err := secretAccessCmd.RunE(secretAccessCmd, nil); err != nil {
+			t.Fatalf("secretAccessCmd: %v", err)
+		}
+	})
+	if !containsAll(out, "GRANTS", "alice", "write", "role:read, direct_share:write", "bob", "role") {
+		t.Fatalf("output missing the effective level or grants, got: %q", out)
+	}
+}
+
 func TestSecretAccessLog_RequiresID(t *testing.T) {
 	secretAccessLogID = 0
 	if err := secretAccessLogCmd.RunE(secretAccessLogCmd, nil); err == nil {
