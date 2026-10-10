@@ -18,12 +18,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -32,21 +30,17 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
-
-var s36DBCounter atomic.Int64
 
 // freshCoreS36WithAdmin opens a uniquely-named in-memory SQLite DB, migrates
 // all needed models, seeds user 1 as system_admin, and returns the core + DB.
 func freshCoreS36WithAdmin(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := s36DBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_s36a_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxhandlers_s36a_")
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)

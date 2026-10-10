@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -19,6 +18,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -40,9 +40,11 @@ func NewRBACTestHelper(t *testing.T) *RBACTestHelper {
 	err := i18n.Initialize(cfg)
 	require.NoError(t, err)
 
-	// Create an in-memory database for testing
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
+	// Create an in-memory database for testing. A plain ":memory:" DSN gives
+	// every pooled connection its own empty database, so a second connection
+	// (e.g. from a detached audit writer) would see no tables; sqlitetest caps
+	// the pool to one connection.
+	db := sqlitetest.OpenWithConfig(t, "kxrbac_", &gorm.Config{})
 
 	// Auto-migrate the schema
 	err = db.AutoMigrate(&models.User{}, &models.SecretNode{}, &models.ShareRecord{})
@@ -102,6 +104,12 @@ func addAuthContext(ctx context.Context, token string) context.Context {
 
 func TestListUsers(t *testing.T) {
 	helper := NewRBACTestHelper(t)
+	// Exercise the package-level legacy path like TestCreateUser and its
+	// siblings do. Without this the test used whatever defaultUserHandler an
+	// earlier test left behind, i.e. a DB that is closed once that test ends.
+	saved := defaultUserHandler
+	defaultUserHandler = nil
+	t.Cleanup(func() { defaultUserHandler = saved })
 
 	// Create test users
 	helper.CreateTestUser(t, "admin", 1)

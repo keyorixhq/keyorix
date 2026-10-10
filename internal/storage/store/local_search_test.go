@@ -5,11 +5,10 @@ package store
 
 import (
 	"context"
-	"fmt"
-	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -18,14 +17,9 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-var searchTestCounter atomic.Int64
-
 func newSearchTestStore(t *testing.T) *LocalStorage {
 	t.Helper()
-	n := searchTestCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxsearch_%d?mode=memory&cache=shared", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "localsearch_", sqlite.Open, &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(
 		&models.Project{},
 		&models.Environment{},

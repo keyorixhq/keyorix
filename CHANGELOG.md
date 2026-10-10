@@ -6,6 +6,13 @@ All notable changes to Keyorix are documented here. This project follows
 ## Unreleased
 
 ### Security
+- **The shipped compose stack and Helm chart run with
+  `security.enable_file_permission_check` on** (ADR-112 default): key material and
+  the `*_FILE` secret files are checked strictly; the orchestrator-mounted config
+  file only warns. Both configs omit the key on purpose, because an explicit `true`
+  would also audit that root/host-owned file strictly. A `*_FILE` secret that is not
+  key material follows the same upgrade grace period as the key files. Guarded by
+  `deploy/hardening` `TestShipped{Compose,Helm}Config_FilePermissionCheckIsOn`.
 - **Every secret the server reads from the environment now also accepts
   `<NAME>_FILE`** (Docker secrets, Kubernetes Secret volumes): the master
   password, DB password, bootstrap token, SMTP/SIEM/SCIM/webhook/SSO secrets and
@@ -17,7 +24,8 @@ All notable changes to Keyorix are documented here. This project follows
   exception is a group-readable file the running user does not own whose group the
   process holds (a Kubernetes Secret volume with `fsGroup`, a Docker secret with
   `group_add`); every other secret file follows
-  `security.enable_file_permission_check` (refuse) / warn. The container
+  `security.enable_file_permission_check` (refuse) / warn, and during the ADR-112
+  upgrade grace period they only warn. The container
   entrypoint (`KEYORIX_ADMIN_PASSWORD_FILE`, `KEYORIX_BOOTSTRAP_TOKEN_FILE`) and
   `keyorix system init` resolve `_FILE` too, so a `_FILE`-only deployment
   auto-bootstraps. A file value has exactly one trailing newline stripped (same

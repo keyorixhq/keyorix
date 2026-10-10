@@ -33,7 +33,27 @@ Open **http://localhost:8088** and log in with the admin credentials you set in
 
 > Building from source instead of pulling published images: edit
 > `docker-compose.yml` and swap the `backend` service's `image:` for the
-> commented-out `build:` block.
+> commented-out `build:` block (the `web` image is still pulled). The first
+> `docker compose build backend` takes about 3 minutes and the first `up -d`
+> about 1–2 minutes more (image pulls); nothing is printed for the 15–35 s the
+> backend spends on first-boot migrations and key derivation.
+
+**First boot check.** With `KEYORIX_ADMIN_PASSWORD` + `KEYORIX_BOOTSTRAP_TOKEN` set
+the backend creates the admin by calling `/system/init` once the server answers,
+but it only waits about 30 s. If first boot is slower than that (a loaded host)
+the log shows `Bootstrap call failed ... — continuing`, the container is
+healthy, and logging in returns `HTTP 401` (tracked in #3025). Look for
+`Server is ready` followed by `Bootstrapping admin user` in
+`docker compose logs backend`; if it is missing, create the admin by hand with
+`keyorix system init --server http://localhost:8088 --admin-username admin --admin-email admin@keyorix.local --bootstrap-token <KEYORIX_BOOTSTRAP_TOKEN>`.
+`docker compose ps` shows `web` as `(unhealthy)` on current images although it
+serves traffic (#3026).
+
+**Using the CLI against the stack.** The backend's port is not published; the
+CLI talks to it through the web container's proxy:
+`keyorix login --server http://localhost:8088 --username admin` (and
+`--server https://<KEYORIX_DOMAIN>` with the `tls` profile). The first admin
+login is confined to MFA enrolment, as in [QUICK_START.md](../QUICK_START.md#enrol-mfa-required-on-first-login).
 
 **Generate your admin recovery key now, before you need it.** If every admin
 account is ever locked out (lost password, lost MFA device), the only way back
@@ -156,6 +176,13 @@ docker compose exec backend ./keyorix-server admin backup --output /tmp/backup.t
 docker compose cp backend:/tmp/backup.tar.gz ./keyorix-backup-$(date +%F).tar.gz
 ```
 
+> **Version note.** The live (beside-the-server) Postgres backup below is not in
+> the published `0.95.3` images that `docker-compose.yml` pins: there the same
+> command fails with `failed to acquire the encryption key lock (another process
+> is using it)`. With those images stop `backend` first and use
+> `docker compose run --rm -v "$PWD/backups:/out" backend ./keyorix-server admin backup --output /out/keyorix-backup.tar.gz`
+> (`mkdir -m 777 backups` first: the container user is uid 1001).
+
 On Postgres, this reads through a single `REPEATABLE READ` snapshot
 transaction by default — every table sees the identical point-in-time view,
 without taking the database offline, so it runs beside the live `backend`
@@ -179,14 +206,27 @@ config the backup was taken from). `admin restore` always takes this
 database's own exclusive lock and refuses if a live server already holds it
 — stop the `backend` service first, and run restore via `docker compose run`
 (a fresh, throwaway container) rather than `exec` (which needs an already-
-running one):
+running one). The throwaway container has its own filesystem, so mount the
+archive into it with `-v` (a `docker compose cp` into the stopped `backend`
+container is not visible to `run`, and fails outright after `down -v` because
+no container exists). The container user is uid 1001: the archive must be
+readable by it (`chmod 644`).
 
 ```sh
-docker compose stop backend
-docker compose cp ./keyorix-backup-YYYY-MM-DD.tar.gz backend:/tmp/backup.tar.gz
-docker compose run --rm backend ./keyorix-server admin restore --input /tmp/backup.tar.gz
-docker compose up -d backend
+docker compose stop backend            # (no-op on a freshly wiped host)
+chmod 644 ./keyorix-backup-YYYY-MM-DD.tar.gz
+docker compose run --rm -v "$PWD/keyorix-backup-YYYY-MM-DD.tar.gz:/tmp/backup.tar.gz:ro" \
+  backend ./keyorix-server admin restore --input /tmp/backup.tar.gz
+docker compose up -d
 ```
+
+`run` starts `postgres` for you and `restore` migrates and loads the empty
+database and the (also empty) `keyorix_keys` volume, then runs `verify-audit`
+(`verify-audit on the restored database: VALID`). Measured for the whole drill
+on a 2-vCPU VM with ~200 rows: backup 1.4 s, restore 24 s, back to serving about
+40 s after `up -d`. Restore into the wiped volumes before the first `up -d`,
+as above (a stack that has already booted holds a non-empty database and keys,
+which restore refuses without `--overwrite-existing`).
 
 Restore refuses a non-empty target by default (`--overwrite-existing` to
 proceed anyway on a genuine disaster-recovery restore) — the normal flow is
@@ -279,13 +319,19 @@ path.
 ## 6. Upgrades
 
 ```sh
-docker compose pull          # fetch newer published images
+# docker-compose.yml pins both images to one release tag (e.g. :0.95.3, no
+# leading "v"). `pull` alone fetches nothing new: first edit the `backend` and
+# `web` tags to the release you are moving to, then:
+docker compose pull          # fetch the published images for those tags
 docker compose up -d         # recreate with the new images
 ```
 
 Schema migrations run automatically on boot and are additive. **Back up first**
-(section 5). To pin a version instead of `latest`, set the image tags in
-`docker-compose.yml` to a release tag (e.g. `:v0.3.0`).
+(section 5, mind its version note). Verified: a stack on the published `0.95.3`
+images with a secret in Postgres, then `docker compose up -d` on a `main`
+build — the secret read back unchanged, `verify-audit` VALID, schema epoch
+matches. See [UPGRADING.md](UPGRADING.md) for what changes on upgrade (MFA
+grace period).
 
 ## 7. TLS
 
@@ -304,7 +350,11 @@ docker compose --profile tls up -d
 Caddy automatically provisions and renews a publicly-trusted certificate
 (Let's Encrypt / ZeroSSL). Issued certs persist on the `caddy_data` volume so
 restarts don't re-request them. For a `localhost` value Caddy uses its internal
-CA (browsers warn unless you trust Caddy's root). When running the `tls` profile,
+CA (browsers warn unless you trust Caddy's root). To use the CLI against it,
+export that root and point the CLI at it:
+`docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt`
+then `SSL_CERT_FILE=$PWD/caddy-root.crt keyorix login --server https://localhost ...`
+(verified: login over `https://localhost` works, `http://localhost` answers 308). When running the `tls` profile,
 don't also expose web's `8088` publicly — front everything through Caddy on
 80/443.
 

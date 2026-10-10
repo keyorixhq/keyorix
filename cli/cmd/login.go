@@ -98,7 +98,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("verify token against %s: %w", serverURL, err)
 	}
 	if profileResp.StatusCode() != http.StatusOK {
-		return fmt.Errorf("login succeeded but token verification failed: HTTP %d", profileResp.StatusCode())
+		return httpStatusError("login succeeded but token verification failed", profileResp.StatusCode(), profileResp.Body)
 	}
 
 	store, err := resolveCredStore()

@@ -61,6 +61,16 @@ func TestCollectRequireMFAPosture_ADR112Grace(t *testing.T) {
 		require.NotNil(t, d, "an upgrade in the require_mfa grace period must be a deviation: %+v", report.deviations)
 		require.Equal(t, originShippedDefault, d.origin)
 		require.Contains(t, d.detail, "does NOT enforce MFA")
+		// #2986: the registry entry must see the grace state too, or the
+		// posture report counts the grace period once but never as a setting.
+		require.Equal(t, config.RequireMFAGraceNotEnforced, cfg.Security.RequireMFAState())
+		insecure := &postureReport{}
+		collectInsecureSettingsPosture(cfg, nil, insecure)
+		var found bool
+		for _, dev := range insecure.deviations {
+			found = found || strings.HasPrefix(dev.detail, "security.insecure_disable_mfa_requirement is in effect (grace-not-enforced)")
+		}
+		require.True(t, found, "registry deviation missing: %+v", insecure.deviations)
 	})
 	t.Run("marker present: enforced, no deviation", func(t *testing.T) {
 		cfg := writeSecureBaselineConfig(t)

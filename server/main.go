@@ -152,21 +152,17 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		log.Fatalf("Configuration is invalid: %v", err)
 	}
 
-	// ADR-112 opt-out rule (item 2): every insecure_ setting currently in effect
-	// gets a warning on EVERY start — never silent. See
-	// warnInsecureSettingsInEffect below. (The deprecated-alias warning for an old
-	// key that was renamed lands with the renames themselves, in their own
-	// follow-up PRs; no setting is renamed yet.)
-	warnInsecureSettingsInEffect(cfg)
+	// ADR-112: decide, once and from the database, whether this boot is an upgraded
+	// deployment still inside the file-permission-check grace period, then warn about
+	// every insecure_ setting in effect (opt-out rule item 2: on EVERY start, never
+	// silent). See resolveADR112BootPosture. Must run before
+	// runStartupValidation/enforceKeyFilePermissions, which both read the grace result.
+	resolveADR112BootPosture(cfg)
 
 	// Run the file-permission / encryption-key / database-reachability checks that were
 	// previously reachable ONLY via the manual `keyorix system validate` CLI subcommand
 	// (#330), despite official docs and that command's own help text claiming they run
 	// automatically on every boot.
-	// ADR-112: decide, once and from the database, whether this boot is an upgraded
-	// deployment still inside the file-permission-check grace period. Must run before
-	// runStartupValidation/enforceKeyFilePermissions, which both read the result.
-	applyADR112UpgradeGrace(cfg)
 	if err := runStartupValidation(cfg); err != nil {
 		log.Fatalf("startup validation: %v", err)
 	}
@@ -1297,7 +1293,16 @@ func closeAuditForwarder(coreService *core.KeyorixCore) {
 // Postgres advisory lock (ADR-039), so starting the loop in every process
 // (regardless of which transport it serves) is the existing, intended
 // coordination model — not a new behavior.
-func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) { // NOSONAR -- cognitive complexity 188, suppress go:S3776
+//
+// The returned wait blocks until every scheduler goroutine started here has
+// exited, which happens once ctx is cancelled and any in-flight tick returns.
+// The server process never needs it (it exits); tests do, so a tick cannot
+// outlive the test that started it and run against the next test's process
+// state (log output, i18n, config) -- see startSchedulersForTest.
+func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) (wait func()) { // NOSONAR -- cognitive complexity 188, suppress go:S3776
+	var schedulers sync.WaitGroup
+	ctx = withSchedulerTracking(ctx, &schedulers)
+
 	// Start anomaly detection scheduler. Single-replica-gated (ADR-039) so N
 	// replicas don't emit N copies of each alert. When anomaly_alerts is enabled,
 	// each detection pass is followed by an alerting pass that pushes newly detected
@@ -1854,6 +1859,7 @@ func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.
 			})
 		})
 	}
+	return schedulers.Wait
 }
 
 // errHTTPServerFailedToStart wraps every error startHTTPServer can return
@@ -2243,8 +2249,9 @@ func resolveVaultToken(tokenEnv string) (string, error) {
 // files named by *_FILE secret variables (secretenv.CheckPermissions: 0600/0400,
 // plus group-read only for an orchestrator-owned file in a group the process
 // holds). Key-material secrets (master password, KEK, Shamir shares) are refused
-// unconditionally where they are read (secretenv.LookupChecked); this covers the
-// rest. Same warn-vs-refuse matrix as enforceKeyFilePermissions: refuse
+// unconditionally where they are read (secretenv.LookupChecked, no grace); this
+// covers the rest, which follow the ADR-112 upgrade grace like the key files.
+// Same warn-vs-refuse matrix as enforceKeyFilePermissions: refuse
 // when security.enable_file_permission_check is on and
 // allow_unsafe_file_permissions is off, otherwise warn.
 func enforceSecretFilePermissions(cfg *config.Config) error {
@@ -2259,6 +2266,16 @@ func enforceSecretFilePermissions(cfg *config.Config) error {
 	}
 	msg := strings.Join(problems, "; ")
 	if cfg.Security.EnableFilePermissionCheck && !cfg.Security.AllowUnsafeFilePermissions {
+		// Strict on the implicit ADR-112 default as well (only orchestrator-mounted
+		// config/TLS files are softened there). The one exception is the upgrade
+		// grace period, same as for the key files in enforceKeyFilePermissions:
+		// warn, and record that this boot was softened. Key material never gets
+		// here -- LookupChecked has already refused it.
+		if cfg.Security.EnableFilePermissionCheckUpgradeGrace {
+			adr112GraceSoftened.Store(true)
+			log.Printf("WARNING: %s -- this now fails closed by default (ADR-112); fix the file mode (chmod 0400, or 0440 on an orchestrator-owned mount whose group the process holds) and set security.enable_file_permission_check: true explicitly once compliant.", msg)
+			return nil
+		}
 		return fmt.Errorf("%s -- refusing to start (or set security.allow_unsafe_file_permissions to override)", msg)
 	}
 	log.Printf("WARNING: %s. Set security.enable_file_permission_check to fail closed instead of warning.", msg)
@@ -2311,9 +2328,21 @@ func logWarnOnImplicitRequireMFADefault(cfg *config.Config) {
 func warnInsecureSettingsInEffect(cfg *config.Config) {
 	for _, s := range config.InsecureSettingsRegistry {
 		if s.InEffect(cfg) {
-			log.Printf("WARNING: %s is in effect — %s", s.Name, s.Describe)
+			log.Printf("WARNING: %s is in effect (%s) — %s", s.Name, s.Value(cfg), s.Describe)
 		}
 	}
+}
+
+// resolveADR112BootPosture applies the ADR-112 upgrade-grace decision and THEN
+// warns about every registry entry in effect. The order is the point (#2908):
+// security.insecure_skip_startup_validation's grace-warn-only state is read
+// from EnableFilePermissionCheckUpgradeGrace, which only
+// applyADR112UpgradeGrace sets. Warning first -- main's order before #2908 --
+// evaluated that entry with the flag still false, so a grace-period
+// deployment that only warns on a failed startup check got no opt-out warning.
+func resolveADR112BootPosture(cfg *config.Config) {
+	applyADR112UpgradeGrace(cfg)
+	warnInsecureSettingsInEffect(cfg)
 }
 
 // securityPostureSnapshot computes this boot's value of every ADR-112

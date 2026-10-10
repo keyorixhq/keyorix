@@ -171,7 +171,37 @@ type apiErrorBody struct {
 func apiError(action string, statusCode int, body []byte) error {
 	var eb apiErrorBody
 	if err := json.Unmarshal(body, &eb); err == nil && eb.Message != "" {
-		return fmt.Errorf("%s failed: %s (HTTP %d)", action, cliout.SanitizeForTerminal(eb.Message), statusCode)
+		return fmt.Errorf("%s failed: %s (HTTP %d)%s", action, cliout.SanitizeForTerminal(eb.Message), statusCode, nextStepHint(eb))
 	}
 	return fmt.Errorf("%s failed: HTTP %d", action, statusCode)
+}
+
+// errCodeMFAEnrollmentRequired is the "error" code the server's auth middleware
+// returns (403) on every authenticated route when security.require_mfa is on and
+// the caller has no MFA enrolled (server/middleware/auth.go).
+const errCodeMFAEnrollmentRequired = "MFAEnrollmentRequired"
+
+// nextStepHint returns a " Next step: ..." suffix for server error codes that
+// have one fixed remedy, or "". Today only MFA enrolment: without it a fresh
+// admin logs in successfully and then every command fails (#2937).
+func nextStepHint(eb apiErrorBody) string {
+	if eb.Error == errCodeMFAEnrollmentRequired {
+		return " Next step: this server requires multi-factor authentication. " +
+			"Enrol MFA with `keyorix mfa enroll`, then `keyorix mfa activate` (see `keyorix mfa --help`), " +
+			"then log in again with `keyorix login --mfa-code <code>`."
+	}
+	return ""
+}
+
+// httpStatusError is the failure path for a non-2xx response where the caller
+// has its own wording: "<what>: <server message> (HTTP <code>)", falling back to
+// "<what>: HTTP <code>" when the body carries no message. Every CLI command uses
+// this (or apiError) so a 403/409 always says why (#2937, #2938). what is a
+// phrase such as "failed to create secret".
+func httpStatusError(what string, statusCode int, body []byte) error {
+	var eb apiErrorBody
+	if err := json.Unmarshal(body, &eb); err == nil && eb.Message != "" {
+		return fmt.Errorf("%s: %s (HTTP %d)%s", what, cliout.SanitizeForTerminal(eb.Message), statusCode, nextStepHint(eb))
+	}
+	return fmt.Errorf("%s: HTTP %d", what, statusCode)
 }

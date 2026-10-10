@@ -39,12 +39,11 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -52,17 +51,11 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// s22DBSeq makes each in-memory DB unique within the process, even across
-// repeated invocations of the same test (e.g. `go test -count=N`).
-var s22DBSeq atomic.Int64
-
 // newS22Store opens a unique in-memory SQLite DB, migrates the supplied models
 // and returns the LocalStorage. It mirrors the s21 helper pattern.
 func newS22Store(t *testing.T, mods ...interface{}) *LocalStorage {
 	t.Helper()
-	dsn := fmt.Sprintf("file:%s_s22_%d?mode=memory&cache=shared", t.Name(), s22DBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "stores22_", sqlite.Open, &gorm.Config{})
 	if len(mods) > 0 {
 		require.NoError(t, db.AutoMigrate(mods...))
 	}
