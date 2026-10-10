@@ -129,3 +129,50 @@ func TestGetDashboardStats_DegradesOnTruncatedReadableCount(t *testing.T) {
 		clean.DegradedReasons)
 	assert.Equal(t, int64(9), clean.TotalSecrets)
 }
+
+// TestListReadableSecrets_Tier2_StorageRowBoundIsReported is the coordinator's
+// "Blocker 1/2" on #2874: the tier-2 union detected truncation only via
+// resp.Total > len(resp.Secrets), which cannot fire when the STORAGE clamp
+// (listingMaxRows) is what bites -- the per-scope page is then full and Total ==
+// len(Secrets). The tests above only lower unionPageSizeOverride, i.e. drive the
+// bound the storage clamp shadows. This one leaves the union bound at its real
+// value and lowers the storage bound, with scoped (non-global) grants.
+//
+// RED before the fix: Truncated == false, Total == 3 (a floor shown as a count).
+func TestListReadableSecrets_Tier2_StorageRowBoundIsReported(t *testing.T) {
+	t.Parallel()
+	c, db := readableListingFixture(t)
+	ctx := context.Background()
+	seedReadableProject(t, db, 1, "alpha", "a", 9)
+	seedReadableProject(t, db, 2, "beta", "b", 2)
+
+	c.listingMaxRowsOverride = 3 // union bound deliberately left at the real 100000
+
+	resp, err := c.ListReadableSecrets(ctx, 1, 1, &models.SecretListFilter{Page: 1, PageSize: 50})
+	require.NoError(t, err)
+	assert.True(t, resp.Truncated,
+		"the storage clamp cut project 1 from 9 to 3 secrets, so the union total is a FLOOR; got Truncated=false Total=%d", resp.Total)
+	assert.Contains(t, resp.TruncatedReason, "project 1")
+	assert.NotContains(t, resp.TruncatedReason, "project 2", "a scope that fit must not be reported")
+
+	total, exact, err := c.CountReadableSecrets(ctx, 1, 1)
+	require.NoError(t, err)
+	assert.False(t, exact, "a count built from a storage-clamped scope is not exact (got total=%d)", total)
+}
+
+// Calibration for the above: storage bound not hit => not truncated, exact.
+func TestListReadableSecrets_Tier2_StorageBoundNotHitIsExact(t *testing.T) {
+	t.Parallel()
+	c, db := readableListingFixture(t)
+	ctx := context.Background()
+	seedReadableProject(t, db, 1, "alpha", "a", 9)
+	c.listingMaxRowsOverride = 50
+
+	resp, err := c.ListReadableSecrets(ctx, 1, 1, &models.SecretListFilter{Page: 1, PageSize: 50})
+	require.NoError(t, err)
+	assert.False(t, resp.Truncated)
+	assert.Equal(t, int64(9), resp.Total)
+	_, exact, err := c.CountReadableSecrets(ctx, 1, 1)
+	require.NoError(t, err)
+	assert.True(t, exact)
+}

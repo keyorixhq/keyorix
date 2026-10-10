@@ -130,8 +130,9 @@ type secretListResponseWire struct {
 	OwnedCount      int                         `json:"owned_count"`
 	SharedCount     int                         `json:"shared_count"`
 	ACLGrantedCount int                         `json:"acl_granted_count"`
-	// Truncated reports that `total` is a FLOOR, not a count: assembling the
-	// multi-scope union hit its per-scope bound. Omitted when false, so the ordinary
+	// Truncated reports that `total` is a FLOOR, not a count: a listing bound was
+	// hit (the storage row bound on any scoped listing, or the multi-scope
+	// union's per-scope bound). Omitted when false, so the ordinary
 	// response shape is unchanged. A client showing `total` must not present it as a
 	// complete count when this is set — see models.SecretListResponse.Truncated.
 	Truncated       bool   `json:"truncated,omitempty"`

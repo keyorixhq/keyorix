@@ -84,8 +84,10 @@ type SecretListResponse struct {
 
 	// Truncated reports that this response does NOT cover everything the caller can
 	// read: a bound was hit while assembling it, so Total is a FLOOR, not a count.
-	// Only core.ListReadableSecrets' multi-scope union can set it, when a single
-	// scope held more secrets than maxUnionPageSize.
+	// Set by the scoped listing paths (core.pageScopedSecrets: tier 1, each tier-2
+	// scope, and the machine branch) when the storage row bound
+	// (secretListingMaxRows) cut a scope short, and by core.ListReadableSecrets'
+	// tier-2 union when a scope also exceeds the union page size.
 	//
 	// It exists because the alternative is a silently short number, which is the
 	// defect class #2780 was: a count that is confidently wrong is worse than one

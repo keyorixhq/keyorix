@@ -186,7 +186,12 @@ func (c *KeyorixCore) ListReadableSecrets(ctx context.Context, userID, principal
 		// "loudly-in-the-logs" and nothing logged, and the response carried no
 		// signal — a silently short Total, which is the same class of defect as
 		// #2780's confidently-wrong zero.
-		if resp.Total > int64(len(resp.Secrets)) {
+		// resp.Truncated is the signal that matters at the shipped configuration:
+		// the storage clamp (listingMaxRows) cuts the scope BEFORE it is paged, so
+		// the page is full and Total == len(Secrets) even when the scope was cut.
+		// The Total comparison only catches a union page size below the storage
+		// clamp (i.e. tests).
+		if resp.Truncated || resp.Total > int64(len(resp.Secrets)) {
 			log.Printf("ListReadableSecrets: scope {project:%d env:%d} holds %d secrets but the union is bounded at %d — "+
 				"the merged total is a FLOOR, not a count (principal_id=%d)",
 				scope.ProjectID, scope.EnvironmentID, resp.Total, c.unionPageSize(), principalID)
