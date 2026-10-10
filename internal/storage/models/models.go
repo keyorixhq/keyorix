@@ -1215,11 +1215,11 @@ func (l *DynamicSecretLease) BeforeSave(_ *gorm.DB) error {
 // installs gain them via migrateDatabase's CREATE INDEX IF NOT EXISTS block.
 type SecretAccessLog struct {
 	ID              uint `gorm:"primaryKey"`
-	SecretNodeID    uint `gorm:"index:idx_secret_access_logs_secret_time,priority:1;index:idx_secret_access_logs_access_time,priority:2"`
+	SecretNodeID    uint `gorm:"index:idx_secret_access_logs_secret_time,priority:1;index:idx_secret_access_logs_access_time,priority:2;index:idx_secret_access_logs_secret_action,priority:1"`
 	SecretVersionID uint
 	AccessedBy      string
 	AccessTime      time.Time `gorm:"index:idx_secret_access_logs_secret_time,priority:2;index:idx_secret_access_logs_access_time,priority:1"`
-	Action          string
+	Action          string    `gorm:"index:idx_secret_access_logs_secret_action,priority:2"`
 	IPAddress       string
 	UserAgent       string
 }

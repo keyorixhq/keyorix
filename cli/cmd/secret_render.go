@@ -65,7 +65,7 @@ func runSecretRender(_ *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("render template: HTTP %d", resp.StatusCode())
+		return httpStatusError("render template", resp.StatusCode(), resp.Body)
 	}
 	out := derefStr(resp.JSON200.Data.Rendered)
 

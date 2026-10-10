@@ -64,11 +64,17 @@ func (ls *LocalStorage) CountSecretReadsBySecretIDs(ctx context.Context, secretI
 		Count        int
 	}
 	var rows []row
-	err := ls.db.WithContext(ctx).Model(&models.SecretAccessLog{}).
+	q := ls.db.WithContext(ctx).Model(&models.SecretAccessLog{}).
 		Select("secret_node_id, COUNT(*) AS count").
-		Where("secret_node_id IN ? AND access_time >= ? AND action = ?", secretIDs, since, "read").
-		Group("secret_node_id").
-		Find(&rows).Error
+		Where("secret_node_id IN ? AND action = ?", secretIDs, "read")
+	// A zero `since` means "all time" (the lifetime count, total_reads). Leaving the
+	// always-true bound out lets the planner answer from (secret_node_id, action)
+	// alone instead of range-scanning (secret_node_id, access_time) with a heap
+	// lookup per row to check action.
+	if !since.IsZero() {
+		q = q.Where("access_time >= ?", since)
+	}
+	err := q.Group("secret_node_id").Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}

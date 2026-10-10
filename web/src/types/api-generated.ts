@@ -5078,6 +5078,8 @@ export interface components {
             description?: string;
             max_reads?: number | null;
             read_count?: number;
+            /** @description Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Counts secret_access_logs rows with action read, which today also include metadata-only by-name lookups (a known exception, see INV-CORE-secret-read-means-value-disclosure), so it can exceed the number of value disclosures. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads. */
+            total_reads?: number;
             /** Format: date-time */
             expiration?: string | null;
             classification?: string;
@@ -5489,6 +5491,8 @@ export interface components {
             description?: string;
             max_reads?: number | null;
             read_count?: number;
+            /** @description Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Counts secret_access_logs rows with action read, which today also include metadata-only by-name lookups (a known exception, see INV-CORE-secret-read-means-value-disclosure), so it can exceed the number of value disclosures. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads. */
+            total_reads?: number;
             /** Format: date-time */
             expiration?: string | null;
             classification?: string;
@@ -10849,7 +10853,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope `{data, message}`. `data.versions` is the version history array. */
+            /** @description Envelope `{data, message}`. `data.versions` is the version history array; `data.total_reads` the secret's lifetime read count (access-log rows with action read). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -10858,6 +10862,8 @@ export interface operations {
                     "application/json": {
                         data?: {
                             versions?: components["schemas"]["SecretVersion"][];
+                            /** @description Lifetime count of reads of this secret's value (secret_access_logs rows with action read; on an install upgraded from before #2970 the earlier version listings, which were logged as reads, are included, so the lifetime count is inflated there). Each version's ReadCount counts only reads charged against max_reads. */
+                            total_reads?: number;
                         };
                     };
                 };

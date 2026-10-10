@@ -105,6 +105,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Use(customMiddleware.PrometheusMiddleware)
 	r.Use(customMiddleware.MaxBodyBytes(cfg.Server.HTTP.EffectiveMaxRequestBodyBytes()))
 	r.Use(middleware.Timeout(60 * time.Second))
+	// RESIL-1 (#2637 follow-up): a request whose write timed out on the SQLite write
+	// gate answers 503 + Retry-After instead of a generic 500. Inside Timeout (it must
+	// see the context the handlers see) and outside every handler; the credential
+	// surface (/auth/) is exempt inside the middleware itself.
+	r.Use(customMiddleware.WriteContention)
 
 	// A tighter body-size limit for the three routes that carry a secret VALUE
 	// (create/update/rotate), scoped in addition to (not instead of) the global

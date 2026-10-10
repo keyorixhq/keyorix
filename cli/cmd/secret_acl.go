@@ -44,7 +44,7 @@ var secretACLListCmd = &cobra.Command{
 			return err
 		}
 		if resp.JSON200 == nil {
-			return fmt.Errorf("list secret ACLs: HTTP %d", resp.StatusCode())
+			return httpStatusError("list secret ACLs", resp.StatusCode(), resp.Body)
 		}
 		acls := derefSecretACLSlice(resp.JSON200.Data)
 		if len(acls) == 0 {
@@ -90,7 +90,7 @@ var secretACLGrantCmd = &cobra.Command{
 			return err
 		}
 		if resp.JSON200 == nil {
-			return fmt.Errorf("grant secret ACL: HTTP %d", resp.StatusCode())
+			return httpStatusError("grant secret ACL", resp.StatusCode(), resp.Body)
 		}
 		fmt.Printf("ACL granted: user %d now has %v on secret %d.\n", secretACLGrantUser, secretACLGrantPerms, secretACLGrantSecret)
 		return nil
@@ -122,7 +122,7 @@ var secretACLRevokeCmd = &cobra.Command{
 			return err
 		}
 		if resp.JSON200 == nil {
-			return fmt.Errorf("revoke secret ACL: HTTP %d", resp.StatusCode())
+			return httpStatusError("revoke secret ACL", resp.StatusCode(), resp.Body)
 		}
 		fmt.Printf("ACL %d revoked from secret %d.\n", secretACLRevokeACL, secretACLRevokeSecret)
 		return nil

@@ -10,10 +10,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -22,20 +20,16 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
-
-var s38ListCounter atomic.Uint64
 
 // freshListFixtureS38 returns a SecretHandler backed by an isolated in-memory
 // SQLite DB with a project, environment, and one active secret.
 func freshListFixtureS38(t *testing.T) (*SecretHandler, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := s38ListCounter.Add(1)
-	dsn := fmt.Sprintf("file:kx_list_s38_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_list_s38_")
 
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},

@@ -18,38 +18,31 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/keyorixhq/keyorix/server/http/handlers/contracttest"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
 // ── DB / helper plumbing ─────────────────────────────────────────────────────
 
-var s11DBCounter atomic.Int64
-
 // freshCoreS11 creates a brand-new in-memory SQLite DB with the full schema
 // (same set as freshCoreS8, including SystemMetadata / PasswordHistory).
 func freshCoreS11(t *testing.T) *core.KeyorixCore {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := s11DBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_s11_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
-	err = db.AutoMigrate(
+	db := sqlitetest.Open(t, "kxhandlers_s11_")
+	err := db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
 		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.SecretNode{},

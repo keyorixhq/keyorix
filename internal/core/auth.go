@@ -103,9 +103,53 @@ func (c *KeyorixCore) VerifyPasswordCredentials(ctx context.Context, username, p
 
 // Login validates credentials, creates a session, and returns (session, user, error).
 func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, error) {
-	user, err := c.VerifyPasswordCredentials(ctx, req.Username, req.Password)
+	user, err := c.authenticatePasswordLogin(ctx, req)
+	if err != nil {
+		return nil, user, err
+	}
+	// #3024: an account that owes both setup steps (restricted AND no second factor
+	// under security.require_mfa) gets a setup-only session: short-lived, confined to
+	// the setup steps, revoked once they are done (account_setup.go).
+	created, err := c.mintSessionWith(ctx, user.ID, req.UserAgent, req.IPAddress, c.needsSetupSession(user))
 	if err != nil {
 		return nil, nil, err
+	}
+	return created, user, nil
+}
+
+// LoginWithIdentity is Login for a caller that also needs the response
+// identity (roles and permissions). It resolves the identity BEFORE minting
+// the session, the same ordering the MFA and WebAuthn logins use (#2841), so
+// nothing fallible runs after the session is written and a login reported as
+// failed never leaves one behind (#2844: the HTTP handler used to read the
+// identity after Login returned, and a panic in that read left a live session
+// the client never received).
+func (c *KeyorixCore) LoginWithIdentity(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, UserIdentity, error) {
+	user, err := c.authenticatePasswordLogin(ctx, req)
+	if err != nil {
+		return nil, user, UserIdentity{}, err
+	}
+	identity, err := c.resolveLoginIdentityBeforeMint(ctx, user.ID)
+	if err != nil {
+		return nil, nil, UserIdentity{}, err
+	}
+	// #3024: an account that owes both setup steps (restricted AND no second factor
+	// under security.require_mfa) gets a setup-only session: short-lived, confined to
+	// the setup steps, revoked once they are done (account_setup.go).
+	created, err := c.mintSessionWith(ctx, user.ID, req.UserAgent, req.IPAddress, c.needsSetupSession(user))
+	if err != nil {
+		return nil, nil, UserIdentity{}, err
+	}
+	return created, user, identity, nil
+}
+
+// authenticatePasswordLogin is everything Login does before the session is
+// minted. On ErrMFARequired it returns the user alongside the error (the caller
+// needs it to start the challenge); on any other error the user is nil.
+func (c *KeyorixCore) authenticatePasswordLogin(ctx context.Context, req *LoginRequest) (*models.User, error) {
+	user, err := c.VerifyPasswordCredentials(ctx, req.Username, req.Password)
+	if err != nil {
+		return nil, err
 	}
 	// Enforce the password max-age policy: if the password has expired, gate the
 	// account to password_reset_required NOW so the middleware blocks API access
@@ -113,7 +157,7 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	// response alone is not sufficient — a client that ignores it would retain
 	// full API access indefinitely.
 	if err := c.enforcePasswordExpiryGate(ctx, user); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	// Accounts with any second factor (TOTP or a passkey) get no session from the
 	// password step — the caller must complete it (CreateMFAChallenge →
@@ -125,7 +169,7 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	// the WebAuthn Finish* functions each do their own clear once the second
 	// factor actually succeeds).
 	if user.MFAEnabled || user.WebAuthnEnabled {
-		return nil, user, ErrMFARequired
+		return user, ErrMFARequired
 	}
 	// No second factor configured — the password step IS the full authentication.
 	// Re-check the lock state under the same serialization recordFailedLogin uses
@@ -135,16 +179,9 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	// snapshot read inside VerifyPasswordCredentials and now (TOCTOU) — never
 	// trust that stale snapshot alone.
 	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	// #3024: an account that owes both setup steps (restricted AND no second factor
-	// under security.require_mfa) gets a setup-only session: short-lived, confined to
-	// the setup steps, revoked once they are done (account_setup.go).
-	created, err := c.mintSessionWith(ctx, user.ID, req.UserAgent, req.IPAddress, c.needsSetupSession(user))
-	if err != nil {
-		return nil, nil, err
-	}
-	return created, user, nil
+	return user, nil
 }
 
 // mintSession creates and persists a new session token for a user. The access
@@ -195,7 +232,10 @@ func (c *KeyorixCore) mintSessionWith(ctx context.Context, userID uint, userAgen
 	if setupOnly {
 		capSetupSession(session, now)
 	}
-	created, err := c.storage.CreateSession(ctx, session)
+	// A failed insert may still have committed: createSession delivers the row
+	// if it landed instead of reporting a failed login over a live session
+	// (#2844). See session_undelivered.go.
+	created, err := c.createSession(ctx, session, ip, "login")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
@@ -382,7 +422,16 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 	}
 	created, won, err := c.storage.RotateSession(ctx, old.ID, session, now)
 	if err != nil {
-		return nil, fmt.Errorf("failed to rotate session: %w", err)
+		// RotateSession is one transaction, so a rotation that committed despite
+		// the error has both retired the old row and written the new one. Failing
+		// it would leave the client holding a retired token while the new
+		// session sits live and undelivered (#2844); deliver it instead.
+		row := c.sessionWriteLanded(ctx, newToken, old.UserID, old.IPAddress, "session refresh", err)
+		if row == nil {
+			return nil, fmt.Errorf("failed to rotate session: %w", err)
+		}
+		session.ID, session.SessionToken = row.ID, newToken
+		created, won = session, true
 	}
 	if !won {
 		// Lost the CAS: a concurrent refresh of this exact token won first between
