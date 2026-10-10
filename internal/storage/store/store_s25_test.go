@@ -58,12 +58,11 @@ package store
 
 import (
 	"context"
-	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -72,18 +71,12 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// s25DBSeq makes each in-memory DB unique within the process, even across
-// repeated invocations of the same test (e.g. `go test -count=N`).
-var s25DBSeq atomic.Int64
-
 // newS25Store opens a fresh in-memory SQLite DB, runs AutoMigrate on the
 // supplied model types, and returns the LocalStorage. Using a "_s25" DSN
 // suffix prevents collisions with other sweeps' test-name-keyed DSNs.
 func newS25Store(t *testing.T, mods ...interface{}) *LocalStorage {
 	t.Helper()
-	dsn := fmt.Sprintf("file:%s_s25_%d?mode=memory&cache=shared", t.Name(), s25DBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "stores25_", sqlite.Open, &gorm.Config{})
 	if len(mods) > 0 {
 		require.NoError(t, db.AutoMigrate(mods...))
 	}
